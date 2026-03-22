@@ -13,7 +13,7 @@ os.environ.setdefault("ALLOWED_ORIGINS", "http://localhost:3000")
 
 from app.database import get_db
 from app.main import app
-from app.models import Base
+from app.models import Base, WaitlistSignup
 
 # ── In-memory SQLite engine for tests ─────────────────────────────────────────
 
