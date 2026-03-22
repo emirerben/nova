@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { getJobStatus, type ClipStatus, type JobStatus, type JobStatusResponse } from "@/lib/api";
 
 const POLL_INTERVAL_MS = 3000;
+const POLL_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — surface an error rather than polling forever
 
 const STAGE_LABELS: Record<string, string> = {
   queued: "Waiting in queue...",
@@ -31,9 +32,15 @@ export default function JobPage() {
   const [job, setJob] = useState<JobStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef = useRef(Date.now());
 
   useEffect(() => {
     async function poll() {
+      if (Date.now() - startTimeRef.current > POLL_TIMEOUT_MS) {
+        setError("Processing is taking unusually long. The pipeline worker may be down — check server logs.");
+        clearInterval(intervalRef.current!);
+        return;
+      }
       try {
         const data = await getJobStatus(id);
         setJob(data);
@@ -99,7 +106,11 @@ export default function JobPage() {
                 {readyClips.length === 3 ? "3 clips ready to post" : `${readyClips.length} clip${readyClips.length > 1 ? "s" : ""} ready`}
               </h2>
               {readyClips.length > 1 && (
-                <button className="px-5 py-2 bg-white text-black rounded-full text-sm font-semibold hover:bg-zinc-200 transition-colors">
+                <button
+                  disabled
+                  title="Social posting coming in Phase 3"
+                  className="px-5 py-2 bg-white text-black rounded-full text-sm font-semibold opacity-40 cursor-not-allowed"
+                >
                   Post All {readyClips.length}
                 </button>
               )}
@@ -156,7 +167,11 @@ function ClipCard({ clip }: { clip: ClipStatus }) {
           >
             {showCopy ? "Hide copy" : "See copy"}
           </button>
-          <button className="text-xs bg-white text-black rounded-full px-3 py-1 font-semibold hover:bg-zinc-200 transition-colors">
+          <button
+            disabled
+            title="Social posting coming in Phase 3"
+            className="text-xs bg-white text-black rounded-full px-3 py-1 font-semibold opacity-40 cursor-not-allowed"
+          >
             Post
           </button>
         </div>
