@@ -16,7 +16,16 @@ dev-api:
 
 test:
 	(cd src/apps/web && pnpm test)
-	(cd src/apps/api && python -m pytest)
+	(cd src/apps/api && python -m pytest tests/ --ignore=tests/quality -v)
+
+test-quality:
+	(cd src/apps/api && python -m pytest tests/quality/ -v)
+
+migrate:
+	(cd src/apps/api && alembic upgrade head)
+
+migrate-new:
+	(cd src/apps/api && alembic revision --autogenerate -m "$(msg)")
 
 # ── Build ──────────────────────────────────────────────────────────────────────
 
