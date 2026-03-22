@@ -1,15 +1,15 @@
 """Integration tests for POST /api/waitlist and GET /api/admin/waitlist."""
 
-import os
+import itertools
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-# Ensure settings can load before importing app modules
-os.environ.setdefault("WAITLIST_ADMIN_SECRET", "test-admin-secret")
-os.environ.setdefault("ALLOWED_ORIGINS", "http://localhost:3000")
+# Unique IP counter — prevents rate-limiter state from bleeding across test functions.
+# Each client fixture call gets a fresh IP, so no test inherits another's request count.
+_ip_counter = itertools.count(1)
 
 from app.database import get_db
 from app.main import app
@@ -40,7 +40,14 @@ async def client(db_engine):
             yield session
 
     app.dependency_overrides[get_db] = override_get_db
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+    # Each fixture call gets a unique IP so the rate limiter never sees
+    # cross-test request counts from the same "client".
+    unique_ip = f"10.{next(_ip_counter) % 256}.0.1"
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Forwarded-For": unique_ip},
+    ) as c:
         yield c
     app.dependency_overrides.clear()
 
