@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     whisper_backend: str = "openai-api"  # "openai-api" | "local"
     whisper_model: str = "base.en"
 
+    # CORS — comma-separated in env: ALLOWED_ORIGINS=https://nova.io,http://localhost:3000
+    allowed_origins: list[str] = ["http://localhost:3000"]
+
+    # Waitlist admin
+    waitlist_admin_secret: str = "changeme"
+
     # Security
     token_encryption_key: str = ""
 

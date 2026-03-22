@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    String,
     Text,
     UniqueConstraint,
 )
@@ -23,6 +24,15 @@ from sqlalchemy.sql import func
 
 class Base(DeclarativeBase):
     pass
+
+
+class WaitlistSignup(Base):
+    __tablename__ = "waitlist_signups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    invited_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
 
 
 class User(Base):

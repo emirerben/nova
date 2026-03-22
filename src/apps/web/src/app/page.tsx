@@ -1,148 +1,119 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import { enqueueJob, getPresignedUrl, uploadFileToGcs } from "@/lib/api";
 
-const PLATFORMS = [
-  { id: "instagram", label: "Instagram Reels" },
-  { id: "youtube", label: "YouTube Shorts" },
-  { id: "tiktok", label: "TikTok (Phase 3)" },
-];
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-const ALLOWED_MIME = ["video/mp4", "video/quicktime", "video/x-msvideo"];
-const MAX_BYTES = 4 * 1024 * 1024 * 1024;
+type FormState = "idle" | "submitting" | "success" | "duplicate" | "error";
 
-type UploadState = "idle" | "uploading" | "enqueuing" | "error";
-
-export default function UploadPage() {
-  const router = useRouter();
-  const fileInput = useRef<HTMLInputElement>(null);
-  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(["instagram", "youtube"]);
-  const [state, setState] = useState<UploadState>("idle");
+export default function LandingPage() {
+  const [state, setState] = useState<FormState>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [dragOver, setDragOver] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  function togglePlatform(id: string) {
-    setSelectedPlatforms((prev) =>
-      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]
-    );
-  }
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const email = inputRef.current?.value.trim() ?? "";
+    if (!email) return;
 
-  async function handleFile(file: File) {
     setErrorMsg(null);
-
-    if (!ALLOWED_MIME.includes(file.type)) {
-      setErrorMsg("Only MP4, MOV, and AVI files are supported.");
-      return;
-    }
-    if (file.size > MAX_BYTES) {
-      setErrorMsg("File exceeds the 4GB limit.");
-      return;
-    }
-    if (selectedPlatforms.length === 0) {
-      setErrorMsg("Select at least one platform.");
-      return;
-    }
+    setState("submitting");
 
     try {
-      setState("uploading");
-      // We don't have video duration client-side without loading the file — use 0 as placeholder;
-      // server validates duration after probe
-      const { upload_url, job_id, gcs_path } = await getPresignedUrl({
-        filename: file.name,
-        file_size_bytes: file.size,
-        duration_s: 0,
-        aspect_ratio: "16:9", // TODO: detect from video metadata
-        platforms: selectedPlatforms,
-        content_type: file.type,
+      const res = await fetch(`${API_URL}/api/waitlist`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
       });
 
-      await uploadFileToGcs(upload_url, file);
-      setState("enqueuing");
-      await enqueueJob(job_id, gcs_path, selectedPlatforms);
-
-      router.push(`/jobs/${job_id}`);
-    } catch (err) {
+      if (res.status === 201) {
+        setState("success");
+      } else if (res.status === 409) {
+        setState("duplicate");
+      } else if (res.status === 422) {
+        setErrorMsg("Enter a valid email address");
+        setState("error");
+      } else if (res.status === 429) {
+        setErrorMsg("Too many attempts — try again in a minute");
+        setState("error");
+      } else {
+        setErrorMsg("Something went wrong — try again");
+        setState("error");
+      }
+    } catch {
+      setErrorMsg("Something went wrong — try again");
       setState("error");
-      setErrorMsg(err instanceof Error ? err.message : "Upload failed — try again.");
     }
   }
 
-  function onDrop(e: React.DragEvent) {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  }
+  const isDone = state === "success" || state === "duplicate";
 
   return (
     <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6">
-      <h1 className="text-4xl font-bold mb-2">Nova</h1>
-      <p className="text-zinc-400 mb-10 text-center max-w-sm">
-        Upload raw footage. Get 3 clips ready to post — captions, copy, and all.
+      <p className="text-xs tracking-[0.2em] uppercase text-zinc-400 mb-6">
+        Nova
       </p>
 
-      {/* Platform selector */}
-      <div className="flex gap-3 mb-8">
-        {PLATFORMS.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => togglePlatform(p.id)}
-            className={`px-4 py-2 rounded-full text-sm border transition-colors ${
-              selectedPlatforms.includes(p.id)
-                ? "bg-white text-black border-white"
-                : "border-zinc-600 text-zinc-400 hover:border-zinc-400"
-            }`}
-          >
-            {p.label}
-          </button>
-        ))}
+      <h1 className="text-4xl sm:text-5xl font-bold text-white leading-tight text-center mb-3 max-w-sm">
+        Drop raw footage.
+        <br />
+        Get 3 clips ready to post.
+      </h1>
+
+      <p className="text-zinc-400 text-center max-w-xs mb-10">
+        You have footage you haven&apos;t posted in months.
+        <br />
+        Nova is invite-only — join the list.
+      </p>
+
+      <div role="status" aria-live="polite" className="w-full max-w-sm">
+        {isDone ? (
+          <div className="text-center">
+            {state === "success" ? (
+              <>
+                <p className="text-white font-medium text-lg">
+                  You&apos;re on the list.
+                </p>
+                <p className="text-zinc-400 text-sm mt-1">
+                  We&apos;ll reach out when your spot opens.
+                </p>
+              </>
+            ) : (
+              <p className="text-zinc-400">You&apos;re already on the list ✓</p>
+            )}
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} noValidate>
+            <label htmlFor="waitlist-email" className="sr-only">
+              Email address
+            </label>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                ref={inputRef}
+                id="waitlist-email"
+                type="email"
+                placeholder="your@email.com"
+                required
+                disabled={state === "submitting"}
+                className="flex-1 min-w-0 bg-zinc-900 border border-zinc-700 rounded-full px-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-1 focus:ring-white text-sm disabled:opacity-50"
+              />
+              <button
+                type="submit"
+                disabled={state === "submitting"}
+                className="shrink-0 bg-white text-black px-6 py-3 rounded-full font-medium text-sm hover:bg-zinc-200 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {state === "submitting" ? "Joining..." : "Join waitlist →"}
+              </button>
+            </div>
+
+            {state === "error" && errorMsg && (
+              <p className="text-red-400 text-sm mt-3 text-center">
+                {errorMsg}
+              </p>
+            )}
+          </form>
+        )}
       </div>
-
-      {/* Drop zone */}
-      <div
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={onDrop}
-        onClick={() => fileInput.current?.click()}
-        className={`w-full max-w-lg h-64 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center cursor-pointer transition-colors ${
-          dragOver ? "border-white bg-zinc-900" : "border-zinc-700 hover:border-zinc-500"
-        }`}
-      >
-        {state === "idle" && (
-          <>
-            <span className="text-5xl mb-4">+</span>
-            <p className="text-zinc-300 font-medium">Drop a video or click to browse</p>
-            <p className="text-zinc-500 text-sm mt-1">MP4, MOV, AVI · max 4GB · max 30 min</p>
-          </>
-        )}
-        {state === "uploading" && (
-          <p className="text-zinc-300">Uploading to secure storage...</p>
-        )}
-        {state === "enqueuing" && (
-          <p className="text-zinc-300">Starting pipeline...</p>
-        )}
-        {state === "error" && (
-          <p className="text-red-400">{errorMsg}</p>
-        )}
-      </div>
-
-      <input
-        ref={fileInput}
-        type="file"
-        accept="video/mp4,video/quicktime,video/x-msvideo"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) handleFile(file);
-        }}
-      />
-
-      {errorMsg && state !== "error" && (
-        <p className="text-red-400 mt-4 text-sm">{errorMsg}</p>
-      )}
     </main>
   );
 }
