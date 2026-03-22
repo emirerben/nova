@@ -24,7 +24,9 @@ TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 async def db_engine():
     engine = create_async_engine(TEST_DB_URL, connect_args={"check_same_thread": False})
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        # Only create the waitlist table — other models use Postgres-specific types
+        # (BYTEA, UUID) that SQLite doesn't support.
+        await conn.run_sync(WaitlistSignup.__table__.create)
     yield engine
     await engine.dispose()
 
