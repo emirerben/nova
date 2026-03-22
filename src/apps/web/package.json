@@ -1,0 +1,38 @@
+{
+  "name": "nova-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "jest"
+  },
+  "dependencies": {
+    "next": "14.2.3",
+    "react": "^18",
+    "react-dom": "^18",
+    "next-auth": "^4.24.7",
+    "swr": "^2.2.5",
+    "@radix-ui/react-progress": "^1.0.3",
+    "@radix-ui/react-dialog": "^1.0.5",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.3.0"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "tailwindcss": "^3.4.3",
+    "postcss": "^8",
+    "autoprefixer": "^10.0.1",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.3",
+    "@testing-library/react": "^15",
+    "@testing-library/jest-dom": "^6",
+    "jest": "^29",
+    "jest-environment-jsdom": "^29"
+  }
+}

@@ -5,7 +5,7 @@
 
 # Video files — never commit (large, contain user content)
 *.mp4 *.mov *.mkv *.avi *.webm *.hevc *.m4v *.3gp *.heic
-*.ts
+*.d.ts.map
 raw_uploads/
 processed_outputs/
 tmp/
@@ -25,3 +25,4 @@ out/
 
 # OS
 .DS_Store
+.gstack/
