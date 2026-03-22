@@ -92,9 +92,20 @@ export default function JobPage() {
             </div>
           )}
           {job.status === "processing_failed" && (
-            <p className="text-red-400 text-sm mt-2">
-              {job.error_detail ?? "Something went wrong. Try re-uploading your video."}
-            </p>
+            <div className="mt-2 space-y-2">
+              <p className="text-red-400 text-sm">
+                Processing failed — try uploading a different video or check your API keys.
+              </p>
+              {job.error_detail && (
+                <details className="text-xs text-zinc-500">
+                  <summary className="cursor-pointer hover:text-zinc-400">Error details</summary>
+                  <pre className="mt-1 whitespace-pre-wrap break-all">{job.error_detail}</pre>
+                </details>
+              )}
+              <a href="/" className="inline-block text-xs text-zinc-400 underline hover:text-zinc-200">
+                Upload another video
+              </a>
+            </div>
           )}
         </div>
 
