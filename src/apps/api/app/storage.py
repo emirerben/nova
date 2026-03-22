@@ -17,10 +17,16 @@ def _get_client() -> gcs.Client:
     return _client
 
 
-def presigned_put_url(user_id: str, job_id: str, filename: str = "raw.mp4") -> tuple[str, str]:
+def presigned_put_url(
+    user_id: str,
+    job_id: str,
+    filename: str = "raw.mp4",
+    content_type: str = "video/mp4",
+) -> tuple[str, str]:
     """Return (signed_upload_url, gcs_object_path) for client-side direct upload.
 
     Client uploads directly to GCS — API never touches video bytes (OOM prevention).
+    The signed URL enforces the given content_type; client must send the same header.
     """
     object_path = f"{user_id}/{job_id}/{filename}"
     bucket = _get_client().bucket(settings.storage_bucket)
@@ -30,7 +36,7 @@ def presigned_put_url(user_id: str, job_id: str, filename: str = "raw.mp4") -> t
         version="v4",
         expiration=datetime.timedelta(minutes=15),
         method="PUT",
-        content_type="video/mp4",
+        content_type=content_type,
     )
     return url, object_path
 

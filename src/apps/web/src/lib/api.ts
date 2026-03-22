@@ -56,6 +56,7 @@ export async function getPresignedUrl(params: {
   duration_s: number;
   aspect_ratio: string;
   platforms: string[];
+  content_type: string;
 }): Promise<PresignedResponse> {
   const res = await fetch(`${API_URL}/uploads/presigned`, {
     method: "POST",
@@ -90,7 +91,7 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
 export async function uploadFileToGcs(uploadUrl: string, file: File): Promise<void> {
   const res = await fetch(uploadUrl, {
     method: "PUT",
-    headers: { "Content-Type": "video/mp4" },
+    headers: { "Content-Type": file.type },
     body: file,
   });
   if (!res.ok) throw new Error(`GCS upload failed: ${res.status}`);

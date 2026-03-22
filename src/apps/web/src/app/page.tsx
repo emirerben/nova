@@ -56,6 +56,7 @@ export default function UploadPage() {
         duration_s: 0,
         aspect_ratio: "16:9", // TODO: detect from video metadata
         platforms: selectedPlatforms,
+        content_type: file.type,
       });
 
       await uploadFileToGcs(upload_url, file);

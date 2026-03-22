@@ -17,12 +17,16 @@ router = APIRouter()
 ALLOWED_ASPECT_RATIOS = {"16:9", "9:16"}
 
 
+ALLOWED_CONTENT_TYPES = {"video/mp4", "video/quicktime", "video/x-msvideo"}
+
+
 class PresignedRequest(BaseModel):
     filename: str
     file_size_bytes: int
     duration_s: float
     aspect_ratio: str  # "16:9" | "9:16"
     platforms: list[str]
+    content_type: str = "video/mp4"
 
 
 class PresignedResponse(BaseModel):
@@ -65,13 +69,19 @@ async def create_presigned_upload(
             detail=f"Unknown platforms: {invalid}",
         )
 
+    if body.content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unsupported content type: {body.content_type}",
+        )
+
     # TODO: auth — replace with real user_id from JWT
     user_id = "dev-user"
 
     job_id = str(uuid.uuid4())
 
     try:
-        upload_url, gcs_path = storage.presigned_put_url(user_id, job_id)
+        upload_url, gcs_path = storage.presigned_put_url(user_id, job_id, content_type=body.content_type)
     except Exception as exc:
         log.error("presigned_url_failed", error=str(exc))
         raise HTTPException(
