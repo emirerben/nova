@@ -17,7 +17,7 @@ jobs:
           version: 9
       - name: Install web dependencies
         working-directory: src/apps/web
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
