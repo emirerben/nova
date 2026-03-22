@@ -58,11 +58,16 @@ export async function getPresignedUrl(params: {
   platforms: string[];
   content_type: string;
 }): Promise<PresignedResponse> {
-  const res = await fetch(`${API_URL}/uploads/presigned`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/uploads/presigned`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+  } catch {
+    throw new Error("Cannot reach the server. Make sure the API is running (`docker-compose up`).");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Upload failed: ${res.status}`);
