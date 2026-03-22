@@ -11,7 +11,7 @@ WORKDIR /app
 
 COPY pyproject.toml .
 # Install with optional local-whisper deps for GPU worker
-RUN pip install --no-cache-dir -e ".[local-whisper]"
+RUN pip install --no-cache-dir --upgrade pip setuptools && pip install --no-cache-dir -e ".[local-whisper]"
 
 COPY . .
 

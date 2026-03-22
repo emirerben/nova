@@ -4,6 +4,7 @@ import datetime
 import uuid
 
 from google.cloud import storage as gcs
+from google.oauth2 import service_account
 
 from app.config import settings
 
@@ -13,7 +14,14 @@ _client: gcs.Client | None = None
 def _get_client() -> gcs.Client:
     global _client
     if _client is None:
-        _client = gcs.Client()
+        project = settings.gcloud_project or None
+        if settings.google_application_credentials:
+            creds = service_account.Credentials.from_service_account_file(
+                settings.google_application_credentials
+            )
+            _client = gcs.Client(project=project, credentials=creds)
+        else:
+            _client = gcs.Client(project=project)
     return _client
 
 

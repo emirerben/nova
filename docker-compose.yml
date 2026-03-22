@@ -27,7 +27,9 @@ services:
       - db
 
   worker:
-    build: ./src/apps/api
+    build:
+      context: ./src/apps/api
+      dockerfile: Dockerfile.worker
     command: celery -A app.worker worker --loglevel=info --concurrency=2
     env_file: .env
     volumes:

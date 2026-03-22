@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     # Storage
     storage_bucket: str
     storage_provider: str = "gcs"
+    gcloud_project: str = ""
+    google_application_credentials: str = ""
 
     # Redis / Celery
     redis_url: str = "redis://localhost:6379"
