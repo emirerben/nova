@@ -64,11 +64,3 @@ def download_to_file(object_path: str, local_path: str) -> None:
     blob.download_to_filename(local_path)
 
 
-def generate_job_paths(user_id: str, job_id: str) -> dict[str, str]:
-    """Return canonical GCS paths for all artifacts of a job."""
-    base = f"{user_id}/{job_id}"
-    return {
-        "raw": f"{base}/raw.mp4",
-        "clip": lambda n: f"{base}/clip_{n}.mp4",
-        "thumb": lambda n: f"{base}/thumb_{n}.jpg",
-    }
