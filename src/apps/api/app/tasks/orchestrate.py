@@ -39,8 +39,10 @@ from app.worker import celery_app
 
 log = structlog.get_logger()
 
-# Sync engine for Celery (Celery tasks are sync, not async)
-_sync_engine = create_engine(settings.database_url)
+# Sync engine for Celery (Celery tasks are sync, not async).
+# Always use psycopg2 — strip +asyncpg if the DATABASE_URL already has it.
+_sync_db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+_sync_engine = create_engine(_sync_db_url)
 
 
 def _sync_session() -> Session:
@@ -51,19 +53,21 @@ def _sync_session() -> Session:
 def orchestrate_job(self, job_id: str) -> None:
     log.info("orchestrate_start", job_id=job_id)
 
-    with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
-        if job is None:
-            log.error("job_not_found", job_id=job_id)
-            return
-        _set_job_status(db, job, "processing")
-
     with tempfile.TemporaryDirectory() as tmpdir:
         raw_local = os.path.join(tmpdir, "raw.mp4")
         try:
+            # Snapshot raw_storage_path before session closes (matches render_clip pattern)
+            with _sync_session() as db:
+                job = db.get(Job, uuid.UUID(job_id))
+                if job is None:
+                    log.error("job_not_found", job_id=job_id)
+                    return
+                raw_storage_path = job.raw_storage_path
+                _set_job_status(db, job, "processing")
+
             # [1] Download raw video from GCS
-            log.info("downloading_raw", job_id=job_id, path=job.raw_storage_path)
-            download_to_file(job.raw_storage_path, raw_local)
+            log.info("downloading_raw", job_id=job_id, path=raw_storage_path)
+            download_to_file(raw_storage_path, raw_local)
 
             # [1] Probe
             video_probe = probe_mod.probe_video(raw_local)
