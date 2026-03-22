@@ -1,0 +1,9 @@
+{
+  "project": "nova",
+  "codeDir": "./src",
+  "agentsDir": "./agents",
+  "notifications": {
+    "milestones": "telegram:group:NOVA_TELEGRAM_GROUP_ID"
+  },
+  "workspace": "~/.openclaw/workspace/startups/nova"
+}

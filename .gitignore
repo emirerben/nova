@@ -1,0 +1,27 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Video files — never commit (large, contain user content)
+*.mp4 *.mov *.mkv *.avi *.webm *.hevc *.m4v *.3gp *.heic
+*.ts
+raw_uploads/
+processed_outputs/
+tmp/
+
+# Python
+__pycache__/
+.venv/
+.ruff_cache/
+*.pyc *.pyo
+dist/
+
+# Node / Next.js
+node_modules/
+.next/
+.turbo/
+out/
+
+# OS
+.DS_Store
