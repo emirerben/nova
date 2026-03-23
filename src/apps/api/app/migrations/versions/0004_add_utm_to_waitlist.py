@@ -12,8 +12,8 @@ Adds three nullable Text columns for server-side UTM attribution:
 All nullable — NULL when UTM params are absent from the signup URL.
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0004"
 down_revision = "0003_template_audio_path"

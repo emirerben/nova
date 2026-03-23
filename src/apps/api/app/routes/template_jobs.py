@@ -109,7 +109,10 @@ async def create_template_job(
     if n_clips < template.required_clips_min:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Template requires at least {template.required_clips_min} clips, got {n_clips}.",
+            detail=(
+                f"Template requires at least {template.required_clips_min} clips, "
+                f"got {n_clips}."
+            ),
         )
     if n_clips > template.required_clips_max:
         raise HTTPException(
@@ -182,7 +185,11 @@ async def list_template_jobs(
     )
 
 
-@router.post("/{job_id}/reroll", response_model=TemplateJobResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{job_id}/reroll",
+    response_model=TemplateJobResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def reroll_template_job(
     job_id: str,
     db: AsyncSession = Depends(get_db),

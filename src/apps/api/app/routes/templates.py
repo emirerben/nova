@@ -115,8 +115,6 @@ async def get_playback_url(
         )
 
     # Generate a 1-hour signed GET URL for the template video
-    from google.cloud import storage as gcs
-
     from app.config import settings
 
     try:
