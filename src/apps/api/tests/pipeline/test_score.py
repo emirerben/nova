@@ -9,7 +9,6 @@ from app.pipeline.scene_detect import SceneCut
 from app.pipeline.score import (
     CANDIDATE_COUNT,
     TOP_N,
-    ClipCandidate,
     _adjust_hook_score,
     _first_sentence,
     _generate_segments,
@@ -19,9 +18,9 @@ from app.pipeline.score import (
 from app.pipeline.transcribe import Transcript, Word
 
 
-def make_transcript(words: list[tuple[str, float, float]], low_confidence: bool = False) -> Transcript:
+def make_transcript(words: list[tuple[str, float, float]], low_confidence: bool = False) -> Transcript:  # noqa: E501
     ws = [Word(text=t, start_s=s, end_s=e, confidence=1.0) for t, s, e in words]
-    return Transcript(words=ws, full_text=" ".join(t for t, _, _ in words), low_confidence=low_confidence)
+    return Transcript(words=ws, full_text=" ".join(t for t, _, _ in words), low_confidence=low_confidence)  # noqa: E501
 
 
 def make_probe(duration_s: float = 300.0, aspect_ratio: str = "16:9") -> VideoProbe:

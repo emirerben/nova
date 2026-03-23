@@ -17,22 +17,23 @@ Pipeline:
 import os
 import tempfile
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from celery import chord, group
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import Job, JobClip
 from app.pipeline import probe as probe_mod
-from app.pipeline import scene_detect, transcribe as transcribe_mod
+from app.pipeline import scene_detect
+from app.pipeline import transcribe as transcribe_mod
 from app.pipeline.agents.copy_writer import generate_copy
 from app.pipeline.agents.gemini_analyzer import gemini_upload_and_wait
 from app.pipeline.captions import generate_ass
 from app.pipeline.reframe import ReframeError, reframe_and_export
-from app.pipeline.score import CANDIDATE_COUNT, TOP_N, ClipCandidate, select_candidates
+from app.pipeline.score import TOP_N, select_candidates
 from app.pipeline.thumbnail import select_thumbnail
 from app.pipeline.validator import validate_output
 from app.storage import download_to_file, upload_bytes_public_read, upload_public_read
@@ -290,7 +291,7 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
 
             file_size = os.path.getsize(output_path)
             duration_s = end_s - start_s
-            expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+            expires_at = datetime.now(UTC) + timedelta(days=30)
 
             with _sync_session() as db:
                 clip = db.get(JobClip, uuid.UUID(clip_db_id))

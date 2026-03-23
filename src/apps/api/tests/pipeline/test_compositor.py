@@ -6,7 +6,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.pipeline.reframe import MAX_OUTPUT_BYTES, ReframeError, _build_video_filter, reframe_and_export
+from app.pipeline.reframe import (
+    MAX_OUTPUT_BYTES,
+    ReframeError,
+    _build_video_filter,
+    reframe_and_export,
+)
 
 
 class TestBuildVideoFilter:

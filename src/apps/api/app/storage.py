@@ -1,7 +1,6 @@
 """GCS storage abstraction: presigned PUT URL generation and public-read upload."""
 
 import datetime
-import uuid
 
 from google.cloud import storage as gcs
 from google.oauth2 import service_account
@@ -62,7 +61,7 @@ def upload_public_read(local_path: str, object_path: str, content_type: str = "v
     return blob.public_url
 
 
-def upload_bytes_public_read(data: bytes, object_path: str, content_type: str = "image/jpeg") -> str:
+def upload_bytes_public_read(data: bytes, object_path: str, content_type: str = "image/jpeg") -> str:  # noqa: E501
     """Upload raw bytes to GCS with public-read ACL. Returns the public URL."""
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)

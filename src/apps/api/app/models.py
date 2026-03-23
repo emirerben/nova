@@ -5,24 +5,34 @@ from datetime import datetime
 
 from sqlalchemy import (
     ARRAY,
+    TIMESTAMP,
     BigInteger,
     Float,
     ForeignKey,
     Index,
     Integer,
+    String,
     Text,
     UniqueConstraint,
 )
-from sqlalchemy import TIMESTAMP
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB, UUID
-
-TIMESTAMPTZ = TIMESTAMP(timezone=True)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+
+TIMESTAMPTZ = TIMESTAMP(timezone=True)
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class WaitlistSignup(Base):
+    __tablename__ = "waitlist_signups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    invited_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
 
 
 class User(Base):
