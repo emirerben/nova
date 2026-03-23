@@ -9,6 +9,7 @@ celery_app = Celery(
     result_backend=settings.redis_url,
     include=[
         "app.tasks.orchestrate",
+        "app.tasks.template_orchestrate",
     ],
 )
 

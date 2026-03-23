@@ -1,7 +1,7 @@
 """Add video_templates table and template fields to jobs.
 
-Revision ID: 0001
-Revises:
+Revision ID: 0002
+Revises: 0001
 Create Date: 2026-03-23
 
 Zero-downtime safe — additive only (new table + new nullable columns with defaults).
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "0001"
-down_revision = None
+revision = "0002"
+down_revision = "0001"
 branch_labels = None
 depends_on = None
 
