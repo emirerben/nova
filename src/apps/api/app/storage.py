@@ -78,3 +78,10 @@ def download_to_file(object_path: str, local_path: str) -> None:
     blob.download_to_filename(local_path)
 
 
+def object_exists(object_path: str) -> bool:
+    """Check whether a GCS object exists. Used for GCS path validation."""
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path)
+    return blob.exists()
+
+

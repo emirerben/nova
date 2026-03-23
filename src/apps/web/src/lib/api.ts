@@ -101,3 +101,66 @@ export async function uploadFileToGcs(uploadUrl: string, file: File): Promise<vo
   });
   if (!res.ok) throw new Error(`GCS upload failed: ${res.status}`);
 }
+
+// ── Template job API ────────────────────────────────────────────────────────
+
+export interface TemplateJobCreateResponse {
+  job_id: string;
+  status: string;
+  template_id: string;
+}
+
+export type TemplateJobStatus =
+  | "queued"
+  | "processing"
+  | "template_ready"
+  | "processing_failed";
+
+export interface AssemblyPlanData {
+  steps: Array<{
+    slot: { position: number; target_duration_s: number; slot_type: string };
+    clip_id: string;
+    moment: { start_s: number; end_s: number; energy: number; description: string };
+  }>;
+  output_url?: string;
+  platform_copy?: PlatformCopy;
+  copy_status?: string;
+}
+
+export interface TemplateJobStatusResponse {
+  job_id: string;
+  status: TemplateJobStatus;
+  template_id: string | null;
+  assembly_plan: AssemblyPlanData | null;
+  error_detail: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function createTemplateJob(params: {
+  template_id: string;
+  clip_gcs_paths: string[];
+  selected_platforms: string[];
+}): Promise<TemplateJobCreateResponse> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/template-jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+  } catch {
+    throw new Error("Cannot reach the server. Make sure the API is running.");
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Template job creation failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getTemplateJobStatus(jobId: string): Promise<TemplateJobStatusResponse> {
+  const res = await fetch(`${API_URL}/template-jobs/${jobId}/status`);
+  if (!res.ok) throw new Error(`Status fetch failed: ${res.status}`);
+  return res.json();
+}

@@ -45,11 +45,31 @@ class TranscribeError(Exception):
     pass
 
 
-def transcribe(video_path: str) -> Transcript:
+def transcribe(video_path: str, file_ref: object | None = None) -> Transcript:
     """Transcribe audio from video_path. Returns Transcript (may be low_confidence).
 
-    Extracts audio to a temp WAV first so we don't stream the whole video file.
+    If file_ref (a Gemini File API reference) is provided AND transcriber_backend
+    is 'gemini', attempts Gemini transcription first with Whisper as fallback.
+    Otherwise uses Whisper directly.
     """
+    if file_ref is not None and settings.transcriber_backend == "gemini":
+        try:
+            from app.pipeline.agents.gemini_analyzer import transcribe as gemini_transcribe  # noqa: PLC0415
+            # Attach local path for Whisper fallback inside gemini_analyzer
+            file_ref._local_path = video_path  # type: ignore[attr-defined]
+            result = gemini_transcribe(file_ref)
+            if not result.low_confidence:
+                log.info("gemini_transcribe_success", path=video_path)
+                return result
+            log.info("gemini_transcribe_low_confidence_falling_back", path=video_path)
+        except Exception as exc:
+            log.warning("gemini_transcribe_failed_falling_back", error=str(exc))
+
+    return transcribe_whisper(video_path)
+
+
+def transcribe_whisper(video_path: str) -> Transcript:
+    """Transcribe via Whisper (OpenAI API or local). Always returns a Transcript."""
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         audio_path = tmp.name
 

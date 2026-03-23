@@ -29,6 +29,7 @@ from app.models import Job, JobClip
 from app.pipeline import probe as probe_mod
 from app.pipeline import scene_detect, transcribe as transcribe_mod
 from app.pipeline.agents.copy_writer import generate_copy
+from app.pipeline.agents.gemini_analyzer import gemini_upload_and_wait
 from app.pipeline.captions import generate_ass
 from app.pipeline.reframe import ReframeError, reframe_and_export
 from app.pipeline.score import CANDIDATE_COUNT, TOP_N, ClipCandidate, select_candidates
@@ -69,7 +70,17 @@ def orchestrate_job(self, job_id: str) -> None:
             log.info("downloading_raw", job_id=job_id, path=raw_storage_path)
             download_to_file(raw_storage_path, raw_local)
 
-            # [1] Probe
+            # [1b] Upload to Gemini File API (one upload; reused for all 9 segment analyses)
+            source_ref = None
+            if settings.gemini_api_key:
+                try:
+                    log.info("gemini_upload_start", job_id=job_id)
+                    source_ref = gemini_upload_and_wait(raw_local)
+                    log.info("gemini_upload_done", job_id=job_id, name=source_ref.name)
+                except Exception as exc:
+                    log.warning("gemini_upload_failed_continuing_without", error=str(exc))
+
+            # [1c] Probe
             video_probe = probe_mod.probe_video(raw_local)
             with _sync_session() as db:
                 job = db.get(Job, uuid.UUID(job_id))
@@ -85,8 +96,8 @@ def orchestrate_job(self, job_id: str) -> None:
                 }
                 db.commit()
 
-            # [2] Transcribe
-            transcript = transcribe_mod.transcribe(raw_local)
+            # [2] Transcribe (Gemini primary when source_ref available, else Whisper)
+            transcript = transcribe_mod.transcribe(raw_local, file_ref=source_ref)
             with _sync_session() as db:
                 job = db.get(Job, uuid.UUID(job_id))
                 job.transcript = {
@@ -107,8 +118,8 @@ def orchestrate_job(self, job_id: str) -> None:
                 job.scene_cuts = [{"timestamp_s": c.timestamp_s, "score": c.score} for c in cuts]
                 db.commit()
 
-            # [4] Score candidates
-            candidates = select_candidates(video_probe, transcript, cuts)
+            # [4] Score candidates (Gemini analyzes each segment via source_ref)
+            candidates = select_candidates(video_probe, transcript, cuts, source_ref=source_ref)
             top3 = candidates[:TOP_N]
             held = candidates[TOP_N:]
 

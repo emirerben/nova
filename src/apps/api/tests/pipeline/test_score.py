@@ -117,9 +117,8 @@ class TestSelectCandidates:
         ])
         cuts = [SceneCut(timestamp_s=45.0, score=1.0)]
 
-        with patch("app.pipeline.score.score_hooks") as mock_scorer:
-            mock_scorer.return_value = [5.0] * CANDIDATE_COUNT
-            candidates = select_candidates(probe, transcript, cuts)
+        # No source_ref → heuristic path (no Gemini calls)
+        candidates = select_candidates(probe, transcript, cuts)
 
         assert len(candidates) == CANDIDATE_COUNT
 
@@ -127,9 +126,7 @@ class TestSelectCandidates:
         probe = make_probe(duration_s=600.0)
         transcript = make_transcript([])
 
-        with patch("app.pipeline.score.score_hooks") as mock_scorer:
-            mock_scorer.return_value = [float(i) for i in range(CANDIDATE_COUNT)]
-            candidates = select_candidates(probe, transcript, [])
+        candidates = select_candidates(probe, transcript, [])
 
         scores = [c.combined_score for c in candidates]
         assert scores == sorted(scores, reverse=True)
@@ -138,9 +135,8 @@ class TestSelectCandidates:
         probe = make_probe(duration_s=300.0)
         transcript = make_transcript([], low_confidence=True)
 
-        with patch("app.pipeline.score.score_hooks") as mock_scorer:
-            candidates = select_candidates(probe, transcript, [])
-            mock_scorer.assert_not_called()
+        # source_ref=None + low_confidence → engagement-only scoring
+        candidates = select_candidates(probe, transcript, [])
 
         # In ASR fallback, all hook_scores are 0
         assert all(c.hook_score == 0.0 for c in candidates)
@@ -149,9 +145,28 @@ class TestSelectCandidates:
         probe = make_probe(duration_s=600.0)
         transcript = make_transcript([])
 
-        with patch("app.pipeline.score.score_hooks") as mock_scorer:
-            mock_scorer.return_value = [5.0] * CANDIDATE_COUNT
-            candidates = select_candidates(probe, transcript, [])
+        candidates = select_candidates(probe, transcript, [])
 
         top = candidates[:TOP_N]
         assert all(c.rank <= TOP_N for c in top)
+
+    def test_gemini_source_ref_calls_analyze_clip(self):
+        """When source_ref is provided, Gemini analyze_clip is called per segment."""
+        probe = make_probe(duration_s=600.0)
+        transcript = make_transcript([("Hello", 0.0, 0.5)])
+        from app.pipeline.agents.gemini_analyzer import ClipMeta
+
+        mock_meta = ClipMeta(
+            clip_id="files/abc",
+            transcript="hello",
+            hook_text="This is amazing!",
+            hook_score=8.0,
+            best_moments=[],
+        )
+        mock_source_ref = object()
+
+        with patch("app.pipeline.agents.gemini_analyzer.analyze_clip", return_value=mock_meta) as mock_analyze:
+            candidates = select_candidates(probe, transcript, [], source_ref=mock_source_ref)
+
+        assert mock_analyze.call_count == CANDIDATE_COUNT
+        assert all(c.hook_score == pytest.approx(8.0) for c in candidates)

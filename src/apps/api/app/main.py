@@ -5,7 +5,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from app.routes import jobs, uploads
+from app.routes import admin, jobs, template_jobs, uploads
 
 log = structlog.get_logger()
 
@@ -25,6 +25,8 @@ app.add_middleware(
 
 app.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
+app.include_router(admin.router, prefix="/admin/templates", tags=["admin"])
+app.include_router(template_jobs.router, prefix="/template-jobs", tags=["template-jobs"])
 
 
 @app.get("/health")

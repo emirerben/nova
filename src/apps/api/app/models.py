@@ -75,6 +75,25 @@ class OAuthToken(Base):
     )
 
 
+class VideoTemplate(Base):
+    """Admin-registered curated TikTok templates used for template-mode jobs."""
+
+    __tablename__ = "video_templates"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    gcs_path: Mapped[str] = mapped_column(Text, nullable=False)
+    recipe_cached: Mapped[dict | None] = mapped_column(JSONB)
+    recipe_cached_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    # "analyzing" → Gemini analysis in progress; "ready" → recipe_cached populated
+    analysis_status: Mapped[str] = mapped_column(Text, nullable=False, default="analyzing")
+    required_clips_min: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    required_clips_max: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now()
+    )
+
+
 class Job(Base):
     __tablename__ = "jobs"
 
@@ -86,7 +105,14 @@ class Job(Base):
     )
     # queued|processing|clips_ready|clips_ready_partial|
     # posting|posting_partial|done|posting_failed|processing_failed
+    # template jobs: queued → processing → template_ready | processing_failed
     status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
+    # "default" | "template"
+    job_type: Mapped[str] = mapped_column(Text, nullable=False, default="default")
+    template_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("video_templates.id"), nullable=True
+    )
+    assembly_plan: Mapped[dict | None] = mapped_column(JSONB)  # populated for template jobs
     raw_storage_path: Mapped[str] = mapped_column(Text, nullable=False)
     selected_platforms: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
     probe_metadata: Mapped[dict | None] = mapped_column(JSONB)

@@ -1,14 +1,16 @@
-"""GPT-4o structured output → PlatformCopy per clip.
+"""Gemini-powered copy generation → PlatformCopy per clip.
 
 Character limits enforced + truncated at last sentence.
-Fallback: template strings on second failure.
+Fallback: template strings on any Gemini failure.
 """
 
+import json
+
 import structlog
-from openai import OpenAI
 from pydantic import BaseModel, field_validator
 
 from app.config import settings
+from app.pipeline.agents.gemini_analyzer import _get_client
 
 log = structlog.get_logger()
 
@@ -86,43 +88,64 @@ def generate_copy(
     transcript_excerpt: str,
     platforms: list[str],
     has_transcript: bool = True,
+    template_tone: str = "",
 ) -> tuple[PlatformCopy, str]:
-    """Generate platform-native copy for a clip.
+    """Generate platform-native copy for a clip using Gemini.
+
+    template_tone: optional tone descriptor from a TemplateRecipe (e.g. 'casual',
+                   'energetic') — used for template-mode jobs to match the reference.
 
     Returns (PlatformCopy, copy_status) where copy_status is one of:
       'generated' | 'generated_fallback'
     """
-    client = OpenAI(api_key=settings.openai_api_key)
+    client = _get_client()
 
     transcript_note = (
         f'Transcript excerpt: "{transcript_excerpt[:500]}"'
         if has_transcript
         else "No transcript available — infer content type from the hook text."
     )
+    tone_note = (
+        f'\nTone guidance: match this style — "{template_tone}".'
+        if template_tone
+        else ""
+    )
 
     prompt = (
         "Generate platform-native social media copy for a short-form video clip.\n\n"
         f"Hook text (first line of clip): \"{hook_text}\"\n"
-        f"{transcript_note}\n\n"
+        f"{transcript_note}"
+        f"{tone_note}\n\n"
+        "Return a JSON object with this structure:\n"
+        '{"tiktok": {"hook": str, "caption": str, "hashtags": [str, ...]},\n'
+        ' "instagram": {"hook": str, "caption": str, "hashtags": [str, ...]},\n'
+        ' "youtube": {"title": str, "description": str, "tags": [str, ...]}}\n\n'
         "Requirements:\n"
         "- TikTok: punchy hook (≤150 chars), caption (≤300 chars), 5 hashtags\n"
         "- Instagram Reels: engaging hook (≤150 chars), caption (≤300 chars), 10 hashtags\n"
         "- YouTube Shorts: SEO title (≤100 chars, include #shorts), "
         "description (≤300 chars), 15 tags\n"
-        "All copy should feel native to each platform. Be direct and energetic."
+        "All copy should feel native to each platform. Be direct and energetic.\n"
+        "Return ONLY valid JSON, no markdown."
     )
+
+    from google.genai import types as genai_types  # type: ignore[import]
 
     for attempt in range(2):
         try:
-            response = client.beta.chat.completions.parse(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-                response_format=PlatformCopy,
-                timeout=30,
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[prompt],
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                ),
             )
-            result = response.choices[0].message.parsed
-            if result is None:
-                raise ValueError("Parsed response was None")
+            data = json.loads(response.text)
+            result = PlatformCopy(
+                tiktok=TikTokCopy(**data["tiktok"]),
+                instagram=InstagramCopy(**data["instagram"]),
+                youtube=YouTubeCopy(**data["youtube"]),
+            )
             log.info("copy_generated", hook=hook_text[:50], attempt=attempt)
             return result, "generated"
         except Exception as exc:

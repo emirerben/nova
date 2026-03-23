@@ -3,16 +3,18 @@
 Scoring formula (from plan):
   combined = HOOK_WEIGHT × hook_score + ENGAGEMENT_WEIGHT × engagement_score
 
-Hook score:   GPT-4o rates first sentence (0-10). Adjusted by scene cut proximity.
+Hook score:   Gemini analyzes the actual video segment (0-10). Adjusted by scene
+              cut proximity. Falls back to heuristic on Gemini failure.
 Engagement:   cut density + speech density + audio RMS z-score → normalized 0-10.
 """
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 
 from app.config import settings
-from app.pipeline.agents.hook_scorer import score_hooks
 from app.pipeline.probe import VideoProbe
 from app.pipeline.scene_detect import SceneCut
 from app.pipeline.transcribe import Transcript
@@ -43,8 +45,13 @@ def select_candidates(
     probe: VideoProbe,
     transcript: Transcript,
     scene_cuts: list[SceneCut],
+    source_ref: Any = None,
 ) -> list[ClipCandidate]:
     """Score CANDIDATE_COUNT clip segments and return all 9 sorted by combined_score.
+
+    source_ref: Gemini File API reference for the uploaded source video.
+                If provided, each segment is analyzed with Gemini (parallel calls).
+                Falls back to heuristic hook scoring if source_ref is None.
 
     Caller uses [:TOP_N] for rendering and [TOP_N:] for re-roll storage.
     """
@@ -55,15 +62,23 @@ def select_candidates(
     # Cap at CANDIDATE_COUNT
     segments = segments[:CANDIDATE_COUNT]
 
-    # Extract hook text per segment (first sentence of transcript in window)
+    # Extract hook text per segment from transcript (first sentence of transcript in window)
     hook_texts = [_first_sentence(transcript, start_s, end_s) for start_s, end_s in segments]
 
-    # Batch hook scoring — single GPT-4o call
-    if transcript.low_confidence:
+    # Hook scoring: Gemini video analysis (parallel) or heuristic fallback
+    if source_ref is not None:
+        raw_hook_scores, gemini_hook_texts = _score_hooks_gemini(source_ref, segments)
+        # Use Gemini-extracted hook texts where available
+        hook_texts = [
+            gemini_hook_texts[i] or hook_texts[i]
+            for i in range(len(segments))
+        ]
+    elif transcript.low_confidence:
         log.info("asr_fallback_mode_engagement_only")
         raw_hook_scores = [0.0] * len(segments)
     else:
-        raw_hook_scores = score_hooks(hook_texts)
+        # Heuristic fallback: use transcript words as proxy for hook quality
+        raw_hook_scores = _score_hooks_heuristic(hook_texts)
 
     # Adjust hook scores for scene cut proximity and filler words
     cut_timestamps = {c.timestamp_s for c in scene_cuts}
@@ -79,7 +94,7 @@ def select_candidates(
     for i, (start_s, end_s) in enumerate(segments):
         hook = hook_scores[i]
         eng = engagement_scores[i]
-        if transcript.low_confidence:
+        if source_ref is None and transcript.low_confidence:
             combined = eng  # engagement-only in ASR fallback
         else:
             combined = settings.hook_weight * hook + settings.engagement_weight * eng
@@ -101,9 +116,65 @@ def select_candidates(
         "candidates_scored",
         count=len(candidates),
         top_score=candidates[0].combined_score if candidates else None,
-        asr_fallback=transcript.low_confidence,
+        gemini_analysis=source_ref is not None,
     )
     return candidates
+
+
+def _score_hooks_gemini(
+    source_ref: Any,
+    segments: list[tuple[float, float]],
+) -> tuple[list[float], list[str]]:
+    """Analyze each segment via Gemini in parallel. Returns (hook_scores, hook_texts).
+
+    Per-segment failures fall back to score=5.0 and empty hook_text — never raises.
+    """
+    from app.pipeline.agents.gemini_analyzer import GeminiAnalysisError, GeminiRefusalError, analyze_clip  # noqa: PLC0415
+
+    def _analyze_one(idx_segment: tuple[int, tuple[float, float]]) -> tuple[int, float, str]:
+        idx, (start_s, end_s) = idx_segment
+        try:
+            meta = analyze_clip(source_ref, start_s=start_s, end_s=end_s)
+            return idx, meta.hook_score, meta.hook_text
+        except (GeminiRefusalError, GeminiAnalysisError, Exception) as exc:
+            log.warning("gemini_hook_score_failed", segment_idx=idx, error=str(exc))
+            return idx, 5.0, ""  # neutral fallback
+
+    scores = [5.0] * len(segments)
+    texts = [""] * len(segments)
+
+    max_workers = min(len(segments), 8)
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_analyze_one, (i, seg)): i
+            for i, seg in enumerate(segments)
+        }
+        for future in as_completed(futures):
+            idx, score, text = future.result()
+            scores[idx] = score
+            texts[idx] = text
+
+    return scores, texts
+
+
+def _score_hooks_heuristic(hook_texts: list[str]) -> list[float]:
+    """Simple heuristic hook scoring when Gemini is unavailable.
+
+    Scores based on word count and punctuation (questions/exclamations score higher).
+    """
+    scores = []
+    for text in hook_texts:
+        if not text:
+            scores.append(3.0)
+            continue
+        words = text.split()
+        base = min(5.0 + len(words) * 0.1, 7.0)
+        if text.endswith("?"):
+            base += 1.5
+        elif text.endswith("!"):
+            base += 1.0
+        scores.append(min(base, 9.0))
+    return scores
 
 
 def _generate_segments(duration_s: float) -> list[tuple[float, float]]:
