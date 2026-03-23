@@ -383,6 +383,89 @@ class TestAssembleClipsAspectRatio:
 # ── Template audio ────────────────────────────────────────────────────────────
 
 
+class TestAssembleClipsTimeCursor:
+    """Time-cursor prevents same footage repeating when a clip fills multiple slots."""
+
+    def test_same_clip_uses_different_start_times(self, tmp_path):
+        """Clip used 3× for 1s slots → three different start_s values."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=30.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        steps = []
+        for pos in range(3):
+            step = MagicMock()
+            step.clip_id = "clip_a"
+            step.moment = {"start_s": 5.0, "end_s": 8.0}  # same moment each time
+            step.slot = {"position": pos + 1, "target_duration_s": 1.0}
+            steps.append(step)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
+        ):
+            mock_ffmpeg.return_value = MagicMock(returncode=0)
+            _assemble_clips(
+                steps=steps,
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+
+            assert mock_reframe.call_count == 3
+            start_times = [c.kwargs["start_s"] for c in mock_reframe.call_args_list]
+            # All three uses must start at different times
+            assert len(set(start_times)) == 3, (
+                f"Expected 3 different start_s, got {start_times}"
+            )
+
+    def test_cursor_wraps_when_clip_exhausted(self, tmp_path):
+        """Cursor wraps to 0.0 when advancing past clip duration."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=3.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        steps = []
+        for pos in range(5):
+            step = MagicMock()
+            step.clip_id = "clip_a"
+            step.moment = {"start_s": 0.0, "end_s": 3.0}
+            step.slot = {"position": pos + 1, "target_duration_s": 1.0}
+            steps.append(step)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
+        ):
+            mock_ffmpeg.return_value = MagicMock(returncode=0)
+            _assemble_clips(
+                steps=steps,
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+
+            start_times = [c.kwargs["start_s"] for c in mock_reframe.call_args_list]
+            # 3s clip, 1s slots → 0.0, 1.0, 2.0, then wraps to 0.0, 1.0
+            assert start_times == [0.0, 1.0, 2.0, 0.0, 1.0], (
+                f"Expected cursor wrap, got {start_times}"
+            )
+
+
 class TestTemplateAudio:
     def test_audio_extract_failure_nonfatal(self, tmp_path):
         """FFmpeg non-zero exit → returns False, does not raise."""

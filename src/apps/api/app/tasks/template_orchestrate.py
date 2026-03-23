@@ -437,8 +437,15 @@ def _assemble_clips(
 
     Each step is trimmed to slot's target_duration_s and reframed to the clip's
     native aspect ratio (derived from probe, not hardcoded).
+
+    Time-cursor: when a clip appears in multiple slots, each use advances start_s
+    by slot_target_dur so the viewer sees a different section of the clip rather
+    than the same footage repeated. Wraps to the beginning if the clip is exhausted.
     """
     from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
+
+    # Per-clip time cursors: track next available start_s to avoid reusing footage
+    clip_cursors: dict[str, float] = {}
 
     # Step 1: reframe each slot to a temp file
     reframed_paths: list[str] = []
@@ -449,9 +456,24 @@ def _assemble_clips(
             raise ValueError(f"Local path not found for clip_id {clip_id}")
 
         moment = step.moment
-        start_s = float(moment.get("start_s", 0.0))
         slot_target_dur = float(step.slot.get("target_duration_s", 5.0))
         slot_target_dur = max(slot_target_dur, 0.5)  # guard against zero/negative
+
+        # Time-cursor logic: first use of a clip follows Gemini's moment start_s;
+        # subsequent uses advance forward so footage doesn't repeat.
+        if clip_id not in clip_cursors:
+            start_s = float(moment.get("start_s", 0.0))
+        else:
+            start_s = clip_cursors[clip_id]
+
+        # Wrap if cursor has gone past the clip duration
+        probe = clip_probe_map.get(local_path)
+        clip_dur = probe.duration_s if probe else 30.0
+        if start_s + slot_target_dur > clip_dur:
+            start_s = 0.0
+
+        clip_cursors[clip_id] = start_s + slot_target_dur
+
         # Trim to target duration — never exceed the slot's allotted time
         end_s = min(
             float(moment.get("end_s", start_s + slot_target_dur)),
