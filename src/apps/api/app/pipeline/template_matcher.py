@@ -1,16 +1,22 @@
-"""Template matcher — greedy algorithm with variety penalty.
+"""Template matcher — greedy algorithm with hard per-clip usage cap.
 
 match(recipe, clip_metas) → AssemblyPlan
 
 Algorithm:
   1. Sort slots by priority (highest first) — greedy assigns best clips to
      most important slots first.
-  2. For each slot, find all (clip, moment) pairs where the moment duration
-     is within ±6s of the slot's target duration.
-  3. Score each pair: moment.energy - 0.3 if same clip as previous slot.
-  4. Pick the highest-scoring pair.
+  2. For each slot, run a two-pass candidate search:
+     - Tight pass (±2s): prefer clips whose moment duration closely matches.
+     - Loose pass (±6s): only used when no tight candidate exists.
+  3. First try candidates where clip_use_count < max_uses (hard cap).
+     If none qualify, fall back to any candidate within duration tolerance.
+  4. Pick the highest-scoring pair (by moment energy).
   5. CRITICAL: sort final plan by slot.position before returning (temporal
      order for FFmpeg concat — greedy builds in priority order).
+
+Hard cap: each clip can be used at most ceil(n_slots / n_clips) times.
+With 5 clips, 5 slots → max 1 use per clip.
+With 3 clips, 8 slots → max 3 uses per clip.
 
 Raises TemplateMismatchError when:
   - clip_metas is empty
@@ -18,14 +24,17 @@ Raises TemplateMismatchError when:
 """
 
 
+import math
+from collections import defaultdict
+
 import structlog
 
 from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep, ClipMeta, TemplateRecipe
 
 log = structlog.get_logger()
 
-DURATION_TOLERANCE_S = 6.0  # ±6s from target_duration_s is acceptable
-VARIETY_PENALTY = 0.3       # deducted when same clip fills consecutive slots
+DURATION_TOLERANCE_PRIMARY_S = 2.0   # tight pass — prefer close duration matches
+DURATION_TOLERANCE_FALLBACK_S = 6.0  # loose pass — only if no tight match exists
 
 
 class TemplateMismatchError(Exception):
@@ -65,40 +74,60 @@ def match(recipe: TemplateRecipe, clip_metas: list[ClipMeta]) -> AssemblyPlan:
     # Sort slots by priority descending — assign best moments to highest-priority slots
     slots_by_priority = sorted(recipe.slots, key=lambda s: s.get("priority", 1), reverse=True)
 
+    n_slots = len(recipe.slots)
+    n_clips = len(clip_metas)
+    # Hard cap: spread usage as evenly as possible. ceil(5/5)=1, ceil(8/3)=3, etc.
+    max_uses = max(1, math.ceil(n_slots / n_clips))
+    clip_use_count: dict[str, int] = defaultdict(int)
+
     plan: list[AssemblyStep] = []
-    last_clip_id: str | None = None
 
     for slot in slots_by_priority:
         target_dur = float(slot.get("target_duration_s", slot.get("target_duration", 5.0)))
         slot_position = slot.get("position", 1)
         slot_priority = slot.get("priority", 1)
 
-        # Collect all (meta, moment) pairs within duration tolerance
-        candidates = [
+        # Two-pass candidate search: tight (±2s) preferred; loose (±6s) fallback
+        tight_candidates = [
             (meta, moment)
             for meta in clip_metas
             for moment in meta.best_moments
             if isinstance(moment, dict)
-            and abs(_moment_duration(moment) - target_dur) <= DURATION_TOLERANCE_S
+            and abs(_moment_duration(moment) - target_dur) <= DURATION_TOLERANCE_PRIMARY_S
+        ]
+        # Use tight if any found; otherwise broaden to loose tolerance
+        loose_candidates = tight_candidates or [
+            (meta, moment)
+            for meta in clip_metas
+            for moment in meta.best_moments
+            if isinstance(moment, dict)
+            and abs(_moment_duration(moment) - target_dur) <= DURATION_TOLERANCE_FALLBACK_S
         ]
 
-        if not candidates:
+        if not loose_candidates:
             raise TemplateMismatchError(
                 f"No clip fits slot {slot_position} requiring ~{target_dur:.1f}s. "
-                f"Upload clips with moments ≥{max(0.0, target_dur - DURATION_TOLERANCE_S):.0f}s.",
+                f"Upload clips with moments ≥{max(0.0, target_dur - DURATION_TOLERANCE_FALLBACK_S):.0f}s.",
                 code="TEMPLATE_CLIP_DURATION_MISMATCH",
             )
 
-        # Score: energy minus variety penalty for repeated adjacent clip
+        # First pass: only clips under usage cap
+        capped_candidates = [
+            (meta, moment)
+            for meta, moment in loose_candidates
+            if clip_use_count[meta.clip_id] < max_uses
+        ]
+
+        # Fall back to any candidate if all clips under cap are exhausted
+        candidates = capped_candidates if capped_candidates else loose_candidates
+
         best_meta, best_moment = max(
             candidates,
-            key=lambda pair: pair[1].get("energy", 5.0) - (
-                VARIETY_PENALTY if pair[0].clip_id == last_clip_id else 0.0
-            ),
+            key=lambda pair: pair[1].get("energy", 5.0),
         )
 
+        clip_use_count[best_meta.clip_id] += 1
         plan.append(AssemblyStep(slot=slot, clip_id=best_meta.clip_id, moment=best_moment))
-        last_clip_id = best_meta.clip_id
 
         log.debug(
             "slot_assigned",
@@ -107,6 +136,8 @@ def match(recipe: TemplateRecipe, clip_metas: list[ClipMeta]) -> AssemblyPlan:
             clip_id=best_meta.clip_id,
             energy=best_moment.get("energy"),
             target_dur=target_dur,
+            use_count=clip_use_count[best_meta.clip_id],
+            cap_enforced=bool(capped_candidates),
         )
 
     # CRITICAL: sort by slot.position before returning — FFmpeg concat needs temporal order

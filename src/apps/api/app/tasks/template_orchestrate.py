@@ -12,6 +12,7 @@ orchestrate_template_job(job_id)
 analyze_template_task(template_id)
   → download template video from GCS
   → Gemini upload + analyze_template
+  → extract template audio → GCS (idempotent)
   → cache recipe in VideoTemplate.recipe_cached
 
 Both tasks follow the render_clip "never raises" invariant:
@@ -19,6 +20,7 @@ all errors caught → job.status = 'processing_failed'
 """
 
 import os
+import shutil
 import subprocess
 import tempfile
 import uuid
@@ -72,11 +74,21 @@ def analyze_template_task(self, template_id: str) -> None:
                     log.error("template_not_found", template_id=template_id)
                     return
                 gcs_path = template.gcs_path
+                existing_audio_gcs = template.audio_gcs_path
 
             download_to_file(gcs_path, local_path)
 
             file_ref = gemini_upload_and_wait(local_path)
             recipe = analyze_template(file_ref)
+
+            # Extract template audio (idempotent — skip if already stored)
+            audio_gcs: str | None = existing_audio_gcs
+            if not existing_audio_gcs:
+                audio_local = os.path.join(tmpdir, "audio.m4a")
+                if _extract_template_audio(local_path, audio_local):
+                    audio_gcs = f"templates/{template_id}/audio.m4a"
+                    upload_public_read(audio_local, audio_gcs)
+                    log.info("template_audio_extracted", template_id=template_id)
 
             with _sync_session() as db:
                 template = db.get(VideoTemplate, template_id)
@@ -92,6 +104,8 @@ def analyze_template_task(self, template_id: str) -> None:
                     }
                     template.recipe_cached_at = datetime.now(UTC)
                     template.analysis_status = "ready"
+                    if audio_gcs and not template.audio_gcs_path:
+                        template.audio_gcs_path = audio_gcs
                     db.commit()
 
             log.info("analyze_template_done", template_id=template_id, slots=len(recipe.slots))
@@ -154,6 +168,7 @@ def _run_template_job(job_id: str) -> None:
             raise ValueError(f"Template {template_id} analysis not ready")
 
         recipe_data = template.recipe_cached
+        audio_gcs_path = template.audio_gcs_path  # may be None
 
     try:
         recipe = TemplateRecipe(**recipe_data)
@@ -164,6 +179,9 @@ def _run_template_job(job_id: str) -> None:
         # [2] Download all clip files in parallel
         local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
 
+        # [2b] Probe all clips — get aspect_ratio + duration in a single FFprobe pass
+        probe_map = _probe_clips(local_clip_paths)
+
         # [3] Upload all clips to Gemini in parallel
         log.info("gemini_upload_clips_start", job_id=job_id, count=len(local_clip_paths))
         file_refs = _upload_clips_parallel(local_clip_paths)
@@ -171,7 +189,7 @@ def _run_template_job(job_id: str) -> None:
 
         # [4] Analyze all clips in parallel
         log.info("gemini_analyze_clips_start", job_id=job_id)
-        clip_metas, failed_count = _analyze_clips_parallel(file_refs, local_clip_paths)
+        clip_metas, failed_count = _analyze_clips_parallel(file_refs, local_clip_paths, probe_map)
 
         # Threshold check: >50% failure → fatal
         total = len(clip_metas) + failed_count
@@ -213,11 +231,19 @@ def _run_template_job(job_id: str) -> None:
 
         # [6] FFmpeg assemble
         log.info("ffmpeg_assemble_start", job_id=job_id)
-        output_path = os.path.join(tmpdir, "assembled.mp4")
+        assembled_path = os.path.join(tmpdir, "assembled.mp4")
         clip_id_to_local = {
             ref.name: path for ref, path in zip(file_refs, local_clip_paths)
         }
-        _assemble_clips(assembly_plan.steps, clip_id_to_local, output_path, tmpdir)
+        _assemble_clips(assembly_plan.steps, clip_id_to_local, probe_map, assembled_path, tmpdir)
+
+        # [6b] Mix template audio if available
+        if audio_gcs_path:
+            final_path = os.path.join(tmpdir, "final.mp4")
+            _mix_template_audio(assembled_path, audio_gcs_path, final_path, tmpdir)
+            output_path = final_path
+        else:
+            output_path = assembled_path
 
         # [7] Generate copy (with template tone)
         hook_text = _extract_hook_text(clip_metas, assembly_plan.steps)
@@ -269,6 +295,35 @@ def _download_clips_parallel(gcs_paths: list[str], tmpdir: str) -> list[str]:
     return local_paths
 
 
+def _probe_clips(local_paths: list[str]) -> dict:
+    """Return {local_path: VideoProbe} for each clip. Falls back on error.
+
+    Replaces _get_clip_duration() — probe_video() returns both aspect_ratio
+    and duration_s in a single FFprobe call.
+    """
+    from app.pipeline.probe import VideoProbe, probe_video  # noqa: PLC0415
+
+    _FALLBACK_DURATION = 30.0
+
+    result: dict = {}
+    for path in local_paths:
+        try:
+            result[path] = probe_video(path)
+        except Exception as exc:
+            log.warning("clip_probe_failed_using_default", path=path, error=str(exc))
+            result[path] = VideoProbe(
+                duration_s=_FALLBACK_DURATION,
+                fps=30.0,
+                width=1920,
+                height=1080,
+                has_audio=True,
+                codec="h264",
+                aspect_ratio="16:9",
+                file_size_bytes=0,
+            )
+    return result
+
+
 def _upload_clips_parallel(local_paths: list[str]) -> list:
     """Upload all clips to Gemini File API in parallel. Returns file refs in order."""
     results: dict[int, object] = {}
@@ -288,12 +343,14 @@ def _upload_clips_parallel(local_paths: list[str]) -> list:
 
 
 def _analyze_clips_parallel(
-    file_refs: list, local_paths: list[str]
+    file_refs: list, local_paths: list[str], probe_map: dict | None = None
 ) -> tuple[list[ClipMeta], int]:
     """Analyze all clips with Gemini in parallel.
 
     Returns (successful_metas, failed_count).
     Per-clip failures are logged but don't raise — caller applies threshold.
+    probe_map is used in the Whisper fallback path to get clip duration without
+    a second FFprobe call.
     """
     clip_metas: list[ClipMeta] = []
     failed_count = 0
@@ -310,14 +367,17 @@ def _analyze_clips_parallel(
             from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
             try:
                 transcript = transcribe_whisper(path)
+                clip_dur = (
+                    probe_map[path].duration_s
+                    if probe_map and path in probe_map
+                    else 30.0
+                )
                 fallback_meta = ClipMeta(
                     clip_id=getattr(ref, "name", f"clip_{idx}"),
                     transcript=transcript.full_text,
                     hook_text=transcript.full_text[:100] if transcript.full_text else "",
                     hook_score=5.0,
-                    best_moments=[
-                        {"start_s": 0.0, "end_s": 15.0, "energy": 5.0, "description": ""}
-                    ],
+                    best_moments=_fallback_moments(clip_dur),
                     analysis_degraded=True,
                     clip_path=path,
                 )
@@ -341,18 +401,42 @@ def _analyze_clips_parallel(
     return clip_metas, failed_count
 
 
+# ── Fallback helpers ──────────────────────────────────────────────────────────
+
+
+def _fallback_moments(clip_dur: float) -> list[dict]:
+    """Generate overlapping moments at multiple durations for Whisper-fallback clips.
+
+    Covers short (3–5s), medium (8–12s), and long (15s+) slot ranges so that
+    a fallback clip can satisfy template slots of any target_duration_s.
+    """
+    moments = [
+        {"start_s": 0.0, "end_s": min(clip_dur, 5.0), "energy": 5.0, "description": "fallback"},
+        {"start_s": 0.0, "end_s": min(clip_dur, 10.0), "energy": 5.0, "description": "fallback"},
+        {"start_s": 0.0, "end_s": min(clip_dur, 15.0), "energy": 5.0, "description": "fallback"},
+    ]
+    # Add a full-clip moment only if it meaningfully extends beyond 15s
+    if clip_dur > 21.0:
+        moments.append(
+            {"start_s": 0.0, "end_s": clip_dur, "energy": 5.0, "description": "fallback"}
+        )
+    return moments
+
+
 # ── FFmpeg assembly ────────────────────────────────────────────────────────────
 
 
 def _assemble_clips(
     steps: list,
     clip_id_to_local: dict[str, str],
+    clip_probe_map: dict,
     output_path: str,
     tmpdir: str,
 ) -> None:
     """Assemble clips in slot order using FFmpeg concat.
 
-    Each step is trimmed to the moment's [start_s, end_s] then reframed to 9:16.
+    Each step is trimmed to slot's target_duration_s and reframed to the clip's
+    native aspect ratio (derived from probe, not hardcoded).
     """
     from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
 
@@ -366,14 +450,31 @@ def _assemble_clips(
 
         moment = step.moment
         start_s = float(moment.get("start_s", 0.0))
-        end_s = float(moment.get("end_s", start_s + 5.0))
-        reframed = os.path.join(tmpdir, f"slot_{i}.mp4")
+        slot_target_dur = float(step.slot.get("target_duration_s", 5.0))
+        slot_target_dur = max(slot_target_dur, 0.5)  # guard against zero/negative
+        # Trim to target duration — never exceed the slot's allotted time
+        end_s = min(
+            float(moment.get("end_s", start_s + slot_target_dur)),
+            start_s + slot_target_dur,
+        )
 
+        # Use per-clip aspect ratio from probe; fall back to 16:9
+        probe = clip_probe_map.get(local_path)
+        aspect_ratio = probe.aspect_ratio if probe else "16:9"
+
+        log.debug(
+            "slot_timed",
+            position=step.slot.get("position"),
+            target_s=slot_target_dur,
+            actual_s=round(end_s - start_s, 2),
+        )
+
+        reframed = os.path.join(tmpdir, f"slot_{i}.mp4")
         reframe_and_export(
             input_path=local_path,
             start_s=start_s,
             end_s=end_s,
-            aspect_ratio="9:16",
+            aspect_ratio=aspect_ratio,
             ass_subtitle_path=None,
             output_path=reframed,
         )
@@ -384,7 +485,6 @@ def _assemble_clips(
 
     if len(reframed_paths) == 1:
         # Single slot — just copy
-        import shutil  # noqa: PLC0415
         shutil.copy2(reframed_paths[0], output_path)
         return
 
@@ -407,6 +507,65 @@ def _assemble_clips(
     result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
     if result.returncode != 0:
         raise ValueError(f"FFmpeg concat failed: {result.stderr.decode()[:300]}")
+
+
+# ── Template audio helpers ─────────────────────────────────────────────────────
+
+
+def _extract_template_audio(local_video_path: str, output_path: str) -> bool:
+    """Extract audio track from template video. Returns True on success.
+
+    Non-fatal: some templates may be silent.
+    Uses .m4a container (AAC in MP4) for broad FFmpeg compatibility.
+    """
+    cmd = [
+        "ffmpeg", "-i", local_video_path,
+        "-vn",          # no video
+        "-acodec", "aac",
+        "-b:a", "192k",
+        "-f", "mp4",    # force mp4 container (more compatible than raw ADTS .aac)
+        "-y", output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
+    if result.returncode != 0:
+        log.warning(
+            "template_audio_extract_failed",
+            stderr=result.stderr.decode()[:200],
+        )
+        return False
+    return os.path.exists(output_path) and os.path.getsize(output_path) > 1000
+
+
+def _mix_template_audio(
+    video_path: str, audio_gcs_path: str, output_path: str, tmpdir: str
+) -> None:
+    """Replace assembled video's audio with template music track.
+
+    Non-fatal if anything fails — falls back to copying video_path → output_path.
+    """
+    audio_local = os.path.join(tmpdir, "template_audio.m4a")
+    try:
+        download_to_file(audio_gcs_path, audio_local)
+    except Exception as exc:
+        log.warning("template_audio_download_failed", error=str(exc))
+        shutil.copy2(video_path, output_path)
+        return
+
+    cmd = [
+        "ffmpeg",
+        "-i", video_path,
+        "-i", audio_local,
+        "-map", "0:v",  # video from assembled
+        "-map", "1:a",  # audio from template
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-shortest",    # cut to shorter of video/audio
+        "-y", output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
+    if result.returncode != 0:
+        log.warning("template_audio_mix_failed", stderr=result.stderr.decode()[:200])
+        shutil.copy2(video_path, output_path)
 
 
 # ── Copy helpers ───────────────────────────────────────────────────────────────

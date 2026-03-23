@@ -97,6 +97,7 @@ class VideoTemplate(Base):
     recipe_cached_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
     # "analyzing" → Gemini analysis in progress; "ready" → recipe_cached populated
     analysis_status: Mapped[str] = mapped_column(Text, nullable=False, default="analyzing")
+    audio_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     required_clips_min: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     required_clips_max: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     created_at: Mapped[datetime] = mapped_column(

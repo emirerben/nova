@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+from app.models import VideoTemplate
 from app.pipeline.agents.gemini_analyzer import (
     ClipMeta,
     GeminiAnalysisError,
@@ -143,6 +144,425 @@ class TestAnalyzeTemplateTask:
             analyze_template_task("template-123")
 
         assert mock_template.analysis_status == "failed"
+
+
+# ── Regression anchors — fail on the old broken code, pass after fix ──────────
+
+
+class TestBug1AspectRatioRegression:
+    """[REGRESSION ANCHOR] Bug #1: aspect_ratio was hardcoded "9:16"."""
+
+    def test_landscape_clip_gets_native_ar_not_9_16(self, tmp_path):
+        """probe returns '16:9' → reframe_and_export must receive '16:9', not '9:16'."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = MagicMock()
+        step.clip_id = "clip_a"
+        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.slot = {"position": 1, "target_duration_s": 5.0}
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            mock_reframe.assert_called_once()
+            assert mock_reframe.call_args.kwargs["aspect_ratio"] == "16:9"
+
+
+class TestBug2TimingRegression:
+    """[REGRESSION ANCHOR] Bug #2: end_s used full moment duration instead of slot target."""
+
+    def test_output_duration_clamped_to_slot_target(self, tmp_path):
+        """slot target=3s, moment end_s=9s → end_s must be clamped to 3.0, not 9.0."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = MagicMock()
+        step.clip_id = "clip_a"
+        step.moment = {"start_s": 0.0, "end_s": 9.0}  # 9s moment
+        step.slot = {"position": 1, "target_duration_s": 3.0}  # 3s slot
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            assert kwargs["end_s"] == 3.0, f"Expected end_s=3.0, got {kwargs['end_s']}"
+            assert kwargs["end_s"] - kwargs["start_s"] == 3.0
+
+
+# ── _assemble_clips timing ────────────────────────────────────────────────────
+
+
+class TestAssembleClipsTiming:
+    def _make_step(self, clip_id: str, start_s: float, end_s: float, target_dur: float) -> MagicMock:
+        step = MagicMock()
+        step.clip_id = clip_id
+        step.moment = {"start_s": start_s, "end_s": end_s}
+        step.slot = {"position": 1, "target_duration_s": target_dur}
+        return step
+
+    def test_slot_trimmed_to_target_duration(self, tmp_path):
+        """target_duration_s enforced — moment longer than slot is trimmed."""
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+        step = self._make_step("clip_a", start_s=2.0, end_s=10.0, target_dur=4.0)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            # start=2.0, target=4.0 → end must be min(10.0, 2.0+4.0) = 6.0
+            assert kwargs["start_s"] == 2.0
+            assert kwargs["end_s"] == 6.0
+
+    def test_zero_target_duration_guard(self, tmp_path):
+        """target_duration_s=0.0 must produce at least 0.5s clip."""
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+        step = self._make_step("clip_a", start_s=0.0, end_s=5.0, target_dur=0.0)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            assert kwargs["end_s"] - kwargs["start_s"] >= 0.5
+
+    def test_moment_shorter_than_slot_target(self, tmp_path):
+        """moment shorter than slot target — use actual moment end_s (no padding)."""
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+        step = self._make_step("clip_a", start_s=0.0, end_s=2.0, target_dur=5.0)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            # min(2.0, 0.0+5.0) = 2.0 — don't pad beyond actual moment
+            assert kwargs["end_s"] == 2.0
+
+
+# ── _assemble_clips aspect ratio ──────────────────────────────────────────────
+
+
+class TestAssembleClipsAspectRatio:
+    def test_aspect_ratio_from_probe_used(self, tmp_path):
+        """probe.aspect_ratio flows through to reframe_and_export correctly."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=5.0, fps=30.0, width=1080, height=1920,
+            has_audio=True, codec="h264", aspect_ratio="9:16", file_size_bytes=4,
+        )
+        step = MagicMock()
+        step.clip_id = "clip_a"
+        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.slot = {"position": 1, "target_duration_s": 5.0}
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            assert mock_reframe.call_args.kwargs["aspect_ratio"] == "9:16"
+
+    def test_probe_failure_falls_back_to_16_9(self, tmp_path):
+        """Missing probe entry → reframe_and_export gets '16:9' fallback."""
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        step = MagicMock()
+        step.clip_id = "clip_a"
+        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.slot = {"position": 1, "target_duration_s": 5.0}
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={},  # no entry for this path
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            assert mock_reframe.call_args.kwargs["aspect_ratio"] == "16:9"
+
+    def test_probe_clips_happy_path(self, tmp_path):
+        """_probe_clips returns one VideoProbe per path."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _probe_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        fake_probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+
+        with patch("app.pipeline.probe.probe_video", return_value=fake_probe):
+            result = _probe_clips([str(clip_file)])
+
+        assert str(clip_file) in result
+        assert result[str(clip_file)].aspect_ratio == "16:9"
+
+
+# ── Template audio ────────────────────────────────────────────────────────────
+
+
+class TestTemplateAudio:
+    def test_audio_extract_failure_nonfatal(self, tmp_path):
+        """FFmpeg non-zero exit → returns False, does not raise."""
+        from app.tasks.template_orchestrate import _extract_template_audio
+
+        failed_proc = MagicMock()
+        failed_proc.returncode = 1
+        failed_proc.stderr = b"error: no audio stream"
+
+        with patch("app.tasks.template_orchestrate.subprocess.run", return_value=failed_proc):
+            result = _extract_template_audio("/tmp/template.mp4", str(tmp_path / "audio.m4a"))
+
+        assert result is False
+
+    def test_audio_extract_small_file_returns_false(self, tmp_path):
+        """Output file < 1000 bytes → returns False (silent/corrupt audio)."""
+        from app.tasks.template_orchestrate import _extract_template_audio
+
+        tiny_file = tmp_path / "audio.m4a"
+        tiny_file.write_bytes(b"x" * 100)  # only 100 bytes
+
+        ok_proc = MagicMock()
+        ok_proc.returncode = 0
+
+        with patch("app.tasks.template_orchestrate.subprocess.run", return_value=ok_proc):
+            result = _extract_template_audio("/tmp/template.mp4", str(tiny_file))
+
+        assert result is False
+
+    def test_mix_audio_happy_path(self, tmp_path):
+        """FFmpeg succeeds → output_path written, not a shutil.copy2 fallback."""
+        from app.tasks.template_orchestrate import _mix_template_audio
+
+        ok_proc = MagicMock()
+        ok_proc.returncode = 0
+
+        with (
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch("app.tasks.template_orchestrate.subprocess.run", return_value=ok_proc),
+            patch("app.tasks.template_orchestrate.shutil.copy2") as mock_copy,
+        ):
+            _mix_template_audio(
+                video_path="/tmp/assembled.mp4",
+                audio_gcs_path="templates/t1/audio.m4a",
+                output_path=str(tmp_path / "final.mp4"),
+                tmpdir=str(tmp_path),
+            )
+
+        mock_copy.assert_not_called()
+
+    def test_mix_audio_download_failure_fallback(self, tmp_path):
+        """download_to_file raises → shutil.copy2 used, no exception raised."""
+        from app.tasks.template_orchestrate import _mix_template_audio
+
+        with (
+            patch(
+                "app.tasks.template_orchestrate.download_to_file",
+                side_effect=Exception("GCS unavailable"),
+            ),
+            patch("app.tasks.template_orchestrate.shutil.copy2") as mock_copy,
+        ):
+            _mix_template_audio(
+                video_path="/tmp/assembled.mp4",
+                audio_gcs_path="templates/t1/audio.m4a",
+                output_path=str(tmp_path / "final.mp4"),
+                tmpdir=str(tmp_path),
+            )
+
+        mock_copy.assert_called_once_with("/tmp/assembled.mp4", str(tmp_path / "final.mp4"))
+
+    def test_run_template_job_uses_final_path_when_audio_available(self):
+        """With audio_gcs_path set: _mix_template_audio called and final.mp4 uploaded."""
+        from app.tasks.template_orchestrate import _run_template_job
+
+        mock_job = MagicMock()
+        mock_job.status = "queued"
+        mock_job.template_id = "t1"
+        mock_job.all_candidates = {"clip_paths": ["gs://bucket/clip_0.mp4"]}
+        mock_job.selected_platforms = ["tiktok"]
+
+        mock_template = MagicMock()
+        mock_template.analysis_status = "ready"
+        mock_template.recipe_cached = {
+            "shot_count": 1,
+            "total_duration_s": 5.0,
+            "hook_duration_s": 3.0,
+            "slots": [{"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "hook"}],
+            "copy_tone": "casual",
+            "caption_style": "bold",
+        }
+        mock_template.audio_gcs_path = "templates/t1/audio.m4a"
+
+        def _mock_ctx():
+            ctx = MagicMock()
+            ctx.__enter__ = MagicMock(return_value=session)
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        session = MagicMock()
+        session.get.side_effect = lambda model, pk: (
+            mock_template if model is VideoTemplate else mock_job
+        )
+
+        with (
+            patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx),
+            patch("app.tasks.template_orchestrate._download_clips_parallel", return_value=["/tmp/clip_0.mp4"]),
+            patch("app.tasks.template_orchestrate._probe_clips", return_value={}),
+            patch("app.tasks.template_orchestrate._upload_clips_parallel", return_value=[MagicMock(name="clip_0")]),
+            patch("app.tasks.template_orchestrate._analyze_clips_parallel", return_value=([_make_clip_meta()], 0)),
+            patch("app.tasks.template_orchestrate.match") as mock_match,
+            patch("app.tasks.template_orchestrate._assemble_clips"),
+            patch("app.tasks.template_orchestrate._mix_template_audio") as mock_mix,
+            patch("app.tasks.template_orchestrate._extract_hook_text", return_value=""),
+            patch("app.tasks.template_orchestrate._extract_transcript", return_value=""),
+            patch("app.tasks.template_orchestrate.upload_public_read", return_value="https://cdn/out.mp4"),
+        ):
+            from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep
+            step = AssemblyStep(
+                slot={"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "hook"},
+                clip_id="clip_0",
+                moment={"start_s": 0.0, "end_s": 5.0, "energy": 7.0},
+            )
+            mock_match.return_value = AssemblyPlan(steps=[step])
+
+            mock_platform_copy = MagicMock()
+            mock_platform_copy.model_dump.return_value = {}
+            with patch("app.pipeline.agents.copy_writer.generate_copy") as mock_copy:
+                mock_copy.return_value = (mock_platform_copy, "generated")
+                _run_template_job("12345678-1234-5678-1234-567812345678")
+
+        mock_mix.assert_called_once()
+
+
+# ── template_matcher two-pass tolerance ───────────────────────────────────────
+
+
+class TestTemplateMatcher2Pass:
+    def test_tight_match_preferred_over_loose(self):
+        """Tight candidate (±2s) preferred over loose-only (±2–6s) when both exist."""
+        from app.pipeline.template_matcher import DURATION_TOLERANCE_PRIMARY_S, match
+        from app.pipeline.agents.gemini_analyzer import ClipMeta
+
+        def _clip(clip_id: str, moment_dur: float, energy: float) -> ClipMeta:
+            return ClipMeta(
+                clip_id=clip_id,
+                transcript="",
+                hook_text="",
+                hook_score=5.0,
+                best_moments=[{
+                    "start_s": 0.0,
+                    "end_s": moment_dur,
+                    "energy": energy,
+                    "description": "test",
+                }],
+            )
+
+        target = 5.0
+        # clip_a: moment=9s — within ±6s fallback but outside ±2s tight
+        # clip_b: moment=5s — within ±2s tight AND higher-energy tie-breaker is irrelevant
+        clip_a = _clip("clip_a", moment_dur=9.0, energy=9.0)   # loose-only, high energy
+        clip_b = _clip("clip_b", moment_dur=5.0, energy=7.0)   # tight match, lower energy
+
+        from app.pipeline.agents.gemini_analyzer import TemplateRecipe
+        recipe = TemplateRecipe(
+            shot_count=1,
+            total_duration_s=target,
+            hook_duration_s=3.0,
+            slots=[{"position": 1, "target_duration_s": target, "priority": 5, "slot_type": "hook"}],
+            copy_tone="casual",
+            caption_style="bold",
+        )
+
+        plan = match(recipe, [clip_a, clip_b])
+
+        # clip_b should win: tight pass finds it and excludes the 9s clip_a
+        assert plan.steps[0].clip_id == "clip_b", (
+            "Tight candidate (clip_b, 5s) should be preferred over "
+            "loose-only candidate (clip_a, 9s) even when clip_a has higher energy"
+        )
+        assert DURATION_TOLERANCE_PRIMARY_S == 2.0  # guard constant value
 
 
 class TestOrchestrateTemplateJobErrors:
