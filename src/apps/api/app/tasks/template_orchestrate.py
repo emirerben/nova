@@ -91,6 +91,12 @@ def analyze_template_task(self, template_id: str) -> None:
                     audio_gcs = f"templates/{template_id}/audio.m4a"
                     upload_public_read(audio_local, audio_gcs)
                     log.info("template_audio_extracted", template_id=template_id)
+            elif not os.path.exists(audio_local):
+                # Re-analysis: audio already in GCS but not local — download for beat detection
+                try:
+                    download_to_file(existing_audio_gcs, audio_local)
+                except Exception as exc:
+                    log.warning("template_audio_redownload_failed", error=str(exc))
 
             # Beat detection: merge Gemini beats with FFmpeg energy onsets
             ffmpeg_beats = (
@@ -100,6 +106,9 @@ def analyze_template_task(self, template_id: str) -> None:
             )
             merged_beats = _merge_beat_sources(recipe.beat_timestamps_s, ffmpeg_beats)
 
+            # Compute per-slot energy from beat density
+            enriched_slots = _enrich_slots_with_energy(recipe.slots, merged_beats)
+
             with _sync_session() as db:
                 template = db.get(VideoTemplate, template_id)
                 if template:
@@ -108,7 +117,7 @@ def analyze_template_task(self, template_id: str) -> None:
                         "shot_count": recipe.shot_count,
                         "total_duration_s": recipe.total_duration_s,
                         "hook_duration_s": recipe.hook_duration_s,
-                        "slots": recipe.slots,
+                        "slots": enriched_slots,
                         "copy_tone": recipe.copy_tone,
                         "caption_style": recipe.caption_style,
                         "beat_timestamps_s": merged_beats,
@@ -578,7 +587,7 @@ def _assemble_clips(
 BEAT_SNAP_TOLERANCE_S = 0.4
 
 
-def _detect_audio_beats(audio_path: str, threshold_db: float = -20.0) -> list[float]:
+def _detect_audio_beats(audio_path: str, threshold_db: float = -35.0) -> list[float]:
     """Detect energy onset timestamps in audio using FFmpeg silencedetect.
 
     Parses silence_end markers from FFmpeg stderr — each silence_end marks a
@@ -645,6 +654,46 @@ def _merge_beat_sources(
             bisect.insort(merged, gb)
 
     return merged
+
+
+def _enrich_slots_with_energy(slots: list[dict], beats: list[float]) -> list[dict]:
+    """Add an 'energy' field (0-10) to each slot based on beat density.
+
+    Energy is proportional to the number of beats that fall within the slot's
+    time range, normalized so the densest slot gets 10 and silence gets 0.
+    This gives the matcher a music-derived energy profile per slot.
+    """
+    if not beats or not slots:
+        return slots
+
+    # Compute cumulative start/end for each slot
+    cum = 0.0
+    slot_ranges: list[tuple[float, float]] = []
+    for s in sorted(slots, key=lambda x: x.get("position", 0)):
+        dur = float(s.get("target_duration_s", 1.0))
+        slot_ranges.append((cum, cum + dur))
+        cum += dur
+
+    # Count beats in each slot's time range
+    beat_counts = []
+    for start, end in slot_ranges:
+        count = sum(1 for b in beats if start <= b < end)
+        # Normalize by duration to get beat density (beats per second)
+        density = count / max(end - start, 0.1)
+        beat_counts.append(density)
+
+    # Normalize to 0-10 scale
+    max_density = max(beat_counts) if beat_counts else 1.0
+    if max_density == 0:
+        return slots
+
+    enriched = []
+    position_sorted = sorted(slots, key=lambda x: x.get("position", 0))
+    for s, density in zip(position_sorted, beat_counts):
+        enriched_slot = {**s, "energy": round(density / max_density * 10.0, 1)}
+        enriched.append(enriched_slot)
+
+    return enriched
 
 
 def _snap_to_beat(target_end_s: float, beats: list[float]) -> float:

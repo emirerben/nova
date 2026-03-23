@@ -264,7 +264,9 @@ def analyze_template(file_ref: Any) -> TemplateRecipe:
         "- slots array length MUST equal shot_count\n"
         "- The sum of all target_duration_s values must approximately equal total_duration_s\n"
         "- Each slot's target_duration_s is the duration of that shot in the template\n"
-        "- position is 1-indexed temporal order (slot 1 = first shot)\n\n"
+        "- position is 1-indexed temporal order (slot 1 = first shot)\n"
+        "- EVERY slot object MUST include an 'energy' field (float 0-10) reflecting the "
+        "musical intensity during that slot — listen to the audio track and rate each slot\n\n"
         "Return a JSON object with these exact fields:\n"
         '- "shot_count": int — total number of shots/cuts\n'
         '- "total_duration_s": float — total video duration in seconds\n'
