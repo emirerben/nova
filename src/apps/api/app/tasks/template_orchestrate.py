@@ -474,11 +474,10 @@ def _assemble_clips(
 
         clip_cursors[clip_id] = start_s + slot_target_dur
 
-        # Trim to target duration — never exceed the slot's allotted time
-        end_s = min(
-            float(moment.get("end_s", start_s + slot_target_dur)),
-            start_s + slot_target_dur,
-        )
+        # End time: start + slot target, bounded by clip duration.
+        # Do NOT use moment.end_s — with cursor-based assembly, the slot's
+        # target_duration_s controls the cut length, not the Gemini moment range.
+        end_s = min(start_s + slot_target_dur, clip_dur)
 
         # Use per-clip aspect ratio from probe; fall back to 16:9
         probe = clip_probe_map.get(local_path)

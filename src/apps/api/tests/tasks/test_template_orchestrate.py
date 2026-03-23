@@ -277,12 +277,22 @@ class TestAssembleClipsTiming:
             kwargs = mock_reframe.call_args.kwargs
             assert kwargs["end_s"] - kwargs["start_s"] >= 0.5
 
-    def test_moment_shorter_than_slot_target(self, tmp_path):
-        """moment shorter than slot target — use actual moment end_s (no padding)."""
+    def test_end_s_uses_slot_target_not_moment_end(self, tmp_path):
+        """Slot target controls duration — moment.end_s is ignored.
+
+        This prevents FFmpeg crashes when Gemini returns a very short moment
+        (e.g. 0.03s) for a 1.0s slot. The clip has plenty of footage, so
+        we play start_s + target_duration_s worth of it.
+        """
+        from app.pipeline.probe import VideoProbe
         from app.tasks.template_orchestrate import _assemble_clips
 
         clip_file = tmp_path / "clip_0.mp4"
         clip_file.write_bytes(b"fake")
+        probe = VideoProbe(
+            duration_s=30.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
         step = self._make_step("clip_a", start_s=0.0, end_s=2.0, target_dur=5.0)
 
         with (
@@ -292,13 +302,13 @@ class TestAssembleClipsTiming:
             _assemble_clips(
                 steps=[step],
                 clip_id_to_local={"clip_a": str(clip_file)},
-                clip_probe_map={},
+                clip_probe_map={str(clip_file): probe},
                 output_path=str(tmp_path / "out.mp4"),
                 tmpdir=str(tmp_path),
             )
             kwargs = mock_reframe.call_args.kwargs
-            # min(2.0, 0.0+5.0) = 2.0 — don't pad beyond actual moment
-            assert kwargs["end_s"] == 2.0
+            # end_s = min(0.0 + 5.0, 30.0) = 5.0 — slot target, not moment.end_s
+            assert kwargs["end_s"] == 5.0
 
 
 # ── _assemble_clips aspect ratio ──────────────────────────────────────────────
