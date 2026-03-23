@@ -24,6 +24,30 @@
 **Effort:** M (human: ~1 week / CC: ~30 min)
 **Priority:** P2 — after v1 template validated in production
 
+### Librosa-Based Beat Detection
+**What:** Replace or augment FFmpeg energy-peak beat detection with librosa's onset detection and beat tracking.
+**Why:** FFmpeg `silencedetect`/`astats` catches energy transients (drum hits, bass drops) but misses melodic transitions. librosa provides proper onset detection, tempo estimation, and beat tracking with significantly higher accuracy.
+**How:** Add librosa dependency (~50MB with numpy/scipy). Replace `_detect_audio_beats()` in `template_orchestrate.py`. Compare quality against FFmpeg approach on 20+ templates.
+**Effort:** S (human: ~1 day / CC: ~15 min)
+**Priority:** P3 — upgrade path if FFmpeg+Gemini beat detection proves insufficient
+**Depends on:** Beat sync feature shipped (this PR)
+
+### Re-Analyze Existing Templates for Beat Data
+**What:** One-time migration task to re-run `analyze_template_task` on all existing templates so they get `beat_timestamps_s` in their cached recipe.
+**Why:** Existing templates have `recipe_cached` without `beat_timestamps_s`. They work (backward-compatible default=[]) but don't benefit from beat sync until re-analyzed.
+**How:** Admin endpoint or management command that queries all templates with `analysis_status="ready"` and dispatches `analyze_template_task` for each.
+**Effort:** XS (human: ~2 hours / CC: ~5 min)
+**Priority:** P2 — run after beat sync code ships
+**Depends on:** Beat sync feature shipped (this PR)
+
+### TikTok Content API Application
+**What:** Submit TikTok Content API application at developer.tiktok.com.
+**Why:** 4-8 week approval window. Clock must start now even though platform posting (Phase 2) is deferred. This is a time-gated blocker — every day of delay pushes the TikTok launch date by a day.
+**How:** Create TikTok developer account, submit Content API application form (15 min).
+**Effort:** XS (15 minutes, one-time form)
+**Priority:** P1 — submit by 2026-03-28 at latest
+**Depends on:** Nothing
+
 ### Platform Posting (Phase 2)
 **What:** POST /post endpoint, OAuth token refresh, Instagram/YouTube/TikTok upload integrations.
 **Why:** Core monetization path — users want one-click posting, not just clip downloads.
