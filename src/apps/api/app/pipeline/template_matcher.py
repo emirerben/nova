@@ -17,7 +17,6 @@ Raises TemplateMismatchError when:
   - No clip can satisfy a slot's duration requirement
 """
 
-from dataclasses import dataclass, field
 
 import structlog
 
@@ -113,7 +112,8 @@ def match(recipe: TemplateRecipe, clip_metas: list[ClipMeta]) -> AssemblyPlan:
     # CRITICAL: sort by slot.position before returning — FFmpeg concat needs temporal order
     sorted_plan = sorted(plan, key=lambda step: step.slot.get("position", 0))
 
-    log.info("template_match_done", slots=len(sorted_plan), clips_used=len({s.clip_id for s in sorted_plan}))
+    clips_used = len({s.clip_id for s in sorted_plan})
+    log.info("template_match_done", slots=len(sorted_plan), clips_used=clips_used)
     return AssemblyPlan(steps=sorted_plan)
 
 

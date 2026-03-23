@@ -8,8 +8,8 @@ Zero-downtime safe — additive only (new table + new nullable columns with defa
 Deployment order: migrate → deploy → register template via POST /admin/templates.
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "0001"

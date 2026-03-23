@@ -18,15 +18,15 @@ Both tasks follow the render_clip "never raises" invariant:
 all errors caught → job.status = 'processing_failed'
 """
 
-import json
 import os
 import subprocess
 import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC
 
 import structlog
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -81,7 +81,7 @@ def analyze_template_task(self, template_id: str) -> None:
             with _sync_session() as db:
                 template = db.get(VideoTemplate, template_id)
                 if template:
-                    from datetime import datetime, timezone  # noqa: PLC0415
+                    from datetime import datetime  # noqa: PLC0415
                     template.recipe_cached = {
                         "shot_count": recipe.shot_count,
                         "total_duration_s": recipe.total_duration_s,
@@ -90,7 +90,7 @@ def analyze_template_task(self, template_id: str) -> None:
                         "copy_tone": recipe.copy_tone,
                         "caption_style": recipe.caption_style,
                     }
-                    template.recipe_cached_at = datetime.now(timezone.utc)
+                    template.recipe_cached_at = datetime.now(UTC)
                     template.analysis_status = "ready"
                     db.commit()
 
@@ -154,7 +154,6 @@ def _run_template_job(job_id: str) -> None:
             raise ValueError(f"Template {template_id} analysis not ready")
 
         recipe_data = template.recipe_cached
-        template_gcs_path = template.gcs_path
 
     try:
         recipe = TemplateRecipe(**recipe_data)
@@ -316,7 +315,9 @@ def _analyze_clips_parallel(
                     transcript=transcript.full_text,
                     hook_text=transcript.full_text[:100] if transcript.full_text else "",
                     hook_score=5.0,
-                    best_moments=[{"start_s": 0.0, "end_s": 15.0, "energy": 5.0, "description": ""}],
+                    best_moments=[
+                        {"start_s": 0.0, "end_s": 15.0, "energy": 5.0, "description": ""}
+                    ],
                     analysis_degraded=True,
                     clip_path=path,
                 )

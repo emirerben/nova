@@ -1,14 +1,13 @@
 """Unit tests for routes/template_jobs.py — template job creation and status."""
 
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.database import get_db
 from app.main import app
-from app.models import Job, VideoTemplate
+from app.models import VideoTemplate
 
 
 @pytest.fixture()

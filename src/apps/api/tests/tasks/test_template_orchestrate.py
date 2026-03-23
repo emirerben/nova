@@ -1,15 +1,12 @@
 """Unit tests for tasks/template_orchestrate.py — all external calls mocked."""
 
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from app.pipeline.agents.gemini_analyzer import (
     ClipMeta,
     GeminiAnalysisError,
     TemplateRecipe,
 )
-from app.pipeline.template_matcher import TemplateMismatchError
 
 
 def _make_clip_meta(clip_id: str = "clip_a", degraded: bool = False) -> ClipMeta:
@@ -67,8 +64,13 @@ class TestOrchestratePipelineHelpers:
         from app.pipeline.transcribe import Transcript
         whisper_transcript = Transcript(words=[], full_text="", low_confidence=True)
 
-        with patch("app.tasks.template_orchestrate.analyze_clip", side_effect=lambda r, **kw: _mock_analyze(r, **kw)), \
-             patch("app.pipeline.transcribe.transcribe_whisper", return_value=whisper_transcript):
+        with (
+            patch(
+                "app.tasks.template_orchestrate.analyze_clip",
+                side_effect=lambda r, **kw: _mock_analyze(r, **kw),
+            ),
+            patch("app.pipeline.transcribe.transcribe_whisper", return_value=whisper_transcript),
+        ):
             # The failing clip falls back to whisper heuristic → returns a meta, not failure
             metas, failed_count = _analyze_clips_parallel(file_refs, local_paths)
 

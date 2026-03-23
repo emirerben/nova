@@ -54,7 +54,9 @@ def transcribe(video_path: str, file_ref: object | None = None) -> Transcript:
     """
     if file_ref is not None and settings.transcriber_backend == "gemini":
         try:
-            from app.pipeline.agents.gemini_analyzer import transcribe as gemini_transcribe  # noqa: PLC0415
+            from app.pipeline.agents.gemini_analyzer import (
+                transcribe as gemini_transcribe,  # noqa: PLC0415
+            )
             # Attach local path for Whisper fallback inside gemini_analyzer
             file_ref._local_path = video_path  # type: ignore[attr-defined]
             result = gemini_transcribe(file_ref)

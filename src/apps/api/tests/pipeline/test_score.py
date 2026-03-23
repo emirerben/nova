@@ -164,7 +164,8 @@ class TestSelectCandidates:
         )
         mock_source_ref = object()
 
-        with patch("app.pipeline.agents.gemini_analyzer.analyze_clip", return_value=mock_meta) as mock_analyze:
+        patch_target = "app.pipeline.agents.gemini_analyzer.analyze_clip"
+        with patch(patch_target, return_value=mock_meta) as mock_analyze:
             candidates = select_candidates(probe, transcript, [], source_ref=mock_source_ref)
 
         assert mock_analyze.call_count == CANDIDATE_COUNT
