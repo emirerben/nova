@@ -231,3 +231,42 @@ export async function getTemplatePlaybackUrl(
   if (!res.ok) throw new Error(`Failed to get playback URL: ${res.status}`);
   return res.json();
 }
+
+// ── Reroll + Job list API ───────────────────────────────────────────────────
+
+export async function rerollTemplateJob(
+  jobId: string
+): Promise<TemplateJobCreateResponse> {
+  const res = await fetch(`${API_URL}/template-jobs/${jobId}/reroll`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Reroll failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface TemplateJobListItem {
+  job_id: string;
+  status: string;
+  template_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TemplateJobListResponse {
+  jobs: TemplateJobListItem[];
+  total: number;
+}
+
+export async function listTemplateJobs(
+  limit = 50,
+  offset = 0
+): Promise<TemplateJobListResponse> {
+  const res = await fetch(
+    `${API_URL}/template-jobs?limit=${limit}&offset=${offset}`
+  );
+  if (!res.ok) throw new Error(`Failed to fetch jobs: ${res.status}`);
+  return res.json();
+}

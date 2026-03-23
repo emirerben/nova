@@ -1,16 +1,19 @@
 """Template job endpoints.
 
-POST /template-jobs       — create a template-mode job
-GET  /template-jobs/:id/status — poll job status + result
+POST /template-jobs              — create a template-mode job
+GET  /template-jobs              — list template jobs (QA dashboard)
+GET  /template-jobs/:id/status   — poll job status + result
+POST /template-jobs/:id/reroll   — re-run assembly with same clips
+GET  /template-jobs/:id/debug    — admin debug endpoint
 """
 
 import uuid
 from datetime import datetime
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -19,6 +22,9 @@ from app.models import Job, VideoTemplate
 log = structlog.get_logger()
 
 router = APIRouter()
+
+# Synthetic user for MVP (Phase 2 adds auth)
+SYNTHETIC_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
@@ -31,7 +37,6 @@ class CreateTemplateJobRequest(BaseModel):
     @field_validator("clip_gcs_paths")
     @classmethod
     def validate_clip_count(cls, v: list[str]) -> list[str]:
-        # Hard limits — template-level min/max checked after DB lookup
         if len(v) < 1:
             raise ValueError("At least 1 clip is required")
         if len(v) > 20:
@@ -64,6 +69,19 @@ class TemplateJobStatusResponse(BaseModel):
     updated_at: datetime
 
 
+class TemplateJobListItem(BaseModel):
+    job_id: str
+    status: str
+    template_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class TemplateJobListResponse(BaseModel):
+    jobs: list[TemplateJobListItem]
+    total: int
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 
@@ -73,7 +91,6 @@ async def create_template_job(
     db: AsyncSession = Depends(get_db),
 ) -> TemplateJobResponse:
     """Create a template-mode job. Validates template existence and clip count."""
-    # Look up template
     result = await db.execute(
         select(VideoTemplate).where(VideoTemplate.id == req.template_id)
     )
@@ -88,29 +105,22 @@ async def create_template_job(
                    "Try again in a few seconds.",
         )
 
-    # Validate clip count against template requirements
     n_clips = len(req.clip_gcs_paths)
     if n_clips < template.required_clips_min:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Template requires at least {template.required_clips_min} clips, "
-                   f"got {n_clips}.",
+            detail=f"Template requires at least {template.required_clips_min} clips, got {n_clips}.",
         )
     if n_clips > template.required_clips_max:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Template allows at most {template.required_clips_max} clips, "
-                   f"got {n_clips}.",
+            detail=f"Template allows at most {template.required_clips_max} clips, got {n_clips}.",
         )
 
-    # Use a synthetic user_id for now (Phase 2 adds auth)
-    synthetic_user_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
-
     job = Job(
-        user_id=synthetic_user_id,
+        user_id=SYNTHETIC_USER_ID,
         job_type="template",
         template_id=req.template_id,
-        # raw_storage_path stores the first clip path for schema compat; full list in all_candidates
         raw_storage_path=req.clip_gcs_paths[0],
         selected_platforms=req.selected_platforms,
         all_candidates={"clip_paths": req.clip_gcs_paths},
@@ -122,12 +132,117 @@ async def create_template_job(
 
     job_id = str(job.id)
 
-    # Enqueue Celery task
     from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
     orchestrate_template_job.delay(job_id)
 
     log.info("template_job_created", job_id=job_id, template_id=req.template_id, clips=n_clips)
     return TemplateJobResponse(job_id=job_id, status="queued", template_id=req.template_id)
+
+
+@router.get("", response_model=TemplateJobListResponse)
+async def list_template_jobs(
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> TemplateJobListResponse:
+    """List template jobs ordered by created_at DESC. Scoped to synthetic user.
+
+    Used by the QA Dashboard for internal review of all template job outputs.
+    """
+    base_query = (
+        select(Job)
+        .where(Job.user_id == SYNTHETIC_USER_ID)
+        .where(Job.job_type == "template")
+    )
+
+    # Count total
+    count_result = await db.execute(
+        select(func.count()).select_from(base_query.subquery())
+    )
+    total = count_result.scalar() or 0
+
+    # Fetch page
+    result = await db.execute(
+        base_query.order_by(Job.created_at.desc()).offset(offset).limit(limit)
+    )
+    jobs = result.scalars().all()
+
+    return TemplateJobListResponse(
+        jobs=[
+            TemplateJobListItem(
+                job_id=str(j.id),
+                status=j.status,
+                template_id=j.template_id,
+                created_at=j.created_at,
+                updated_at=j.updated_at,
+            )
+            for j in jobs
+        ],
+        total=total,
+    )
+
+
+@router.post("/{job_id}/reroll", response_model=TemplateJobResponse, status_code=status.HTTP_201_CREATED)
+async def reroll_template_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateJobResponse:
+    """Re-run template assembly with the same clips. Creates a new job.
+
+    Guard: original job must be in 'template_ready' status.
+    The matcher naturally produces different results on re-run due to
+    ThreadPoolExecutor ordering + moment tiebreakers.
+    """
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    result = await db.execute(select(Job).where(Job.id == job_uuid))
+    original = result.scalar_one_or_none()
+
+    if original is None or original.job_type != "template":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    if original.status != "template_ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Can only re-roll completed jobs (current status: {original.status})",
+        )
+
+    # Extract clip paths from original job
+    clip_paths = (original.all_candidates or {}).get("clip_paths", [])
+    if not clip_paths:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Original job has no clip paths to re-roll",
+        )
+
+    # Create new job with same clips and template
+    new_job = Job(
+        user_id=SYNTHETIC_USER_ID,
+        job_type="template",
+        template_id=original.template_id,
+        raw_storage_path=clip_paths[0],
+        selected_platforms=original.selected_platforms or ["tiktok", "instagram", "youtube"],
+        all_candidates={"clip_paths": clip_paths},
+        status="queued",
+    )
+    db.add(new_job)
+    await db.commit()
+    await db.refresh(new_job)
+
+    new_job_id = str(new_job.id)
+
+    from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
+    orchestrate_template_job.delay(new_job_id)
+
+    log.info("template_job_rerolled", new_job_id=new_job_id, original_job_id=job_id)
+    return TemplateJobResponse(
+        job_id=new_job_id,
+        status="queued",
+        template_id=original.template_id or "",
+    )
 
 
 @router.get("/{job_id}/debug")
@@ -146,7 +261,6 @@ async def get_template_job_debug(
     if job is None or job.job_type != "template":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    # Load template recipe
     template_recipe = None
     if job.template_id:
         tpl_result = await db.execute(
