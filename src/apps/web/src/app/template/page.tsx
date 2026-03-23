@@ -13,7 +13,7 @@ const PLATFORMS = [
 const ALLOWED_MIME = ["video/mp4", "video/quicktime", "video/x-msvideo"];
 const MAX_BYTES = 4 * 1024 * 1024 * 1024;
 const MIN_CLIPS = 5;
-const MAX_CLIPS = 10;
+const MAX_CLIPS = 20;
 
 // In v1 the template ID is configured server-side; we read it from env or use a well-known default.
 // Operators set NEXT_PUBLIC_DEFAULT_TEMPLATE_ID in .env.local

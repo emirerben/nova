@@ -130,6 +130,51 @@ async def create_template_job(
     return TemplateJobResponse(job_id=job_id, status="queued", template_id=req.template_id)
 
 
+@router.get("/{job_id}/debug")
+async def get_template_job_debug(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin debug endpoint — returns full template recipe, assembly plan, and clip diagnostics."""
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    result = await db.execute(select(Job).where(Job.id == job_uuid))
+    job = result.scalar_one_or_none()
+    if job is None or job.job_type != "template":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    # Load template recipe
+    template_recipe = None
+    if job.template_id:
+        tpl_result = await db.execute(
+            select(VideoTemplate).where(VideoTemplate.id == job.template_id)
+        )
+        tpl = tpl_result.scalar_one_or_none()
+        if tpl:
+            template_recipe = tpl.recipe_cached
+
+    assembly_plan = job.assembly_plan or {}
+    steps = assembly_plan.get("steps", [])
+    clip_ids_used = [s.get("clip_id") for s in steps]
+    clips_used_unique = len(set(clip_ids_used))
+
+    return {
+        "job_id": job_id,
+        "status": job.status,
+        "error_detail": job.error_detail,
+        "template_recipe": template_recipe,
+        "assembly_plan": {
+            "steps": steps,
+            "clips_used_unique": clips_used_unique,
+            "total_slots": len(steps),
+            "clip_ids_in_order": clip_ids_used,
+        },
+    }
+
+
 @router.get("/{job_id}/status", response_model=TemplateJobStatusResponse)
 async def get_template_job_status(
     job_id: str,

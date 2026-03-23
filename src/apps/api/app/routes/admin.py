@@ -65,8 +65,8 @@ class CreateTemplateRequest(BaseModel):
     @field_validator("required_clips_max")
     @classmethod
     def validate_max(cls, v: int) -> int:
-        if v > 20:
-            raise ValueError("required_clips_max must be ≤ 20")
+        if v > 30:
+            raise ValueError("required_clips_max must be ≤ 30")
         return v
 
 
@@ -121,6 +121,42 @@ async def create_template(
     analyze_template_task.delay(template_id)
 
     log.info("template_created", template_id=template_id, name=req.name)
+    return TemplateResponse(
+        id=template.id,
+        name=template.name,
+        gcs_path=template.gcs_path,
+        analysis_status=template.analysis_status,
+        required_clips_min=template.required_clips_min,
+        required_clips_max=template.required_clips_max,
+        created_at=template.created_at,
+    )
+
+
+@router.post(
+    "/{template_id}/reanalyze",
+    response_model=TemplateResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def reanalyze_template(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateResponse:
+    """Re-run Gemini analysis on an existing template (e.g. to populate beat data)."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    result = await db.execute(select(VideoTemplate).where(VideoTemplate.id == template_id))
+    template = result.scalar_one_or_none()
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
+
+    template.analysis_status = "analyzing"
+    await db.commit()
+    await db.refresh(template)
+
+    from app.tasks.template_orchestrate import analyze_template_task  # noqa: PLC0415
+    analyze_template_task.delay(template_id)
+
+    log.info("template_reanalyze_enqueued", template_id=template_id)
     return TemplateResponse(
         id=template.id,
         name=template.name,

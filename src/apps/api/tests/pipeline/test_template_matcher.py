@@ -2,8 +2,8 @@
 
 import pytest
 
-from app.pipeline.agents.gemini_analyzer import AssemblyPlan, ClipMeta, TemplateRecipe
-from app.pipeline.template_matcher import TemplateMismatchError, match
+from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep, ClipMeta, TemplateRecipe
+from app.pipeline.template_matcher import TemplateMismatchError, _dedup_adjacent, match
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -139,3 +139,105 @@ class TestTemplateMatcher:
         # slot position 2 has priority=10, should get the high-energy moment
         slot2_step = next(s for s in plan.steps if s.slot["position"] == 2)
         assert slot2_step.moment["energy"] == pytest.approx(9.0)
+
+
+# ── Adjacency dedup tests ────────────────────────────────────────────────────
+
+
+def _step(clip_id: str, position: int, target_dur: float = 5.0, moment_dur: float = 5.0) -> AssemblyStep:
+    """Helper to build an AssemblyStep for dedup tests."""
+    return AssemblyStep(
+        slot=_slot(position, target_dur),
+        clip_id=clip_id,
+        moment=_moment(0.0, moment_dur),
+    )
+
+
+class TestDedupAdjacent:
+    def test_adjacent_same_clip_swapped(self):
+        """[A, A, B] → [A, B, A] — adjacent duplicate resolved by swap."""
+        steps = [_step("A", 1), _step("A", 2), _step("B", 3)]
+
+        result = _dedup_adjacent(steps)
+
+        clip_ids = [s.clip_id for s in result]
+        assert clip_ids == ["A", "B", "A"]
+
+    def test_no_adjacency_issue_unchanged(self):
+        """[A, B, A] → [A, B, A] — already non-adjacent, no swap needed."""
+        steps = [_step("A", 1), _step("B", 2), _step("A", 3)]
+
+        result = _dedup_adjacent(steps)
+
+        clip_ids = [s.clip_id for s in result]
+        assert clip_ids == ["A", "B", "A"]
+
+    def test_single_clip_all_slots_noop(self):
+        """[A, A, A] → [A, A, A] — only one clip, no swap candidate exists."""
+        steps = [_step("A", 1), _step("A", 2), _step("A", 3)]
+
+        result = _dedup_adjacent(steps)
+
+        clip_ids = [s.clip_id for s in result]
+        assert clip_ids == ["A", "A", "A"]
+
+    def test_duration_incompatible_swap_skipped(self):
+        """Swap skipped when moments don't fit new slots within ±2s tolerance."""
+        # A's moment is 5s, B's moment is 15s. Slots are 5s and 15s.
+        # Swapping would put A's 5s moment in B's 15s slot (|5-15|=10 > 2s) — skip.
+        steps = [
+            _step("A", 1, target_dur=5.0, moment_dur=5.0),
+            _step("A", 2, target_dur=5.0, moment_dur=5.0),
+            _step("B", 3, target_dur=15.0, moment_dur=15.0),
+        ]
+
+        result = _dedup_adjacent(steps)
+
+        # No swap possible — B's 15s moment doesn't fit 5s slot (±2s)
+        clip_ids = [s.clip_id for s in result]
+        assert clip_ids == ["A", "A", "B"]
+
+    def test_cascading_adjacency_resolved(self):
+        """[A, A, B, B] → [A, B, A, B] — cascading adjacency fixed left-to-right."""
+        steps = [_step("A", 1), _step("A", 2), _step("B", 3), _step("B", 4)]
+
+        result = _dedup_adjacent(steps)
+
+        clip_ids = [s.clip_id for s in result]
+        # Position 2 (was A, adjacent to A@1) swaps with position 3 (B)
+        assert clip_ids[0] != clip_ids[1], "Positions 1-2 should differ"
+        assert clip_ids[2] != clip_ids[3], "Positions 3-4 should differ"
+
+    def test_two_element_plan_swapped(self):
+        """[A, A] with a swap candidate — minimum size plan."""
+        # Need two clips for a swap to be possible, but with only 2 steps
+        # both using clip A, there's no candidate with a different clip_id.
+        steps = [_step("A", 1), _step("A", 2)]
+
+        result = _dedup_adjacent(steps)
+
+        # No swap candidate (only clip A) — unchanged
+        clip_ids = [s.clip_id for s in result]
+        assert clip_ids == ["A", "A"]
+
+    def test_match_integration_no_adjacent_same_clip(self):
+        """End-to-end: match() with 5 slots, 2 clips → no consecutive same clip_id."""
+        recipe = _make_recipe([
+            _slot(1, 5.0, priority=5),
+            _slot(2, 5.0, priority=4),
+            _slot(3, 5.0, priority=3),
+            _slot(4, 5.0, priority=2),
+            _slot(5, 5.0, priority=1),
+        ])
+        clips = [
+            _make_clip("clip_a", [_moment(0.0, 5.0, energy=8.0), _moment(5.0, 10.0, energy=7.0)]),
+            _make_clip("clip_b", [_moment(0.0, 5.0, energy=7.5), _moment(5.0, 10.0, energy=6.5)]),
+        ]
+
+        plan = match(recipe, clips)
+
+        clip_ids = [step.clip_id for step in plan.steps]
+        for i in range(1, len(clip_ids)):
+            assert clip_ids[i] != clip_ids[i - 1], (
+                f"Adjacent slots {i} and {i+1} both use {clip_ids[i]}: {clip_ids}"
+            )

@@ -1,6 +1,9 @@
 """Unit tests for tasks/template_orchestrate.py — all external calls mocked."""
 
+import subprocess
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from app.models import VideoTemplate
 from app.pipeline.agents.gemini_analyzer import (
@@ -436,8 +439,8 @@ class TestAssembleClipsTimeCursor:
                 f"Expected 3 different start_s, got {start_times}"
             )
 
-    def test_cursor_wraps_when_clip_exhausted(self, tmp_path):
-        """Cursor wraps to 0.0 when advancing past clip duration."""
+    def test_cursor_clamps_when_clip_exhausted(self, tmp_path):
+        """Cursor clamps to end of clip when exhausted — never wraps to 0.0."""
         from app.pipeline.probe import VideoProbe
         from app.tasks.template_orchestrate import _assemble_clips
 
@@ -470,9 +473,9 @@ class TestAssembleClipsTimeCursor:
             )
 
             start_times = [c.kwargs["start_s"] for c in mock_reframe.call_args_list]
-            # 3s clip, 1s slots → 0.0, 1.0, 2.0, then wraps to 0.0, 1.0
-            assert start_times == [0.0, 1.0, 2.0, 0.0, 1.0], (
-                f"Expected cursor wrap, got {start_times}"
+            # 3s clip, 1s slots → 0.0, 1.0, 2.0, then clamps to 2.0 (end of clip)
+            assert start_times == [0.0, 1.0, 2.0, 2.0, 2.0], (
+                f"Expected cursor clamp (no wrap), got {start_times}"
             )
 
 
@@ -705,3 +708,260 @@ class TestOrchestrateTemplateJobErrors:
 
             # Must not raise
             orchestrate_template_job("12345678-1234-5678-1234-567812345678")
+
+
+# ── Beat detection tests ─────────────────────────────────────────────────────
+
+
+class TestSnapToBeat:
+    def test_snap_within_tolerance(self):
+        """Target near a beat (within 0.4s) → snaps to beat."""
+        from app.tasks.template_orchestrate import _snap_to_beat
+
+        result = _snap_to_beat(5.0, [4.8, 10.0])
+        assert result == 4.8
+
+    def test_snap_outside_tolerance(self):
+        """Target far from any beat (>0.4s) → returns target unchanged."""
+        from app.tasks.template_orchestrate import _snap_to_beat
+
+        result = _snap_to_beat(5.0, [3.0, 8.0])
+        assert result == 5.0
+
+    def test_snap_empty_beats(self):
+        """No beats → returns target unchanged."""
+        from app.tasks.template_orchestrate import _snap_to_beat
+
+        result = _snap_to_beat(5.0, [])
+        assert result == 5.0
+
+    def test_snap_exact_match(self):
+        """Target equals a beat → returns that beat."""
+        from app.tasks.template_orchestrate import _snap_to_beat
+
+        result = _snap_to_beat(5.0, [3.0, 5.0, 8.0])
+        assert result == 5.0
+
+    def test_snap_two_beats_equidistant(self):
+        """Two beats equally close → picks one (deterministic)."""
+        from app.tasks.template_orchestrate import _snap_to_beat
+
+        result = _snap_to_beat(5.0, [4.8, 5.2])
+        assert result in (4.8, 5.2)
+
+    def test_snap_prefers_closer_beat(self):
+        """When two beats are within tolerance, closer one wins."""
+        from app.tasks.template_orchestrate import _snap_to_beat
+
+        result = _snap_to_beat(5.0, [4.9, 5.3])
+        assert result == 4.9
+
+
+class TestDetectAudioBeats:
+    def test_happy_path_parses_silence_end(self):
+        """FFmpeg stderr with silence_end markers → sorted timestamps."""
+        from app.tasks.template_orchestrate import _detect_audio_beats
+
+        fake_stderr = (
+            b"[silencedetect @ 0x1234] silence_end: 1.500 | silence_duration: 0.300\n"
+            b"[silencedetect @ 0x1234] silence_end: 3.200 | silence_duration: 0.150\n"
+            b"[silencedetect @ 0x1234] silence_end: 5.800 | silence_duration: 0.200\n"
+        )
+        mock_result = MagicMock(returncode=0, stderr=fake_stderr)
+
+        with patch("app.tasks.template_orchestrate.subprocess.run", return_value=mock_result):
+            beats = _detect_audio_beats("/tmp/audio.m4a")
+
+        assert beats == [1.5, 3.2, 5.8]
+
+    def test_ffmpeg_failure_returns_empty(self):
+        """FFmpeg non-zero exit → returns [], does not raise."""
+        from app.tasks.template_orchestrate import _detect_audio_beats
+
+        mock_result = MagicMock(returncode=1, stderr=b"error")
+
+        with patch("app.tasks.template_orchestrate.subprocess.run", return_value=mock_result):
+            beats = _detect_audio_beats("/tmp/audio.m4a")
+
+        assert beats == []
+
+    def test_silent_audio_returns_empty(self):
+        """FFmpeg succeeds but no silence_end markers → returns []."""
+        from app.tasks.template_orchestrate import _detect_audio_beats
+
+        mock_result = MagicMock(returncode=0, stderr=b"size=   0kB time=00:00:30\n")
+
+        with patch("app.tasks.template_orchestrate.subprocess.run", return_value=mock_result):
+            beats = _detect_audio_beats("/tmp/audio.m4a")
+
+        assert beats == []
+
+    def test_subprocess_exception_returns_empty(self):
+        """subprocess.run raises → returns [], does not propagate."""
+        from app.tasks.template_orchestrate import _detect_audio_beats
+
+        with patch(
+            "app.tasks.template_orchestrate.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("ffmpeg", 30),
+        ):
+            beats = _detect_audio_beats("/tmp/audio.m4a")
+
+        assert beats == []
+
+
+class TestMergeBeatSources:
+    def test_both_sources_merged_and_deduped(self):
+        """Gemini and FFmpeg beats combined, near-duplicates removed."""
+        from app.tasks.template_orchestrate import _merge_beat_sources
+
+        gemini = [1.5, 3.2, 5.0]
+        ffmpeg = [1.48, 3.5, 7.0]  # 1.48 is near 1.5 (within 0.15s threshold)
+
+        result = _merge_beat_sources(gemini, ffmpeg)
+
+        # 1.48 kept (FFmpeg), 1.5 dropped (too close). 3.2, 3.5, 5.0, 7.0 all kept.
+        assert 1.48 in result
+        assert 1.5 not in result
+        assert 3.2 in result
+        assert 3.5 in result
+        assert 5.0 in result
+        assert 7.0 in result
+
+    def test_both_empty_returns_empty(self):
+        from app.tasks.template_orchestrate import _merge_beat_sources
+
+        assert _merge_beat_sources([], []) == []
+
+    def test_one_source_empty_returns_other(self):
+        from app.tasks.template_orchestrate import _merge_beat_sources
+
+        assert _merge_beat_sources([], [1.0, 2.0]) == [1.0, 2.0]
+        assert _merge_beat_sources([1.0, 2.0], []) == [1.0, 2.0]
+
+    def test_result_is_sorted(self):
+        from app.tasks.template_orchestrate import _merge_beat_sources
+
+        result = _merge_beat_sources([5.0, 1.0], [3.0, 7.0])
+        assert result == sorted(result)
+
+
+class TestAssembleClipsBeatSnap:
+    """Beat-snap integration in _assemble_clips."""
+
+    def test_beat_snap_adjusts_slot_duration(self, tmp_path):
+        """With beats, slot end_s is adjusted to align with nearest beat."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=30.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = MagicMock()
+        step.clip_id = "clip_a"
+        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.slot = {"position": 1, "target_duration_s": 5.0}
+
+        # Beat at 4.8s — within 0.4s tolerance of slot end (0+5=5.0)
+        beats = [4.8, 10.0, 15.0]
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                beat_timestamps_s=beats,
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            # Slot snapped from 5.0 to 4.8 → end_s = 0.0 + 4.8 = 4.8
+            assert kwargs["end_s"] == pytest.approx(4.8, abs=0.01)
+
+    def test_no_beats_unchanged(self, tmp_path):
+        """Empty beats → same behavior as before (regression guard)."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=30.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = MagicMock()
+        step.clip_id = "clip_a"
+        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.slot = {"position": 1, "target_duration_s": 5.0}
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                beat_timestamps_s=[],
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            assert kwargs["end_s"] == 5.0
+
+    def test_none_beats_unchanged(self, tmp_path):
+        """None beats (backward compat) → same behavior as before."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=30.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = MagicMock()
+        step.clip_id = "clip_a"
+        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.slot = {"position": 1, "target_duration_s": 5.0}
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                # beat_timestamps_s not passed → defaults to None
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            assert kwargs["end_s"] == 5.0
+
+
+class TestTemplateRecipeBackwardCompat:
+    def test_old_recipe_without_beats_loads(self):
+        """Cached recipe dict without beat_timestamps_s → TemplateRecipe works."""
+        old_recipe_dict = {
+            "shot_count": 3,
+            "total_duration_s": 15.0,
+            "hook_duration_s": 3.0,
+            "slots": [{"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "hook"}],
+            "copy_tone": "casual",
+            "caption_style": "bold",
+        }
+
+        recipe = TemplateRecipe(**old_recipe_dict)
+
+        assert recipe.beat_timestamps_s == []
+        assert recipe.shot_count == 3

@@ -19,7 +19,9 @@ Both tasks follow the render_clip "never raises" invariant:
 all errors caught → job.status = 'processing_failed'
 """
 
+import bisect
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -83,12 +85,20 @@ def analyze_template_task(self, template_id: str) -> None:
 
             # Extract template audio (idempotent — skip if already stored)
             audio_gcs: str | None = existing_audio_gcs
+            audio_local = os.path.join(tmpdir, "audio.m4a")
             if not existing_audio_gcs:
-                audio_local = os.path.join(tmpdir, "audio.m4a")
                 if _extract_template_audio(local_path, audio_local):
                     audio_gcs = f"templates/{template_id}/audio.m4a"
                     upload_public_read(audio_local, audio_gcs)
                     log.info("template_audio_extracted", template_id=template_id)
+
+            # Beat detection: merge Gemini beats with FFmpeg energy onsets
+            ffmpeg_beats = (
+                _detect_audio_beats(audio_local)
+                if os.path.exists(audio_local)
+                else []
+            )
+            merged_beats = _merge_beat_sources(recipe.beat_timestamps_s, ffmpeg_beats)
 
             with _sync_session() as db:
                 template = db.get(VideoTemplate, template_id)
@@ -101,6 +111,7 @@ def analyze_template_task(self, template_id: str) -> None:
                         "slots": recipe.slots,
                         "copy_tone": recipe.copy_tone,
                         "caption_style": recipe.caption_style,
+                        "beat_timestamps_s": merged_beats,
                     }
                     template.recipe_cached_at = datetime.now(UTC)
                     template.analysis_status = "ready"
@@ -235,7 +246,11 @@ def _run_template_job(job_id: str) -> None:
         clip_id_to_local = {
             ref.name: path for ref, path in zip(file_refs, local_clip_paths)
         }
-        _assemble_clips(assembly_plan.steps, clip_id_to_local, probe_map, assembled_path, tmpdir)
+        _assemble_clips(
+            assembly_plan.steps, clip_id_to_local, probe_map,
+            assembled_path, tmpdir,
+            beat_timestamps_s=recipe.beat_timestamps_s,
+        )
 
         # [6b] Mix template audio if available
         if audio_gcs_path:
@@ -432,6 +447,7 @@ def _assemble_clips(
     clip_probe_map: dict,
     output_path: str,
     tmpdir: str,
+    beat_timestamps_s: list[float] | None = None,
 ) -> None:
     """Assemble clips in slot order using FFmpeg concat.
 
@@ -441,11 +457,20 @@ def _assemble_clips(
     Time-cursor: when a clip appears in multiple slots, each use advances start_s
     by slot_target_dur so the viewer sees a different section of the clip rather
     than the same footage repeated. Wraps to the beginning if the clip is exhausted.
+
+    Beat-snap: when beat_timestamps_s is provided, each slot boundary is snapped
+    to the nearest beat within BEAT_SNAP_TOLERANCE_S, adjusting slot duration
+    so transitions align with musical beats.
     """
     from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
 
+    beats = beat_timestamps_s or []
+
     # Per-clip time cursors: track next available start_s to avoid reusing footage
     clip_cursors: dict[str, float] = {}
+
+    # Cumulative time offset for beat-snap (tracks assembled video position)
+    cumulative_s = 0.0
 
     # Step 1: reframe each slot to a temp file
     reframed_paths: list[str] = []
@@ -459,6 +484,15 @@ def _assemble_clips(
         slot_target_dur = float(step.slot.get("target_duration_s", 5.0))
         slot_target_dur = max(slot_target_dur, 0.5)  # guard against zero/negative
 
+        # Beat-snap: adjust slot duration so the cut lands on a musical beat
+        if beats:
+            expected_end = cumulative_s + slot_target_dur
+            snapped_end = _snap_to_beat(expected_end, beats)
+            slot_target_dur = max(0.5, snapped_end - cumulative_s)
+            cumulative_s = snapped_end
+        else:
+            cumulative_s += slot_target_dur
+
         # Time-cursor logic: first use of a clip follows Gemini's moment start_s;
         # subsequent uses advance forward so footage doesn't repeat.
         if clip_id not in clip_cursors:
@@ -466,11 +500,20 @@ def _assemble_clips(
         else:
             start_s = clip_cursors[clip_id]
 
-        # Wrap if cursor has gone past the clip duration
+        # Clamp if cursor has gone past the clip duration.
+        # Never wrap to 0.0 — that replays footage the viewer already saw.
+        # Instead, show the last available segment of the clip.
         probe = clip_probe_map.get(local_path)
         clip_dur = probe.duration_s if probe else 30.0
         if start_s + slot_target_dur > clip_dur:
-            start_s = 0.0
+            start_s = max(0.0, clip_dur - slot_target_dur)
+            log.warning(
+                "clip_footage_exhausted",
+                clip_id=clip_id,
+                position=step.slot.get("position"),
+                clip_dur=clip_dur,
+                cursor=clip_cursors.get(clip_id, 0.0),
+            )
 
         clip_cursors[clip_id] = start_s + slot_target_dur
 
@@ -528,6 +571,101 @@ def _assemble_clips(
     result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
     if result.returncode != 0:
         raise ValueError(f"FFmpeg concat failed: {result.stderr.decode()[:300]}")
+
+
+# ── Beat detection helpers ─────────────────────────────────────────────────────
+
+BEAT_SNAP_TOLERANCE_S = 0.4
+
+
+def _detect_audio_beats(audio_path: str, threshold_db: float = -20.0) -> list[float]:
+    """Detect energy onset timestamps in audio using FFmpeg silencedetect.
+
+    Parses silence_end markers from FFmpeg stderr — each silence_end marks a
+    transition from quiet→loud, which corresponds to a beat or energy onset.
+
+    Non-fatal: returns [] on any error.
+    """
+    cmd = [
+        "ffmpeg", "-i", audio_path,
+        "-af", f"silencedetect=noise={threshold_db}dB:d=0.1",
+        "-f", "null", "-",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=30, check=False)
+        if result.returncode != 0:
+            log.warning("beat_detect_ffmpeg_failed", stderr=result.stderr.decode()[:200])
+            return []
+
+        # Parse silence_end timestamps from stderr
+        # Format: [silencedetect @ 0x...] silence_end: 1.234 | silence_duration: 0.567
+        stderr_text = result.stderr.decode()
+        beats = sorted(
+            float(m.group(1))
+            for m in re.finditer(r"silence_end:\s*([\d.]+)", stderr_text)
+        )
+        log.info("beat_detect_done", count=len(beats))
+        return beats
+
+    except Exception as exc:
+        log.warning("beat_detect_failed", error=str(exc))
+        return []
+
+
+def _merge_beat_sources(
+    gemini_beats: list[float],
+    ffmpeg_beats: list[float],
+    dedup_threshold_s: float = 0.15,
+) -> list[float]:
+    """Merge two beat timestamp lists, deduplicating within threshold.
+
+    When Gemini and FFmpeg beats are within dedup_threshold_s of each other,
+    the FFmpeg timestamp is kept (frame-accurate) and the Gemini one is dropped.
+    """
+    if not gemini_beats and not ffmpeg_beats:
+        return []
+    if not gemini_beats:
+        return sorted(ffmpeg_beats)
+    if not ffmpeg_beats:
+        return sorted(gemini_beats)
+
+    # Start with FFmpeg beats (higher accuracy)
+    merged = sorted(ffmpeg_beats)
+
+    # Add Gemini beats that aren't near any FFmpeg beat
+    for gb in gemini_beats:
+        idx = bisect.bisect_left(merged, gb)
+        too_close = False
+        for check_idx in (idx - 1, idx):
+            if 0 <= check_idx < len(merged):
+                if abs(merged[check_idx] - gb) <= dedup_threshold_s:
+                    too_close = True
+                    break
+        if not too_close:
+            bisect.insort(merged, gb)
+
+    return merged
+
+
+def _snap_to_beat(target_end_s: float, beats: list[float]) -> float:
+    """Snap target timestamp to nearest beat if within tolerance.
+
+    Uses bisect for O(log n) lookup. No-op if beats is empty.
+    """
+    if not beats:
+        return target_end_s
+
+    idx = bisect.bisect_left(beats, target_end_s)
+    candidates = []
+    if idx < len(beats):
+        candidates.append(beats[idx])
+    if idx > 0:
+        candidates.append(beats[idx - 1])
+
+    nearest = min(candidates, key=lambda b: abs(b - target_end_s))
+    if abs(nearest - target_end_s) <= BEAT_SNAP_TOLERANCE_S:
+        return nearest
+    return target_end_s
 
 
 # ── Template audio helpers ─────────────────────────────────────────────────────

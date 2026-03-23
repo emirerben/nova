@@ -59,6 +59,7 @@ class TemplateRecipe:
     slots: list[dict]  # [{position, target_duration_s, priority, slot_type}]
     copy_tone: str
     caption_style: str
+    beat_timestamps_s: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -199,9 +200,11 @@ def analyze_clip(
         '- "transcript": string — full spoken text in the segment\n'
         '- "hook_text": string — the first compelling sentence that creates curiosity\n'
         '- "hook_score": float 0–10 — how strongly the opening hooks the viewer\n'
-        '- "best_moments": list of objects with '
+        '- "best_moments": list of 3–6 objects with '
         '{"start_s": float, "end_s": float, "energy": float 0–10, "description": string} '
-        "— the 2–5 most energetic/interesting moments\n\n"
+        "covering a VARIETY of durations — include some short moments (3–5s) AND some "
+        "medium moments (8–12s) AND at least one longer moment (13–20s) so this clip can "
+        "fill both short and long template slots\n\n"
         "Return ONLY valid JSON, no markdown."
     )
 
@@ -209,7 +212,7 @@ def analyze_clip(
         from google.genai import types as genai_types  # type: ignore[import]
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=settings.gemini_model,
             contents=[
                 genai_types.Part.from_uri(
                     file_uri=file_ref.uri,
@@ -254,16 +257,30 @@ def analyze_template(file_ref: Any) -> TemplateRecipe:
     client = _get_client()
 
     prompt = (
-        "Analyze this TikTok/short-form video template. Extract its structural recipe.\n\n"
+        "Analyze this TikTok/short-form video template. Extract its structural recipe "
+        "so user footage can be inserted into each slot.\n\n"
+        "Rules:\n"
+        "- Count every shot cut as a separate slot\n"
+        "- slots array length MUST equal shot_count\n"
+        "- The sum of all target_duration_s values must approximately equal total_duration_s\n"
+        "- Each slot's target_duration_s is the duration of that shot in the template\n"
+        "- position is 1-indexed temporal order (slot 1 = first shot)\n\n"
         "Return a JSON object with these exact fields:\n"
         '- "shot_count": int — total number of shots/cuts\n'
         '- "total_duration_s": float — total video duration in seconds\n'
         '- "hook_duration_s": float — duration of the opening hook section\n'
         '- "slots": list of objects with '
         '{"position": int (1-indexed), "target_duration_s": float, '
-        '"priority": int 1–10, "slot_type": "hook"|"broll"|"outro"}\n'
+        '"priority": int 1–10, "slot_type": "hook"|"broll"|"outro", '
+        '"energy": float 0–10} where energy reflects the musical intensity at that '
+        "moment — 0 is silence/calm, 5 is moderate, 10 is a hard beat drop or climax. "
+        "This is critical for matching footage energy to music energy.\n"
         '- "copy_tone": string — one of: casual, formal, energetic, calm\n'
-        '- "caption_style": string — description of caption/text overlay style\n\n'
+        '- "caption_style": string — description of caption/text overlay style\n'
+        '- "beat_timestamps_s": list of float — timestamps (in seconds) of significant '
+        "musical beats, drops, transitions, or energy changes in the audio track. "
+        "Include every timestamp where a visual cut coincides with a musical beat. "
+        "Return empty list if the template has no music.\n\n"
         "Return ONLY valid JSON, no markdown."
     )
 
@@ -285,13 +302,29 @@ def analyze_template(file_ref: Any) -> TemplateRecipe:
 
     data = _check_refusal(response, ["shot_count", "slots"])
 
+    slots = data.get("slots", [])
+    total_duration_s = float(data.get("total_duration_s", 0.0))
+    slot_duration_sum = sum(float(s.get("target_duration_s", 0.0)) for s in slots)
+    if total_duration_s > 0 and abs(slot_duration_sum - total_duration_s) > 5.0:
+        log.warning(
+            "template_slot_duration_mismatch",
+            slot_sum=round(slot_duration_sum, 1),
+            total_duration_s=round(total_duration_s, 1),
+            delta=round(abs(slot_duration_sum - total_duration_s), 1),
+        )
+
+    beat_timestamps_s = sorted(
+        float(t) for t in data.get("beat_timestamps_s", [])
+    )
+
     return TemplateRecipe(
         shot_count=int(data.get("shot_count", 0)),
-        total_duration_s=float(data.get("total_duration_s", 0.0)),
+        total_duration_s=total_duration_s,
         hook_duration_s=float(data.get("hook_duration_s", 0.0)),
-        slots=data.get("slots", []),
+        slots=slots,
         copy_tone=str(data.get("copy_tone", "casual")),
         caption_style=str(data.get("caption_style", "")),
+        beat_timestamps_s=beat_timestamps_s,
     )
 
 
@@ -321,7 +354,7 @@ def transcribe(file_ref: Any) -> "Transcript":  # noqa: F821
         from google.genai import types as genai_types  # type: ignore[import]
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=settings.gemini_model,
             contents=[
                 genai_types.Part.from_uri(
                     file_uri=file_ref.uri,
