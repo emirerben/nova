@@ -3,10 +3,7 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from app.pipeline.agents.copy_writer import (
-    PlatformCopy,
     _template_copy,
     _truncate,
     generate_copy,

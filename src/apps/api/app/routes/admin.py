@@ -7,7 +7,7 @@ Auth: X-Admin-Token header (static key from settings.admin_api_key).
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, status

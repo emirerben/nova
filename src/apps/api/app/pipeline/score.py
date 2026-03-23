@@ -129,7 +129,11 @@ def _score_hooks_gemini(
 
     Per-segment failures fall back to score=5.0 and empty hook_text — never raises.
     """
-    from app.pipeline.agents.gemini_analyzer import GeminiAnalysisError, GeminiRefusalError, analyze_clip  # noqa: PLC0415
+    from app.pipeline.agents.gemini_analyzer import (  # noqa: PLC0415
+        GeminiAnalysisError,
+        GeminiRefusalError,
+        analyze_clip,
+    )
 
     def _analyze_one(idx_segment: tuple[int, tuple[float, float]]) -> tuple[int, float, str]:
         idx, (start_s, end_s) = idx_segment

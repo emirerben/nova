@@ -5,7 +5,6 @@ import pytest
 from app.pipeline.agents.gemini_analyzer import AssemblyPlan, ClipMeta, TemplateRecipe
 from app.pipeline.template_matcher import TemplateMismatchError, match
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
 def _make_recipe(slots: list[dict]) -> TemplateRecipe:

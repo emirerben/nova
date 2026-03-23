@@ -1,7 +1,6 @@
 """Unit tests for pipeline/agents/gemini_analyzer.py — all Gemini calls mocked."""
 
 import json
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,7 +17,6 @@ from app.pipeline.agents.gemini_analyzer import (
     gemini_upload_and_wait,
     transcribe,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -140,7 +138,9 @@ class TestAnalyzeClip:
             "transcript": "This is a video about something",
             "hook_text": "You won't believe this!",
             "hook_score": 8.5,
-            "best_moments": [{"start_s": 0.0, "end_s": 10.0, "energy": 7.0, "description": "intro"}],
+            "best_moments": [
+                {"start_s": 0.0, "end_s": 10.0, "energy": 7.0, "description": "intro"}
+            ],
         }
 
         with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client:
