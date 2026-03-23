@@ -58,7 +58,7 @@ def _sync_session() -> Session:
 # ── analyze_template_task ─────────────────────────────────────────────────────
 
 
-@celery_app.task(name="tasks.analyze_template_task", bind=True, max_retries=0)
+@celery_app.task(name="tasks.analyze_template_task", bind=True, max_retries=0, time_limit=600)
 def analyze_template_task(self, template_id: str) -> None:
     """Download template video, analyze with Gemini, cache recipe in DB."""
     log.info("analyze_template_start", template_id=template_id)
@@ -108,7 +108,7 @@ def analyze_template_task(self, template_id: str) -> None:
 # ── orchestrate_template_job ──────────────────────────────────────────────────
 
 
-@celery_app.task(name="tasks.orchestrate_template_job", bind=True, max_retries=0)
+@celery_app.task(name="tasks.orchestrate_template_job", bind=True, max_retries=0, time_limit=1800)
 def orchestrate_template_job(self, job_id: str) -> None:
     """Full template-mode pipeline. Never raises — all errors go to processing_failed."""
     log.info("template_job_start", job_id=job_id)
@@ -156,14 +156,10 @@ def _run_template_job(job_id: str) -> None:
         recipe_data = template.recipe_cached
         template_gcs_path = template.gcs_path
 
-    recipe = TemplateRecipe(
-        shot_count=recipe_data["shot_count"],
-        total_duration_s=recipe_data["total_duration_s"],
-        hook_duration_s=recipe_data["hook_duration_s"],
-        slots=recipe_data["slots"],
-        copy_tone=recipe_data["copy_tone"],
-        caption_style=recipe_data["caption_style"],
-    )
+    try:
+        recipe = TemplateRecipe(**recipe_data)
+    except (TypeError, ValueError, KeyError) as exc:
+        raise ValueError(f"Template recipe in DB is malformed: {exc}") from exc
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # [2] Download all clip files in parallel

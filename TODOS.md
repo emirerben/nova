@@ -1,5 +1,38 @@
 # Nova — Deferred Work
 
+## Gemini + Template Mode (shipped 2026-03-23)
+
+### Gemini Integration Tests
+**What:** Real end-to-end tests hitting the Gemini API: `tests/integration/test_gemini_analyzer.py`
+**Why:** Current tests mock all Gemini calls — a model API change or schema drift would only surface in production.
+**How:** Requires `GEMINI_API_KEY` in local env. Write 3 tests: upload+poll, analyze_clip, analyze_template against a real test video fixture.
+**Effort:** S (human: ~1 day / CC: ~15 min)
+**Priority:** P2
+**Depends on:** GEMINI_API_KEY in local env
+
+### Gemini API Cost + Rate Limit Guard
+**What:** Add per-job Gemini token cost tracking and a per-user/per-day quota guard.
+**Why:** 9 parallel analyze_clip calls per job. At scale, costs can grow unbounded and ResourceExhausted errors will increase.
+**How:** Track token counts in `Job.probe_metadata`; add a Celery pre-task check against a Redis counter.
+**Effort:** M (human: ~3 days / CC: ~30 min)
+**Priority:** P2 — add before marketing drives volume
+**Depends on:** Usage baseline from real jobs
+
+### Multiple Template Support
+**What:** Support different template structures for different content categories (tutorial vs. reaction vs. vlog).
+**Why:** v1 validates the single-template UX; after validation, multiple templates unlock more use cases.
+**Effort:** M (human: ~1 week / CC: ~30 min)
+**Priority:** P2 — after v1 template validated in production
+
+### Platform Posting (Phase 2)
+**What:** POST /post endpoint, OAuth token refresh, Instagram/YouTube/TikTok upload integrations.
+**Why:** Core monetization path — users want one-click posting, not just clip downloads.
+**How:** Separate PR; OAuth infra already in models. See agents/DECISIONS.md.
+**Effort:** L (human: ~2 weeks / CC: ~2 hours)
+**Priority:** P1 — next sprint after template validation
+
+---
+
 ## P1 — Required before GTM campaigns go live
 
 ### UTM Capture

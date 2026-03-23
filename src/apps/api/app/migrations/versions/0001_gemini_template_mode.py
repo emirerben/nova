@@ -53,6 +53,7 @@ def upgrade() -> None:
             nullable=True,
         ),
     )
+    op.create_index("idx_jobs_template_id", "jobs", ["template_id"])
     op.add_column(
         "jobs",
         sa.Column("assembly_plan", JSONB, nullable=True),
@@ -60,6 +61,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_index("idx_jobs_template_id", "jobs")
     op.drop_column("jobs", "assembly_plan")
     op.drop_column("jobs", "template_id")
     op.drop_column("jobs", "job_type")
