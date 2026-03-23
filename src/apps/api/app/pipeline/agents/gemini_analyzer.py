@@ -209,7 +209,7 @@ def analyze_clip(
         from google.genai import types as genai_types  # type: ignore[import]
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=[
                 genai_types.Part.from_uri(
                     file_uri=file_ref.uri,
@@ -270,7 +270,7 @@ def analyze_template(file_ref: Any) -> TemplateRecipe:
     from google.genai import types as genai_types  # type: ignore[import]
 
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         contents=[
             genai_types.Part.from_uri(
                 file_uri=file_ref.uri,
@@ -321,7 +321,7 @@ def transcribe(file_ref: Any) -> "Transcript":  # noqa: F821
         from google.genai import types as genai_types  # type: ignore[import]
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=[
                 genai_types.Part.from_uri(
                     file_uri=file_ref.uri,

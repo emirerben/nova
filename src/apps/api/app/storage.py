@@ -49,25 +49,30 @@ def presigned_put_url(
 
 
 def upload_public_read(local_path: str, object_path: str, content_type: str = "video/mp4") -> str:
-    """Upload a local file to GCS with public-read ACL. Returns the public URL.
+    """Upload a local file to GCS and return a signed URL valid for 7 days.
 
-    Instagram Graph API requires a public URL — signed URLs fail.
-    Paths are scoped to {user_id}/{job_id}/ so IDOR is not possible even on public bucket.
+    Uses signed URLs instead of ACLs — compatible with uniform bucket-level access.
     """
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     blob.upload_from_filename(local_path, content_type=content_type)
-    blob.make_public()
-    return blob.public_url
+    return blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(days=7),
+        method="GET",
+    )
 
 
 def upload_bytes_public_read(data: bytes, object_path: str, content_type: str = "image/jpeg") -> str:  # noqa: E501
-    """Upload raw bytes to GCS with public-read ACL. Returns the public URL."""
+    """Upload raw bytes to GCS and return a signed URL valid for 7 days."""
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     blob.upload_from_string(data, content_type=content_type)
-    blob.make_public()
-    return blob.public_url
+    return blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(days=7),
+        method="GET",
+    )
 
 
 def download_to_file(object_path: str, local_path: str) -> None:
