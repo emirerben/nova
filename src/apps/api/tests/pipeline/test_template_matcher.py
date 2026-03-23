@@ -123,22 +123,43 @@ class TestTemplateMatcher:
 
         assert len(plan.steps) == 1
 
-    def test_greedy_assigns_highest_energy_to_highest_priority(self):
-        """Highest priority slot should get the highest energy moment."""
+    def test_greedy_matches_energy_to_slot(self):
+        """Highest priority slot gets the best energy-matched moment."""
         recipe = _make_recipe([
             _slot(1, 5.0, priority=1),
-            _slot(2, 5.0, priority=10),  # highest priority
+            _slot(2, 5.0, priority=10),  # highest priority, default energy=5.0
         ])
         clip = _make_clip("clip_a", [
-            _moment(0.0, 5.0, energy=9.0),   # high energy
-            _moment(5.0, 10.0, energy=3.0),  # low energy
+            _moment(0.0, 5.0, energy=9.0),   # far from slot energy 5.0
+            _moment(5.0, 10.0, energy=5.0),   # exact match to slot energy 5.0
         ])
 
         plan = match(recipe, [clip])
 
-        # slot position 2 has priority=10, should get the high-energy moment
+        # slot position 2 has priority=10, processed first → gets energy=5.0 (closest match)
         slot2_step = next(s for s in plan.steps if s.slot["position"] == 2)
-        assert slot2_step.moment["energy"] == pytest.approx(9.0)
+        assert slot2_step.moment["energy"] == pytest.approx(5.0)
+
+    def test_high_energy_slot_gets_high_energy_moment(self):
+        """Slot with high energy rating gets matched to high-energy footage."""
+        slots = [
+            {"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "broll", "energy": 2.0},
+            {"position": 2, "target_duration_s": 5.0, "priority": 5, "slot_type": "broll", "energy": 9.0},
+        ]
+        recipe = _make_recipe(slots)
+        clip = _make_clip("clip_a", [
+            _moment(0.0, 5.0, energy=8.5),   # high energy
+            _moment(5.0, 10.0, energy=2.5),   # low energy
+        ])
+
+        plan = match(recipe, [clip])
+
+        # slot 2 (energy=9.0) should get the high-energy moment (8.5)
+        slot2_step = next(s for s in plan.steps if s.slot["position"] == 2)
+        assert slot2_step.moment["energy"] == pytest.approx(8.5)
+        # slot 1 (energy=2.0) should get the low-energy moment (2.5)
+        slot1_step = next(s for s in plan.steps if s.slot["position"] == 1)
+        assert slot1_step.moment["energy"] == pytest.approx(2.5)
 
 
 # ── Adjacency dedup tests ────────────────────────────────────────────────────
