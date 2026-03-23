@@ -1,6 +1,5 @@
 """Failure path: 1 of 3 render tasks fails → job status = clips_ready_partial."""
 
-import pytest
 
 from app.tasks.orchestrate import finalize_job
 

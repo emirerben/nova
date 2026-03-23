@@ -5,15 +5,15 @@ import itertools
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.database import get_db
+from app.main import app
+from app.models import WaitlistSignup
 
 # Unique IP counter — prevents rate-limiter state from bleeding across test functions.
 # Each client fixture call gets a fresh IP, so no test inherits another's request count.
 _ip_counter = itertools.count(1)
-
-from app.database import get_db
-from app.main import app
-from app.models import Base, WaitlistSignup
 
 # ── In-memory SQLite engine for tests ─────────────────────────────────────────
 

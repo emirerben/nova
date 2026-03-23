@@ -13,7 +13,6 @@ CRITICAL: Never use shell=True. Always pass args as a list.
 
 import os
 import subprocess
-import tempfile
 
 import structlog
 

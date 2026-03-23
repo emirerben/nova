@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from pydantic import ValidationError
 
 from app.pipeline.agents.copy_writer import (
     PlatformCopy,

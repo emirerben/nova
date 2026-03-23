@@ -91,7 +91,7 @@ class TestProbeVideo:
                 probe_video("/fake/bad.mp4")
 
     def test_timeout_raises_probe_timeout(self):
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="ffprobe", timeout=60)):
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="ffprobe", timeout=60)):  # noqa: E501
             with pytest.raises(ProbeTimeout):
                 probe_video("/fake/video.mp4")
 

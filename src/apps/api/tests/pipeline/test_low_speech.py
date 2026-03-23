@@ -5,7 +5,6 @@ from unittest.mock import patch
 import pytest
 
 from app.pipeline.probe import VideoProbe
-from app.pipeline.scene_detect import SceneCut
 from app.pipeline.score import CANDIDATE_COUNT, select_candidates
 from app.pipeline.transcribe import Transcript, Word
 
