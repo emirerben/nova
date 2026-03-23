@@ -5,6 +5,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     ARRAY,
+    TIMESTAMP,
     BigInteger,
     Float,
     ForeignKey,
@@ -14,12 +15,11 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy import TIMESTAMP
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB, UUID
-
-TIMESTAMPTZ = TIMESTAMP(timezone=True)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+
+TIMESTAMPTZ = TIMESTAMP(timezone=True)
 
 
 class Base(DeclarativeBase):

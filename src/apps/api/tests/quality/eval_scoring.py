@@ -11,7 +11,6 @@ Run: pytest tests/quality/ -v
 """
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -47,10 +46,10 @@ def load_eval_cases() -> list[dict]:
 )
 def test_recall_at_3_meets_launch_threshold():
     """LAUNCH GATE: ≥70% of human-chosen clips must appear in Nova's top 3."""
-    from unittest.mock import patch
 
     from app.pipeline import probe as probe_mod
-    from app.pipeline import scene_detect, transcribe as transcribe_mod
+    from app.pipeline import scene_detect
+    from app.pipeline import transcribe as transcribe_mod
     from app.pipeline.score import TOP_N, select_candidates
 
     cases = load_eval_cases()

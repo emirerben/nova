@@ -1,0 +1,34 @@
+Metadata-Version: 2.4
+Name: nova-api
+Version: 0.1.0
+Requires-Python: >=3.11
+Requires-Dist: fastapi>=0.111
+Requires-Dist: uvicorn[standard]>=0.29
+Requires-Dist: celery[redis]>=5.3
+Requires-Dist: redis>=5.0
+Requires-Dist: sqlalchemy>=2.0
+Requires-Dist: alembic>=1.13
+Requires-Dist: asyncpg>=0.29
+Requires-Dist: psycopg2-binary>=2.9
+Requires-Dist: pydantic>=2.7
+Requires-Dist: pydantic-settings>=2.2
+Requires-Dist: openai>=1.30
+Requires-Dist: google-cloud-storage>=2.16
+Requires-Dist: scenedetect[opencv]>=0.6
+Requires-Dist: opencv-python-headless>=4.9
+Requires-Dist: cryptography>=42
+Requires-Dist: slowapi>=0.1.9
+Requires-Dist: email-validator>=2.1
+Requires-Dist: python-multipart>=0.0.9
+Requires-Dist: httpx>=0.27
+Requires-Dist: structlog>=24
+Provides-Extra: local-whisper
+Requires-Dist: faster-whisper>=1.0; extra == "local-whisper"
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: pytest-mock>=3.14; extra == "dev"
+Requires-Dist: httpx>=0.27; extra == "dev"
+Requires-Dist: aiosqlite>=0.20; extra == "dev"
+Requires-Dist: ruff>=0.4; extra == "dev"
+Requires-Dist: mypy>=1.10; extra == "dev"

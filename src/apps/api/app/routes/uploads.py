@@ -58,7 +58,7 @@ async def create_presigned_upload(
     if body.aspect_ratio not in ALLOWED_ASPECT_RATIOS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Only 16:9 (landscape) and 9:16 (vertical) aspect ratios are supported in v1. Use landscape or vertical video.",
+            detail="Only 16:9 (landscape) and 9:16 (vertical) aspect ratios are supported in v1. Use landscape or vertical video.",  # noqa: E501
         )
 
     allowed_platforms = {"instagram", "youtube", "tiktok"}
@@ -81,7 +81,7 @@ async def create_presigned_upload(
     job_id = str(uuid.uuid4())
 
     try:
-        upload_url, gcs_path = storage.presigned_put_url(user_id, job_id, content_type=body.content_type)
+        upload_url, gcs_path = storage.presigned_put_url(user_id, job_id, content_type=body.content_type)  # noqa: E501
     except Exception as exc:
         log.error("presigned_url_failed", error=str(exc))
         raise HTTPException(

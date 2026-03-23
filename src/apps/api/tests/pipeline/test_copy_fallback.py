@@ -37,7 +37,7 @@ def test_copy_status_generated_on_success():
         mock_client = mock_openai.return_value
         mock_client.beta.chat.completions.parse.return_value.__class__ = object
         mock_client.beta.chat.completions.parse.return_value = type(
-            "R", (), {"choices": [type("C", (), {"message": type("M", (), {"parsed": mock_copy})()})()]}
+            "R", (), {"choices": [type("C", (), {"message": type("M", (), {"parsed": mock_copy})()})()]}  # noqa: E501
         )()
         copy, status = generate_copy("hook text", "transcript", ["instagram"])
 

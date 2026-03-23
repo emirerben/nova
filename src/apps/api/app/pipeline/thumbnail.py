@@ -1,8 +1,7 @@
-"""[Stage 6] Thumbnail selection: FFmpeg keyframe extraction + Laplacian sharpness + face detection."""
+"""[Stage 6] Thumbnail selection: FFmpeg keyframe extraction + Laplacian sharpness + face detection."""  # noqa: E501
 
 import os
 import subprocess
-import tempfile
 from dataclasses import dataclass
 
 import structlog
@@ -101,7 +100,7 @@ def _laplacian_variance(path: str) -> float:
     """Compute Laplacian variance as a proxy for image sharpness."""
     try:
         import cv2
-        import numpy as np
+        import numpy as np  # noqa: F401  # noqa: E501
 
         img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
         if img is None:

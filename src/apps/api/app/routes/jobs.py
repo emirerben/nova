@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Job, JobClip
 from app.tasks.orchestrate import orchestrate_job
-from app.worker import celery_app
 
 log = structlog.get_logger()
 router = APIRouter()
