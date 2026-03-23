@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # Waitlist admin
     waitlist_admin_secret: str = "changeme"
 
+    # Resend (transactional email) — leave empty to skip confirmation emails
+    resend_api_key: str = ""
+
     # Security
     token_encryption_key: str = ""
 

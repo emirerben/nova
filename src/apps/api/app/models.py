@@ -33,6 +33,10 @@ class WaitlistSignup(Base):
     email: Mapped[str] = mapped_column(String(254), unique=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     invited_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # UTM attribution — nullable, NULL when absent from signup URL
+    utm_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    utm_medium: Mapped[str | None] = mapped_column(Text, nullable=True)
+    utm_campaign: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class User(Base):
