@@ -16,8 +16,20 @@ class Settings(BaseSettings):
     # Database
     database_url: str
 
-    # OpenAI
+    # OpenAI (Whisper fallback)
     openai_api_key: str = ""
+
+    # Gemini
+    gemini_api_key: str = ""
+
+    # Admin
+    admin_api_key: str = ""
+
+    # Transcription backend
+    transcriber_backend: str = "gemini"  # "gemini" | "whisper"
+
+    # Template
+    default_template_id: str = ""
 
     # Whisper
     whisper_backend: str = "openai-api"  # "openai-api" | "local"

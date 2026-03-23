@@ -1,7 +1,5 @@
 """Test: low-speech transcript triggers engagement-only scoring + no-transcript copy note."""
 
-from unittest.mock import patch
-
 import pytest
 
 from app.pipeline.probe import VideoProbe
@@ -36,12 +34,12 @@ def make_probe(duration_s: float = 300.0) -> VideoProbe:
 
 
 def test_low_speech_skips_hook_scoring():
+    """low_confidence + no source_ref → engagement-only, all hook_scores=0."""
     transcript = make_low_confidence_transcript()
     probe = make_probe()
 
-    with patch("app.pipeline.score.score_hooks") as mock_scorer:
-        candidates = select_candidates(probe, transcript, [])
-        mock_scorer.assert_not_called()
+    # source_ref=None + low_confidence → heuristic engagement-only
+    candidates = select_candidates(probe, transcript, [])
 
     assert len(candidates) > 0
     # In ASR fallback, hook_scores are all 0
@@ -58,12 +56,15 @@ def test_low_speech_combined_score_equals_engagement_score():
         assert c.combined_score == pytest.approx(c.engagement_score, abs=1e-9)
 
 
-def test_normal_transcript_uses_hook_scorer():
+def test_normal_transcript_uses_heuristic_hook_scoring():
+    """Normal transcript with no source_ref uses heuristic hook scores (non-zero)."""
     words = [Word(text="Hello", start_s=0.0, end_s=0.5, confidence=0.95)] * 20
     transcript = Transcript(words=words, full_text="Hello " * 20, low_confidence=False)
     probe = make_probe()
 
-    with patch("app.pipeline.score.score_hooks") as mock_scorer:
-        mock_scorer.return_value = [5.0] * CANDIDATE_COUNT
-        select_candidates(probe, transcript, [])
-        mock_scorer.assert_called_once()
+    # No Gemini source_ref → heuristic path; scores should be non-zero
+    candidates = select_candidates(probe, transcript, [])
+
+    assert len(candidates) == CANDIDATE_COUNT
+    # Heuristic scores should be > 0 for non-empty transcript
+    assert any(c.hook_score > 0.0 for c in candidates)

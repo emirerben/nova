@@ -16,6 +16,7 @@ __pycache__/
 .ruff_cache/
 *.pyc *.pyo
 dist/
+*.egg-info/
 
 # Node / Next.js
 node_modules/

@@ -1,0 +1,368 @@
+"""
+Gemini video analysis adapter.
+
+Handles all Gemini File API interactions:
+  gemini_upload_and_wait  → upload video + poll until ACTIVE
+  analyze_clip            → hook score + best moments + transcript (optional timestamps)
+  analyze_template        → template recipe extraction
+  transcribe              → audio transcription (Gemini primary, Whisper fallback)
+  _check_refusal          → detect safety refusals + missing required fields
+  _get_client             → module-level singleton (lazy init)
+"""
+
+import json
+import time
+from dataclasses import dataclass, field
+from typing import Any
+
+import structlog
+
+from app.config import settings
+
+log = structlog.get_logger()
+
+# ── Custom Exceptions ─────────────────────────────────────────────────────────
+
+
+class PollingTimeoutError(Exception):
+    pass
+
+
+class GeminiRefusalError(Exception):
+    pass
+
+
+class GeminiAnalysisError(Exception):
+    pass
+
+
+# ── Dataclasses ───────────────────────────────────────────────────────────────
+
+
+@dataclass
+class ClipMeta:
+    clip_id: str  # GCS path or a hash
+    transcript: str
+    hook_text: str
+    hook_score: float
+    best_moments: list[dict]  # [{start_s, end_s, energy, description}]
+    analysis_degraded: bool = False
+    failed: bool = False
+    clip_path: str = ""  # set by caller for fallback
+
+
+@dataclass
+class TemplateRecipe:
+    shot_count: int
+    total_duration_s: float
+    hook_duration_s: float
+    slots: list[dict]  # [{position, target_duration_s, priority, slot_type}]
+    copy_tone: str
+    caption_style: str
+
+
+@dataclass
+class AssemblyStep:
+    slot: dict
+    clip_id: str
+    moment: dict  # {start_s, end_s, energy, description}
+
+
+@dataclass
+class AssemblyPlan:
+    steps: list[AssemblyStep] = field(default_factory=list)
+
+
+# ── Gemini client singleton ───────────────────────────────────────────────────
+
+_gemini_client: Any = None  # genai.Client | None
+
+
+def _get_client() -> Any:
+    """Return module-level singleton Gemini client (lazy init)."""
+    global _gemini_client
+    if _gemini_client is None:
+        from google import genai  # type: ignore[import]
+
+        _gemini_client = genai.Client(api_key=settings.gemini_api_key)
+    return _gemini_client
+
+
+# ── File upload ───────────────────────────────────────────────────────────────
+
+
+def gemini_upload_and_wait(path: str, timeout: int = 120) -> Any:
+    """Upload a local file to Gemini File API and poll until state == ACTIVE.
+
+    Raises PollingTimeoutError if the file doesn't become ACTIVE within `timeout` seconds.
+    Retries up to 2× on ResourceExhausted (rate limit) with 15s backoff.
+    Raises immediately on InvalidArgument.
+    """
+    from google.api_core import exceptions as gapi_exc  # type: ignore[import]
+
+    client = _get_client()
+
+    # Upload with retry for rate limits
+    file_ref = None
+    for attempt in range(3):
+        try:
+            file_ref = client.files.upload(file=path)
+            break
+        except gapi_exc.ResourceExhausted:
+            if attempt >= 2:
+                raise
+            log.warning("gemini_upload_rate_limited", attempt=attempt, path=path)
+            time.sleep(15)
+        except gapi_exc.InvalidArgument:
+            raise
+
+    if file_ref is None:
+        raise GeminiAnalysisError("Failed to upload file after retries")
+
+    # Poll until ACTIVE
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            file_ref = client.files.get(name=file_ref.name)
+        except gapi_exc.ResourceExhausted:
+            log.warning("gemini_poll_rate_limited", name=file_ref.name)
+            time.sleep(15)
+            continue
+
+        state_name = file_ref.state.name if hasattr(file_ref.state, "name") else str(file_ref.state)
+        if state_name == "ACTIVE":
+            log.info("gemini_file_active", name=file_ref.name)
+            return file_ref
+        if state_name == "FAILED":
+            raise GeminiAnalysisError(f"Gemini file processing failed: {file_ref.name}")
+
+        log.debug("gemini_file_polling", state=state_name, name=file_ref.name)
+        time.sleep(5)
+
+    raise PollingTimeoutError(
+        f"Gemini file {file_ref.name} did not become ACTIVE within {timeout}s"
+    )
+
+
+# ── Refusal detection ─────────────────────────────────────────────────────────
+
+
+def _check_refusal(response: Any, required_fields: list[str]) -> dict:
+    """Parse Gemini response JSON and check for safety refusals / missing fields.
+
+    Returns the parsed dict on success.
+    Raises GeminiRefusalError on safety refusal, JSON errors, or missing required fields.
+    """
+    candidates = getattr(response, "candidates", None)
+    if candidates and len(candidates) > 0:
+        finish_reason = candidates[0].finish_reason
+        reason_name = finish_reason.name if hasattr(finish_reason, "name") else str(finish_reason)
+        if reason_name == "SAFETY":
+            raise GeminiRefusalError("Content policy refusal")
+
+    try:
+        data = json.loads(response.text)
+    except (json.JSONDecodeError, AttributeError, TypeError) as exc:
+        raise GeminiRefusalError("Invalid JSON response") from exc
+
+    for field_name in required_fields:
+        val = data.get(field_name)
+        if val is None or val == "" or val == []:
+            raise GeminiRefusalError(f"Missing required field: {field_name}")
+
+    return data
+
+
+# ── Clip analysis ─────────────────────────────────────────────────────────────
+
+
+def analyze_clip(
+    file_ref: Any,
+    start_s: float | None = None,
+    end_s: float | None = None,
+) -> ClipMeta:
+    """Analyze a video clip or time range. Returns ClipMeta.
+
+    If start_s and end_s are provided, focuses analysis on that segment.
+    Raises GeminiAnalysisError on failure.
+    """
+    client = _get_client()
+
+    if start_s is not None and end_s is not None:
+        segment_instruction = f"Analyze the video segment from {start_s:.1f}s to {end_s:.1f}s."
+    else:
+        segment_instruction = "Analyze this video clip."
+
+    prompt = (
+        f"{segment_instruction}\n\n"
+        "Return a JSON object with these exact fields:\n"
+        '- "transcript": string — full spoken text in the segment\n'
+        '- "hook_text": string — the first compelling sentence that creates curiosity\n'
+        '- "hook_score": float 0–10 — how strongly the opening hooks the viewer\n'
+        '- "best_moments": list of objects with '
+        '{"start_s": float, "end_s": float, "energy": float 0–10, "description": string} '
+        "— the 2–5 most energetic/interesting moments\n\n"
+        "Return ONLY valid JSON, no markdown."
+    )
+
+    try:
+        from google.genai import types as genai_types  # type: ignore[import]
+
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                genai_types.Part.from_uri(
+                    file_uri=file_ref.uri,
+                    mime_type=file_ref.mime_type or "video/mp4",
+                ),
+                prompt,
+            ],
+            config=genai_types.GenerateContentConfig(
+                response_mime_type="application/json",
+            ),
+        )
+
+        data = _check_refusal(response, ["hook_text", "hook_score", "best_moments"])
+
+        hook_score = float(data.get("hook_score", 5.0))
+        hook_score = max(0.0, min(10.0, hook_score))
+
+        clip_id = getattr(file_ref, "name", str(id(file_ref)))
+
+        return ClipMeta(
+            clip_id=clip_id,
+            transcript=data.get("transcript", ""),
+            hook_text=data.get("hook_text", ""),
+            hook_score=hook_score,
+            best_moments=data.get("best_moments", []),
+        )
+
+    except (GeminiRefusalError, GeminiAnalysisError):
+        raise
+    except Exception as exc:
+        raise GeminiAnalysisError(f"Clip analysis failed: {exc}") from exc
+
+
+# ── Template analysis ─────────────────────────────────────────────────────────
+
+
+def analyze_template(file_ref: Any) -> TemplateRecipe:
+    """Extract a structural 'recipe' from a template video.
+
+    Failure is fatal (raises) — caller must handle.
+    """
+    client = _get_client()
+
+    prompt = (
+        "Analyze this TikTok/short-form video template. Extract its structural recipe.\n\n"
+        "Return a JSON object with these exact fields:\n"
+        '- "shot_count": int — total number of shots/cuts\n'
+        '- "total_duration_s": float — total video duration in seconds\n'
+        '- "hook_duration_s": float — duration of the opening hook section\n'
+        '- "slots": list of objects with '
+        '{"position": int (1-indexed), "target_duration_s": float, '
+        '"priority": int 1–10, "slot_type": "hook"|"broll"|"outro"}\n'
+        '- "copy_tone": string — one of: casual, formal, energetic, calm\n'
+        '- "caption_style": string — description of caption/text overlay style\n\n'
+        "Return ONLY valid JSON, no markdown."
+    )
+
+    from google.genai import types as genai_types  # type: ignore[import]
+
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[
+            genai_types.Part.from_uri(
+                file_uri=file_ref.uri,
+                mime_type=file_ref.mime_type or "video/mp4",
+            ),
+            prompt,
+        ],
+        config=genai_types.GenerateContentConfig(
+            response_mime_type="application/json",
+        ),
+    )
+
+    data = _check_refusal(response, ["shot_count", "slots"])
+
+    return TemplateRecipe(
+        shot_count=int(data.get("shot_count", 0)),
+        total_duration_s=float(data.get("total_duration_s", 0.0)),
+        hook_duration_s=float(data.get("hook_duration_s", 0.0)),
+        slots=data.get("slots", []),
+        copy_tone=str(data.get("copy_tone", "casual")),
+        caption_style=str(data.get("caption_style", "")),
+    )
+
+
+# ── Transcription ─────────────────────────────────────────────────────────────
+
+
+def transcribe(file_ref: Any) -> "Transcript":  # noqa: F821
+    """Transcribe audio from a Gemini file reference.
+
+    Falls back to Whisper (via transcribe.py) on any failure.
+    Returns a Transcript with low_confidence=True if both fail.
+    """
+    from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
+
+    client = _get_client()
+
+    prompt = (
+        "Transcribe all speech in this video.\n\n"
+        "Return a JSON object with these exact fields:\n"
+        '- "full_text": string — complete transcript\n'
+        '- "words": list of {"text": string, "start_s": float, "end_s": float}\n'
+        '- "low_confidence": boolean — true if transcription quality is poor\n\n'
+        "Return ONLY valid JSON, no markdown."
+    )
+
+    try:
+        from google.genai import types as genai_types  # type: ignore[import]
+
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                genai_types.Part.from_uri(
+                    file_uri=file_ref.uri,
+                    mime_type=file_ref.mime_type or "video/mp4",
+                ),
+                prompt,
+            ],
+            config=genai_types.GenerateContentConfig(
+                response_mime_type="application/json",
+            ),
+        )
+
+        data = _check_refusal(response, ["full_text", "words"])
+
+        words = [
+            Word(
+                text=w.get("text", ""),
+                start_s=float(w.get("start_s", 0.0)),
+                end_s=float(w.get("end_s", 0.0)),
+                confidence=1.0,  # Gemini doesn't return per-word confidence
+            )
+            for w in data.get("words", [])
+        ]
+
+        return Transcript(
+            words=words,
+            full_text=data.get("full_text", ""),
+            low_confidence=bool(data.get("low_confidence", False)),
+        )
+
+    except (GeminiRefusalError, GeminiAnalysisError, Exception) as exc:
+        log.warning("gemini_transcribe_failed_falling_back", error=str(exc))
+
+        # Whisper fallback — needs a local file path, but we only have a file_ref here.
+        # The caller (transcribe.py) handles the path routing; here we signal unavailability.
+        # If called directly with no path context, return degraded transcript.
+        clip_path = getattr(file_ref, "_local_path", None)
+        if clip_path:
+            try:
+                return transcribe_whisper(clip_path)
+            except Exception as whisper_exc:
+                log.error("whisper_fallback_also_failed", error=str(whisper_exc))
+
+        return Transcript(words=[], full_text="", low_confidence=True)
