@@ -115,6 +115,28 @@ def reframe_and_export(
 
     result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
 
+    if result.returncode != 0 and ass_overlay_paths:
+        # ASS overlays may fail if FFmpeg lacks libass — retry without them
+        log.warning(
+            "reframe_ass_fallback",
+            rc=result.returncode,
+            ass_count=len(ass_overlay_paths),
+        )
+        return reframe_and_export(
+            input_path=input_path,
+            start_s=start_s,
+            end_s=end_s,
+            aspect_ratio=aspect_ratio,
+            ass_subtitle_path=ass_subtitle_path,
+            output_path=output_path,
+            text_overlay_pngs=text_overlay_pngs,
+            ass_overlay_paths=None,  # retry without ASS
+            color_hint=color_hint,
+            speed_factor=speed_factor,
+            darkening_windows=darkening_windows,
+            narrowing_windows=narrowing_windows,
+        )
+
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace")[:500]
         raise ReframeError(f"FFmpeg failed (rc={result.returncode}): {stderr}")

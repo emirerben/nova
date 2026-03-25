@@ -265,18 +265,40 @@ def analyze_template(file_ref: Any) -> TemplateRecipe:
         "- The sum of all target_duration_s values must approximately equal total_duration_s\n"
         "- Each slot's target_duration_s is the duration of that shot in the template\n"
         "- position is 1-indexed temporal order (slot 1 = first shot)\n"
-        "- EVERY slot object MUST include an 'energy' field (float 0-10) reflecting the "
-        "musical intensity during that slot — listen to the audio track and rate each slot\n\n"
+        "- EVERY slot MUST include 'energy' (float 0-10) reflecting musical intensity\n"
+        "- For EACH slot, analyze the visual transition INTO that slot from the previous one\n"
+        "- For EACH slot, note if the footage appears sped up or slowed down\n"
+        "- For EACH slot, describe any text/caption overlays that appear\n\n"
         "Return a JSON object with these exact fields:\n"
         '- "shot_count": int — total number of shots/cuts\n'
         '- "total_duration_s": float — total video duration in seconds\n'
         '- "hook_duration_s": float — duration of the opening hook section\n'
-        '- "slots": list of objects with '
-        '{"position": int (1-indexed), "target_duration_s": float, '
-        '"priority": int 1–10, "slot_type": "hook"|"broll"|"outro", '
-        '"energy": float 0–10} where energy reflects the musical intensity at that '
-        "moment — 0 is silence/calm, 5 is moderate, 10 is a hard beat drop or climax. "
-        "This is critical for matching footage energy to music energy.\n"
+        '- "slots": list of objects, EACH with ALL of these fields:\n'
+        '    "position": int (1-indexed temporal order)\n'
+        '    "target_duration_s": float (duration of this shot)\n'
+        '    "priority": int 1-10\n'
+        '    "slot_type": "hook" | "broll" | "outro"\n'
+        '    "energy": float 0-10 (musical intensity — 0=silence, 10=beat drop)\n'
+        '    "transition_in": "crossfade" | "fade_black" | "wipe_left" | "wipe_right" | "none"\n'
+        '        — how does this slot visually transition from the previous one?\n'
+        '        — use "none" for hard cuts, "crossfade" for dissolves/fades between shots\n'
+        '        — slot 1 should always be "none"\n'
+        '    "speed_factor": one of [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]\n'
+        '        — 1.0 = normal speed, 2.0 = footage plays at 2x, 0.5 = slow motion\n'
+        '    "color_hint": "warm" | "cool" | "vintage" | "desaturated" | "high_contrast" | "none"\n'
+        '        — dominant color grading of this slot. Use "none" if neutral/no grading\n'
+        '    "text_overlays": list of objects (empty list if no text in this slot), each with:\n'
+        '        "role": "hook" | "label" | "cta" | "reaction"\n'
+        '        "sample_text": string — the actual text shown in the template\n'
+        '        "start_s": float — when text appears (relative to slot start, 0 = slot start)\n'
+        '        "end_s": float — when text disappears (relative to slot start)\n'
+        '        "position": "center" | "top" | "bottom"\n'
+        '        "effect": "fade-in" | "typewriter" | "slide-up" | "static" | "none"\n'
+        '            — how does the text animate in? "fade-in" = fades from transparent,\n'
+        '              "typewriter" = characters appear one by one,\n'
+        '              "slide-up" = slides up from below, "static" = appears instantly\n'
+        '        "has_darkening": boolean — is the background darkened behind the text?\n'
+        '        "has_narrowing": boolean — are there letterbox bars when text is shown?\n'
         '- "copy_tone": string — one of: casual, formal, energetic, calm\n'
         '- "caption_style": string — description of caption/text overlay style\n'
         '- "beat_timestamps_s": list of float — timestamps (in seconds) of significant '
