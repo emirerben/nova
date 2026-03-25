@@ -39,6 +39,7 @@ def _encoding_args(output_path: str) -> list[str]:
         "-c:v", "libx264",
         "-preset", "fast",
         "-crf", "23",
+        "-pix_fmt", "yuv420p",  # QuickTime/browser compatibility
         "-b:v", settings.output_video_bitrate,
         "-maxrate", settings.output_video_bitrate,
         "-bufsize", "8M",
