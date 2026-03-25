@@ -74,6 +74,7 @@ def join_with_transitions(
         "-c:v", "libx264",
         "-preset", "fast",
         "-crf", "23",
+        "-pix_fmt", "yuv420p",  # QuickTime/browser compatibility
         "-r", "30",
         "-movflags", "+faststart",
         "-y",
