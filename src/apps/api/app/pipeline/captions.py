@@ -4,6 +4,7 @@ ASS (Advanced SubStation Alpha) supports word-level highlight styling
 which produces the "karaoke" caption effect common on TikTok/Reels.
 """
 
+from app.pipeline.ass_utils import format_ass_time, sanitize_ass_text
 from app.pipeline.transcribe import Transcript, Word
 
 
@@ -47,29 +48,21 @@ def _build_dialogue_lines(words: list[Word], offset_s: float) -> list[str]:
         text_parts = []
         for j, word in enumerate(chunk):
             dur_cs = int((word.end_s - word.start_s) * 100)
+            clean = sanitize_ass_text(word.text.strip())
             if j == 0:
-                text_parts.append(f"{{\\k{dur_cs}}}{word.text.strip()}")
+                text_parts.append(f"{{\\k{dur_cs}}}{clean}")
             else:
-                text_parts.append(f" {{\\k{dur_cs}}}{word.text.strip()}")
+                text_parts.append(f" {{\\k{dur_cs}}}{clean}")
 
         text = "".join(text_parts)
-        start_str = _format_ass_time(max(0.0, chunk_start))
-        end_str = _format_ass_time(max(0.0, chunk_end))
+        start_str = format_ass_time(max(0.0, chunk_start))
+        end_str = format_ass_time(max(0.0, chunk_end))
 
         dialogue_lines.append(
             f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{text}"
         )
 
     return dialogue_lines
-
-
-def _format_ass_time(seconds: float) -> str:
-    """Format seconds as ASS time: H:MM:SS.cc"""
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    cs = int((seconds % 1) * 100)
-    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
 def _write_empty_ass(output_path: str) -> None:

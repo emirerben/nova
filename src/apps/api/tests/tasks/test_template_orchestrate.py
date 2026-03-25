@@ -965,3 +965,167 @@ class TestTemplateRecipeBackwardCompat:
 
         assert recipe.beat_timestamps_s == []
         assert recipe.shot_count == 3
+
+
+# ── Text overlay integration ─────────────────────────────────────────────────
+
+
+class TestAssembleClipsTextOverlays:
+    """Tests for text overlay, darkening, and narrowing in _assemble_clips."""
+
+    def _make_step_with_overlays(
+        self, clip_id: str = "clip_a", overlays: list | None = None,
+    ) -> MagicMock:
+        step = MagicMock()
+        step.clip_id = clip_id
+        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.slot = {
+            "position": 1,
+            "target_duration_s": 5.0,
+            "text_overlays": overlays or [],
+        }
+        return step
+
+    def test_slot_with_overlays_generates_ass(self, tmp_path):
+        """reframe called with text_overlay_pngs when slot has overlays."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+
+        overlays = [{
+            "role": "hook",
+            "start_s": 0.5,
+            "end_s": 2.5,
+            "position": "center",
+            "effect": "pop-in",
+            "has_darkening": True,
+            "has_narrowing": True,
+            "sample_text": "WOW",
+        }]
+        step = self._make_step_with_overlays(overlays=overlays)
+        meta = _make_clip_meta(clip_id="clip_a")
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                clip_metas=[meta],
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            assert kwargs["text_overlay_pngs"] is not None
+            assert kwargs["darkening_windows"] is not None
+            assert kwargs["narrowing_windows"] is not None
+
+    def test_slot_without_overlays_regression(self, tmp_path):
+        """reframe called with text_overlay_pngs=None when slot has no overlays."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+
+        step = self._make_step_with_overlays(overlays=[])
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            assert kwargs["text_overlay_pngs"] is None
+
+    def test_darkening_skipped_when_text_empty(self, tmp_path):
+        """has_darkening=True but text resolves to None → no darkening."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+
+        overlays = [{
+            "role": "cta",  # CTA role returns None in v1
+            "start_s": 0.5,
+            "end_s": 2.5,
+            "position": "center",
+            "effect": "none",
+            "has_darkening": True,
+            "has_narrowing": True,
+            "sample_text": "",
+        }]
+        step = self._make_step_with_overlays(overlays=overlays)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            assert kwargs["text_overlay_pngs"] is None
+            assert kwargs["darkening_windows"] is None
+
+
+class TestResolveOverlayText:
+    def test_hook_role_uses_hook_text(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        meta = _make_clip_meta()
+        result = _resolve_overlay_text("hook", meta, {})
+        assert result == "test hook"
+
+    def test_reaction_role_uses_sample_text(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "reaction", None, {"sample_text": "OMG"},
+        )
+        assert result == "OMG"
+
+    def test_label_role_uses_sample_text(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None, {"sample_text": "Day 1"},
+        )
+        assert result == "Day 1"
+
+    def test_cta_role_returns_none(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text("cta", _make_clip_meta(), {})
+        assert result is None
+
+    def test_hook_role_no_meta_returns_none(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text("hook", None, {})
+        assert result is None

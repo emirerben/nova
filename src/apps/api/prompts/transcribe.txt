@@ -1,0 +1,8 @@
+Transcribe all speech in this video.
+
+Return a JSON object with these exact fields:
+- "full_text": string — complete transcript
+- "words": list of {"text": string, "start_s": float, "end_s": float}
+- "low_confidence": boolean — true if transcription quality is poor
+
+Return ONLY valid JSON, no markdown.

@@ -121,6 +121,11 @@ def analyze_template_task(self, template_id: str) -> None:
                         "copy_tone": recipe.copy_tone,
                         "caption_style": recipe.caption_style,
                         "beat_timestamps_s": merged_beats,
+                        "creative_direction": recipe.creative_direction,
+                        "transition_style": recipe.transition_style,
+                        "color_grade": recipe.color_grade,
+                        "pacing_style": recipe.pacing_style,
+                        "sync_style": recipe.sync_style,
                     }
                     template.recipe_cached_at = datetime.now(UTC)
                     template.analysis_status = "ready"
@@ -259,6 +264,8 @@ def _run_template_job(job_id: str) -> None:
             assembly_plan.steps, clip_id_to_local, probe_map,
             assembled_path, tmpdir,
             beat_timestamps_s=recipe.beat_timestamps_s,
+            clip_metas=clip_metas,
+            global_color_grade=recipe.color_grade,
         )
 
         # [6b] Mix template audio if available
@@ -457,6 +464,8 @@ def _assemble_clips(
     output_path: str,
     tmpdir: str,
     beat_timestamps_s: list[float] | None = None,
+    clip_metas: list[ClipMeta] | None = None,
+    global_color_grade: str = "none",
 ) -> None:
     """Assemble clips in slot order using FFmpeg concat.
 
@@ -480,6 +489,9 @@ def _assemble_clips(
 
     # Cumulative time offset for beat-snap (tracks assembled video position)
     cumulative_s = 0.0
+
+    # Lazy import for text overlay generation
+    from app.pipeline.text_overlay import generate_text_overlay_png  # noqa: PLC0415
 
     # Step 1: reframe each slot to a temp file
     reframed_paths: list[str] = []
@@ -542,6 +554,63 @@ def _assemble_clips(
             actual_s=round(end_s - start_s, 2),
         )
 
+        # ── Text overlay processing ──────────────────────────────────────
+        text_overlay_pngs: list[dict] | None = None
+        darkening_windows: list[tuple[float, float]] | None = None
+        narrowing_windows: list[tuple[float, float]] | None = None
+
+        raw_overlays = step.slot.get("text_overlays", [])
+        if raw_overlays:
+            clip_meta_for_slot = _find_clip_meta_by_id(
+                clip_id, clip_metas
+            )
+
+            resolved_overlays = []
+            dark_wins: list[tuple[float, float]] = []
+            narrow_wins: list[tuple[float, float]] = []
+
+            for ov in raw_overlays:
+                text = _resolve_overlay_text(
+                    ov.get("role", "label"),
+                    clip_meta_for_slot,
+                    ov,
+                )
+                if not text or not text.strip():
+                    continue
+
+                ov_start = float(ov.get("start_s", 0.0))
+                ov_end = float(ov.get("end_s", slot_target_dur))
+
+                resolved_overlays.append({
+                    "text": text,
+                    "start_s": ov_start,
+                    "end_s": ov_end,
+                    "position": ov.get("position", "center"),
+                    "effect": ov.get("effect", "none"),
+                })
+
+                if ov.get("has_darkening"):
+                    dark_wins.append((ov_start, ov_end))
+                if ov.get("has_narrowing"):
+                    narrow_wins.append((ov_start, ov_end))
+
+            if resolved_overlays:
+                text_overlay_pngs = generate_text_overlay_png(
+                    resolved_overlays, slot_target_dur, tmpdir, i,
+                )
+                if text_overlay_pngs:
+                    darkening_windows = dark_wins or None
+                    narrowing_windows = narrow_wins or None
+                    log.info(
+                        "slot_text_overlay",
+                        slot=i,
+                        overlays=len(text_overlay_pngs),
+                        darkening=len(dark_wins),
+                    )
+
+        # ── Color grading (global default + per-slot override) ─────
+        slot_color = step.slot.get("color_hint") or global_color_grade or "none"
+
         reframed = os.path.join(tmpdir, f"slot_{i}.mp4")
         reframe_and_export(
             input_path=local_path,
@@ -550,6 +619,10 @@ def _assemble_clips(
             aspect_ratio=aspect_ratio,
             ass_subtitle_path=None,
             output_path=reframed,
+            text_overlay_pngs=text_overlay_pngs,
+            darkening_windows=darkening_windows,
+            narrowing_windows=narrowing_windows,
+            color_hint=slot_color,
         )
         reframed_paths.append(reframed)
 
@@ -774,6 +847,41 @@ def _mix_template_audio(
     if result.returncode != 0:
         log.warning("template_audio_mix_failed", stderr=result.stderr.decode()[:200])
         shutil.copy2(video_path, output_path)
+
+
+# ── Text overlay helpers ──────────────────────────────────────────────────
+
+
+def _resolve_overlay_text(
+    role: str,
+    clip_meta: "ClipMeta | None",
+    overlay: dict,
+) -> str | None:
+    """Resolve display text for an overlay based on its role.
+
+    Returns None if text cannot be resolved (caller skips this overlay).
+    """
+    if role == "hook":
+        return clip_meta.hook_text if clip_meta else None
+    elif role in ("reaction", "label"):
+        return overlay.get("sample_text", "") or None
+    elif role == "cta":
+        # CTA text not available at assembly time (copy generation runs after).
+        # Skipped in v1.
+        return None
+    return overlay.get("sample_text", "") or None
+
+
+def _find_clip_meta_by_id(
+    clip_id: str, clip_metas: list[ClipMeta] | None
+) -> ClipMeta | None:
+    """Look up a ClipMeta by clip_id. Returns None if not found."""
+    if not clip_metas:
+        return None
+    for meta in clip_metas:
+        if meta.clip_id == clip_id:
+            return meta
+    return None
 
 
 # ── Copy helpers ───────────────────────────────────────────────────────────────

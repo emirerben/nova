@@ -10,6 +10,7 @@ from app.pipeline.reframe import (
     MAX_OUTPUT_BYTES,
     ReframeError,
     _build_video_filter,
+    _color_hint_filters,
     reframe_and_export,
 )
 
@@ -146,3 +147,314 @@ class TestReframeAndExport:
                 ass_subtitle_path=None,
                 output_path="/fake/out.mp4",
             )
+
+
+class TestBuildVideoFilterOverlays:
+    """Tests for darkening and narrowing in _build_video_filter."""
+
+    def test_darkening_window_produces_colorlevels(self):
+        filters = _build_video_filter(
+            "9:16", None,
+            darkening_windows=[(0.5, 2.5)],
+        )
+        joined = ",".join(filters)
+        assert "colorlevels" in joined
+        assert "enable=" in joined
+        assert "rimax=0.45" in joined
+
+    def test_multiple_darkening_windows(self):
+        filters = _build_video_filter(
+            "9:16", None,
+            darkening_windows=[(0.5, 2.5), (4.0, 6.0)],
+        )
+        joined = ",".join(filters)
+        assert joined.count("colorlevels") == 2
+
+    def test_narrowing_window_produces_drawbox(self):
+        filters = _build_video_filter(
+            "9:16", None,
+            narrowing_windows=[(0.5, 2.5)],
+        )
+        joined = ",".join(filters)
+        assert joined.count("drawbox") == 2
+        assert "y=0" in joined
+        assert "y=ih-120" in joined
+
+    def test_filter_ordering(self):
+        """scale before colorlevels before drawbox."""
+        filters = _build_video_filter(
+            "9:16", None,
+            darkening_windows=[(0.5, 2.5)],
+            narrowing_windows=[(0.5, 2.5)],
+        )
+        joined = ",".join(filters)
+        scale_pos = joined.index("scale")
+        color_pos = joined.index("colorlevels")
+        drawbox_pos = joined.index("drawbox")
+        assert scale_pos < color_pos < drawbox_pos
+
+    def test_no_new_params_backward_compat(self):
+        """Calling with None defaults produces same filters as before."""
+        filters_old = _build_video_filter("16:9", None)
+        filters_new = _build_video_filter(
+            "16:9", None,
+            darkening_windows=None,
+            narrowing_windows=None,
+        )
+        assert filters_old == filters_new
+
+    def test_reframe_passes_new_params(self):
+        """Verify reframe_and_export passes darkening/narrowing to _build_video_filter."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = os.path.join(tmpdir, "out.mp4")
+
+            def side_effect(cmd, **kwargs):
+                with open(output, "wb") as f:
+                    f.write(b"\x00" * 1024)
+                return MagicMock(returncode=0, stderr=b"")
+
+            with (
+                patch("subprocess.run", side_effect=side_effect),
+                patch(
+                    "app.pipeline.reframe._build_video_filter",
+                    wraps=_build_video_filter,
+                ) as mock_bvf,
+            ):
+                reframe_and_export(
+                    input_path="/fake/input.mp4",
+                    start_s=0.0,
+                    end_s=5.0,
+                    aspect_ratio="9:16",
+                    ass_subtitle_path=None,
+                    output_path=output,
+                    darkening_windows=[(0.5, 2.0)],
+                    narrowing_windows=[(0.5, 2.0)],
+                )
+                call_kwargs = mock_bvf.call_args.kwargs
+                assert call_kwargs["darkening_windows"] == [(0.5, 2.0)]
+                assert call_kwargs["narrowing_windows"] == [(0.5, 2.0)]
+
+    def test_darkening_enable_timing_format(self):
+        """enable='between(t,0.5,2.5)' correctly formatted."""
+        filters = _build_video_filter(
+            "9:16", None,
+            darkening_windows=[(0.5, 2.5)],
+        )
+        joined = ",".join(filters)
+        assert "between(t,0.500,2.500)" in joined
+
+
+class TestOverlayCommand:
+    """Tests for PNG overlay compositing via filter_complex."""
+
+    def test_overlay_pngs_uses_filter_complex(self):
+        """When text_overlay_pngs is provided, command uses -filter_complex."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a dummy PNG
+            png_path = os.path.join(tmpdir, "overlay.png")
+            from PIL import Image
+            Image.new("RGBA", (1080, 1920), (0, 0, 0, 0)).save(png_path)
+
+            output = os.path.join(tmpdir, "out.mp4")
+
+            def side_effect(cmd, **kwargs):
+                with open(output, "wb") as f:
+                    f.write(b"\x00" * 1024)
+                return MagicMock(returncode=0, stderr=b"")
+
+            with patch("subprocess.run", side_effect=side_effect) as mock_run:
+                reframe_and_export(
+                    input_path="/fake/input.mp4",
+                    start_s=0.0,
+                    end_s=5.0,
+                    aspect_ratio="9:16",
+                    ass_subtitle_path=None,
+                    output_path=output,
+                    text_overlay_pngs=[{
+                        "png_path": png_path,
+                        "start_s": 0.5,
+                        "end_s": 2.5,
+                    }],
+                )
+                cmd = mock_run.call_args[0][0]
+                assert "-filter_complex" in cmd
+                assert "-vf" not in cmd
+                # PNG should be an input
+                assert png_path in cmd
+
+    def test_no_overlay_uses_vf(self):
+        """Without overlays, command uses simple -vf (no filter_complex)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = os.path.join(tmpdir, "out.mp4")
+
+            def side_effect(cmd, **kwargs):
+                with open(output, "wb") as f:
+                    f.write(b"\x00" * 1024)
+                return MagicMock(returncode=0, stderr=b"")
+
+            with patch("subprocess.run", side_effect=side_effect) as mock_run:
+                reframe_and_export(
+                    input_path="/fake/input.mp4",
+                    start_s=0.0,
+                    end_s=5.0,
+                    aspect_ratio="9:16",
+                    ass_subtitle_path=None,
+                    output_path=output,
+                )
+                cmd = mock_run.call_args[0][0]
+                assert "-vf" in cmd
+                assert "-filter_complex" not in cmd
+
+    def test_overlay_enable_timing_in_filter_complex(self):
+        """The overlay filter has correct enable timing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            png_path = os.path.join(tmpdir, "overlay.png")
+            from PIL import Image
+            Image.new("RGBA", (1080, 1920), (0, 0, 0, 0)).save(png_path)
+
+            output = os.path.join(tmpdir, "out.mp4")
+
+            def side_effect(cmd, **kwargs):
+                with open(output, "wb") as f:
+                    f.write(b"\x00" * 1024)
+                return MagicMock(returncode=0, stderr=b"")
+
+            with patch("subprocess.run", side_effect=side_effect) as mock_run:
+                reframe_and_export(
+                    input_path="/fake/input.mp4",
+                    start_s=0.0,
+                    end_s=5.0,
+                    aspect_ratio="9:16",
+                    ass_subtitle_path=None,
+                    output_path=output,
+                    text_overlay_pngs=[{
+                        "png_path": png_path,
+                        "start_s": 0.5,
+                        "end_s": 2.5,
+                    }],
+                )
+                cmd = mock_run.call_args[0][0]
+                fc_idx = cmd.index("-filter_complex")
+                fc_string = cmd[fc_idx + 1]
+                assert "overlay=0:0" in fc_string
+                assert "between(t,0.500,2.500)" in fc_string
+
+
+class TestColorGrading:
+    """Tests for color grading via _build_video_filter and _color_hint_filters."""
+
+    def test_color_grade_warm_produces_colorbalance(self):
+        filters = _build_video_filter("9:16", None, color_hint="warm")
+        joined = ",".join(filters)
+        assert "colorbalance" in joined
+        assert "rs=0.15" in joined
+
+    def test_color_grade_cool_produces_colorbalance(self):
+        filters = _build_video_filter("9:16", None, color_hint="cool")
+        joined = ",".join(filters)
+        assert "colorbalance" in joined
+        assert "bs=0.15" in joined
+
+    def test_color_grade_high_contrast_produces_eq(self):
+        filters = _build_video_filter("9:16", None, color_hint="high-contrast")
+        joined = ",".join(filters)
+        assert "eq=contrast=1.3" in joined
+
+    def test_color_grade_desaturated_produces_eq(self):
+        filters = _build_video_filter("9:16", None, color_hint="desaturated")
+        joined = ",".join(filters)
+        assert "eq=saturation=0.6" in joined
+
+    def test_color_grade_none_no_filter(self):
+        filters_none = _build_video_filter("9:16", None, color_hint="none")
+        filters_default = _build_video_filter("9:16", None)
+        assert filters_none == filters_default
+
+    def test_color_grade_invalid_no_filter(self):
+        """Unrecognized color_hint produces no color filter."""
+        filters = _build_video_filter("9:16", None, color_hint="banana")
+        # Should be identical to no color hint
+        filters_none = _build_video_filter("9:16", None, color_hint="none")
+        assert filters == filters_none
+
+    def test_color_grade_vintage_two_filters(self):
+        """Vintage produces two separate filter items (colorbalance + eq)."""
+        result = _color_hint_filters("vintage")
+        assert len(result) == 2
+        assert "colorbalance" in result[0]
+        assert "eq=saturation" in result[1]
+
+        # Verify they appear as separate items in the full filter chain
+        filters = _build_video_filter("9:16", None, color_hint="vintage")
+        joined = ",".join(filters)
+        assert "colorbalance" in joined
+        assert "eq=saturation=0.8" in joined
+
+    def test_filter_ordering_color_before_darkening(self):
+        """Color grading filters appear before darkening (colorlevels)."""
+        filters = _build_video_filter(
+            "9:16", None,
+            color_hint="warm",
+            darkening_windows=[(0.5, 2.5)],
+        )
+        joined = ",".join(filters)
+        color_pos = joined.index("colorbalance")
+        dark_pos = joined.index("colorlevels")
+        assert color_pos < dark_pos
+
+    def test_color_hint_threading_through_reframe(self):
+        """Verify reframe_and_export passes color_hint to _build_video_filter."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = os.path.join(tmpdir, "out.mp4")
+
+            def side_effect(cmd, **kwargs):
+                with open(output, "wb") as f:
+                    f.write(b"\x00" * 1024)
+                return MagicMock(returncode=0, stderr=b"")
+
+            with (
+                patch("subprocess.run", side_effect=side_effect),
+                patch(
+                    "app.pipeline.reframe._build_video_filter",
+                    wraps=_build_video_filter,
+                ) as mock_bvf,
+            ):
+                reframe_and_export(
+                    input_path="/fake/input.mp4",
+                    start_s=0.0,
+                    end_s=5.0,
+                    aspect_ratio="9:16",
+                    ass_subtitle_path=None,
+                    output_path=output,
+                    color_hint="warm",
+                )
+                call_kwargs = mock_bvf.call_args.kwargs
+                assert call_kwargs["color_hint"] == "warm"
+
+    def test_color_hint_backward_compat_default_none(self):
+        """reframe_and_export without color_hint defaults to 'none' (no color filter)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = os.path.join(tmpdir, "out.mp4")
+
+            def side_effect(cmd, **kwargs):
+                with open(output, "wb") as f:
+                    f.write(b"\x00" * 1024)
+                return MagicMock(returncode=0, stderr=b"")
+
+            with (
+                patch("subprocess.run", side_effect=side_effect),
+                patch(
+                    "app.pipeline.reframe._build_video_filter",
+                    wraps=_build_video_filter,
+                ) as mock_bvf,
+            ):
+                reframe_and_export(
+                    input_path="/fake/input.mp4",
+                    start_s=0.0,
+                    end_s=5.0,
+                    aspect_ratio="9:16",
+                    ass_subtitle_path=None,
+                    output_path=output,
+                )
+                call_kwargs = mock_bvf.call_args.kwargs
+                assert call_kwargs["color_hint"] == "none"

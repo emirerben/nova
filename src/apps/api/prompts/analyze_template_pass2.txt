@@ -1,0 +1,13 @@
+Creative direction for this template: $creative_direction
+
+Using that creative context, analyze this TikTok/short-form video template. Extract its structural recipe so user footage can be inserted into each slot.
+
+Rules:
+- Count every shot cut as a separate slot
+- slots array length MUST equal shot_count
+- The sum of all target_duration_s values must approximately equal total_duration_s
+- Each slot's target_duration_s is the duration of that shot in the template
+- position is 1-indexed temporal order (slot 1 = first shot)
+- EVERY slot object MUST include an 'energy' field (float 0-10) reflecting the musical intensity during that slot — listen to the audio track and rate each slot
+
+$schema
