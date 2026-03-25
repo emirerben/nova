@@ -296,6 +296,74 @@ async def get_template_job_debug(
     }
 
 
+@router.get("/{job_id}/eval")
+async def get_template_job_eval(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Visual evaluation harness — per-slot comparison data for QA.
+
+    Returns per-slot video URLs (when EVAL_HARNESS_ENABLED) alongside template
+    reference timestamps for side-by-side visual comparison.
+    """
+    from app.config import settings as app_settings  # noqa: PLC0415
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    result = await db.execute(select(Job).where(Job.id == job_uuid))
+    job = result.scalar_one_or_none()
+    if job is None or job.job_type != "template":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    assembly_plan = job.assembly_plan or {}
+    steps = assembly_plan.get("steps", [])
+
+    # Build per-slot eval data
+    slots_eval = []
+    cumulative_s = 0.0
+    for i, step in enumerate(steps):
+        slot = step.get("slot", {})
+        dur = float(slot.get("target_duration_s", 5.0))
+        slot_url = None
+        if app_settings.eval_harness_enabled:
+            slot_url = assembly_plan.get("slot_urls", {}).get(str(i))
+
+        slots_eval.append({
+            "position": slot.get("position", i + 1),
+            "slot_url": slot_url,
+            "template_start_s": round(cumulative_s, 3),
+            "template_end_s": round(cumulative_s + dur, 3),
+            "transition_in": slot.get("transition_in", "none"),
+            "speed_factor": slot.get("speed_factor", 1.0),
+            "text_overlays": [
+                {"role": ov.get("role"), "effect": ov.get("effect")}
+                for ov in slot.get("text_overlays", [])
+            ],
+        })
+        cumulative_s += dur
+
+    # Template URL
+    template_url = None
+    if job.template_id:
+        tpl_result = await db.execute(
+            select(VideoTemplate).where(VideoTemplate.id == job.template_id)
+        )
+        tpl = tpl_result.scalar_one_or_none()
+        if tpl:
+            template_url = tpl.gcs_path
+
+    return {
+        "job_id": job_id,
+        "slots": slots_eval,
+        "template_url": template_url,
+        "output_url": assembly_plan.get("output_url"),
+        "comparison_grid_url": assembly_plan.get("comparison_grid_url"),
+    }
+
+
 @router.get("/{job_id}/status", response_model=TemplateJobStatusResponse)
 async def get_template_job_status(
     job_id: str,

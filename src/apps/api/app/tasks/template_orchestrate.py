@@ -259,6 +259,9 @@ def _run_template_job(job_id: str) -> None:
             assembly_plan.steps, clip_id_to_local, probe_map,
             assembled_path, tmpdir,
             beat_timestamps_s=recipe.beat_timestamps_s,
+            clip_metas=clip_metas,
+            global_color_grade=recipe.copy_tone if hasattr(recipe, "copy_tone") else "none",
+            job_id=job_id,
         )
 
         # [6b] Mix template audio if available
@@ -448,6 +451,170 @@ def _fallback_moments(clip_dur: float) -> list[dict]:
 
 
 # ── FFmpeg assembly ────────────────────────────────────────────────────────────
+#
+# Pipeline:
+#   for each slot → _render_slot() → slot_i.mp4
+#   join slots   → _join_or_concat() → assembled.mp4
+#
+# _render_slot encapsulates: cursor logic, beat-snap, speed ramp source-duration,
+# text overlay routing (ASS animated vs PNG static), color grading, and reframe.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _render_slot(
+    step,
+    clip_path: str,
+    probe,
+    beats: list[float],
+    clip_cursors: dict[str, float],
+    cumulative_s: float,
+    slot_idx: int,
+    clip_metas: list | None,
+    global_color_grade: str,
+    tmpdir: str,
+) -> tuple[str, float, float]:
+    """Render a single slot to a temp .mp4 file.
+
+    Returns (reframed_path, slot_visual_duration, updated_cumulative_s).
+
+    Speed ramp: source_duration = slot_target_dur * speed_factor
+    (2x speed needs 2x source footage compressed into slot_target_dur).
+    """
+    from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
+    from app.pipeline.text_overlay import (  # noqa: PLC0415
+        ASS_ANIMATED_EFFECTS,
+        generate_animated_overlay_ass,
+        generate_text_overlay_png,
+    )
+
+    clip_id = step.clip_id
+    moment = step.moment
+    slot_target_dur = float(step.slot.get("target_duration_s", 5.0))
+    slot_target_dur = max(slot_target_dur, 0.5)
+
+    # Beat-snap: adjust slot duration so the cut lands on a musical beat
+    if beats:
+        expected_end = cumulative_s + slot_target_dur
+        snapped_end = _snap_to_beat(expected_end, beats)
+        slot_target_dur = max(0.5, snapped_end - cumulative_s)
+        cumulative_s = snapped_end
+    else:
+        cumulative_s += slot_target_dur
+
+    # Speed ramp: source_duration = slot_target_dur * speed_factor
+    # 2x speed (speed_factor=2.0) needs 2x source footage → setpts=PTS/2.0 compresses it
+    speed_factor = float(step.slot.get("speed_factor", 1.0))
+    source_duration = slot_target_dur * speed_factor
+
+    # Time-cursor logic
+    if clip_id not in clip_cursors:
+        start_s = float(moment.get("start_s", 0.0))
+    else:
+        start_s = clip_cursors[clip_id]
+
+    clip_dur = probe.duration_s if probe else 30.0
+    if start_s + source_duration > clip_dur:
+        start_s = max(0.0, clip_dur - source_duration)
+        log.warning(
+            "clip_footage_exhausted",
+            clip_id=clip_id,
+            position=step.slot.get("position"),
+            clip_dur=clip_dur,
+            cursor=clip_cursors.get(clip_id, 0.0),
+        )
+
+    clip_cursors[clip_id] = start_s + source_duration
+    end_s = min(start_s + source_duration, clip_dur)
+
+    aspect_ratio = probe.aspect_ratio if probe else "16:9"
+
+    # ── Text overlay routing (ASS animated vs PNG static) ─────────
+    text_overlay_pngs: list[dict] | None = None
+    ass_overlay_paths: list[str] | None = None
+    darkening_windows: list[tuple[float, float]] | None = None
+    narrowing_windows: list[tuple[float, float]] | None = None
+
+    raw_overlays = step.slot.get("text_overlays", [])
+    if raw_overlays:
+        clip_meta = _find_clip_meta_by_id(clip_id, clip_metas)
+        resolved_overlays = []
+        dark_wins: list[tuple[float, float]] = []
+        narrow_wins: list[tuple[float, float]] = []
+
+        for ov in raw_overlays:
+            text = _resolve_overlay_text(ov.get("role", "label"), clip_meta, ov)
+            if not text or not text.strip():
+                continue
+
+            ov_start = float(ov.get("start_s", 0.0))
+            ov_end = float(ov.get("end_s", slot_target_dur))
+            resolved_overlays.append({
+                "text": text,
+                "start_s": ov_start,
+                "end_s": ov_end,
+                "position": ov.get("position", "center"),
+                "effect": ov.get("effect", "none"),
+            })
+            if ov.get("has_darkening"):
+                dark_wins.append((ov_start, ov_end))
+            if ov.get("has_narrowing"):
+                narrow_wins.append((ov_start, ov_end))
+
+        if resolved_overlays:
+            # Split by effect type: animated → ASS, static → PNG
+            png_overlays = [
+                o for o in resolved_overlays if o["effect"] not in ASS_ANIMATED_EFFECTS
+            ]
+            ass_overlays = [
+                o for o in resolved_overlays if o["effect"] in ASS_ANIMATED_EFFECTS
+            ]
+
+            if png_overlays:
+                text_overlay_pngs = generate_text_overlay_png(
+                    png_overlays, slot_target_dur, tmpdir, slot_idx,
+                )
+            if ass_overlays:
+                ass_overlay_paths = generate_animated_overlay_ass(
+                    ass_overlays, slot_target_dur, tmpdir, slot_idx,
+                )
+
+            if text_overlay_pngs or ass_overlay_paths:
+                darkening_windows = dark_wins or None
+                narrowing_windows = narrow_wins or None
+                log.info(
+                    "slot_text_overlay",
+                    slot=slot_idx,
+                    png_overlays=len(text_overlay_pngs or []),
+                    ass_overlays=len(ass_overlay_paths or []),
+                )
+
+    # ── Color grading ─────────────────────────────────────────────
+    slot_color = step.slot.get("color_hint") or global_color_grade or "none"
+
+    log.debug(
+        "slot_timed",
+        position=step.slot.get("position"),
+        target_s=slot_target_dur,
+        actual_s=round(end_s - start_s, 2),
+        speed_factor=speed_factor,
+    )
+
+    reframed = os.path.join(tmpdir, f"slot_{slot_idx}.mp4")
+    reframe_and_export(
+        input_path=clip_path,
+        start_s=start_s,
+        end_s=end_s,
+        aspect_ratio=aspect_ratio,
+        ass_subtitle_path=None,
+        output_path=reframed,
+        text_overlay_pngs=text_overlay_pngs,
+        ass_overlay_paths=ass_overlay_paths,
+        color_hint=slot_color,
+        speed_factor=speed_factor,
+        darkening_windows=darkening_windows,
+        narrowing_windows=narrowing_windows,
+    )
+    return reframed, slot_target_dur, cumulative_s
 
 
 def _assemble_clips(
@@ -457,117 +624,104 @@ def _assemble_clips(
     output_path: str,
     tmpdir: str,
     beat_timestamps_s: list[float] | None = None,
+    clip_metas: list | None = None,
+    global_color_grade: str = "none",
+    job_id: str | None = None,
 ) -> None:
-    """Assemble clips in slot order using FFmpeg concat.
+    """Assemble clips in slot order: render each slot, then join with transitions.
 
-    Each step is trimmed to slot's target_duration_s and reframed to the clip's
-    native aspect ratio (derived from probe, not hardcoded).
+    Uses _render_slot() per slot (cursor, beat-snap, speed ramp, overlays, reframe),
+    then joins with xfade transitions or concat demuxer fallback.
 
-    Time-cursor: when a clip appears in multiple slots, each use advances start_s
-    by slot_target_dur so the viewer sees a different section of the clip rather
-    than the same footage repeated. Wraps to the beginning if the clip is exhausted.
-
-    Beat-snap: when beat_timestamps_s is provided, each slot boundary is snapped
-    to the nearest beat within BEAT_SNAP_TOLERANCE_S, adjusting slot duration
-    so transitions align with musical beats.
+    When EVAL_HARNESS_ENABLED, preserves per-slot .mp4 files in GCS for visual QA.
     """
-    from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
-
     beats = beat_timestamps_s or []
-
-    # Per-clip time cursors: track next available start_s to avoid reusing footage
     clip_cursors: dict[str, float] = {}
-
-    # Cumulative time offset for beat-snap (tracks assembled video position)
     cumulative_s = 0.0
 
-    # Step 1: reframe each slot to a temp file
     reframed_paths: list[str] = []
+    slot_durations: list[float] = []
+    transition_types: list[str] = []
+
     for i, step in enumerate(steps):
         clip_id = step.clip_id
         local_path = clip_id_to_local.get(clip_id)
         if not local_path or not os.path.exists(local_path):
             raise ValueError(f"Local path not found for clip_id {clip_id}")
 
-        moment = step.moment
-        slot_target_dur = float(step.slot.get("target_duration_s", 5.0))
-        slot_target_dur = max(slot_target_dur, 0.5)  # guard against zero/negative
-
-        # Beat-snap: adjust slot duration so the cut lands on a musical beat
-        if beats:
-            expected_end = cumulative_s + slot_target_dur
-            snapped_end = _snap_to_beat(expected_end, beats)
-            slot_target_dur = max(0.5, snapped_end - cumulative_s)
-            cumulative_s = snapped_end
-        else:
-            cumulative_s += slot_target_dur
-
-        # Time-cursor logic: first use of a clip follows Gemini's moment start_s;
-        # subsequent uses advance forward so footage doesn't repeat.
-        if clip_id not in clip_cursors:
-            start_s = float(moment.get("start_s", 0.0))
-        else:
-            start_s = clip_cursors[clip_id]
-
-        # Clamp if cursor has gone past the clip duration.
-        # Never wrap to 0.0 — that replays footage the viewer already saw.
-        # Instead, show the last available segment of the clip.
         probe = clip_probe_map.get(local_path)
-        clip_dur = probe.duration_s if probe else 30.0
-        if start_s + slot_target_dur > clip_dur:
-            start_s = max(0.0, clip_dur - slot_target_dur)
-            log.warning(
-                "clip_footage_exhausted",
-                clip_id=clip_id,
-                position=step.slot.get("position"),
-                clip_dur=clip_dur,
-                cursor=clip_cursors.get(clip_id, 0.0),
-            )
 
-        clip_cursors[clip_id] = start_s + slot_target_dur
-
-        # End time: start + slot target, bounded by clip duration.
-        # Do NOT use moment.end_s — with cursor-based assembly, the slot's
-        # target_duration_s controls the cut length, not the Gemini moment range.
-        end_s = min(start_s + slot_target_dur, clip_dur)
-
-        # Use per-clip aspect ratio from probe; fall back to 16:9
-        probe = clip_probe_map.get(local_path)
-        aspect_ratio = probe.aspect_ratio if probe else "16:9"
-
-        log.debug(
-            "slot_timed",
-            position=step.slot.get("position"),
-            target_s=slot_target_dur,
-            actual_s=round(end_s - start_s, 2),
-        )
-
-        reframed = os.path.join(tmpdir, f"slot_{i}.mp4")
-        reframe_and_export(
-            input_path=local_path,
-            start_s=start_s,
-            end_s=end_s,
-            aspect_ratio=aspect_ratio,
-            ass_subtitle_path=None,
-            output_path=reframed,
+        reframed, vis_dur, cumulative_s = _render_slot(
+            step=step,
+            clip_path=local_path,
+            probe=probe,
+            beats=beats,
+            clip_cursors=clip_cursors,
+            cumulative_s=cumulative_s,
+            slot_idx=i,
+            clip_metas=clip_metas,
+            global_color_grade=global_color_grade,
+            tmpdir=tmpdir,
         )
         reframed_paths.append(reframed)
+        slot_durations.append(vis_dur)
+
+        # Collect transition types for boundaries (skip first slot)
+        if i > 0:
+            transition_types.append(
+                str(step.slot.get("transition_in", "none"))
+            )
 
     if not reframed_paths:
         raise ValueError("No slots to assemble")
 
     if len(reframed_paths) == 1:
-        # Single slot — just copy
         shutil.copy2(reframed_paths[0], output_path)
-        return
+    else:
+        _join_or_concat(
+            reframed_paths, transition_types, slot_durations,
+            output_path, tmpdir,
+        )
 
-    # Step 2: write concat list
+    # Eval harness: upload per-slot files for visual comparison
+    if settings.eval_harness_enabled and job_id:
+        _upload_eval_slots(reframed_paths, slot_durations, steps, job_id)
+
+
+def _join_or_concat(
+    reframed_paths: list[str],
+    transition_types: list[str],
+    slot_durations: list[float],
+    output_path: str,
+    tmpdir: str,
+) -> None:
+    """Join slots with xfade transitions, falling back to concat demuxer on error."""
+    has_transitions = any(t != "none" for t in transition_types)
+
+    if has_transitions and len(reframed_paths) > 1:
+        try:
+            from app.pipeline.transitions import join_with_transitions  # noqa: PLC0415
+
+            join_with_transitions(
+                reframed_paths, transition_types, slot_durations, output_path,
+            )
+            return
+        except Exception as exc:
+            log.warning("transition_join_failed_falling_back", error=str(exc))
+
+    # Fallback: concat demuxer (fast, no re-encode)
+    _concat_demuxer(reframed_paths, output_path, tmpdir)
+
+
+def _concat_demuxer(
+    reframed_paths: list[str], output_path: str, tmpdir: str,
+) -> None:
+    """FFmpeg concat demuxer — lossless stream copy, fast."""
     concat_list = os.path.join(tmpdir, "concat.txt")
     with open(concat_list, "w") as f:
         for p in reframed_paths:
             f.write(f"file '{p}'\n")
 
-    # Step 3: FFmpeg concat (demuxer — fast, no re-encode)
     cmd = [
         "ffmpeg",
         "-f", "concat",
@@ -580,6 +734,44 @@ def _assemble_clips(
     result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
     if result.returncode != 0:
         raise ValueError(f"FFmpeg concat failed: {result.stderr.decode()[:300]}")
+
+
+def _upload_eval_slots(
+    reframed_paths: list[str],
+    slot_durations: list[float],
+    steps: list,
+    job_id: str,
+) -> None:
+    """Upload per-slot .mp4 files to GCS for the eval harness. Non-fatal."""
+    try:
+        for i, path in enumerate(reframed_paths):
+            if os.path.exists(path):
+                gcs_path = f"jobs/{job_id}/slots/slot_{i}.mp4"
+                upload_public_read(path, gcs_path)
+        log.info("eval_slots_uploaded", job_id=job_id, count=len(reframed_paths))
+    except Exception as exc:
+        log.warning("eval_slot_upload_failed", job_id=job_id, error=str(exc))
+
+
+def _find_clip_meta_by_id(clip_id: str, clip_metas: list | None) -> "ClipMeta | None":
+    """Find a ClipMeta by clip_id. Returns None if not found."""
+    if not clip_metas:
+        return None
+    for meta in clip_metas:
+        if meta.clip_id == clip_id:
+            return meta
+    return None
+
+
+def _resolve_overlay_text(
+    role: str, clip_meta: "ClipMeta | None", overlay: dict,
+) -> str:
+    """Resolve overlay text based on role. Hook text comes from clip analysis."""
+    if role == "hook" and clip_meta:
+        return clip_meta.hook_text or overlay.get("sample_text", "")
+    if role == "cta":
+        return ""  # CTA text generated later by copy_writer
+    return overlay.get("sample_text", "")
 
 
 # ── Beat detection helpers ─────────────────────────────────────────────────────

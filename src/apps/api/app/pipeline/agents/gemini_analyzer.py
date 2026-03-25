@@ -319,6 +319,9 @@ def analyze_template(file_ref: Any) -> TemplateRecipe:
         float(t) for t in data.get("beat_timestamps_s", [])
     )
 
+    # Validate and normalize slot fields (transitions, effects, speed_factor)
+    slots = _validate_slots(slots)
+
     return TemplateRecipe(
         shot_count=int(data.get("shot_count", 0)),
         total_duration_s=total_duration_s,
@@ -328,6 +331,68 @@ def analyze_template(file_ref: Any) -> TemplateRecipe:
         caption_style=str(data.get("caption_style", "")),
         beat_timestamps_s=beat_timestamps_s,
     )
+
+
+# ── Slot validation & migration ──────────────────────────────────────────────
+
+_VALID_TRANSITIONS = {"crossfade", "fade_black", "wipe_left", "wipe_right", "none"}
+_VALID_EFFECTS = {"fade-in", "typewriter", "slide-up", "font-cycle", "static", "none"}
+_VALID_SPEED_FACTORS = {0.5, 0.75, 1.0, 1.25, 1.5, 2.0}
+
+# Migration mapping: old Gemini values → closest supported equivalent
+_TRANSITION_MIGRATION: dict[str, str] = {
+    "dissolve": "crossfade",
+    "zoom-in": "fade_black",
+    "whip-pan": "wipe_left",
+    "hard-cut": "none",
+}
+_EFFECT_MIGRATION: dict[str, str] = {
+    "pop-in": "fade-in",
+    "scale-up": "fade-in",
+    "bounce": "fade-in",
+    "glitch": "static",
+    "slide-in": "slide-up",
+}
+
+
+def _validate_slots(slots: list[dict]) -> list[dict]:
+    """Normalize and constrain slot fields to the supported effects vocabulary.
+
+    Applies migration mapping for old Gemini values, then enforces enum constraints.
+    Unknown values default to "none" after migration attempt.
+    """
+    for slot in slots:
+        # Transition
+        trans = str(slot.get("transition_in", "none"))
+        if trans not in _VALID_TRANSITIONS:
+            trans = _TRANSITION_MIGRATION.get(trans, "none")
+        slot["transition_in"] = trans
+
+        # Speed factor — snap to nearest valid discrete value
+        raw_speed = float(slot.get("speed_factor", 1.0))
+        slot["speed_factor"] = min(
+            _VALID_SPEED_FACTORS, key=lambda v: abs(v - raw_speed)
+        )
+
+        # Text overlays
+        for ov in slot.get("text_overlays", []):
+            effect = str(ov.get("effect", "none"))
+            if effect not in _VALID_EFFECTS:
+                effect = _EFFECT_MIGRATION.get(effect, "none")
+            ov["effect"] = effect
+
+            # Clamp speed_factor on overlay (if present)
+            if "speed_factor" in ov:
+                ov_speed = float(ov["speed_factor"])
+                ov["speed_factor"] = min(
+                    _VALID_SPEED_FACTORS, key=lambda v: abs(v - ov_speed)
+                )
+
+        # Ensure energy field exists (defaults to 5.0)
+        if "energy" not in slot:
+            slot["energy"] = 5.0
+
+    return slots
 
 
 # ── Transcription ─────────────────────────────────────────────────────────────

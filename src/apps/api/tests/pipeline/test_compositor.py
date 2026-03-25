@@ -10,6 +10,7 @@ from app.pipeline.reframe import (
     MAX_OUTPUT_BYTES,
     ReframeError,
     _build_video_filter,
+    _encoding_args,
     reframe_and_export,
 )
 
@@ -46,6 +47,72 @@ class TestBuildVideoFilter:
         filters = _build_video_filter("9:16", "/nonexistent/captions.ass")
         joined = ",".join(filters)
         assert "ass=" not in joined
+
+    def test_speed_factor_2x_adds_setpts(self):
+        """speed_factor=2.0 → setpts=PTS/2.0 in filter chain."""
+        filters = _build_video_filter("16:9", None, speed_factor=2.0)
+        joined = ",".join(filters)
+        assert "setpts=PTS/2.0" in joined
+
+    def test_speed_factor_1_no_setpts(self):
+        """speed_factor=1.0 → no setpts filter (avoid rounding artifacts)."""
+        filters = _build_video_filter("16:9", None, speed_factor=1.0)
+        joined = ",".join(filters)
+        assert "setpts" not in joined
+
+    def test_speed_factor_half_adds_setpts(self):
+        """speed_factor=0.5 → setpts=PTS/0.5 in filter chain."""
+        filters = _build_video_filter("16:9", None, speed_factor=0.5)
+        joined = ",".join(filters)
+        assert "setpts=PTS/0.5" in joined
+
+    def test_setpts_is_first_filter(self):
+        """setpts MUST be first filter (before scale/crop) to normalize PTS."""
+        filters = _build_video_filter("16:9", None, speed_factor=2.0)
+        assert filters[0] == "setpts=PTS/2.0"
+        assert "scale" in filters[1]
+
+    def test_color_hint_warm(self):
+        """Color hint 'warm' adds colorbalance filter."""
+        filters = _build_video_filter("16:9", None, color_hint="warm")
+        joined = ",".join(filters)
+        assert "colorbalance" in joined
+
+    def test_color_hint_none_no_extra_filters(self):
+        """Color hint 'none' adds no color grading."""
+        filters = _build_video_filter("16:9", None, color_hint="none")
+        joined = ",".join(filters)
+        assert "colorbalance" not in joined
+        assert "eq=" not in joined
+
+    def test_darkening_window_adds_colorlevels(self):
+        filters = _build_video_filter(
+            "16:9", None, darkening_windows=[(0.0, 2.0)]
+        )
+        joined = ",".join(filters)
+        assert "colorlevels" in joined
+        assert "between(t,0.000,2.000)" in joined
+
+    def test_narrowing_window_adds_drawbox(self):
+        filters = _build_video_filter(
+            "16:9", None, narrowing_windows=[(1.0, 3.0)]
+        )
+        joined = ",".join(filters)
+        assert "drawbox" in joined
+
+
+class TestEncodingArgs:
+    def test_returns_correct_number_of_args(self):
+        args = _encoding_args("/tmp/out.mp4")
+        assert isinstance(args, list)
+        assert len(args) >= 14
+        assert args[-1] == "/tmp/out.mp4"
+        assert "-c:v" in args
+        assert "libx264" in args
+
+    def test_contains_output_path(self):
+        args = _encoding_args("/my/output.mp4")
+        assert "/my/output.mp4" in args
 
 
 class TestReframeAndExport:
