@@ -33,6 +33,7 @@ class CreateTemplateJobRequest(BaseModel):
     template_id: str
     clip_gcs_paths: list[str]
     selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
+    subject: str = ""  # e.g. "Puerto Rico" — replaces template placeholder text
 
     @field_validator("clip_gcs_paths")
     @classmethod
@@ -126,7 +127,7 @@ async def create_template_job(
         template_id=req.template_id,
         raw_storage_path=req.clip_gcs_paths[0],
         selected_platforms=req.selected_platforms,
-        all_candidates={"clip_paths": req.clip_gcs_paths},
+        all_candidates={"clip_paths": req.clip_gcs_paths, "subject": req.subject},
         status="queued",
     )
     db.add(job)
@@ -138,7 +139,7 @@ async def create_template_job(
     from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
     orchestrate_template_job.delay(job_id)
 
-    log.info("template_job_created", job_id=job_id, template_id=req.template_id, clips=n_clips)
+    log.info("template_job_created", job_id=job_id, template_id=req.template_id, clips=n_clips, subject=req.subject)
     return TemplateJobResponse(job_id=job_id, status="queued", template_id=req.template_id)
 
 

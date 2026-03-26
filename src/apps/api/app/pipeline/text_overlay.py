@@ -119,16 +119,13 @@ def generate_text_overlay_png(
         if text is None:
             continue
 
-        # Use style info from Gemini analysis if available
         font_style = overlay.get("font_style", "sans")
         text_size = overlay.get("text_size", "medium")
         hex_color = overlay.get("text_color", "#FFFFFF")
-
-        font = _load_styled_font(font_style, text_size)
         text_color = _hex_to_rgba(hex_color)
 
         png_path = os.path.join(output_dir, f"slot_{slot_index}_overlay_{i}.png")
-        _draw_text_png(text, font, position, png_path, text_color=text_color, shadow=True)
+        _draw_text_png(text, font_style, text_size, position, png_path, text_color=text_color)
         results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
 
     return results if results else None
@@ -298,21 +295,46 @@ def _load_styled_font(
 
 def _draw_text_png(
     text: str,
-    font,
+    font_style: str,
+    text_size: str,
     position: str,
     png_path: str,
     text_color: tuple[int, int, int, int] = (255, 255, 255, 255),
-    outline_color: tuple[int, int, int, int] = (0, 0, 0, 255),
-    shadow: bool = False,
 ) -> None:
     """Draw styled text on a transparent 1080x1920 canvas.
 
-    Supports custom text color, outline color, and optional drop shadow.
+    Auto-scales the font so text fills ~80% of canvas width for large/xlarge sizes.
+    Uses subtle drop shadow instead of outline for a clean TikTok look.
     """
-    from PIL import Image, ImageDraw  # noqa: PLC0415
+    from PIL import Image, ImageDraw, ImageFont  # noqa: PLC0415
 
     img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
+
+    # Target width: large/xlarge text should fill most of the frame
+    if text_size in ("large", "xlarge"):
+        target_w = int(CANVAS_W * 0.85)
+    else:
+        target_w = int(CANVAS_W * 0.65)
+
+    # Auto-scale: start from the nominal size, scale up/down to fit target width
+    nominal_size = _FONT_SIZE_MAP.get(text_size, 72)
+    font = _load_styled_font(font_style, text_size)
+
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+
+    if text_w > 0 and abs(text_w - target_w) > 20:
+        # Scale font size to fit target width
+        scaled_size = int(nominal_size * target_w / text_w)
+        scaled_size = max(32, min(scaled_size, 300))  # clamp
+        candidates = _FONT_STYLE_MAP.get(font_style, _FONT_STYLE_MAP["sans"])
+        for path in candidates:
+            try:
+                font = ImageFont.truetype(path, scaled_size)
+                break
+            except (OSError, IOError):
+                continue
 
     bbox = draw.textbbox((0, 0), text, font=font)
     text_w = bbox[2] - bbox[0]
@@ -322,17 +344,10 @@ def _draw_text_png(
     y_frac = _POSITION_Y.get(position, 0.5)
     y = int(CANVAS_H * y_frac - text_h / 2)
 
-    # Drop shadow (subtle, offset by 3px)
-    if shadow:
-        shadow_color = (0, 0, 0, 160)
-        draw.text((x + 3, y + 3), text, font=font, fill=shadow_color)
-
-    # Outline (stroke)
-    outline_width = 3
-    for dx in range(-outline_width, outline_width + 1):
-        for dy in range(-outline_width, outline_width + 1):
-            if dx * dx + dy * dy <= outline_width * outline_width:
-                draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
+    # Subtle drop shadow (no ugly outline)
+    shadow_color = (0, 0, 0, 120)
+    for offset in [(2, 2), (3, 3)]:
+        draw.text((x + offset[0], y + offset[1]), text, font=font, fill=shadow_color)
 
     # Foreground text
     draw.text((x, y), text, font=font, fill=text_color)

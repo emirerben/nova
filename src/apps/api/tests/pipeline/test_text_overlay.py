@@ -155,15 +155,16 @@ class TestAnimatedOverlayASS:
 
 
 class TestPNGOverlay:
-    def test_skips_animated_effects(self):
-        """generate_text_overlay_png ignores animated effects."""
+    def test_renders_animated_effects_as_png_fallback(self):
+        """generate_text_overlay_png renders ALL overlays including animated (as fallback)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_text_overlay_png(
                 [{"text": "Fade", "start_s": 0.0, "end_s": 3.0,
                   "position": "center", "effect": "fade-in"}],
                 5.0, tmpdir, 0,
             )
-            assert result is None
+            assert result is not None
+            assert len(result) == 1
 
     def test_renders_static_overlay(self):
         """Static effect produces a PNG file."""

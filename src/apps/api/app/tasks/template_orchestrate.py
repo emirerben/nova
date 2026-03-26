@@ -174,6 +174,7 @@ def _run_template_job(job_id: str) -> None:
         template_id = job.template_id
         all_candidates = job.all_candidates or {}
         clip_paths_gcs = all_candidates.get("clip_paths", [])
+        user_subject = all_candidates.get("subject", "")
         selected_platforms = job.selected_platforms or ["tiktok", "instagram", "youtube"]
 
     if not clip_paths_gcs:
@@ -262,6 +263,7 @@ def _run_template_job(job_id: str) -> None:
             clip_metas=clip_metas,
             global_color_grade=recipe.copy_tone if hasattr(recipe, "copy_tone") else "none",
             job_id=job_id,
+            user_subject=user_subject,
         )
 
         # [6b] Mix template audio if available
@@ -628,6 +630,7 @@ def _assemble_clips(
     clip_metas: list | None = None,
     global_color_grade: str = "none",
     job_id: str | None = None,
+    user_subject: str = "",
 ) -> None:
     """Assemble clips in slot order: render each slot, then join with transitions.
 
@@ -640,10 +643,10 @@ def _assemble_clips(
     clip_cursors: dict[str, float] = {}
     cumulative_s = 0.0
 
-    # Determine consensus subject from clip analysis (e.g. "Puerto Rico")
-    subject = _consensus_subject(clip_metas)
+    # User-provided subject takes priority over auto-detected
+    subject = user_subject or _consensus_subject(clip_metas)
     if subject:
-        log.info("consensus_subject_detected", subject=subject)
+        log.info("subject_resolved", subject=subject, source="user" if user_subject else "auto")
 
     reframed_paths: list[str] = []
     slot_durations: list[float] = []
