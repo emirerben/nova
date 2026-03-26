@@ -773,6 +773,28 @@ def _find_clip_meta_by_id(clip_id: str, clip_metas: list | None) -> "ClipMeta | 
     return None
 
 
+def _is_subject_placeholder(sample: str) -> bool:
+    """Return True if sample_text looks like a variable place/topic name.
+
+    Heuristic: short ALL-CAPS text (e.g. "PERU", "NYC") or a short
+    title-cased phrase where every word is capitalized (e.g. "New York")
+    is likely a template variable that should be replaced with the user's
+    subject.  Fixed phrases like "Welcome to" (has lowercase word) or
+    "discovering a hidden river" (long, lowercase) do NOT match.
+    """
+    if not sample or not sample.strip():
+        return False
+    words = sample.split()
+    # ALL-CAPS up to 3 words: "PERU", "NEW YORK", "SAN JUAN PR"
+    if sample.isupper() and len(words) <= 3:
+        return True
+    # Title-cased 1-2 words where EVERY word is capitalized: "Peru", "New York"
+    # Excludes mixed-case phrases like "Welcome to", "Check this"
+    if len(words) <= 2 and all(w[0].isupper() for w in words):
+        return True
+    return False
+
+
 def _resolve_overlay_text(
     role: str, clip_meta: "ClipMeta | None", overlay: dict,
     subject: str = "",
@@ -782,21 +804,25 @@ def _resolve_overlay_text(
     Template text like "PERU" is replaced with the detected subject from user clips
     (e.g. "Puerto Rico"). Fixed text like "Welcome to" passes through unchanged.
     The template_subject field on the overlay (if set) tells us which word to replace.
+
+    Subject substitution takes priority over role-based hook text when the
+    sample_text looks like a place-name placeholder — this prevents clip
+    analysis text (e.g. "YOU", "discovering a hidden river") from overriding
+    the user's subject.
     """
     sample = overlay.get("sample_text", "")
 
     if role == "cta":
         return ""  # CTA text generated later by copy_writer
 
+    # Subject substitution FIRST: if the template text looks like a variable
+    # place/topic name and we have a subject, substitute it regardless of role.
+    if subject and _is_subject_placeholder(sample):
+        return subject.upper() if sample.isupper() else subject
+
+    # Role-based fallback: hook overlays use clip analysis hook text.
     if role == "hook" and clip_meta:
         return clip_meta.hook_text or sample
-
-    # Subject substitution: if the template text looks like a proper noun / place name
-    # and we have a detected subject, replace it. The heuristic: short ALL-CAPS text
-    # or text that's a single capitalized word is likely a variable (city, topic).
-    if subject and sample:
-        if sample.isupper() or (len(sample.split()) <= 2 and sample[0].isupper()):
-            return subject.upper() if sample.isupper() else subject
 
     return sample
 
