@@ -815,14 +815,19 @@ def _resolve_overlay_text(
     if role == "cta":
         return ""  # CTA text generated later by copy_writer
 
-    # Subject substitution FIRST: if the template text looks like a variable
-    # place/topic name and we have a subject, substitute it regardless of role.
+    # Subject substitution: if the template text looks like a variable
+    # place/topic name and we have a subject, substitute it.
     if subject and _is_subject_placeholder(sample):
         return subject.upper() if sample.isupper() else subject
 
-    # Role-based fallback: hook overlays use clip analysis hook text.
-    if role == "hook" and clip_meta:
-        return clip_meta.hook_text or sample
+    # If the template already has text for this overlay, USE IT.
+    # "Welcome to" means "Welcome to" — not clip hook_text.
+    if sample:
+        return sample
+
+    # Empty sample_text with hook role: use clip analysis hook text.
+    if role == "hook" and clip_meta and clip_meta.hook_text:
+        return clip_meta.hook_text
 
     return sample
 
