@@ -118,9 +118,9 @@ def reframe_and_export(
     result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
 
     if result.returncode != 0 and ass_overlay_paths:
-        # ASS overlays may fail if FFmpeg lacks libass — retry without them
+        # ASS overlays may fail if FFmpeg lacks libass — retry with PNGs only
         log.warning(
-            "reframe_ass_fallback",
+            "reframe_ass_fallback_to_png",
             rc=result.returncode,
             ass_count=len(ass_overlay_paths),
         )

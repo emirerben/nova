@@ -19,7 +19,6 @@ log = structlog.get_logger()
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-OVERLAY_FONT_SIZE = 90
 MAX_OVERLAY_TEXT_LEN = 40
 
 CANVAS_W = 1080
@@ -39,6 +38,43 @@ _POSITION_Y = {
     "top": 0.15,
     "bottom": 0.85,
 }
+
+# ── Font style mapping ──────────────────────────────────────────────────────
+# Gemini reports font_style per overlay → we pick the best available font.
+# Priority: bundled asset → macOS system → fallback.
+
+_FONT_SIZE_MAP = {"small": 48, "medium": 72, "large": 120, "xlarge": 150}
+
+_FONT_STYLE_MAP: dict[str, list[str]] = {
+    "serif": [
+        "/System/Library/Fonts/Supplemental/Didot.ttc",
+        "/System/Library/Fonts/Supplemental/Baskerville.ttc",
+        "/System/Library/Fonts/Supplemental/Georgia Bold Italic.ttf",
+    ],
+    "serif_italic": [
+        "/System/Library/Fonts/Supplemental/Georgia Bold Italic.ttf",
+        "/System/Library/Fonts/Supplemental/Didot.ttc",
+    ],
+    "script": [
+        "/System/Library/Fonts/Supplemental/SnellRoundhand.ttc",
+        "/System/Library/Fonts/Supplemental/Brush Script.ttf",
+    ],
+    "sans": [
+        OVERLAY_FONT_PATH,  # Montserrat ExtraBold
+        "/System/Library/Fonts/Helvetica.ttc",
+    ],
+    "display": [
+        "/System/Library/Fonts/Supplemental/Didot.ttc",
+        OVERLAY_FONT_PATH,
+    ],
+}
+
+def _hex_to_rgba(hex_color: str) -> tuple[int, int, int, int]:
+    """Convert '#D4A843' or 'D4A843' to (R, G, B, 255)."""
+    h = hex_color.lstrip("#")
+    if len(h) == 6:
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 255)
+    return (255, 255, 255, 255)  # default white
 
 # Position → ASS alignment + MarginV
 # ASS alignment: 2=bottom-center, 5=center, 8=top-center
@@ -79,17 +115,20 @@ def generate_text_overlay_png(
     results: list[dict] = []
 
     for i, overlay in enumerate(overlays):
-        effect = overlay.get("effect", "none")
-        if effect in ASS_ANIMATED_EFFECTS:
-            continue
-
         text, start_s, end_s, position = _validate_overlay(overlay, slot_duration_s)
         if text is None:
             continue
 
-        font = _load_font(OVERLAY_FONT_PATH)
+        # Use style info from Gemini analysis if available
+        font_style = overlay.get("font_style", "sans")
+        text_size = overlay.get("text_size", "medium")
+        hex_color = overlay.get("text_color", "#FFFFFF")
+
+        font = _load_styled_font(font_style, text_size)
+        text_color = _hex_to_rgba(hex_color)
+
         png_path = os.path.join(output_dir, f"slot_{slot_index}_overlay_{i}.png")
-        _draw_text_png(text, font, position, png_path)
+        _draw_text_png(text, font, position, png_path, text_color=text_color, shadow=True)
         results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
 
     return results if results else None
@@ -230,23 +269,46 @@ def _validate_overlay(
     return text, start_s, end_s, position
 
 
-def _load_font(font_path: str, size: int = OVERLAY_FONT_SIZE):
-    """Load a font from path with fallback chain."""
+def _load_styled_font(
+    font_style: str = "sans",
+    text_size: str = "medium",
+):
+    """Load a font matching the requested style and size.
+
+    font_style: "serif", "serif_italic", "script", "sans", "display"
+    text_size:  "small" (48), "medium" (72), "large" (120), "xlarge" (150)
+    """
     from PIL import ImageFont  # noqa: PLC0415
 
-    try:
-        return ImageFont.truetype(font_path, size)
-    except (OSError, IOError):
-        pass
+    size = _FONT_SIZE_MAP.get(text_size, 72)
+    candidates = _FONT_STYLE_MAP.get(font_style, _FONT_STYLE_MAP["sans"])
+
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except (OSError, IOError):
+            continue
+
+    # Last resort
     try:
         return ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size)
     except (OSError, IOError):
-        pass
-    return ImageFont.load_default()
+        return ImageFont.load_default()
 
 
-def _draw_text_png(text: str, font, position: str, png_path: str) -> None:
-    """Draw centered text with black outline on a transparent 1080x1920 canvas."""
+def _draw_text_png(
+    text: str,
+    font,
+    position: str,
+    png_path: str,
+    text_color: tuple[int, int, int, int] = (255, 255, 255, 255),
+    outline_color: tuple[int, int, int, int] = (0, 0, 0, 255),
+    shadow: bool = False,
+) -> None:
+    """Draw styled text on a transparent 1080x1920 canvas.
+
+    Supports custom text color, outline color, and optional drop shadow.
+    """
     from PIL import Image, ImageDraw  # noqa: PLC0415
 
     img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
@@ -260,11 +322,19 @@ def _draw_text_png(text: str, font, position: str, png_path: str) -> None:
     y_frac = _POSITION_Y.get(position, 0.5)
     y = int(CANVAS_H * y_frac - text_h / 2)
 
-    outline_width = 4
+    # Drop shadow (subtle, offset by 3px)
+    if shadow:
+        shadow_color = (0, 0, 0, 160)
+        draw.text((x + 3, y + 3), text, font=font, fill=shadow_color)
+
+    # Outline (stroke)
+    outline_width = 3
     for dx in range(-outline_width, outline_width + 1):
         for dy in range(-outline_width, outline_width + 1):
             if dx * dx + dy * dy <= outline_width * outline_width:
-                draw.text((x + dx, y + dy), text, font=font, fill=(0, 0, 0, 255))
+                draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
 
-    draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
+    # Foreground text
+    draw.text((x, y), text, font=font, fill=text_color)
+
     img.save(png_path, "PNG")

@@ -555,6 +555,9 @@ def _render_slot(
                 "end_s": ov_end,
                 "position": ov.get("position", "center"),
                 "effect": ov.get("effect", "none"),
+                "font_style": ov.get("font_style", "sans"),
+                "text_size": ov.get("text_size", "medium"),
+                "text_color": ov.get("text_color", "#FFFFFF"),
             })
             if ov.get("has_darkening"):
                 dark_wins.append((ov_start, ov_end))
@@ -562,18 +565,15 @@ def _render_slot(
                 narrow_wins.append((ov_start, ov_end))
 
         if resolved_overlays:
-            # Split by effect type: animated → ASS, static → PNG
-            png_overlays = [
-                o for o in resolved_overlays if o["effect"] not in ASS_ANIMATED_EFFECTS
-            ]
+            # Always generate styled PNGs for ALL overlays (fallback + static path)
+            text_overlay_pngs = generate_text_overlay_png(
+                resolved_overlays, slot_target_dur, tmpdir, slot_idx,
+            )
+
+            # Additionally generate ASS for animated effects (preferred rendering)
             ass_overlays = [
                 o for o in resolved_overlays if o["effect"] in ASS_ANIMATED_EFFECTS
             ]
-
-            if png_overlays:
-                text_overlay_pngs = generate_text_overlay_png(
-                    png_overlays, slot_target_dur, tmpdir, slot_idx,
-                )
             if ass_overlays:
                 ass_overlay_paths = generate_animated_overlay_ass(
                     ass_overlays, slot_target_dur, tmpdir, slot_idx,
