@@ -701,9 +701,14 @@ def _collect_absolute_overlays(
 ) -> list[dict]:
     """Collect text overlays across all slots with absolute video timestamps.
 
-    Deduplicates: if the same text appears on consecutive slots, merge into
-    one overlay spanning the full range. This prevents "Welcome to" from
-    disappearing and reappearing at slot boundaries.
+    Two dedup rules prevent visual glitches:
+      1. Same-text dedup: if the same text (case-insensitive) appears on
+         multiple slots, keep only the first occurrence. Templates report
+         overlays per-shot, so "Welcome to" would otherwise repeat on every
+         slot boundary.
+      2. Same-position overlap prevention: if two overlays share the same
+         screen position with overlapping time ranges, truncate the earlier
+         one so they never render simultaneously.
     """
     raw: list[dict] = []
     cumulative_s = 0.0
@@ -734,24 +739,36 @@ def _collect_absolute_overlays(
 
         cumulative_s += dur
 
-    # Deduplicate: merge overlays with the same text that are consecutive
-    # (end of one ≈ start of next, within 0.5s tolerance)
     if not raw:
         return []
 
-    merged: list[dict] = []
+    # ── Dedup 1: drop duplicate text ──────────────────────────────────────
+    # Templates report overlays per-shot, so "Welcome to" appears on every
+    # slot. Keep only the first occurrence of each text (case-insensitive).
+    seen_texts: set[str] = set()
+    unique: list[dict] = []
     for ov in raw:
-        found = False
-        for m in merged:
-            if m["text"] == ov["text"] and abs(m["end_s"] - ov["start_s"]) < 0.5:
-                m["end_s"] = max(m["end_s"], ov["end_s"])
-                found = True
-                break
-        if not found:
-            merged.append(dict(ov))
+        key = ov["text"].lower().strip()
+        if key in seen_texts:
+            continue
+        seen_texts.add(key)
+        unique.append(ov)
 
-    log.info("text_overlays_collected", raw=len(raw), merged=len(merged))
-    return merged
+    # ── Dedup 2: prevent same-position time overlap ───────────────────────
+    # Sort by position then start time. If two overlays share a position
+    # and overlap in time, truncate the earlier one to end before the
+    # later one starts (with a small gap for visual clarity).
+    unique.sort(key=lambda o: (o["position"], o["start_s"]))
+    for i in range(len(unique) - 1):
+        if unique[i]["position"] == unique[i + 1]["position"]:
+            if unique[i]["end_s"] > unique[i + 1]["start_s"]:
+                unique[i]["end_s"] = unique[i + 1]["start_s"] - 0.1
+
+    # Remove any that became invalid after truncation
+    result = [o for o in unique if o["end_s"] > o["start_s"]]
+
+    log.info("text_overlays_collected", raw=len(raw), deduped=len(result))
+    return result
 
 
 def _burn_text_overlays(
