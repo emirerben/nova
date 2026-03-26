@@ -46,6 +46,7 @@ class ClipMeta:
     hook_text: str
     hook_score: float
     best_moments: list[dict]  # [{start_s, end_s, energy, description}]
+    detected_subject: str = ""  # location, topic, or main subject detected from visuals/audio
     analysis_degraded: bool = False
     failed: bool = False
     clip_path: str = ""  # set by caller for fallback
@@ -200,6 +201,10 @@ def analyze_clip(
         '- "transcript": string — full spoken text in the segment\n'
         '- "hook_text": string — the first compelling sentence that creates curiosity\n'
         '- "hook_score": float 0–10 — how strongly the opening hooks the viewer\n'
+        '- "detected_subject": string — the main subject, location, or topic of this video. '
+        "For travel content: the city/country name (e.g. \"Puerto Rico\", \"Tokyo\"). "
+        "For tutorials: the topic (e.g. \"Sourdough Bread\"). "
+        "For vlogs: the main activity or theme. Be specific and concise (1-3 words).\n"
         '- "best_moments": list of 3–6 objects with '
         '{"start_s": float, "end_s": float, "energy": float 0–10, "description": string} '
         "covering a VARIETY of durations — include some short moments (3–5s) AND some "
@@ -238,6 +243,7 @@ def analyze_clip(
             hook_text=data.get("hook_text", ""),
             hook_score=hook_score,
             best_moments=data.get("best_moments", []),
+            detected_subject=data.get("detected_subject", ""),
         )
 
     except (GeminiRefusalError, GeminiAnalysisError):

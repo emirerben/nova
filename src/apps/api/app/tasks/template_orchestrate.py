@@ -472,6 +472,7 @@ def _render_slot(
     clip_metas: list | None,
     global_color_grade: str,
     tmpdir: str,
+    subject: str = "",
 ) -> tuple[str, float, float]:
     """Render a single slot to a temp .mp4 file.
 
@@ -542,7 +543,7 @@ def _render_slot(
         narrow_wins: list[tuple[float, float]] = []
 
         for ov in raw_overlays:
-            text = _resolve_overlay_text(ov.get("role", "label"), clip_meta, ov)
+            text = _resolve_overlay_text(ov.get("role", "label"), clip_meta, ov, subject=subject)
             if not text or not text.strip():
                 continue
 
@@ -639,6 +640,11 @@ def _assemble_clips(
     clip_cursors: dict[str, float] = {}
     cumulative_s = 0.0
 
+    # Determine consensus subject from clip analysis (e.g. "Puerto Rico")
+    subject = _consensus_subject(clip_metas)
+    if subject:
+        log.info("consensus_subject_detected", subject=subject)
+
     reframed_paths: list[str] = []
     slot_durations: list[float] = []
     transition_types: list[str] = []
@@ -662,6 +668,7 @@ def _assemble_clips(
             clip_metas=clip_metas,
             global_color_grade=global_color_grade,
             tmpdir=tmpdir,
+            subject=subject,
         )
         reframed_paths.append(reframed)
         slot_durations.append(vis_dur)
@@ -765,13 +772,59 @@ def _find_clip_meta_by_id(clip_id: str, clip_metas: list | None) -> "ClipMeta | 
 
 def _resolve_overlay_text(
     role: str, clip_meta: "ClipMeta | None", overlay: dict,
+    subject: str = "",
 ) -> str:
-    """Resolve overlay text based on role. Hook text comes from clip analysis."""
-    if role == "hook" and clip_meta:
-        return clip_meta.hook_text or overlay.get("sample_text", "")
+    """Resolve overlay text based on role, substituting detected subject.
+
+    Template text like "PERU" is replaced with the detected subject from user clips
+    (e.g. "Puerto Rico"). Fixed text like "Welcome to" passes through unchanged.
+    The template_subject field on the overlay (if set) tells us which word to replace.
+    """
+    sample = overlay.get("sample_text", "")
+
     if role == "cta":
         return ""  # CTA text generated later by copy_writer
-    return overlay.get("sample_text", "")
+
+    if role == "hook" and clip_meta:
+        return clip_meta.hook_text or sample
+
+    # Subject substitution: if the template text looks like a proper noun / place name
+    # and we have a detected subject, replace it. The heuristic: short ALL-CAPS text
+    # or text that's a single capitalized word is likely a variable (city, topic).
+    if subject and sample:
+        if sample.isupper() or (len(sample.split()) <= 2 and sample[0].isupper()):
+            return subject.upper() if sample.isupper() else subject
+
+    return sample
+
+
+def _consensus_subject(clip_metas: list | None) -> str:
+    """Determine the consensus detected_subject across all analyzed clips.
+
+    Uses majority vote — the most common non-empty subject wins.
+    Returns empty string if no clips have a detected subject.
+    """
+    if not clip_metas:
+        return ""
+
+    subjects: dict[str, int] = {}
+    for meta in clip_metas:
+        s = (meta.detected_subject or "").strip()
+        if s:
+            # Normalize: lowercase for counting, keep original casing of first occurrence
+            key = s.lower()
+            subjects[key] = subjects.get(key, 0) + 1
+
+    if not subjects:
+        return ""
+
+    # Return the most common subject (original casing from first clip)
+    best_key = max(subjects, key=subjects.get)
+    for meta in clip_metas:
+        s = (meta.detected_subject or "").strip()
+        if s.lower() == best_key:
+            return s
+    return ""
 
 
 # ── Beat detection helpers ─────────────────────────────────────────────────────
