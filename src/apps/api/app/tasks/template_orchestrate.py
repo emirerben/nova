@@ -121,6 +121,11 @@ def analyze_template_task(self, template_id: str) -> None:
                         "copy_tone": recipe.copy_tone,
                         "caption_style": recipe.caption_style,
                         "beat_timestamps_s": merged_beats,
+                        "creative_direction": recipe.creative_direction,
+                        "transition_style": recipe.transition_style,
+                        "color_grade": recipe.color_grade,
+                        "pacing_style": recipe.pacing_style,
+                        "sync_style": recipe.sync_style,
                     }
                     template.recipe_cached_at = datetime.now(UTC)
                     template.analysis_status = "ready"
@@ -261,7 +266,7 @@ def _run_template_job(job_id: str) -> None:
             assembled_path, tmpdir,
             beat_timestamps_s=recipe.beat_timestamps_s,
             clip_metas=clip_metas,
-            global_color_grade=recipe.copy_tone if hasattr(recipe, "copy_tone") else "none",
+            global_color_grade=recipe.color_grade,
             job_id=job_id,
             user_subject=user_subject,
         )
@@ -563,7 +568,7 @@ def _assemble_clips(
     output_path: str,
     tmpdir: str,
     beat_timestamps_s: list[float] | None = None,
-    clip_metas: list | None = None,
+    clip_metas: list[ClipMeta] | None = None,
     global_color_grade: str = "none",
     job_id: str | None = None,
     user_subject: str = "",

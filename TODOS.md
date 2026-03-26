@@ -57,6 +57,34 @@
 
 ---
 
+## Template Prompt Improvement (from CEO review 2026-03-24)
+
+### Color Grading Visual Verification
+**What:** Post-merge, visually review color grading output on 3-5 templates within 48 hours. Tune the FFmpeg colorbalance/eq values if they look over- or under-processed.
+**Why:** The color grade → FFmpeg filter mappings are starting-point values based on theory, not empirical testing. Subtle adjustments may be needed.
+**How:** Run template jobs, inspect output videos. Compare warm/cool/vintage/desaturated slots against the original template.
+**Effort:** XS (human: ~1 hour / CC: N/A — manual visual review)
+**Priority:** P2 — within 48 hours of merge
+**Depends on:** Template prompt improvement merged
+
+### A/B Analysis Mode Evaluation
+**What:** After running both single-pass and two-pass Gemini analysis on 3-5 templates, compare recipe quality and decide which to keep as default. Remove the losing approach to prevent dead code.
+**Why:** Outside voice challenged the two-pass assumption. A/B ships both; need to evaluate and converge.
+**How:** Run `analyze_template()` with `analysis_mode="single"` and `"two_pass"` on the same templates. Compare: creative_direction quality, field accuracy (transition_in, color_hint), and overall recipe usefulness.
+**Effort:** XS (human: ~2 hours / CC: ~5 min for cleanup)
+**Priority:** P2 — within 1 week of merge
+**Depends on:** Template prompt improvement merged
+
+### Speed Ramp FFmpeg Implementation
+**What:** Implement `setpts` filter for `speed_factor` per slot. Currently schema-only.
+**Why:** Speed ramping is a signature TikTok editing move — high visual impact.
+**How:** First investigate: does template mode mute clip audio? If yes, simple `setpts=PTS/{speed_factor}` in `-vf` chain. If no, need `atempo` for audio compensation. Template mode mixes clip audio with template music track — need to understand the audio handling before touching video speed.
+**Effort:** S (human: ~1 day / CC: ~15 min)
+**Priority:** P3 — after audio handling is understood
+**Depends on:** Template prompt improvement merged (for speed_factor data)
+
+---
+
 ## P1 — Required before GTM campaigns go live
 
 ### UTM Capture

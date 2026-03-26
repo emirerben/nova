@@ -991,3 +991,142 @@ class TestTemplateRecipeBackwardCompat:
 
         assert recipe.beat_timestamps_s == []
         assert recipe.shot_count == 3
+
+
+# ── Text overlay integration ─────────────────────────────────────────────────
+
+
+class TestAssembleClipsTextOverlays:
+    """Tests for post-join text overlay collection and dedup in _assemble_clips."""
+
+    def _make_step_with_overlays(
+        self, clip_id: str = "clip_a", overlays: list | None = None,
+    ) -> MagicMock:
+        step = MagicMock()
+        step.clip_id = clip_id
+        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.slot = {
+            "position": 1,
+            "target_duration_s": 5.0,
+            "text_overlays": overlays or [],
+        }
+        return step
+
+    def test_overlays_collected_and_burned_post_join(self, tmp_path):
+        """Text overlays are collected post-join and burned via _burn_text_overlays."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+
+        overlays = [{
+            "role": "hook",
+            "start_s": 0.5,
+            "end_s": 2.5,
+            "position": "center",
+            "effect": "pop-in",
+            "sample_text": "WOW",
+        }]
+        step = self._make_step_with_overlays(overlays=overlays)
+        meta = _make_clip_meta(clip_id="clip_a")
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate._burn_text_overlays") as mock_burn,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                clip_metas=[meta],
+            )
+            # Per-slot reframe should NOT get text_overlay_pngs (post-join now)
+            kwargs = mock_reframe.call_args.kwargs
+            assert "text_overlay_pngs" not in kwargs
+            # Post-join burn should be called with collected overlays
+            mock_burn.assert_called_once()
+
+    def test_no_overlays_skips_burn(self, tmp_path):
+        """No text overlays → _burn_text_overlays not called, copy2 used instead."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+
+        step = self._make_step_with_overlays(overlays=[])
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export"),
+            patch("app.tasks.template_orchestrate._burn_text_overlays") as mock_burn,
+            patch("app.tasks.template_orchestrate.shutil.copy2") as mock_copy,
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            mock_burn.assert_not_called()
+            mock_copy.assert_called()
+
+    def test_cta_overlay_skipped_in_collection(self):
+        """CTA role resolves to empty string → excluded from collected overlays."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=[{
+            "role": "cta",
+            "start_s": 0.5,
+            "end_s": 2.5,
+            "position": "center",
+            "sample_text": "",
+        }])
+        result = _collect_absolute_overlays([step], [5.0], None, "")
+        assert result == []
+
+
+class TestResolveOverlayText:
+    def test_hook_role_uses_hook_text(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        meta = _make_clip_meta()
+        result = _resolve_overlay_text("hook", meta, {})
+        assert result == "test hook"
+
+    def test_reaction_role_uses_sample_text(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "reaction", None, {"sample_text": "OMG"},
+        )
+        assert result == "OMG"
+
+    def test_label_role_uses_sample_text(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None, {"sample_text": "Day 1"},
+        )
+        assert result == "Day 1"
+
+    def test_cta_role_returns_empty(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text("cta", _make_clip_meta(), {})
+        assert result == ""
+
+    def test_hook_role_no_meta_returns_empty(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text("hook", None, {})
+        assert result == ""

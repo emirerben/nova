@@ -1,19 +1,19 @@
-"""[Stage 7] FFmpeg reframe + caption burn + audio normalize → 1080×1920 MP4.
+"""[Stage 7] FFmpeg reframe + caption burn + audio normalize -> 1080x1920 MP4.
 
-16:9 input: scale to height=1920 → face-tracked crop to 1080×1920
-9:16 input: scale+pad to 1080×1920
-Output: h264, 1080×1920, 30fps, 4Mbps video, aac 192kbps, -14 LUFS audio
+16:9 input: scale to height=1920 -> face-tracked crop to 1080x1920
+9:16 input: scale+pad to 1080x1920
+Output: h264, 1080x1920, 30fps, 4Mbps video, aac 192kbps, -14 LUFS audio
 
 Supports three overlay types in the same slot:
-  1. PNG overlays (font-cycle, static) → FFmpeg overlay filter with enable timing
-  2. ASS animated text (fade-in, typewriter, slide-up) → subtitles filter
-  3. ASS captions (speech) → subtitles filter
+  1. PNG overlays (font-cycle, static) -> FFmpeg overlay filter with enable timing
+  2. ASS animated text (fade-in, typewriter, slide-up) -> subtitles filter
+  3. ASS captions (speech) -> subtitles filter
 
 Filter chain when overlays present:
-  [0:v] → setpts (if speed≠1) → scale/crop → color_grade
-    → [base] → overlay PNGs → subtitles ASS text → subtitles ASS captions → [out]
+  [0:v] -> setpts (if speed!=1) -> scale/crop -> color_grade
+    -> [base] -> overlay PNGs -> subtitles ASS text -> subtitles ASS captions -> [out]
 
-IMPORTANT: subprocess.run() is blocking — all calls here are sync.
+IMPORTANT: subprocess.run() is blocking -- all calls here are sync.
 CRITICAL: Never use shell=True. Always pass args as a list.
 """
 
@@ -70,15 +70,18 @@ def reframe_and_export(
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
 
+    Never uses shell=True. All paths are passed as list args.
+
     text_overlay_pngs: list of {png_path, start_s, end_s} for PNG overlay compositing.
     ass_overlay_paths: list of ASS file paths for animated text overlays.
     speed_factor: playback speed multiplier (2.0 = 2x fast). Applied as setpts=PTS/speed_factor.
-    color_hint: color grading preset — "warm", "cool", "high-contrast", etc.
+    color_hint: color grading preset -- "warm", "cool", "high-contrast", etc.
     """
     duration = end_s - start_s
     if duration <= 0:
         raise ReframeError(f"Invalid duration: {duration}s")
 
+    # Build video filter chain
     vf_parts = _build_video_filter(
         aspect_ratio, ass_subtitle_path,
         color_hint=color_hint,
@@ -87,6 +90,7 @@ def reframe_and_export(
         narrowing_windows=narrowing_windows,
     )
 
+    # Build command -- use filter_complex when overlays are present
     has_overlays = bool(text_overlay_pngs) or bool(ass_overlay_paths)
 
     if has_overlays:
@@ -118,7 +122,7 @@ def reframe_and_export(
     result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
 
     if result.returncode != 0 and ass_overlay_paths:
-        # ASS overlays may fail if FFmpeg lacks libass — retry with PNGs only
+        # ASS overlays may fail if FFmpeg lacks libass -- retry with PNGs only
         log.warning(
             "reframe_ass_fallback_to_png",
             rc=result.returncode,
@@ -165,7 +169,7 @@ def _build_overlay_cmd(
 ) -> list[str]:
     """Build FFmpeg command with -filter_complex for PNG + ASS overlay compositing.
 
-    Chain: [0:v] → vf filters → overlay each PNG → subtitles each ASS → output
+    Chain: [0:v] -> vf filters -> overlay each PNG -> subtitles each ASS -> output
     """
     cmd = [
         "ffmpeg",
@@ -178,14 +182,15 @@ def _build_overlay_cmd(
     for ov in overlay_pngs:
         cmd.extend(["-i", ov["png_path"]])
 
-    # Build filter_complex
+    # Build filter_complex string
+    # First apply the vf chain to the video input
     vf_chain = ",".join(vf_parts) if vf_parts else "null"
     fc_parts = [f"[0:v]{vf_chain}[base]"]
 
     # Chain PNG overlay filters
     prev_label = "base"
     for i, ov in enumerate(overlay_pngs):
-        input_idx = i + 1
+        input_idx = i + 1  # PNG inputs start at index 1
         start = ov["start_s"]
         end = ov["end_s"]
         out_label = f"ov{i}"
@@ -226,13 +231,14 @@ def _build_video_filter(
 ) -> list[str]:
     """Return list of filter segments to join with commas.
 
-    Filter order: setpts (speed) → scale/crop → color grading
-                  → darkening → narrowing → caption ASS.
+    Filter order: setpts (speed) -> scale/crop -> color grading
+                  -> darkening -> narrowing -> caption ASS.
     setpts MUST be first to normalize PTS before timed filters (darkening, narrowing).
+    Text overlays are handled separately via overlay filter (not in this chain).
     """
     filters: list[str] = []
 
-    # 0. Speed ramp — FIRST filter to normalize PTS for all subsequent timed filters
+    # 0. Speed ramp -- FIRST filter to normalize PTS for all subsequent timed filters
     if speed_factor != 1.0 and speed_factor > 0:
         filters.append(f"setpts=PTS/{speed_factor}")
 
@@ -250,7 +256,7 @@ def _build_video_filter(
             f":(ow-iw)/2:(oh-ih)/2"
         )
 
-    # 2. Color grading
+    # 2. Color grading (applied before darkening so darkened areas have the grade)
     for f in _color_hint_filters(color_hint):
         filters.append(f)
 
@@ -271,7 +277,7 @@ def _build_video_filter(
             f"drawbox=x=0:y=ih-120:w=iw:h=120:color=black@0.85:t=fill:{enable}"
         )
 
-    # 5. Caption ASS (speech captions — distinct from text overlay ASS)
+    # 5. Caption ASS (speech captions -- distinct from text overlay ASS)
     if ass_path and os.path.exists(ass_path):
         escaped = ass_path.replace("\\", "/").replace(":", "\\:")
         filters.append(f"ass={escaped}")
@@ -279,7 +285,9 @@ def _build_video_filter(
     return filters
 
 
-# ── Color grading filter mapping ─────────────────────────────────────────────
+# -- Color grading filter mapping ---------------------------------------------
+# Starting-point values -- visually verify on 3-5 templates and tune if needed.
+# These are intentionally subtle to avoid over-processing.
 
 _COLOR_HINT_MAP: dict[str, list[str]] = {
     "warm": ["colorbalance=rs=0.15:gs=0.05:bs=-0.1"],
@@ -294,5 +302,8 @@ _COLOR_HINT_MAP: dict[str, list[str]] = {
 
 
 def _color_hint_filters(color_hint: str) -> list[str]:
-    """Return FFmpeg filter strings for the given color hint."""
+    """Return FFmpeg filter strings for the given color hint.
+
+    Returns empty list for "none" or unrecognized values.
+    """
     return list(_COLOR_HINT_MAP.get(color_hint, []))
