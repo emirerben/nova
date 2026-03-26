@@ -46,6 +46,7 @@ class ClipMeta:
     hook_text: str
     hook_score: float
     best_moments: list[dict]  # [{start_s, end_s, energy, description}]
+    detected_subject: str = ""  # location, topic, or main subject detected from visuals/audio
     analysis_degraded: bool = False
     failed: bool = False
     clip_path: str = ""  # set by caller for fallback
@@ -200,6 +201,10 @@ def analyze_clip(
         '- "transcript": string — full spoken text in the segment\n'
         '- "hook_text": string — the first compelling sentence that creates curiosity\n'
         '- "hook_score": float 0–10 — how strongly the opening hooks the viewer\n'
+        '- "detected_subject": string — the main subject, location, or topic of this video. '
+        "For travel content: the city/country name (e.g. \"Puerto Rico\", \"Tokyo\"). "
+        "For tutorials: the topic (e.g. \"Sourdough Bread\"). "
+        "For vlogs: the main activity or theme. Be specific and concise (1-3 words).\n"
         '- "best_moments": list of 3–6 objects with '
         '{"start_s": float, "end_s": float, "energy": float 0–10, "description": string} '
         "covering a VARIETY of durations — include some short moments (3–5s) AND some "
@@ -238,6 +243,7 @@ def analyze_clip(
             hook_text=data.get("hook_text", ""),
             hook_score=hook_score,
             best_moments=data.get("best_moments", []),
+            detected_subject=data.get("detected_subject", ""),
         )
 
     except (GeminiRefusalError, GeminiAnalysisError):
@@ -265,18 +271,50 @@ def analyze_template(file_ref: Any) -> TemplateRecipe:
         "- The sum of all target_duration_s values must approximately equal total_duration_s\n"
         "- Each slot's target_duration_s is the duration of that shot in the template\n"
         "- position is 1-indexed temporal order (slot 1 = first shot)\n"
-        "- EVERY slot object MUST include an 'energy' field (float 0-10) reflecting the "
-        "musical intensity during that slot — listen to the audio track and rate each slot\n\n"
+        "- EVERY slot MUST include 'energy' (float 0-10) reflecting musical intensity\n"
+        "- For EACH slot, analyze the visual transition INTO that slot from the previous one\n"
+        "- For EACH slot, note if the footage appears sped up or slowed down\n"
+        "- For EACH slot, describe any text/caption overlays that appear\n\n"
         "Return a JSON object with these exact fields:\n"
         '- "shot_count": int — total number of shots/cuts\n'
         '- "total_duration_s": float — total video duration in seconds\n'
         '- "hook_duration_s": float — duration of the opening hook section\n'
-        '- "slots": list of objects with '
-        '{"position": int (1-indexed), "target_duration_s": float, '
-        '"priority": int 1–10, "slot_type": "hook"|"broll"|"outro", '
-        '"energy": float 0–10} where energy reflects the musical intensity at that '
-        "moment — 0 is silence/calm, 5 is moderate, 10 is a hard beat drop or climax. "
-        "This is critical for matching footage energy to music energy.\n"
+        '- "slots": list of objects, EACH with ALL of these fields:\n'
+        '    "position": int (1-indexed temporal order)\n'
+        '    "target_duration_s": float (duration of this shot)\n'
+        '    "priority": int 1-10\n'
+        '    "slot_type": "hook" | "broll" | "outro"\n'
+        '    "energy": float 0-10 (musical intensity — 0=silence, 10=beat drop)\n'
+        '    "transition_in": "crossfade" | "fade_black" | "wipe_left" | "wipe_right" | "none"\n'
+        '        — how does this slot visually transition from the previous one?\n'
+        '        — use "none" for hard cuts, "crossfade" for dissolves/fades between shots\n'
+        '        — slot 1 should always be "none"\n'
+        '    "speed_factor": one of [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]\n'
+        '        — 1.0 = normal speed, 2.0 = footage plays at 2x, 0.5 = slow motion\n'
+        '    "color_hint": "warm" | "cool" | "vintage" | "desaturated" | "high_contrast" | "none"\n'
+        '        — dominant color grading of this slot. Use "none" if neutral/no grading\n'
+        '    "text_overlays": list of objects (empty list if no text in this slot), each with:\n'
+        '        "role": "hook" | "label" | "cta" | "reaction"\n'
+        '        "sample_text": string — the actual text shown in the template\n'
+        '        "start_s": float — when text appears (relative to slot start, 0 = slot start)\n'
+        '        "end_s": float — when text disappears (relative to slot start)\n'
+        '        "position": "center" | "top" | "bottom"\n'
+        '        "effect": "fade-in" | "typewriter" | "slide-up" | "static" | "none"\n'
+        '            — how does the text animate in? "fade-in" = fades from transparent,\n'
+        '              "typewriter" = characters appear one by one,\n'
+        '              "slide-up" = slides up from below, "static" = appears instantly\n'
+        '        "font_style": "serif" | "serif_italic" | "script" | "sans" | "display"\n'
+        '            — what type of font is used? "serif" for elegant/classic (Didot, Baskerville),\n'
+        '              "serif_italic" for italic serif, "script" for handwriting/cursive,\n'
+        '              "sans" for clean modern (Helvetica, Montserrat), "display" for decorative\n'
+        '        "text_size": "small" | "medium" | "large" | "xlarge"\n'
+        '            — relative size of the text in the frame. "small" for captions/labels,\n'
+        '              "medium" for normal text, "large" for prominent titles,\n'
+        '              "xlarge" for the main hero text that dominates the frame\n'
+        '        "text_color": string — hex color code of the text (e.g. "#FFFFFF" for white,\n'
+        '            "#D4A843" for gold, "#FF0000" for red). Look at the actual color carefully.\n'
+        '        "has_darkening": boolean — is the background darkened behind the text?\n'
+        '        "has_narrowing": boolean — are there letterbox bars when text is shown?\n'
         '- "copy_tone": string — one of: casual, formal, energetic, calm\n'
         '- "caption_style": string — description of caption/text overlay style\n'
         '- "beat_timestamps_s": list of float — timestamps (in seconds) of significant '
@@ -319,6 +357,9 @@ def analyze_template(file_ref: Any) -> TemplateRecipe:
         float(t) for t in data.get("beat_timestamps_s", [])
     )
 
+    # Validate and normalize slot fields (transitions, effects, speed_factor)
+    slots = _validate_slots(slots)
+
     return TemplateRecipe(
         shot_count=int(data.get("shot_count", 0)),
         total_duration_s=total_duration_s,
@@ -328,6 +369,68 @@ def analyze_template(file_ref: Any) -> TemplateRecipe:
         caption_style=str(data.get("caption_style", "")),
         beat_timestamps_s=beat_timestamps_s,
     )
+
+
+# ── Slot validation & migration ──────────────────────────────────────────────
+
+_VALID_TRANSITIONS = {"crossfade", "fade_black", "wipe_left", "wipe_right", "none"}
+_VALID_EFFECTS = {"fade-in", "typewriter", "slide-up", "font-cycle", "static", "none"}
+_VALID_SPEED_FACTORS = {0.5, 0.75, 1.0, 1.25, 1.5, 2.0}
+
+# Migration mapping: old Gemini values → closest supported equivalent
+_TRANSITION_MIGRATION: dict[str, str] = {
+    "dissolve": "crossfade",
+    "zoom-in": "fade_black",
+    "whip-pan": "wipe_left",
+    "hard-cut": "none",
+}
+_EFFECT_MIGRATION: dict[str, str] = {
+    "pop-in": "fade-in",
+    "scale-up": "fade-in",
+    "bounce": "fade-in",
+    "glitch": "static",
+    "slide-in": "slide-up",
+}
+
+
+def _validate_slots(slots: list[dict]) -> list[dict]:
+    """Normalize and constrain slot fields to the supported effects vocabulary.
+
+    Applies migration mapping for old Gemini values, then enforces enum constraints.
+    Unknown values default to "none" after migration attempt.
+    """
+    for slot in slots:
+        # Transition
+        trans = str(slot.get("transition_in", "none"))
+        if trans not in _VALID_TRANSITIONS:
+            trans = _TRANSITION_MIGRATION.get(trans, "none")
+        slot["transition_in"] = trans
+
+        # Speed factor — snap to nearest valid discrete value
+        raw_speed = float(slot.get("speed_factor", 1.0))
+        slot["speed_factor"] = min(
+            _VALID_SPEED_FACTORS, key=lambda v: abs(v - raw_speed)
+        )
+
+        # Text overlays
+        for ov in slot.get("text_overlays", []):
+            effect = str(ov.get("effect", "none"))
+            if effect not in _VALID_EFFECTS:
+                effect = _EFFECT_MIGRATION.get(effect, "none")
+            ov["effect"] = effect
+
+            # Clamp speed_factor on overlay (if present)
+            if "speed_factor" in ov:
+                ov_speed = float(ov["speed_factor"])
+                ov["speed_factor"] = min(
+                    _VALID_SPEED_FACTORS, key=lambda v: abs(v - ov_speed)
+                )
+
+        # Ensure energy field exists (defaults to 5.0)
+        if "energy" not in slot:
+            slot["energy"] = 5.0
+
+    return slots
 
 
 # ── Transcription ─────────────────────────────────────────────────────────────

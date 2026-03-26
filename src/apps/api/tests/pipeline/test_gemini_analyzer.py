@@ -324,3 +324,65 @@ class TestTranscribe:
 
         mock_whisper.assert_called_once_with("/tmp/test.mp4")
         assert result.full_text == "Whisper transcript"
+
+
+# ── Slot validation & migration ──────────────────────────────────────────────
+
+from app.pipeline.agents.gemini_analyzer import _validate_slots
+
+
+class TestValidateSlots:
+    def test_valid_transition_passes_through(self):
+        slots = [{"transition_in": "crossfade", "energy": 5.0}]
+        result = _validate_slots(slots)
+        assert result[0]["transition_in"] == "crossfade"
+
+    def test_old_dissolve_migrates_to_crossfade(self):
+        slots = [{"transition_in": "dissolve"}]
+        result = _validate_slots(slots)
+        assert result[0]["transition_in"] == "crossfade"
+
+    def test_old_whip_pan_migrates_to_wipe_left(self):
+        slots = [{"transition_in": "whip-pan"}]
+        result = _validate_slots(slots)
+        assert result[0]["transition_in"] == "wipe_left"
+
+    def test_old_zoom_in_migrates_to_fade_black(self):
+        slots = [{"transition_in": "zoom-in"}]
+        result = _validate_slots(slots)
+        assert result[0]["transition_in"] == "fade_black"
+
+    def test_unknown_transition_defaults_to_none(self):
+        slots = [{"transition_in": "glitch-warp"}]
+        result = _validate_slots(slots)
+        assert result[0]["transition_in"] == "none"
+
+    def test_speed_factor_snaps_to_nearest(self):
+        slots = [{"speed_factor": 1.8}]
+        result = _validate_slots(slots)
+        assert result[0]["speed_factor"] == 2.0
+
+    def test_speed_factor_defaults_to_1(self):
+        slots = [{}]
+        result = _validate_slots(slots)
+        assert result[0]["speed_factor"] == 1.0
+
+    def test_effect_migration_pop_in_to_fade_in(self):
+        slots = [{"text_overlays": [{"effect": "pop-in"}]}]
+        result = _validate_slots(slots)
+        assert result[0]["text_overlays"][0]["effect"] == "fade-in"
+
+    def test_effect_migration_slide_in_to_slide_up(self):
+        slots = [{"text_overlays": [{"effect": "slide-in"}]}]
+        result = _validate_slots(slots)
+        assert result[0]["text_overlays"][0]["effect"] == "slide-up"
+
+    def test_unknown_effect_defaults_to_none(self):
+        slots = [{"text_overlays": [{"effect": "rainbow-explode"}]}]
+        result = _validate_slots(slots)
+        assert result[0]["text_overlays"][0]["effect"] == "none"
+
+    def test_energy_defaults_to_5(self):
+        slots = [{}]
+        result = _validate_slots(slots)
+        assert result[0]["energy"] == 5.0

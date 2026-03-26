@@ -419,11 +419,25 @@ class TestAssembleClipsTimeCursor:
             step.slot = {"position": pos + 1, "target_duration_s": 1.0}
             steps.append(step)
 
+        def fake_reframe(**kwargs):
+            # Create the slot file so concat/copy can find it
+            with open(kwargs["output_path"], "wb") as f:
+                f.write(b"\x00" * 64)
+
         with (
-            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.pipeline.reframe.reframe_and_export", side_effect=fake_reframe) as mock_reframe,
             patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
         ):
-            mock_ffmpeg.return_value = MagicMock(returncode=0)
+            def fake_ffmpeg(cmd, **kw):
+                # Create whatever output file the command targets (-y <path>)
+                if "-y" in cmd:
+                    idx = cmd.index("-y") + 1
+                    if idx < len(cmd):
+                        with open(cmd[idx], "wb") as f:
+                            f.write(b"\x00" * 64)
+                return MagicMock(returncode=0)
+
+            mock_ffmpeg.side_effect = fake_ffmpeg
             _assemble_clips(
                 steps=steps,
                 clip_id_to_local={"clip_a": str(clip_file)},
@@ -459,11 +473,23 @@ class TestAssembleClipsTimeCursor:
             step.slot = {"position": pos + 1, "target_duration_s": 1.0}
             steps.append(step)
 
+        def fake_reframe(**kwargs):
+            with open(kwargs["output_path"], "wb") as f:
+                f.write(b"\x00" * 64)
+
         with (
-            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.pipeline.reframe.reframe_and_export", side_effect=fake_reframe) as mock_reframe,
             patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
         ):
-            mock_ffmpeg.return_value = MagicMock(returncode=0)
+            def fake_ffmpeg(cmd, **kw):
+                if "-y" in cmd:
+                    idx = cmd.index("-y") + 1
+                    if idx < len(cmd):
+                        with open(cmd[idx], "wb") as f:
+                            f.write(b"\x00" * 64)
+                return MagicMock(returncode=0)
+
+            mock_ffmpeg.side_effect = fake_ffmpeg
             _assemble_clips(
                 steps=steps,
                 clip_id_to_local={"clip_a": str(clip_file)},
