@@ -531,67 +531,7 @@ def _render_slot(
 
     aspect_ratio = probe.aspect_ratio if probe else "16:9"
 
-    # ── Text overlay routing (ASS animated vs PNG static) ─────────
-    text_overlay_pngs: list[dict] | None = None
-    ass_overlay_paths: list[str] | None = None
-    darkening_windows: list[tuple[float, float]] | None = None
-    narrowing_windows: list[tuple[float, float]] | None = None
-
-    raw_overlays = step.slot.get("text_overlays", [])
-    if raw_overlays:
-        clip_meta = _find_clip_meta_by_id(clip_id, clip_metas)
-        resolved_overlays = []
-        dark_wins: list[tuple[float, float]] = []
-        narrow_wins: list[tuple[float, float]] = []
-
-        for ov in raw_overlays:
-            text = _resolve_overlay_text(ov.get("role", "label"), clip_meta, ov, subject=subject)
-            if not text or not text.strip():
-                continue
-
-            ov_start = float(ov.get("start_s", 0.0))
-            ov_end = float(ov.get("end_s", slot_target_dur))
-            resolved_overlays.append({
-                "text": text,
-                "start_s": ov_start,
-                "end_s": ov_end,
-                "position": ov.get("position", "center"),
-                "effect": ov.get("effect", "none"),
-                "font_style": ov.get("font_style", "sans"),
-                "text_size": ov.get("text_size", "medium"),
-                "text_color": ov.get("text_color", "#FFFFFF"),
-            })
-            if ov.get("has_darkening"):
-                dark_wins.append((ov_start, ov_end))
-            if ov.get("has_narrowing"):
-                narrow_wins.append((ov_start, ov_end))
-
-        if resolved_overlays:
-            # Always generate styled PNGs for ALL overlays (fallback + static path)
-            text_overlay_pngs = generate_text_overlay_png(
-                resolved_overlays, slot_target_dur, tmpdir, slot_idx,
-            )
-
-            # Additionally generate ASS for animated effects (preferred rendering)
-            ass_overlays = [
-                o for o in resolved_overlays if o["effect"] in ASS_ANIMATED_EFFECTS
-            ]
-            if ass_overlays:
-                ass_overlay_paths = generate_animated_overlay_ass(
-                    ass_overlays, slot_target_dur, tmpdir, slot_idx,
-                )
-
-            if text_overlay_pngs or ass_overlay_paths:
-                darkening_windows = dark_wins or None
-                narrowing_windows = narrow_wins or None
-                log.info(
-                    "slot_text_overlay",
-                    slot=slot_idx,
-                    png_overlays=len(text_overlay_pngs or []),
-                    ass_overlays=len(ass_overlay_paths or []),
-                )
-
-    # ── Color grading ─────────────────────────────────────────────
+    # ── Color grading (text overlays applied post-join, not per-slot) ────
     slot_color = step.slot.get("color_hint") or global_color_grade or "none"
 
     log.debug(
@@ -610,12 +550,8 @@ def _render_slot(
         aspect_ratio=aspect_ratio,
         ass_subtitle_path=None,
         output_path=reframed,
-        text_overlay_pngs=text_overlay_pngs,
-        ass_overlay_paths=ass_overlay_paths,
         color_hint=slot_color,
         speed_factor=speed_factor,
-        darkening_windows=darkening_windows,
-        narrowing_windows=narrowing_windows,
     )
     return reframed, slot_target_dur, cumulative_s
 
@@ -685,13 +621,24 @@ def _assemble_clips(
     if not reframed_paths:
         raise ValueError("No slots to assemble")
 
+    # Join slots (transitions or concat)
+    joined_path = os.path.join(tmpdir, "joined.mp4")
     if len(reframed_paths) == 1:
-        shutil.copy2(reframed_paths[0], output_path)
+        shutil.copy2(reframed_paths[0], joined_path)
     else:
         _join_or_concat(
             reframed_paths, transition_types, slot_durations,
-            output_path, tmpdir,
+            joined_path, tmpdir,
         )
+
+    # ── Post-join text overlays (absolute timestamps, deduplicated) ────
+    # Collect overlays across ALL slots, convert to absolute timestamps,
+    # and deduplicate so "Welcome to" appears once and persists.
+    abs_overlays = _collect_absolute_overlays(steps, slot_durations, clip_metas, subject)
+    if abs_overlays:
+        _burn_text_overlays(joined_path, abs_overlays, output_path, tmpdir)
+    else:
+        shutil.copy2(joined_path, output_path)
 
     # Eval harness: upload per-slot files for visual comparison
     if settings.eval_harness_enabled and job_id:
@@ -744,6 +691,128 @@ def _concat_demuxer(
     result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
     if result.returncode != 0:
         raise ValueError(f"FFmpeg concat failed: {result.stderr.decode()[:300]}")
+
+
+def _collect_absolute_overlays(
+    steps: list,
+    slot_durations: list[float],
+    clip_metas: list | None,
+    subject: str,
+) -> list[dict]:
+    """Collect text overlays across all slots with absolute video timestamps.
+
+    Deduplicates: if the same text appears on consecutive slots, merge into
+    one overlay spanning the full range. This prevents "Welcome to" from
+    disappearing and reappearing at slot boundaries.
+    """
+    raw: list[dict] = []
+    cumulative_s = 0.0
+
+    for i, step in enumerate(steps):
+        slot = step.get("slot", {}) if isinstance(step, dict) else step.slot
+        dur = slot_durations[i] if i < len(slot_durations) else float(slot.get("target_duration_s", 5.0))
+        clip_id = step.get("clip_id", "") if isinstance(step, dict) else step.clip_id
+
+        for ov in slot.get("text_overlays", []):
+            clip_meta = _find_clip_meta_by_id(clip_id, clip_metas)
+            text = _resolve_overlay_text(ov.get("role", "label"), clip_meta, ov, subject=subject)
+            if not text or not text.strip():
+                continue
+
+            ov_start = cumulative_s + float(ov.get("start_s", 0.0))
+            ov_end = cumulative_s + float(ov.get("end_s", dur))
+
+            raw.append({
+                "text": text,
+                "start_s": ov_start,
+                "end_s": ov_end,
+                "position": ov.get("position", "center"),
+                "font_style": ov.get("font_style", "sans"),
+                "text_size": ov.get("text_size", "medium"),
+                "text_color": ov.get("text_color", "#FFFFFF"),
+            })
+
+        cumulative_s += dur
+
+    # Deduplicate: merge overlays with the same text that are consecutive
+    # (end of one ≈ start of next, within 0.5s tolerance)
+    if not raw:
+        return []
+
+    merged: list[dict] = []
+    for ov in raw:
+        found = False
+        for m in merged:
+            if m["text"] == ov["text"] and abs(m["end_s"] - ov["start_s"]) < 0.5:
+                m["end_s"] = max(m["end_s"], ov["end_s"])
+                found = True
+                break
+        if not found:
+            merged.append(dict(ov))
+
+    log.info("text_overlays_collected", raw=len(raw), merged=len(merged))
+    return merged
+
+
+def _burn_text_overlays(
+    input_path: str,
+    overlays: list[dict],
+    output_path: str,
+    tmpdir: str,
+) -> None:
+    """Burn text overlays onto the joined video using FFmpeg overlay filter.
+
+    Generates styled PNGs for each unique overlay, then composites them
+    onto the video with absolute enable timing.
+    """
+    from app.pipeline.text_overlay import generate_text_overlay_png  # noqa: PLC0415
+
+    # Generate PNG for each overlay
+    png_configs = generate_text_overlay_png(overlays, 999.0, tmpdir, slot_index=99)
+    if not png_configs:
+        shutil.copy2(input_path, output_path)
+        return
+
+    # Match timing: use absolute start_s/end_s from the merged overlays
+    for i, cfg in enumerate(png_configs):
+        if i < len(overlays):
+            cfg["start_s"] = overlays[i]["start_s"]
+            cfg["end_s"] = overlays[i]["end_s"]
+
+    from app.pipeline.reframe import _build_overlay_cmd, _encoding_args  # noqa: PLC0415
+    from app.config import settings as s
+
+    # Build FFmpeg command with overlay filter
+    cmd = ["ffmpeg", "-i", input_path]
+    for cfg in png_configs:
+        cmd.extend(["-i", cfg["png_path"]])
+
+    # filter_complex: overlay each PNG with absolute enable timing
+    fc_parts = ["[0:v]null[base]"]
+    prev = "base"
+    for i, cfg in enumerate(png_configs):
+        out = f"txt{i}"
+        fc_parts.append(
+            f"[{prev}][{i + 1}:v]overlay=0:0"
+            f":enable='between(t,{cfg['start_s']:.3f},{cfg['end_s']:.3f})'"
+            f"[{out}]"
+        )
+        prev = out
+
+    cmd.extend([
+        "-filter_complex", ";".join(fc_parts),
+        "-map", f"[{prev}]",
+        "-map", "0:a?",
+        *_encoding_args(output_path),
+    ])
+
+    log.info("burn_text_overlays", count=len(png_configs))
+    result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
+    if result.returncode != 0:
+        log.warning("burn_text_failed", rc=result.returncode)
+        shutil.copy2(input_path, output_path)
+    else:
+        log.info("burn_text_done")
 
 
 def _upload_eval_slots(
