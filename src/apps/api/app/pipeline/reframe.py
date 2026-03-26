@@ -1,13 +1,19 @@
-"""[Stage 7] FFmpeg reframe + caption burn + audio normalize → 1080×1920 MP4.
+"""[Stage 7] FFmpeg reframe + caption burn + audio normalize -> 1080x1920 MP4.
 
-16:9 input: scale to height=1920 → face-tracked crop to 1080×1920
-9:16 input: scale+pad to 1080×1920
-Output: h264, 1080×1920, 30fps, 4Mbps video, aac 192kbps, -14 LUFS audio
+16:9 input: scale to height=1920 -> face-tracked crop to 1080x1920
+9:16 input: scale+pad to 1080x1920
+Output: h264, 1080x1920, 30fps, 4Mbps video, aac 192kbps, -14 LUFS audio
 
-IMPORTANT: subprocess.run() is blocking — all calls here are sync (called from
-Celery worker thread, not async context). If ever called from async, wrap in
-asyncio.run_in_executor(None, ...).
+Supports three overlay types in the same slot:
+  1. PNG overlays (font-cycle, static) -> FFmpeg overlay filter with enable timing
+  2. ASS animated text (fade-in, typewriter, slide-up) -> subtitles filter
+  3. ASS captions (speech) -> subtitles filter
 
+Filter chain when overlays present:
+  [0:v] -> setpts (if speed!=1) -> scale/crop -> color_grade
+    -> [base] -> overlay PNGs -> subtitles ASS text -> subtitles ASS captions -> [out]
+
+IMPORTANT: subprocess.run() is blocking -- all calls here are sync.
 CRITICAL: Never use shell=True. Always pass args as a list.
 """
 
@@ -20,11 +26,32 @@ from app.config import settings
 
 log = structlog.get_logger()
 
-MAX_OUTPUT_BYTES = 500 * 1024 * 1024  # 500MB — clip flagged failed if exceeded
+MAX_OUTPUT_BYTES = 500 * 1024 * 1024  # 500MB
 
 
 class ReframeError(Exception):
     pass
+
+
+def _encoding_args(output_path: str) -> list[str]:
+    """Shared FFmpeg output encoding arguments (DRY)."""
+    return [
+        "-c:v", "libx264",
+        "-profile:v", "high",
+        "-preset", "fast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",  # QuickTime/browser compatibility
+        "-b:v", settings.output_video_bitrate,
+        "-maxrate", settings.output_video_bitrate,
+        "-bufsize", "8M",
+        "-r", str(settings.output_fps),
+        "-c:a", "aac",
+        "-b:a", settings.output_audio_bitrate,
+        "-s", f"{settings.output_width}x{settings.output_height}",
+        "-movflags", "+faststart",
+        "-y",
+        output_path,
+    ]
 
 
 def reframe_and_export(
@@ -35,16 +62,20 @@ def reframe_and_export(
     ass_subtitle_path: str | None,
     output_path: str,
     text_overlay_pngs: list[dict] | None = None,
+    ass_overlay_paths: list[str] | None = None,
+    color_hint: str = "none",
+    speed_factor: float = 1.0,
     darkening_windows: list[tuple[float, float]] | None = None,
     narrowing_windows: list[tuple[float, float]] | None = None,
-    color_hint: str = "none",
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
 
     Never uses shell=True. All paths are passed as list args.
 
-    text_overlay_pngs: list of {png_path, start_s, end_s} dicts for overlay compositing.
-    color_hint: color grading to apply — "warm", "cool", "high-contrast", etc.
+    text_overlay_pngs: list of {png_path, start_s, end_s} for PNG overlay compositing.
+    ass_overlay_paths: list of ASS file paths for animated text overlays.
+    speed_factor: playback speed multiplier (2.0 = 2x fast). Applied as setpts=PTS/speed_factor.
+    color_hint: color grading preset -- "warm", "cool", "high-contrast", etc.
     """
     duration = end_s - start_s
     if duration <= 0:
@@ -53,18 +84,21 @@ def reframe_and_export(
     # Build video filter chain
     vf_parts = _build_video_filter(
         aspect_ratio, ass_subtitle_path,
+        color_hint=color_hint,
+        speed_factor=speed_factor,
         darkening_windows=darkening_windows,
         narrowing_windows=narrowing_windows,
-        color_hint=color_hint,
     )
 
-    # Build command — use filter_complex when overlays are present
-    has_overlays = bool(text_overlay_pngs)
+    # Build command -- use filter_complex when overlays are present
+    has_overlays = bool(text_overlay_pngs) or bool(ass_overlay_paths)
 
     if has_overlays:
         cmd = _build_overlay_cmd(
             input_path, start_s, duration, vf_parts,
-            text_overlay_pngs, output_path,
+            text_overlay_pngs or [],
+            ass_overlay_paths or [],
+            output_path,
         )
     else:
         vf_string = ",".join(vf_parts)
@@ -75,30 +109,39 @@ def reframe_and_export(
             "-i", input_path,
             "-af", f"loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
             "-vf", vf_string,
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "23",
-            "-b:v", settings.output_video_bitrate,
-            "-maxrate", settings.output_video_bitrate,
-            "-bufsize", "8M",
-            "-r", str(settings.output_fps),
-            "-c:a", "aac",
-            "-b:a", settings.output_audio_bitrate,
-            "-s", f"{settings.output_width}x{settings.output_height}",
-            "-movflags", "+faststart",
-            "-y",
-            output_path,
+            *_encoding_args(output_path),
         ]
 
-    log.info("reframe_start", input=input_path, start=start_s, end=end_s,
-             aspect=aspect_ratio, overlays=len(text_overlay_pngs or []))
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        timeout=600,  # 10min max per clip
-        check=False,
+    log.info(
+        "reframe_start", input=input_path, start=start_s, end=end_s,
+        aspect=aspect_ratio, speed=speed_factor,
+        overlays=len(text_overlay_pngs or []),
+        ass_overlays=len(ass_overlay_paths or []),
     )
+
+    result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
+
+    if result.returncode != 0 and ass_overlay_paths:
+        # ASS overlays may fail if FFmpeg lacks libass -- retry with PNGs only
+        log.warning(
+            "reframe_ass_fallback_to_png",
+            rc=result.returncode,
+            ass_count=len(ass_overlay_paths),
+        )
+        return reframe_and_export(
+            input_path=input_path,
+            start_s=start_s,
+            end_s=end_s,
+            aspect_ratio=aspect_ratio,
+            ass_subtitle_path=ass_subtitle_path,
+            output_path=output_path,
+            text_overlay_pngs=text_overlay_pngs,
+            ass_overlay_paths=None,  # retry without ASS
+            color_hint=color_hint,
+            speed_factor=speed_factor,
+            darkening_windows=darkening_windows,
+            narrowing_windows=narrowing_windows,
+        )
 
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace")[:500]
@@ -121,11 +164,12 @@ def _build_overlay_cmd(
     duration: float,
     vf_parts: list[str],
     overlay_pngs: list[dict],
+    ass_overlay_paths: list[str],
     output_path: str,
 ) -> list[str]:
-    """Build FFmpeg command with -filter_complex for PNG overlay compositing.
+    """Build FFmpeg command with -filter_complex for PNG + ASS overlay compositing.
 
-    Chain: [0:v] → vf filters → overlay each PNG with enable timing → output
+    Chain: [0:v] -> vf filters -> overlay each PNG -> subtitles each ASS -> output
     """
     cmd = [
         "ffmpeg",
@@ -143,7 +187,7 @@ def _build_overlay_cmd(
     vf_chain = ",".join(vf_parts) if vf_parts else "null"
     fc_parts = [f"[0:v]{vf_chain}[base]"]
 
-    # Chain overlay filters
+    # Chain PNG overlay filters
     prev_label = "base"
     for i, ov in enumerate(overlay_pngs):
         input_idx = i + 1  # PNG inputs start at index 1
@@ -157,6 +201,13 @@ def _build_overlay_cmd(
         )
         prev_label = out_label
 
+    # Chain ASS subtitle filters for animated text overlays
+    for j, ass_path in enumerate(ass_overlay_paths):
+        escaped = ass_path.replace("\\", "/").replace(":", "\\:")
+        out_label = f"sub{j}"
+        fc_parts.append(f"[{prev_label}]subtitles={escaped}[{out_label}]")
+        prev_label = out_label
+
     filter_complex = ";".join(fc_parts)
 
     cmd.extend([
@@ -164,19 +215,7 @@ def _build_overlay_cmd(
         "-map", f"[{prev_label}]",
         "-map", "0:a?",
         "-af", f"loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "23",
-        "-b:v", settings.output_video_bitrate,
-        "-maxrate", settings.output_video_bitrate,
-        "-bufsize", "8M",
-        "-r", str(settings.output_fps),
-        "-c:a", "aac",
-        "-b:a", settings.output_audio_bitrate,
-        "-s", f"{settings.output_width}x{settings.output_height}",
-        "-movflags", "+faststart",
-        "-y",
-        output_path,
+        *_encoding_args(output_path),
     ])
 
     return cmd
@@ -185,25 +224,28 @@ def _build_overlay_cmd(
 def _build_video_filter(
     aspect_ratio: str,
     ass_path: str | None,
+    color_hint: str = "none",
+    speed_factor: float = 1.0,
     darkening_windows: list[tuple[float, float]] | None = None,
     narrowing_windows: list[tuple[float, float]] | None = None,
-    color_hint: str = "none",
 ) -> list[str]:
     """Return list of filter segments to join with commas.
 
-    Filter order: scale/crop → color grading → darkening → narrowing → caption ASS.
+    Filter order: setpts (speed) -> scale/crop -> color grading
+                  -> darkening -> narrowing -> caption ASS.
+    setpts MUST be first to normalize PTS before timed filters (darkening, narrowing).
     Text overlays are handled separately via overlay filter (not in this chain).
     """
     filters: list[str] = []
 
-    # 1. Scale/crop (existing)
+    # 0. Speed ramp -- FIRST filter to normalize PTS for all subsequent timed filters
+    if speed_factor != 1.0 and speed_factor > 0:
+        filters.append(f"setpts=PTS/{speed_factor}")
+
+    # 1. Scale/crop
     if aspect_ratio == "16:9":
-        filters.append(
-            f"scale=-2:{settings.output_height}"
-        )
-        filters.append(
-            f"crop={settings.output_width}:{settings.output_height}"
-        )
+        filters.append(f"scale=-2:{settings.output_height}")
+        filters.append(f"crop={settings.output_width}:{settings.output_height}")
     else:
         filters.append(
             f"scale={settings.output_width}:{settings.output_height}"
@@ -235,7 +277,7 @@ def _build_video_filter(
             f"drawbox=x=0:y=ih-120:w=iw:h=120:color=black@0.85:t=fill:{enable}"
         )
 
-    # 5. Caption ASS (existing — speech captions)
+    # 5. Caption ASS (speech captions -- distinct from text overlay ASS)
     if ass_path and os.path.exists(ass_path):
         escaped = ass_path.replace("\\", "/").replace(":", "\\:")
         filters.append(f"ass={escaped}")
@@ -243,8 +285,8 @@ def _build_video_filter(
     return filters
 
 
-# ── Color grading filter mapping ─────────────────────────────────────────────
-# Starting-point values — visually verify on 3-5 templates and tune if needed.
+# -- Color grading filter mapping ---------------------------------------------
+# Starting-point values -- visually verify on 3-5 templates and tune if needed.
 # These are intentionally subtle to avoid over-processing.
 
 _COLOR_HINT_MAP: dict[str, list[str]] = {

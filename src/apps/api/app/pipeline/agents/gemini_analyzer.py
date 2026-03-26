@@ -46,6 +46,7 @@ class ClipMeta:
     hook_text: str
     hook_score: float
     best_moments: list[dict]  # [{start_s, end_s, energy, description}]
+    detected_subject: str = ""  # location, topic, or main subject detected from visuals/audio
     analysis_degraded: bool = False
     failed: bool = False
     clip_path: str = ""  # set by caller for fallback
@@ -234,6 +235,7 @@ def analyze_clip(
             hook_text=data.get("hook_text", ""),
             hook_score=hook_score,
             best_moments=data.get("best_moments", []),
+            detected_subject=data.get("detected_subject", ""),
         )
 
     except (GeminiRefusalError, GeminiAnalysisError):
@@ -366,6 +368,7 @@ _VALID_OVERLAY_ROLES = {"hook", "reaction", "cta", "label"}
 _VALID_OVERLAY_EFFECTS = {
     "pop-in", "fade-in", "scale-up", "none",
     "font-cycle", "typewriter", "glitch", "bounce", "slide-in",
+    "slide-up", "static",
 }
 _VALID_OVERLAY_POSITIONS = {"center", "top", "bottom"}
 _VALID_TRANSITION_TYPES = {"hard-cut", "whip-pan", "zoom-in", "dissolve", "none"}
@@ -436,6 +439,10 @@ def _validate_slots(slots: list[dict], global_color_grade: str) -> None:
         except (TypeError, ValueError):
             speed_factor = 1.0
         slot["speed_factor"] = max(0.25, min(4.0, speed_factor))
+
+        # ── Ensure energy field exists (defaults to 5.0) ────────────
+        if "energy" not in slot:
+            slot["energy"] = 5.0
 
         # ── text_overlays ────────────────────────────────────────────
         raw_overlays = slot.get("text_overlays", [])

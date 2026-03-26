@@ -104,3 +104,23 @@
 **Effort:** S (human: ~1 day / CC: ~10 min)
 **Priority:** P1 — add before GTM campaigns drive significant traffic
 **Depends on:** Resend API key (free tier: 3k emails/month)
+
+---
+
+## Template Fidelity (from CEO/eng review 2026-03-25)
+
+### Automated Visual Regression Testing
+**What:** On every pipeline code change, auto-run 3-5 reference templates, generate eval grids, diff against golden baselines.
+**Why:** Catches quality regressions automatically. Currently manual-only via eval harness.
+**How:** CI step that runs template jobs on reference videos, generates per-slot eval grids, compares pixel-diff against golden baselines. Fail if delta > threshold.
+**Effort:** S (human: ~1 day / CC: ~30 min)
+**Priority:** P2
+**Depends on:** Eval harness shipped (this PR)
+
+### Converge Overlay Rendering to ASS-Only
+**What:** Migrate font-cycle from multi-PNG to ASS rendering.
+**Why:** Reduces two overlay code paths (PNG + ASS) in text_overlay.py and reframe.py to one. Lower maintenance burden.
+**How:** Replace `_render_font_cycle()` PNG generation with ASS karaoke tags using rapid style switching. Update reframe.py to remove PNG overlay path.
+**Effort:** S (human: ~1 day / CC: ~15 min)
+**Priority:** P3
+**Depends on:** ASS animated overlays shipped and validated (this PR)

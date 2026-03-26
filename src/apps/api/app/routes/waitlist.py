@@ -1,6 +1,7 @@
 import hmac
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+import structlog
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -11,7 +12,11 @@ from app.database import get_db
 from app.limiter import limiter
 from app.models import WaitlistSignup
 
+log = structlog.get_logger()
 router = APIRouter()
+
+# Max length for UTM params to prevent abuse
+UTM_MAX_LENGTH = 256
 
 
 def get_real_ip(request: Request) -> str:
@@ -20,6 +25,13 @@ def get_real_ip(request: Request) -> str:
     if xff:
         return xff.split(",")[0].strip()
     return request.client.host or "127.0.0.1"
+
+
+def _truncate_utm(value: str | None) -> str | None:
+    """Truncate UTM param to max length, or return None if empty."""
+    if not value:
+        return None
+    return value[:UTM_MAX_LENGTH] or None
 
 
 class WaitlistRequest(BaseModel):
@@ -32,15 +44,31 @@ async def join_waitlist(
     request: Request,
     body: WaitlistRequest,
     db: AsyncSession = Depends(get_db),
+    utm_source: str | None = Query(None),
+    utm_medium: str | None = Query(None),
+    utm_campaign: str | None = Query(None),
 ) -> dict:
     normalized = body.email.lower().strip()
-    signup = WaitlistSignup(email=normalized)
+    signup = WaitlistSignup(
+        email=normalized,
+        utm_source=_truncate_utm(utm_source),
+        utm_medium=_truncate_utm(utm_medium),
+        utm_campaign=_truncate_utm(utm_campaign),
+    )
     db.add(signup)
     try:
         await db.commit()
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=409, detail="already_registered")
+
+    # Fire-and-forget confirmation email
+    try:
+        from app.tasks.email import send_waitlist_confirmation  # noqa: PLC0415
+        send_waitlist_confirmation.delay(normalized)
+    except Exception as exc:
+        log.warning("confirmation_email_dispatch_failed", email=normalized, error=str(exc))
+
     return {"message": "success"}
 
 

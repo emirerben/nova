@@ -1,45 +1,72 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
-import { createTemplateJob, getPresignedUrl, uploadFileToGcs } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import {
+  type BatchPresignedFile,
+  type TemplateListItem,
+  createTemplateJob,
+  getBatchPresignedUrls,
+  listTemplates,
+  uploadFileToGcs,
+} from "@/lib/api";
 
-const PLATFORMS = [
-  { id: "instagram", label: "Instagram Reels" },
-  { id: "youtube", label: "YouTube Shorts" },
-  { id: "tiktok", label: "TikTok" },
-];
+// ── Tone → gradient mapping for placeholder thumbnails ──────────────────────
+const TONE_GRADIENTS: Record<string, string> = {
+  casual: "from-orange-500 to-amber-400",
+  energetic: "from-red-500 to-pink-500",
+  calm: "from-blue-500 to-teal-400",
+  formal: "from-gray-600 to-gray-800",
+};
 
-const ALLOWED_MIME = ["video/mp4", "video/quicktime", "video/x-msvideo"];
+const ALLOWED_MIME = ["video/mp4", "video/quicktime"];
 const MAX_BYTES = 4 * 1024 * 1024 * 1024;
-const MIN_CLIPS = 5;
 const MAX_CLIPS = 20;
 
-// In v1 the template ID is configured server-side; we read it from env or use a well-known default.
-// Operators set NEXT_PUBLIC_DEFAULT_TEMPLATE_ID in .env.local
-const DEFAULT_TEMPLATE_ID = process.env.NEXT_PUBLIC_DEFAULT_TEMPLATE_ID ?? "default";
-
-type UploadState = "idle" | "uploading" | "enqueuing" | "error";
+type PageState = "gallery" | "upload" | "uploading" | "enqueuing" | "error";
 
 interface ClipFile {
   file: File;
-  id: string; // local key for React
+  id: string;
+  progress: number; // 0-100
+  error: string | null;
 }
 
 export default function TemplatePage() {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
+
+  // Gallery state
+  const [templates, setTemplates] = useState<TemplateListItem[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(true);
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateListItem | null>(null);
+
+  // Upload state
+  const [pageState, setPageState] = useState<PageState>("gallery");
   const [clips, setClips] = useState<ClipFile[]>([]);
-  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(["instagram", "youtube"]);
-  const [state, setState] = useState<UploadState>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState(0); // 0-100
   const [dragOver, setDragOver] = useState(false);
 
-  function togglePlatform(id: string) {
-    setSelectedPlatforms((prev) =>
-      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]
-    );
+  // Fetch templates on mount
+  useEffect(() => {
+    listTemplates()
+      .then(setTemplates)
+      .catch((err) => setErrorMsg(err.message))
+      .finally(() => setLoadingTemplates(false));
+  }, []);
+
+  function selectTemplate(t: TemplateListItem) {
+    setSelectedTemplate(t);
+    setPageState("upload");
+    setClips([]);
+    setErrorMsg(null);
+  }
+
+  function backToGallery() {
+    setPageState("gallery");
+    setSelectedTemplate(null);
+    setClips([]);
+    setErrorMsg(null);
   }
 
   function addFiles(files: FileList | File[]) {
@@ -50,7 +77,10 @@ export default function TemplatePage() {
       return true;
     });
     setClips((prev) => {
-      const combined = [...prev, ...valid.map((f) => ({ file: f, id: crypto.randomUUID() }))];
+      const combined = [
+        ...prev,
+        ...valid.map((f) => ({ file: f, id: crypto.randomUUID(), progress: 0, error: null })),
+      ];
       return combined.slice(0, MAX_CLIPS);
     });
   }
@@ -60,59 +90,154 @@ export default function TemplatePage() {
   }
 
   async function handleSubmit() {
+    if (!selectedTemplate) return;
     setErrorMsg(null);
 
-    if (clips.length < MIN_CLIPS) {
-      setErrorMsg(`Upload at least ${MIN_CLIPS} clips to use template mode.`);
-      return;
-    }
-    if (selectedPlatforms.length === 0) {
-      setErrorMsg("Select at least one platform.");
+    const minClips = selectedTemplate.slot_count || 5;
+    if (clips.length < minClips) {
+      setErrorMsg(`This template needs at least ${minClips} clips. Add ${minClips - clips.length} more.`);
       return;
     }
 
     try {
-      setState("uploading");
+      setPageState("uploading");
 
-      // Upload each clip via presigned URL
-      const gcsPaths: string[] = [];
-      for (let i = 0; i < clips.length; i++) {
-        const { file } = clips[i];
-        const { upload_url, gcs_path } = await getPresignedUrl({
-          filename: `clip_${i}.mp4`,
-          file_size_bytes: file.size,
-          duration_s: 0,
-          aspect_ratio: "16:9",
-          platforms: selectedPlatforms,
-          content_type: file.type,
-        });
-        await uploadFileToGcs(upload_url, file);
-        gcsPaths.push(gcs_path);
-        setUploadProgress(Math.round(((i + 1) / clips.length) * 100));
-      }
+      // Step 1: Get batch presigned URLs
+      const fileMeta: BatchPresignedFile[] = clips.map((c, i) => ({
+        filename: `clip_${i}.${c.file.name.split(".").pop() || "mp4"}`,
+        content_type: c.file.type || "video/mp4",
+        file_size_bytes: c.file.size,
+      }));
+      const { urls } = await getBatchPresignedUrls(fileMeta);
 
-      setState("enqueuing");
+      // Step 2: Upload all clips in parallel with per-file progress
+      const gcsPaths: string[] = new Array(clips.length);
+      await Promise.all(
+        clips.map(async (clip, i) => {
+          try {
+            await uploadFileToGcs(urls[i].upload_url, clip.file);
+            gcsPaths[i] = urls[i].gcs_path;
+            setClips((prev) =>
+              prev.map((c) => (c.id === clip.id ? { ...c, progress: 100 } : c))
+            );
+          } catch (err) {
+            setClips((prev) =>
+              prev.map((c) =>
+                c.id === clip.id
+                  ? { ...c, error: err instanceof Error ? err.message : "Upload failed" }
+                  : c
+              )
+            );
+            throw err;
+          }
+        })
+      );
+
+      // Step 3: Create template job
+      setPageState("enqueuing");
       const { job_id } = await createTemplateJob({
-        template_id: DEFAULT_TEMPLATE_ID,
+        template_id: selectedTemplate.id,
         clip_gcs_paths: gcsPaths,
-        selected_platforms: selectedPlatforms,
+        selected_platforms: ["tiktok", "instagram", "youtube"],
       });
 
       router.push(`/template-jobs/${job_id}`);
     } catch (err) {
-      setState("error");
+      setPageState("error");
       setErrorMsg(err instanceof Error ? err.message : "Something went wrong.");
     }
   }
 
-  const canSubmit = clips.length >= MIN_CLIPS && state === "idle";
+  // ── Gallery View ────────────────────────────────────────────────────────────
+  if (pageState === "gallery") {
+    return (
+      <main className="min-h-screen bg-black text-white px-4 py-16">
+        <div className="max-w-4xl mx-auto">
+          <h1 className="text-3xl font-bold mb-2 text-center">Choose a Template</h1>
+          <p className="text-zinc-400 text-sm text-center mb-10">
+            Pick a viral template — then upload your clips to fill the slots.
+          </p>
+
+          {loadingTemplates && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-48 bg-zinc-900 rounded-xl animate-pulse" />
+              ))}
+            </div>
+          )}
+
+          {!loadingTemplates && templates.length === 0 && (
+            <div className="text-center py-20">
+              <p className="text-zinc-500 text-lg">No templates available yet.</p>
+              <p className="text-zinc-600 text-sm mt-2">Templates are being prepared — check back soon.</p>
+            </div>
+          )}
+
+          {!loadingTemplates && templates.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {templates.map((t) => {
+                const gradient = TONE_GRADIENTS[t.copy_tone] || TONE_GRADIENTS.casual;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => selectTemplate(t)}
+                    className="group relative overflow-hidden rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all text-left"
+                  >
+                    {/* Gradient placeholder (v1: no thumbnails) */}
+                    <div className={`h-32 bg-gradient-to-br ${gradient} opacity-80 group-hover:opacity-100 transition-opacity`} />
+                    <div className="p-4">
+                      <h3 className="font-semibold text-sm mb-1">{t.name}</h3>
+                      <div className="flex items-center gap-3 text-xs text-zinc-400">
+                        <span>{t.slot_count} slots</span>
+                        <span>·</span>
+                        <span>{Math.round(t.total_duration_s)}s</span>
+                        <span>·</span>
+                        <span className="capitalize">{t.copy_tone}</span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {errorMsg && (
+            <div className="mt-6 bg-red-900/40 border border-red-700 rounded-lg px-4 py-3 text-sm text-red-300 text-center">
+              {errorMsg}
+            </div>
+          )}
+
+          <p className="mt-8 text-center text-xs text-zinc-600">
+            <a href="/" className="underline hover:text-zinc-400">← Back to home</a>
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  // ── Upload View (template selected) ─────────────────────────────────────────
+  const minClips = selectedTemplate?.slot_count || 5;
+  const canSubmit = clips.length >= minClips && pageState === "upload";
+  const totalProgress =
+    clips.length > 0
+      ? Math.round(clips.reduce((sum, c) => sum + c.progress, 0) / clips.length)
+      : 0;
 
   return (
     <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4 py-16">
       <div className="w-full max-w-xl">
-        <h1 className="text-3xl font-bold mb-2 text-center">Template Mode</h1>
-        <p className="text-zinc-400 text-sm text-center mb-8">
-          Upload {MIN_CLIPS}–{MAX_CLIPS} raw clips. AI will assemble them to match a curated TikTok template.
+        <button
+          onClick={backToGallery}
+          className="text-zinc-400 text-sm hover:text-white transition-colors mb-6"
+        >
+          ← Back to templates
+        </button>
+
+        <h1 className="text-2xl font-bold mb-1">
+          {selectedTemplate?.name || "Upload Clips"}
+        </h1>
+        <p className="text-zinc-400 text-sm mb-6">
+          Upload {minClips}–{MAX_CLIPS} raw clips. AI will assemble them to match this template.
         </p>
 
         {/* Drop zone */}
@@ -132,70 +257,59 @@ export default function TemplatePage() {
           <p className="text-zinc-400 text-sm">
             {clips.length === 0
               ? "Drop clips here or click to browse"
-              : `${clips.length} clip${clips.length !== 1 ? "s" : ""} selected (${MIN_CLIPS}–${MAX_CLIPS} required)`}
+              : `${clips.length} clip${clips.length !== 1 ? "s" : ""} selected`}
           </p>
-          <p className="text-zinc-600 text-xs mt-1">MP4, MOV, AVI · Up to 4GB each</p>
+          <p className="text-zinc-600 text-xs mt-1">MP4, MOV · Up to 4GB each</p>
           <input
             ref={fileInput}
             type="file"
-            accept="video/mp4,video/quicktime,video/x-msvideo"
+            accept="video/mp4,video/quicktime"
             multiple
             className="hidden"
             onChange={(e) => e.target.files && addFiles(e.target.files)}
           />
         </div>
 
-        {/* Clip list */}
+        {/* Clip list with per-file progress */}
         {clips.length > 0 && (
           <ul className="mt-4 space-y-2">
             {clips.map((c) => (
               <li
                 key={c.id}
-                className="flex items-center justify-between bg-zinc-900 rounded-lg px-4 py-2 text-sm"
+                className="flex items-center bg-zinc-900 rounded-lg px-4 py-2 text-sm"
               >
-                <span className="truncate text-zinc-300 flex-1 mr-4">{c.file.name}</span>
-                <span className="text-zinc-500 mr-4 shrink-0">
+                <span className="truncate text-zinc-300 flex-1 mr-3">{c.file.name}</span>
+                <span className="text-zinc-500 mr-3 shrink-0">
                   {(c.file.size / 1024 / 1024).toFixed(1)} MB
                 </span>
-                <button
-                  onClick={() => removeClip(c.id)}
-                  className="text-zinc-500 hover:text-red-400 transition-colors shrink-0"
-                  aria-label="Remove clip"
-                >
-                  ✕
-                </button>
+                {c.error ? (
+                  <span className="text-red-400 text-xs mr-3">Failed</span>
+                ) : c.progress > 0 && c.progress < 100 ? (
+                  <span className="text-blue-400 text-xs mr-3">{c.progress}%</span>
+                ) : c.progress === 100 ? (
+                  <span className="text-green-400 text-xs mr-3">✓</span>
+                ) : null}
+                {pageState === "upload" && (
+                  <button
+                    onClick={() => removeClip(c.id)}
+                    className="text-zinc-500 hover:text-red-400 transition-colors shrink-0"
+                    aria-label="Remove clip"
+                  >
+                    ✕
+                  </button>
+                )}
               </li>
             ))}
           </ul>
         )}
 
-        {/* Platform selector */}
-        <div className="mt-6">
-          <p className="text-sm text-zinc-400 mb-2">Platforms</p>
-          <div className="flex gap-3">
-            {PLATFORMS.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => togglePlatform(p.id)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  selectedPlatforms.includes(p.id)
-                    ? "bg-white text-black"
-                    : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* Error message */}
         {errorMsg && (
           <div className="mt-4 bg-red-900/40 border border-red-700 rounded-lg px-4 py-3 text-sm text-red-300">
             {errorMsg}
-            {state === "error" && (
+            {pageState === "error" && (
               <button
-                onClick={() => { setState("idle"); setErrorMsg(null); }}
+                onClick={() => { setPageState("upload"); setErrorMsg(null); }}
                 className="ml-3 underline text-red-400 hover:text-red-200"
               >
                 Try again
@@ -204,23 +318,23 @@ export default function TemplatePage() {
           </div>
         )}
 
-        {/* Progress bar */}
-        {state === "uploading" && (
+        {/* Upload progress */}
+        {pageState === "uploading" && (
           <div className="mt-4">
             <div className="flex justify-between text-xs text-zinc-400 mb-1">
               <span>Uploading clips...</span>
-              <span>{uploadProgress}%</span>
+              <span>{totalProgress}%</span>
             </div>
             <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
               <div
                 className="h-full bg-white transition-all duration-300"
-                style={{ width: `${uploadProgress}%` }}
+                style={{ width: `${totalProgress}%` }}
               />
             </div>
           </div>
         )}
 
-        {state === "enqueuing" && (
+        {pageState === "enqueuing" && (
           <p className="mt-4 text-sm text-zinc-400 text-center">Starting AI processing...</p>
         )}
 
@@ -234,14 +348,10 @@ export default function TemplatePage() {
               : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
           }`}
         >
-          {clips.length < MIN_CLIPS
-            ? `Add ${MIN_CLIPS - clips.length} more clip${MIN_CLIPS - clips.length !== 1 ? "s" : ""}`
+          {clips.length < minClips
+            ? `Add ${minClips - clips.length} more clip${minClips - clips.length !== 1 ? "s" : ""}`
             : "Create with Template"}
         </button>
-
-        <p className="mt-4 text-center text-xs text-zinc-600">
-          <a href="/" className="underline hover:text-zinc-400">← Back to standard upload</a>
-        </p>
       </div>
     </main>
   );

@@ -1,16 +1,18 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   getTemplateJobStatus,
+  getTemplatePlaybackUrl,
+  rerollTemplateJob,
   type AssemblyPlanData,
   type TemplateJobStatus,
   type TemplateJobStatusResponse,
 } from "@/lib/api";
 
 const POLL_INTERVAL_MS = 4000;
-const POLL_TIMEOUT_MS = 10 * 60 * 1000; // 10 min
+const POLL_TIMEOUT_MS = 10 * 60 * 1000;
 
 const STAGE_LABELS: Record<TemplateJobStatus, string> = {
   queued: "Waiting in queue...",
@@ -52,25 +54,11 @@ export default function TemplateJobPage() {
     return () => clearInterval(intervalRef.current!);
   }, [id]);
 
-  if (error) {
-    return (
-      <ErrorScreen message={error} jobId={id} />
-    );
-  }
-
-  if (!job) {
-    return <LoadingScreen message="Loading..." />;
-  }
-
+  if (error) return <ErrorScreen message={error} jobId={id} />;
+  if (!job) return <LoadingScreen message="Loading..." />;
   if (job.status === "processing_failed") {
-    return (
-      <ErrorScreen
-        message={job.error_detail ?? "Processing failed. Please try again."}
-        jobId={id}
-      />
-    );
+    return <ErrorScreen message={job.error_detail ?? "Processing failed. Please try again."} jobId={id} />;
   }
-
   if (job.status !== "template_ready" || !job.assembly_plan?.output_url) {
     return <LoadingScreen message={STAGE_LABELS[job.status]} />;
   }
@@ -78,7 +66,7 @@ export default function TemplateJobPage() {
   return <ResultView job={job} plan={job.assembly_plan} />;
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+// ── Loading & Error ──────────────────────────────────────────────────────────
 
 function LoadingScreen({ message }: { message: string }) {
   return (
@@ -107,6 +95,269 @@ function ErrorScreen({ message, jobId }: { message: string; jobId: string }) {
   );
 }
 
+// ── Slot-Aware Timeline Player ───────────────────────────────────────────────
+
+const SLOT_COLORS: Record<string, string> = {
+  hook: "bg-blue-500",
+  broll: "bg-zinc-500",
+  b_roll: "bg-zinc-500",
+  outro: "bg-green-500",
+  intro: "bg-purple-500",
+  transition: "bg-yellow-500",
+};
+
+function TimelinePlayer({
+  steps,
+  videoRef,
+}: {
+  steps: AssemblyPlanData["steps"];
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+}) {
+  const [currentTime, setCurrentTime] = useState(0);
+  const totalDuration = steps.reduce((sum, s) => sum + s.slot.target_duration_s, 0);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const handler = () => setCurrentTime(video.currentTime);
+    video.addEventListener("timeupdate", handler);
+    return () => video.removeEventListener("timeupdate", handler);
+  }, [videoRef]);
+
+  function seekToSlot(slotIndex: number) {
+    const video = videoRef.current;
+    if (!video) return;
+    let cumulative = 0;
+    for (let i = 0; i < slotIndex; i++) {
+      cumulative += steps[i].slot.target_duration_s;
+    }
+    video.currentTime = cumulative;
+    video.play().catch(() => {});
+  }
+
+  // Find active slot
+  let cumTime = 0;
+  let activeSlot = 0;
+  for (let i = 0; i < steps.length; i++) {
+    if (currentTime >= cumTime && currentTime < cumTime + steps[i].slot.target_duration_s) {
+      activeSlot = i;
+      break;
+    }
+    cumTime += steps[i].slot.target_duration_s;
+    if (i === steps.length - 1) activeSlot = i;
+  }
+
+  const scrubberPercent = totalDuration > 0 ? (currentTime / totalDuration) * 100 : 0;
+
+  return (
+    <div className="mt-4">
+      {/* Timeline bar */}
+      <div className="relative flex h-8 rounded-lg overflow-hidden bg-zinc-900">
+        {steps.map((step, i) => {
+          const widthPercent = (step.slot.target_duration_s / totalDuration) * 100;
+          const color = SLOT_COLORS[step.slot.slot_type] || "bg-zinc-600";
+          const isActive = i === activeSlot;
+          return (
+            <button
+              key={i}
+              onClick={() => seekToSlot(i)}
+              className={`${color} relative flex items-center justify-center text-[10px] font-medium text-white transition-all ${
+                isActive ? "opacity-100 ring-1 ring-white" : "opacity-60 hover:opacity-80"
+              }`}
+              style={{
+                width: `${widthPercent}%`,
+                borderWidth: step.slot.priority ? `${Math.min(step.slot.priority, 10) * 0.3}px` : "1px",
+                borderColor: "rgba(255,255,255,0.2)",
+              }}
+              title={`${step.slot.slot_type} · ${step.slot.target_duration_s.toFixed(1)}s`}
+            >
+              {widthPercent > 8 && step.slot.slot_type}
+            </button>
+          );
+        })}
+        {/* Scrubber line */}
+        <div
+          className="absolute top-0 bottom-0 w-0.5 bg-white z-10 pointer-events-none transition-all"
+          style={{ left: `${Math.min(scrubberPercent, 100)}%` }}
+        />
+      </div>
+
+      {/* Current slot info */}
+      <div className="mt-2 text-xs text-zinc-400">
+        Slot {steps[activeSlot]?.slot.position} · Clip {activeSlot + 1} · {steps[activeSlot]?.slot.slot_type} · {steps[activeSlot]?.slot.target_duration_s.toFixed(1)}s
+      </div>
+    </div>
+  );
+}
+
+// ── Side-by-Side Comparison ──────────────────────────────────────────────────
+
+function SideBySideComparison({
+  templateId,
+  outputUrl,
+}: {
+  templateId: string | null;
+  outputUrl: string;
+}) {
+  const [templateUrl, setTemplateUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const templateVideoRef = useRef<HTMLVideoElement>(null);
+  const outputVideoRef = useRef<HTMLVideoElement>(null);
+
+  async function loadTemplateVideo() {
+    if (!templateId || templateUrl) return;
+    setLoading(true);
+    try {
+      const { url } = await getTemplatePlaybackUrl(templateId);
+      setTemplateUrl(url);
+    } catch {
+      // Silently fail — template video is optional
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggleExpanded() {
+    setExpanded(!expanded);
+    if (!expanded && !templateUrl) loadTemplateVideo();
+  }
+
+  function syncPlay() {
+    templateVideoRef.current?.play().catch(() => {});
+    outputVideoRef.current?.play().catch(() => {});
+  }
+
+  function syncPause() {
+    templateVideoRef.current?.pause();
+    outputVideoRef.current?.pause();
+  }
+
+  if (!templateId) return null;
+
+  return (
+    <div className="mt-8">
+      <button
+        onClick={toggleExpanded}
+        className="text-sm text-zinc-400 hover:text-white transition-colors"
+      >
+        {expanded ? "▾" : "▸"} Compare with original template
+      </button>
+
+      {expanded && (
+        <div className="mt-4">
+          <div className="flex gap-2 mb-3">
+            <button
+              onClick={syncPlay}
+              className="px-3 py-1.5 bg-zinc-800 text-zinc-300 rounded text-xs hover:bg-zinc-700"
+            >
+              ▶ Play both
+            </button>
+            <button
+              onClick={syncPause}
+              className="px-3 py-1.5 bg-zinc-800 text-zinc-300 rounded text-xs hover:bg-zinc-700"
+            >
+              ⏸ Pause both
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Original Template</p>
+              {loading ? (
+                <div className="h-48 bg-zinc-900 rounded-lg flex items-center justify-center">
+                  <div className="w-6 h-6 border-2 border-zinc-600 border-t-white rounded-full animate-spin" />
+                </div>
+              ) : templateUrl ? (
+                <video
+                  ref={templateVideoRef}
+                  src={templateUrl}
+                  controls
+                  className="w-full rounded-lg bg-zinc-900"
+                />
+              ) : (
+                <div className="h-48 bg-zinc-900 rounded-lg flex items-center justify-center text-zinc-600 text-xs">
+                  Template video unavailable
+                </div>
+              )}
+            </div>
+            <div>
+              <p className="text-xs text-zinc-500 mb-1">Your Output</p>
+              <video
+                ref={outputVideoRef}
+                src={outputUrl}
+                controls
+                className="w-full rounded-lg bg-zinc-900"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Reroll Button ────────────────────────────────────────────────────────────
+
+function RerollButton({ jobId }: { jobId: string }) {
+  const router = useRouter();
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [rerollCount, setRerollCount] = useState(0);
+
+  const MAX_REROLLS = 2;
+
+  async function handleReroll() {
+    if (rerollCount >= MAX_REROLLS) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const { job_id } = await rerollTemplateJob(jobId);
+      setRerollCount((c) => c + 1);
+      router.push(`/template-jobs/${job_id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Reroll failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="mt-6">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+      >
+        {expanded ? "▾" : "▸"} These don&apos;t look right?
+      </button>
+
+      {expanded && (
+        <div className="mt-3 bg-zinc-900 rounded-lg p-4">
+          <p className="text-xs text-zinc-400 mb-3">
+            Re-rolling uses the same clips but produces a different assembly.
+            {rerollCount > 0 && ` (${MAX_REROLLS - rerollCount} re-roll${MAX_REROLLS - rerollCount !== 1 ? "s" : ""} remaining)`}
+          </p>
+          <button
+            onClick={handleReroll}
+            disabled={loading || rerollCount >= MAX_REROLLS}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              loading || rerollCount >= MAX_REROLLS
+                ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
+                : "bg-zinc-700 text-white hover:bg-zinc-600"
+            }`}
+          >
+            {loading ? "Re-rolling..." : rerollCount >= MAX_REROLLS ? "No re-rolls left" : "Try different clips"}
+          </button>
+          {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Result View (main) ───────────────────────────────────────────────────────
+
 function ResultView({
   job,
   plan,
@@ -115,6 +366,7 @@ function ResultView({
   plan: AssemblyPlanData;
 }) {
   const copy = plan.platform_copy;
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   return (
     <main className="min-h-screen bg-black text-white px-4 py-16">
@@ -125,8 +377,9 @@ function ResultView({
         </p>
 
         {/* Video player */}
-        <div className="rounded-2xl overflow-hidden bg-zinc-900 mb-8">
+        <div className="rounded-2xl overflow-hidden bg-zinc-900">
           <video
+            ref={videoRef}
             src={plan.output_url}
             controls
             className="w-full max-h-[70vh] object-contain"
@@ -134,8 +387,13 @@ function ResultView({
           />
         </div>
 
+        {/* Slot-Aware Timeline */}
+        {plan.steps.length > 0 && (
+          <TimelinePlayer steps={plan.steps} videoRef={videoRef} />
+        )}
+
         {/* Download */}
-        <div className="flex justify-center mb-8">
+        <div className="flex justify-center mt-6 mb-4">
           <a
             href={plan.output_url}
             download
@@ -145,9 +403,18 @@ function ResultView({
           </a>
         </div>
 
+        {/* Reroll */}
+        <RerollButton jobId={job.job_id} />
+
+        {/* Side-by-side comparison */}
+        <SideBySideComparison
+          templateId={job.template_id}
+          outputUrl={plan.output_url!}
+        />
+
         {/* Platform copy */}
         {copy && (
-          <div className="space-y-4">
+          <div className="mt-8 space-y-4">
             <h2 className="text-lg font-semibold">Caption copy</h2>
             {copy.tiktok && (
               <CopyCard
@@ -182,7 +449,7 @@ function ResultView({
           </div>
         )}
 
-        {/* Shot breakdown */}
+        {/* Assembly breakdown */}
         <div className="mt-8">
           <h2 className="text-lg font-semibold mb-3">Assembly breakdown</h2>
           <div className="space-y-2">
@@ -204,6 +471,8 @@ function ResultView({
 
         <p className="mt-8 text-center text-xs text-zinc-600">
           <a href="/template" className="underline hover:text-zinc-400">← Create another</a>
+          {" · "}
+          <a href="/template-jobs" className="underline hover:text-zinc-400">QA Dashboard</a>
         </p>
       </div>
     </main>

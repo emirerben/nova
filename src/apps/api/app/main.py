@@ -6,7 +6,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.limiter import limiter
-from app.routes import admin, jobs, template_jobs, uploads, waitlist
+from app.routes import admin, jobs, presigned, template_jobs, templates, uploads, waitlist
 
 log = structlog.get_logger()
 
@@ -26,6 +26,8 @@ app.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(admin.router, prefix="/admin/templates", tags=["admin"])
 app.include_router(template_jobs.router, prefix="/template-jobs", tags=["template-jobs"])
+app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])
+app.include_router(templates.router, prefix="/templates", tags=["templates"])
 app.include_router(waitlist.router, tags=["waitlist"])
 
 

@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     # Waitlist admin
     waitlist_admin_secret: str = "changeme"
 
+    # Resend (transactional email) — leave empty to skip confirmation emails
+    resend_api_key: str = ""
+
+    # Eval harness — gates per-slot GCS upload for visual comparison
+    eval_harness_enabled: bool = False
+
     # Security
     token_encryption_key: str = ""
 

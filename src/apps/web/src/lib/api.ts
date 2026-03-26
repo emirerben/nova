@@ -164,3 +164,109 @@ export async function getTemplateJobStatus(jobId: string): Promise<TemplateJobSt
   if (!res.ok) throw new Error(`Status fetch failed: ${res.status}`);
   return res.json();
 }
+
+// ── Batch presigned + template gallery API ──────────────────────────────────
+
+export interface BatchPresignedFile {
+  filename: string;
+  content_type: string;
+  file_size_bytes: number;
+}
+
+export interface BatchPresignedUrl {
+  upload_url: string;
+  gcs_path: string;
+}
+
+export interface BatchPresignedResponse {
+  urls: BatchPresignedUrl[];
+}
+
+export async function getBatchPresignedUrls(
+  files: BatchPresignedFile[]
+): Promise<BatchPresignedResponse> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/presigned-urls`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files }),
+    });
+  } catch {
+    throw new Error("Cannot reach the server. Make sure the API is running.");
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Presigned URL generation failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface TemplateListItem {
+  id: string;
+  name: string;
+  gcs_path: string;
+  analysis_status: string;
+  slot_count: number;
+  total_duration_s: number;
+  copy_tone: string;
+  thumbnail_url: string | null;
+}
+
+export async function listTemplates(): Promise<TemplateListItem[]> {
+  const res = await fetch(`${API_URL}/templates`);
+  if (!res.ok) throw new Error(`Failed to fetch templates: ${res.status}`);
+  return res.json();
+}
+
+export interface PlaybackUrlResponse {
+  url: string;
+  expires_in_s: number;
+}
+
+export async function getTemplatePlaybackUrl(
+  templateId: string
+): Promise<PlaybackUrlResponse> {
+  const res = await fetch(`${API_URL}/templates/${templateId}/playback-url`);
+  if (!res.ok) throw new Error(`Failed to get playback URL: ${res.status}`);
+  return res.json();
+}
+
+// ── Reroll + Job list API ───────────────────────────────────────────────────
+
+export async function rerollTemplateJob(
+  jobId: string
+): Promise<TemplateJobCreateResponse> {
+  const res = await fetch(`${API_URL}/template-jobs/${jobId}/reroll`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Reroll failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface TemplateJobListItem {
+  job_id: string;
+  status: string;
+  template_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TemplateJobListResponse {
+  jobs: TemplateJobListItem[];
+  total: number;
+}
+
+export async function listTemplateJobs(
+  limit = 50,
+  offset = 0
+): Promise<TemplateJobListResponse> {
+  const res = await fetch(
+    `${API_URL}/template-jobs?limit=${limit}&offset=${offset}`
+  );
+  if (!res.ok) throw new Error(`Failed to fetch jobs: ${res.status}`);
+  return res.json();
+}

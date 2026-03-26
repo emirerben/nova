@@ -704,7 +704,7 @@ class TestNewSlotFields:
 
 class TestCacheLoadValidation:
     def test_old_recipe_missing_new_fields_constructs_ok(self):
-        """Old cached recipe without new fields → TemplateRecipe with defaults."""
+        """Old cached recipe without new fields -> TemplateRecipe with defaults."""
         old_data = {
             "shot_count": 3,
             "total_duration_s": 15.0,
