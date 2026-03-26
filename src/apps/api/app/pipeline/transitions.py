@@ -72,6 +72,7 @@ def join_with_transitions(
         "-map", final_label,
         "-an",  # video-only — template audio mixed separately
         "-c:v", "libx264",
+        "-profile:v", "high",
         "-preset", "fast",
         "-crf", "23",
         "-pix_fmt", "yuv420p",  # QuickTime/browser compatibility

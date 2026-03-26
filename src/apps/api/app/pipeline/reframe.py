@@ -37,6 +37,7 @@ def _encoding_args(output_path: str) -> list[str]:
     """Shared FFmpeg output encoding arguments (DRY)."""
     return [
         "-c:v", "libx264",
+        "-profile:v", "high",
         "-preset", "fast",
         "-crf", "23",
         "-pix_fmt", "yuv420p",  # QuickTime/browser compatibility
