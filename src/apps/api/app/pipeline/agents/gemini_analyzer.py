@@ -67,6 +67,7 @@ class TemplateRecipe:
     color_grade: str = "none"
     pacing_style: str = ""
     sync_style: str = "freeform"
+    interstitials: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -250,6 +251,7 @@ def analyze_clip(
 def analyze_template(
     file_ref: Any,
     analysis_mode: str = "single",
+    black_segments: list[dict] | None = None,
 ) -> TemplateRecipe:
     """Extract a structural 'recipe' from a template video.
 
@@ -257,6 +259,8 @@ def analyze_template(
         file_ref: Gemini file reference (must be ACTIVE).
         analysis_mode: "single" for one-pass expanded prompt,
                        "two_pass" for creative direction + structural extraction.
+        black_segments: Optional list of black segments from FFmpeg blackdetect.
+                        Passed as context to the Gemini prompt for interstitial detection.
 
     Failure is fatal (raises) — caller must handle.
     """
@@ -264,6 +268,38 @@ def analyze_template(
 
     client = _get_client()
     from google.genai import types as genai_types  # type: ignore[import]
+
+    # ── Build black segments context for prompts ─────────────────────
+    black_segments_context = ""
+    if black_segments:
+        lines = ["Black segments detected by frame analysis:"]
+        has_classified = False
+        for seg in black_segments:
+            likely_type = seg.get("likely_type")
+            line = (
+                f"  - {seg['start_s']:.2f}s to {seg['end_s']:.2f}s "
+                f"(duration: {seg['duration_s']:.2f}s)"
+            )
+            if likely_type == "curtain-close":
+                line += " — CURTAIN-CLOSE detected (black bars closing from top/bottom)"
+                has_classified = True
+            elif likely_type == "fade-black-hold":
+                line += " — FADE-TO-BLACK detected (uniform darkening)"
+                has_classified = True
+            lines.append(line)
+
+        if has_classified:
+            lines.append(
+                "Use the transition type classifications above when populating "
+                "each interstitial's type field. Segments marked CURTAIN-CLOSE "
+                "must use type \"curtain-close\" in the interstitials array."
+            )
+        else:
+            lines.append(
+                "These may indicate curtain-close, fade-to-black, or other "
+                "transitions with a black hold between clips."
+            )
+        black_segments_context = "\n".join(lines)
 
     # ── Pass 1: creative direction (two_pass mode only) ──────────────
     creative_direction = ""
@@ -280,9 +316,14 @@ def analyze_template(
             "analyze_template_pass2",
             creative_direction=creative_direction,
             schema=schema,
+            black_segments_context=black_segments_context,
         )
     else:
-        prompt = load_prompt("analyze_template_single", schema=schema)
+        prompt = load_prompt(
+            "analyze_template_single",
+            schema=schema,
+            black_segments_context=black_segments_context,
+        )
 
     log.info(
         "template_analysis_mode",
@@ -346,6 +387,11 @@ def analyze_template(
         ),
     )
 
+    # ── Validate interstitials ──────────────────────────────────────
+    interstitials = _validate_interstitials(
+        data.get("interstitials", []), int(data.get("shot_count", 0))
+    )
+
     return TemplateRecipe(
         shot_count=int(data.get("shot_count", 0)),
         total_duration_s=total_duration_s,
@@ -359,6 +405,7 @@ def analyze_template(
         color_grade=global_color_grade,
         pacing_style=str(data.get("pacing_style", "")),
         sync_style=sync_style,
+        interstitials=interstitials,
     )
 
 
@@ -371,7 +418,7 @@ _VALID_OVERLAY_EFFECTS = {
     "slide-up", "static",
 }
 _VALID_OVERLAY_POSITIONS = {"center", "top", "bottom"}
-_VALID_TRANSITION_TYPES = {"hard-cut", "whip-pan", "zoom-in", "dissolve", "none"}
+_VALID_TRANSITION_TYPES = {"hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none"}
 _VALID_COLOR_HINTS = {"warm", "cool", "high-contrast", "desaturated", "vintage", "none"}
 _VALID_SYNC_STYLES = {"cut-on-beat", "transition-on-beat", "energy-match", "freeform"}
 
@@ -473,6 +520,60 @@ def _validate_slots(slots: list[dict], global_color_grade: str) -> None:
             ov.setdefault("sample_text", "")
             validated.append(ov)
         slot["text_overlays"] = validated
+
+
+_VALID_INTERSTITIAL_TYPES = {"curtain-close", "fade-black-hold", "flash-white"}
+
+
+def _validate_interstitials(raw: list, shot_count: int) -> list[dict]:
+    """Validate and normalize interstitial definitions from Gemini response.
+
+    Returns a list of validated interstitial dicts. Invalid entries are dropped.
+    """
+    if not isinstance(raw, list):
+        return []
+
+    validated = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+
+        itype = item.get("type", "")
+        if itype not in _VALID_INTERSTITIAL_TYPES:
+            log.warning("interstitial_invalid_type", type=itype)
+            continue
+
+        try:
+            after_slot = int(item.get("after_slot", 0))
+        except (TypeError, ValueError):
+            continue
+        if after_slot < 1 or after_slot > shot_count:
+            log.warning("interstitial_invalid_slot", after_slot=after_slot)
+            continue
+
+        try:
+            animate_s = max(0.0, min(2.0, float(item.get("animate_s", 0.5))))
+            hold_s = max(0.1, min(3.0, float(item.get("hold_s", 1.0))))
+        except (TypeError, ValueError):
+            animate_s = 0.5
+            hold_s = 1.0
+
+        hold_color = item.get("hold_color", "#000000")
+        if hold_color not in ("#000000", "#FFFFFF"):
+            hold_color = "#000000"
+
+        validated.append({
+            "after_slot": after_slot,
+            "type": itype,
+            "animate_s": animate_s,
+            "hold_s": hold_s,
+            "hold_color": hold_color,
+        })
+
+    if validated:
+        log.info("interstitials_validated", count=len(validated))
+
+    return validated
 
 
 # ── Transcription ─────────────────────────────────────────────────────────────
