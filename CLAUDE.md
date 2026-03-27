@@ -31,6 +31,13 @@ docker-compose up        # starts web + api + worker + redis + db
 VideoFileClip(path) buffers the entire video into RAM. On a 2GB source file this crashes.
 Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 
+## Template pipeline
+- Interstitials: `app/pipeline/interstitials.py` detects curtain-close vs fade-to-black via FFmpeg luminance band analysis, renders color holds and drawbox animations
+- Transitions: `app/pipeline/transitions.py` translates Gemini vocabulary (whip-pan, zoom-in, dissolve) to internal FFmpeg xfade types
+- Font bundle: Playfair Display (Bold + Regular) in `assets/fonts/`, referenced via `fontsdir` in ASS subtitle filters
+- Text overlays: `app/pipeline/text_overlay.py` renders gaussian-shadow text (no hard outlines), supports font-cycle and ASS animated overlays
+- Beat-snap: `cumulative_s` in `_assemble_clips()` must account for interstitial hold durations to keep beat-snap calculations accurate
+
 ## Env vars needed (see .env.example for full list with descriptions)
 - STORAGE_BUCKET, STORAGE_PROVIDER
 - REDIS_URL
