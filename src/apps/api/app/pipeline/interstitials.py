@@ -11,8 +11,10 @@ solely on LLM visual analysis for classifying transition types.
 CRITICAL: Never use shell=True. Always pass args as a list.
 """
 
+import os
 import re
 import subprocess
+import tempfile
 
 import structlog
 
@@ -146,34 +148,14 @@ def apply_curtain_close_tail(
 
     anim_start = max(0.0, duration - animate_s)
 
-    # Expression: bar_height grows from 0 to ih/2 during last animate_s seconds.
-    # progress = clamp((t - anim_start) / animate_s, 0, 1)
-    # bar_h = floor(ih/2 * progress)
-    progress = f"min(1,max(0,(t-{anim_start:.3f})/{animate_s:.3f}))"
-    bar_h = f"floor(ih/2*{progress})"
-
-    # Two drawbox filters: top bar and bottom bar
-    filter_complex = (
-        f"drawbox=x=0:y=0:w=iw:h='{bar_h}':color=black:t=fill"
-        f":enable='gte(t,{anim_start:.3f})',"
-        f"drawbox=x=0:y='ih-{bar_h}':w=iw:h='{bar_h}':color=black:t=fill"
-        f":enable='gte(t,{anim_start:.3f})'"
-    )
-
-    cmd = [
-        "ffmpeg",
-        "-i", slot_video_path,
-        "-vf", filter_complex,
-        "-c:v", "libx264",
-        "-profile:v", "high",
-        "-preset", "fast",
-        "-crf", "23",
-        "-pix_fmt", "yuv420p",
-        "-an",
-        "-movflags", "+faststart",
-        "-y",
-        output_path,
-    ]
+    # Optimization: geq evaluates every pixel every frame, so processing the
+    # full clip is expensive (~5s per second of video at 1080x1920). Instead,
+    # split the clip into a prefix (stream-copied, instant) and a tail segment
+    # (geq-processed, only animate_s long). Then concat.
+    #
+    # geq is required because drawbox's h/w/x/y expressions do NOT have access
+    # to the 't' timestamp variable (only the 'enable' expression does), so
+    # drawbox cannot animate bar height over time.
 
     log.info(
         "curtain_close_tail_start",
@@ -181,10 +163,97 @@ def apply_curtain_close_tail(
         anim_start=round(anim_start, 3),
         animate_s=animate_s,
     )
-    result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
-    if result.returncode != 0:
-        stderr = result.stderr.decode(errors="replace")[:500]
-        raise InterstitialError(f"curtain_close tail effect failed: {stderr}")
+
+    work_dir = tempfile.mkdtemp(prefix="curtain_")
+    prefix_path = os.path.join(work_dir, "prefix.mp4")
+    tail_path = os.path.join(work_dir, "tail_raw.mp4")
+    tail_animated_path = os.path.join(work_dir, "tail_anim.mp4")
+    concat_list = os.path.join(work_dir, "concat.txt")
+
+    try:
+        # Step 1: Copy prefix (before animation) — stream copy, instant
+        prefix_cmd = [
+            "ffmpeg", "-i", slot_video_path,
+            "-t", f"{anim_start:.3f}",
+            "-c", "copy", "-an",
+            "-y", prefix_path,
+        ]
+        r = subprocess.run(prefix_cmd, capture_output=True, timeout=30, check=False)
+        if r.returncode != 0:
+            raise InterstitialError(
+                f"prefix split failed: {r.stderr.decode(errors='replace')[:300]}"
+            )
+
+        # Step 2: Extract tail segment — re-encode to ensure clean keyframes
+        tail_cmd = [
+            "ffmpeg", "-ss", f"{anim_start:.3f}", "-i", slot_video_path,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-an",
+            "-y", tail_path,
+        ]
+        r = subprocess.run(tail_cmd, capture_output=True, timeout=30, check=False)
+        if r.returncode != 0:
+            raise InterstitialError(
+                f"tail split failed: {r.stderr.decode(errors='replace')[:300]}"
+            )
+
+        # Step 3: Apply geq to tail only — T starts from 0 in this segment
+        # progress grows from 0 to 1 over the full tail duration
+        progress = f"min(1,max(0,T/{animate_s:.3f}))"
+        bar_h = f"floor(H/2*{progress})"
+        in_bar = f"lt(Y,{bar_h})+gt(Y,H-1-{bar_h})"
+
+        geq_filter = (
+            f"geq="
+            f"lum='if({in_bar},0,lum(X,Y))':"
+            f"cb='if({in_bar},128,cb(X,Y))':"
+            f"cr='if({in_bar},128,cr(X,Y))'"
+        )
+
+        geq_cmd = [
+            "ffmpeg", "-i", tail_path,
+            "-vf", geq_filter,
+            "-c:v", "libx264", "-profile:v", "high",
+            "-preset", "fast", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-an",
+            "-movflags", "+faststart",
+            "-y", tail_animated_path,
+        ]
+        r = subprocess.run(geq_cmd, capture_output=True, timeout=120, check=False)
+        if r.returncode != 0:
+            raise InterstitialError(
+                f"geq curtain-close failed: {r.stderr.decode(errors='replace')[:500]}"
+            )
+
+        # Step 4: Concat prefix + animated tail
+        with open(concat_list, "w") as f:
+            f.write(f"file '{prefix_path}'\nfile '{tail_animated_path}'\n")
+
+        concat_cmd = [
+            "ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_list,
+            "-c:v", "libx264", "-profile:v", "high",
+            "-preset", "fast", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-an",
+            "-movflags", "+faststart",
+            "-y", output_path,
+        ]
+        r = subprocess.run(concat_cmd, capture_output=True, timeout=60, check=False)
+        if r.returncode != 0:
+            raise InterstitialError(
+                f"curtain concat failed: {r.stderr.decode(errors='replace')[:300]}"
+            )
+
+    finally:
+        # Clean up temp files
+        for p in (prefix_path, tail_path, tail_animated_path, concat_list):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        try:
+            os.rmdir(work_dir)
+        except OSError:
+            pass
 
     log.info("curtain_close_tail_done", output=output_path)
 
