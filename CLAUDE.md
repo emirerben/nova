@@ -45,3 +45,23 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - REDIS_URL
 - DATABASE_URL
 - OPENAI_API_KEY
+
+## Deploy Configuration (configured by /setup-deploy)
+- Platform: Fly.io (planned, not yet configured)
+- Production URL: TBD (update after `fly launch`)
+- Deploy workflow: auto-deploy on push to main (via Fly.io GitHub integration)
+- Deploy status command: `fly status --app <app-name>`
+- Merge method: squash
+- Project type: web app + API + background workers
+
+### Custom deploy hooks
+- Pre-merge: none
+- Deploy trigger: automatic on push to main (Fly.io GitHub integration)
+- Deploy status: `fly status --app <app-name>` (after Fly CLI installed)
+- Health check: `https://<app-name>.fly.dev` (after deploy configured)
+
+### Setup remaining
+1. Install Fly CLI: `curl -L https://fly.io/install.sh | sh`
+2. Create Fly app: `fly launch` (generates fly.toml + Dockerfile)
+3. Connect GitHub: `fly deploy` or Fly.io dashboard → GitHub integration
+4. Update this section with real app name and production URL
