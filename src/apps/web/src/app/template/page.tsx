@@ -10,6 +10,7 @@ import {
   listTemplates,
   uploadFileToGcs,
 } from "@/lib/api";
+import { trackRecentJob } from "@/hooks/useArchitectureData";
 
 // ── Tone → gradient mapping for placeholder thumbnails ──────────────────────
 const TONE_GRADIENTS: Record<string, string> = {
@@ -141,6 +142,7 @@ export default function TemplatePage() {
         selected_platforms: ["tiktok", "instagram", "youtube"],
       });
 
+      trackRecentJob(job_id, "template");
       router.push(`/template-jobs/${job_id}`);
     } catch (err) {
       setPageState("error");

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { enqueueJob, getPresignedUrl, uploadFileToGcs } from "@/lib/api";
+import { trackRecentJob } from "@/hooks/useArchitectureData";
 
 const PLATFORMS = [
   { id: "instagram", label: "Instagram Reels" },
@@ -62,6 +63,7 @@ export default function UploadPage() {
       await uploadFileToGcs(upload_url, file);
       setState("enqueuing");
       await enqueueJob(job_id, gcs_path, selectedPlatforms);
+      trackRecentJob(job_id, "default");
 
       router.push(`/jobs/${job_id}`);
     } catch (err) {
