@@ -109,7 +109,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Overlay,Playfair Display,90,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,5,50,50,0,1
+Style: Overlay,Playfair Display,90,&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,-1,0,0,0,100,100,0,0,1,0,2,5,50,50,0,1
 """  # noqa: E501
 
 # -- Font-cycle configuration -------------------------------------------------
@@ -504,23 +504,30 @@ def _draw_text_png(
     y_frac = _POSITION_Y.get(position, 0.5)
     y = int(CANVAS_H * y_frac - text_h / 2)
 
-    # Subtle drop shadow (no ugly outline)
-    shadow_color = (0, 0, 0, 120)
-    for offset in [(2, 2), (3, 3)]:
-        draw.text((x + offset[0], y + offset[1]), text, font=font, fill=shadow_color)
+    # Soft gaussian shadow -- cinematic depth, no hard edges
+    from PIL import ImageFilter  # noqa: PLC0415
 
-    # Foreground text
-    draw.text((x, y), text, font=font, fill=text_color)
+    shadow_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow_layer)
+    shadow_draw.text((x, y + 6), text, font=font, fill=(0, 0, 0, 160))
+    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
+    img = Image.alpha_composite(img, shadow_layer)
+
+    # Clean foreground text -- no outline, no stroke
+    fg_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    fg_draw = ImageDraw.Draw(fg_layer)
+    fg_draw.text((x, y), text, font=font, fill=text_color)
+    img = Image.alpha_composite(img, fg_layer)
 
     img.save(png_path, "PNG")
 
 
 def _draw_text_png_with_font(text: str, font, position: str, png_path: str) -> None:
-    """Draw centered text with black outline on a transparent canvas and save as PNG.
+    """Draw centered text with soft gaussian shadow on a transparent canvas.
 
     Used by font-cycle rendering where the font object is already resolved.
     """
-    from PIL import Image, ImageDraw  # noqa: PLC0415
+    from PIL import Image, ImageDraw, ImageFilter  # noqa: PLC0415
 
     img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -533,15 +540,18 @@ def _draw_text_png_with_font(text: str, font, position: str, png_path: str) -> N
     y_frac = _POSITION_Y.get(position, 0.5)
     y = int(CANVAS_H * y_frac - text_h / 2)
 
-    # Black outline (stroke)
-    outline_width = 4
-    for dx in range(-outline_width, outline_width + 1):
-        for dy in range(-outline_width, outline_width + 1):
-            if dx * dx + dy * dy <= outline_width * outline_width:
-                draw.text((x + dx, y + dy), text, font=font, fill=(0, 0, 0, 255))
+    # Soft gaussian shadow -- cinematic depth
+    shadow_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow_layer)
+    shadow_draw.text((x, y + 6), text, font=font, fill=(0, 0, 0, 160))
+    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
+    img = Image.alpha_composite(img, shadow_layer)
 
-    # White text on top
-    draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
+    # Clean white text -- no outline, no stroke
+    fg_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    fg_draw = ImageDraw.Draw(fg_layer)
+    fg_draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
+    img = Image.alpha_composite(img, fg_layer)
 
     img.save(png_path, "PNG")
 
