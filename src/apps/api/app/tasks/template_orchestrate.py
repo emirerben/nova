@@ -863,6 +863,11 @@ def _collect_absolute_overlays(
         )
         clip_id = step.get("clip_id", "") if isinstance(step, dict) else step.clip_id
 
+        # Look up interstitial for this slot once (used by overlay
+        # acceleration and cumulative time accounting below).
+        slot_position = int(slot.get("position", i + 1))
+        inter = inter_map.get(slot_position)
+
         for ov in slot.get("text_overlays", []):
             clip_meta = _find_clip_meta_by_id(clip_id, clip_metas)
             text = _resolve_overlay_text(ov.get("role", "label"), clip_meta, ov, subject=subject)
@@ -872,7 +877,7 @@ def _collect_absolute_overlays(
             ov_start = cumulative_s + float(ov.get("start_s", 0.0))
             ov_end = cumulative_s + float(ov.get("end_s", dur))
 
-            raw.append({
+            entry = {
                 "text": text,
                 "start_s": ov_start,
                 "end_s": ov_end,
@@ -881,13 +886,29 @@ def _collect_absolute_overlays(
                 "font_style": ov.get("font_style", "display"),
                 "text_size": ov.get("text_size", "medium"),
                 "text_color": ov.get("text_color", "#FFFFFF"),
-            })
+            }
+
+            # If this overlay uses font-cycle and the slot has a
+            # curtain-close after it, inject the absolute timestamp
+            # where the curtain animation starts so the font cycling
+            # accelerates in sync with the closing bars.
+            if (
+                entry["effect"] == "font-cycle"
+                and inter
+                and inter.get("type") == "curtain-close"
+            ):
+                animate_s = float(inter.get("animate_s", 0.5))
+                slot_end_abs = cumulative_s + dur
+                accel_at = slot_end_abs - animate_s
+                # Clamp: accel must be within the overlay's time range
+                if accel_at > ov_start:
+                    entry["font_cycle_accel_at_s"] = accel_at
+
+            raw.append(entry)
 
         cumulative_s += dur
 
         # Account for interstitial hold time after this slot
-        slot_position = int(slot.get("position", i + 1))
-        inter = inter_map.get(slot_position)
         if inter:
             cumulative_s += float(inter.get("hold_s", 1.0))
 
@@ -915,6 +936,10 @@ def _collect_absolute_overlays(
         if unique[i]["position"] == unique[i + 1]["position"]:
             if unique[i]["end_s"] > unique[i + 1]["start_s"]:
                 unique[i]["end_s"] = unique[i + 1]["start_s"] - 0.1
+                # Keep font-cycle accel timestamp within the truncated range
+                accel = unique[i].get("font_cycle_accel_at_s")
+                if accel is not None and accel >= unique[i]["end_s"]:
+                    del unique[i]["font_cycle_accel_at_s"]
 
     # Remove any that became invalid after truncation
     result = [o for o in unique if o["end_s"] > o["start_s"]]
@@ -936,17 +961,14 @@ def _burn_text_overlays(
     """
     from app.pipeline.text_overlay import generate_text_overlay_png  # noqa: PLC0415
 
-    # Generate PNG for each overlay
+    # Generate PNGs for each overlay. Overlays already carry absolute
+    # timestamps from _collect_absolute_overlays, so the PNGs come back
+    # with correct timing. Font-cycle overlays expand to many PNGs per
+    # overlay, so do NOT reassign timing with a 1:1 overlay index.
     png_configs = generate_text_overlay_png(overlays, 999.0, tmpdir, slot_index=99)
     if not png_configs:
         shutil.copy2(input_path, output_path)
         return
-
-    # Match timing: use absolute start_s/end_s from the merged overlays
-    for i, cfg in enumerate(png_configs):
-        if i < len(overlays):
-            cfg["start_s"] = overlays[i]["start_s"]
-            cfg["end_s"] = overlays[i]["end_s"]
 
     from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
 

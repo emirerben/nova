@@ -79,6 +79,10 @@ blackdetect=d=0.15:pix_th=0.15
 subtitles=overlay.ass:fontsdir=/path/to/assets/fonts
 ```
 
+**Curtain-close rendering** (`interstitials.py`): Uses `geq` pixel expression filter to animate black bars growing from top/bottom edges. drawbox cannot animate bar height (its `h/w/x/y` expressions lack the `t` timestamp variable). The clip is split into a stream-copied prefix and a short geq-processed tail for performance.
+
+**Font-cycle acceleration**: When a curtain-close animation starts, `font_cycle_accel_at_s` triggers faster font switching (0.15s interval drops to 0.07s), syncing the visual rhythm of text cycling with closing bars. `MAX_FONT_CYCLE_FRAMES` (60) caps total PNGs to prevent explosion on long overlays. Per-size font caching ensures large/medium/small overlays get correctly sized fonts.
+
 **Transition vocabulary** (`transitions.py`): Gemini outputs human-friendly names, translated to FFmpeg xfade types: hard-cut to none, whip-pan to wipe_left, zoom-in to crossfade, dissolve to crossfade, curtain-close to none (handled by interstitial clip instead).
 
 ## Virality Framework

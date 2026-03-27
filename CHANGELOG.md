@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1.0] - 2026-03-27
+
+### Added
+- Font-cycle acceleration: cycling interval drops from 0.15s to 0.07s when curtain-close animation starts, syncing font switching speed with closing bars
+- `text_color` passthrough for font-cycle overlays, enabling colored text (yellow country names, red highlights) during rapid font switching
+- Per-size font caching in `_resolve_cycle_fonts()` so large/medium/small overlays get correctly sized fonts
+- `MAX_FONT_CYCLE_FRAMES` safety cap (60) preventing PNG explosion on long overlays
+- 14 new tests: 11 for text overlay (color, acceleration, size), 3 for template orchestration (curtain-close wiring)
+
+### Fixed
+- Font-cycle timing corruption: removed broken 1:1 timing reassignment in `_burn_text_overlays()` that overwrote multi-PNG font-cycle timestamps with single overlay timestamps
+- Curtain-close animation: replaced broken drawbox approach with `geq` pixel expression filter for reliable top/bottom bar closing
+- `font_cycle_accel_at_s` clamped to overlay start time to prevent full-speed cycling when `animate_s >= slot_duration`
+- Stale `font_cycle_accel_at_s` removed when dedup truncation pushes overlay `end_s` before acceleration timestamp
+
+### Changed
+- Pillow added as explicit dependency for text overlay PNG rendering
+- Font-cycle font resolution now accepts pixel `size` parameter with per-size dict cache
+
 ## [0.1.0.0] - 2026-03-27
 
 ### Added
