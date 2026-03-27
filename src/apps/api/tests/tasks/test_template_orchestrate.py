@@ -428,7 +428,10 @@ class TestAssembleClipsTimeCursor:
                 f.write(b"\x00" * 64)
 
         with (
-            patch("app.pipeline.reframe.reframe_and_export", side_effect=fake_reframe) as mock_reframe,
+            patch(
+                "app.pipeline.reframe.reframe_and_export",
+                side_effect=fake_reframe,
+            ) as mock_reframe,
             patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
         ):
             def fake_ffmpeg(cmd, **kw):
@@ -481,7 +484,10 @@ class TestAssembleClipsTimeCursor:
                 f.write(b"\x00" * 64)
 
         with (
-            patch("app.pipeline.reframe.reframe_and_export", side_effect=fake_reframe) as mock_reframe,
+            patch(
+                "app.pipeline.reframe.reframe_and_export",
+                side_effect=fake_reframe,
+            ) as mock_reframe,
             patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
         ):
             def fake_ffmpeg(cmd, **kw):
@@ -692,7 +698,12 @@ class TestTemplateMatcher2Pass:
             shot_count=1,
             total_duration_s=target,
             hook_duration_s=3.0,
-            slots=[{"position": 1, "target_duration_s": target, "priority": 5, "slot_type": "hook"}],
+            slots=[{
+                "position": 1,
+                "target_duration_s": target,
+                "priority": 5,
+                "slot_type": "hook",
+            }],
             copy_tone="casual",
             caption_style="bold",
         )
@@ -1002,7 +1013,14 @@ class TestTemplateRecipeBackwardCompat:
             "shot_count": 3,
             "total_duration_s": 15.0,
             "hook_duration_s": 3.0,
-            "slots": [{"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "hook"}],
+            "slots": [
+                {
+                    "position": 1,
+                    "target_duration_s": 5.0,
+                    "priority": 5,
+                    "slot_type": "hook",
+                },
+            ],
             "copy_tone": "casual",
             "caption_style": "bold",
         }
