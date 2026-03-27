@@ -143,8 +143,14 @@ _CYCLE_FONT_CANDIDATES = [
 # How often the font switches (seconds per frame)
 FONT_CYCLE_INTERVAL_S = 0.15
 
+# Faster interval used when curtain-close is active
+FONT_CYCLE_FAST_INTERVAL_S = 0.07
+
 # Fraction of duration where cycling "settles" on the primary font
 FONT_CYCLE_SETTLE_RATIO = 0.30
+
+# Max font-cycle frames to prevent PNG explosion on long overlays
+MAX_FONT_CYCLE_FRAMES = 60
 
 OVERLAY_FONT_SIZE = 90
 
@@ -312,21 +318,27 @@ def _render_font_cycle(
     styles (bold, serif, script, condensed). The last ~30% of the duration
     "settles" on the primary font (Playfair Display Bold).
 
+    Supports acceleration: if ``font_cycle_accel_at_s`` is set in the overlay
+    dict, the cycling interval drops to FONT_CYCLE_FAST_INTERVAL_S after that
+    absolute timestamp (used to speed up during curtain-close).
+
     Returns a list of {png_path, start_s, end_s} configs for FFmpeg overlay.
     """
     text, start_s, end_s, position = _validate_overlay(overlay, slot_duration_s)
     if text is None:
         return []
 
-    # Resolve available cycle fonts
-    cycle_fonts = _resolve_cycle_fonts()
+    hex_color = overlay.get("text_color", "#FFFFFF")
+    text_color = _hex_to_rgba(hex_color)
+    text_size = overlay.get("text_size", "medium")
+    pixel_size = _FONT_SIZE_MAP.get(text_size, 72)
+
+    # Resolve available cycle fonts at the requested size
+    cycle_fonts = _resolve_cycle_fonts(pixel_size)
     if len(cycle_fonts) < 2:
         # Not enough fonts for cycling -- fall back to static
         log.warning("font_cycle_insufficient_fonts", count=len(cycle_fonts))
         font_style = overlay.get("font_style", "display")
-        text_size = overlay.get("text_size", "medium")
-        hex_color = overlay.get("text_color", "#FFFFFF")
-        text_color = _hex_to_rgba(hex_color)
         png_path = os.path.join(output_dir, f"slot_{slot_index}_overlay_{overlay_index}.png")
         _draw_text_png(text, font_style, text_size, position, png_path, text_color=text_color)
         return [{"png_path": png_path, "start_s": start_s, "end_s": end_s}]
@@ -335,21 +347,28 @@ def _render_font_cycle(
     settle_start = start_s + duration * (1.0 - FONT_CYCLE_SETTLE_RATIO)
     cycle_end = settle_start  # cycling stops here, settle begins
 
+    # Acceleration: switch to faster interval after this absolute timestamp
+    accel_at = overlay.get("font_cycle_accel_at_s")
+
     results: list[dict] = []
     frame_idx = 0
     t = start_s
 
-    # Phase 1: rapid font cycling
+    # Phase 1: rapid font cycling (with optional acceleration)
     font_idx = 0
-    while t < cycle_end:
-        frame_end = min(t + FONT_CYCLE_INTERVAL_S, cycle_end)
+    while t < cycle_end and frame_idx < MAX_FONT_CYCLE_FRAMES:
+        interval = FONT_CYCLE_INTERVAL_S
+        if accel_at is not None and t >= accel_at:
+            interval = FONT_CYCLE_FAST_INTERVAL_S
+
+        frame_end = min(t + interval, cycle_end)
         font = cycle_fonts[font_idx % len(cycle_fonts)]
 
         png_path = os.path.join(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_{frame_idx}.png",
         )
-        _draw_text_png_with_font(text, font, position, png_path)
+        _draw_text_png_with_font(text, font, position, png_path, text_color=text_color)
         results.append({"png_path": png_path, "start_s": t, "end_s": frame_end})
 
         t = frame_end
@@ -363,7 +382,7 @@ def _render_font_cycle(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_settle.png",
         )
-        _draw_text_png_with_font(text, primary_font, position, png_path)
+        _draw_text_png_with_font(text, primary_font, position, png_path, text_color=text_color)
         results.append({"png_path": png_path, "start_s": settle_start, "end_s": end_s})
 
     log.info(
@@ -373,6 +392,7 @@ def _render_font_cycle(
         frames=len(results),
         fonts_available=len(cycle_fonts),
         duration=round(duration, 2),
+        accelerated=accel_at is not None,
     )
 
     return results
@@ -524,7 +544,13 @@ def _draw_text_png(
     img.save(png_path, "PNG")
 
 
-def _draw_text_png_with_font(text: str, font, position: str, png_path: str) -> None:
+def _draw_text_png_with_font(
+    text: str,
+    font,
+    position: str,
+    png_path: str,
+    text_color: tuple[int, int, int, int] = (255, 255, 255, 255),
+) -> None:
     """Draw centered text with soft gaussian shadow on a transparent canvas.
 
     Used by font-cycle rendering where the font object is already resolved.
@@ -549,39 +575,43 @@ def _draw_text_png_with_font(text: str, font, position: str, png_path: str) -> N
     shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
     img = Image.alpha_composite(img, shadow_layer)
 
-    # Clean white text -- no outline, no stroke
+    # Clean foreground text -- no outline, no stroke
     fg_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     fg_draw = ImageDraw.Draw(fg_layer)
-    fg_draw.text((x, y), text, font=font, fill=(255, 255, 255, 255))
+    fg_draw.text((x, y), text, font=font, fill=text_color)
     img = Image.alpha_composite(img, fg_layer)
 
     img.save(png_path, "PNG")
 
 
-_cycle_fonts_cache: list | None = None
+_cycle_fonts_cache: dict[int, list] = {}
 
 
 def _reset_cycle_cache() -> None:
     """Reset the font-cycle cache. For testing only."""
     global _cycle_fonts_cache
-    _cycle_fonts_cache = None
+    _cycle_fonts_cache = {}
 
 
-def _resolve_cycle_fonts() -> list:
-    """Resolve available fonts for cycling. Cached after first call."""
+def _resolve_cycle_fonts(size: int = OVERLAY_FONT_SIZE) -> list:
+    """Resolve available fonts for cycling at the given pixel size.
+
+    Cached per-size after first call so large/medium/small overlays each
+    get fonts loaded at the right dimensions.
+    """
     global _cycle_fonts_cache
-    if _cycle_fonts_cache is not None:
-        return _cycle_fonts_cache
+    if size in _cycle_fonts_cache:
+        return _cycle_fonts_cache[size]
 
     fonts = []
     for candidates in _CYCLE_FONT_CANDIDATES:
         for path in candidates:
             if os.path.exists(path):
-                font = _load_font(path)
+                font = _load_font(path, size)
                 fonts.append(font)
                 break
         # If no candidate found for this style, skip it
 
-    _cycle_fonts_cache = fonts
-    log.info("font_cycle_fonts_resolved", count=len(fonts))
+    _cycle_fonts_cache[size] = fonts
+    log.info("font_cycle_fonts_resolved", count=len(fonts), size=size)
     return fonts

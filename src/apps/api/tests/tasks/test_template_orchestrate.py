@@ -1137,6 +1137,70 @@ class TestAssembleClipsTextOverlays:
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert result == []
 
+    def test_font_cycle_accel_injected_for_curtain_close(self):
+        """font-cycle overlays on slots with curtain-close get accel timestamp."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=[{
+            "role": "label",
+            "start_s": 0.0,
+            "end_s": 5.0,
+            "position": "center",
+            "effect": "font-cycle",
+            "sample_text": "PERU",
+        }])
+
+        interstitial_map = {
+            1: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
+        }
+        result = _collect_absolute_overlays(
+            [step], [5.0], None, "Peru",
+            interstitial_map=interstitial_map,
+        )
+        assert len(result) == 1
+        # Curtain starts 1.5s before slot end (5.0), so accel at 3.5s
+        assert result[0].get("font_cycle_accel_at_s") == 3.5
+
+    def test_no_accel_without_curtain_close(self):
+        """font-cycle overlays without curtain-close don't get accel timestamp."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=[{
+            "role": "label",
+            "start_s": 0.0,
+            "end_s": 5.0,
+            "position": "center",
+            "effect": "font-cycle",
+            "sample_text": "TOKYO",
+        }])
+
+        result = _collect_absolute_overlays([step], [5.0], None, "Tokyo")
+        assert len(result) == 1
+        assert "font_cycle_accel_at_s" not in result[0]
+
+    def test_no_accel_for_static_overlay_with_curtain(self):
+        """Static overlays don't get accel even if slot has curtain-close."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=[{
+            "role": "label",
+            "start_s": 0.0,
+            "end_s": 5.0,
+            "position": "center",
+            "effect": "none",
+            "sample_text": "Welcome to",
+        }])
+
+        interstitial_map = {
+            1: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
+        }
+        result = _collect_absolute_overlays(
+            [step], [5.0], None, "",
+            interstitial_map=interstitial_map,
+        )
+        assert len(result) == 1
+        assert "font_cycle_accel_at_s" not in result[0]
+
 
 class TestResolveOverlayText:
     def test_hook_role_uses_hook_text(self):
