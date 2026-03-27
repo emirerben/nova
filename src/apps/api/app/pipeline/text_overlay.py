@@ -11,7 +11,9 @@ Supports effects:
     with a different font, swapped via timed FFmpeg overlays (~7 changes/sec)
   - Animated effects (fade-in, typewriter, slide-up): ASS subtitle files
 
-Font: Montserrat ExtraBold (bundled, SIL OFL) + system fonts for cycling.
+Font: Playfair Display Bold (bundled, SIL OFL) for titles/display,
+      Playfair Display Regular (bundled) for serif/subtitle text,
+      Montserrat ExtraBold (bundled) as sans fallback + font-cycle contrast.
 Fallback: system Helvetica -> Pillow default.
 """
 
@@ -33,7 +35,11 @@ CANVAS_H = 1920
 
 # Font path: look next to assets/ dir relative to the api app root
 _ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "fonts")
-OVERLAY_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "Montserrat-ExtraBold.ttf"))
+FONTS_DIR = os.path.normpath(_ASSETS_DIR)
+
+OVERLAY_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "PlayfairDisplay-Bold.ttf"))
+OVERLAY_FONT_PATH_REGULAR = os.path.normpath(os.path.join(_ASSETS_DIR, "PlayfairDisplay-Regular.ttf"))
+MONTSERRAT_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "Montserrat-ExtraBold.ttf"))
 
 # Effects that produce animated .ass files instead of static PNGs
 ASS_ANIMATED_EFFECTS = frozenset({"fade-in", "typewriter", "slide-up"})
@@ -53,9 +59,9 @@ _FONT_SIZE_MAP = {"small": 48, "medium": 72, "large": 120, "xlarge": 150}
 
 _FONT_STYLE_MAP: dict[str, list[str]] = {
     "serif": [
+        OVERLAY_FONT_PATH_REGULAR,  # Playfair Display Regular
         "/System/Library/Fonts/Supplemental/Didot.ttc",
         "/System/Library/Fonts/Supplemental/Baskerville.ttc",
-        "/System/Library/Fonts/Supplemental/Georgia Bold Italic.ttf",
     ],
     "serif_italic": [
         "/System/Library/Fonts/Supplemental/Georgia Bold Italic.ttf",
@@ -66,12 +72,13 @@ _FONT_STYLE_MAP: dict[str, list[str]] = {
         "/System/Library/Fonts/Supplemental/Brush Script.ttf",
     ],
     "sans": [
-        OVERLAY_FONT_PATH,  # Montserrat ExtraBold
+        MONTSERRAT_FONT_PATH,  # Montserrat ExtraBold
         "/System/Library/Fonts/Helvetica.ttc",
     ],
     "display": [
+        OVERLAY_FONT_PATH,  # Playfair Display Bold
         "/System/Library/Fonts/Supplemental/Didot.ttc",
-        OVERLAY_FONT_PATH,
+        MONTSERRAT_FONT_PATH,
     ],
 }
 
@@ -102,7 +109,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Overlay,Montserrat ExtraBold,90,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,5,50,50,0,1
+Style: Overlay,Playfair Display,90,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,4,1,5,50,50,0,1
 """  # noqa: E501
 
 # -- Font-cycle configuration -------------------------------------------------
@@ -110,7 +117,7 @@ Style: Overlay,Montserrat ExtraBold,90,&H00FFFFFF,&H00FFFFFF,&H00000000,&H800000
 # Each entry is a list of candidate paths -- first found is used.
 
 _CYCLE_FONT_CANDIDATES = [
-    # 0: Bold sans-serif (primary -- Montserrat ExtraBold)
+    # 0: Elegant serif (primary -- Playfair Display Bold, settle font)
     [OVERLAY_FONT_PATH],
     # 1: Bold serif
     [
@@ -127,11 +134,8 @@ _CYCLE_FONT_CANDIDATES = [
         "/System/Library/Fonts/Supplemental/Brush Script.ttf",
         "/System/Library/Fonts/Supplemental/Papyrus.ttc",
     ],
-    # 4: Elegant serif
-    [
-        "/System/Library/Fonts/Supplemental/Didot.ttc",
-        "/System/Library/Fonts/Supplemental/Copperplate.ttc",
-    ],
+    # 4: Bold sans-serif (contrast during cycling)
+    [MONTSERRAT_FONT_PATH],
 ]
 
 # How often the font switches (seconds per frame)
@@ -175,7 +179,7 @@ def generate_text_overlay_png(
             if text is None:
                 continue
 
-            font_style = overlay.get("font_style", "sans")
+            font_style = overlay.get("font_style", "display")
             text_size = overlay.get("text_size", "medium")
             hex_color = overlay.get("text_color", "#FFFFFF")
             text_color = _hex_to_rgba(hex_color)
@@ -304,7 +308,7 @@ def _render_font_cycle(
 
     The text stays centered but the font rapidly switches between contrasting
     styles (bold, serif, script, condensed). The last ~30% of the duration
-    "settles" on the primary font (Montserrat ExtraBold).
+    "settles" on the primary font (Playfair Display Bold).
 
     Returns a list of {png_path, start_s, end_s} configs for FFmpeg overlay.
     """
@@ -317,7 +321,7 @@ def _render_font_cycle(
     if len(cycle_fonts) < 2:
         # Not enough fonts for cycling -- fall back to static
         log.warning("font_cycle_insufficient_fonts", count=len(cycle_fonts))
-        font_style = overlay.get("font_style", "sans")
+        font_style = overlay.get("font_style", "display")
         text_size = overlay.get("text_size", "medium")
         hex_color = overlay.get("text_color", "#FFFFFF")
         text_color = _hex_to_rgba(hex_color)
@@ -352,7 +356,7 @@ def _render_font_cycle(
 
     # Phase 2: settle on the primary font for the remaining duration
     if settle_start < end_s:
-        primary_font = cycle_fonts[0]  # Montserrat ExtraBold
+        primary_font = cycle_fonts[0]  # Playfair Display Bold
         png_path = os.path.join(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_settle.png",
@@ -405,7 +409,7 @@ def _validate_overlay(
 
 
 def _load_styled_font(
-    font_style: str = "sans",
+    font_style: str = "display",
     text_size: str = "medium",
 ):
     """Load a font matching the requested style and size.
@@ -543,6 +547,12 @@ def _draw_text_png_with_font(text: str, font, position: str, png_path: str) -> N
 
 
 _cycle_fonts_cache: list | None = None
+
+
+def _reset_cycle_cache() -> None:
+    """Reset the font-cycle cache. For testing only."""
+    global _cycle_fonts_cache
+    _cycle_fonts_cache = None
 
 
 def _resolve_cycle_fonts() -> list:
