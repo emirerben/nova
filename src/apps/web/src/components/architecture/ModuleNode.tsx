@@ -21,6 +21,7 @@ export interface ModuleNodeData {
   isHighlighted: boolean;
   isSelected: boolean;
   childCount: number;
+  viewMode: "technical" | "business";
 }
 
 function IssueBadge({ count }: { count: number | null }) {
@@ -75,10 +76,18 @@ function ActivityIndicator({
   return null;
 }
 
+const STATUS_COLORS: Record<string, string> = {
+  live: "bg-emerald-500/20 text-emerald-400",
+  building: "bg-amber-500/20 text-amber-400",
+  planned: "bg-gray-700 text-gray-400",
+};
+
 function ModuleNodeInner({ data }: NodeProps & { data: ModuleNodeData }) {
-  const { module, issueCount, activeVisual, isHighlighted, isSelected, childCount } =
+  const { module, issueCount, activeVisual, isHighlighted, isSelected, childCount, viewMode } =
     data;
   const isDataStore = module.isDataStore;
+  const biz = module.business;
+  const isBusiness = viewMode === "business";
 
   const baseBg = isDataStore
     ? "bg-blue-950 border-blue-800"
@@ -98,9 +107,9 @@ function ModuleNodeInner({ data }: NodeProps & { data: ModuleNodeData }) {
   return (
     <div
       className={`
-        relative border rounded-lg p-3 min-w-[200px] max-w-[220px]
-        transition-all duration-200 cursor-pointer
+        relative border rounded-lg p-3 transition-all duration-200 cursor-pointer
         hover:border-gray-600
+        ${isBusiness ? "min-w-[240px] max-w-[280px]" : "min-w-[200px] max-w-[220px]"}
         ${baseBg} ${highlightRing} ${pulseStyle}
       `}
     >
@@ -109,27 +118,37 @@ function ModuleNodeInner({ data }: NodeProps & { data: ModuleNodeData }) {
       <Handle type="target" position={Position.Left} className="!bg-gray-600 !w-2 !h-2 !border-0" />
       <Handle type="source" position={Position.Right} className="!bg-gray-600 !w-2 !h-2 !border-0" />
 
-      {/* Row 1: Name + issue badge */}
+      {/* Row 1: Name + badge */}
       <div className="flex items-center gap-2">
-        {isDataStore && (
-          <span className="text-blue-400 text-xs">◆</span>
-        )}
+        {isDataStore && <span className="text-blue-400 text-xs">◆</span>}
         <span className="text-sm font-semibold text-gray-100 truncate">
           {module.name}
         </span>
-        <IssueBadge count={issueCount} />
+        {isBusiness && biz ? (
+          <span className={`ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded ${STATUS_COLORS[biz.status] ?? STATUS_COLORS.planned}`}>
+            {biz.status}
+          </span>
+        ) : (
+          <IssueBadge count={issueCount} />
+        )}
       </div>
 
       {/* Row 2: Description */}
-      <p className="text-xs text-gray-400 mt-1 truncate">
-        {module.description}
+      <p className="text-xs text-gray-400 mt-1 line-clamp-2">
+        {isBusiness && biz ? biz.userFacing : module.description}
       </p>
 
       {/* Row 3: Metadata */}
-      <p className="text-xs text-gray-500 mt-1">
-        {module.files.length} file{module.files.length !== 1 ? "s" : ""}
-        {childCount > 0 && ` · ${childCount} sub-module${childCount !== 1 ? "s" : ""}`}
-      </p>
+      {isBusiness && biz ? (
+        <p className="text-[10px] text-gray-500 mt-1.5 line-clamp-1">
+          {biz.metric}
+        </p>
+      ) : (
+        <p className="text-xs text-gray-500 mt-1">
+          {module.files.length} file{module.files.length !== 1 ? "s" : ""}
+          {childCount > 0 && ` · ${childCount} sub-module${childCount !== 1 ? "s" : ""}`}
+        </p>
+      )}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { useModuleIssues, useModuleCommits } from "@/hooks/useArchitectureData";
 interface ModuleDetailPanelProps {
   module: Module | null;
   onClose: () => void;
+  viewMode: "technical" | "business";
 }
 
 function FilesSection({ files }: { files: string[] }) {
@@ -145,8 +146,48 @@ function getPrimaryPath(files: string[]): string | null {
   return best || null;
 }
 
-export function ModuleDetailPanel({ module, onClose }: ModuleDetailPanelProps) {
+function BusinessSection({ module }: { module: Module }) {
+  const biz = module.business;
+  if (!biz) return <p className="text-xs text-gray-500 italic">No business context defined</p>;
+
+  const statusColor = {
+    live: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+    building: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+    planned: "bg-gray-700/50 text-gray-400 border-gray-600",
+  }[biz.status];
+
+  return (
+    <div className="space-y-4">
+      <div className={`rounded-lg border p-3 ${statusColor}`}>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-xs font-medium uppercase tracking-wider">Status</span>
+          <span className="text-xs font-semibold">{biz.status}</span>
+        </div>
+      </div>
+
+      <div>
+        <SectionHeader>What users see</SectionHeader>
+        <p className="text-sm text-gray-200 leading-relaxed">{biz.userFacing}</p>
+      </div>
+
+      <div>
+        <SectionHeader>Why it matters</SectionHeader>
+        <p className="text-sm text-gray-300 leading-relaxed">{biz.businessImpact}</p>
+      </div>
+
+      <div>
+        <SectionHeader>Key metric</SectionHeader>
+        <p className="text-xs text-gray-400 font-mono bg-gray-800 px-3 py-2 rounded">
+          {biz.metric}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export function ModuleDetailPanel({ module, onClose, viewMode }: ModuleDetailPanelProps) {
   const primaryPath = module ? getPrimaryPath(module.files) : null;
+  const isBusiness = viewMode === "business";
 
   return (
     <Dialog.Root open={!!module} onOpenChange={(open) => !open && onClose()}>
@@ -166,7 +207,9 @@ export function ModuleDetailPanel({ module, onClose }: ModuleDetailPanelProps) {
                     {module.name}
                   </Dialog.Title>
                   <Dialog.Description className="text-xs text-gray-400 mt-1">
-                    {module.description}
+                    {isBusiness && module.business
+                      ? module.business.userFacing
+                      : module.description}
                   </Dialog.Description>
                 </div>
                 <Dialog.Close className="text-gray-500 hover:text-gray-300 transition-colors p-1">
@@ -174,28 +217,35 @@ export function ModuleDetailPanel({ module, onClose }: ModuleDetailPanelProps) {
                 </Dialog.Close>
               </div>
 
-              {module.produces.length > 0 && (
+              {isBusiness ? (
+                <BusinessSection module={module} />
+              ) : (
                 <>
-                  <SectionHeader>Produces</SectionHeader>
-                  <div className="flex flex-wrap gap-1.5">
-                    {module.produces.map((p) => (
-                      <span
-                        key={p}
-                        className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded"
-                      >
-                        {p}
-                      </span>
-                    ))}
-                  </div>
+                  {module.produces.length > 0 && (
+                    <>
+                      <SectionHeader>Produces</SectionHeader>
+                      <div className="flex flex-wrap gap-1.5">
+                        {module.produces.map((p) => (
+                          <span
+                            key={p}
+                            className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded"
+                          >
+                            {p}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  <SectionHeader>Files</SectionHeader>
+                  <FilesSection files={module.files} />
+
+                  <SectionHeader>Recent Commits</SectionHeader>
+                  <CommitsSection modulePath={primaryPath} />
                 </>
               )}
 
-              <SectionHeader>Files</SectionHeader>
-              <FilesSection files={module.files} />
-
-              <SectionHeader>Recent Commits</SectionHeader>
-              <CommitsSection modulePath={primaryPath} />
-
+              {/* Issues show in both views */}
               <SectionHeader>Open Issues</SectionHeader>
               <IssuesSection label={module.githubLabel} />
             </>

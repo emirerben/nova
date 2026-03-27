@@ -17,6 +17,17 @@
 // Types
 // ---------------------------------------------------------------------------
 
+export interface BusinessContext {
+  /** What this does for the user, in plain language */
+  userFacing: string;
+  /** Why it matters for the business */
+  businessImpact: string;
+  /** Key metric this module affects */
+  metric: string;
+  /** Current status or phase */
+  status: "live" | "building" | "planned";
+}
+
 export interface Module {
   id: string;
   name: string;
@@ -29,6 +40,8 @@ export interface Module {
   children?: Record<string, Module>;
   /** Data store nodes use a different visual style */
   isDataStore?: boolean;
+  /** Business-facing context (shown in Business view) */
+  business?: BusinessContext;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +274,12 @@ export const modules: Record<string, Module> = {
     dependsOn: [],
     produces: ["job_id", "raw_storage_path"],
     children: uploadChildren,
+    business: {
+      userFacing: "Where creators drop their raw footage. One drag, one button. No settings.",
+      businessImpact: "First touch point. If upload feels slow or confusing, users leave before seeing any value.",
+      metric: "Upload completion rate (target: >90%)",
+      status: "live",
+    },
   },
   processing: {
     id: "processing",
@@ -278,6 +297,12 @@ export const modules: Record<string, Module> = {
     dependsOn: ["upload"],
     produces: ["top 9 clip candidates (ranked)"],
     children: processingChildren,
+    business: {
+      userFacing: "AI watches the video and finds the best moments. The user waits 2-5 min.",
+      businessImpact: "This is the core AI magic. Quality of clip selection determines if users trust Nova over manual editing.",
+      metric: "Processing time <8 min (SLA), clip quality score vs human baseline",
+      status: "live",
+    },
   },
   clips: {
     id: "clips",
@@ -294,6 +319,12 @@ export const modules: Record<string, Module> = {
     dependsOn: ["processing"],
     produces: ["3 rendered clips + platform copy"],
     children: clipsChildren,
+    business: {
+      userFacing: "Turns raw moments into ready-to-post shorts with captions and platform-specific copy.",
+      businessImpact: "This is where 'raw footage' becomes 'content'. The output quality here is what users judge Nova by.",
+      metric: "% of users who post without editing copy (target: >70%)",
+      status: "live",
+    },
   },
   templates: {
     id: "templates",
@@ -309,6 +340,12 @@ export const modules: Record<string, Module> = {
     dependsOn: ["processing"],
     produces: ["assembled template video"],
     children: templateChildren,
+    business: {
+      userFacing: "Pick a trending TikTok template, upload your clips, get a polished video matching that style.",
+      businessImpact: "Differentiator from OpusClip. Templates let creators ride trends without editing skills.",
+      metric: "Template completion rate, re-roll rate (<30% means templates are good enough first try)",
+      status: "live",
+    },
   },
   delivery: {
     id: "delivery",
@@ -323,6 +360,12 @@ export const modules: Record<string, Module> = {
     dependsOn: ["clips", "templates"],
     produces: ["posted content / downloaded clips"],
     children: deliveryChildren,
+    business: {
+      userFacing: "See your 3 best clips ranked, preview them, and post to platforms with one click.",
+      businessImpact: "The 'zero-decision' promise lives here. If posting requires decisions, we've failed.",
+      metric: "Click-to-post rate, time from 'clips ready' to 'posted' (<30s target)",
+      status: "building",
+    },
   },
 
   // Data stores — separate visual style
@@ -336,6 +379,12 @@ export const modules: Record<string, Module> = {
     dependsOn: [],
     produces: [],
     isDataStore: true,
+    business: {
+      userFacing: "Remembers your jobs, your connected accounts, and your preferences.",
+      businessImpact: "Source of truth for everything. If this is down, nothing works.",
+      metric: "Uptime, query latency p99",
+      status: "live",
+    },
   },
   redis: {
     id: "redis",
@@ -347,6 +396,12 @@ export const modules: Record<string, Module> = {
     dependsOn: [],
     produces: [],
     isDataStore: true,
+    business: {
+      userFacing: "The waiting line. When you upload a video, it joins the queue here.",
+      businessImpact: "Queue depth = user wait time. If this backs up, processing SLA breaks.",
+      metric: "Queue depth, job wait time before processing starts",
+      status: "live",
+    },
   },
   gcs: {
     id: "gcs",
@@ -358,6 +413,12 @@ export const modules: Record<string, Module> = {
     dependsOn: [],
     produces: [],
     isDataStore: true,
+    business: {
+      userFacing: "Where all videos live. Your raw uploads and the finished clips.",
+      businessImpact: "Biggest cost driver at scale. Every video is stored twice (raw + processed).",
+      metric: "Storage cost per user, download speed for clip previews",
+      status: "live",
+    },
   },
 };
 
@@ -369,6 +430,8 @@ export interface Edge {
   source: string;
   target: string;
   label: string;
+  /** Business-friendly label for non-technical view */
+  businessLabel: string;
 }
 
 export const edges: Edge[] = [
@@ -376,29 +439,38 @@ export const edges: Edge[] = [
     source: "upload",
     target: "processing",
     label: "job_id + raw_storage_path",
+    businessLabel: "User's video enters the pipeline",
   },
   {
     source: "processing",
     target: "clips",
     label: "top 9 candidates (ranked)",
+    businessLabel: "Best 9 moments found, top 3 shown",
   },
   {
     source: "processing",
     target: "templates",
     label: "analysis + beat data",
+    businessLabel: "Video analyzed for template matching",
   },
-  { source: "clips", target: "delivery", label: "3 rendered clips + copy" },
+  {
+    source: "clips",
+    target: "delivery",
+    label: "3 rendered clips + copy",
+    businessLabel: "3 ready-to-post shorts with captions",
+  },
   {
     source: "templates",
     target: "delivery",
     label: "assembled template video",
+    businessLabel: "Finished template video ready to post",
   },
   // Data store connections
-  { source: "upload", target: "gcs", label: "raw video file" },
-  { source: "clips", target: "gcs", label: "processed clips" },
-  { source: "processing", target: "redis", label: "Celery task dispatch" },
-  { source: "processing", target: "postgresql", label: "job status updates" },
-  { source: "delivery", target: "postgresql", label: "clip metadata reads" },
+  { source: "upload", target: "gcs", label: "raw video file", businessLabel: "Video stored in cloud" },
+  { source: "clips", target: "gcs", label: "processed clips", businessLabel: "Finished clips saved" },
+  { source: "processing", target: "redis", label: "Celery task dispatch", businessLabel: "Job queued for processing" },
+  { source: "processing", target: "postgresql", label: "job status updates", businessLabel: "Progress tracked" },
+  { source: "delivery", target: "postgresql", label: "clip metadata reads", businessLabel: "Clip info loaded" },
 ];
 
 // ---------------------------------------------------------------------------

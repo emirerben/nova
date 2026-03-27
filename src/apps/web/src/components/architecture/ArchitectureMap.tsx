@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -20,7 +20,7 @@ import {
   getChildCount,
   type Module,
 } from "@/lib/architecture-config";
-import { useModuleIssues, useActiveJobs } from "@/hooks/useArchitectureData";
+import { useActiveJobs } from "@/hooks/useArchitectureData";
 import { ModuleNode, type ModuleNodeData } from "./ModuleNode";
 import { DataFlowEdge } from "./DataFlowEdge";
 import { ModuleDetailPanel } from "./ModuleDetailPanel";
@@ -48,7 +48,7 @@ const L1_POSITIONS: Record<string, { x: number; y: number }> = {
   gcs: { x: 700, y: 400 },
 };
 
-function buildL2Nodes(parentId: string, children: Record<string, Module>): Node[] {
+function buildL2Nodes(parentId: string, children: Record<string, Module>, viewMode: "technical" | "business"): Node[] {
   const parentPos = L1_POSITIONS[parentId] ?? { x: 0, y: 0 };
   const entries = Object.values(children);
   return entries.map((child, i) => ({
@@ -66,6 +66,7 @@ function buildL2Nodes(parentId: string, children: Record<string, Module>): Node[
       isHighlighted: false,
       isSelected: false,
       childCount: 0,
+      viewMode,
     } satisfies ModuleNodeData,
   }));
 }
@@ -75,6 +76,7 @@ function buildL2Nodes(parentId: string, children: Record<string, Module>): Node[
 // ---------------------------------------------------------------------------
 
 export function ArchitectureMap() {
+  const [viewMode, setViewMode] = useState<"technical" | "business">("business");
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null);
   const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set());
   const [expandedL1, setExpandedL1] = useState<string | null>(null);
@@ -101,7 +103,7 @@ export function ArchitectureMap() {
       // L2 view: show children of expanded module
       const parent = modules[expandedL1];
       if (!parent?.children) return [];
-      return buildL2Nodes(expandedL1, parent.children);
+      return buildL2Nodes(expandedL1, parent.children, viewMode);
     }
 
     // L1 view: show all top-level modules
@@ -117,14 +119,15 @@ export function ArchitectureMap() {
         isHighlighted: highlightedIds.has(mod.id),
         isSelected: selectedModuleId === mod.id,
         childCount: getChildCount(mod.id),
+        viewMode,
       } satisfies ModuleNodeData,
     }));
-  }, [expandedL1, activeJobMap, highlightedIds, selectedModuleId]);
+  }, [expandedL1, activeJobMap, highlightedIds, selectedModuleId, viewMode]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(builtNodes);
 
   // Keep nodes in sync with computed values
-  useMemo(() => {
+  useEffect(() => {
     setNodes(builtNodes);
   }, [builtNodes, setNodes]);
 
@@ -160,17 +163,17 @@ export function ArchitectureMap() {
       target: e.target,
       type: "dataFlow",
       data: {
-        label: e.label,
+        label: viewMode === "business" ? e.businessLabel : e.label,
         isActive:
           highlightedIds.has(e.source) || highlightedIds.has(e.target),
       },
       markerEnd: { type: MarkerType.ArrowClosed, color: "#4b5563" },
     }));
-  }, [expandedL1, highlightedIds]);
+  }, [expandedL1, highlightedIds, viewMode]);
 
   const [edges, setEdges, onEdgesChange] = useEdgesState(builtEdges);
 
-  useMemo(() => {
+  useEffect(() => {
     setEdges(builtEdges);
   }, [builtEdges, setEdges]);
 
@@ -239,6 +242,30 @@ export function ArchitectureMap() {
         <span className="text-gray-600 mx-2">·</span>
         <span className="text-sm font-medium text-gray-200">Architecture Map</span>
         <span className="text-gray-600 mx-2">·</span>
+
+        {/* View mode toggle */}
+        <div className="flex items-center bg-gray-800 rounded p-0.5 mr-3">
+          <button
+            onClick={() => setViewMode("business")}
+            className={`text-xs px-2.5 py-1 rounded transition-colors ${
+              viewMode === "business"
+                ? "bg-gray-700 text-gray-100"
+                : "text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            Business
+          </button>
+          <button
+            onClick={() => setViewMode("technical")}
+            className={`text-xs px-2.5 py-1 rounded transition-colors ${
+              viewMode === "technical"
+                ? "bg-gray-700 text-gray-100"
+                : "text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            Technical
+          </button>
+        </div>
         {expandedL1 ? (
           <button
             onClick={() => {
@@ -313,6 +340,7 @@ export function ArchitectureMap() {
       <ModuleDetailPanel
         module={detailModule}
         onClose={() => setDetailModule(null)}
+        viewMode={viewMode}
       />
     </div>
   );
