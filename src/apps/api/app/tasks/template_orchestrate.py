@@ -627,6 +627,10 @@ def _assemble_clips(
     # slot_durations grows when interstitials are inserted, breaking the 1:1
     # correspondence with steps that _collect_absolute_overlays relies on.
     original_slot_durations: list[float] = []
+    # When True, the previous slot had an interstitial after it, so the
+    # transition INTO this slot must be hard-cut (the interstitial IS the
+    # transition effect — adding an xfade from a solid color looks broken).
+    prev_had_interstitial = False
 
     for i, step in enumerate(steps):
         clip_id = step.clip_id
@@ -669,18 +673,28 @@ def _assemble_clips(
         slot_durations.append(vis_dur)
         original_slot_durations.append(vis_dur)
 
-        # Collect transition types for boundaries (skip first slot)
-        # Translate Gemini vocabulary → internal FFmpeg vocabulary
+        # Collect transition types for boundaries (skip first slot).
+        # Force hard-cut if the previous slot had an interstitial — the
+        # interstitial clip IS the transition, so xfade from a solid color
+        # frame (whip-pan, crossfade) would look broken.
         if i > 0:
-            raw_transition = str(step.slot.get("transition_in", "none"))
-            transition_types.append(translate_transition(raw_transition))
+            if prev_had_interstitial:
+                transition_types.append("none")
+            else:
+                raw_transition = str(step.slot.get("transition_in", "none"))
+                transition_types.append(translate_transition(raw_transition))
 
         # Insert interstitial clip AFTER this slot if one is defined
+        prev_had_interstitial = bool(inter)
         if inter:
             _insert_interstitial(
                 inter, i, reframed_paths, slot_durations,
                 transition_types, tmpdir,
             )
+            # Keep beat-snap clock in sync — interstitial hold time is real
+            # video duration that must be accounted for when snapping later
+            # slot boundaries to musical beats.
+            cumulative_s += float(inter.get("hold_s", 1.0))
 
     if not reframed_paths:
         raise ValueError("No slots to assemble")
@@ -864,6 +878,7 @@ def _collect_absolute_overlays(
                 "start_s": ov_start,
                 "end_s": ov_end,
                 "position": ov.get("position", "center"),
+                "effect": ov.get("effect", "none"),
                 "font_style": ov.get("font_style", "display"),
                 "text_size": ov.get("text_size", "medium"),
                 "text_color": ov.get("text_color", "#FFFFFF"),
