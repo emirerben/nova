@@ -513,8 +513,16 @@ def _validate_slots(slots: list[dict], global_color_grade: str) -> None:
             if slot_dur > 0 and start >= slot_dur:
                 log.warning("template_overlay_outside_slot", start_s=start, slot_dur=slot_dur)
                 continue
-            ov["effect"] = ov.get("effect", "none") if ov.get("effect") in _VALID_OVERLAY_EFFECTS else "none"
-            ov["position"] = ov.get("position", "center") if ov.get("position") in _VALID_OVERLAY_POSITIONS else "center"
+            ov["effect"] = (
+                ov.get("effect", "none")
+                if ov.get("effect") in _VALID_OVERLAY_EFFECTS
+                else "none"
+            )
+            ov["position"] = (
+                ov.get("position", "center")
+                if ov.get("position") in _VALID_OVERLAY_POSITIONS
+                else "center"
+            )
             ov.setdefault("has_darkening", False)
             ov.setdefault("has_narrowing", False)
             ov.setdefault("sample_text", "")
@@ -585,9 +593,8 @@ def transcribe(file_ref: Any) -> "Transcript":  # noqa: F821
     Falls back to Whisper (via transcribe.py) on any failure.
     Returns a Transcript with low_confidence=True if both fail.
     """
-    from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
-
     from app.pipeline.prompt_loader import load_prompt  # noqa: PLC0415
+    from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
 
     client = _get_client()
     prompt = load_prompt("transcribe")

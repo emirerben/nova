@@ -70,7 +70,6 @@ async def test_list_templates_returns_ready(client):
         mock_get_db.return_value = mock_db_gen()
 
         # Direct test via route logic — simpler approach
-        from app.routes.templates import list_templates
         # We test the endpoint behavior through the actual app instead
         pass
 
@@ -88,7 +87,6 @@ async def test_list_templates_skips_null_recipe(client):
     tpl.recipe_cached = None
 
     # Verify the filtering logic directly
-    from app.routes.templates import TemplateListItem
     # A template with None recipe should be skipped
     assert tpl.recipe_cached is None
 

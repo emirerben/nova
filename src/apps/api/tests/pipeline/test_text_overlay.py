@@ -3,21 +3,15 @@
 import os
 import tempfile
 
-import pytest
-
 from app.pipeline.text_overlay import (
-    ASS_ANIMATED_EFFECTS,
-    CANVAS_H,
-    CANVAS_W,
+    _ASS_OVERLAY_HEADER,
     MAX_OVERLAY_TEXT_LEN,
     OVERLAY_FONT_PATH,
     OVERLAY_FONT_PATH_REGULAR,
-    _ASS_OVERLAY_HEADER,
     _reset_cycle_cache,
     _resolve_cycle_fonts,
     _validate_ass_file,
     _validate_overlay,
-    _write_animated_ass,
     generate_animated_overlay_ass,
     generate_text_overlay_png,
 )

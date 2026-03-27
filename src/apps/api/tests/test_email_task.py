@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 def test_email_skipped_when_no_api_key():
     """When RESEND_API_KEY is empty, task logs warning and returns without sending."""

@@ -501,11 +501,6 @@ def _render_slot(
     (2x speed needs 2x source footage compressed into slot_target_dur).
     """
     from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
-    from app.pipeline.text_overlay import (  # noqa: PLC0415
-        ASS_ANIMATED_EFFECTS,
-        generate_animated_overlay_ass,
-        generate_text_overlay_png,
-    )
 
     clip_id = step.clip_id
     moment = step.moment
@@ -861,7 +856,11 @@ def _collect_absolute_overlays(
 
     for i, step in enumerate(steps):
         slot = step.get("slot", {}) if isinstance(step, dict) else step.slot
-        dur = slot_durations[i] if i < len(slot_durations) else float(slot.get("target_duration_s", 5.0))
+        dur = (
+            slot_durations[i]
+            if i < len(slot_durations)
+            else float(slot.get("target_duration_s", 5.0))
+        )
         clip_id = step.get("clip_id", "") if isinstance(step, dict) else step.clip_id
 
         for ov in slot.get("text_overlays", []):
@@ -949,8 +948,7 @@ def _burn_text_overlays(
             cfg["start_s"] = overlays[i]["start_s"]
             cfg["end_s"] = overlays[i]["end_s"]
 
-    from app.pipeline.reframe import _build_overlay_cmd, _encoding_args  # noqa: PLC0415
-    from app.config import settings as s
+    from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
 
     # Build FFmpeg command with overlay filter
     cmd = ["ffmpeg", "-i", input_path]

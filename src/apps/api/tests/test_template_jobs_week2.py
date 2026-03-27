@@ -1,7 +1,7 @@
 """Tests for Week 2 template job endpoints: reroll + list."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -104,8 +104,9 @@ def test_reroll_response_schema():
 
 def test_list_response_schema():
     """TemplateJobListResponse has jobs + total."""
-    from app.routes.template_jobs import TemplateJobListResponse, TemplateJobListItem
     from datetime import datetime
+
+    from app.routes.template_jobs import TemplateJobListItem, TemplateJobListResponse
     item = TemplateJobListItem(
         job_id="abc",
         status="template_ready",

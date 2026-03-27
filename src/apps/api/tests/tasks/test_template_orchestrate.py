@@ -227,7 +227,10 @@ class TestBug2TimingRegression:
 
 
 class TestAssembleClipsTiming:
-    def _make_step(self, clip_id: str, start_s: float, end_s: float, target_dur: float) -> MagicMock:
+    def _make_step(
+        self, clip_id: str, start_s: float,
+        end_s: float, target_dur: float,
+    ) -> MagicMock:
         step = MagicMock()
         step.clip_id = clip_id
         step.moment = {"start_s": start_s, "end_s": end_s}
@@ -591,7 +594,14 @@ class TestTemplateAudio:
             "shot_count": 1,
             "total_duration_s": 5.0,
             "hook_duration_s": 3.0,
-            "slots": [{"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "hook"}],
+            "slots": [
+                {
+                    "position": 1,
+                    "target_duration_s": 5.0,
+                    "priority": 5,
+                    "slot_type": "hook",
+                },
+            ],
             "copy_tone": "casual",
             "caption_style": "bold",
         }
@@ -608,12 +618,22 @@ class TestTemplateAudio:
             mock_template if model is VideoTemplate else mock_job
         )
 
+        _orch = "app.tasks.template_orchestrate"
         with (
-            patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx),
-            patch("app.tasks.template_orchestrate._download_clips_parallel", return_value=["/tmp/clip_0.mp4"]),
-            patch("app.tasks.template_orchestrate._probe_clips", return_value={}),
-            patch("app.tasks.template_orchestrate._upload_clips_parallel", return_value=[MagicMock(name="clip_0")]),
-            patch("app.tasks.template_orchestrate._analyze_clips_parallel", return_value=([_make_clip_meta()], 0)),
+            patch(f"{_orch}._sync_session", side_effect=_mock_ctx),
+            patch(
+                f"{_orch}._download_clips_parallel",
+                return_value=["/tmp/clip_0.mp4"],
+            ),
+            patch(f"{_orch}._probe_clips", return_value={}),
+            patch(
+                f"{_orch}._upload_clips_parallel",
+                return_value=[MagicMock(name="clip_0")],
+            ),
+            patch(
+                f"{_orch}._analyze_clips_parallel",
+                return_value=([_make_clip_meta()], 0),
+            ),
             patch("app.tasks.template_orchestrate.match") as mock_match,
             patch("app.tasks.template_orchestrate._assemble_clips"),
             patch("app.tasks.template_orchestrate._mix_template_audio") as mock_mix,
@@ -644,8 +664,8 @@ class TestTemplateAudio:
 class TestTemplateMatcher2Pass:
     def test_tight_match_preferred_over_loose(self):
         """Tight candidate (±2s) preferred over loose-only (±2–6s) when both exist."""
-        from app.pipeline.template_matcher import DURATION_TOLERANCE_PRIMARY_S, match
         from app.pipeline.agents.gemini_analyzer import ClipMeta
+        from app.pipeline.template_matcher import DURATION_TOLERANCE_PRIMARY_S, match
 
         def _clip(clip_id: str, moment_dur: float, energy: float) -> ClipMeta:
             return ClipMeta(

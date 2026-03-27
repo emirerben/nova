@@ -38,7 +38,9 @@ _ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "fon
 FONTS_DIR = os.path.normpath(_ASSETS_DIR)
 
 OVERLAY_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "PlayfairDisplay-Bold.ttf"))
-OVERLAY_FONT_PATH_REGULAR = os.path.normpath(os.path.join(_ASSETS_DIR, "PlayfairDisplay-Regular.ttf"))
+OVERLAY_FONT_PATH_REGULAR = os.path.normpath(
+    os.path.join(_ASSETS_DIR, "PlayfairDisplay-Regular.ttf")
+)
 MONTSERRAT_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "Montserrat-ExtraBold.ttf"))
 
 # Effects that produce animated .ass files instead of static PNGs
@@ -425,13 +427,13 @@ def _load_styled_font(
     for path in candidates:
         try:
             return ImageFont.truetype(path, size)
-        except (OSError, IOError):
+        except OSError:
             continue
 
     # Last resort
     try:
         return ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size)
-    except (OSError, IOError):
+    except OSError:
         return ImageFont.load_default()
 
 
@@ -441,13 +443,13 @@ def _load_font(font_path: str, size: int = OVERLAY_FONT_SIZE):
 
     try:
         return ImageFont.truetype(font_path, size)
-    except (OSError, IOError):
+    except OSError:
         pass
 
     # Fallback: system Helvetica
     try:
         return ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size)
-    except (OSError, IOError):
+    except OSError:
         pass
 
     return ImageFont.load_default()
@@ -493,7 +495,7 @@ def _draw_text_png(
             try:
                 font = ImageFont.truetype(path, scaled_size)
                 break
-            except (OSError, IOError):
+            except OSError:
                 continue
 
     bbox = draw.textbbox((0, 0), text, font=font)
