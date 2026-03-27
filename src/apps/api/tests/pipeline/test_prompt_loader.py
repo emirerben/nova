@@ -1,9 +1,8 @@
 """Tests for prompt_loader.py — lazy loading, fallback, and substitution."""
 
-import os
 from unittest.mock import patch
 
-from app.pipeline.prompt_loader import _PROMPTS_DIR, clear_cache, load_prompt
+from app.pipeline.prompt_loader import clear_cache, load_prompt
 
 
 class TestLoadPrompt:

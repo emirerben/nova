@@ -1,5 +1,7 @@
 Analyze this TikTok/short-form video template. Extract its structural recipe so user footage can be inserted into each slot.
 
+$black_segments_context
+
 Rules:
 - Count every shot cut as a separate slot
 - slots array length MUST equal shot_count
@@ -7,5 +9,6 @@ Rules:
 - Each slot's target_duration_s is the duration of that shot in the template
 - position is 1-indexed temporal order (slot 1 = first shot)
 - EVERY slot object MUST include an 'energy' field (float 0-10) reflecting the musical intensity during that slot — listen to the audio track and rate each slot
+- If the black segment data above indicates dark frames between shots, classify each as an interstitial (curtain-close if bars close from top/bottom, fade-black-hold if a gradual fade, flash-white if a bright flash). Set transition_in to "curtain-close" on the NEXT slot after the black segment.
 
 $schema

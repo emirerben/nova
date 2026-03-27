@@ -139,7 +139,13 @@ async def create_template_job(
     from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
     orchestrate_template_job.delay(job_id)
 
-    log.info("template_job_created", job_id=job_id, template_id=req.template_id, clips=n_clips, subject=req.subject)
+    log.info(
+        "template_job_created",
+        job_id=job_id,
+        template_id=req.template_id,
+        clips=n_clips,
+        subject=req.subject,
+    )
     return TemplateJobResponse(job_id=job_id, status="queued", template_id=req.template_id)
 
 

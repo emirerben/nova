@@ -3,18 +3,17 @@
 import os
 import tempfile
 
-import pytest
-
 from app.pipeline.text_overlay import (
-    ASS_ANIMATED_EFFECTS,
-    CANVAS_H,
-    CANVAS_W,
+    _ASS_OVERLAY_HEADER,
     MAX_OVERLAY_TEXT_LEN,
+    OVERLAY_FONT_PATH,
+    OVERLAY_FONT_PATH_REGULAR,
+    _reset_cycle_cache,
+    _resolve_cycle_fonts,
+    _validate_ass_file,
+    _validate_overlay,
     generate_animated_overlay_ass,
     generate_text_overlay_png,
-    _validate_overlay,
-    _write_animated_ass,
-    _validate_ass_file,
 )
 
 
@@ -413,3 +412,70 @@ class TestFontCycleEffect:
         )
         assert result is not None
         assert len(result) >= 2  # at least 1 cycle + 1 settle
+
+
+# -- Playfair Display font tests ----------------------------------------------
+
+
+class TestPlayfairDisplayFonts:
+    """Tests for the Playfair Display font bundle and configuration."""
+
+    def test_playfair_bold_loads(self):
+        """Primary font (Playfair Display Bold) is bundled and loadable."""
+        from PIL import ImageFont
+
+        assert os.path.exists(OVERLAY_FONT_PATH), f"Missing: {OVERLAY_FONT_PATH}"
+        font = ImageFont.truetype(OVERLAY_FONT_PATH, 90)
+        family, style = font.getname()
+        assert family == "Playfair Display"
+        assert style == "Bold"
+
+    def test_playfair_regular_loads(self):
+        """Serif font (Playfair Display Regular) is bundled and loadable."""
+        from PIL import ImageFont
+
+        assert os.path.exists(OVERLAY_FONT_PATH_REGULAR), f"Missing: {OVERLAY_FONT_PATH_REGULAR}"
+        font = ImageFont.truetype(OVERLAY_FONT_PATH_REGULAR, 72)
+        family, style = font.getname()
+        assert family == "Playfair Display"
+        assert style == "Regular"
+
+    def test_display_style_renders(self, tmp_path):
+        """The 'display' font_style (Playfair Bold) renders a valid PNG."""
+        from PIL import Image
+
+        result = generate_text_overlay_png(
+            [{"text": "PORTUGAL", "start_s": 0.0, "end_s": 3.0,
+              "position": "center", "effect": "none", "font_style": "display",
+              "text_size": "large", "text_color": "#FFFFFF"}],
+            5.0, str(tmp_path), 0,
+        )
+        assert result is not None
+        img = Image.open(result[0]["png_path"])
+        assert img.mode == "RGBA"
+        assert img.size == (1080, 1920)
+        alpha = img.split()[3]
+        assert alpha.getextrema()[1] > 0  # has visible text
+
+    def test_serif_style_renders(self, tmp_path):
+        """The 'serif' font_style (Playfair Regular) renders a valid PNG."""
+        result = generate_text_overlay_png(
+            [{"text": "Welcome to", "start_s": 0.0, "end_s": 3.0,
+              "position": "top", "effect": "none", "font_style": "serif",
+              "text_size": "medium", "text_color": "#FFFFFF"}],
+            5.0, str(tmp_path), 0,
+        )
+        assert result is not None
+        assert os.path.exists(result[0]["png_path"])
+
+    def test_ass_header_uses_playfair(self):
+        """ASS overlay header should reference Playfair Display, not Montserrat."""
+        assert "Playfair Display" in _ASS_OVERLAY_HEADER
+        assert "Montserrat" not in _ASS_OVERLAY_HEADER
+
+    def test_cycle_cache_reset(self):
+        """Font-cycle cache can be reset and rebuilt."""
+        _reset_cycle_cache()
+        fonts = _resolve_cycle_fonts()
+        assert len(fonts) >= 1  # at least Playfair Bold is bundled
+        _reset_cycle_cache()  # clean up

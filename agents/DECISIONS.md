@@ -33,3 +33,27 @@
 **Decision:** Repos live at `github.com/emirerben/nova` and `github.com/emirerben/nova-workspace`
 **Why:** Fastest setup, no new org to create. ybyesilyurt is collaborator.
 **Revisit if:** Nova incorporates, or we add a third engineer.
+
+---
+
+## [2026-03-27] Interstitials as separate clips, not xfade parameters
+
+**Decision:** Render interstitials (curtain-close, black hold, white flash) as standalone video clips inserted between template slots, rather than encoding them as xfade transition parameters.
+**Why:** xfade can only blend two adjacent clips. Curtain-close is a three-phase effect (bars closing, hold, next clip) that needs its own timeline segment. Separate clips also make beat-snap accounting explicit (cumulative_s tracks total duration).
+**Revisit if:** FFmpeg adds native curtain-close xfade type, or performance requires fewer concat segments.
+
+---
+
+## [2026-03-27] Playfair Display over Montserrat for editorial overlays
+
+**Decision:** Bundle Playfair Display (Bold + Regular) as the primary editorial font. Montserrat retained for font-cycle contrast.
+**Why:** Playfair's serif forms are more readable at mobile text sizes and signal editorial quality. Sans/serif contrast during font-cycle adds visual variety. ASS subtitle filter uses `fontsdir` to discover bundled .ttf files.
+**Revisit if:** user testing shows readability issues on specific devices, or font-cycle contrast feels jarring.
+
+---
+
+## [2026-03-27] Gemini vocabulary translation layer
+
+**Decision:** Map Gemini's human-friendly transition names (whip-pan, zoom-in, dissolve) to internal FFmpeg xfade types via `translate_transition()`, rather than constraining Gemini's output vocabulary.
+**Why:** Gemini produces better creative direction when using natural film terminology. The translation layer is 10 lines and easy to extend. Unknown types default to "none" (hard-cut) for safety.
+**Revisit if:** the vocabulary mapping grows beyond 20 entries, or Gemini starts generating types that don't map cleanly.

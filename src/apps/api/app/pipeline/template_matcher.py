@@ -108,7 +108,8 @@ def match(recipe: TemplateRecipe, clip_metas: list[ClipMeta]) -> AssemblyPlan:
         if not loose_candidates:
             raise TemplateMismatchError(
                 f"No clip fits slot {slot_position} requiring ~{target_dur:.1f}s. "
-                f"Upload clips with moments ≥{max(0.0, target_dur - DURATION_TOLERANCE_FALLBACK_S):.0f}s.",
+                "Upload clips with moments "
+                f"≥{max(0.0, target_dur - DURATION_TOLERANCE_FALLBACK_S):.0f}s.",
                 code="TEMPLATE_CLIP_DURATION_MISMATCH",
             )
 

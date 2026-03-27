@@ -1,17 +1,33 @@
 """Tests for Week 2 template job endpoints: reroll + list."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.database import get_db
 from app.main import app
 
 
-@pytest.fixture
-def client():
-    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+@pytest_asyncio.fixture
+async def client():
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_result.scalars.return_value.all.return_value = []
+    mock_session.execute.return_value = mock_result
+
+    async def override_get_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+    ) as c:
+        yield c
+    app.dependency_overrides.clear()
 
 
 # ── POST /template-jobs/:id/reroll ──────────────────────────────────────────
@@ -88,8 +104,9 @@ def test_reroll_response_schema():
 
 def test_list_response_schema():
     """TemplateJobListResponse has jobs + total."""
-    from app.routes.template_jobs import TemplateJobListResponse, TemplateJobListItem
     from datetime import datetime
+
+    from app.routes.template_jobs import TemplateJobListItem, TemplateJobListResponse
     item = TemplateJobListItem(
         job_id="abc",
         status="template_ready",

@@ -5,12 +5,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.pipeline.transitions import (
-    DEFAULT_TRANSITION_DURATION_S,
     TransitionError,
     _build_xfade_filter,
     join_with_transitions,
 )
-
 
 # ── _build_xfade_filter unit tests ───────────────────────────────────────────
 

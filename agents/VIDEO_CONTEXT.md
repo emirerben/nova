@@ -58,6 +58,29 @@ subprocess.run([
 ], check=True)
 ```
 
+## Template Mode: Interstitials and Transitions
+
+Template mode inserts user clips into a template structure. Between slots, interstitials express transitions that can't be modeled as xfade.
+
+**Interstitial types:**
+- **curtain-close**: black bars grow from top/bottom edges, hold black, then next clip begins
+- **fade-black-hold**: uniform fade to black, hold, then next clip
+- **flash-white**: quick white flash between clips
+
+**Detection** (`interstitials.py`): Sample 6 frames before each black segment detected by `blackdetect`. Compute luminance in 3 horizontal bands (top/middle/bottom) via `signalstats` YAVG. If top+bottom darken faster than middle (ratio > 1.5), classify as curtain-close. Uniform darkening = fade-black-hold.
+
+**FFmpeg blackdetect thresholds** (lowered for template analysis):
+```
+blackdetect=d=0.15:pix_th=0.15
+```
+
+**ASS subtitle filter with bundled fonts:**
+```
+subtitles=overlay.ass:fontsdir=/path/to/assets/fonts
+```
+
+**Transition vocabulary** (`transitions.py`): Gemini outputs human-friendly names, translated to FFmpeg xfade types: hard-cut to none, whip-pan to wipe_left, zoom-in to crossfade, dissolve to crossfade, curtain-close to none (handled by interstitial clip instead).
+
 ## Virality Framework
 - **Hook (0-3s):** Create a question/curiosity/emotion. Cut dead air. Start mid-action.
 - **Retention (3-30s):** Remove pauses >1s. Add captions (Whisper timestamps). Keep energy high.
