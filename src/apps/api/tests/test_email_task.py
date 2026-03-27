@@ -25,7 +25,7 @@ def test_email_sent_successfully():
 
     with (
         patch("app.tasks.email.settings") as mock_settings,
-        patch("app.tasks.email.httpx.post", return_value=mock_response) as mock_post,
+        patch("httpx.post", return_value=mock_response) as mock_post,
     ):
         mock_settings.resend_api_key = "re_test_key"
 
@@ -52,7 +52,7 @@ def test_email_api_failure_logged_not_raised():
 
     with (
         patch("app.tasks.email.settings") as mock_settings,
-        patch("app.tasks.email.httpx.post", return_value=mock_response),
+        patch("httpx.post", return_value=mock_response),
     ):
         mock_settings.resend_api_key = "re_test_key"
 
@@ -66,7 +66,7 @@ def test_email_network_error_logged_not_raised():
     """Network error → logged, no exception raised."""
     with (
         patch("app.tasks.email.settings") as mock_settings,
-        patch("app.tasks.email.httpx.post", side_effect=Exception("Connection refused")),
+        patch("httpx.post", side_effect=Exception("Connection refused")),
     ):
         mock_settings.resend_api_key = "re_test_key"
 

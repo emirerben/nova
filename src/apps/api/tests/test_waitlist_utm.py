@@ -3,15 +3,29 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.database import get_db
 from app.main import app
 from app.routes.waitlist import _truncate_utm
 
 
-@pytest.fixture
-def client():
-    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+@pytest_asyncio.fixture
+async def client():
+    mock_session = AsyncMock()
+    mock_session.commit = AsyncMock()
+    mock_session.add = MagicMock()
+
+    async def override_get_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+    ) as c:
+        yield c
+    app.dependency_overrides.clear()
 
 
 def test_truncate_utm_normal():
@@ -40,45 +54,19 @@ def test_truncate_utm_long_string():
 @pytest.mark.asyncio
 async def test_waitlist_with_utm_params(client):
     """POST /api/waitlist?utm_source=tiktok stores UTM in DB."""
-    with (
-        patch("app.routes.waitlist.get_db") as mock_get_db,
-        patch("app.routes.waitlist.limiter") as mock_limiter,
-    ):
-        mock_session = AsyncMock()
-        mock_session.commit = AsyncMock()
-        mock_session.add = MagicMock()
-
-        async def mock_db():
-            yield mock_session
-
-        mock_get_db.return_value = mock_db()
-
-        res = await client.post(
-            "/api/waitlist?utm_source=tiktok&utm_medium=social&utm_campaign=launch",
-            json={"email": "test@example.com"},
-        )
-        # May get rate limited or DB error, but we verify the route accepts UTM params
-        assert res.status_code in (201, 429, 500)
+    res = await client.post(
+        "/api/waitlist?utm_source=tiktok&utm_medium=social&utm_campaign=launch",
+        json={"email": "test@example.com"},
+    )
+    # May get rate limited or DB error, but we verify the route accepts UTM params
+    assert res.status_code in (201, 429, 500)
 
 
 @pytest.mark.asyncio
 async def test_waitlist_without_utm_params(client):
     """POST /api/waitlist without UTM params → UTM fields are NULL."""
-    with (
-        patch("app.routes.waitlist.get_db") as mock_get_db,
-        patch("app.routes.waitlist.limiter") as mock_limiter,
-    ):
-        mock_session = AsyncMock()
-        mock_session.commit = AsyncMock()
-        mock_session.add = MagicMock()
-
-        async def mock_db():
-            yield mock_session
-
-        mock_get_db.return_value = mock_db()
-
-        res = await client.post(
-            "/api/waitlist",
-            json={"email": "test2@example.com"},
-        )
-        assert res.status_code in (201, 429, 500)
+    res = await client.post(
+        "/api/waitlist",
+        json={"email": "test2@example.com"},
+    )
+    assert res.status_code in (201, 429, 500)
