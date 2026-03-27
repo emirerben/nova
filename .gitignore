@@ -27,3 +27,6 @@ out/
 # OS
 .DS_Store
 .gstack/
+
+# Firebase
+firebase-debug.log
