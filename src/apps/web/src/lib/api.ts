@@ -31,6 +31,7 @@ export interface PlatformCopy {
 }
 
 export type JobStatus =
+  | "importing"
   | "queued"
   | "processing"
   | "clips_ready"
@@ -57,6 +58,9 @@ export interface JobStatusResponse {
   error_detail: string | null;
   created_at: string;
   updated_at: string;
+  import_progress_pct: number | null;
+  drive_filename: string | null;
+  drive_file_size_bytes: number | null;
 }
 
 export async function getPresignedUrl(params: {
@@ -109,6 +113,88 @@ export async function uploadFileToGcs(uploadUrl: string, file: File): Promise<vo
     body: file,
   });
   if (!res.ok) throw new Error(`GCS upload failed: ${res.status}`);
+}
+
+// ── Google Drive Import API ────────────────────────────────────────────────
+
+export interface DriveImportResponse {
+  job_id: string;
+  status: string;
+}
+
+export async function importFromDrive(params: {
+  drive_file_id: string;
+  filename: string;
+  file_size_bytes: number;
+  mime_type: string;
+  platforms: string[];
+  google_access_token: string;
+}): Promise<DriveImportResponse> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/uploads/drive-import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+  } catch {
+    throw new Error("Cannot reach the server. Make sure the API is running.");
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Drive import failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface DriveImportBatchResponse {
+  batch_id: string;
+  gcs_paths: string[];
+  status: string;
+}
+
+export interface DriveImportBatchStatusResponse {
+  batch_id: string;
+  status: "importing" | "complete" | "partial_failure" | "failed";
+  total: number;
+  completed: number;
+  current_file: string | null;
+  gcs_paths: string[];
+  errors: string[];
+}
+
+export async function importBatchFromDrive(params: {
+  files: Array<{
+    drive_file_id: string;
+    filename: string;
+    file_size_bytes: number;
+    mime_type: string;
+  }>;
+  google_access_token: string;
+}): Promise<DriveImportBatchResponse> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/uploads/drive-import-batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+  } catch {
+    throw new Error("Cannot reach the server. Make sure the API is running.");
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Batch Drive import failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getDriveImportBatchStatus(
+  batchId: string
+): Promise<DriveImportBatchStatusResponse> {
+  const res = await fetch(`${API_URL}/uploads/drive-import-batch/${batchId}/status`);
+  if (!res.ok) throw new Error(`Batch status fetch failed: ${res.status}`);
+  return res.json();
 }
 
 // ── Template job API ────────────────────────────────────────────────────────

@@ -588,6 +588,7 @@ export const JOB_STATUS_MODULE_MAP: Record<
   string,
   { moduleId: string; visual: "pulse" | "check" | "check-yellow" | "error" }
 > = {
+  importing: { moduleId: "upload", visual: "pulse" },
   queued: { moduleId: "upload", visual: "pulse" },
   processing: { moduleId: "processing", visual: "pulse" },
   clips_ready: { moduleId: "clips", visual: "check" },

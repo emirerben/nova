@@ -118,8 +118,9 @@ class Job(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    # queued|processing|clips_ready|clips_ready_partial|
+    # importing|queued|processing|clips_ready|clips_ready_partial|
     # posting|posting_partial|done|posting_failed|processing_failed
+    # drive import: importing → queued → processing → ...
     # template jobs: queued → processing → template_ready | processing_failed
     status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
     # "default" | "template"
