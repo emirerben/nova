@@ -3,18 +3,17 @@
 import os
 import tempfile
 
-import pytest
-
 from app.pipeline.text_overlay import (
-    ASS_ANIMATED_EFFECTS,
-    CANVAS_H,
-    CANVAS_W,
+    _ASS_OVERLAY_HEADER,
     MAX_OVERLAY_TEXT_LEN,
+    OVERLAY_FONT_PATH,
+    OVERLAY_FONT_PATH_REGULAR,
+    _reset_cycle_cache,
+    _resolve_cycle_fonts,
+    _validate_ass_file,
+    _validate_overlay,
     generate_animated_overlay_ass,
     generate_text_overlay_png,
-    _validate_overlay,
-    _write_animated_ass,
-    _validate_ass_file,
 )
 
 
@@ -413,3 +412,268 @@ class TestFontCycleEffect:
         )
         assert result is not None
         assert len(result) >= 2  # at least 1 cycle + 1 settle
+
+
+# -- Playfair Display font tests ----------------------------------------------
+
+
+class TestPlayfairDisplayFonts:
+    """Tests for the Playfair Display font bundle and configuration."""
+
+    def test_playfair_bold_loads(self):
+        """Primary font (Playfair Display Bold) is bundled and loadable."""
+        from PIL import ImageFont
+
+        assert os.path.exists(OVERLAY_FONT_PATH), f"Missing: {OVERLAY_FONT_PATH}"
+        font = ImageFont.truetype(OVERLAY_FONT_PATH, 90)
+        family, style = font.getname()
+        assert family == "Playfair Display"
+        assert style == "Bold"
+
+    def test_playfair_regular_loads(self):
+        """Serif font (Playfair Display Regular) is bundled and loadable."""
+        from PIL import ImageFont
+
+        assert os.path.exists(OVERLAY_FONT_PATH_REGULAR), f"Missing: {OVERLAY_FONT_PATH_REGULAR}"
+        font = ImageFont.truetype(OVERLAY_FONT_PATH_REGULAR, 72)
+        family, style = font.getname()
+        assert family == "Playfair Display"
+        assert style == "Regular"
+
+    def test_display_style_renders(self, tmp_path):
+        """The 'display' font_style (Playfair Bold) renders a valid PNG."""
+        from PIL import Image
+
+        result = generate_text_overlay_png(
+            [{"text": "PORTUGAL", "start_s": 0.0, "end_s": 3.0,
+              "position": "center", "effect": "none", "font_style": "display",
+              "text_size": "large", "text_color": "#FFFFFF"}],
+            5.0, str(tmp_path), 0,
+        )
+        assert result is not None
+        img = Image.open(result[0]["png_path"])
+        assert img.mode == "RGBA"
+        assert img.size == (1080, 1920)
+        alpha = img.split()[3]
+        assert alpha.getextrema()[1] > 0  # has visible text
+
+    def test_serif_style_renders(self, tmp_path):
+        """The 'serif' font_style (Playfair Regular) renders a valid PNG."""
+        result = generate_text_overlay_png(
+            [{"text": "Welcome to", "start_s": 0.0, "end_s": 3.0,
+              "position": "top", "effect": "none", "font_style": "serif",
+              "text_size": "medium", "text_color": "#FFFFFF"}],
+            5.0, str(tmp_path), 0,
+        )
+        assert result is not None
+        assert os.path.exists(result[0]["png_path"])
+
+    def test_ass_header_uses_playfair(self):
+        """ASS overlay header should reference Playfair Display, not Montserrat."""
+        assert "Playfair Display" in _ASS_OVERLAY_HEADER
+        assert "Montserrat" not in _ASS_OVERLAY_HEADER
+
+    def test_cycle_cache_reset(self):
+        """Font-cycle cache can be reset and rebuilt."""
+        _reset_cycle_cache()
+        fonts = _resolve_cycle_fonts()
+        assert len(fonts) >= 1  # at least Playfair Bold is bundled
+        _reset_cycle_cache()  # clean up
+
+
+# -- text_color support -------------------------------------------------------
+
+
+class TestFontCycleTextColor:
+    """Tests for custom text_color in font-cycle and static overlays."""
+
+    def test_font_cycle_respects_text_color(self, tmp_path):
+        """Font-cycle PNGs should use the specified text_color (yellow)."""
+        from PIL import Image
+
+        overlay = {
+            "text": "PERU",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "center",
+            "effect": "font-cycle",
+            "text_color": "#FFD700",
+        }
+        result = generate_text_overlay_png(
+            [overlay], slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        # Check that PNGs contain yellow-ish pixels (R > 200, G > 150)
+        img = Image.open(result[0]["png_path"])
+        pixels = list(img.getdata())
+        visible = [p for p in pixels if p[3] > 100]  # non-transparent
+        # At least some visible pixels should have yellow tones
+        yellow_pixels = [p for p in visible if p[0] > 200 and p[1] > 150 and p[2] < 100]
+        assert len(yellow_pixels) > 0, "No yellow pixels found in font-cycle PNG"
+
+    def test_static_overlay_respects_text_color(self, tmp_path):
+        """Static overlays use text_color from the overlay dict."""
+        from PIL import Image
+
+        overlay = {
+            "text": "Hello",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "center",
+            "effect": "none",
+            "text_color": "#FF0000",
+        }
+        result = generate_text_overlay_png(
+            [overlay], slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        img = Image.open(result[0]["png_path"])
+        pixels = list(img.getdata())
+        visible = [p for p in pixels if p[3] > 100]
+        red_pixels = [p for p in visible if p[0] > 200 and p[1] < 50 and p[2] < 50]
+        assert len(red_pixels) > 0, "No red pixels found"
+
+    def test_default_text_color_is_white(self, tmp_path):
+        """Without text_color, font-cycle defaults to white."""
+        from PIL import Image
+
+        overlay = {
+            "text": "TOKYO",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "center",
+            "effect": "font-cycle",
+        }
+        result = generate_text_overlay_png(
+            [overlay], slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        img = Image.open(result[0]["png_path"])
+        pixels = list(img.getdata())
+        visible = [p for p in pixels if p[3] > 100]
+        # White pixels: R, G, B all high
+        white_pixels = [p for p in visible if p[0] > 200 and p[1] > 200 and p[2] > 200]
+        assert len(white_pixels) > 0, "No white pixels found (default color)"
+
+
+# -- font-cycle acceleration --------------------------------------------------
+
+
+class TestFontCycleAcceleration:
+    """Tests for font-cycle speed acceleration (curtain-close sync)."""
+
+    def test_acceleration_produces_more_frames(self, tmp_path):
+        """With accel_at_s, the fast phase should produce more frames than normal."""
+        normal_dir = tmp_path / "normal"
+        accel_dir = tmp_path / "accel"
+        os.makedirs(normal_dir, exist_ok=True)
+        os.makedirs(accel_dir, exist_ok=True)
+
+        # Normal speed: 3s overlay
+        normal = generate_text_overlay_png(
+            [{"text": "PERU", "start_s": 0.0, "end_s": 3.0,
+              "position": "center", "effect": "font-cycle"}],
+            slot_duration_s=5.0,
+            output_dir=str(normal_dir), slot_index=0,
+        )
+
+        # Accelerated: same 3s overlay, fast after 1.0s
+        accel = generate_text_overlay_png(
+            [{"text": "PERU", "start_s": 0.0, "end_s": 3.0,
+              "position": "center", "effect": "font-cycle",
+              "font_cycle_accel_at_s": 1.0}],
+            slot_duration_s=5.0,
+            output_dir=str(accel_dir), slot_index=0,
+        )
+
+        assert normal is not None
+        assert accel is not None
+        # Accelerated version should have more frames (faster switching = more PNGs)
+        assert len(accel) > len(normal)
+
+    def test_acceleration_no_timing_gaps(self, tmp_path):
+        """Accelerated font-cycle frames still have no timing gaps."""
+        result = generate_text_overlay_png(
+            [{"text": "ROME", "start_s": 0.0, "end_s": 3.0,
+              "position": "center", "effect": "font-cycle",
+              "font_cycle_accel_at_s": 1.5}],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        for i in range(len(result) - 1):
+            assert abs(result[i]["end_s"] - result[i + 1]["start_s"]) < 0.001
+
+    def test_acceleration_covers_full_duration(self, tmp_path):
+        """Accelerated overlay still covers start to end."""
+        result = generate_text_overlay_png(
+            [{"text": "PARIS", "start_s": 1.0, "end_s": 4.0,
+              "position": "center", "effect": "font-cycle",
+              "font_cycle_accel_at_s": 2.5}],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        assert result[0]["start_s"] == 1.0
+        assert result[-1]["end_s"] == 4.0
+
+
+# -- font-cycle text_size support ---------------------------------------------
+
+
+class TestFontCycleTextSize:
+    """Tests for font-cycle respecting the text_size field."""
+
+    def test_large_size_produces_larger_text(self, tmp_path):
+        """text_size='large' should render bigger text than 'small'."""
+        from PIL import Image
+
+        small_dir = tmp_path / "small"
+        large_dir = tmp_path / "large"
+        os.makedirs(small_dir, exist_ok=True)
+        os.makedirs(large_dir, exist_ok=True)
+
+        small = generate_text_overlay_png(
+            [{"text": "HI", "start_s": 0.0, "end_s": 2.0,
+              "position": "center", "effect": "font-cycle",
+              "text_size": "small"}],
+            slot_duration_s=5.0,
+            output_dir=str(small_dir), slot_index=0,
+        )
+        large = generate_text_overlay_png(
+            [{"text": "HI", "start_s": 0.0, "end_s": 2.0,
+              "position": "center", "effect": "font-cycle",
+              "text_size": "large"}],
+            slot_duration_s=5.0,
+            output_dir=str(large_dir), slot_index=0,
+        )
+
+        assert small is not None
+        assert large is not None
+
+        # Count non-transparent pixels as a proxy for text size
+        small_img = Image.open(small[0]["png_path"])
+        large_img = Image.open(large[0]["png_path"])
+
+        small_visible = sum(1 for p in small_img.getdata() if p[3] > 50)
+        large_visible = sum(1 for p in large_img.getdata() if p[3] > 50)
+
+        assert large_visible > small_visible, (
+            f"Large text ({large_visible}px) should have more visible pixels "
+            f"than small ({small_visible}px)"
+        )
+
+    def test_resolve_cycle_fonts_caches_by_size(self):
+        """_resolve_cycle_fonts returns different font objects for different sizes."""
+        _reset_cycle_cache()
+        fonts_72 = _resolve_cycle_fonts(72)
+        fonts_120 = _resolve_cycle_fonts(120)
+        assert len(fonts_72) >= 1
+        assert len(fonts_120) >= 1
+        # Font objects should be different (different pixel sizes)
+        if fonts_72 and fonts_120:
+            assert fonts_72[0] is not fonts_120[0]
+        _reset_cycle_cache()  # clean up

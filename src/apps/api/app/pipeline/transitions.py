@@ -21,7 +21,27 @@ _XFADE_MAP: dict[str, str] = {
     "wipe_right": "wiperight",
 }
 
+# Gemini vocabulary → internal transition type.
+# Gemini uses video-editor-friendly names; this maps them to _XFADE_MAP keys
+# or special values handled by the pipeline (e.g. "curtain-close" → interstitial).
+_GEMINI_TO_INTERNAL: dict[str, str] = {
+    "hard-cut": "none",
+    "whip-pan": "wipe_left",
+    "zoom-in": "crossfade",
+    "dissolve": "crossfade",
+    "curtain-close": "none",  # handled as interstitial, not xfade
+    "none": "none",
+}
+
 DEFAULT_TRANSITION_DURATION_S = 0.3
+
+
+def translate_transition(gemini_type: str) -> str:
+    """Translate a Gemini transition_in value to an internal transition type.
+
+    Returns a key that exists in _XFADE_MAP or "none".
+    """
+    return _GEMINI_TO_INTERNAL.get(gemini_type, "none")
 
 
 class TransitionError(Exception):

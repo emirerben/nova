@@ -80,8 +80,18 @@ def analyze_template_task(self, template_id: str) -> None:
 
             download_to_file(gcs_path, local_path)
 
+            # Run blackdetect on template video for interstitial detection
+            from app.pipeline.interstitials import (  # noqa: PLC0415
+                classify_black_segment_type,
+                detect_black_segments,
+            )
+            black_segments = detect_black_segments(local_path)
+            black_segments = classify_black_segment_type(local_path, black_segments)
+
             file_ref = gemini_upload_and_wait(local_path)
-            recipe = analyze_template(file_ref)
+            recipe = analyze_template(
+                file_ref, analysis_mode="two_pass", black_segments=black_segments,
+            )
 
             # Extract template audio (idempotent — skip if already stored)
             audio_gcs: str | None = existing_audio_gcs
@@ -126,6 +136,7 @@ def analyze_template_task(self, template_id: str) -> None:
                         "color_grade": recipe.color_grade,
                         "pacing_style": recipe.pacing_style,
                         "sync_style": recipe.sync_style,
+                        "interstitials": recipe.interstitials,
                     }
                     template.recipe_cached_at = datetime.now(UTC)
                     template.analysis_status = "ready"
@@ -269,6 +280,7 @@ def _run_template_job(job_id: str) -> None:
             global_color_grade=recipe.color_grade,
             job_id=job_id,
             user_subject=user_subject,
+            interstitials=recipe.interstitials,
         )
 
         # [6b] Mix template audio if available
@@ -489,11 +501,6 @@ def _render_slot(
     (2x speed needs 2x source footage compressed into slot_target_dur).
     """
     from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
-    from app.pipeline.text_overlay import (  # noqa: PLC0415
-        ASS_ANIMATED_EFFECTS,
-        generate_animated_overlay_ass,
-        generate_text_overlay_png,
-    )
 
     clip_id = step.clip_id
     moment = step.moment
@@ -572,14 +579,20 @@ def _assemble_clips(
     global_color_grade: str = "none",
     job_id: str | None = None,
     user_subject: str = "",
+    interstitials: list[dict] | None = None,
 ) -> None:
     """Assemble clips in slot order: render each slot, then join with transitions.
 
     Uses _render_slot() per slot (cursor, beat-snap, speed ramp, overlays, reframe),
     then joins with xfade transitions or concat demuxer fallback.
 
+    Interstitials (curtain-close, fade-black-hold, etc.) are rendered as separate
+    clips and inserted between slots before joining.
+
     When EVAL_HARNESS_ENABLED, preserves per-slot .mp4 files in GCS for visual QA.
     """
+    from app.pipeline.transitions import translate_transition  # noqa: PLC0415
+
     beats = beat_timestamps_s or []
     clip_cursors: dict[str, float] = {}
     cumulative_s = 0.0
@@ -589,9 +602,30 @@ def _assemble_clips(
     if subject:
         log.info("subject_resolved", subject=subject, source="user" if user_subject else "auto")
 
+    # Build lookup of interstitials by after_slot position
+    interstitial_map: dict[int, dict] = {}
+    for inter in (interstitials or []):
+        slot_pos = inter["after_slot"]
+        if slot_pos in interstitial_map:
+            log.warning(
+                "interstitial_duplicate_after_slot",
+                after_slot=slot_pos,
+                existing_type=interstitial_map[slot_pos]["type"],
+                new_type=inter["type"],
+            )
+        interstitial_map[slot_pos] = inter
+
     reframed_paths: list[str] = []
     slot_durations: list[float] = []
     transition_types: list[str] = []
+    # Original per-slot durations (excluding interstitials) for overlay timing.
+    # slot_durations grows when interstitials are inserted, breaking the 1:1
+    # correspondence with steps that _collect_absolute_overlays relies on.
+    original_slot_durations: list[float] = []
+    # When True, the previous slot had an interstitial after it, so the
+    # transition INTO this slot must be hard-cut (the interstitial IS the
+    # transition effect — adding an xfade from a solid color looks broken).
+    prev_had_interstitial = False
 
     for i, step in enumerate(steps):
         clip_id = step.clip_id
@@ -614,14 +648,48 @@ def _assemble_clips(
             tmpdir=tmpdir,
             subject=subject,
         )
+
+        # Check if this slot has an interstitial AFTER it (curtain-close tail effect)
+        slot_position = int(step.slot.get("position", i + 1))
+        inter = interstitial_map.get(slot_position)
+        if inter and inter["type"] == "curtain-close":
+            # Apply curtain-close animation to the tail of this slot
+            from app.pipeline.interstitials import apply_curtain_close_tail  # noqa: PLC0415
+            tail_output = os.path.join(tmpdir, f"slot_{i}_curtain.mp4")
+            try:
+                apply_curtain_close_tail(
+                    reframed, tail_output, animate_s=inter.get("animate_s", 0.5),
+                )
+                reframed = tail_output
+            except Exception as exc:
+                log.warning("curtain_close_tail_failed", slot=i, error=str(exc))
+
         reframed_paths.append(reframed)
         slot_durations.append(vis_dur)
+        original_slot_durations.append(vis_dur)
 
-        # Collect transition types for boundaries (skip first slot)
+        # Collect transition types for boundaries (skip first slot).
+        # Force hard-cut if the previous slot had an interstitial — the
+        # interstitial clip IS the transition, so xfade from a solid color
+        # frame (whip-pan, crossfade) would look broken.
         if i > 0:
-            transition_types.append(
-                str(step.slot.get("transition_in", "none"))
+            if prev_had_interstitial:
+                transition_types.append("none")
+            else:
+                raw_transition = str(step.slot.get("transition_in", "none"))
+                transition_types.append(translate_transition(raw_transition))
+
+        # Insert interstitial clip AFTER this slot if one is defined
+        prev_had_interstitial = bool(inter)
+        if inter:
+            _insert_interstitial(
+                inter, i, reframed_paths, slot_durations,
+                transition_types, tmpdir,
             )
+            # Keep beat-snap clock in sync — interstitial hold time is real
+            # video duration that must be accounted for when snapping later
+            # slot boundaries to musical beats.
+            cumulative_s += float(inter.get("hold_s", 1.0))
 
     if not reframed_paths:
         raise ValueError("No slots to assemble")
@@ -634,12 +702,16 @@ def _assemble_clips(
         _join_or_concat(
             reframed_paths, transition_types, slot_durations,
             joined_path, tmpdir,
+            has_interstitials=bool(interstitial_map),
         )
 
     # ── Post-join text overlays (absolute timestamps, deduplicated) ────
     # Collect overlays across ALL slots, convert to absolute timestamps,
     # and deduplicate so "Welcome to" appears once and persists.
-    abs_overlays = _collect_absolute_overlays(steps, slot_durations, clip_metas, subject)
+    abs_overlays = _collect_absolute_overlays(
+        steps, original_slot_durations, clip_metas, subject,
+        interstitial_map=interstitial_map,
+    )
     if abs_overlays:
         _burn_text_overlays(joined_path, abs_overlays, output_path, tmpdir)
     else:
@@ -650,17 +722,74 @@ def _assemble_clips(
         _upload_eval_slots(reframed_paths, slot_durations, steps, job_id)
 
 
+def _insert_interstitial(
+    inter: dict,
+    slot_idx: int,
+    reframed_paths: list[str],
+    slot_durations: list[float],
+    transition_types: list[str],
+    tmpdir: str,
+) -> None:
+    """Render an interstitial clip and insert it into the assembly lists.
+
+    The interstitial is added after the current slot's position in the lists.
+    Transition types around the interstitial are set to "none" (hard cut)
+    because the interstitial itself IS the transition effect.
+    """
+    from app.pipeline.interstitials import (  # noqa: PLC0415
+        InterstitialError,
+        render_color_hold,
+    )
+
+    inter_type = inter["type"]
+    hold_s = float(inter.get("hold_s", 1.0))
+    hold_color = inter.get("hold_color", "#000000")
+    # Map hold_color hex to FFmpeg color name
+    ffmpeg_color = "white" if hold_color == "#FFFFFF" else "black"
+    inter_path = os.path.join(tmpdir, f"interstitial_{slot_idx}_{inter_type}.mp4")
+
+    try:
+        if inter_type in ("curtain-close", "fade-black-hold", "flash-white"):
+            render_color_hold(inter_path, hold_s=hold_s, color=ffmpeg_color)
+        else:
+            log.warning("unknown_interstitial_type", type=inter_type)
+            return
+    except InterstitialError as exc:
+        log.warning("interstitial_render_failed", type=inter_type, error=str(exc))
+        return
+
+    # Insert interstitial clip into assembly lists
+    reframed_paths.append(inter_path)
+    slot_durations.append(hold_s)
+    # Hard cut into and out of the interstitial
+    transition_types.append("none")
+
+    log.info(
+        "interstitial_inserted",
+        type=inter_type,
+        after_slot=inter.get("after_slot"),
+        hold_s=hold_s,
+    )
+
+
 def _join_or_concat(
     reframed_paths: list[str],
     transition_types: list[str],
     slot_durations: list[float],
     output_path: str,
     tmpdir: str,
+    has_interstitials: bool = False,
 ) -> None:
-    """Join slots with xfade transitions, falling back to concat demuxer on error."""
+    """Join slots with xfade transitions, falling back to concat demuxer on error.
+
+    When has_interstitials is True, always use the xfade re-encode path even if
+    all transitions are "none". Interstitial clips are video-only (-an) while
+    slots have audio — the concat demuxer's stream copy requires matching stream
+    layouts and will fail or drop audio on the mismatch.
+    """
     has_transitions = any(t != "none" for t in transition_types)
 
-    if has_transitions and len(reframed_paths) > 1:
+    if (has_transitions or has_interstitials) and len(reframed_paths) > 1:
         try:
             from app.pipeline.transitions import join_with_transitions  # noqa: PLC0415
 
@@ -703,8 +832,14 @@ def _collect_absolute_overlays(
     slot_durations: list[float],
     clip_metas: list | None,
     subject: str,
+    interstitial_map: dict[int, dict] | None = None,
 ) -> list[dict]:
     """Collect text overlays across all slots with absolute video timestamps.
+
+    Args:
+        slot_durations: Original per-slot durations (excluding interstitials).
+        interstitial_map: Lookup of interstitials by after_slot position.
+            Used to offset cumulative time for interstitial hold durations.
 
     Two dedup rules prevent visual glitches:
       1. Same-text dedup: if the same text (case-insensitive) appears on
@@ -717,11 +852,21 @@ def _collect_absolute_overlays(
     """
     raw: list[dict] = []
     cumulative_s = 0.0
+    inter_map = interstitial_map or {}
 
     for i, step in enumerate(steps):
         slot = step.get("slot", {}) if isinstance(step, dict) else step.slot
-        dur = slot_durations[i] if i < len(slot_durations) else float(slot.get("target_duration_s", 5.0))
+        dur = (
+            slot_durations[i]
+            if i < len(slot_durations)
+            else float(slot.get("target_duration_s", 5.0))
+        )
         clip_id = step.get("clip_id", "") if isinstance(step, dict) else step.clip_id
+
+        # Look up interstitial for this slot once (used by overlay
+        # acceleration and cumulative time accounting below).
+        slot_position = int(slot.get("position", i + 1))
+        inter = inter_map.get(slot_position)
 
         for ov in slot.get("text_overlays", []):
             clip_meta = _find_clip_meta_by_id(clip_id, clip_metas)
@@ -732,17 +877,40 @@ def _collect_absolute_overlays(
             ov_start = cumulative_s + float(ov.get("start_s", 0.0))
             ov_end = cumulative_s + float(ov.get("end_s", dur))
 
-            raw.append({
+            entry = {
                 "text": text,
                 "start_s": ov_start,
                 "end_s": ov_end,
                 "position": ov.get("position", "center"),
-                "font_style": ov.get("font_style", "sans"),
+                "effect": ov.get("effect", "none"),
+                "font_style": ov.get("font_style", "display"),
                 "text_size": ov.get("text_size", "medium"),
                 "text_color": ov.get("text_color", "#FFFFFF"),
-            })
+            }
+
+            # If this overlay uses font-cycle and the slot has a
+            # curtain-close after it, inject the absolute timestamp
+            # where the curtain animation starts so the font cycling
+            # accelerates in sync with the closing bars.
+            if (
+                entry["effect"] == "font-cycle"
+                and inter
+                and inter.get("type") == "curtain-close"
+            ):
+                animate_s = float(inter.get("animate_s", 0.5))
+                slot_end_abs = cumulative_s + dur
+                accel_at = slot_end_abs - animate_s
+                # Clamp: accel must be within the overlay's time range
+                if accel_at > ov_start:
+                    entry["font_cycle_accel_at_s"] = accel_at
+
+            raw.append(entry)
 
         cumulative_s += dur
+
+        # Account for interstitial hold time after this slot
+        if inter:
+            cumulative_s += float(inter.get("hold_s", 1.0))
 
     if not raw:
         return []
@@ -768,6 +936,10 @@ def _collect_absolute_overlays(
         if unique[i]["position"] == unique[i + 1]["position"]:
             if unique[i]["end_s"] > unique[i + 1]["start_s"]:
                 unique[i]["end_s"] = unique[i + 1]["start_s"] - 0.1
+                # Keep font-cycle accel timestamp within the truncated range
+                accel = unique[i].get("font_cycle_accel_at_s")
+                if accel is not None and accel >= unique[i]["end_s"]:
+                    del unique[i]["font_cycle_accel_at_s"]
 
     # Remove any that became invalid after truncation
     result = [o for o in unique if o["end_s"] > o["start_s"]]
@@ -789,20 +961,16 @@ def _burn_text_overlays(
     """
     from app.pipeline.text_overlay import generate_text_overlay_png  # noqa: PLC0415
 
-    # Generate PNG for each overlay
+    # Generate PNGs for each overlay. Overlays already carry absolute
+    # timestamps from _collect_absolute_overlays, so the PNGs come back
+    # with correct timing. Font-cycle overlays expand to many PNGs per
+    # overlay, so do NOT reassign timing with a 1:1 overlay index.
     png_configs = generate_text_overlay_png(overlays, 999.0, tmpdir, slot_index=99)
     if not png_configs:
         shutil.copy2(input_path, output_path)
         return
 
-    # Match timing: use absolute start_s/end_s from the merged overlays
-    for i, cfg in enumerate(png_configs):
-        if i < len(overlays):
-            cfg["start_s"] = overlays[i]["start_s"]
-            cfg["end_s"] = overlays[i]["end_s"]
-
-    from app.pipeline.reframe import _build_overlay_cmd, _encoding_args  # noqa: PLC0415
-    from app.config import settings as s
+    from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
 
     # Build FFmpeg command with overlay filter
     cmd = ["ffmpeg", "-i", input_path]

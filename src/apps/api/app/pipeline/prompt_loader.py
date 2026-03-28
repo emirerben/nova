@@ -7,7 +7,6 @@ Uses lazy initialization (same pattern as _get_client() in gemini_analyzer.py)
 to avoid import-time filesystem access.
 """
 
-import os
 from pathlib import Path
 from string import Template
 

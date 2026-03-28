@@ -23,6 +23,7 @@ import subprocess
 import structlog
 
 from app.config import settings
+from app.pipeline.text_overlay import FONTS_DIR
 
 log = structlog.get_logger()
 
@@ -202,10 +203,13 @@ def _build_overlay_cmd(
         prev_label = out_label
 
     # Chain ASS subtitle filters for animated text overlays
+    escaped_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
     for j, ass_path in enumerate(ass_overlay_paths):
         escaped = ass_path.replace("\\", "/").replace(":", "\\:")
         out_label = f"sub{j}"
-        fc_parts.append(f"[{prev_label}]subtitles={escaped}[{out_label}]")
+        fc_parts.append(
+            f"[{prev_label}]subtitles={escaped}:fontsdir={escaped_fonts}[{out_label}]"
+        )
         prev_label = out_label
 
     filter_complex = ";".join(fc_parts)
@@ -280,7 +284,8 @@ def _build_video_filter(
     # 5. Caption ASS (speech captions -- distinct from text overlay ASS)
     if ass_path and os.path.exists(ass_path):
         escaped = ass_path.replace("\\", "/").replace(":", "\\:")
-        filters.append(f"ass={escaped}")
+        escaped_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
+        filters.append(f"ass={escaped}:fontsdir={escaped_fonts}")
 
     return filters
 

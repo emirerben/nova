@@ -143,8 +143,16 @@ class TestTemplateMatcher:
     def test_high_energy_slot_gets_high_energy_moment(self):
         """Slot with high energy rating gets matched to high-energy footage."""
         slots = [
-            {"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "broll", "energy": 2.0},
-            {"position": 2, "target_duration_s": 5.0, "priority": 5, "slot_type": "broll", "energy": 9.0},
+            {
+                "position": 1, "target_duration_s": 5.0,
+                "priority": 5, "slot_type": "broll",
+                "energy": 2.0,
+            },
+            {
+                "position": 2, "target_duration_s": 5.0,
+                "priority": 5, "slot_type": "broll",
+                "energy": 9.0,
+            },
         ]
         recipe = _make_recipe(slots)
         clip = _make_clip("clip_a", [
@@ -165,7 +173,12 @@ class TestTemplateMatcher:
 # ── Adjacency dedup tests ────────────────────────────────────────────────────
 
 
-def _step(clip_id: str, position: int, target_dur: float = 5.0, moment_dur: float = 5.0) -> AssemblyStep:
+def _step(
+    clip_id: str,
+    position: int,
+    target_dur: float = 5.0,
+    moment_dur: float = 5.0,
+) -> AssemblyStep:
     """Helper to build an AssemblyStep for dedup tests."""
     return AssemblyStep(
         slot=_slot(position, target_dur),

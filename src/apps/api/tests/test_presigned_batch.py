@@ -1,6 +1,6 @@
 """Tests for POST /presigned-urls (batch presigned upload endpoint)."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -27,8 +27,14 @@ async def test_batch_presigned_happy_path(client):
     mock_url = "https://storage.googleapis.com/signed-url"
     mock_path = "00000000/batch-abc/clip_000.mp4"
 
-    with patch("app.routes.presigned.storage.presigned_put_url", return_value=(mock_url, mock_path)):
-        res = await client.post("/presigned-urls", json={"files": [_valid_file(i) for i in range(3)]})
+    with patch(
+        "app.routes.presigned.storage.presigned_put_url",
+        return_value=(mock_url, mock_path),
+    ):
+        res = await client.post(
+            "/presigned-urls",
+            json={"files": [_valid_file(i) for i in range(3)]},
+        )
 
     assert res.status_code == 200
     data = res.json()
