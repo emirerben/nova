@@ -3,16 +3,17 @@
 import json
 import uuid
 
+import redis
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import redis
-
 from app.config import settings
 from app.database import get_db
+from app.models import Job, JobClip
+from app.tasks.orchestrate import orchestrate_job
 
 _redis_client: redis.Redis | None = None
 
@@ -20,10 +21,12 @@ _redis_client: redis.Redis | None = None
 def _get_redis() -> redis.Redis:
     global _redis_client
     if _redis_client is None:
-        _redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+        _redis_client = redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+        )
     return _redis_client
-from app.models import Job, JobClip
-from app.tasks.orchestrate import orchestrate_job
+
 
 log = structlog.get_logger()
 router = APIRouter()

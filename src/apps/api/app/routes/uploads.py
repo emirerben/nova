@@ -67,6 +67,7 @@ def _get_redis():
     global _redis_client_uploads
     if _redis_client_uploads is None:
         import redis
+
         _redis_client_uploads = redis.from_url(settings.redis_url)
     return _redis_client_uploads
 
@@ -135,7 +136,9 @@ async def create_presigned_upload(
     job_id = str(uuid.uuid4())
 
     try:
-        upload_url, gcs_path = storage.presigned_put_url(user_id, job_id, content_type=body.content_type)  # noqa: E501
+        upload_url, gcs_path = storage.presigned_put_url(
+            user_id, job_id, content_type=body.content_type
+        )  # noqa: E501
     except Exception as exc:
         log.error("presigned_url_failed", error=str(exc))
         raise HTTPException(
@@ -181,7 +184,9 @@ class DriveImportResponse(BaseModel):
     status: str
 
 
-@router.post("/drive-import", response_model=DriveImportResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/drive-import", response_model=DriveImportResponse, status_code=status.HTTP_202_ACCEPTED
+)
 async def import_from_drive(
     body: DriveImportRequest,
     db: AsyncSession = Depends(get_db),
@@ -196,7 +201,10 @@ async def import_from_drive(
     if body.file_size_bytes > settings.max_upload_bytes:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"File exceeds {settings.max_upload_bytes // (1024**3)}GB limit ({body.file_size_bytes} bytes)",
+            detail=(
+                f"File exceeds {settings.max_upload_bytes // (1024**3)}GB limit"
+                f" ({body.file_size_bytes} bytes)"
+            ),
         )
 
     if body.mime_type not in DRIVE_ALLOWED_MIME:
@@ -243,6 +251,7 @@ async def import_from_drive(
 
     try:
         from app.tasks.drive_import import import_from_drive as import_task
+
         import_task.apply_async(args=[job_id, body.drive_file_id, encrypted_token, gcs_path])
     except Exception as exc:
         # If Celery enqueue fails, mark job as failed so it doesn't stay stuck in "importing"
@@ -297,7 +306,11 @@ class DriveImportBatchStatus(BaseModel):
     errors: list[str]
 
 
-@router.post("/drive-import-batch", response_model=DriveImportBatchResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/drive-import-batch",
+    response_model=DriveImportBatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def import_batch_from_drive(
     body: DriveImportBatchRequest,
 ) -> DriveImportBatchResponse:
@@ -348,6 +361,7 @@ async def import_batch_from_drive(
     files_meta = [f.model_dump() for f in body.files]
 
     from app.tasks.drive_import import batch_import_from_drive
+
     batch_import_from_drive.apply_async(args=[batch_id, files_meta, encrypted_token, gcs_paths])
 
     log.info("batch_drive_import_enqueued", batch_id=batch_id, file_count=len(body.files))

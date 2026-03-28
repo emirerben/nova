@@ -16,7 +16,6 @@ Batch import flow (for template mode):
 
 import json
 import os
-import re
 import subprocess
 import tempfile
 import time
@@ -58,6 +57,7 @@ def _sync_session() -> Session:
 def _get_redis():
     """Get a Redis client from the Celery broker connection."""
     import redis
+
     return redis.from_url(settings.redis_url)
 
 
@@ -77,9 +77,13 @@ def _ffprobe_duration(filepath: str) -> float:
     """Run ffprobe to get video duration in seconds."""
     result = subprocess.run(
         [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
             filepath,
         ],
         capture_output=True,
@@ -108,13 +112,19 @@ def _stream_download(
 
     for attempt in range(MAX_RETRIES + 1):
         try:
-            with httpx.stream("GET", url, headers=headers, timeout=DOWNLOAD_TIMEOUT, follow_redirects=True) as resp:
+            with httpx.stream(
+                "GET", url, headers=headers, timeout=DOWNLOAD_TIMEOUT, follow_redirects=True
+            ) as resp:
                 if resp.status_code == 401:
                     raise ValueError("Google Drive access denied — token may have expired")
                 if resp.status_code == 403:
-                    raise ValueError("Google Drive access denied — you may not have permission to this file")
+                    raise ValueError(
+                        "Google Drive access denied — you may not have permission to this file"
+                    )
                 if resp.status_code == 404:
-                    raise ValueError("File not found on Google Drive — it may have been deleted or moved")
+                    raise ValueError(
+                        "File not found on Google Drive — it may have been deleted or moved"
+                    )
                 resp.raise_for_status()
 
                 downloaded = 0
@@ -126,10 +136,19 @@ def _stream_download(
                         downloaded += len(chunk)
 
                         # Throttled progress updates to Redis
-                        if redis_key and (time.monotonic() - last_progress_time) >= PROGRESS_INTERVAL_S:
-                            pct = round((downloaded / total_bytes) * 100, 1) if total_bytes > 0 else 0
+                        if (
+                            redis_key
+                            and (time.monotonic() - last_progress_time) >= PROGRESS_INTERVAL_S
+                        ):
+                            pct = (
+                                round((downloaded / total_bytes) * 100, 1) if total_bytes > 0 else 0
+                            )
                             r = _get_redis()
-                            r.set(redis_key, json.dumps({"progress_pct": pct, "bytes_downloaded": downloaded}), ex=3600)
+                            r.set(
+                                redis_key,
+                                json.dumps({"progress_pct": pct, "bytes_downloaded": downloaded}),
+                                ex=3600,
+                            )
                             last_progress_time = time.monotonic()
 
             return  # success
@@ -138,10 +157,15 @@ def _stream_download(
                 log.warning("drive_download_timeout_retry", attempt=attempt)
                 time.sleep(RETRY_DELAY_S)
                 continue
-            raise ValueError("Google Drive download timed out. The file may be too large or the connection too slow.")
+            raise ValueError(
+                "Google Drive download timed out. "
+                "File may be too large or connection too slow."
+            )
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code >= 500 and attempt < MAX_RETRIES:
-                log.warning("drive_download_5xx_retry", status=exc.response.status_code, attempt=attempt)
+                log.warning(
+                    "drive_download_5xx_retry", status=exc.response.status_code, attempt=attempt
+                )
                 time.sleep(RETRY_DELAY_S)
                 continue
             raise
@@ -160,6 +184,7 @@ def _cleanup_gcs_blob(gcs_path: str) -> None:
     """Attempt to delete a GCS blob (best-effort cleanup on failure)."""
     try:
         from app.storage import _get_client
+
         bucket = _get_client().bucket(settings.storage_bucket)
         blob = bucket.blob(gcs_path)
         if blob.exists():
@@ -168,7 +193,9 @@ def _cleanup_gcs_blob(gcs_path: str) -> None:
         log.warning("gcs_cleanup_failed", gcs_path=gcs_path)
 
 
-@celery_app.task(name="tasks.import_from_drive", bind=True, max_retries=0, time_limit=1200, soft_time_limit=1140)
+@celery_app.task(
+    name="tasks.import_from_drive", bind=True, max_retries=0, time_limit=1200, soft_time_limit=1140
+)
 def import_from_drive(
     self,
     job_id: str,
@@ -225,6 +252,7 @@ def import_from_drive(
                 db.commit()
 
                 from app.tasks.orchestrate import orchestrate_job
+
                 orchestrate_job.apply_async(args=[job_id], task_id=job_id)
 
             log.info("drive_import_complete", job_id=job_id)
@@ -247,7 +275,13 @@ def import_from_drive(
                 pass
 
 
-@celery_app.task(name="tasks.batch_import_from_drive", bind=True, max_retries=0, time_limit=2400, soft_time_limit=2340)
+@celery_app.task(
+    name="tasks.batch_import_from_drive",
+    bind=True,
+    max_retries=0,
+    time_limit=2400,
+    soft_time_limit=2340,
+)
 def batch_import_from_drive(
     self,
     batch_id: str,
@@ -271,14 +305,20 @@ def batch_import_from_drive(
         try:
             access_token = _decrypt_token(encrypted_token)
         except ValueError as exc:
-            r.set(redis_key, json.dumps({
-                "status": "failed",
-                "total": len(files_meta),
-                "completed": 0,
-                "current_file": None,
-                "gcs_paths": [],
-                "errors": [str(exc)],
-            }), ex=3600)
+            r.set(
+                redis_key,
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "total": len(files_meta),
+                        "completed": 0,
+                        "current_file": None,
+                        "gcs_paths": [],
+                        "errors": [str(exc)],
+                    }
+                ),
+                ex=3600,
+            )
             return
 
         total = len(files_meta)
@@ -290,14 +330,20 @@ def batch_import_from_drive(
             local_path = os.path.join(tmpdir, f"clip_{i:03d}.mp4")
 
             # Update progress
-            r.set(redis_key, json.dumps({
-                "status": "importing",
-                "total": total,
-                "completed": len(completed_paths),
-                "current_file": filename,
-                "gcs_paths": completed_paths,
-                "errors": errors,
-            }), ex=3600)
+            r.set(
+                redis_key,
+                json.dumps(
+                    {
+                        "status": "importing",
+                        "total": total,
+                        "completed": len(completed_paths),
+                        "current_file": filename,
+                        "gcs_paths": completed_paths,
+                        "errors": errors,
+                    }
+                ),
+                ex=3600,
+            )
 
             try:
                 _stream_download(access_token, file_id, local_path, declared_size)
@@ -309,11 +355,19 @@ def batch_import_from_drive(
 
                 actual_size = os.path.getsize(local_path)
                 if actual_size > settings.max_upload_bytes:
-                    raise ValueError(f"{filename}: file too large ({actual_size / (1024**3):.1f} GB)")
+                    raise ValueError(
+                        f"{filename}: file too large ({actual_size / (1024**3):.1f} GB)"
+                    )
 
                 _upload_to_gcs(local_path, gcs_path)
                 completed_paths.append(gcs_path)
-                log.info("batch_file_imported", batch_id=batch_id, file=filename, index=i + 1, total=total)
+                log.info(
+                    "batch_file_imported",
+                    batch_id=batch_id,
+                    file=filename,
+                    index=i + 1,
+                    total=total,
+                )
 
             except Exception as exc:
                 log.error("batch_file_failed", batch_id=batch_id, file=filename, error=str(exc))
@@ -333,14 +387,25 @@ def batch_import_from_drive(
         else:
             final_status = "failed"
 
-        r.set(redis_key, json.dumps({
-            "status": final_status,
-            "total": total,
-            "completed": len(completed_paths),
-            "current_file": None,
-            "gcs_paths": completed_paths,
-            "errors": errors,
-        }), ex=3600)
+        r.set(
+            redis_key,
+            json.dumps(
+                {
+                    "status": final_status,
+                    "total": total,
+                    "completed": len(completed_paths),
+                    "current_file": None,
+                    "gcs_paths": completed_paths,
+                    "errors": errors,
+                }
+            ),
+            ex=3600,
+        )
 
-        log.info("batch_import_complete", batch_id=batch_id, status=final_status,
-                 completed=len(completed_paths), total=total)
+        log.info(
+            "batch_import_complete",
+            batch_id=batch_id,
+            status=final_status,
+            completed=len(completed_paths),
+            total=total,
+        )
