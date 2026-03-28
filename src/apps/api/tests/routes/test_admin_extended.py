@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from app.database import get_db
 from app.main import app
-from app.models import Job, TemplateRecipeVersion, VideoTemplate
+from app.models import VideoTemplate
 
 VALID_TOKEN = "test-admin-token"
 
