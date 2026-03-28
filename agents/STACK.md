@@ -4,12 +4,13 @@
 
 ## Frontend
 - **Next.js 14** + TypeScript + React
-- Deployment target: Vercel (or Cloud Run)
+- Deployment target: Vercel
 
-## Backend (API)
+## Backend (API + Worker)
 - **Python FastAPI** — async-native, auto-generates OpenAPI docs, fast
 - **Celery** — distributed task queue for video processing jobs
 - Why FastAPI over Flask: async support critical for job status streaming
+- Deployment target: Fly.io (api + worker process groups, see `fly.toml`)
 
 ## Job Queue
 - **Redis + Celery** — industry-proven for CPU-bound background workers

@@ -12,6 +12,7 @@ Nova transforms raw real-life videos into viral short-form content (TikTok, Reel
 ## Key paths
 - src/apps/web/  — Next.js frontend (upload UI, progress tracker, result viewer)
 - src/apps/api/  — Python API (upload endpoint, job queue, FFmpeg pipeline)
+- src/apps/api/prompts/ — LLM prompt templates (template analysis, transcription)
 - agents/        — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
 
 ## Local dev
@@ -49,12 +50,17 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 ## Deploy Configuration (configured by /setup-deploy)
 - Platform: Fly.io
 - App name: nova-video
+- Region: iad
 - Production URL: https://nova-video.fly.dev
 - Deploy workflow: `fly deploy` from repo root (or GitHub Actions CD)
 - Deploy status command: `fly status --app nova-video`
 - Merge method: squash
 - Project type: web app + API + background workers
 - Process groups: api (FastAPI/uvicorn) + worker (Celery)
+- Release command: `python -m alembic upgrade head` (runs migrations on every deploy)
+- VM sizing: api = 1 shared CPU / 512MB, worker = 2 shared CPUs / 2048MB
+- Dockerfile: repo-root `Dockerfile` (cached dependency layer from pyproject.toml)
+- Docker image includes: `app/`, `assets/`, `prompts/`, `alembic.ini`
 
 ### Custom deploy hooks
 - Pre-merge: none
