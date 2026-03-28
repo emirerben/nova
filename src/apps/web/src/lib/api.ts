@@ -127,7 +127,7 @@ export type TemplateJobStatus =
 
 export interface AssemblyPlanData {
   steps: Array<{
-    slot: { position: number; target_duration_s: number; slot_type: string };
+    slot: { position: number; target_duration_s: number; slot_type: string; priority?: number };
     clip_id: string;
     moment: { start_s: number; end_s: number; energy: number; description: string };
   }>;

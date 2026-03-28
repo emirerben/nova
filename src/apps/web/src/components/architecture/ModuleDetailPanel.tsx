@@ -45,12 +45,12 @@ function CommitsSection({ modulePath }: { modulePath: string | null }) {
     );
   }
 
-  if (!data || data.items.length === 0) {
-    return <p className="text-xs text-gray-500 italic">No recent commits</p>;
+  if (data?.rateLimited) {
+    return <p className="text-xs text-gray-500 italic">Commits unavailable</p>;
   }
 
-  if (data.rateLimited) {
-    return <p className="text-xs text-gray-500 italic">Commits unavailable</p>;
+  if (!data || data.items.length === 0) {
+    return <p className="text-xs text-gray-500 italic">No recent commits</p>;
   }
 
   return (
@@ -88,16 +88,16 @@ function IssuesSection({ label }: { label: string | null }) {
     );
   }
 
+  if (data?.rateLimited) {
+    return <p className="text-xs text-gray-500 italic">Issues unavailable</p>;
+  }
+
   if (!data || data.items.length === 0) {
     return (
       <p className="text-xs text-gray-500">
         No open issues <span className="text-emerald-500">✓</span>
       </p>
     );
-  }
-
-  if (data.rateLimited) {
-    return <p className="text-xs text-gray-500 italic">Issues unavailable</p>;
   }
 
   return (

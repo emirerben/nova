@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2.0] - 2026-03-28
+
+### Added
+- Interactive architecture dashboard at `/architecture` with react-flow diagram, dark mission-control theme
+- Module graph config (`architecture-config.ts`): 5 L1 pipeline modules, 3 data stores, 17 L2 sub-modules with dependencies, file paths, and business context
+- Business/Technical view toggle: business view shows user-facing descriptions, metrics, and status; technical view shows file counts, issue badges, and data flow labels
+- L1→L2 drill-down: click any pipeline module to expand and see sub-modules
+- Module detail slide-out panel: description, file list with GitHub links, recent commits, open issues
+- GitHub integration via Next.js API route proxy (`/api/architecture/github`): fetches issues by module label and commits by directory path
+- Impact highlighting: right-click any module to highlight direct downstream dependents
+- Live job activity overlay: polls active jobs via SWR, maps job status to pipeline modules with emerald pulse animation
+- localStorage job tracking: `trackRecentJob()` called on upload and template job creation for live overlay
+- 32 tests across 5 suites: architecture config validation, react-flow diagram, detail panel, GitHub route, SWR hooks
+- Jest configuration (`jest.config.js`) for Next.js with path aliases
+
+### Fixed
+- Rate limit check in `ModuleDetailPanel` was dead code (always caught by empty items check first)
+- L2 view highlighting now passes through `highlightedIds` and `selectedModuleId` to child nodes
+- Pre-existing TypeScript errors: `Set<TemplateJobStatus>` inference, missing `priority` on slot type, `session.user` possibly undefined
+
+### Removed
+- Dead code: `hook_scorer.py` (109 LOC, never imported — superseded by `score.py`)
+- Stale file reference in architecture config: redis module pointed to non-existent `celery_app.py` (now `worker.py`)
+
 ## [0.1.1.0] - 2026-03-27
 
 ### Added

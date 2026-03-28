@@ -21,7 +21,7 @@ const STAGE_LABELS: Record<TemplateJobStatus, string> = {
   processing_failed: "Processing failed",
 };
 
-const TERMINAL: Set<TemplateJobStatus> = new Set(["template_ready", "processing_failed"]);
+const TERMINAL = new Set<TemplateJobStatus>(["template_ready", "processing_failed"]);
 
 export default function TemplateJobPage() {
   const { id } = useParams<{ id: string }>();

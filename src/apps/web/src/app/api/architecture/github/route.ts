@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const REPO_OWNER = "emirerben";
-const REPO_NAME = "nova";
+const GITHUB_REPO = process.env.GITHUB_REPO ?? "emirerben/nova";
 
 function githubHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
@@ -17,7 +16,7 @@ function githubHeaders(): Record<string, string> {
 async function fetchIssues(label: string) {
   if (!GITHUB_TOKEN) return { items: [] };
 
-  const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/issues?labels=${encodeURIComponent(label)}&state=open&per_page=20`;
+  const url = `https://api.github.com/repos/${GITHUB_REPO}/issues?labels=${encodeURIComponent(label)}&state=open&per_page=20`;
 
   const res = await fetch(url, { headers: githubHeaders() });
 
@@ -45,7 +44,7 @@ async function fetchIssues(label: string) {
 async function fetchCommits(path: string) {
   if (!GITHUB_TOKEN) return { items: [] };
 
-  const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/commits?path=${encodeURIComponent(path)}&per_page=5`;
+  const url = `https://api.github.com/repos/${GITHUB_REPO}/commits?path=${encodeURIComponent(path)}&per_page=5`;
 
   const res = await fetch(url, { headers: githubHeaders() });
 

@@ -48,7 +48,13 @@ const L1_POSITIONS: Record<string, { x: number; y: number }> = {
   gcs: { x: 700, y: 400 },
 };
 
-function buildL2Nodes(parentId: string, children: Record<string, Module>, viewMode: "technical" | "business"): Node[] {
+function buildL2Nodes(
+  parentId: string,
+  children: Record<string, Module>,
+  viewMode: "technical" | "business",
+  highlightedIds: Set<string>,
+  selectedModuleId: string | null,
+): Node[] {
   const parentPos = L1_POSITIONS[parentId] ?? { x: 0, y: 0 };
   const entries = Object.values(children);
   return entries.map((child, i) => ({
@@ -63,8 +69,8 @@ function buildL2Nodes(parentId: string, children: Record<string, Module>, viewMo
       issueCount: null,
       isActive: false,
       activeVisual: null,
-      isHighlighted: false,
-      isSelected: false,
+      isHighlighted: highlightedIds.has(child.id),
+      isSelected: selectedModuleId === child.id,
       childCount: 0,
       viewMode,
     } satisfies ModuleNodeData,
@@ -103,7 +109,7 @@ export function ArchitectureMap() {
       // L2 view: show children of expanded module
       const parent = modules[expandedL1];
       if (!parent?.children) return [];
-      return buildL2Nodes(expandedL1, parent.children, viewMode);
+      return buildL2Nodes(expandedL1, parent.children, viewMode, highlightedIds, selectedModuleId);
     }
 
     // L1 view: show all top-level modules
