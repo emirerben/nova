@@ -167,6 +167,7 @@ class DriveImportRequest(BaseModel):
     drive_file_id: str
     filename: str
     file_size_bytes: int
+    compress: bool = False  # Compress to 720p for faster testing
     mime_type: str
     platforms: list[str]
     google_access_token: str
@@ -198,13 +199,13 @@ async def import_from_drive(
             detail="Drive import not configured — token_encryption_key is missing or invalid",
         )
 
-    if body.file_size_bytes > settings.max_upload_bytes:
+    # Compression shrinks ~10x, so allow larger inputs when enabled
+    size_limit = settings.max_upload_bytes * 10 if body.compress else settings.max_upload_bytes
+    if body.file_size_bytes > size_limit:
+        limit_gb = size_limit // (1024**3)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"File exceeds {settings.max_upload_bytes // (1024**3)}GB limit"
-                f" ({body.file_size_bytes} bytes)"
-            ),
+            detail=f"File exceeds {limit_gb}GB limit ({body.file_size_bytes} bytes)",
         )
 
     if body.mime_type not in DRIVE_ALLOWED_MIME:
@@ -252,7 +253,10 @@ async def import_from_drive(
     try:
         from app.tasks.drive_import import import_from_drive as import_task
 
-        import_task.apply_async(args=[job_id, body.drive_file_id, encrypted_token, gcs_path])
+        import_task.apply_async(
+            args=[job_id, body.drive_file_id, encrypted_token, gcs_path],
+            kwargs={"compress": body.compress},
+        )
     except Exception as exc:
         # If Celery enqueue fails, mark job as failed so it doesn't stay stuck in "importing"
         job.status = "processing_failed"

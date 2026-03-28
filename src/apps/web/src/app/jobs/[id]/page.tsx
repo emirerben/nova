@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { getJobStatus, TERMINAL_STATES, type ClipStatus, type JobStatus, type JobStatusResponse } from "@/lib/api";
 
 const POLL_INTERVAL_MS = 3000;
-const POLL_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — surface an error rather than polling forever
+const POLL_TIMEOUT_MS = 30 * 60 * 1000; // 30 min — Drive imports of large files can take 10-20 min
 
 const STAGE_LABELS: Record<string, string> = {
   importing: "Importing from Google Drive...",

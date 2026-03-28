@@ -73,6 +73,25 @@ def _decrypt_token(encrypted_token: str) -> str:
         raise ValueError("Google access token expired or invalid") from exc
 
 
+def _compress_for_testing(input_path: str, output_path: str) -> None:
+    """Transcode video to 720p for faster testing. ~10x smaller files."""
+    result = subprocess.run(
+        [
+            "ffmpeg", "-i", input_path,
+            "-vf", "scale=-2:720",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-y", output_path,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        raise ValueError(f"Compression failed: {result.stderr.strip()[:200]}")
+
+
 def _ffprobe_duration(filepath: str) -> float:
     """Run ffprobe to get video duration in seconds."""
     result = subprocess.run(
@@ -202,6 +221,7 @@ def import_from_drive(
     drive_file_id: str,
     encrypted_token: str,
     gcs_path: str,
+    compress: bool = False,
 ) -> None:
     """Download a single file from Google Drive to GCS, then enqueue orchestrate_job."""
     redis_key = f"import:progress:{job_id}"
@@ -237,6 +257,19 @@ def import_from_drive(
                 raise ValueError(
                     f"Downloaded file is {actual_size / (1024**3):.1f} GB, "
                     f"exceeds {settings.max_upload_bytes / (1024**3):.0f} GB limit."
+                )
+
+            # Compress for testing (720p, ~10x smaller)
+            if compress:
+                compressed_path = os.path.join(tmpdir, "compressed.mp4")
+                log.info("drive_import_compressing", job_id=job_id)
+                _compress_for_testing(local_path, compressed_path)
+                os.remove(local_path)
+                os.rename(compressed_path, local_path)
+                log.info(
+                    "drive_import_compressed",
+                    job_id=job_id,
+                    size_mb=round(os.path.getsize(local_path) / (1024**2)),
                 )
 
             # Upload to GCS
