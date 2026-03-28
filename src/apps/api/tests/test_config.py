@@ -1,7 +1,5 @@
 """Tests for Settings.normalize_postgres_scheme and asyncpg_database_url."""
 
-import os
-
 import pytest
 
 
