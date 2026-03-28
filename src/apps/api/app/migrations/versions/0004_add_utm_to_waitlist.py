@@ -1,7 +1,7 @@
 """Add UTM tracking columns to waitlist_signups.
 
 Revision ID: 0004
-Revises: 0003_template_audio_path
+Revises: 0003
 Create Date: 2026-03-23
 
 Adds three nullable Text columns for server-side UTM attribution:
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0004"
-down_revision = "0003_template_audio_path"
+down_revision = "0003"
 branch_labels = None
 depends_on = None
 

@@ -33,7 +33,7 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       // Expose user id to client (not tokens — those stay server-side)
       if (session.user) {
-        (session.user as any).id = token.sub ?? "";
+        (session.user as Record<string, unknown>).id = token.sub ?? "";
       }
       return session;
     },

@@ -16,11 +16,21 @@ All notable changes to this project will be documented in this file.
 - localStorage job tracking: `trackRecentJob()` called on upload and template job creation for live overlay
 - 32 tests across 5 suites: architecture config validation, react-flow diagram, detail panel, GitHub route, SWR hooks
 - Jest configuration (`jest.config.js`) for Next.js with path aliases
+- Production Dockerfile for Fly.io deployment with cached dependency layer (parses pyproject.toml at build time)
+- `fly.toml` with api + worker process groups, auto-stop for API, VM sizing, health checks
+- Alembic `release_command` in fly.toml for automatic migrations on deploy
+- `asyncpg_database_url` property on Settings for Fly Postgres compatibility (translates libpq sslmode to asyncpg ssl)
+- `normalize_postgres_scheme` field validator on database_url (postgres:// to postgresql://)
+- DejaVu fonts installed in Docker image for font-cycle variety
+- `.dockerignore` to exclude media, tests, frontend, and dev files from production image
+- Procfile for process group definitions
+- 6 new tests for Settings database URL normalization and asyncpg URL translation
 
 ### Fixed
 - Rate limit check in `ModuleDetailPanel` was dead code (always caught by empty items check first)
 - L2 view highlighting now passes through `highlightedIds` and `selectedModuleId` to child nodes
-- Pre-existing TypeScript errors: `Set<TemplateJobStatus>` inference, missing `priority` on slot type, `session.user` possibly undefined
+- Migration 0004 `down_revision` pointed to filename instead of revision ID
+- TypeScript build errors for Vercel production: explicit Set generic, missing priority field, session.user null guard
 
 ### Removed
 - Dead code: `hook_scorer.py` (109 LOC, never imported — superseded by `score.py`)
