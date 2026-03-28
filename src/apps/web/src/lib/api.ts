@@ -129,6 +129,7 @@ export async function importFromDrive(params: {
   mime_type: string;
   platforms: string[];
   google_access_token: string;
+  compress?: boolean;
 }): Promise<DriveImportResponse> {
   let res: Response;
   try {
