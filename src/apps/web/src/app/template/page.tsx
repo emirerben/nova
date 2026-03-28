@@ -44,6 +44,9 @@ interface ClipFile {
   error: string | null;
 }
 
+// Cache Drive token for the session (valid ~1 hour)
+let cachedDriveToken: { token: string; expiresAt: number } | null = null;
+
 export default function TemplatePage() {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -61,6 +64,7 @@ export default function TemplatePage() {
 
   // Drive import state
   const [driveImportStatus, setDriveImportStatus] = useState<DriveImportBatchStatusResponse | null>(null);
+  const [compress, setCompress] = useState(false);
   const driveAvailable = !!GOOGLE_CLIENT_ID && !!GOOGLE_PICKER_API_KEY;
   const drivePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -122,7 +126,7 @@ export default function TemplatePage() {
     if (!selectedTemplate) return;
     setErrorMsg(null);
 
-    const minClips = selectedTemplate.slot_count || 5;
+    const minClips = 5;
     if (clips.length < minClips) {
       setErrorMsg(`This template needs at least ${minClips} clips. Add ${minClips - clips.length} more.`);
       return;
@@ -187,19 +191,25 @@ export default function TemplatePage() {
     try {
       await preloadDriveScripts();
 
+      // Reuse cached token if still valid
       let accessToken: string;
-      try {
-        accessToken = await requestDriveAccessToken(GOOGLE_CLIENT_ID);
-      } catch (err) {
-        if (err instanceof Error && err.message === "popup_closed") return;
-        throw err;
+      if (cachedDriveToken && Date.now() < cachedDriveToken.expiresAt - 5 * 60 * 1000) {
+        accessToken = cachedDriveToken.token;
+      } else {
+        try {
+          accessToken = await requestDriveAccessToken(GOOGLE_CLIENT_ID);
+        } catch (err) {
+          if (err instanceof Error && err.message === "popup_closed") return;
+          throw err;
+        }
+        cachedDriveToken = { token: accessToken, expiresAt: Date.now() + 55 * 60 * 1000 };
       }
 
       const files = await openDrivePicker(accessToken, GOOGLE_PICKER_API_KEY, { multiSelect: true });
       if (files.length === 0) return;
 
       // Validate count
-      const minClips = selectedTemplate.slot_count || 5;
+      const minClips = 5;
       if (files.length < minClips) {
         setErrorMsg(`This template needs at least ${minClips} clips. You selected ${files.length}.`);
         return;
@@ -209,10 +219,12 @@ export default function TemplatePage() {
         return;
       }
 
-      // Check individual file sizes
+      // Check individual file sizes (compress allows 10x larger inputs)
+      const sizeLimit = compress ? MAX_BYTES * 10 : MAX_BYTES;
+      const limitLabel = compress ? "40GB" : "4GB";
       for (const f of files) {
-        if (f.sizeBytes > MAX_BYTES) {
-          setErrorMsg(`"${f.fileName}" exceeds the 4GB limit.`);
+        if (f.sizeBytes > sizeLimit) {
+          setErrorMsg(`"${f.fileName}" exceeds the ${limitLabel} limit.`);
           return;
         }
       }
@@ -227,6 +239,7 @@ export default function TemplatePage() {
           mime_type: f.mimeType,
         })),
         google_access_token: accessToken,
+        compress,
       });
 
       // Poll with setTimeout recursion (prevents overlapping callbacks)
@@ -352,7 +365,7 @@ export default function TemplatePage() {
   }
 
   // ── Upload View (template selected) ─────────────────────────────────────────
-  const minClips = selectedTemplate?.slot_count || 5;
+  const minClips = 5;
   const canSubmit = clips.length >= minClips && pageState === "upload";
   const totalProgress =
     clips.length > 0
@@ -372,9 +385,22 @@ export default function TemplatePage() {
         <h1 className="text-2xl font-bold mb-1">
           {selectedTemplate?.name || "Upload Clips"}
         </h1>
-        <p className="text-zinc-400 text-sm mb-6">
+        <p className="text-zinc-400 text-sm mb-4">
           Upload {minClips}–{MAX_CLIPS} raw clips. AI will assemble them to match this template.
         </p>
+
+        {/* Compress toggle */}
+        <label className="flex items-center gap-2 mb-5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={compress}
+            onChange={(e) => setCompress(e.target.checked)}
+            disabled={pageState !== "upload"}
+            className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-white accent-white"
+          />
+          <span className="text-zinc-500 text-xs">Compress to 720p</span>
+          <span className="text-zinc-600 text-xs">(~10x faster for testing)</span>
+        </label>
 
         {/* Drop zone */}
         <div

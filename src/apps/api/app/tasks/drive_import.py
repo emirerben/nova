@@ -321,6 +321,7 @@ def batch_import_from_drive(
     files_meta: list[dict],
     encrypted_token: str,
     gcs_paths: list[str],
+    compress: bool = False,
 ) -> None:
     """Download multiple files from Google Drive to GCS (for template mode).
 
@@ -385,6 +386,13 @@ def batch_import_from_drive(
                 duration = _ffprobe_duration(local_path)
                 if duration > settings.max_duration_s:
                     raise ValueError(f"{filename}: video is {duration:.0f}s, exceeds limit")
+
+                # Compress for testing (720p, ~10x smaller)
+                if compress:
+                    compressed_path = os.path.join(tmpdir, f"compressed_{i:03d}.mp4")
+                    _compress_for_testing(local_path, compressed_path)
+                    os.remove(local_path)
+                    os.rename(compressed_path, local_path)
 
                 actual_size = os.path.getsize(local_path)
                 if actual_size > settings.max_upload_bytes:

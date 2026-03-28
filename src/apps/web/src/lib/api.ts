@@ -172,6 +172,7 @@ export async function importBatchFromDrive(params: {
     mime_type: string;
   }>;
   google_access_token: string;
+  compress?: boolean;
 }): Promise<DriveImportBatchResponse> {
   let res: Response;
   try {

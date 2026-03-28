@@ -292,6 +292,7 @@ class DriveFileInfo(BaseModel):
 class DriveImportBatchRequest(BaseModel):
     files: list[DriveFileInfo]
     google_access_token: str
+    compress: bool = False
 
 
 class DriveImportBatchResponse(BaseModel):
@@ -337,11 +338,13 @@ async def import_batch_from_drive(
             detail="Maximum 20 files per batch",
         )
 
+    size_limit = settings.max_upload_bytes * 10 if body.compress else settings.max_upload_bytes
+    limit_gb = size_limit // (1024**3)
     for f in body.files:
-        if f.file_size_bytes > settings.max_upload_bytes:
+        if f.file_size_bytes > size_limit:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"{f.filename} exceeds {settings.max_upload_bytes // (1024**3)}GB limit",
+                detail=f"{f.filename} exceeds {limit_gb}GB limit",
             )
         if f.mime_type not in DRIVE_ALLOWED_MIME:
             raise HTTPException(
@@ -366,7 +369,10 @@ async def import_batch_from_drive(
 
     from app.tasks.drive_import import batch_import_from_drive
 
-    batch_import_from_drive.apply_async(args=[batch_id, files_meta, encrypted_token, gcs_paths])
+    batch_import_from_drive.apply_async(
+        args=[batch_id, files_meta, encrypted_token, gcs_paths],
+        kwargs={"compress": body.compress},
+    )
 
     log.info("batch_drive_import_enqueued", batch_id=batch_id, file_count=len(body.files))
     return DriveImportBatchResponse(batch_id=batch_id, gcs_paths=gcs_paths, status="importing")
