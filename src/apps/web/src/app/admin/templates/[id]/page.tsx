@@ -281,7 +281,7 @@ function RecipeTab({
         {playbackUrl && <VideoPlayer url={playbackUrl} />}
         <div className="flex-1 py-12 text-center">
           <p className="text-red-400 mb-2">Analysis failed</p>
-          <p className="text-zinc-500 text-sm">Try clicking "Reanalyze" in the action bar below.</p>
+          <p className="text-zinc-500 text-sm">Try clicking &ldquo;Reanalyze&rdquo; in the action bar below.</p>
         </div>
       </div>
     );
