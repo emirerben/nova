@@ -34,7 +34,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Job, VideoTemplate
+from app.models import Job, TemplateRecipeVersion, VideoTemplate
 from app.pipeline.agents.gemini_analyzer import (
     ClipMeta,
     GeminiAnalysisError,
@@ -123,7 +123,12 @@ def analyze_template_task(self, template_id: str) -> None:
                 template = db.get(VideoTemplate, template_id)
                 if template:
                     from datetime import datetime  # noqa: PLC0415
-                    template.recipe_cached = {
+
+                    # Determine trigger: reanalysis if recipe already exists
+                    is_reanalysis = template.recipe_cached is not None
+                    trigger = "reanalysis" if is_reanalysis else "initial_analysis"
+
+                    recipe_dict = {
                         "shot_count": recipe.shot_count,
                         "total_duration_s": recipe.total_duration_s,
                         "hook_duration_s": recipe.hook_duration_s,
@@ -138,11 +143,22 @@ def analyze_template_task(self, template_id: str) -> None:
                         "sync_style": recipe.sync_style,
                         "interstitials": recipe.interstitials,
                     }
+
+                    # Save recipe version before updating cached recipe
+                    version = TemplateRecipeVersion(
+                        template_id=template_id,
+                        recipe=recipe_dict,
+                        trigger=trigger,
+                    )
+                    db.add(version)
+
+                    template.recipe_cached = recipe_dict
                     template.recipe_cached_at = datetime.now(UTC)
                     template.analysis_status = "ready"
                     if audio_gcs and not template.audio_gcs_path:
                         template.audio_gcs_path = audio_gcs
                     db.commit()
+                    log.info("recipe_version_created", template_id=template_id, trigger=trigger)
 
             log.info("analyze_template_done", template_id=template_id, slots=len(recipe.slots))
 
