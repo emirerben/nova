@@ -8,6 +8,7 @@ const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — surface an error rather than polling forever
 
 const STAGE_LABELS: Record<string, string> = {
+  importing: "Importing from Google Drive...",
   queued: "Waiting in queue...",
   processing: "Processing video...",
   clips_ready: "Clips ready!",
@@ -78,7 +79,33 @@ export default function JobPage() {
         {/* Status bar */}
         <div className="mb-8">
           <p className="text-zinc-400 text-sm mb-1">{STAGE_LABELS[job.status] ?? job.status}</p>
-          {isProcessing && (
+
+          {/* Drive import progress bar (determinate when available) */}
+          {job.status === "importing" && (
+            <div className="mt-2">
+              {job.drive_filename && (
+                <p className="text-zinc-500 text-xs mb-2">
+                  {job.drive_filename}
+                  {job.drive_file_size_bytes ? ` (${formatBytes(job.drive_file_size_bytes)})` : ""}
+                </p>
+              )}
+              {job.import_progress_pct != null ? (
+                <div className="w-full h-1.5 bg-zinc-800 rounded overflow-hidden">
+                  <div
+                    className="h-full bg-white rounded transition-all duration-500 ease-out"
+                    style={{ width: `${Math.min(job.import_progress_pct, 100)}%` }}
+                  />
+                </div>
+              ) : (
+                <div className="w-full h-1 bg-zinc-800 rounded">
+                  <div className="h-1 bg-white rounded animate-pulse w-1/3" />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Generic progress bar for other processing states */}
+          {isProcessing && job.status !== "importing" && (
             <div className="w-full h-1 bg-zinc-800 rounded">
               <div className="h-1 bg-white rounded animate-pulse w-1/3" />
             </div>
@@ -147,6 +174,12 @@ export default function JobPage() {
       </div>
     </main>
   );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+  return `${(bytes / 1024).toFixed(0)} KB`;
 }
 
 function ClipCard({ clip }: { clip: ClipStatus }) {

@@ -10,6 +10,7 @@ celery_app = Celery(
     include=[
         "app.tasks.orchestrate",
         "app.tasks.template_orchestrate",
+        "app.tasks.drive_import",
     ],
 )
 

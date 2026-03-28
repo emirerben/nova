@@ -1,5 +1,6 @@
 """POST /jobs, GET /jobs/:id/status"""
 
+import json
 import uuid
 
 import structlog
@@ -8,7 +9,19 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import redis
+
+from app.config import settings
 from app.database import get_db
+
+_redis_client: redis.Redis | None = None
+
+
+def _get_redis() -> redis.Redis:
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+    return _redis_client
 from app.models import Job, JobClip
 from app.tasks.orchestrate import orchestrate_job
 
@@ -47,6 +60,10 @@ class JobStatusResponse(BaseModel):
     error_detail: str | None
     created_at: str
     updated_at: str
+    # Drive import progress (only present when status == "importing")
+    import_progress_pct: float | None = None
+    drive_filename: str | None = None
+    drive_file_size_bytes: int | None = None
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
@@ -87,6 +104,25 @@ async def get_job_status(
     # Only return top-3 ranked clips to the client (hold 4-9 for re-roll)
     visible_clips = [c for c in clips if c.rank <= 3]
 
+    # Read Drive import progress from Redis (only when importing)
+    import_progress_pct = None
+    drive_filename = None
+    drive_file_size_bytes = None
+
+    if job.status == "importing":
+        try:
+            r = _get_redis()
+            raw = r.get(f"import:progress:{job_id}")
+            if raw:
+                progress = json.loads(raw)
+                import_progress_pct = progress.get("progress_pct")
+        except Exception:
+            pass  # Redis unavailable — progress just won't show
+
+        if job.probe_metadata:
+            drive_filename = job.probe_metadata.get("drive_filename")
+            drive_file_size_bytes = job.probe_metadata.get("drive_file_size_bytes")
+
     return JobStatusResponse(
         id=str(job.id),
         status=job.status,
@@ -113,4 +149,7 @@ async def get_job_status(
         error_detail=job.error_detail,
         created_at=job.created_at.isoformat(),
         updated_at=job.updated_at.isoformat(),
+        import_progress_pct=import_progress_pct,
+        drive_filename=drive_filename,
+        drive_file_size_bytes=drive_file_size_bytes,
     )

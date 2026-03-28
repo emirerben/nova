@@ -4,13 +4,24 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   type BatchPresignedFile,
+  type DriveImportBatchStatusResponse,
   type TemplateListItem,
   createTemplateJob,
+  getDriveImportBatchStatus,
   getBatchPresignedUrls,
+  importBatchFromDrive,
   listTemplates,
   uploadFileToGcs,
 } from "@/lib/api";
 import { trackRecentJob } from "@/hooks/useArchitectureData";
+import {
+  preloadDriveScripts,
+  requestDriveAccessToken,
+  openDrivePicker,
+} from "@/lib/google-drive-picker";
+
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
+const GOOGLE_PICKER_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? "";
 
 // ── Tone → gradient mapping for placeholder thumbnails ──────────────────────
 const TONE_GRADIENTS: Record<string, string> = {
@@ -24,7 +35,7 @@ const ALLOWED_MIME = ["video/mp4", "video/quicktime"];
 const MAX_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_CLIPS = 20;
 
-type PageState = "gallery" | "upload" | "uploading" | "enqueuing" | "error";
+type PageState = "gallery" | "upload" | "uploading" | "enqueuing" | "drive_importing" | "error";
 
 interface ClipFile {
   file: File;
@@ -47,6 +58,23 @@ export default function TemplatePage() {
   const [clips, setClips] = useState<ClipFile[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+
+  // Drive import state
+  const [driveImportStatus, setDriveImportStatus] = useState<DriveImportBatchStatusResponse | null>(null);
+  const driveAvailable = !!GOOGLE_CLIENT_ID && !!GOOGLE_PICKER_API_KEY;
+  const drivePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Clean up Drive polling on unmount
+  useEffect(() => {
+    return () => {
+      if (drivePollRef.current) clearTimeout(drivePollRef.current as unknown as ReturnType<typeof setTimeout>);
+    };
+  }, []);
+
+  // Preload Drive scripts
+  useEffect(() => {
+    if (driveAvailable) preloadDriveScripts().catch(() => {});
+  }, [driveAvailable]);
 
   // Fetch templates on mount
   useEffect(() => {
@@ -147,6 +175,112 @@ export default function TemplatePage() {
     } catch (err) {
       setPageState("error");
       setErrorMsg(err instanceof Error ? err.message : "Something went wrong.");
+    }
+  }
+
+  // ── Drive import for template clips ──────────────────────────────────────
+
+  async function handleDriveImportClips() {
+    if (!selectedTemplate) return;
+    setErrorMsg(null);
+
+    try {
+      await preloadDriveScripts();
+
+      let accessToken: string;
+      try {
+        accessToken = await requestDriveAccessToken(GOOGLE_CLIENT_ID);
+      } catch (err) {
+        if (err instanceof Error && err.message === "popup_closed") return;
+        throw err;
+      }
+
+      const files = await openDrivePicker(accessToken, GOOGLE_PICKER_API_KEY, { multiSelect: true });
+      if (files.length === 0) return;
+
+      // Validate count
+      const minClips = selectedTemplate.slot_count || 5;
+      if (files.length < minClips) {
+        setErrorMsg(`This template needs at least ${minClips} clips. You selected ${files.length}.`);
+        return;
+      }
+      if (files.length > MAX_CLIPS) {
+        setErrorMsg(`Maximum ${MAX_CLIPS} clips per batch.`);
+        return;
+      }
+
+      // Check individual file sizes
+      for (const f of files) {
+        if (f.sizeBytes > MAX_BYTES) {
+          setErrorMsg(`"${f.fileName}" exceeds the 4GB limit.`);
+          return;
+        }
+      }
+
+      setPageState("drive_importing");
+
+      const { batch_id, gcs_paths } = await importBatchFromDrive({
+        files: files.map((f) => ({
+          drive_file_id: f.fileId,
+          filename: f.fileName,
+          file_size_bytes: f.sizeBytes,
+          mime_type: f.mimeType,
+        })),
+        google_access_token: accessToken,
+      });
+
+      // Poll with setTimeout recursion (prevents overlapping callbacks)
+      async function pollOnce() {
+        try {
+          const status = await getDriveImportBatchStatus(batch_id);
+          setDriveImportStatus(status);
+
+          if (status.status === "complete") {
+            setPageState("enqueuing");
+            const { job_id } = await createTemplateJob({
+              template_id: selectedTemplate.id,
+              clip_gcs_paths: status.gcs_paths,
+              selected_platforms: ["tiktok", "instagram", "youtube"],
+            });
+            trackRecentJob(job_id, "template");
+            router.push(`/template-jobs/${job_id}`);
+          } else if (status.status === "partial_failure") {
+            if (status.completed >= minClips) {
+              setPageState("enqueuing");
+              const { job_id } = await createTemplateJob({
+                template_id: selectedTemplate.id,
+                clip_gcs_paths: status.gcs_paths,
+                selected_platforms: ["tiktok", "instagram", "youtube"],
+              });
+              trackRecentJob(job_id, "template");
+              router.push(`/template-jobs/${job_id}`);
+            } else {
+              setPageState("error");
+              setErrorMsg(
+                `Only ${status.completed}/${status.total} clips imported (need at least ${minClips}). ` +
+                `Failed: ${status.errors.join("; ")}`
+              );
+            }
+          } else if (status.status === "failed") {
+            setPageState("error");
+            setErrorMsg(`All imports failed: ${status.errors.join("; ")}`);
+          } else {
+            // Still importing, schedule next poll (setTimeout prevents overlap)
+            drivePollRef.current = setTimeout(pollOnce, 3000) as unknown as ReturnType<typeof setInterval>;
+          }
+        } catch {
+          setPageState("error");
+          setErrorMsg("Failed to check import status.");
+        }
+      }
+      drivePollRef.current = setTimeout(pollOnce, 1000) as unknown as ReturnType<typeof setInterval>;
+    } catch (err) {
+      setPageState("error");
+      if (err instanceof Error && err.message.includes("denied")) {
+        setErrorMsg("Google Drive access was denied. Please try again and grant permission.");
+      } else {
+        setErrorMsg(err instanceof Error ? err.message : "Drive import failed.");
+      }
     }
   }
 
@@ -270,7 +404,56 @@ export default function TemplatePage() {
             className="hidden"
             onChange={(e) => e.target.files && addFiles(e.target.files)}
           />
+
+          {/* Drive import button */}
+          {driveAvailable && pageState === "upload" && (
+            <div className="mt-4 flex flex-col items-center">
+              <div className="flex items-center gap-3 mb-3 w-32">
+                <div className="flex-1 h-px bg-zinc-700" />
+                <span className="text-zinc-500 text-xs">or</span>
+                <div className="flex-1 h-px bg-zinc-700" />
+              </div>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleDriveImportClips(); }}
+                className="flex items-center gap-2 px-4 py-2 border border-zinc-600 rounded-full text-xs text-zinc-300 hover:border-zinc-400 hover:text-white transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
+                  <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+                  <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-20.4 35.3c-.8 1.4-1.2 2.95-1.2 4.5h27.5z" fill="#00ac47"/>
+                  <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.5l5.85 13.15z" fill="#ea4335"/>
+                  <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+                  <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+                  <path d="m73.4 26.5-10.1-17.5c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 23.5h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+                </svg>
+                Import clips from Google Drive
+              </button>
+            </div>
+          )}
         </div>
+
+        {/* Drive import progress */}
+        {pageState === "drive_importing" && driveImportStatus && (
+          <div className="mt-4">
+            <div className="flex justify-between text-xs text-zinc-400 mb-1">
+              <span>
+                Importing from Google Drive ({driveImportStatus.completed}/{driveImportStatus.total})
+              </span>
+              {driveImportStatus.current_file && (
+                <span className="text-zinc-500 truncate ml-2">{driveImportStatus.current_file}</span>
+              )}
+            </div>
+            <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-white transition-all duration-500"
+                style={{ width: `${driveImportStatus.total > 0 ? (driveImportStatus.completed / driveImportStatus.total) * 100 : 0}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {pageState === "drive_importing" && !driveImportStatus && (
+          <p className="mt-4 text-sm text-zinc-400 text-center animate-pulse">Starting Drive import...</p>
+        )}
 
         {/* Clip list with per-file progress */}
         {clips.length > 0 && (
