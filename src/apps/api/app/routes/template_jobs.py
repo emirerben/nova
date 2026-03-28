@@ -123,7 +123,7 @@ async def create_template_job(
         "template_job_created",
         job_id=job_id,
         template_id=req.template_id,
-        clips=n_clips,
+        clips=len(req.clip_gcs_paths),
         subject=req.subject,
     )
     return TemplateJobResponse(job_id=job_id, status="queued", template_id=req.template_id)
