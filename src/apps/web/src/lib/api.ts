@@ -41,6 +41,15 @@ export type JobStatus =
   | "posting_failed"
   | "processing_failed";
 
+/** Terminal job statuses — shared between job tracker and architecture dashboard */
+export const TERMINAL_STATES = new Set<JobStatus>([
+  "clips_ready",
+  "clips_ready_partial",
+  "done",
+  "posting_failed",
+  "processing_failed",
+]);
+
 export interface JobStatusResponse {
   id: string;
   status: JobStatus;

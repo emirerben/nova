@@ -2,7 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { getJobStatus, type ClipStatus, type JobStatus, type JobStatusResponse } from "@/lib/api";
+import { getJobStatus, TERMINAL_STATES, type ClipStatus, type JobStatus, type JobStatusResponse } from "@/lib/api";
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 10 * 60 * 1000; // 10 min — surface an error rather than polling forever
@@ -18,14 +18,6 @@ const STAGE_LABELS: Record<string, string> = {
   posting_failed: "Posting failed",
   processing_failed: "Processing failed",
 };
-
-const TERMINAL_STATES = new Set<JobStatus>([
-  "clips_ready",
-  "clips_ready_partial",
-  "done",
-  "posting_failed",
-  "processing_failed",
-]);
 
 export default function JobPage() {
   const { id } = useParams<{ id: string }>();
