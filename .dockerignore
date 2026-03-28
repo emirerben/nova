@@ -1,0 +1,69 @@
+# ── Secrets & environment ──
+.env
+.env.*
+
+# ── Git ──
+.git
+.gitignore
+
+# ── Python caches ──
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# ── Node ──
+node_modules
+
+# ── Virtual environments ──
+.venv
+venv
+
+# ── Video files (never ship media in the image) ──
+*.mp4
+*.mov
+*.mkv
+*.avi
+
+# ── Upload / output / temp directories ──
+raw_uploads/
+processed_outputs/
+tmp/
+
+# ── OS junk ──
+.DS_Store
+
+# ── Tool / agent metadata ──
+.gstack/
+.claude/
+.context/
+agents/
+
+# ── Frontend (separate container, not needed in API image) ──
+src/apps/web/
+
+# ── Tests (save image size) ──
+tests/
+**/tests/
+
+# ── Docker Compose (not used in Fly.io deploy) ──
+docker-compose.yml
+docker-compose*.yml
+
+# ── Documentation (not needed at runtime) ──
+README.md
+CHANGELOG.md
+TODOS.md
+docs/
+
+# ── GitHub CI/CD config ──
+.github/
+
+# ── Misc dev files ──
+dev.sh
+setup-cofounder.sh
+Makefile
+firebase-debug.log
+openclaw.config.json

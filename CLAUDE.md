@@ -47,21 +47,29 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - OPENAI_API_KEY
 
 ## Deploy Configuration (configured by /setup-deploy)
-- Platform: Fly.io (planned, not yet configured)
-- Production URL: TBD (update after `fly launch`)
-- Deploy workflow: auto-deploy on push to main (via Fly.io GitHub integration)
-- Deploy status command: `fly status --app <app-name>`
+- Platform: Fly.io
+- App name: nova-video
+- Production URL: https://nova-video.fly.dev
+- Deploy workflow: `fly deploy` from repo root (or GitHub Actions CD)
+- Deploy status command: `fly status --app nova-video`
 - Merge method: squash
 - Project type: web app + API + background workers
+- Process groups: api (FastAPI/uvicorn) + worker (Celery)
 
 ### Custom deploy hooks
 - Pre-merge: none
-- Deploy trigger: automatic on push to main (Fly.io GitHub integration)
-- Deploy status: `fly status --app <app-name>` (after Fly CLI installed)
-- Health check: `https://<app-name>.fly.dev` (after deploy configured)
+- Deploy trigger: `fly deploy` (manual) or GitHub Actions (after CD workflow added)
+- Deploy status: `fly status --app nova-video`
+- Health check: https://nova-video.fly.dev/health
 
-### Setup remaining
-1. Install Fly CLI: `curl -L https://fly.io/install.sh | sh`
-2. Create Fly app: `fly launch` (generates fly.toml + Dockerfile)
-3. Connect GitHub: `fly deploy` or Fly.io dashboard → GitHub integration
-4. Update this section with real app name and production URL
+### Secrets (set via `fly secrets set`)
+Required before first deploy:
+```bash
+fly secrets set -a nova-video \
+  DATABASE_URL="..." \
+  REDIS_URL="..." \
+  STORAGE_BUCKET="..." \
+  STORAGE_PROVIDER="..." \
+  OPENAI_API_KEY="..." \
+  GEMINI_API_KEY="..."
+```
