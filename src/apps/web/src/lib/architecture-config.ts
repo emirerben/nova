@@ -174,7 +174,6 @@ const processingChildren: Record<string, Module> = {
     level: "L2",
     files: [
       "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
-      "src/apps/api/app/pipeline/agents/hook_scorer.py",
     ],
     githubLabel: "module:processing",
     dependsOn: ["probe"],
@@ -499,7 +498,7 @@ export const modules: Record<string, Module> = {
     name: "Redis",
     description: "Celery job queue for async processing",
     level: "L1",
-    files: ["src/apps/api/app/celery_app.py"],
+    files: ["src/apps/api/app/worker.py"],
     githubLabel: "module:infra",
     dependsOn: [],
     produces: [],
