@@ -18,6 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Job, VideoTemplate
+from app.services.template_validation import (
+    get_template_or_404,
+    require_ready,
+    validate_clip_count,
+)
 
 log = structlog.get_logger()
 
@@ -92,34 +97,9 @@ async def create_template_job(
     db: AsyncSession = Depends(get_db),
 ) -> TemplateJobResponse:
     """Create a template-mode job. Validates template existence and clip count."""
-    result = await db.execute(
-        select(VideoTemplate).where(VideoTemplate.id == req.template_id)
-    )
-    template = result.scalar_one_or_none()
-    if template is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template not found")
-
-    if template.analysis_status != "ready":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Template is still being analyzed (status: {template.analysis_status}). "
-                   "Try again in a few seconds.",
-        )
-
-    n_clips = len(req.clip_gcs_paths)
-    if n_clips < template.required_clips_min:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"Template requires at least {template.required_clips_min} clips, "
-                f"got {n_clips}."
-            ),
-        )
-    if n_clips > template.required_clips_max:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Template allows at most {template.required_clips_max} clips, got {n_clips}.",
-        )
+    template = await get_template_or_404(req.template_id, db)
+    require_ready(template)
+    validate_clip_count(template, len(req.clip_gcs_paths))
 
     job = Job(
         user_id=SYNTHETIC_USER_ID,

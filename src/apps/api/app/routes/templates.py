@@ -45,13 +45,17 @@ class PlaybackUrlResponse(BaseModel):
 async def list_templates(
     db: AsyncSession = Depends(get_db),
 ) -> list[TemplateListItem]:
-    """Return all templates with analysis_status='ready'.
+    """Return all published, non-archived templates.
 
+    Filters by published_at IS NOT NULL AND archived_at IS NULL.
     Derives slot_count, total_duration_s, copy_tone from recipe_cached JSONB.
     Silently skips templates with None or corrupt recipe_cached.
     """
     result = await db.execute(
-        select(VideoTemplate).where(VideoTemplate.analysis_status == "ready")
+        select(VideoTemplate).where(
+            VideoTemplate.published_at.isnot(None),
+            VideoTemplate.archived_at.is_(None),
+        )
     )
     templates = result.scalars().all()
 

@@ -7,6 +7,7 @@ from sqlalchemy import (
     ARRAY,
     TIMESTAMP,
     BigInteger,
+    CheckConstraint,
     Float,
     ForeignKey,
     Index,
@@ -104,8 +105,46 @@ class VideoTemplate(Base):
     audio_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     required_clips_min: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     required_clips_max: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    # Admin lifecycle columns (nullable for backward compat)
+    published_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    thumbnail_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
+    )
+
+    recipe_versions: Mapped[list["TemplateRecipeVersion"]] = relationship(
+        back_populates="template", cascade="all, delete-orphan"
+    )
+
+
+class TemplateRecipeVersion(Base):
+    """Tracks recipe versions across analyze/reanalyze cycles for comparison."""
+
+    __tablename__ = "template_recipe_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    template_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("video_templates.id", ondelete="CASCADE"), nullable=False
+    )
+    recipe: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    trigger: Mapped[str] = mapped_column(Text, nullable=False)  # initial_analysis | reanalysis | manual_edit
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now()
+    )
+
+    template: Mapped["VideoTemplate"] = relationship(back_populates="recipe_versions")
+
+    __table_args__ = (
+        CheckConstraint(
+            "trigger IN ('initial_analysis', 'reanalysis', 'manual_edit')",
+            name="ck_recipe_version_trigger",
+        ),
+        Index("idx_recipe_versions_template_created", "template_id", "created_at"),
     )
 
 
@@ -148,6 +187,7 @@ class Job(Base):
     __table_args__ = (
         Index("idx_jobs_user_id", "user_id"),
         Index("idx_jobs_status", "status"),
+        Index("idx_jobs_template_id", "template_id"),
     )
 
 
