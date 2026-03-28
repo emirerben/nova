@@ -1,0 +1,71 @@
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+
+app = "nova-video"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  release_command = "python -m alembic upgrade head"
+
+# ---------------------------------------------------------------------------
+# Process groups
+# ---------------------------------------------------------------------------
+
+[processes]
+  api = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+  worker = "celery -A app.worker worker --loglevel=info --concurrency=2"
+
+# ---------------------------------------------------------------------------
+# HTTP service (api process only)
+# ---------------------------------------------------------------------------
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8000
+  processes = ["api"]
+  auto_stop_machines = true
+  auto_start_machines = true
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.http_checks]]
+    interval = 15000        # ms
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+    protocol = "http"
+    timeout = 5000          # ms
+
+# ---------------------------------------------------------------------------
+# Worker — always running, no HTTP exposure
+# ---------------------------------------------------------------------------
+
+[[services]]
+  processes = ["worker"]
+  auto_stop_machines = false
+  auto_start_machines = true
+
+# ---------------------------------------------------------------------------
+# VM sizing per process group
+# ---------------------------------------------------------------------------
+
+[[vm]]
+  processes = ["api"]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
+
+[[vm]]
+  processes = ["worker"]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_mb = 2048

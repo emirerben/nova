@@ -1,3 +1,6 @@
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +18,35 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str
+
+    @field_validator("database_url")
+    @classmethod
+    def normalize_postgres_scheme(cls, v: str) -> str:
+        """Fly Postgres (and Heroku) provide postgres:// URLs, but
+        SQLAlchemy 1.4+ only recognises the postgresql:// scheme."""
+        if v.startswith("postgres://"):
+            v = v.replace("postgres://", "postgresql://", 1)
+        return v
+
+    @property
+    def asyncpg_database_url(self) -> str:
+        """Return a postgresql+asyncpg:// URL suitable for asyncpg.
+
+        asyncpg does not understand libpq-specific query params like
+        ``sslmode``.  We translate ``sslmode`` to asyncpg's ``ssl``
+        param and swap the scheme to ``postgresql+asyncpg://``.
+        """
+        url = self.database_url.replace(
+            "postgresql://", "postgresql+asyncpg://", 1
+        )
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        # Translate libpq sslmode → asyncpg ssl
+        sslmode_vals = qs.pop("sslmode", None)
+        if sslmode_vals and "ssl" not in qs:
+            qs["ssl"] = sslmode_vals  # e.g. ["disable"]
+        cleaned_query = urlencode(qs, doseq=True)
+        return urlunparse(parsed._replace(query=cleaned_query))
 
     # OpenAI (Whisper fallback)
     openai_api_key: str = ""
