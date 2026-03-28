@@ -6,6 +6,9 @@ primary_region = "iad"
 [build]
   dockerfile = "Dockerfile"
 
+[deploy]
+  release_command = "python -m alembic upgrade head"
+
 # ---------------------------------------------------------------------------
 # Process groups
 # ---------------------------------------------------------------------------
@@ -65,4 +68,4 @@ primary_region = "iad"
   processes = ["worker"]
   cpu_kind = "shared"
   cpus = 2
-  memory_mb = 1024
+  memory_mb = 2048

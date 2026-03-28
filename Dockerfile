@@ -6,6 +6,7 @@ FROM python:3.11-slim
 # System deps required by FFmpeg pipeline, opencv, and python-magic
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    fonts-dejavu-core \
     libmagic1 \
     libgl1 \
     libglib2.0-0 \
@@ -34,6 +35,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools && \
 # uvicorn adds CWD to sys.path, so app.main resolves from /app/app/main.py
 COPY src/apps/api/app ./app
 COPY src/apps/api/assets ./assets
+COPY src/apps/api/prompts ./prompts
 COPY src/apps/api/alembic.ini .
 
 # Own everything under /app by nova
