@@ -1,4 +1,4 @@
-"""Tests for the extended admin endpoints (list, update, metrics, test-job, presigned, recipe-history).
+"""Tests for extended admin endpoints (list, update, metrics, test-job, presigned, recipe-history).
 
 Covers:
 - List all templates (empty, with data, pagination)

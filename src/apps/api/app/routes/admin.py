@@ -360,7 +360,10 @@ async def update_template(
     if template.required_clips_min > template.required_clips_max:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"required_clips_min ({template.required_clips_min}) must be <= required_clips_max ({template.required_clips_max})",
+            detail=(
+                f"required_clips_min ({template.required_clips_min}) "
+                f"must be <= required_clips_max ({template.required_clips_max})"
+            ),
         )
 
     if req.publish:
@@ -519,8 +522,14 @@ async def get_recipe_history(
                 id=str(v.id),
                 trigger=v.trigger,
                 created_at=v.created_at,
-                slot_count=len(v.recipe.get("slots", [])) if isinstance(v.recipe, dict) else 0,
-                total_duration_s=float(v.recipe.get("total_duration_s", 0)) if isinstance(v.recipe, dict) else 0,
+                slot_count=(
+                    len(v.recipe.get("slots", []))
+                    if isinstance(v.recipe, dict) else 0
+                ),
+                total_duration_s=(
+                    float(v.recipe.get("total_duration_s", 0))
+                    if isinstance(v.recipe, dict) else 0
+                ),
             )
             for v in versions
         ],

@@ -30,8 +30,14 @@ depends_on = None
 
 def upgrade() -> None:
     # ── New columns on video_templates ────────────────────────────────────
-    op.add_column("video_templates", sa.Column("published_at", sa.TIMESTAMP(timezone=True), nullable=True))
-    op.add_column("video_templates", sa.Column("archived_at", sa.TIMESTAMP(timezone=True), nullable=True))
+    op.add_column(
+        "video_templates",
+        sa.Column("published_at", sa.TIMESTAMP(timezone=True), nullable=True),
+    )
+    op.add_column(
+        "video_templates",
+        sa.Column("archived_at", sa.TIMESTAMP(timezone=True), nullable=True),
+    )
     op.add_column("video_templates", sa.Column("description", sa.Text(), nullable=True))
     op.add_column("video_templates", sa.Column("source_url", sa.Text(), nullable=True))
     op.add_column("video_templates", sa.Column("thumbnail_gcs_path", sa.Text(), nullable=True))

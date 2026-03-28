@@ -132,7 +132,8 @@ class TemplateRecipeVersion(Base):
         Text, ForeignKey("video_templates.id", ondelete="CASCADE"), nullable=False
     )
     recipe: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    trigger: Mapped[str] = mapped_column(Text, nullable=False)  # initial_analysis | reanalysis | manual_edit
+    # initial_analysis | reanalysis | manual_edit
+    trigger: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
     )

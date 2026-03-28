@@ -125,7 +125,8 @@ def analyze_template_task(self, template_id: str) -> None:
                     from datetime import datetime  # noqa: PLC0415
 
                     # Determine trigger: reanalysis if recipe already exists
-                    trigger = "reanalysis" if template.recipe_cached is not None else "initial_analysis"
+                    is_reanalysis = template.recipe_cached is not None
+                    trigger = "reanalysis" if is_reanalysis else "initial_analysis"
 
                     recipe_dict = {
                         "shot_count": recipe.shot_count,
