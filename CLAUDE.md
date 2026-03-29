@@ -76,6 +76,7 @@ fly secrets set -a nova-video \
   REDIS_URL="..." \
   STORAGE_BUCKET="..." \
   STORAGE_PROVIDER="..." \
+  GOOGLE_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}' \
   OPENAI_API_KEY="..." \
   GEMINI_API_KEY="..."
 ```

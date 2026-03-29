@@ -78,3 +78,23 @@ def test_adc_fallback_when_neither_set(mock_gcs_client):
         storage._get_client()
 
     mock_gcs_client.assert_called_once_with(project=None, credentials=None)
+
+
+def test_invalid_sa_structure_raises_runtime_error():
+    """Tier 2: valid JSON but not a valid service account key structure."""
+    with patch.object(storage.settings, "google_application_credentials", ""), \
+         patch.object(storage.settings, "google_service_account_json", '{"foo": "bar"}'), \
+         patch.object(storage.settings, "gcloud_project", ""):
+        with pytest.raises(RuntimeError, match="missing required fields"):
+            storage._get_client()
+
+
+@patch("app.storage.gcs.Client")
+def test_whitespace_only_json_falls_through_to_adc(mock_gcs_client):
+    """Whitespace-only GOOGLE_SERVICE_ACCOUNT_JSON is treated as unset (ADC fallback)."""
+    with patch.object(storage.settings, "google_application_credentials", ""), \
+         patch.object(storage.settings, "google_service_account_json", "  \n  "), \
+         patch.object(storage.settings, "gcloud_project", ""):
+        storage._get_client()
+
+    mock_gcs_client.assert_called_once_with(project=None, credentials=None)

@@ -25,14 +25,21 @@ def _get_client() -> gcs.Client:
             creds = service_account.Credentials.from_service_account_file(
                 settings.google_application_credentials
             )
-        elif settings.google_service_account_json:
+        elif settings.google_service_account_json.strip():
+            raw = settings.google_service_account_json.strip()
             try:
-                info = json.loads(settings.google_service_account_json)
+                info = json.loads(raw)
             except json.JSONDecodeError as exc:
                 raise RuntimeError(
                     "GOOGLE_SERVICE_ACCOUNT_JSON is set but contains invalid JSON"
                 ) from exc
-            creds = service_account.Credentials.from_service_account_info(info)
+            try:
+                creds = service_account.Credentials.from_service_account_info(info)
+            except (ValueError, KeyError) as exc:
+                raise RuntimeError(
+                    "GOOGLE_SERVICE_ACCOUNT_JSON contains valid JSON but is not a "
+                    "valid service account key (missing required fields)"
+                ) from exc
         else:
             creds = None  # triggers ADC inside gcs.Client
         _client = gcs.Client(project=project, credentials=creds)
