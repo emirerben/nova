@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3.0] - 2026-03-29
+
+### Added
+- Batch import progress recovery via localStorage: users can navigate away during a Drive import and return to find progress resumed automatically
+- `saveBatchToStorage`, `readBatchFromStorage`, `clearBatchStorage` helpers with SSR guard, type validation, and 30-minute staleness protection
+- Extracted `startBatchPolling(batchId, templateId)` reusable polling function from inline handler, supports both new imports and recovery
+- Mount-time recovery `useEffect` that reads localStorage and restarts polling on page load
+- Retry logic for transient network errors during polling (3 consecutive failures before giving up, exponential backoff)
+- Recovery UI indicator: "Resuming Drive import..." message distinguishes recovery from new imports
+- 11 tests for batch recovery: localStorage helpers, staleness detection, malformed data handling, overwrite behavior
+
 ## [0.1.2.0] - 2026-03-28
 
 ### Added
