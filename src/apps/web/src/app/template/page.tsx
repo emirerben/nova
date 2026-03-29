@@ -23,6 +23,39 @@ import {
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
 const GOOGLE_PICKER_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? "";
 
+// ── Batch import localStorage persistence (survives navigation) ─────────────
+const BATCH_STORAGE_KEY = "nova_active_batch_import";
+
+const BATCH_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes — well within Redis 1h TTL
+
+export function saveBatchToStorage(batchId: string, templateId: string) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(BATCH_STORAGE_KEY, JSON.stringify({ batch_id: batchId, template_id: templateId, saved_at: Date.now() }));
+}
+
+export function readBatchFromStorage(): { batch_id: string; template_id: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(BATCH_STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (typeof data?.batch_id !== "string" || typeof data?.template_id !== "string") return null;
+    // Discard stale entries — Redis batch keys expire in 1h
+    if (typeof data.saved_at === "number" && Date.now() - data.saved_at > BATCH_MAX_AGE_MS) {
+      localStorage.removeItem(BATCH_STORAGE_KEY);
+      return null;
+    }
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export function clearBatchStorage() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(BATCH_STORAGE_KEY);
+}
+
 // ── Tone → gradient mapping for placeholder thumbnails ──────────────────────
 const TONE_GRADIENTS: Record<string, string> = {
   casual: "from-orange-500 to-amber-400",
@@ -65,6 +98,7 @@ export default function TemplatePage() {
   // Drive import state
   const [driveImportStatus, setDriveImportStatus] = useState<DriveImportBatchStatusResponse | null>(null);
   const [compress, setCompress] = useState(false);
+  const [isRecovery, setIsRecovery] = useState(false);
   const driveAvailable = !!GOOGLE_CLIENT_ID && !!GOOGLE_PICKER_API_KEY;
   const drivePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -86,6 +120,86 @@ export default function TemplatePage() {
       .then(setTemplates)
       .catch((err) => setErrorMsg(err.message))
       .finally(() => setLoadingTemplates(false));
+  }, []);
+
+  // ── Reusable batch polling (used by both new imports and recovery) ────────
+  function startBatchPolling(batchId: string, templateId: string) {
+    // Cancel any existing polling to prevent concurrent poll conflict
+    if (drivePollRef.current) {
+      clearTimeout(drivePollRef.current as unknown as ReturnType<typeof setTimeout>);
+    }
+
+    setPageState("drive_importing");
+
+    const minClips = 5;
+    const maxRetries = 3;
+    let consecutiveErrors = 0;
+
+    async function pollOnce() {
+      try {
+        const status = await getDriveImportBatchStatus(batchId);
+        consecutiveErrors = 0; // Reset on success
+        setDriveImportStatus(status);
+
+        if (status.status === "complete") {
+          clearBatchStorage();
+          setPageState("enqueuing");
+          const { job_id } = await createTemplateJob({
+            template_id: templateId,
+            clip_gcs_paths: status.gcs_paths,
+            selected_platforms: ["tiktok", "instagram", "youtube"],
+          });
+          trackRecentJob(job_id, "template");
+          router.push(`/template-jobs/${job_id}`);
+        } else if (status.status === "partial_failure") {
+          if (status.completed >= minClips) {
+            clearBatchStorage();
+            setPageState("enqueuing");
+            const { job_id } = await createTemplateJob({
+              template_id: templateId,
+              clip_gcs_paths: status.gcs_paths,
+              selected_platforms: ["tiktok", "instagram", "youtube"],
+            });
+            trackRecentJob(job_id, "template");
+            router.push(`/template-jobs/${job_id}`);
+          } else {
+            clearBatchStorage();
+            setPageState("error");
+            setErrorMsg(
+              `Only ${status.completed}/${status.total} clips imported (need at least ${minClips}). ` +
+              `Failed: ${status.errors.join("; ")}`
+            );
+          }
+        } else if (status.status === "failed") {
+          clearBatchStorage();
+          setPageState("error");
+          setErrorMsg(`All imports failed: ${status.errors.join("; ")}`);
+        } else {
+          drivePollRef.current = setTimeout(pollOnce, 3000) as unknown as ReturnType<typeof setInterval>;
+        }
+      } catch {
+        consecutiveErrors++;
+        if (consecutiveErrors >= maxRetries) {
+          clearBatchStorage();
+          setPageState("error");
+          setErrorMsg("Failed to check import status.");
+        } else {
+          // Transient error — retry with backoff
+          drivePollRef.current = setTimeout(pollOnce, 3000 * consecutiveErrors) as unknown as ReturnType<typeof setInterval>;
+        }
+      }
+    }
+
+    drivePollRef.current = setTimeout(pollOnce, 1000) as unknown as ReturnType<typeof setInterval>;
+  }
+
+  // Recover in-progress batch import from localStorage
+  useEffect(() => {
+    const saved = readBatchFromStorage();
+    if (!saved) return;
+    setIsRecovery(true);
+    startBatchPolling(saved.batch_id, saved.template_id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function selectTemplate(t: TemplateListItem) {
@@ -187,6 +301,7 @@ export default function TemplatePage() {
   async function handleDriveImportClips() {
     if (!selectedTemplate) return;
     setErrorMsg(null);
+    setIsRecovery(false);
 
     try {
       await preloadDriveScripts();
@@ -231,7 +346,7 @@ export default function TemplatePage() {
 
       setPageState("drive_importing");
 
-      const { batch_id, gcs_paths } = await importBatchFromDrive({
+      const { batch_id } = await importBatchFromDrive({
         files: files.map((f) => ({
           drive_file_id: f.fileId,
           filename: f.fileName,
@@ -242,51 +357,9 @@ export default function TemplatePage() {
         compress,
       });
 
-      // Poll with setTimeout recursion (prevents overlapping callbacks)
-      async function pollOnce() {
-        try {
-          const status = await getDriveImportBatchStatus(batch_id);
-          setDriveImportStatus(status);
-
-          if (status.status === "complete") {
-            setPageState("enqueuing");
-            const { job_id } = await createTemplateJob({
-              template_id: selectedTemplate.id,
-              clip_gcs_paths: status.gcs_paths,
-              selected_platforms: ["tiktok", "instagram", "youtube"],
-            });
-            trackRecentJob(job_id, "template");
-            router.push(`/template-jobs/${job_id}`);
-          } else if (status.status === "partial_failure") {
-            if (status.completed >= minClips) {
-              setPageState("enqueuing");
-              const { job_id } = await createTemplateJob({
-                template_id: selectedTemplate.id,
-                clip_gcs_paths: status.gcs_paths,
-                selected_platforms: ["tiktok", "instagram", "youtube"],
-              });
-              trackRecentJob(job_id, "template");
-              router.push(`/template-jobs/${job_id}`);
-            } else {
-              setPageState("error");
-              setErrorMsg(
-                `Only ${status.completed}/${status.total} clips imported (need at least ${minClips}). ` +
-                `Failed: ${status.errors.join("; ")}`
-              );
-            }
-          } else if (status.status === "failed") {
-            setPageState("error");
-            setErrorMsg(`All imports failed: ${status.errors.join("; ")}`);
-          } else {
-            // Still importing, schedule next poll (setTimeout prevents overlap)
-            drivePollRef.current = setTimeout(pollOnce, 3000) as unknown as ReturnType<typeof setInterval>;
-          }
-        } catch {
-          setPageState("error");
-          setErrorMsg("Failed to check import status.");
-        }
-      }
-      drivePollRef.current = setTimeout(pollOnce, 1000) as unknown as ReturnType<typeof setInterval>;
+      // Persist for recovery if user navigates away
+      saveBatchToStorage(batch_id, selectedTemplate.id);
+      startBatchPolling(batch_id, selectedTemplate.id);
     } catch (err) {
       setPageState("error");
       if (err instanceof Error && err.message.includes("denied")) {
@@ -478,7 +551,9 @@ export default function TemplatePage() {
         )}
 
         {pageState === "drive_importing" && !driveImportStatus && (
-          <p className="mt-4 text-sm text-zinc-400 text-center animate-pulse">Starting Drive import...</p>
+          <p className="mt-4 text-sm text-zinc-400 text-center animate-pulse">
+            {isRecovery ? "Resuming Drive import..." : "Starting Drive import..."}
+          </p>
         )}
 
         {/* Clip list with per-file progress */}
