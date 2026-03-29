@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4.0] - 2026-03-29
+
+### Fixed
+- GCS `DefaultCredentialsError` on Fly.io: added `GOOGLE_SERVICE_ACCOUNT_JSON` env var support as tier-2 in the credential chain (file path → JSON string → ADC)
+- Clear error messages for misconfigured GCS credentials: malformed JSON and invalid service account key structure both produce actionable `RuntimeError` instead of cryptic library tracebacks
+- Whitespace-only `GOOGLE_SERVICE_ACCOUNT_JSON` (trailing newlines from shell piping) now correctly falls through to ADC instead of erroring
+
+### Added
+- 6 unit tests for the GCS credential chain covering all tiers, priority ordering, and error paths
+- `GOOGLE_SERVICE_ACCOUNT_JSON` documented in `.env.example` and CLAUDE.md Fly secrets list
+
 ## [0.1.3.0] - 2026-03-29
 
 ### Added

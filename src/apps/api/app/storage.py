@@ -1,6 +1,7 @@
 """GCS storage abstraction: presigned PUT URL generation and public-read upload."""
 
 import datetime
+import json
 
 from google.cloud import storage as gcs
 from google.oauth2 import service_account
@@ -11,6 +12,12 @@ _client: gcs.Client | None = None
 
 
 def _get_client() -> gcs.Client:
+    """Build a GCS client with a 3-tier credential chain:
+
+    1. File path  (GOOGLE_APPLICATION_CREDENTIALS) — local dev
+    2. JSON string (GOOGLE_SERVICE_ACCOUNT_JSON)   — Fly.io / containers
+    3. Application Default Credentials              — GCE / GKE / Cloud Run
+    """
     global _client
     if _client is None:
         project = settings.gcloud_project or None
@@ -18,9 +25,24 @@ def _get_client() -> gcs.Client:
             creds = service_account.Credentials.from_service_account_file(
                 settings.google_application_credentials
             )
-            _client = gcs.Client(project=project, credentials=creds)
+        elif settings.google_service_account_json.strip():
+            raw = settings.google_service_account_json.strip()
+            try:
+                info = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    "GOOGLE_SERVICE_ACCOUNT_JSON is set but contains invalid JSON"
+                ) from exc
+            try:
+                creds = service_account.Credentials.from_service_account_info(info)
+            except (ValueError, KeyError) as exc:
+                raise RuntimeError(
+                    "GOOGLE_SERVICE_ACCOUNT_JSON contains valid JSON but is not a "
+                    "valid service account key (missing required fields)"
+                ) from exc
         else:
-            _client = gcs.Client(project=project)
+            creds = None  # triggers ADC inside gcs.Client
+        _client = gcs.Client(project=project, credentials=creds)
     return _client
 
 
