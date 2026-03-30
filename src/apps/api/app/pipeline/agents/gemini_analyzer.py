@@ -11,6 +11,7 @@ Handles all Gemini File API interactions:
 """
 
 import json
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -332,7 +333,7 @@ def analyze_template(
     )
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=settings.gemini_model,
         contents=[
             genai_types.Part.from_uri(
                 file_uri=file_ref.uri,
@@ -347,7 +348,25 @@ def analyze_template(
 
     data = _check_refusal(response, ["shot_count", "slots"])
 
+    # Semantic validation: each slot must have meaningful content
     slots = data.get("slots", [])
+    for i, slot in enumerate(slots):
+        duration = slot.get("target_duration_s")
+        try:
+            dur_val = float(duration) if duration is not None else 0.0
+        except (TypeError, ValueError):
+            raise GeminiRefusalError(
+                f"Slot {i + 1} has non-numeric target_duration_s: {duration}"
+            )
+        if dur_val <= 0 or math.isnan(dur_val) or math.isinf(dur_val):
+            raise GeminiRefusalError(
+                f"Slot {i + 1} missing or invalid target_duration_s"
+            )
+        if not slot.get("slot_type"):
+            raise GeminiRefusalError(
+                f"Slot {i + 1} missing slot_type"
+            )
+
     total_duration_s = float(data.get("total_duration_s", 0.0))
     slot_duration_sum = sum(float(s.get("target_duration_s", 0.0)) for s in slots)
     if total_duration_s > 0 and abs(slot_duration_sum - total_duration_s) > 5.0:
@@ -434,7 +453,7 @@ def _extract_creative_direction(client: Any, file_ref: Any, genai_types: Any) ->
         prompt = load_prompt("analyze_template_pass1")
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=settings.gemini_model,
             contents=[
                 genai_types.Part.from_uri(
                     file_uri=file_ref.uri,

@@ -9,6 +9,7 @@ import json
 import structlog
 from pydantic import BaseModel, field_validator
 
+from app.config import settings
 from app.pipeline.agents.gemini_analyzer import _get_client
 
 log = structlog.get_logger()
@@ -133,7 +134,7 @@ def generate_copy(
     for attempt in range(2):
         try:
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=settings.gemini_model,
                 contents=[prompt],
                 config=genai_types.GenerateContentConfig(
                     response_mime_type="application/json",
