@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 import structlog
 from celery import chord, group
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -51,7 +52,10 @@ def _sync_session() -> Session:
     return Session(_sync_engine, expire_on_commit=False)
 
 
-@celery_app.task(name="tasks.orchestrate_job", bind=True, max_retries=0)
+@celery_app.task(
+    name="tasks.orchestrate_job", bind=True, max_retries=0,
+    soft_time_limit=1080, time_limit=1200,
+)
 def orchestrate_job(self, job_id: str) -> None:
     log.info("orchestrate_start", job_id=job_id)
 
@@ -174,6 +178,15 @@ def orchestrate_job(self, job_id: str) -> None:
 
                 db.commit()
 
+        except SoftTimeLimitExceeded:
+            log.error("orchestrate_timeout", job_id=job_id)
+            with _sync_session() as db:
+                job = db.get(Job, uuid.UUID(job_id))
+                if job:
+                    job.status = "processing_failed"
+                    job.error_detail = "Job timed out (exceeded 1080s soft limit)"
+                    db.commit()
+            return
         except Exception as exc:
             log.error("orchestrate_failed", job_id=job_id, error=str(exc))
             with _sync_session() as db:
@@ -201,7 +214,10 @@ def orchestrate_job(self, job_id: str) -> None:
     workflow.apply_async()
 
 
-@celery_app.task(name="tasks.render_clip", bind=True, max_retries=0)
+@celery_app.task(
+    name="tasks.render_clip", bind=True, max_retries=0,
+    soft_time_limit=540, time_limit=600,
+)
 def render_clip(self, job_id: str, clip_db_id: str) -> dict:
     """Render a single clip. Returns {clip_id, success, error}.
 
@@ -308,6 +324,15 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
             log.info("render_clip_done", clip_id=clip_db_id, video_url=video_url)
             return {"clip_id": clip_db_id, "success": True, "error": None}
 
+        except SoftTimeLimitExceeded:
+            log.error("render_clip_timeout", clip_id=clip_db_id)
+            with _sync_session() as db:
+                clip = db.get(JobClip, uuid.UUID(clip_db_id))
+                if clip:
+                    clip.render_status = "failed"
+                    clip.error_detail = "Clip render timed out (exceeded 540s soft limit)"
+                    db.commit()
+            return {"clip_id": clip_db_id, "success": False, "error": "render timeout"}
         except Exception as exc:
             log.error("render_clip_failed", clip_id=clip_db_id, error=str(exc))
             with _sync_session() as db:

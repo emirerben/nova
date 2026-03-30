@@ -41,6 +41,7 @@ def _make_template(**kwargs):
         description=None,
         source_url=None,
         thumbnail_gcs_path=None,
+        error_detail=None,
         created_at=datetime.now(UTC),
         recipe_cached={"slots": [{"position": 1}], "total_duration_s": 30.0},
         recipe_cached_at=datetime.now(UTC),
@@ -427,3 +428,62 @@ class TestSharedValidation:
 
         template = _make_template(required_clips_min=3, required_clips_max=10)
         validate_clip_count(template, 5)  # Should not raise
+
+
+# ── Reanalyze clears error_detail ────────────────────────────────────────────
+
+
+class TestReanalyzeErrorDetail:
+    def test_reanalyze_clears_error_detail(self, client):
+        """Reanalyze sets error_detail=None and analysis_status='analyzing'."""
+        template = _make_template(
+            analysis_status="failed",
+            error_detail="Analysis timed out (exceeded 840s soft limit)",
+        )
+
+        mock_redis_instance = MagicMock()
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch("redis.from_url", return_value=mock_redis_instance),
+        ):
+            s.admin_api_key = VALID_TOKEN
+            s.redis_url = "redis://localhost:6379"
+
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.post(
+                    f"/admin/templates/{template.id}/reanalyze",
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        # Template should have error_detail cleared
+        assert template.error_detail is None
+        assert template.analysis_status == "analyzing"
+        # Redis counter should have been cleared
+        mock_redis_instance.delete.assert_called_once_with(f"analyze_attempts:{template.id}")
+
+    def test_error_detail_in_template_response(self, client):
+        """TemplateResponse includes error_detail field."""
+        template = _make_template(
+            analysis_status="failed",
+            error_detail="API quota exceeded",
+        )
+
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.get(
+                    f"/admin/templates/{template.id}",
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        data = res.json()
+        assert data["error_detail"] == "API quota exceeded"

@@ -741,3 +741,119 @@ class TestCacheLoadValidation:
         ]
         _validate_slots(slots, global_color_grade="none")
         assert slots[0]["speed_factor"] == 4.0
+
+
+# ── Hardcoded model tests ────────────────────────────────────────────────────
+
+
+class TestAnalyzeTemplateUsesSettingsModel:
+    def test_analyze_template_uses_settings_model(self):
+        """analyze_template should use settings.gemini_model, not hardcoded string."""
+        file_ref = _make_file_ref()
+        data = _base_template_data()
+
+        with (
+            patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_gc,
+            patch("app.pipeline.agents.gemini_analyzer.settings") as mock_settings,
+        ):
+            mock_settings.gemini_model = "gemini-2.5-pro"
+            mock_client = MagicMock()
+            mock_gc.return_value = mock_client
+            mock_client.models.generate_content.return_value = _make_gemini_response(data)
+
+            analyze_template(file_ref)
+
+        # Verify generate_content was called with the settings model
+        call_args = mock_client.models.generate_content.call_args
+        assert call_args.kwargs["model"] == "gemini-2.5-pro"
+
+    def test_two_pass_both_calls_use_settings_model(self):
+        """Both pass-1 and pass-2 of two_pass analysis use settings.gemini_model."""
+        file_ref = _make_file_ref()
+        pass1_response = MagicMock()
+        pass1_response.text = "Creative direction text"
+        pass1_response.candidates = [MagicMock()]
+        pass1_response.candidates[0].finish_reason.name = "STOP"
+
+        data = _base_template_data()
+        pass2_response = _make_gemini_response(data)
+
+        with (
+            patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_gc,
+            patch("app.pipeline.agents.gemini_analyzer.settings") as mock_settings,
+        ):
+            mock_settings.gemini_model = "gemini-2.5-pro"
+            mock_client = MagicMock()
+            mock_gc.return_value = mock_client
+            mock_client.models.generate_content.side_effect = [pass1_response, pass2_response]
+
+            analyze_template(file_ref, analysis_mode="two_pass")
+
+        # Both calls should use settings.gemini_model
+        for call in mock_client.models.generate_content.call_args_list:
+            assert call.kwargs["model"] == "gemini-2.5-pro"
+
+
+# ── Slot semantic validation tests ───────────────────────────────────────────
+
+
+class TestSlotSemanticValidation:
+    def test_analyze_template_rejects_missing_target_duration(self):
+        """Slot without target_duration_s raises GeminiRefusalError."""
+        file_ref = _make_file_ref()
+        data = {
+            "shot_count": 1,
+            "total_duration_s": 5.0,
+            "hook_duration_s": 2.0,
+            "slots": [{"position": 1}],  # missing target_duration_s and slot_type
+            "copy_tone": "casual",
+            "caption_style": "",
+        }
+
+        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_gc:
+            mock_client = MagicMock()
+            mock_gc.return_value = mock_client
+            mock_client.models.generate_content.return_value = _make_gemini_response(data)
+
+            with pytest.raises(GeminiRefusalError, match="target_duration_s"):
+                analyze_template(file_ref)
+
+    def test_analyze_template_rejects_zero_duration(self):
+        """Slot with target_duration_s=0 raises GeminiRefusalError."""
+        file_ref = _make_file_ref()
+        data = {
+            "shot_count": 1,
+            "total_duration_s": 5.0,
+            "hook_duration_s": 2.0,
+            "slots": [{"position": 1, "target_duration_s": 0, "slot_type": "hook"}],
+            "copy_tone": "casual",
+            "caption_style": "",
+        }
+
+        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_gc:
+            mock_client = MagicMock()
+            mock_gc.return_value = mock_client
+            mock_client.models.generate_content.return_value = _make_gemini_response(data)
+
+            with pytest.raises(GeminiRefusalError, match="target_duration_s"):
+                analyze_template(file_ref)
+
+    def test_analyze_template_rejects_missing_slot_type(self):
+        """Slot without slot_type raises GeminiRefusalError."""
+        file_ref = _make_file_ref()
+        data = {
+            "shot_count": 1,
+            "total_duration_s": 5.0,
+            "hook_duration_s": 2.0,
+            "slots": [{"position": 1, "target_duration_s": 5.0}],  # missing slot_type
+            "copy_tone": "casual",
+            "caption_style": "",
+        }
+
+        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_gc:
+            mock_client = MagicMock()
+            mock_gc.return_value = mock_client
+            mock_client.models.generate_content.return_value = _make_gemini_response(data)
+
+            with pytest.raises(GeminiRefusalError, match="slot_type"):
+                analyze_template(file_ref)

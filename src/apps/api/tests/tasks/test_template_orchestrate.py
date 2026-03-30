@@ -1,6 +1,7 @@
 """Unit tests for tasks/template_orchestrate.py — all external calls mocked."""
 
 import subprocess
+import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1232,3 +1233,168 @@ class TestResolveOverlayText:
         from app.tasks.template_orchestrate import _resolve_overlay_text
         result = _resolve_overlay_text("hook", None, {})
         assert result == ""
+
+
+# ── Timeout & error_detail tests ──────────────────────────────────────────────
+
+
+class TestAnalyzeTemplateTimeout:
+    def test_analyze_timeout_sets_failed_and_error_detail(self):
+        """SoftTimeLimitExceeded → analysis_status='failed' + error_detail set."""
+        from celery.exceptions import SoftTimeLimitExceeded
+
+        from app.tasks.template_orchestrate import analyze_template_task
+
+        mock_template = MagicMock()
+        mock_template.gcs_path = "templates/test.mp4"
+        mock_template.audio_gcs_path = None
+        mock_template.error_detail = None
+
+        mock_redis = MagicMock()
+        mock_redis.incr.return_value = 1
+
+        with (
+            patch("app.tasks.template_orchestrate._sync_session") as mock_session_ctx,
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch("app.tasks.template_orchestrate.gemini_upload_and_wait") as mock_upload,
+            patch("app.tasks.template_orchestrate.redis_lib") as mock_redis_mod,
+        ):
+            session = MagicMock()
+            mock_session_ctx.return_value.__enter__ = MagicMock(return_value=session)
+            mock_session_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            session.get.return_value = mock_template
+
+            mock_redis_mod.from_url.return_value = mock_redis
+            mock_upload.side_effect = SoftTimeLimitExceeded()
+
+            analyze_template_task("template-timeout")
+
+        assert mock_template.analysis_status == "failed"
+        assert "timed out" in mock_template.error_detail
+
+    def test_analyze_failure_persists_error_detail(self):
+        """Generic exception → error_detail = str(exc)[:1000]."""
+        from app.tasks.template_orchestrate import analyze_template_task
+
+        mock_template = MagicMock()
+        mock_template.gcs_path = "templates/test.mp4"
+        mock_template.audio_gcs_path = None
+        mock_template.error_detail = None
+
+        mock_redis = MagicMock()
+        mock_redis.incr.return_value = 1
+
+        with (
+            patch("app.tasks.template_orchestrate._sync_session") as mock_session_ctx,
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch("app.tasks.template_orchestrate.gemini_upload_and_wait") as mock_upload,
+            patch("app.tasks.template_orchestrate.redis_lib") as mock_redis_mod,
+        ):
+            session = MagicMock()
+            mock_session_ctx.return_value.__enter__ = MagicMock(return_value=session)
+            mock_session_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            session.get.return_value = mock_template
+
+            mock_redis_mod.from_url.return_value = mock_redis
+            mock_upload.side_effect = Exception("API quota exceeded")
+
+            analyze_template_task("template-err")
+
+        assert mock_template.analysis_status == "failed"
+        assert mock_template.error_detail == "API quota exceeded"
+
+    def test_analyze_clears_stale_error_on_start(self):
+        """Successful run clears a prior error_detail."""
+        from app.tasks.template_orchestrate import analyze_template_task
+
+        mock_template = MagicMock()
+        mock_template.gcs_path = "templates/test.mp4"
+        mock_template.audio_gcs_path = None
+        mock_template.error_detail = "old error"
+
+        mock_redis = MagicMock()
+        mock_redis.incr.return_value = 1
+
+        mock_recipe = _make_recipe()
+
+        with (
+            patch("app.tasks.template_orchestrate._sync_session") as mock_session_ctx,
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch("app.tasks.template_orchestrate.gemini_upload_and_wait") as mock_upload,
+            patch("app.tasks.template_orchestrate.analyze_template") as mock_analyze,
+            patch("app.tasks.template_orchestrate.redis_lib") as mock_redis_mod,
+        ):
+            session = MagicMock()
+            mock_session_ctx.return_value.__enter__ = MagicMock(return_value=session)
+            mock_session_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            session.get.return_value = mock_template
+
+            mock_redis_mod.from_url.return_value = mock_redis
+            mock_upload.return_value = MagicMock()
+            mock_analyze.return_value = mock_recipe
+
+            analyze_template_task("template-clear")
+
+        # error_detail was cleared on start (set to None)
+        # The final status should be "ready"
+        assert mock_template.analysis_status == "ready"
+        # error_detail was set to None during the clearing phase
+        # It should remain None since no error occurred
+        assert mock_template.error_detail is None
+
+    def test_analyze_bails_on_max_attempts(self):
+        """Redis counter > 3 → early return with failed status, no Gemini calls."""
+        from app.tasks.template_orchestrate import analyze_template_task
+
+        mock_template = MagicMock()
+        mock_template.gcs_path = "templates/test.mp4"
+
+        mock_redis = MagicMock()
+        mock_redis.incr.return_value = 4  # exceeds max of 3
+
+        with (
+            patch("app.tasks.template_orchestrate._sync_session") as mock_session_ctx,
+            patch("app.tasks.template_orchestrate.gemini_upload_and_wait") as mock_upload,
+            patch("app.tasks.template_orchestrate.redis_lib") as mock_redis_mod,
+        ):
+            session = MagicMock()
+            mock_session_ctx.return_value.__enter__ = MagicMock(return_value=session)
+            mock_session_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            session.get.return_value = mock_template
+
+            mock_redis_mod.from_url.return_value = mock_redis
+
+            analyze_template_task("template-maxretry")
+
+        assert mock_template.analysis_status == "failed"
+        assert "max analysis attempts" in mock_template.error_detail.lower()
+        # Gemini was never called
+        mock_upload.assert_not_called()
+
+
+class TestOrchestrateTemplateJobTimeout:
+    def test_orchestrate_template_job_timeout(self):
+        """SoftTimeLimitExceeded → job.status='processing_failed' + error_detail set."""
+        from celery.exceptions import SoftTimeLimitExceeded
+
+        from app.tasks.template_orchestrate import orchestrate_template_job
+
+        mock_job = MagicMock()
+        job_id = str(uuid.uuid4())
+
+        with (
+            patch("app.tasks.template_orchestrate._sync_session") as mock_session_ctx,
+            patch(
+                "app.tasks.template_orchestrate._run_template_job",
+                side_effect=SoftTimeLimitExceeded(),
+            ),
+        ):
+            session = MagicMock()
+            mock_session_ctx.return_value.__enter__ = MagicMock(return_value=session)
+            mock_session_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            session.get.return_value = mock_job
+
+            orchestrate_template_job(job_id)
+
+        assert mock_job.status == "processing_failed"
+        assert "timed out" in mock_job.error_detail

@@ -29,7 +29,9 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC
 
+import redis as redis_lib
 import structlog
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -62,13 +64,38 @@ def _sync_session() -> Session:
 # ── analyze_template_task ─────────────────────────────────────────────────────
 
 
-@celery_app.task(name="tasks.analyze_template_task", bind=True, max_retries=0, time_limit=600)
+@celery_app.task(
+    name="tasks.analyze_template_task", bind=True, max_retries=0,
+    soft_time_limit=840, time_limit=900,
+)
 def analyze_template_task(self, template_id: str) -> None:
     """Download template video, analyze with Gemini, cache recipe in DB."""
     log.info("analyze_template_start", template_id=template_id)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         local_path = os.path.join(tmpdir, "template.mp4")
+
+        # Requeue guard: bail if this template has been retried too many times
+        # (prevents infinite SIGKILL → requeue loops on templates that always timeout)
+        _redis = redis_lib.from_url(settings.redis_url)
+        attempt_key = f"analyze_attempts:{template_id}"
+        attempts = _redis.incr(attempt_key)
+        _redis.expire(attempt_key, 3600)  # TTL 1 hour
+
+        if attempts > 3:
+            log.error("analyze_template_max_attempts", template_id=template_id, attempts=attempts)
+            with _sync_session() as db:
+                template = db.get(VideoTemplate, template_id)
+                if template:
+                    template.analysis_status = "failed"
+                    template.error_detail = (
+                        f"Exceeded max analysis attempts ({attempts}). "
+                        "Template may be too large or trigger safety filters."
+                    )
+                    db.commit()
+            _redis.close()
+            return
+
         try:
             with _sync_session() as db:
                 template = db.get(VideoTemplate, template_id)
@@ -77,6 +104,9 @@ def analyze_template_task(self, template_id: str) -> None:
                     return
                 gcs_path = template.gcs_path
                 existing_audio_gcs = template.audio_gcs_path
+                # Clear stale error from prior failed run
+                template.error_detail = None
+                db.commit()
 
             download_to_file(gcs_path, local_path)
 
@@ -160,27 +190,51 @@ def analyze_template_task(self, template_id: str) -> None:
                     db.commit()
                     log.info("recipe_version_created", template_id=template_id, trigger=trigger)
 
+            # Success — clear requeue guard counter
+            _redis.delete(attempt_key)
             log.info("analyze_template_done", template_id=template_id, slots=len(recipe.slots))
 
+        except SoftTimeLimitExceeded:
+            log.error("analyze_template_timeout", template_id=template_id)
+            with _sync_session() as db:
+                template = db.get(VideoTemplate, template_id)
+                if template:
+                    template.analysis_status = "failed"
+                    template.error_detail = "Analysis timed out (exceeded 840s soft limit)"
+                    db.commit()
         except Exception as exc:
             log.error("analyze_template_failed", template_id=template_id, error=str(exc))
             with _sync_session() as db:
                 template = db.get(VideoTemplate, template_id)
                 if template:
                     template.analysis_status = "failed"
+                    template.error_detail = str(exc)[:1000]
                     db.commit()
+        finally:
+            _redis.close()
 
 
 # ── orchestrate_template_job ──────────────────────────────────────────────────
 
 
-@celery_app.task(name="tasks.orchestrate_template_job", bind=True, max_retries=0, time_limit=1800)
+@celery_app.task(
+    name="tasks.orchestrate_template_job", bind=True, max_retries=0,
+    soft_time_limit=1740, time_limit=1800,
+)
 def orchestrate_template_job(self, job_id: str) -> None:
     """Full template-mode pipeline. Never raises — all errors go to processing_failed."""
     log.info("template_job_start", job_id=job_id)
 
     try:
         _run_template_job(job_id)
+    except SoftTimeLimitExceeded:
+        log.error("template_job_timeout", job_id=job_id)
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            if job:
+                job.status = "processing_failed"
+                job.error_detail = "Template job timed out (exceeded 1740s soft limit)"
+                db.commit()
     except Exception as exc:
         log.error("template_job_fatal", job_id=job_id, error=str(exc))
         with _sync_session() as db:

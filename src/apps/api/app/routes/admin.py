@@ -101,6 +101,7 @@ class TemplateResponse(BaseModel):
     description: str | None
     source_url: str | None
     thumbnail_gcs_path: str | None
+    error_detail: str | None = None
     created_at: datetime
 
 
@@ -122,6 +123,7 @@ class TemplateListItem(BaseModel):
     archived_at: datetime | None
     description: str | None
     thumbnail_gcs_path: str | None
+    error_detail: str | None = None
     job_count: int
     created_at: datetime
 
@@ -207,6 +209,7 @@ def _template_response(t: VideoTemplate) -> TemplateResponse:
         description=t.description,
         source_url=t.source_url,
         thumbnail_gcs_path=t.thumbnail_gcs_path,
+        error_detail=t.error_detail,
         created_at=t.created_at,
     )
 
@@ -262,6 +265,7 @@ async def list_templates(
                 archived_at=t.archived_at,
                 description=t.description,
                 thumbnail_gcs_path=t.thumbnail_gcs_path,
+                error_detail=t.error_detail,
                 job_count=job_count,
                 created_at=t.created_at,
             )
@@ -398,8 +402,16 @@ async def reanalyze_template(
     template = await get_template_or_404(template_id, db)
 
     template.analysis_status = "analyzing"
+    template.error_detail = None  # clear stale error
     await db.commit()
     await db.refresh(template)
+
+    # Clear requeue guard counter so manual reanalysis gets fresh attempts
+    import redis as redis_lib  # noqa: PLC0415
+
+    _redis = redis_lib.from_url(settings.redis_url)
+    _redis.delete(f"analyze_attempts:{template_id}")
+    _redis.close()
 
     from app.tasks.template_orchestrate import analyze_template_task  # noqa: PLC0415
     analyze_template_task.delay(template_id)
