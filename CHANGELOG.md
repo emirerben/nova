@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5.0] - 2026-03-30
+
+### Fixed
+- Template analysis pipeline leaves `recipe_cached = NULL` on Fly.io when Celery hard `time_limit` sends SIGKILL before DB commit. Added `soft_time_limit` (catchable) before all hard limits so the error handler runs and persists failure state.
+- Infinite SIGKILL-requeue loop: tasks killed by hard `time_limit` were requeued forever via `task_acks_late + task_reject_on_worker_lost`. Added Redis-based attempt counter (max 3, 1hr TTL) as a circuit breaker.
+- Hardcoded `"gemini-2.5-flash"` in 3 Gemini API calls now uses `settings.gemini_model` config, matching the pattern already used by `analyze_clip` and `transcribe`.
+- `float("NaN")` and non-numeric Gemini slot durations now rejected during template analysis instead of silently propagating to FFmpeg commands.
+- Redis connections created in admin reanalyze endpoint and Celery tasks are now explicitly closed after use.
+
+### Added
+- `error_detail` column on `video_templates` table: stores the failure reason (timeout, refusal, quota) so admins can see why a template failed without reading logs.
+- `error_detail` exposed in admin API responses (`GET /admin/templates`, `GET /admin/templates/:id`).
+- Reanalyze endpoint clears stale `error_detail` and Redis attempt counter so manual retry always gets a fresh set of attempts.
+- Slot semantic validation: Gemini responses with missing/zero `target_duration_s` or missing `slot_type` are rejected with clear error messages instead of producing broken recipes.
+- `soft_time_limit` + `SoftTimeLimitExceeded` handlers on all 4 Celery tasks: `analyze_template_task` (840s/900s), `orchestrate_template_job` (1740s/1800s), `orchestrate_job` (1080s/1200s), `render_clip` (540s/600s).
+- 12 new tests: timeout handling, error_detail persistence, max attempts guard, settings model config, slot validation, admin error_detail flow.
+
 ## [0.1.4.0] - 2026-03-29
 
 ### Fixed
