@@ -11,6 +11,7 @@ import {
   getBatchPresignedUrls,
   importBatchFromDrive,
   listTemplates,
+  normaliseMimeType,
   uploadFileToGcs,
 } from "@/lib/api";
 import { trackRecentJob } from "@/hooks/useArchitectureData";
@@ -194,11 +195,26 @@ export default function TemplatePage() {
   }
 
   // Recover in-progress batch import from localStorage
+  // First validate the batch still exists on the server before polling
   useEffect(() => {
     const saved = readBatchFromStorage();
     if (!saved) return;
-    setIsRecovery(true);
-    startBatchPolling(saved.batch_id, saved.template_id);
+
+    // Check if batch is still alive before starting to poll
+    getDriveImportBatchStatus(saved.batch_id)
+      .then((status) => {
+        if (status.status === "importing") {
+          setIsRecovery(true);
+          startBatchPolling(saved.batch_id, saved.template_id);
+        } else if (status.status === "complete" || status.status === "partial_failure" || status.status === "failed") {
+          // Batch finished while we were away, clean up
+          clearBatchStorage();
+        }
+      })
+      .catch(() => {
+        // Batch expired or doesn't exist, clean up silently
+        clearBatchStorage();
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -250,9 +266,11 @@ export default function TemplatePage() {
       setPageState("uploading");
 
       // Step 1: Get batch presigned URLs
+      // Normalise MIME here so fileMeta matches what uploadFileToGcs will send —
+      // the presigned URL is signed against this exact content-type.
       const fileMeta: BatchPresignedFile[] = clips.map((c, i) => ({
         filename: `clip_${i}.${c.file.name.split(".").pop() || "mp4"}`,
-        content_type: c.file.type || "video/mp4",
+        content_type: normaliseMimeType(c.file.type),
         file_size_bytes: c.file.size,
       }));
       const { urls } = await getBatchPresignedUrls(fileMeta);

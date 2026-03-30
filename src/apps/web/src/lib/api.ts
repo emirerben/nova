@@ -106,12 +106,32 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
   return res.json();
 }
 
+/** Normalise video MIME types for GCS signed uploads.
+ *
+ * GCS presigned URLs are signed against the exact content-type declared at
+ * request time. If the browser reports "video/quicktime" (common for .mov and
+ * some .mp4 files on macOS/iOS) or an empty string, but the presigned URL was
+ * signed for "video/mp4", the PUT returns 403 SignatureDoesNotMatch — which
+ * the browser surfaces as a fetch() TypeError ("Cannot reach the server").
+ * Normalising to "video/mp4" keeps the signed header in sync with what we send.
+ */
+export function normaliseMimeType(mime: string | undefined): string {
+  if (!mime || mime === "video/quicktime") return "video/mp4";
+  return mime;
+}
+
 export async function uploadFileToGcs(uploadUrl: string, file: File): Promise<void> {
-  const res = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": file.type },
-    body: file,
-  });
+  const contentType = normaliseMimeType(file.type);
+  let res: Response;
+  try {
+    res = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body: file,
+    });
+  } catch {
+    throw new Error("Upload failed — network error connecting to storage.");
+  }
   if (!res.ok) throw new Error(`GCS upload failed: ${res.status}`);
 }
 
@@ -282,12 +302,18 @@ export interface BatchPresignedResponse {
 export async function getBatchPresignedUrls(
   files: BatchPresignedFile[]
 ): Promise<BatchPresignedResponse> {
+  // Normalise MIME types before sending — the presigned URL will be signed
+  // against exactly this content-type, so it must match what uploadFileToGcs sends.
+  const normalisedFiles = files.map((f) => ({
+    ...f,
+    content_type: normaliseMimeType(f.content_type),
+  }));
   let res: Response;
   try {
     res = await fetch(`${API_URL}/presigned-urls`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ files }),
+      body: JSON.stringify({ files: normalisedFiles }),
     });
   } catch {
     throw new Error("Cannot reach the server. Make sure the API is running.");
