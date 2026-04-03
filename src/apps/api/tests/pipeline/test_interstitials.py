@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch  # noqa: I001
 
 from app.pipeline.interstitials import (
+    MIN_CURTAIN_ANIMATE_S,
     _classify_single_segment,
     classify_black_segment_type,
 )
@@ -204,3 +205,43 @@ class TestDetectBlackSegmentsThresholds:
         # Verify lowered thresholds
         assert "d=0.15" in cmd_str
         assert "pix_th=0.15" in cmd_str
+
+
+# ── MIN_CURTAIN_ANIMATE_S clamp ─────────────────────────────────────────────
+
+
+class TestCurtainMinAnimateS:
+    def test_min_curtain_constant_is_one_second(self):
+        assert MIN_CURTAIN_ANIMATE_S == 1.0
+
+    def test_curtain_min_animate_s_clamped(self):
+        """animate_s below MIN_CURTAIN_ANIMATE_S is clamped to 1.0 at the call site."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        # Build a step with font-cycle overlay + curtain-close with animate_s=0.3
+        step = MagicMock()
+        step.clip_id = "clip_a"
+        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.slot = {
+            "position": 1,
+            "target_duration_s": 5.0,
+            "text_overlays": [{
+                "role": "label",
+                "start_s": 0.0,
+                "end_s": 5.0,
+                "position": "center",
+                "effect": "font-cycle",
+                "sample_text": "PERU",
+            }],
+        }
+
+        interstitial_map = {
+            1: {"type": "curtain-close", "animate_s": 0.3, "hold_s": 1.0},
+        }
+        result = _collect_absolute_overlays(
+            [step], [5.0], None, "Peru",
+            interstitial_map=interstitial_map,
+        )
+        assert len(result) == 1
+        # animate_s should be clamped to 1.0 (not 0.3), so accel_at = 5.0 - 1.0 = 4.0
+        assert result[0].get("font_cycle_accel_at_s") == 4.0
