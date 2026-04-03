@@ -907,10 +907,11 @@ def _collect_absolute_overlays(
             Used to offset cumulative time for interstitial hold durations.
 
     Two dedup rules prevent visual glitches:
-      1. Same-text dedup: if the same text (case-insensitive) appears on
-         multiple slots, keep only the first occurrence. Templates report
-         overlays per-shot, so "Welcome to" would otherwise repeat on every
-         slot boundary.
+      1. Same-text merge: if the same text (case-insensitive) appears at the
+         same position on adjacent slots with a gap < 2.0s, merge them into
+         one continuous overlay. This covers interstitial hold durations
+         (typically 1.0s) with margin. Templates report overlays per-shot,
+         so "Welcome to" would otherwise restart on every slot boundary.
       2. Same-position overlap prevention: if two overlays share the same
          screen position with overlapping time ranges, truncate the earlier
          one so they never render simultaneously.
@@ -986,6 +987,9 @@ def _collect_absolute_overlays(
     # appear on multiple consecutive slots. Instead of dropping duplicates,
     # MERGE overlays that share the same text AND position and have a
     # small gap (< 2.0s, covers interstitial hold + margin).
+    # 2.0s covers the default interstitial hold (1.0s) plus margin for
+    # frame-boundary rounding.  A gap > 2.0s likely means a long black
+    # hold where the text should legitimately restart.
     _MERGE_GAP_THRESHOLD_S = 2.0
     raw.sort(key=lambda o: (o["text"].lower().strip(), o["position"], o["start_s"]))
     unique: list[dict] = []
