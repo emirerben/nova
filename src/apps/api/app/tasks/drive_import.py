@@ -24,17 +24,13 @@ import uuid
 import httpx
 import structlog
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database import sync_session as _sync_session
 from app.models import Job
 from app.worker import celery_app
 
 log = structlog.get_logger()
-
-_sync_db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
-_sync_engine = create_engine(_sync_db_url)
 
 DRIVE_DOWNLOAD_URL = "https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
 DRIVE_METADATA_URL = "https://www.googleapis.com/drive/v3/files/{file_id}?fields=size,mimeType,name"
@@ -48,10 +44,6 @@ PROGRESS_INTERVAL_S = 5
 # Max retries for 5xx errors
 MAX_RETRIES = 1
 RETRY_DELAY_S = 5
-
-
-def _sync_session() -> Session:
-    return Session(_sync_engine, expire_on_commit=False)
 
 
 def _get_redis():

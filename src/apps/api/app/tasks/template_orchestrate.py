@@ -32,10 +32,9 @@ from datetime import UTC
 import redis as redis_lib
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database import sync_session as _sync_session
 from app.models import Job, TemplateRecipeVersion, VideoTemplate
 from app.pipeline.agents.gemini_analyzer import (
     ClipMeta,
@@ -51,14 +50,6 @@ from app.storage import download_to_file, upload_public_read
 from app.worker import celery_app
 
 log = structlog.get_logger()
-
-# Sync engine (same pattern as orchestrate.py)
-_sync_db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
-_sync_engine = create_engine(_sync_db_url)
-
-
-def _sync_session() -> Session:
-    return Session(_sync_engine, expire_on_commit=False)
 
 
 # ── analyze_template_task ─────────────────────────────────────────────────────
