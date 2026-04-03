@@ -344,11 +344,20 @@ def _render_font_cycle(
         return [{"png_path": png_path, "start_s": start_s, "end_s": end_s}]
 
     duration = end_s - start_s
-    settle_start = start_s + duration * (1.0 - FONT_CYCLE_SETTLE_RATIO)
-    cycle_end = settle_start  # cycling stops here, settle begins
 
     # Acceleration: switch to faster interval after this absolute timestamp
     accel_at = overlay.get("font_cycle_accel_at_s")
+
+    # When curtain-close acceleration is active, skip the settle phase
+    # entirely — cycling runs to the end, reinforcing the kinetic energy
+    # of the closing bars. Otherwise, settle on the primary font for the
+    # last FONT_CYCLE_SETTLE_RATIO of the duration.
+    if accel_at is not None:
+        settle_start = end_s
+        cycle_end = end_s
+    else:
+        settle_start = start_s + duration * (1.0 - FONT_CYCLE_SETTLE_RATIO)
+        cycle_end = settle_start  # cycling stops here, settle begins
 
     results: list[dict] = []
     frame_idx = 0
@@ -374,6 +383,18 @@ def _render_font_cycle(
         t = frame_end
         frame_idx += 1
         font_idx += 1
+
+    # Gap-fill: if the loop exited early (frame cap hit) with t < cycle_end,
+    # render one more PNG with the last-used font covering (t, cycle_end)
+    if t < cycle_end - 0.001:
+        last_font = cycle_fonts[(font_idx - 1) % len(cycle_fonts)]
+        png_path = os.path.join(
+            output_dir,
+            f"slot_{slot_index}_fontcycle_{overlay_index}_{frame_idx}_gapfill.png",
+        )
+        _draw_text_png_with_font(text, last_font, position, png_path, text_color=text_color)
+        results.append({"png_path": png_path, "start_s": t, "end_s": cycle_end})
+        t = cycle_end
 
     # Phase 2: settle on the primary font for the remaining duration
     if settle_start < end_s:

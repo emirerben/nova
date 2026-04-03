@@ -715,11 +715,15 @@ def _assemble_clips(
         inter = interstitial_map.get(slot_position)
         if inter and inter["type"] == "curtain-close":
             # Apply curtain-close animation to the tail of this slot
-            from app.pipeline.interstitials import apply_curtain_close_tail  # noqa: PLC0415
+            from app.pipeline.interstitials import (  # noqa: PLC0415
+                MIN_CURTAIN_ANIMATE_S,
+                apply_curtain_close_tail,
+            )
             tail_output = os.path.join(tmpdir, f"slot_{i}_curtain.mp4")
             try:
                 apply_curtain_close_tail(
-                    reframed, tail_output, animate_s=inter.get("animate_s", 0.5),
+                    reframed, tail_output,
+                    animate_s=max(MIN_CURTAIN_ANIMATE_S, inter.get("animate_s", 1.0)),
                 )
                 reframed = tail_output
             except Exception as exc:
@@ -903,10 +907,11 @@ def _collect_absolute_overlays(
             Used to offset cumulative time for interstitial hold durations.
 
     Two dedup rules prevent visual glitches:
-      1. Same-text dedup: if the same text (case-insensitive) appears on
-         multiple slots, keep only the first occurrence. Templates report
-         overlays per-shot, so "Welcome to" would otherwise repeat on every
-         slot boundary.
+      1. Same-text merge: if the same text (case-insensitive) appears at the
+         same position on adjacent slots with a gap < 2.0s, merge them into
+         one continuous overlay. This covers interstitial hold durations
+         (typically 1.0s) with margin. Templates report overlays per-shot,
+         so "Welcome to" would otherwise restart on every slot boundary.
       2. Same-position overlap prevention: if two overlays share the same
          screen position with overlapping time ranges, truncate the earlier
          one so they never render simultaneously.
@@ -958,7 +963,8 @@ def _collect_absolute_overlays(
                 and inter
                 and inter.get("type") == "curtain-close"
             ):
-                animate_s = float(inter.get("animate_s", 0.5))
+                from app.pipeline.interstitials import MIN_CURTAIN_ANIMATE_S  # noqa: PLC0415
+                animate_s = max(MIN_CURTAIN_ANIMATE_S, float(inter.get("animate_s", 1.0)))
                 slot_end_abs = cumulative_s + dur
                 accel_at = slot_end_abs - animate_s
                 # Clamp: accel must be within the overlay's time range
@@ -976,17 +982,40 @@ def _collect_absolute_overlays(
     if not raw:
         return []
 
-    # ── Dedup 1: drop duplicate text ──────────────────────────────────────
-    # Templates report overlays per-shot, so "Welcome to" appears on every
-    # slot. Keep only the first occurrence of each text (case-insensitive).
-    seen_texts: set[str] = set()
+    # ── Dedup 1: merge adjacent same-text overlays ──────────────────────
+    # Templates report overlays per-shot, so "Welcome to" or "PERU" may
+    # appear on multiple consecutive slots. Instead of dropping duplicates,
+    # MERGE overlays that share the same text AND position and have a
+    # small gap (< 2.0s, covers interstitial hold + margin).
+    # 2.0s covers the default interstitial hold (1.0s) plus margin for
+    # frame-boundary rounding.  A gap > 2.0s likely means a long black
+    # hold where the text should legitimately restart.
+    _MERGE_GAP_THRESHOLD_S = 2.0
+    raw.sort(key=lambda o: (o["text"].lower().strip(), o["position"], o["start_s"]))
     unique: list[dict] = []
     for ov in raw:
         key = ov["text"].lower().strip()
-        if key in seen_texts:
-            continue
-        seen_texts.add(key)
-        unique.append(ov)
+        merged = False
+        # Check if we can merge with an existing entry
+        for prev in unique:
+            prev_key = prev["text"].lower().strip()
+            if (
+                prev_key == key
+                and prev["position"] == ov["position"]
+                and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
+            ):
+                # Merge: extend previous overlay's end time
+                prev["end_s"] = max(prev["end_s"], ov["end_s"])
+                # If current has font-cycle effect, upgrade previous
+                if ov.get("effect") == "font-cycle":
+                    prev["effect"] = "font-cycle"
+                # If current has accel, copy it to previous
+                if "font_cycle_accel_at_s" in ov:
+                    prev["font_cycle_accel_at_s"] = ov["font_cycle_accel_at_s"]
+                merged = True
+                break
+        if not merged:
+            unique.append(ov)
 
     # ── Dedup 2: prevent same-position time overlap ───────────────────────
     # Sort by position then start time. If two overlays share a position

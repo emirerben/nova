@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.6.0] - 2026-04-03
+
+### Fixed
+- Curtain-close animation too fast to perceive: minimum animation duration raised from 0.5s to 1.0s via `MIN_CURTAIN_ANIMATE_S` constant, enforced at both `_assemble_clips` and `_collect_absolute_overlays` call sites
+- Font-cycle settle phase interfering with curtain-close sync: when `font_cycle_accel_at_s` is active, settle phase is now skipped entirely so cycling runs to the end, reinforcing the kinetic energy of the closing bars
+- Font-cycle frame cap leaving timing gaps: gap-fill PNG now bridges the frame cap boundary to `cycle_end`, preventing silent gaps in the overlay timeline
+- Cross-slot text merging: adjacent slots sharing the same text (e.g., "PERU" on slots 1 and 2) now merge into a single continuous overlay instead of dropping duplicates, correctly spanning interstitial hold durations
+
+### Added
+- 8 new tests covering all 4 root causes: curtain minimum clamp, settle-phase skip with accel, frame-cap gap-fill, cross-slot merge (same text, different positions, non-adjacent gaps, accel inheritance)
+
 ## [0.1.5.0] - 2026-03-30
 
 ### Fixed

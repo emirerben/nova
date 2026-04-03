@@ -413,6 +413,27 @@ class TestFontCycleEffect:
         assert result is not None
         assert len(result) >= 2  # at least 1 cycle + 1 settle
 
+    def test_font_cycle_frame_cap_fills_gap(self, tmp_path):
+        """When frame cap is hit, gap-fill PNG bridges cycling to settle phase."""
+        from app.pipeline.text_overlay import MAX_FONT_CYCLE_FRAMES, FONT_CYCLE_INTERVAL_S
+        # Create an overlay long enough that the frame cap is hit during cycling.
+        # cycling covers 70% of duration; at 0.15s per frame, cap needs
+        # duration * 0.7 / 0.15 > MAX_FONT_CYCLE_FRAMES
+        min_duration = (MAX_FONT_CYCLE_FRAMES * FONT_CYCLE_INTERVAL_S) / 0.7 + 1.0
+        result = generate_text_overlay_png(
+            [_make_overlay(text="LONG", effect="font-cycle", start_s=0.0, end_s=min_duration)],
+            slot_duration_s=min_duration + 1.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        # Verify no timing gaps between any consecutive frames
+        for i in range(len(result) - 1):
+            gap = result[i + 1]["start_s"] - result[i]["end_s"]
+            assert abs(gap) < 0.001, f"Gap of {gap:.4f}s between frame {i} and {i+1}"
+        # First frame starts at overlay start, last ends at overlay end
+        assert result[0]["start_s"] == 0.0
+        assert abs(result[-1]["end_s"] - min_duration) < 0.001
+
 
 # -- Playfair Display font tests ----------------------------------------------
 
@@ -619,6 +640,27 @@ class TestFontCycleAcceleration:
         assert result is not None
         assert result[0]["start_s"] == 1.0
         assert result[-1]["end_s"] == 4.0
+
+    def test_font_cycle_accel_skips_settle_phase(self, tmp_path):
+        """With accel_at_s, no settle PNG — cycling extends to end_s."""
+        result = generate_text_overlay_png(
+            [{"text": "ROME", "start_s": 0.0, "end_s": 3.0,
+              "position": "center", "effect": "font-cycle",
+              "font_cycle_accel_at_s": 1.5}],
+            slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        # No settle PNG should exist — all PNGs should be cycling frames
+        settle_pngs = [r for r in result if "settle" in r["png_path"]]
+        assert len(settle_pngs) == 0, "Settle PNG should not be generated when accel is active"
+        # Last frame should end at overlay end
+        assert result[-1]["end_s"] == 3.0
+        # Frames after accel_at should use fast interval (0.07s)
+        fast_frames = [r for r in result if r["start_s"] >= 1.5 and "gapfill" not in r["png_path"]]
+        if len(fast_frames) >= 2:
+            interval = fast_frames[1]["start_s"] - fast_frames[0]["start_s"]
+            assert interval < 0.10, f"Expected fast interval (~0.07s), got {interval:.3f}s"
 
 
 # -- font-cycle text_size support ---------------------------------------------

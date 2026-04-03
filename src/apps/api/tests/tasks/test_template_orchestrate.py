@@ -1203,6 +1203,145 @@ class TestAssembleClipsTextOverlays:
         assert "font_cycle_accel_at_s" not in result[0]
 
 
+class TestCrossSlotMerge:
+    """Tests for cross-slot same-text overlay merging (replaces old drop-duplicate logic)."""
+
+    def _make_step_with_overlays(
+        self, clip_id: str = "clip_a", overlays: list | None = None,
+        position: int = 1,
+    ) -> MagicMock:
+        step = MagicMock()
+        step.clip_id = clip_id
+        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.slot = {
+            "position": position,
+            "target_duration_s": 5.0,
+            "text_overlays": overlays or [],
+        }
+        return step
+
+    def test_cross_slot_same_text_merged(self):
+        """Same text on adjacent slots produces one merged overlay."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step1 = self._make_step_with_overlays(
+            position=1, overlays=[{
+                "role": "label", "start_s": 0.0, "end_s": 5.0,
+                "position": "center", "effect": "none",
+                "sample_text": "PERU",
+            }],
+        )
+        step2 = self._make_step_with_overlays(
+            clip_id="clip_b", position=2, overlays=[{
+                "role": "label", "start_s": 0.0, "end_s": 5.0,
+                "position": "center", "effect": "none",
+                "sample_text": "PERU",
+            }],
+        )
+
+        # slot1=5s, interstitial hold=1s, slot2=5s → total 11s
+        # Overlay 1: 0-5s, Overlay 2: 6-11s (gap = 1.0s < 2.0s threshold)
+        interstitial_map = {
+            1: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
+        }
+        result = _collect_absolute_overlays(
+            [step1, step2], [5.0, 5.0], None, "Peru",
+            interstitial_map=interstitial_map,
+        )
+        # Should be merged into one overlay
+        peru_overlays = [o for o in result if o["text"].lower() == "peru"]
+        assert len(peru_overlays) == 1
+        # Merged overlay spans from start of slot1 to end of slot2
+        assert peru_overlays[0]["start_s"] == 0.0
+        assert peru_overlays[0]["end_s"] == 11.0
+
+    def test_cross_slot_merge_inherits_accel(self):
+        """Merged overlay gets font_cycle_accel_at_s from the later slot."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step1 = self._make_step_with_overlays(
+            position=1, overlays=[{
+                "role": "label", "start_s": 0.0, "end_s": 5.0,
+                "position": "center", "effect": "none",
+                "sample_text": "PERU",
+            }],
+        )
+        step2 = self._make_step_with_overlays(
+            clip_id="clip_b", position=2, overlays=[{
+                "role": "label", "start_s": 0.0, "end_s": 5.0,
+                "position": "center", "effect": "font-cycle",
+                "sample_text": "PERU",
+            }],
+        )
+
+        interstitial_map = {
+            2: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
+        }
+        result = _collect_absolute_overlays(
+            [step1, step2], [5.0, 5.0], None, "Peru",
+            interstitial_map=interstitial_map,
+        )
+        peru_overlays = [o for o in result if o["text"].lower() == "peru"]
+        assert len(peru_overlays) == 1
+        # Should have font-cycle effect from the second slot
+        assert peru_overlays[0]["effect"] == "font-cycle"
+        # Should have accel_at from the curtain-close on slot 2
+        assert "font_cycle_accel_at_s" in peru_overlays[0]
+
+    def test_non_adjacent_same_text_not_merged(self):
+        """Same text with large gap (>2s) stays separate."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step1 = self._make_step_with_overlays(
+            position=1, overlays=[{
+                "role": "label", "start_s": 0.0, "end_s": 2.0,
+                "position": "center", "effect": "none",
+                "sample_text": "PERU",
+            }],
+        )
+        # Second overlay starts 5s into a 10s slot = 8s gap from first overlay's end
+        step2 = self._make_step_with_overlays(
+            clip_id="clip_b", position=2, overlays=[{
+                "role": "label", "start_s": 5.0, "end_s": 10.0,
+                "position": "center", "effect": "none",
+                "sample_text": "PERU",
+            }],
+        )
+
+        result = _collect_absolute_overlays(
+            [step1, step2], [5.0, 10.0], None, "Peru",
+        )
+        peru_overlays = [o for o in result if o["text"].lower() == "peru"]
+        assert len(peru_overlays) == 2, "Non-adjacent same text should stay separate"
+
+    def test_different_position_same_text_not_merged(self):
+        """Same text at different positions stays separate."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step1 = self._make_step_with_overlays(
+            position=1, overlays=[
+                {
+                    "role": "label", "start_s": 0.0, "end_s": 5.0,
+                    "position": "top", "effect": "none",
+                    "sample_text": "PERU",
+                },
+                {
+                    "role": "label", "start_s": 0.0, "end_s": 5.0,
+                    "position": "bottom", "effect": "none",
+                    "sample_text": "PERU",
+                },
+            ],
+        )
+
+        result = _collect_absolute_overlays(
+            [step1], [5.0], None, "Peru",
+        )
+        peru_overlays = [o for o in result if o["text"].lower() == "peru"]
+        assert len(peru_overlays) == 2, "Same text at different positions should stay separate"
+        positions = {o["position"] for o in peru_overlays}
+        assert positions == {"top", "bottom"}
+
+
 class TestResolveOverlayText:
     def test_hook_role_uses_hook_text(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text

@@ -30,6 +30,9 @@ _CURTAIN_CLOSE_RATIO_THRESHOLD = 1.5
 # Minimum number of frames showing the bar pattern to confirm curtain-close
 _CURTAIN_CLOSE_MIN_FRAMES = 2
 
+# Minimum curtain-close animation duration — 0.5s is too fast to perceive
+MIN_CURTAIN_ANIMATE_S = 1.0
+
 
 class InterstitialError(Exception):
     pass
@@ -96,7 +99,7 @@ def render_color_hold(
 def apply_curtain_close_tail(
     slot_video_path: str,
     output_path: str,
-    animate_s: float = 0.5,
+    animate_s: float = 1.0,
 ) -> None:
     """Apply curtain-close animation to the tail of a rendered slot clip.
 
