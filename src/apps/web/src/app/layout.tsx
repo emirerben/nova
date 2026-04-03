@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Nova — Join the Waitlist",
+  title: "Nova — Turn raw footage into viral clips",
   description:
-    "You have footage you haven't posted in months. Nova turns raw video into 3 clips ready to post.",
+    "Drop raw footage. Get 3 clips ready to post — captions, copy, and all.",
 };
 
 export default function RootLayout({
