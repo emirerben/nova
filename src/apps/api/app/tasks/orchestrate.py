@@ -22,10 +22,10 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from celery import chord, group
 from celery.exceptions import SoftTimeLimitExceeded
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database import sync_session as _sync_session
 from app.models import Job, JobClip
 from app.pipeline import probe as probe_mod
 from app.pipeline import scene_detect
@@ -41,15 +41,6 @@ from app.storage import download_to_file, upload_bytes_public_read, upload_publi
 from app.worker import celery_app
 
 log = structlog.get_logger()
-
-# Sync engine for Celery (Celery tasks are sync, not async).
-# Always use psycopg2 — strip +asyncpg if the DATABASE_URL already has it.
-_sync_db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
-_sync_engine = create_engine(_sync_db_url)
-
-
-def _sync_session() -> Session:
-    return Session(_sync_engine, expire_on_commit=False)
 
 
 @celery_app.task(
