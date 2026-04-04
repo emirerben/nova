@@ -258,6 +258,7 @@ export async function createTemplateJob(params: {
   template_id: string;
   clip_gcs_paths: string[];
   selected_platforms: string[];
+  subject?: string;
 }): Promise<TemplateJobCreateResponse> {
   let res: Response;
   try {
