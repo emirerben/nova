@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.9.0] - 2026-04-04
+
+### Added
+- Location input on template upload page so users can type city/country for overlay text
+- Timing overrides (`start_s_override` / `end_s_override`) for recipe-level overlay timing corrections
+- Role-based visual overrides for label text: 120px maize/gold Montserrat ExtraBold (replaces unreliable Gemini-returned styles)
+- Text exit clamp on curtain-close slots prevents text from lingering on black frames
+- Subject validation (`max_length=50`) on template job creation
+
+### Fixed
+- Curtain animation safety clamp now ensures at least 50% visible footage (was only triggered when clip was shorter than animation, missing equal-duration case)
+- Font-cycle acceleration timestamp now uses the same 50% clamp as the visual curtain, keeping text cycling in sync with closing bars
+- Reroll endpoint now preserves the subject field from the original job instead of silently dropping it
+
+### Changed
+- Curtain animation minimum increased from 1.0s to 3.0s for more dramatic slow-curtain effect
+- 14 new unit tests covering timing overrides, role overrides, curtain sync, and exit clamp
+
 ## [0.1.8.0] - 2026-04-04
 
 ### Fixed
