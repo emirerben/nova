@@ -68,6 +68,9 @@ export default function TemplatePage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
+  // Location (subject) state
+  const [location, setLocation] = useState("");
+
   // Drive import state
   const [driveImportStatus, setDriveImportStatus] = useState<DriveImportBatchStatusResponse | null>(null);
   const [compress, setCompress] = useState(false);
@@ -121,6 +124,7 @@ export default function TemplatePage() {
             template_id: templateId,
             clip_gcs_paths: status.gcs_paths,
             selected_platforms: ["tiktok", "instagram", "youtube"],
+            subject: location || undefined,
           });
           trackRecentJob(job_id, "template");
           router.push(`/template-jobs/${job_id}`);
@@ -132,6 +136,7 @@ export default function TemplatePage() {
               template_id: templateId,
               clip_gcs_paths: status.gcs_paths,
               selected_platforms: ["tiktok", "instagram", "youtube"],
+              subject: location || undefined,
             });
             trackRecentJob(job_id, "template");
             router.push(`/template-jobs/${job_id}`);
@@ -276,6 +281,7 @@ export default function TemplatePage() {
         template_id: selectedTemplate.id,
         clip_gcs_paths: gcsPaths,
         selected_platforms: ["tiktok", "instagram", "youtube"],
+        subject: location || undefined,
       });
 
       trackRecentJob(job_id, "template");
@@ -451,6 +457,22 @@ export default function TemplatePage() {
         <p className="text-zinc-400 text-sm mb-4">
           Upload {minClips}–{MAX_CLIPS} raw clips. AI will assemble them to match this template.
         </p>
+
+        {/* Location input */}
+        <div className="mb-4">
+          <label className="block text-zinc-400 text-xs mb-1.5">
+            Location (city/country)
+          </label>
+          <input
+            type="text"
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            placeholder="e.g. Peru, Tokyo, New York"
+            maxLength={50}
+            disabled={pageState !== "upload"}
+            className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-colors disabled:opacity-50"
+          />
+        </div>
 
         {/* Compress toggle */}
         <label className="flex items-center gap-2 mb-5 cursor-pointer select-none">

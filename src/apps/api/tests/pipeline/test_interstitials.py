@@ -211,24 +211,24 @@ class TestDetectBlackSegmentsThresholds:
 
 
 class TestCurtainMinAnimateS:
-    def test_min_curtain_constant_is_one_second(self):
-        assert MIN_CURTAIN_ANIMATE_S == 1.0
+    def test_min_curtain_constant(self):
+        assert MIN_CURTAIN_ANIMATE_S == 3.0
 
     def test_curtain_min_animate_s_clamped(self):
-        """animate_s below MIN_CURTAIN_ANIMATE_S is clamped to 1.0 at the call site."""
+        """animate_s below MIN_CURTAIN_ANIMATE_S is clamped to 3.0, then 50% rule applies."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        # Build a step with font-cycle overlay + curtain-close with animate_s=0.3
+        # 10s slot: MIN=3.0, 50% of 10=5.0 → 3.0 wins (no clamp needed)
         step = MagicMock()
         step.clip_id = "clip_a"
-        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.moment = {"start_s": 0.0, "end_s": 10.0}
         step.slot = {
             "position": 1,
-            "target_duration_s": 5.0,
+            "target_duration_s": 10.0,
             "text_overlays": [{
                 "role": "label",
                 "start_s": 0.0,
-                "end_s": 5.0,
+                "end_s": 10.0,
                 "position": "center",
                 "effect": "font-cycle",
                 "sample_text": "PERU",
@@ -239,9 +239,74 @@ class TestCurtainMinAnimateS:
             1: {"type": "curtain-close", "animate_s": 0.3, "hold_s": 1.0},
         }
         result = _collect_absolute_overlays(
-            [step], [5.0], None, "Peru",
+            [step], [10.0], None, "Peru",
             interstitial_map=interstitial_map,
         )
         assert len(result) == 1
-        # animate_s should be clamped to 1.0 (not 0.3), so accel_at = 5.0 - 1.0 = 4.0
-        assert result[0].get("font_cycle_accel_at_s") == 4.0
+        # animate_s = max(3.0, 0.3) = 3.0, min(3.0, 10*0.5=5.0) = 3.0
+        # accel_at = 10.0 - 3.0 = 7.0
+        assert result[0].get("font_cycle_accel_at_s") == 7.0
+
+    def test_clamp_at_50_pct(self):
+        """50% clamp: 4s slot with 3.0 MIN → clamped to 2.0."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = MagicMock()
+        step.clip_id = "clip_a"
+        step.moment = {"start_s": 0.0, "end_s": 4.0}
+        step.slot = {
+            "position": 1,
+            "target_duration_s": 4.0,
+            "text_overlays": [{
+                "role": "label",
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "position": "center",
+                "effect": "font-cycle",
+                "sample_text": "PERU",
+            }],
+        }
+
+        interstitial_map = {
+            1: {"type": "curtain-close", "animate_s": 1.0, "hold_s": 1.0},
+        }
+        result = _collect_absolute_overlays(
+            [step], [4.0], None, "Peru",
+            interstitial_map=interstitial_map,
+        )
+        assert len(result) == 1
+        # animate_s = max(3.0, 1.0) = 3.0, min(3.0, 4.0*0.5=2.0) = 2.0
+        # accel_at = 4.0 - 2.0 = 2.0
+        assert result[0].get("font_cycle_accel_at_s") == 2.0
+
+    def test_clamp_equal_duration(self):
+        """3s slot with 3s animate → clamped to 1.5s (50%)."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = MagicMock()
+        step.clip_id = "clip_a"
+        step.moment = {"start_s": 0.0, "end_s": 3.0}
+        step.slot = {
+            "position": 1,
+            "target_duration_s": 3.0,
+            "text_overlays": [{
+                "role": "label",
+                "start_s": 0.0,
+                "end_s": 3.0,
+                "position": "center",
+                "effect": "font-cycle",
+                "sample_text": "PERU",
+            }],
+        }
+
+        interstitial_map = {
+            1: {"type": "curtain-close", "animate_s": 3.0, "hold_s": 1.0},
+        }
+        result = _collect_absolute_overlays(
+            [step], [3.0], None, "Peru",
+            interstitial_map=interstitial_map,
+        )
+        assert len(result) == 1
+        # animate_s = max(3.0, 3.0) = 3.0, min(3.0, 3.0*0.5=1.5) = 1.5
+        # accel_at = 3.0 - 1.5 = 1.5
+        assert result[0].get("font_cycle_accel_at_s") == 1.5

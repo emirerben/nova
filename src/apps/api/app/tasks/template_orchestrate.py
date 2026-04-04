@@ -51,6 +51,17 @@ from app.worker import celery_app
 
 log = structlog.get_logger()
 
+# Role-based visual overrides for text overlays.
+# Gemini doesn't return text_size/font_style/text_color reliably,
+# so we override per-role to match TikTok template aesthetics.
+_ROLE_OVERRIDES: dict[str, dict] = {
+    "label": {
+        "text_size": "large",       # 120px (was medium/72px)
+        "font_style": "sans",       # Montserrat ExtraBold (was display/Playfair)
+        "text_color": "#F4D03F",    # warm maize/gold (was white)
+    },
+}
+
 
 # ── analyze_template_task ─────────────────────────────────────────────────────
 
@@ -940,9 +951,21 @@ def _collect_absolute_overlays(
             if not text or not text.strip():
                 continue
 
+            # 1. Compute ov_start, ov_end from Gemini values
             ov_start = cumulative_s + float(ov.get("start_s", 0.0))
             ov_end = cumulative_s + float(ov.get("end_s", dur))
 
+            # 2. Apply timing overrides — recipe can specify exact timestamps
+            # to correct Gemini's approximate timing (relative to slot start)
+            if "start_s_override" in ov:
+                ov_start = cumulative_s + float(ov["start_s_override"])
+            if "end_s_override" in ov:
+                ov_end = cumulative_s + float(ov["end_s_override"])
+            # Guard against negative timestamps from bad override values
+            ov_start = max(0.0, ov_start)
+            ov_end = max(ov_start + 0.01, ov_end)
+
+            # 3. Build entry dict with defaults
             entry = {
                 "text": text,
                 "start_s": ov_start,
@@ -954,10 +977,13 @@ def _collect_absolute_overlays(
                 "text_color": ov.get("text_color", "#FFFFFF"),
             }
 
-            # If this overlay uses font-cycle and the slot has a
-            # curtain-close after it, inject the absolute timestamp
-            # where the curtain animation starts so the font cycling
-            # accelerates in sync with the closing bars.
+            # 4. Apply role-based overrides (font size, style, color)
+            role = ov.get("role", "")
+            overrides = _ROLE_OVERRIDES.get(role, {})
+            entry.update(overrides)
+
+            # 5. Inject font_cycle_accel_at_s with CLAMPED animate_s
+            # so font cycling syncs with the visual curtain animation
             if (
                 entry["effect"] == "font-cycle"
                 and inter
@@ -965,11 +991,21 @@ def _collect_absolute_overlays(
             ):
                 from app.pipeline.interstitials import MIN_CURTAIN_ANIMATE_S  # noqa: PLC0415
                 animate_s = max(MIN_CURTAIN_ANIMATE_S, float(inter.get("animate_s", 1.0)))
+                # Apply same 50% clamp as apply_curtain_close_tail
+                animate_s = min(animate_s, dur * 0.5)
                 slot_end_abs = cumulative_s + dur
                 accel_at = slot_end_abs - animate_s
                 # Clamp: accel must be within the overlay's time range
                 if accel_at > ov_start:
                     entry["font_cycle_accel_at_s"] = accel_at
+
+            # 6. Clamp overlay end to curtain completion — text disappears
+            # when bars fully close, not after. Runs AFTER timing overrides
+            # so the clamp always wins (text on black is never correct).
+            if inter and inter.get("type") == "curtain-close":
+                slot_end_abs = cumulative_s + dur
+                if entry["end_s"] > slot_end_abs:
+                    entry["end_s"] = slot_end_abs
 
             raw.append(entry)
 
