@@ -1159,8 +1159,10 @@ class TestAssembleClipsTextOverlays:
             interstitial_map=interstitial_map,
         )
         assert len(result) == 1
-        # Curtain starts 1.5s before slot end (5.0), so accel at 3.5s
-        assert result[0].get("font_cycle_accel_at_s") == 3.5
+        # MIN_CURTAIN_ANIMATE_S=3.0 > 1.5, so animate_s=3.0
+        # 50% clamp: min(3.0, 5.0*0.5=2.5) = 2.5
+        # accel_at = 5.0 - 2.5 = 2.5
+        assert result[0].get("font_cycle_accel_at_s") == 2.5
 
     def test_no_accel_without_curtain_close(self):
         """font-cycle overlays without curtain-close don't get accel timestamp."""
@@ -1537,3 +1539,205 @@ class TestOrchestrateTemplateJobTimeout:
 
         assert mock_job.status == "processing_failed"
         assert "timed out" in mock_job.error_detail
+
+
+# ── Fine-tuning tests (timing overrides, role overrides, curtain clamp) ──────
+
+
+class TestOverlayFineTuning:
+    """Tests for Issue 1-5: timing overrides, role overrides, curtain sync, exit clamp."""
+
+    def _make_step(
+        self, overlays: list, position: int = 1, clip_id: str = "clip_a",
+    ) -> MagicMock:
+        step = MagicMock()
+        step.clip_id = clip_id
+        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.slot = {
+            "position": position,
+            "target_duration_s": 5.0,
+            "text_overlays": overlays,
+        }
+        return step
+
+    # ── Issue 1: Timing overrides ────────────────────────────────────────
+
+    def test_timing_override_start_s(self):
+        """start_s_override shifts overlay start from Gemini value."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "hook", "start_s": 0.5, "end_s": 3.0,
+            "start_s_override": 1.0,
+            "position": "center", "effect": "pop-in", "sample_text": "WOW",
+        }])
+        result = _collect_absolute_overlays([step], [5.0], None, "")
+        assert len(result) == 1
+        assert result[0]["start_s"] == 1.0  # overridden from 0.5
+
+    def test_timing_override_end_s(self):
+        """end_s_override shifts overlay end from Gemini value."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "hook", "start_s": 0.0, "end_s": 5.0,
+            "end_s_override": 3.5,
+            "position": "center", "effect": "pop-in", "sample_text": "WOW",
+        }])
+        result = _collect_absolute_overlays([step], [5.0], None, "")
+        assert len(result) == 1
+        assert result[0]["end_s"] == 3.5  # overridden from 5.0
+
+    def test_timing_override_not_present(self):
+        """Without overrides, Gemini values are used as-is."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "hook", "start_s": 0.5, "end_s": 3.0,
+            "position": "center", "effect": "pop-in", "sample_text": "WOW",
+        }])
+        result = _collect_absolute_overlays([step], [5.0], None, "")
+        assert len(result) == 1
+        assert result[0]["start_s"] == 0.5
+        assert result[0]["end_s"] == 3.0
+
+    def test_negative_timing_override_clamped_to_zero(self):
+        """Negative start_s_override is clamped to 0.0."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "hook", "start_s": 0.5, "end_s": 3.0,
+            "start_s_override": -1.0,
+            "position": "center", "effect": "pop-in", "sample_text": "WOW",
+        }])
+        result = _collect_absolute_overlays([step], [5.0], None, "")
+        assert len(result) == 1
+        assert result[0]["start_s"] == 0.0
+
+    # ── Issues 2+3: Role overrides ───────────────────────────────────────
+
+    def test_role_override_label_applies(self):
+        """Label role gets large/sans/maize overrides."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "label", "start_s": 0.0, "end_s": 5.0,
+            "position": "center", "effect": "none",
+            "sample_text": "PERU",
+            "text_size": "medium", "font_style": "display", "text_color": "#FFFFFF",
+        }])
+        result = _collect_absolute_overlays([step], [5.0], None, "Peru")
+        assert len(result) == 1
+        assert result[0]["text_size"] == "large"
+        assert result[0]["font_style"] == "sans"
+        assert result[0]["text_color"] == "#F4D03F"
+
+    def test_role_override_hook_passthrough(self):
+        """Hook role keeps Gemini defaults (no override defined)."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "hook", "start_s": 0.0, "end_s": 5.0,
+            "position": "center", "effect": "pop-in",
+            "sample_text": "WOW",
+            "text_size": "medium", "font_style": "display", "text_color": "#FFFFFF",
+        }])
+        result = _collect_absolute_overlays([step], [5.0], None, "")
+        assert len(result) == 1
+        assert result[0]["text_size"] == "medium"
+        assert result[0]["font_style"] == "display"
+        assert result[0]["text_color"] == "#FFFFFF"
+
+    # ── Issue 5: Text exit clamped on curtain-close ──────────────────────
+
+    def test_text_exit_clamped_on_curtain(self):
+        """end_s > slot_end is clamped to slot end on curtain-close slots."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "hook", "start_s": 0.0, "end_s": 7.0,  # extends past 5.0s slot
+            "position": "center", "effect": "none", "sample_text": "WOW",
+        }])
+        interstitial_map = {
+            1: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
+        }
+        result = _collect_absolute_overlays(
+            [step], [5.0], None, "",
+            interstitial_map=interstitial_map,
+        )
+        assert len(result) == 1
+        assert result[0]["end_s"] == 5.0  # clamped to slot end
+
+    def test_text_exit_not_clamped_no_curtain(self):
+        """Without curtain-close, end_s is NOT clamped to slot end."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "hook", "start_s": 0.0, "end_s": 7.0,
+            "position": "center", "effect": "none", "sample_text": "WOW",
+        }])
+        result = _collect_absolute_overlays([step], [5.0], None, "")
+        assert len(result) == 1
+        assert result[0]["end_s"] == 7.0  # not clamped
+
+    def test_text_exit_already_within_slot(self):
+        """end_s < slot_end is untouched even with curtain-close."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "hook", "start_s": 0.0, "end_s": 4.0,
+            "position": "center", "effect": "none", "sample_text": "WOW",
+        }])
+        interstitial_map = {
+            1: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
+        }
+        result = _collect_absolute_overlays(
+            [step], [5.0], None, "",
+            interstitial_map=interstitial_map,
+        )
+        assert len(result) == 1
+        assert result[0]["end_s"] == 4.0  # untouched
+
+    def test_timing_override_clamped_by_curtain(self):
+        """Timing override past slot end is still clamped by curtain exit."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "hook", "start_s": 0.0, "end_s": 3.0,
+            "end_s_override": 8.0,  # override extends well past slot
+            "position": "center", "effect": "none", "sample_text": "WOW",
+        }])
+        interstitial_map = {
+            1: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
+        }
+        result = _collect_absolute_overlays(
+            [step], [5.0], None, "",
+            interstitial_map=interstitial_map,
+        )
+        assert len(result) == 1
+        assert result[0]["end_s"] == 5.0  # clamped by curtain
+
+    # ── Issue 4: accel_at uses clamped animate_s ─────────────────────────
+
+    def test_accel_at_uses_clamped_animate_s(self):
+        """accel timestamp uses 50%-clamped animate_s, not raw MIN_CURTAIN_ANIMATE_S."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        # 4s slot with MIN_CURTAIN_ANIMATE_S=3.0 → clamped to 4.0*0.5=2.0
+        step = self._make_step([{
+            "role": "label", "start_s": 0.0, "end_s": 4.0,
+            "position": "center", "effect": "font-cycle", "sample_text": "PERU",
+        }])
+        step.slot["target_duration_s"] = 4.0
+
+        interstitial_map = {
+            1: {"type": "curtain-close", "animate_s": 1.0, "hold_s": 1.0},
+        }
+        result = _collect_absolute_overlays(
+            [step], [4.0], None, "Peru",
+            interstitial_map=interstitial_map,
+        )
+        assert len(result) == 1
+        # MIN_CURTAIN_ANIMATE_S=3.0, but clamped to 4.0*0.5=2.0
+        # accel_at = 4.0 - 2.0 = 2.0
+        assert result[0].get("font_cycle_accel_at_s") == 2.0

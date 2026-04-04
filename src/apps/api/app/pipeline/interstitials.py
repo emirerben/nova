@@ -30,8 +30,8 @@ _CURTAIN_CLOSE_RATIO_THRESHOLD = 1.5
 # Minimum number of frames showing the bar pattern to confirm curtain-close
 _CURTAIN_CLOSE_MIN_FRAMES = 2
 
-# Minimum curtain-close animation duration — 0.5s is too fast to perceive
-MIN_CURTAIN_ANIMATE_S = 1.0
+# Minimum curtain-close animation duration — 1.0s was too fast for dramatic effect
+MIN_CURTAIN_ANIMATE_S = 3.0
 
 
 class InterstitialError(Exception):
@@ -136,14 +136,16 @@ def apply_curtain_close_tail(
             f"{probe_result.stdout.decode()[:100]}"
         ) from exc
 
-    if duration < animate_s:
+    # Always ensure at least 50% visible footage (fixes bug where strict <
+    # meant equal durations got no clamp)
+    if animate_s > duration * 0.5:
         log.warning(
-            "curtain_close_clip_too_short",
+            "curtain_close_clamped",
             duration=round(duration, 3),
-            animate_s=animate_s,
+            requested_animate_s=animate_s,
+            clamped_animate_s=round(duration * 0.5, 3),
         )
-        # Shorten animation to fit within clip, leaving at least 50% visible
-        animate_s = min(animate_s, duration * 0.5)
+        animate_s = duration * 0.5
         if animate_s < 0.05:
             raise InterstitialError(
                 f"clip too short for curtain-close ({duration:.2f}s)"
