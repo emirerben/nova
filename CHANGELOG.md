@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.8.0] - 2026-04-04
+
+### Fixed
+- White screen after video upload caused by stale `.next` build cache referencing missing webpack chunks from pre-route-move layout
+- `next build` failure from invalid named exports (`saveBatchToStorage`, `readBatchFromStorage`, `clearBatchStorage`) in `template/page.tsx` — Next.js App Router only allows default + metadata exports from page files
+- Batch storage entries without `saved_at` timestamp now expire correctly instead of bypassing the 30-minute TTL indefinitely
+- `readBatchFromStorage` now returns only declared fields (`batch_id`, `template_id`) instead of leaking raw parsed localStorage data
+
+### Added
+- Root error boundary (`error.tsx`) catches page-level runtime errors with retry UI
+- Global error boundary (`global-error.tsx`) catches root layout crashes with inline-styled fallback (Tailwind unavailable when layout fails)
+- Batch storage helpers extracted to `lib/batch-storage.ts` for proper module separation
+
 ## [0.1.7.0] - 2026-04-04
 
 ### Changed
