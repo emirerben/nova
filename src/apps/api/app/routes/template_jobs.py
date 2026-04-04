@@ -38,7 +38,8 @@ class CreateTemplateJobRequest(BaseModel):
     template_id: str
     clip_gcs_paths: list[str]
     selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
-    subject: str = Field(default="", max_length=50)  # e.g. "Puerto Rico" — replaces template placeholder text
+    # e.g. "Puerto Rico" — replaces template placeholder text
+    subject: str = Field(default="", max_length=50)
 
     @field_validator("clip_gcs_paths")
     @classmethod
