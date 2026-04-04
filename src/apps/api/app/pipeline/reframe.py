@@ -34,12 +34,17 @@ class ReframeError(Exception):
     pass
 
 
-def _encoding_args(output_path: str) -> list[str]:
-    """Shared FFmpeg output encoding arguments (DRY)."""
+def _encoding_args(output_path: str, preset: str = "fast") -> list[str]:
+    """Shared FFmpeg output encoding arguments (DRY).
+
+    Args:
+        preset: libx264 preset. Use "ultrafast" for intermediate files
+                that will be re-encoded later, "fast" for final output.
+    """
     return [
         "-c:v", "libx264",
         "-profile:v", "high",
-        "-preset", "fast",
+        "-preset", preset,
         "-crf", "23",
         "-pix_fmt", "yuv420p",  # QuickTime/browser compatibility
         "-b:v", settings.output_video_bitrate,
@@ -109,7 +114,7 @@ def reframe_and_export(
             "-t", str(duration),
             "-i", input_path,
             "-vf", vf_string,
-            *_encoding_args(output_path),
+            *_encoding_args(output_path, preset="ultrafast"),
         ]
 
     log.info(
@@ -217,7 +222,7 @@ def _build_overlay_cmd(
         "-filter_complex", filter_complex,
         "-map", f"[{prev_label}]",
         "-map", "0:a?",
-        *_encoding_args(output_path),
+        *_encoding_args(output_path, preset="ultrafast"),
     ])
 
     return cmd
