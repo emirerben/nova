@@ -1435,6 +1435,7 @@ def _mix_template_audio(
         "-map", "1:a",  # audio from template
         "-c:v", "copy",
         "-c:a", "aac",
+        "-af", f"loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
         "-shortest",    # cut to shorter of video/audio
         "-y", output_path,
     ]

@@ -108,7 +108,6 @@ def reframe_and_export(
             "-ss", str(start_s),
             "-t", str(duration),
             "-i", input_path,
-            "-af", f"loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
             "-vf", vf_string,
             *_encoding_args(output_path),
         ]
@@ -218,7 +217,6 @@ def _build_overlay_cmd(
         "-filter_complex", filter_complex,
         "-map", f"[{prev_label}]",
         "-map", "0:a?",
-        "-af", f"loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
         *_encoding_args(output_path),
     ])
 
