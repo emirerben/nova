@@ -149,8 +149,10 @@ FONT_CYCLE_FAST_INTERVAL_S = 0.07
 # Fraction of duration where cycling "settles" on the primary font
 FONT_CYCLE_SETTLE_RATIO = 0.30
 
-# Max font-cycle frames to prevent PNG explosion on long overlays
-MAX_FONT_CYCLE_FRAMES = 60
+# Max font-cycle frames to prevent PNG explosion on long overlays.
+# Keep low — each frame becomes an FFmpeg overlay input, and 60+ inputs
+# OOM-kill FFmpeg on 4GB VMs. 20 frames at ~3 FPS is still visually smooth.
+MAX_FONT_CYCLE_FRAMES = 20
 
 OVERLAY_FONT_SIZE = 90
 
