@@ -62,12 +62,12 @@ jest.mock("next/navigation", () => ({
   }),
 }));
 
-// ── Import the actual helpers from page.tsx ──────────────────────────────────
+// ── Import the actual helpers from batch-storage utility ─────────────────────
 import {
   saveBatchToStorage,
   readBatchFromStorage,
   clearBatchStorage,
-} from "@/app/template/page";
+} from "@/lib/batch-storage";
 
 const BATCH_STORAGE_KEY = "nova_active_batch_import";
 
