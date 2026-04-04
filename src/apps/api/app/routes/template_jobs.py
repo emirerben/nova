@@ -12,7 +12,7 @@ from datetime import datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,7 +38,7 @@ class CreateTemplateJobRequest(BaseModel):
     template_id: str
     clip_gcs_paths: list[str]
     selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
-    subject: str = ""  # e.g. "Puerto Rico" — replaces template placeholder text
+    subject: str = Field(default="", max_length=50)  # e.g. "Puerto Rico" — replaces template placeholder text
 
     @field_validator("clip_gcs_paths")
     @classmethod
@@ -219,7 +219,10 @@ async def reroll_template_job(
         template_id=original.template_id,
         raw_storage_path=clip_paths[0],
         selected_platforms=original.selected_platforms or ["tiktok", "instagram", "youtube"],
-        all_candidates={"clip_paths": clip_paths},
+        all_candidates={
+            "clip_paths": clip_paths,
+            "subject": (original.all_candidates or {}).get("subject", ""),
+        },
         status="queued",
     )
     db.add(new_job)
