@@ -415,7 +415,7 @@ class TestFontCycleEffect:
 
     def test_font_cycle_frame_cap_fills_gap(self, tmp_path):
         """When frame cap is hit, gap-fill PNG bridges cycling to settle phase."""
-        from app.pipeline.text_overlay import MAX_FONT_CYCLE_FRAMES, FONT_CYCLE_INTERVAL_S
+        from app.pipeline.text_overlay import FONT_CYCLE_INTERVAL_S, MAX_FONT_CYCLE_FRAMES
         # Create an overlay long enough that the frame cap is hit during cycling.
         # cycling covers 70% of duration; at 0.15s per frame, cap needs
         # duration * 0.7 / 0.15 > MAX_FONT_CYCLE_FRAMES

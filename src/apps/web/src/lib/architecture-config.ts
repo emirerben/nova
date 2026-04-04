@@ -51,10 +51,10 @@ export interface Module {
 const uploadChildren: Record<string, Module> = {
   upload_ui: {
     id: "upload_ui",
-    name: "Nova Studio UI",
+    name: "Upload UI",
     description: "Drag-drop upload interface with platform selection",
     level: "L2",
-    files: ["src/apps/web/src/app/nova-studio/page.tsx"],
+    files: ["src/apps/web/src/app/page.tsx"],
     githubLabel: "module:upload",
     dependsOn: [],
     produces: ["file object", "selected platforms"],
@@ -373,7 +373,7 @@ export const modules: Record<string, Module> = {
     description: "Client-side upload to GCS via signed URLs",
     level: "L1",
     files: [
-      "src/apps/web/src/app/nova-studio/page.tsx",
+      "src/apps/web/src/app/page.tsx",
       "src/apps/api/app/routes/uploads.py",
       "src/apps/api/app/storage.py",
     ],

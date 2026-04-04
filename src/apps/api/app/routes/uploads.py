@@ -25,6 +25,20 @@ ALLOWED_CONTENT_TYPES = {"video/mp4", "video/quicktime", "video/x-msvideo"}
 # Drive imports also accept application/octet-stream (Drive may report this for valid videos)
 DRIVE_ALLOWED_MIME = ALLOWED_CONTENT_TYPES | {"application/octet-stream"}
 
+
+def _normalise_content_type(ct: str) -> str:
+    """Normalise video MIME for GCS presigned URLs.
+
+    GCS signs against the exact content-type. Browsers often report
+    ``video/quicktime`` for .mov/.mp4 on macOS/iOS; an empty string is
+    also possible. Normalising to ``video/mp4`` keeps the signed header
+    in sync with what the client sends (see ``normaliseMimeType`` in
+    ``api.ts`` for the client-side twin).
+    """
+    if not ct or ct == "video/quicktime":
+        return "video/mp4"
+    return ct
+
 # Google Drive file IDs: alphanumeric + hyphen/underscore, typically 20-50 chars
 DRIVE_FILE_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{10,60}$")
 
@@ -130,6 +144,10 @@ async def create_presigned_upload(
             detail=f"Unsupported content type: {body.content_type}",
         )
 
+    # Normalise before signing — video/quicktime → video/mp4 so the presigned
+    # URL content-type matches what the client PUT sends (NOV-8 fix).
+    signing_content_type = _normalise_content_type(body.content_type)
+
     # TODO: auth — replace with real user_id from JWT
     user_id = "dev-user"
 
@@ -137,8 +155,8 @@ async def create_presigned_upload(
 
     try:
         upload_url, gcs_path = storage.presigned_put_url(
-            user_id, job_id, content_type=body.content_type
-        )  # noqa: E501
+            user_id, job_id, content_type=signing_content_type
+        )
     except Exception as exc:
         log.error("presigned_url_failed", error=str(exc))
         raise HTTPException(
