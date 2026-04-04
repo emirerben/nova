@@ -213,17 +213,16 @@ describe("batch import localStorage recovery", () => {
     expect(saved!.batch_id).toBe("batch-recent");
   });
 
-  // ── 10. Entries without saved_at are treated as valid (backward compat) ─
-  test("entries without saved_at are not discarded", () => {
-    // Old-format entry without saved_at
+  // ── 10. Entries without saved_at are treated as expired ─────────────────
+  test("discards entries without saved_at (legacy format)", () => {
     localStorage.setItem(
       BATCH_STORAGE_KEY,
       JSON.stringify({ batch_id: "batch-legacy", template_id: "tmpl-legacy" })
     );
 
-    const saved = readBatchFromStorage();
-    expect(saved).not.toBeNull();
-    expect(saved!.batch_id).toBe("batch-legacy");
+    expect(readBatchFromStorage()).toBeNull();
+    // Entry should be cleaned up
+    expect(localStorage.getItem(BATCH_STORAGE_KEY)).toBeNull();
   });
 
   // ── 11. No stale data when localStorage is empty ───────────────────────
