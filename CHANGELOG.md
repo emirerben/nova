@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.7.0] - 2026-04-04
+
+### Changed
+- Upload UI is now the primary entry point at `/` — users land directly on the upload page instead of the waitlist. The old `/nova-studio` path redirects to `/`.
+- Page metadata updated to reflect product positioning: "Turn raw footage into viral clips"
+
+### Fixed
+- Server-side MIME normalisation for presigned uploads: `video/quicktime` (common on macOS/iOS) is now normalised to `video/mp4` before GCS signing, preventing signature mismatch errors when the client PUTs the file
+- Architecture dashboard module config updated to reference upload UI at new root path
+
+### Added
+- 11 presigned upload endpoint tests: MIME normalisation unit tests, integration tests for happy path, quicktime normalisation, AVI passthrough, unsupported type rejection, file size limit, aspect ratio validation, and GCS failure handling
+
 ## [0.1.6.0] - 2026-04-03
 
 ### Fixed
