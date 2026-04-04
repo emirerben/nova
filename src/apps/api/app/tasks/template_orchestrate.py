@@ -883,7 +883,13 @@ def _join_or_concat(
 def _concat_demuxer(
     reframed_paths: list[str], output_path: str, tmpdir: str,
 ) -> None:
-    """FFmpeg concat demuxer — lossless stream copy, fast."""
+    """FFmpeg concat demuxer — re-encode to handle mixed audio/no-audio slots.
+
+    Stream copy (-c copy) silently truncates when some slots lack an audio
+    track. Re-encoding ensures all inputs are normalized to the same layout.
+    """
+    from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
+
     concat_list = os.path.join(tmpdir, "concat.txt")
     with open(concat_list, "w") as f:
         for p in reframed_paths:
@@ -894,11 +900,9 @@ def _concat_demuxer(
         "-f", "concat",
         "-safe", "0",
         "-i", concat_list,
-        "-c", "copy",
-        "-y",
-        output_path,
+        *_encoding_args(output_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
+    result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
     if result.returncode != 0:
         raise ValueError(f"FFmpeg concat failed: {result.stderr.decode()[:300]}")
 
