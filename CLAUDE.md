@@ -64,10 +64,10 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Production URL: https://nova-video.vercel.app
 - Framework: Next.js (auto-detected)
 - Root directory: `src/apps/web/`
-- Deploy: auto-deploys on push to `main` (once GitHub integration connected), or `cd src/apps/web && vercel --prod`
+- Deploy: auto-deploys on push to `main` via GitHub integration, or `cd src/apps/web && vercel --prod`
 - Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXT_PUBLIC_GOOGLE_CLIENT_ID, NEXT_PUBLIC_GOOGLE_PICKER_API_KEY, NEXTAUTH_SECRET)
-- Deployment Protection: Standard Protection enabled by default (requires Vercel SSO). Disable in Settings → Deployment Protection to make public.
-- Preview deploys: UI renders but API calls fail (production-only CORS). Test API integration locally.
+- Deployment Protection: preview-only (production is public)
+- Preview deploys: full API access via regex CORS (`allow_origin_regex` in `main.py`)
 
 ### Fly.io — API + Workers (configured by /setup-deploy)
 - App name: nova-video
