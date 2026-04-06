@@ -124,3 +124,39 @@
 **Effort:** S (human: ~1 day / CC: ~15 min)
 **Priority:** P3
 **Depends on:** ASS animated overlays shipped and validated (this PR)
+
+---
+
+## Vercel Frontend Deploy (added 2026-04-06)
+
+### Regex CORS for Vercel Preview Deployments
+**What:** Add regex-based CORS matching for Vercel preview deployment URLs (pattern: `https://web-*-emirerbens-projects.vercel.app`).
+**Why:** Currently only the production Vercel domain is in `ALLOWED_ORIGINS`. Preview deployments render the UI but can't call the Fly.io API. Regex CORS would allow testing full API integration on every PR.
+**How:** Add a `@field_validator('allowed_origins', mode='before')` in `config.py` that expands a regex pattern entry (e.g. `regex:https://web-.*-emirerbens-projects\.vercel\.app`) against the request origin at middleware level, or use FastAPI's `allow_origin_regex` parameter in `CORSMiddleware`.
+**Effort:** S (human: ~2 hours / CC: ~10 min)
+**Priority:** P3
+**Depends on:** Vercel frontend deployed (done)
+
+### Connect Vercel GitHub Integration
+**What:** Connect the GitHub repo to the Vercel project for automatic deploys on push.
+**Why:** Currently deploys are manual via `vercel --prod` CLI. GitHub integration enables auto-deploy on push to `main` and preview deploys on every PR.
+**How:** Vercel Dashboard → Project Settings → Git → Connect GitHub Repository. Select the nova repo and set root directory to `src/apps/web/`.
+**Effort:** XS (5 minutes, dashboard only)
+**Priority:** P2
+**Depends on:** Vercel frontend deployed (done)
+
+### Disable Vercel Deployment Protection for Production
+**What:** Make the production Vercel URL publicly accessible (currently requires Vercel SSO).
+**Why:** End users can't access the site without a Vercel account. Standard Protection is fine for preview deploys but blocks production visitors.
+**How:** Vercel Dashboard → Project Settings → Deployment Protection → set "Standard Protection" to "Only Preview Deployments".
+**Effort:** XS (1 minute, dashboard only)
+**Priority:** P1 — must do before sharing the URL with anyone
+**Depends on:** Vercel frontend deployed (done)
+
+### Update Google OAuth Redirect URIs
+**What:** Add the Vercel production domain to Google Cloud Console OAuth redirect URIs.
+**Why:** Google OAuth sign-in will fail on the Vercel domain until the redirect URI is authorized.
+**How:** Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID → add `https://nova-video.vercel.app` to Authorized JavaScript origins and `https://nova-video.vercel.app/api/auth/callback/google` to Authorized redirect URIs.
+**Effort:** XS (5 minutes, console only)
+**Priority:** P1 — must do before OAuth works on Vercel
+**Depends on:** Vercel frontend deployed (done)

@@ -53,28 +53,44 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - DATABASE_URL
 - OPENAI_API_KEY
 
-## Deploy Configuration (configured by /setup-deploy)
-- Platform: Fly.io
+## Deploy Configuration
+
+### Architecture: Split Deploy
+- **Frontend (Next.js)** → Vercel (CDN edge, preview deploys, auto-deploy on push)
+- **API + Workers (FastAPI + Celery)** → Fly.io (long-running FFmpeg jobs, up to 18-20 min)
+
+### Vercel — Frontend (`src/apps/web/`)
+- Project: `emirerbens-projects/nova`
+- Production URL: https://nova-video.vercel.app
+- Framework: Next.js (auto-detected)
+- Root directory: `src/apps/web/`
+- Deploy: auto-deploys on push to `main` (once GitHub integration connected), or `cd src/apps/web && vercel --prod`
+- Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXT_PUBLIC_GOOGLE_CLIENT_ID, NEXT_PUBLIC_GOOGLE_PICKER_API_KEY, NEXTAUTH_SECRET)
+- Deployment Protection: Standard Protection enabled by default (requires Vercel SSO). Disable in Settings → Deployment Protection to make public.
+- Preview deploys: UI renders but API calls fail (production-only CORS). Test API integration locally.
+
+### Fly.io — API + Workers (configured by /setup-deploy)
 - App name: nova-video
 - Region: iad
 - Production URL: https://nova-video.fly.dev
 - Deploy workflow: `fly deploy` from repo root (or GitHub Actions CD)
 - Deploy status command: `fly status --app nova-video`
 - Merge method: squash
-- Project type: web app + API + background workers
 - Process groups: api (FastAPI/uvicorn) + worker (Celery)
 - Release command: `python -m alembic upgrade head` (runs migrations on every deploy)
 - VM sizing: api = 1 shared CPU / 512MB, worker = 2 shared CPUs / 2048MB
 - Dockerfile: repo-root `Dockerfile` (cached dependency layer from pyproject.toml)
 - Docker image includes: `app/`, `assets/`, `prompts/`, `alembic.ini`
+- CORS: `ALLOWED_ORIGINS` env var — JSON array format, e.g. `'["http://localhost:3000","https://nova-video.vercel.app"]'`
 
 ### Custom deploy hooks
 - Pre-merge: none
-- Deploy trigger: `fly deploy` (manual) or GitHub Actions (after CD workflow added)
-- Deploy status: `fly status --app nova-video`
-- Health check: https://nova-video.fly.dev/health
+- Deploy trigger (API): `fly deploy` (manual) or GitHub Actions (after CD workflow added)
+- Deploy trigger (Frontend): push to `main` (Vercel auto-deploy) or `cd src/apps/web && vercel --prod`
+- Deploy status (API): `fly status --app nova-video`
+- Health check (API): https://nova-video.fly.dev/health
 
-### Secrets (set via `fly secrets set`)
+### Fly.io Secrets (set via `fly secrets set`)
 Required before first deploy:
 ```bash
 fly secrets set -a nova-video \
@@ -84,7 +100,8 @@ fly secrets set -a nova-video \
   STORAGE_PROVIDER="..." \
   GOOGLE_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}' \
   OPENAI_API_KEY="..." \
-  GEMINI_API_KEY="..."
+  GEMINI_API_KEY="..." \
+  ALLOWED_ORIGINS='["http://localhost:3000","https://nova-video.vercel.app"]'
 ```
 
 ## Paperclip Agent Protocol

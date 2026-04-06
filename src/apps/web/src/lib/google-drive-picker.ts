@@ -169,6 +169,21 @@ interface PickerCallbackData {
   }>;
 }
 
+interface GooglePickerDocsView {
+  setMimeTypes: (types: string) => GooglePickerDocsView;
+  setMode: (mode: string) => GooglePickerDocsView;
+}
+
+interface GooglePickerBuilder {
+  addView: (view: GooglePickerDocsView) => GooglePickerBuilder;
+  setOAuthToken: (token: string) => GooglePickerBuilder;
+  setDeveloperKey: (key: string) => GooglePickerBuilder;
+  setTitle: (title: string) => GooglePickerBuilder;
+  setCallback: (cb: (data: PickerCallbackData) => void) => GooglePickerBuilder;
+  enableFeature: (feature: string) => GooglePickerBuilder;
+  build: () => { setVisible: (v: boolean) => void };
+}
+
 declare global {
   interface Window {
     gapi: {
@@ -186,19 +201,9 @@ declare global {
         };
       };
       picker: {
-        DocsView: new (viewId: string) => {
-          setMimeTypes: (types: string) => { setMode: (mode: string) => unknown };
-        };
+        DocsView: new (viewId: string) => GooglePickerDocsView;
         DocsViewMode: { LIST: string };
-        PickerBuilder: new () => {
-          addView: (view: unknown) => { setOAuthToken: (token: string) => unknown } & Record<string, (...args: unknown[]) => unknown>;
-          setOAuthToken: (token: string) => unknown;
-          setDeveloperKey: (key: string) => unknown;
-          setTitle: (title: string) => unknown;
-          setCallback: (cb: (data: PickerCallbackData) => void) => unknown;
-          enableFeature: (feature: string) => unknown;
-          build: () => { setVisible: (v: boolean) => void };
-        };
+        PickerBuilder: new () => GooglePickerBuilder;
         ViewId: { DOCS_VIDEOS: string };
         Action: { CANCEL: string; PICKED: string };
         Feature: { MULTISELECT_ENABLED: string };
