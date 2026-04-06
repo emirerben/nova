@@ -51,14 +51,26 @@ from app.worker import celery_app
 
 log = structlog.get_logger()
 
-# Role-based visual overrides for text overlays.
+# Consolidated label configuration — all visual tuning for text overlays.
 # Gemini doesn't return text_size/font_style/text_color reliably,
-# so we override per-role to match TikTok template aesthetics.
-_ROLE_OVERRIDES: dict[str, dict] = {
-    "label": {
-        "text_size": "large",       # 120px (was medium/72px)
-        "font_style": "sans",       # Montserrat ExtraBold (was display/Playfair)
-        "text_color": "#F4D03F",    # warm maize/gold (was white)
+# so we override per label type to match TikTok template aesthetics.
+#
+# "prefix" = fixed text like "Welcome to"
+#            (detected by _is_subject_placeholder returning False)
+# "subject" = variable text like city name
+#            (detected by _is_subject_placeholder returning True)
+_LABEL_CONFIG: dict[str, dict] = {
+    "prefix": {
+        "text_size": "medium",      # 72px — smaller, subordinate
+        "start_s": 2.0,             # appears at absolute second 2
+    },
+    "subject": {
+        "text_size": "large",       # 120px — prominent
+        "font_style": "sans",       # Montserrat ExtraBold
+        "text_color": "#F4D03F",    # warm maize/gold
+        "start_s": 3.0,             # appears 1s after prefix
+        "effect": "font-cycle",     # forced font cycling
+        "accel_at_s": 8.0,          # font cycle accelerates after second 8
     },
 }
 
@@ -981,10 +993,22 @@ def _collect_absolute_overlays(
                 "text_color": ov.get("text_color", "#FFFFFF"),
             }
 
-            # 4. Apply role-based overrides (font size, style, color)
+            # 4. Apply label config based on subject vs prefix detection
             role = ov.get("role", "")
-            overrides = _ROLE_OVERRIDES.get(role, {})
-            entry.update(overrides)
+            if role == "label":
+                is_subject = _is_subject_placeholder(ov.get("sample_text", ""))
+                config = _LABEL_CONFIG["subject" if is_subject else "prefix"]
+                # Apply styling keys (skip timing/accel — handled separately)
+                entry.update({k: v for k, v in config.items() if k not in ("start_s", "accel_at_s")})
+
+                # Timing override for first-slot labels only
+                # Guard: don't push start past end (e.g. short overlay)
+                if cumulative_s == 0.0 and "start_s" in config and config["start_s"] < entry["end_s"]:
+                    entry["start_s"] = config["start_s"]
+
+                # Font-cycle acceleration for subject labels
+                if is_subject and "accel_at_s" in config:
+                    entry["font_cycle_accel_at_s"] = config["accel_at_s"]
 
             # 5. Inject font_cycle_accel_at_s with CLAMPED animate_s
             # so font cycling syncs with the visual curtain animation
@@ -993,15 +1017,19 @@ def _collect_absolute_overlays(
                 and inter
                 and inter.get("type") == "curtain-close"
             ):
-                from app.pipeline.interstitials import MIN_CURTAIN_ANIMATE_S  # noqa: PLC0415
+                from app.pipeline.interstitials import MIN_CURTAIN_ANIMATE_S, _CURTAIN_MAX_RATIO  # noqa: PLC0415
                 animate_s = max(MIN_CURTAIN_ANIMATE_S, float(inter.get("animate_s", 1.0)))
-                # Apply same 50% clamp as apply_curtain_close_tail
-                animate_s = min(animate_s, dur * 0.5)
+                # Apply same 60% clamp as apply_curtain_close_tail
+                animate_s = min(animate_s, dur * _CURTAIN_MAX_RATIO)
                 slot_end_abs = cumulative_s + dur
                 accel_at = slot_end_abs - animate_s
-                # Clamp: accel must be within the overlay's time range
-                if accel_at > ov_start:
-                    entry["font_cycle_accel_at_s"] = accel_at
+                # Clamp: accel must be within the overlay's time range;
+                # use min() so curtain-derived accel can override to earlier
+                if accel_at > entry["start_s"]:
+                    entry["font_cycle_accel_at_s"] = min(
+                        entry.get("font_cycle_accel_at_s", accel_at),
+                        accel_at,
+                    )
 
             # 6. Clamp overlay end to curtain completion — text disappears
             # when bars fully close, not after. Runs AFTER timing overrides
