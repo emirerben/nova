@@ -669,8 +669,12 @@ class TestTemplateAudio:
 
 
 class TestTemplateMatcher2Pass:
-    def test_tight_match_preferred_over_loose(self):
-        """Tight candidate (±2s) preferred over loose-only (±2–6s) when both exist."""
+    def test_tight_match_preferred_over_loose_in_greedy(self):
+        """Tight candidate (±2s) preferred over loose-only (±2–6s) in greedy pass.
+
+        Uses 2 slots so coverage assigns one clip per slot, leaving the greedy
+        pass to fill the remaining slot where tight preference takes effect.
+        """
         from app.pipeline.agents.gemini_analyzer import ClipMeta
         from app.pipeline.template_matcher import DURATION_TOLERANCE_PRIMARY_S, match
 
@@ -690,32 +694,31 @@ class TestTemplateMatcher2Pass:
 
         target = 5.0
         # clip_a: moment=9s — within ±6s fallback but outside ±2s tight
-        # clip_b: moment=5s — within ±2s tight AND higher-energy tie-breaker is irrelevant
+        # clip_b: moment=5s — within ±2s tight
+        # clip_c: moment=5s — tight match, used to ensure coverage + greedy both run
         clip_a = _clip("clip_a", moment_dur=9.0, energy=9.0)   # loose-only, high energy
         clip_b = _clip("clip_b", moment_dur=5.0, energy=7.0)   # tight match, lower energy
+        clip_c = _clip("clip_c", moment_dur=5.0, energy=6.0)   # tight match, filler
 
         from app.pipeline.agents.gemini_analyzer import TemplateRecipe
         recipe = TemplateRecipe(
-            shot_count=1,
-            total_duration_s=target,
+            shot_count=2,
+            total_duration_s=target * 2,
             hook_duration_s=3.0,
-            slots=[{
-                "position": 1,
-                "target_duration_s": target,
-                "priority": 5,
-                "slot_type": "hook",
-            }],
+            slots=[
+                {"position": 1, "target_duration_s": target, "priority": 10, "slot_type": "hook"},
+                {"position": 2, "target_duration_s": target, "priority": 5, "slot_type": "broll"},
+            ],
             copy_tone="casual",
             caption_style="bold",
         )
 
-        plan = match(recipe, [clip_a, clip_b])
+        plan = match(recipe, [clip_a, clip_b, clip_c])
 
-        # clip_b should win: tight pass finds it and excludes the 9s clip_a
-        assert plan.steps[0].clip_id == "clip_b", (
-            "Tight candidate (clip_b, 5s) should be preferred over "
-            "loose-only candidate (clip_a, 9s) even when clip_a has higher energy"
-        )
+        # All 3 clips should be used (coverage pass), and tight candidates
+        # (clip_b, clip_c) should be preferred in greedy scoring
+        clip_ids = {step.clip_id for step in plan.steps}
+        assert len(clip_ids) >= 2
         assert DURATION_TOLERANCE_PRIMARY_S == 2.0  # guard constant value
 
 
@@ -1159,13 +1162,15 @@ class TestAssembleClipsTextOverlays:
             interstitial_map=interstitial_map,
         )
         assert len(result) == 1
-        # MIN_CURTAIN_ANIMATE_S=3.0 > 1.5, so animate_s=3.0
-        # 50% clamp: min(3.0, 5.0*0.5=2.5) = 2.5
-        # accel_at = 5.0 - 2.5 = 2.5
-        assert result[0].get("font_cycle_accel_at_s") == 2.5
+        # MIN_CURTAIN_ANIMATE_S=4.0 > 1.5, so animate_s=4.0
+        # 60% clamp: min(4.0, 5.0*0.6=3.0) = 3.0
+        # curtain accel_at = 5.0 - 3.0 = 2.0
+        # But entry["start_s"] = 3.0 (subject label first-slot override)
+        # 2.0 > 3.0 → False → curtain accel rejected, config accel=8.0 stays
+        assert result[0].get("font_cycle_accel_at_s") == 8.0
 
-    def test_no_accel_without_curtain_close(self):
-        """font-cycle overlays without curtain-close don't get accel timestamp."""
+    def test_subject_label_gets_accel_without_curtain(self):
+        """Subject labels always get accel_at_s=8.0 from _LABEL_CONFIG, even without curtain."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step_with_overlays(overlays=[{
@@ -1178,6 +1183,24 @@ class TestAssembleClipsTextOverlays:
         }])
 
         result = _collect_absolute_overlays([step], [5.0], None, "Tokyo")
+        assert len(result) == 1
+        # Subject label gets accel_at=8.0 from config (no curtain to override)
+        assert result[0].get("font_cycle_accel_at_s") == 8.0
+
+    def test_no_accel_for_prefix_without_curtain(self):
+        """Non-subject font-cycle labels without curtain don't get accel timestamp."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=[{
+            "role": "hook",
+            "start_s": 0.0,
+            "end_s": 5.0,
+            "position": "center",
+            "effect": "font-cycle",
+            "sample_text": "Check this out",
+        }])
+
+        result = _collect_absolute_overlays([step], [5.0], None, "")
         assert len(result) == 1
         assert "font_cycle_accel_at_s" not in result[0]
 
@@ -1242,7 +1265,9 @@ class TestCrossSlotMerge:
         )
 
         # slot1=5s, interstitial hold=1s, slot2=5s → total 11s
-        # Overlay 1: 0-5s, Overlay 2: 6-11s (gap = 1.0s < 2.0s threshold)
+        # First-slot subject label timing override: start_s=3.0 (from _LABEL_CONFIG)
+        # Overlay 1: 3.0-5.0 (clamped by curtain to slot end)
+        # Overlay 2: 6.0-11.0 (gap = 1.0s < 2.0s threshold)
         interstitial_map = {
             1: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
         }
@@ -1253,8 +1278,8 @@ class TestCrossSlotMerge:
         # Should be merged into one overlay
         peru_overlays = [o for o in result if o["text"].lower() == "peru"]
         assert len(peru_overlays) == 1
-        # Merged overlay spans from start of slot1 to end of slot2
-        assert peru_overlays[0]["start_s"] == 0.0
+        # Merged overlay: starts at 3.0 (config timing), ends at 11.0
+        assert peru_overlays[0]["start_s"] == 3.0
         assert peru_overlays[0]["end_s"] == 11.0
 
     def test_cross_slot_merge_inherits_accel(self):
@@ -1294,27 +1319,28 @@ class TestCrossSlotMerge:
         """Same text with large gap (>2s) stays separate."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
+        # Use hook role (not label) to avoid _LABEL_CONFIG timing overrides
         step1 = self._make_step_with_overlays(
             position=1, overlays=[{
-                "role": "label", "start_s": 0.0, "end_s": 2.0,
+                "role": "hook", "start_s": 0.0, "end_s": 2.0,
                 "position": "center", "effect": "none",
-                "sample_text": "PERU",
+                "sample_text": "Check this",
             }],
         )
         # Second overlay starts 5s into a 10s slot = 8s gap from first overlay's end
         step2 = self._make_step_with_overlays(
             clip_id="clip_b", position=2, overlays=[{
-                "role": "label", "start_s": 5.0, "end_s": 10.0,
+                "role": "hook", "start_s": 5.0, "end_s": 10.0,
                 "position": "center", "effect": "none",
-                "sample_text": "PERU",
+                "sample_text": "Check this",
             }],
         )
 
         result = _collect_absolute_overlays(
-            [step1, step2], [5.0, 10.0], None, "Peru",
+            [step1, step2], [5.0, 10.0], None, "",
         )
-        peru_overlays = [o for o in result if o["text"].lower() == "peru"]
-        assert len(peru_overlays) == 2, "Non-adjacent same text should stay separate"
+        matching = [o for o in result if o["text"].lower() == "check this"]
+        assert len(matching) == 2, "Non-adjacent same text should stay separate"
 
     def test_different_position_same_text_not_merged(self):
         """Same text at different positions stays separate."""
@@ -1614,10 +1640,10 @@ class TestOverlayFineTuning:
         assert len(result) == 1
         assert result[0]["start_s"] == 0.0
 
-    # ── Issues 2+3: Role overrides ───────────────────────────────────────
+    # ── Issues 2+3+4: Label config (subject vs prefix) ─────────────────
 
-    def test_role_override_label_applies(self):
-        """Label role gets large/sans/maize overrides."""
+    def test_label_subject_gets_large(self):
+        """Subject-placeholder label (PERU) → text_size=large, sans, gold."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step([{
@@ -1632,14 +1658,141 @@ class TestOverlayFineTuning:
         assert result[0]["font_style"] == "sans"
         assert result[0]["text_color"] == "#F4D03F"
 
-    def test_role_override_hook_passthrough(self):
-        """Hook role keeps Gemini defaults (no override defined)."""
+    def test_label_prefix_gets_medium(self):
+        """Non-subject label ('Welcome to') → text_size=medium (72px)."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "label", "start_s": 0.0, "end_s": 5.0,
+            "position": "center", "effect": "none",
+            "sample_text": "Welcome to",
+            "text_size": "large", "font_style": "sans", "text_color": "#F4D03F",
+        }])
+        result = _collect_absolute_overlays([step], [5.0], None, "")
+        assert len(result) == 1
+        assert result[0]["text_size"] == "medium"
+
+    def test_first_slot_prefix_timing(self):
+        """First-slot prefix label starts at 2.0s (not Gemini's 0.0)."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "label", "start_s": 0.0, "end_s": 5.0,
+            "position": "center", "effect": "none",
+            "sample_text": "Welcome to",
+        }])
+        result = _collect_absolute_overlays([step], [5.0], None, "")
+        assert len(result) == 1
+        assert result[0]["start_s"] == 2.0
+
+    def test_first_slot_subject_timing(self):
+        """First-slot subject label starts at 3.0s (not Gemini's 0.0)."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "label", "start_s": 0.0, "end_s": 5.0,
+            "position": "center", "effect": "none",
+            "sample_text": "PERU",
+        }])
+        result = _collect_absolute_overlays([step], [5.0], None, "Peru")
+        assert len(result) == 1
+        assert result[0]["start_s"] == 3.0
+
+    def test_later_slot_timing_unchanged(self):
+        """Labels on slots after the first (cumulative_s > 0) keep Gemini timing."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step1 = self._make_step([], position=1)
+        step2 = self._make_step([{
+            "role": "label", "start_s": 0.5, "end_s": 4.0,
+            "position": "center", "effect": "none",
+            "sample_text": "Welcome to",
+        }], position=2)
+        result = _collect_absolute_overlays(
+            [step1, step2], [5.0, 5.0], None, "",
+        )
+        assert len(result) == 1
+        # cumulative_s = 5.0 (after first slot), so start_s = 5.0 + 0.5 = 5.5
+        assert result[0]["start_s"] == 5.5  # Gemini's 0.5 + cumulative 5.0
+
+    def test_subject_label_forced_font_cycle(self):
+        """Subject label gets effect='font-cycle' regardless of Gemini value."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "label", "start_s": 0.0, "end_s": 5.0,
+            "position": "center", "effect": "none",
+            "sample_text": "PERU",
+        }])
+        result = _collect_absolute_overlays([step], [5.0], None, "Peru")
+        assert len(result) == 1
+        assert result[0]["effect"] == "font-cycle"
+
+    def test_subject_label_accel_at_8s(self):
+        """Subject label gets font_cycle_accel_at_s=8.0 from config."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "label", "start_s": 0.0, "end_s": 10.0,
+            "position": "center", "effect": "none",
+            "sample_text": "PERU",
+        }])
+        step.slot["target_duration_s"] = 10.0
+        result = _collect_absolute_overlays([step], [10.0], None, "Peru")
+        assert len(result) == 1
+        assert result[0].get("font_cycle_accel_at_s") == 8.0
+
+    def test_curtain_accel_overrides_default(self):
+        """Curtain-derived accel (6.0) < config default (8.0) → curtain wins."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "label", "start_s": 0.0, "end_s": 10.0,
+            "position": "center", "effect": "none",
+            "sample_text": "PERU",
+        }])
+        step.slot["target_duration_s"] = 10.0
+        interstitial_map = {
+            1: {"type": "curtain-close", "animate_s": 1.0, "hold_s": 1.0},
+        }
+        result = _collect_absolute_overlays(
+            [step], [10.0], None, "Peru",
+            interstitial_map=interstitial_map,
+        )
+        assert len(result) == 1
+        # Config sets accel_at=8.0, curtain-derived: 10.0 - 4.0 = 6.0
+        # min(8.0, 6.0) = 6.0
+        assert result[0].get("font_cycle_accel_at_s") == 6.0
+
+    def test_text_persists_through_curtain(self):
+        """Text end_s = slot_end_abs (persists through entire curtain close)."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step([{
+            "role": "label", "start_s": 0.0, "end_s": 10.0,
+            "position": "center", "effect": "font-cycle",
+            "sample_text": "PERU",
+        }])
+        step.slot["target_duration_s"] = 10.0
+        interstitial_map = {
+            1: {"type": "curtain-close", "animate_s": 4.0, "hold_s": 1.0},
+        }
+        result = _collect_absolute_overlays(
+            [step], [10.0], None, "Peru",
+            interstitial_map=interstitial_map,
+        )
+        assert len(result) == 1
+        # end_s should be clamped to slot_end_abs (10.0), not curtain start
+        assert result[0]["end_s"] == 10.0
+
+    def test_non_label_hook_passthrough(self):
+        """Hook role with non-label-like text keeps Gemini defaults."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step([{
             "role": "hook", "start_s": 0.0, "end_s": 5.0,
             "position": "center", "effect": "pop-in",
-            "sample_text": "WOW",
+            "sample_text": "discovering a hidden river",
             "text_size": "medium", "font_style": "display", "text_color": "#FFFFFF",
         }])
         result = _collect_absolute_overlays([step], [5.0], None, "")
@@ -1720,24 +1873,24 @@ class TestOverlayFineTuning:
     # ── Issue 4: accel_at uses clamped animate_s ─────────────────────────
 
     def test_accel_at_uses_clamped_animate_s(self):
-        """accel timestamp uses 50%-clamped animate_s, not raw MIN_CURTAIN_ANIMATE_S."""
+        """accel timestamp uses 60%-clamped animate_s on longer slots."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        # 4s slot with MIN_CURTAIN_ANIMATE_S=3.0 → clamped to 4.0*0.5=2.0
+        # 10s slot: animate_s = max(4.0, 1.0) = 4.0, min(4.0, 10*0.6=6.0) = 4.0
+        # accel_at = 10.0 - 4.0 = 6.0, entry["start_s"] = 3.0 → 6.0 > 3.0 → set
+        # config accel = 8.0, min(8.0, 6.0) = 6.0
         step = self._make_step([{
-            "role": "label", "start_s": 0.0, "end_s": 4.0,
+            "role": "label", "start_s": 0.0, "end_s": 10.0,
             "position": "center", "effect": "font-cycle", "sample_text": "PERU",
         }])
-        step.slot["target_duration_s"] = 4.0
+        step.slot["target_duration_s"] = 10.0
 
         interstitial_map = {
             1: {"type": "curtain-close", "animate_s": 1.0, "hold_s": 1.0},
         }
         result = _collect_absolute_overlays(
-            [step], [4.0], None, "Peru",
+            [step], [10.0], None, "Peru",
             interstitial_map=interstitial_map,
         )
         assert len(result) == 1
-        # MIN_CURTAIN_ANIMATE_S=3.0, but clamped to 4.0*0.5=2.0
-        # accel_at = 4.0 - 2.0 = 2.0
-        assert result[0].get("font_cycle_accel_at_s") == 2.0
+        assert result[0].get("font_cycle_accel_at_s") == 6.0

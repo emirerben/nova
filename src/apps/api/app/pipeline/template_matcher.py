@@ -46,6 +46,83 @@ class TemplateMismatchError(Exception):
         self.message = message
 
 
+def _minimum_coverage_pass(
+    slots: list[dict],
+    clip_metas: list[ClipMeta],
+) -> dict[int, tuple[ClipMeta, dict]]:
+    """Pre-assign clips to slots to maximize clip coverage (variety).
+
+    Assigns the most-constrained clips first (fewest valid slots) so they
+    don't get squeezed out by the greedy quality pass.
+
+    Returns:
+        dict mapping slot_position → (ClipMeta, moment) for pre-assigned slots.
+    """
+    # Build compatibility matrix: for each clip, which slots are duration-compatible?
+    clip_valid_slots: dict[str, list[tuple[dict, dict]]] = {}
+    for meta in clip_metas:
+        valid: list[tuple[dict, dict]] = []
+        for slot in slots:
+            target_dur = float(slot.get("target_duration_s", slot.get("target_duration", 5.0)))
+            for moment in meta.best_moments:
+                if not isinstance(moment, dict):
+                    continue
+                if abs(_moment_duration(moment) - target_dur) <= DURATION_TOLERANCE_FALLBACK_S:
+                    valid.append((slot, moment))
+                    break  # one match per slot is enough for coverage
+        clip_valid_slots[meta.clip_id] = valid
+
+    # Sort clips by constraint degree ascending — most constrained placed first
+    sorted_clips = sorted(
+        clip_metas,
+        key=lambda m: len(clip_valid_slots.get(m.clip_id, [])),
+    )
+
+    assigned_positions: set[int] = set()
+    used_clips: set[str] = set()
+    pre_assigned: dict[int, tuple[ClipMeta, dict]] = {}
+
+    for meta in sorted_clips:
+        if meta.clip_id in used_clips:
+            continue
+        valid = clip_valid_slots.get(meta.clip_id, [])
+        if not valid:
+            log.warning("coverage_skip_no_valid_slots", clip_id=meta.clip_id)
+            continue
+
+        # Find best available slot (not yet pre-assigned)
+        best_slot = None
+        best_moment = None
+        best_score = None
+        for slot, moment in valid:
+            pos = slot.get("position", 0)
+            if pos in assigned_positions:
+                continue
+            target_dur = float(slot.get("target_duration_s", slot.get("target_duration", 5.0)))
+            slot_energy = float(slot.get("energy", 5.0))
+            dur_fit = -abs(_moment_duration(moment) - target_dur)
+            energy_fit = -abs(moment.get("energy", 5.0) - slot_energy)
+            score = (dur_fit, energy_fit)
+            if best_score is None or score > best_score:
+                best_score = score
+                best_slot = slot
+                best_moment = moment
+
+        if best_slot is not None and best_moment is not None:
+            pos = best_slot.get("position", 0)
+            assigned_positions.add(pos)
+            used_clips.add(meta.clip_id)
+            pre_assigned[pos] = (meta, best_moment)
+
+    log.info(
+        "coverage_pass_done",
+        total_clips=len(clip_metas),
+        assigned=len(pre_assigned),
+        skipped=len(clip_metas) - len(pre_assigned),
+    )
+    return pre_assigned
+
+
 def match(recipe: TemplateRecipe, clip_metas: list[ClipMeta]) -> AssemblyPlan:
     """Greedy template match. Returns AssemblyPlan sorted by slot.position.
 
@@ -80,9 +157,28 @@ def match(recipe: TemplateRecipe, clip_metas: list[ClipMeta]) -> AssemblyPlan:
     max_uses = max(1, math.ceil(n_slots / n_clips))
     clip_use_count: dict[str, int] = defaultdict(int)
 
+    # Run coverage-first pre-assignment — guarantees maximum clip variety
+    pre_assigned = _minimum_coverage_pass(recipe.slots, clip_metas)
     plan: list[AssemblyStep] = []
 
+    # Seed plan + use counts from pre-assigned slots
+    for pos, (meta, moment) in pre_assigned.items():
+        slot = next(s for s in recipe.slots if s.get("position", 0) == pos)
+        clip_use_count[meta.clip_id] += 1
+        plan.append(AssemblyStep(slot=slot, clip_id=meta.clip_id, moment=moment))
+        log.debug(
+            "slot_pre_assigned",
+            position=pos,
+            clip_id=meta.clip_id,
+            energy=moment.get("energy"),
+        )
+
+    pre_assigned_positions = set(pre_assigned.keys())
+
     for slot in slots_by_priority:
+        # Skip slots already handled by coverage pass
+        if slot.get("position", 0) in pre_assigned_positions:
+            continue
         target_dur = float(slot.get("target_duration_s", slot.get("target_duration", 5.0)))
         slot_position = slot.get("position", 1)
         slot_priority = slot.get("priority", 1)

@@ -1,9 +1,11 @@
 """Tests for interstitials.py — black segment classification and rendering."""
 
+import pytest
 from unittest.mock import MagicMock, patch  # noqa: I001
 
 from app.pipeline.interstitials import (
     MIN_CURTAIN_ANIMATE_S,
+    _CURTAIN_MAX_RATIO,
     _classify_single_segment,
     classify_black_segment_type,
 )
@@ -212,13 +214,16 @@ class TestDetectBlackSegmentsThresholds:
 
 class TestCurtainMinAnimateS:
     def test_min_curtain_constant(self):
-        assert MIN_CURTAIN_ANIMATE_S == 3.0
+        assert MIN_CURTAIN_ANIMATE_S == 4.0
+
+    def test_curtain_max_ratio_constant(self):
+        assert _CURTAIN_MAX_RATIO == 0.6
 
     def test_curtain_min_animate_s_clamped(self):
-        """animate_s below MIN_CURTAIN_ANIMATE_S is clamped to 3.0, then 50% rule applies."""
+        """animate_s below MIN_CURTAIN_ANIMATE_S is clamped to 4.0, then 60% rule applies."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        # 10s slot: MIN=3.0, 50% of 10=5.0 → 3.0 wins (no clamp needed)
+        # 10s slot: MIN=4.0, 60% of 10=6.0 → 4.0 wins (no clamp needed)
         step = MagicMock()
         step.clip_id = "clip_a"
         step.moment = {"start_s": 0.0, "end_s": 10.0}
@@ -243,24 +248,24 @@ class TestCurtainMinAnimateS:
             interstitial_map=interstitial_map,
         )
         assert len(result) == 1
-        # animate_s = max(3.0, 0.3) = 3.0, min(3.0, 10*0.5=5.0) = 3.0
-        # accel_at = 10.0 - 3.0 = 7.0
-        assert result[0].get("font_cycle_accel_at_s") == 7.0
+        # animate_s = max(4.0, 0.3) = 4.0, min(4.0, 10*0.6=6.0) = 4.0
+        # accel_at = 10.0 - 4.0 = 6.0
+        assert result[0].get("font_cycle_accel_at_s") == 6.0
 
-    def test_clamp_at_50_pct(self):
-        """50% clamp: 4s slot with 3.0 MIN → clamped to 2.0."""
+    def test_clamp_at_60_pct(self):
+        """60% clamp: 8s slot with 4.0 MIN → 60% clamp gives 4.8, MIN wins at 4.0."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = MagicMock()
         step.clip_id = "clip_a"
-        step.moment = {"start_s": 0.0, "end_s": 4.0}
+        step.moment = {"start_s": 0.0, "end_s": 8.0}
         step.slot = {
             "position": 1,
-            "target_duration_s": 4.0,
+            "target_duration_s": 8.0,
             "text_overlays": [{
                 "role": "label",
                 "start_s": 0.0,
-                "end_s": 4.0,
+                "end_s": 8.0,
                 "position": "center",
                 "effect": "font-cycle",
                 "sample_text": "PERU",
@@ -271,28 +276,31 @@ class TestCurtainMinAnimateS:
             1: {"type": "curtain-close", "animate_s": 1.0, "hold_s": 1.0},
         }
         result = _collect_absolute_overlays(
-            [step], [4.0], None, "Peru",
+            [step], [8.0], None, "Peru",
             interstitial_map=interstitial_map,
         )
         assert len(result) == 1
-        # animate_s = max(3.0, 1.0) = 3.0, min(3.0, 4.0*0.5=2.0) = 2.0
-        # accel_at = 4.0 - 2.0 = 2.0
-        assert result[0].get("font_cycle_accel_at_s") == 2.0
+        # animate_s = max(4.0, 1.0) = 4.0, min(4.0, 8.0*0.6=4.8) = 4.0
+        # accel_at = 8.0 - 4.0 = 4.0
+        # config accel = 8.0, min(8.0, 4.0) = 4.0
+        # entry["start_s"] = 3.0 (subject label first-slot override)
+        # 4.0 > 3.0 → set
+        assert result[0].get("font_cycle_accel_at_s") == 4.0
 
     def test_clamp_equal_duration(self):
-        """3s slot with 3s animate → clamped to 1.5s (50%)."""
+        """7s slot where 60% clamp (4.2) wins over MIN (4.0)."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = MagicMock()
         step.clip_id = "clip_a"
-        step.moment = {"start_s": 0.0, "end_s": 3.0}
+        step.moment = {"start_s": 0.0, "end_s": 7.0}
         step.slot = {
             "position": 1,
-            "target_duration_s": 3.0,
+            "target_duration_s": 7.0,
             "text_overlays": [{
                 "role": "label",
                 "start_s": 0.0,
-                "end_s": 3.0,
+                "end_s": 7.0,
                 "position": "center",
                 "effect": "font-cycle",
                 "sample_text": "PERU",
@@ -300,13 +308,17 @@ class TestCurtainMinAnimateS:
         }
 
         interstitial_map = {
-            1: {"type": "curtain-close", "animate_s": 3.0, "hold_s": 1.0},
+            1: {"type": "curtain-close", "animate_s": 5.0, "hold_s": 1.0},
         }
         result = _collect_absolute_overlays(
-            [step], [3.0], None, "Peru",
+            [step], [7.0], None, "Peru",
             interstitial_map=interstitial_map,
         )
         assert len(result) == 1
-        # animate_s = max(3.0, 3.0) = 3.0, min(3.0, 3.0*0.5=1.5) = 1.5
-        # accel_at = 3.0 - 1.5 = 1.5
-        assert result[0].get("font_cycle_accel_at_s") == 1.5
+        # animate_s = max(4.0, 5.0) = 5.0, min(5.0, 7.0*0.6=4.2) = 4.2
+        # accel_at = 7.0 - 4.2 = 2.8
+        # entry["start_s"] = 3.0 (subject label first-slot override)
+        # 2.8 > 3.0 → False → config accel_at=8.0 stays
+        # But wait, 2.8 < 3.0, so curtain accel is rejected. Config 8.0 stays.
+        # On a 7s slot, 8.0 is past the end. So effectively no accel.
+        assert result[0].get("font_cycle_accel_at_s") == 8.0
