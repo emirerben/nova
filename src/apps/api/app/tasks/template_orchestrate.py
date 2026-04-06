@@ -993,10 +993,14 @@ def _collect_absolute_overlays(
                 "text_color": ov.get("text_color", "#FFFFFF"),
             }
 
-            # 4. Apply label config based on subject vs prefix detection
+            # 4. Apply label config based on subject vs prefix detection.
+            # Gemini inconsistently returns role="hook" for text that should
+            # be role="label", so we also detect by sample_text content.
             role = ov.get("role", "")
-            if role == "label":
-                is_subject = _is_subject_placeholder(ov.get("sample_text", ""))
+            sample_text = ov.get("sample_text", "")
+            is_subject = _is_subject_placeholder(sample_text)
+            is_label_like = role == "label" or is_subject or sample_text.lower().startswith("welcome")
+            if is_label_like:
                 config = _LABEL_CONFIG["subject" if is_subject else "prefix"]
                 # Apply styling keys (skip timing/accel — handled separately)
                 entry.update({k: v for k, v in config.items() if k not in ("start_s", "accel_at_s")})

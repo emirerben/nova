@@ -1785,14 +1785,14 @@ class TestOverlayFineTuning:
         # end_s should be clamped to slot_end_abs (10.0), not curtain start
         assert result[0]["end_s"] == 10.0
 
-    def test_role_override_hook_passthrough(self):
-        """Hook role keeps Gemini defaults (no override defined)."""
+    def test_non_label_hook_passthrough(self):
+        """Hook role with non-label-like text keeps Gemini defaults."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step([{
             "role": "hook", "start_s": 0.0, "end_s": 5.0,
             "position": "center", "effect": "pop-in",
-            "sample_text": "WOW",
+            "sample_text": "discovering a hidden river",
             "text_size": "medium", "font_style": "display", "text_color": "#FFFFFF",
         }])
         result = _collect_absolute_overlays([step], [5.0], None, "")
