@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.10.0] - 2026-04-06
+
+### Added
+- Minimum-coverage clip rotation ensures all uploaded clips appear in the output video, not just the best-matched ones
+- Differentiated label sizing: city/subject names render at 120px (large), prefix text like "Welcome to" renders at 72px (medium)
+- First-slot label timing: prefix text appears at second 2, subject text at second 3 (staggered reveal)
+- Subject labels now always get font-cycle animation with acceleration at second 8
+
+### Changed
+- Curtain-close animation minimum increased from 3.0s to 4.0s for more dramatic effect
+- Curtain-close duration clamp changed from 50% to 60% of slot duration (more curtain, still 40% visible footage)
+- Curtain-derived font-cycle acceleration now correctly uses post-timing-override start time, preventing accel from firing before text appears
+
 ## [0.1.9.0] - 2026-04-04
 
 ### Added
