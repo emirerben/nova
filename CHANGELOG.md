@@ -13,7 +13,11 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Curtain-close animation minimum increased from 3.0s to 4.0s for more dramatic effect
 - Curtain-close duration clamp changed from 50% to 60% of slot duration (more curtain, still 40% visible footage)
+- Label detection is now content-based (matches "PERU", "Welcome to") instead of relying on Gemini's inconsistent role field
+
+### Fixed
 - Curtain-derived font-cycle acceleration now correctly uses post-timing-override start time, preventing accel from firing before text appears
+- Combined "Welcome to PERU" overlays on later template slots are filtered out, preventing redundant text after the staggered reveal
 
 ## [0.1.9.0] - 2026-04-04
 
