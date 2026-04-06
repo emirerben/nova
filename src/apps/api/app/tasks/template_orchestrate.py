@@ -967,6 +967,19 @@ def _collect_absolute_overlays(
             if not text or not text.strip():
                 continue
 
+            # Skip combined prefix+subject overlays (e.g. "Welcome to PERU").
+            # Gemini sometimes reports separate "Welcome to" + "PERU" overlays
+            # on earlier slots AND a combined "Welcome to PERU" on later slots.
+            # The combined form is redundant and breaks the staggered reveal.
+            sample = ov.get("sample_text", "")
+            if (
+                sample
+                and " " in sample
+                and any(w.isupper() and len(w) > 1 for w in sample.split())
+                and sample.lower().startswith("welcome")
+            ):
+                continue
+
             # 1. Compute ov_start, ov_end from Gemini values
             ov_start = cumulative_s + float(ov.get("start_s", 0.0))
             ov_end = cumulative_s + float(ov.get("end_s", dur))
