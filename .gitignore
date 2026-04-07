@@ -10,6 +10,9 @@ raw_uploads/
 processed_outputs/
 tmp/
 
+# Dev environment runtime state (dev-auto.sh logs + PIDs)
+.dev/
+
 # Python
 __pycache__/
 .venv/

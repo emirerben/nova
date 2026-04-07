@@ -16,8 +16,12 @@ Nova transforms raw real-life videos into viral short-form content (TikTok, Reel
 - agents/        — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
 
 ## Local dev
-cp .env.example .env    # fill in values
-docker-compose up        # starts web + api + worker + redis + db
+cp .env.example .env            # fill in values
+./scripts/dev-auto.sh            # single-command dev env with hot reload
+
+`dev-auto.sh` starts redis + postgres (docker), runs migrations, and launches API (`uvicorn --reload`), Celery worker (`watchfiles` auto-restart on `.py` edits), and Next.js (HMR). Logs go to `.dev/<service>.log`. Do NOT restart servers manually — hot reload handles all code edits. Stop with `./scripts/dev-stop.sh`.
+
+Alternative: `docker-compose up` runs everything in containers (no hot reload for worker/api).
 
 ## Domain context
 - Target output: 9:16 aspect ratio, sub-60s, H.264/AAC, 1080x1920
