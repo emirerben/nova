@@ -793,6 +793,15 @@ def _assemble_clips(
             has_interstitials=bool(interstitial_map),
         )
 
+    # Debug: probe durations at each stage to trace truncation
+    _joined_dur = _probe_duration(joined_path)
+    log.info(
+        "debug_stage_durations",
+        joined_dur=_joined_dur,
+        slot_count=len(reframed_paths),
+        slot_durations_sum=round(sum(slot_durations), 2),
+    )
+
     # ── Post-join text overlays (absolute timestamps, deduplicated) ────
     # Collect overlays across ALL slots, convert to absolute timestamps,
     # and deduplicate so "Welcome to" appears once and persists.
@@ -802,6 +811,8 @@ def _assemble_clips(
     )
     if abs_overlays:
         _burn_text_overlays(joined_path, abs_overlays, output_path, tmpdir)
+        _burned_dur = _probe_duration(output_path)
+        log.info("debug_post_burn_duration", burned_dur=_burned_dur)
     else:
         shutil.copy2(joined_path, output_path)
 
@@ -877,7 +888,7 @@ def _join_or_concat(
     """
     has_transitions = any(t != "none" for t in transition_types)
 
-    if (has_transitions or has_interstitials) and len(reframed_paths) > 1:
+    if has_transitions and len(reframed_paths) > 1:
         try:
             from app.pipeline.transitions import join_with_transitions  # noqa: PLC0415
 
@@ -888,7 +899,9 @@ def _join_or_concat(
         except Exception as exc:
             log.warning("transition_join_failed_falling_back", error=str(exc))
 
-    # Fallback: concat demuxer (fast, no re-encode)
+    # Concat demuxer re-encodes (handles mixed audio/no-audio from
+    # interstitials) and doesn't suffer from xfade offset drift that
+    # occurs when slot_durations diverge from actual file durations.
     _concat_demuxer(reframed_paths, output_path, tmpdir)
 
 
@@ -1457,6 +1470,19 @@ def _extract_template_audio(local_video_path: str, output_path: str) -> bool:
     return os.path.exists(output_path) and os.path.getsize(output_path) > 1000
 
 
+def _probe_duration(path: str) -> float:
+    """Return the duration in seconds of a media file via ffprobe."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", path],
+        capture_output=True, timeout=10, check=False,
+    )
+    try:
+        return float(result.stdout.strip())
+    except (ValueError, TypeError):
+        return 30.0  # safe fallback
+
+
 def _mix_template_audio(
     video_path: str, audio_gcs_path: str, output_path: str, tmpdir: str
 ) -> None:
@@ -1472,16 +1498,28 @@ def _mix_template_audio(
         shutil.copy2(video_path, output_path)
         return
 
+    # Loop audio so it always covers the full video length.  The previous
+    # approach used `-shortest` which truncated the output when the template
+    # audio was shorter than the assembled video (common with TikTok audio
+    # that has mismatched container duration metadata).
+    #
+    # With `-stream_loop -1` the audio repeats forever, so `-shortest` now
+    # correctly cuts to the VIDEO length (which is always the shorter stream).
+    # We also add a short audio fade-out so the loop cut isn't abrupt.
+    video_dur = _probe_duration(video_path)
+    fade_start = max(0, video_dur - 0.5)
+
     cmd = [
         "ffmpeg",
         "-i", video_path,
+        "-stream_loop", "-1",
         "-i", audio_local,
-        "-map", "0:v",  # video from assembled
-        "-map", "1:a",  # audio from template
+        "-map", "0:v",
+        "-map", "1:a",
         "-c:v", "copy",
         "-c:a", "aac",
-        "-af", f"loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
-        "-shortest",    # cut to shorter of video/audio
+        "-af", f"afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
+        "-shortest",
         "-y", output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)

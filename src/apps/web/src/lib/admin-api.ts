@@ -159,6 +159,20 @@ export async function adminCreateTemplate(data: {
   return res.json();
 }
 
+export async function adminCreateTemplateFromUrl(data: {
+  name: string;
+  url: string;
+  required_clips_min?: number;
+  required_clips_max?: number;
+  description?: string;
+}): Promise<AdminTemplate> {
+  const res = await adminFetch("/admin/templates/from-url", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
 export async function adminReanalyzeTemplate(id: string): Promise<AdminTemplate> {
   const res = await adminFetch(`/admin/templates/${id}/reanalyze`, {
     method: "POST",
@@ -204,6 +218,30 @@ export async function adminGetPresignedUpload(
   const res = await adminFetch("/admin/upload-presigned", {
     method: "POST",
     body: JSON.stringify({ filename, content_type: contentType }),
+  });
+  return res.json();
+}
+
+// ── Recipe editor API ─────────────────────────────────────────────────────────
+
+export interface RecipeResponse {
+  recipe: Record<string, unknown>;
+  version_id: string;
+  version_number: number;
+}
+
+export async function adminGetRecipe(id: string): Promise<RecipeResponse> {
+  const res = await adminFetch(`/admin/templates/${id}/recipe`);
+  return res.json();
+}
+
+export async function adminSaveRecipe(
+  id: string,
+  data: { recipe: Record<string, unknown>; base_version_id: string | null },
+): Promise<RecipeResponse> {
+  const res = await adminFetch(`/admin/templates/${id}/recipe`, {
+    method: "PUT",
+    body: JSON.stringify(data),
   });
   return res.json();
 }

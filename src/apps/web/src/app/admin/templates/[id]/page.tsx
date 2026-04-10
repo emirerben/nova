@@ -21,13 +21,15 @@ import {
 } from "@/lib/api";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { useJobPoller } from "@/hooks/useJobPoller";
+import { EditorTab } from "./components/EditorTab";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type TabId = "recipe" | "test" | "settings";
+type TabId = "recipe" | "editor" | "test" | "settings";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "recipe", label: "Recipe" },
+  { id: "editor", label: "Editor" },
   { id: "test", label: "Test" },
   { id: "settings", label: "Settings" },
 ];
@@ -187,6 +189,9 @@ export default function TemplateDetailPage() {
             playbackUrl={playbackUrl}
             onRefresh={refreshTemplate}
           />
+        )}
+        {activeTab === "editor" && (
+          <EditorTab template={template} />
         )}
         {activeTab === "test" && (
           <TestTab template={template} playbackUrl={playbackUrl} />

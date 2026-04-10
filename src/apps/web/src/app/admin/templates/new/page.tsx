@@ -4,17 +4,23 @@ import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import {
   adminCreateTemplate,
+  adminCreateTemplateFromUrl,
   adminGetPresignedUpload,
 } from "@/lib/admin-api";
 import { useFileUpload } from "@/hooks/useFileUpload";
 
+type SourceMode = "url" | "file";
+
 /**
  * Upload a new template video + set parameters.
- * Flow: upload video → fill form → submit → redirect to detail page.
+ * Supports two modes:
+ *   - URL: paste a TikTok/IG/YT link → backend downloads via yt-dlp
+ *   - File: upload a video file directly to GCS
  */
 export default function NewTemplatePage() {
   const router = useRouter();
 
+  const [mode, setMode] = useState<SourceMode>("url");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
@@ -32,7 +38,6 @@ export default function NewTemplatePage() {
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       if (!e.target.files) return;
-      // Only allow one template video
       upload.clearFiles();
       const entries = upload.addFiles([e.target.files[0]]);
       upload.startUpload(entries);
@@ -43,84 +48,166 @@ export default function NewTemplatePage() {
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
-      if (upload.successfulPaths.length === 0) {
-        setError("Upload a video first");
-        return;
-      }
       if (!name.trim()) {
         setError("Name is required");
         return;
       }
 
+      if (mode === "url") {
+        if (!sourceUrl.trim()) {
+          setError("Paste a TikTok, Instagram, or YouTube URL");
+          return;
+        }
+      } else {
+        if (upload.successfulPaths.length === 0) {
+          setError("Upload a video first");
+          return;
+        }
+      }
+
       setSubmitting(true);
       setError(null);
       try {
-        const template = await adminCreateTemplate({
-          name: name.trim(),
-          gcs_path: upload.successfulPaths[0],
-          required_clips_min: clipsMin,
-          required_clips_max: clipsMax,
-          description: description.trim() || undefined,
-          source_url: sourceUrl.trim() || undefined,
-        });
+        let template;
+        if (mode === "url") {
+          template = await adminCreateTemplateFromUrl({
+            name: name.trim(),
+            url: sourceUrl.trim(),
+            required_clips_min: clipsMin,
+            required_clips_max: clipsMax,
+            description: description.trim() || undefined,
+          });
+        } else {
+          template = await adminCreateTemplate({
+            name: name.trim(),
+            gcs_path: upload.successfulPaths[0],
+            required_clips_min: clipsMin,
+            required_clips_max: clipsMax,
+            description: description.trim() || undefined,
+            source_url: sourceUrl.trim() || undefined,
+          });
+        }
         router.push(`/admin/templates/${template.id}?tab=recipe`);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Creation failed");
         setSubmitting(false);
       }
     },
-    [upload.successfulPaths, name, description, sourceUrl, clipsMin, clipsMax, router],
+    [upload.successfulPaths, name, description, sourceUrl, clipsMin, clipsMax, mode, router],
   );
 
   const uploadedFile = upload.files[0];
+
+  const canSubmit =
+    mode === "url"
+      ? !!sourceUrl.trim() && !submitting
+      : upload.successfulPaths.length > 0 && !submitting && !upload.uploading;
 
   return (
     <div className="p-6 max-w-xl">
       <h1 className="text-lg font-semibold mb-6">New Template</h1>
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Video upload */}
+        {/* Source mode toggle */}
         <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">Template Video</label>
-          {uploadedFile ? (
-            <div className="border border-zinc-800 rounded p-3 flex items-center gap-3">
-              <span className="text-sm text-zinc-300 truncate flex-1">{uploadedFile.file.name}</span>
-              {uploadedFile.error ? (
-                <span className="text-red-400 text-xs">{uploadedFile.error}</span>
-              ) : uploadedFile.progress === 100 ? (
-                <span className="text-green-400 text-xs">Uploaded</span>
-              ) : (
-                <div className="w-24 bg-zinc-800 rounded-full h-1.5">
-                  <div
-                    className="bg-blue-500 h-full rounded-full transition-all"
-                    style={{ width: `${uploadedFile.progress}%` }}
-                  />
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={() => upload.clearFiles()}
-                className="text-zinc-600 hover:text-zinc-400 text-xs"
-              >
-                Remove
-              </button>
-            </div>
-          ) : (
-            <div className="border-2 border-dashed border-zinc-700 rounded-lg p-8 text-center hover:border-zinc-500 transition-colors">
-              <input
-                type="file"
-                accept="video/mp4,video/quicktime"
-                onChange={handleFileSelect}
-                className="hidden"
-                id="template-video-input"
-              />
-              <label htmlFor="template-video-input" className="cursor-pointer">
-                <p className="text-sm text-zinc-400">Click to select a template video</p>
-                <p className="text-xs text-zinc-600 mt-1">MP4 or MOV, 9:16 aspect ratio recommended</p>
-              </label>
-            </div>
-          )}
+          <label className="block text-sm text-zinc-400 mb-2">Video Source</label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setMode("url")}
+              className={`px-4 py-1.5 text-sm rounded border transition-colors ${
+                mode === "url"
+                  ? "bg-white text-black border-white"
+                  : "bg-transparent text-zinc-400 border-zinc-700 hover:border-zinc-500"
+              }`}
+            >
+              Paste URL
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("file")}
+              className={`px-4 py-1.5 text-sm rounded border transition-colors ${
+                mode === "file"
+                  ? "bg-white text-black border-white"
+                  : "bg-transparent text-zinc-400 border-zinc-700 hover:border-zinc-500"
+              }`}
+            >
+              Upload File
+            </button>
+          </div>
         </div>
+
+        {/* URL input */}
+        {mode === "url" && (
+          <div>
+            <label className="block text-sm text-zinc-400 mb-1.5">Video URL *</label>
+            <input
+              value={sourceUrl}
+              onChange={(e) => setSourceUrl(e.target.value)}
+              placeholder="https://www.tiktok.com/@user/video/..."
+              className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-zinc-500"
+            />
+            <p className="text-xs text-zinc-600 mt-1">
+              TikTok, Instagram Reels, or YouTube Shorts
+            </p>
+          </div>
+        )}
+
+        {/* File upload */}
+        {mode === "file" && (
+          <div>
+            <label className="block text-sm text-zinc-400 mb-1.5">Template Video</label>
+            {uploadedFile ? (
+              <div className="border border-zinc-800 rounded p-3 flex items-center gap-3">
+                <span className="text-sm text-zinc-300 truncate flex-1">{uploadedFile.file.name}</span>
+                {uploadedFile.error ? (
+                  <span className="text-red-400 text-xs">{uploadedFile.error}</span>
+                ) : uploadedFile.progress === 100 ? (
+                  <span className="text-green-400 text-xs">Uploaded</span>
+                ) : (
+                  <div className="w-24 bg-zinc-800 rounded-full h-1.5">
+                    <div
+                      className="bg-blue-500 h-full rounded-full transition-all"
+                      style={{ width: `${uploadedFile.progress}%` }}
+                    />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => upload.clearFiles()}
+                  className="text-zinc-600 hover:text-zinc-400 text-xs"
+                >
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <div className="border-2 border-dashed border-zinc-700 rounded-lg p-8 text-center hover:border-zinc-500 transition-colors">
+                <input
+                  type="file"
+                  accept="video/mp4,video/quicktime"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                  id="template-video-input"
+                />
+                <label htmlFor="template-video-input" className="cursor-pointer">
+                  <p className="text-sm text-zinc-400">Click to select a template video</p>
+                  <p className="text-xs text-zinc-600 mt-1">MP4 or MOV, 9:16 aspect ratio recommended</p>
+                </label>
+              </div>
+            )}
+
+            {/* Source URL (optional reference when using file upload) */}
+            <div className="mt-3">
+              <label className="block text-sm text-zinc-400 mb-1.5">Source URL (optional)</label>
+              <input
+                value={sourceUrl}
+                onChange={(e) => setSourceUrl(e.target.value)}
+                placeholder="https://www.tiktok.com/..."
+                className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-zinc-500"
+              />
+            </div>
+          </div>
+        )}
 
         {/* Name */}
         <div>
@@ -143,17 +230,6 @@ export default function NewTemplatePage() {
             placeholder="Admin notes about this template..."
             rows={2}
             className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-zinc-500 resize-none"
-          />
-        </div>
-
-        {/* Source URL */}
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">Source URL</label>
-          <input
-            value={sourceUrl}
-            onChange={(e) => setSourceUrl(e.target.value)}
-            placeholder="https://www.tiktok.com/..."
-            className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-zinc-500"
           />
         </div>
 
@@ -187,10 +263,14 @@ export default function NewTemplatePage() {
 
         <button
           type="submit"
-          disabled={submitting || upload.uploading || upload.successfulPaths.length === 0}
+          disabled={!canSubmit}
           className="px-6 py-2.5 text-sm bg-white text-black rounded font-medium hover:bg-zinc-200 disabled:opacity-50"
         >
-          {submitting ? "Creating..." : "Create Template"}
+          {submitting
+            ? mode === "url"
+              ? "Downloading & Creating..."
+              : "Creating..."
+            : "Create Template"}
         </button>
       </form>
     </div>

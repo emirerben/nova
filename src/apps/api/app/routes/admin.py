@@ -16,10 +16,11 @@ Auth: X-Admin-Token header (static key from settings.admin_api_key).
 import hmac
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +74,39 @@ class CreateTemplateRequest(BaseModel):
         if not v.startswith("templates/"):
             raise ValueError("gcs_path must start with 'templates/'")
         return v
+
+    @field_validator("required_clips_min")
+    @classmethod
+    def validate_min(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("required_clips_min must be ≥ 1")
+        return v
+
+    @field_validator("required_clips_max")
+    @classmethod
+    def validate_max(cls, v: int) -> int:
+        if v > 30:
+            raise ValueError("required_clips_max must be ≤ 30")
+        return v
+
+
+class CreateTemplateFromUrlRequest(BaseModel):
+    name: str
+    url: str
+    required_clips_min: int = 5
+    required_clips_max: int = 10
+    description: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        from app.services.url_download import is_supported_url  # noqa: PLC0415
+
+        if not is_supported_url(v):
+            raise ValueError(
+                "URL must be a TikTok, Instagram, or YouTube link"
+            )
+        return v.strip()
 
     @field_validator("required_clips_min")
     @classmethod
@@ -191,6 +225,184 @@ class RecipeVersionItem(BaseModel):
 class RecipeHistoryResponse(BaseModel):
     versions: list[RecipeVersionItem]
     total: int
+
+
+# ── Recipe editor schemas (strict validation) ────────────────────────────────
+
+TransitionIn = Literal[
+    "hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none"
+]
+ColorHint = Literal[
+    "warm", "cool", "high-contrast", "desaturated", "vintage", "none"
+]
+SlotType = Literal["hook", "broll", "outro"]
+OverlayEffect = Literal[
+    "pop-in", "fade-in", "scale-up", "font-cycle", "typewriter",
+    "glitch", "bounce", "slide-in", "slide-up", "static", "none",
+]
+OverlayPosition = Literal["top", "center", "bottom"]
+FontStyle = Literal["display", "sans", "serif", "serif_italic", "script"]
+TextSize = Literal["small", "medium", "large", "xlarge"]
+OverlayRole = Literal["hook", "reaction", "cta", "label"]
+SyncStyle = Literal[
+    "cut-on-beat", "transition-on-beat", "energy-match", "freeform"
+]
+InterstitialType = Literal["curtain-close", "fade-black-hold", "flash-white"]
+
+
+class RecipeTextOverlaySchema(BaseModel):
+    role: OverlayRole
+    text: str
+    position: OverlayPosition
+    effect: OverlayEffect
+    font_style: FontStyle
+    text_size: TextSize
+    text_color: str = "#FFFFFF"
+    start_s: float
+    end_s: float
+    start_s_override: float | None = None
+    end_s_override: float | None = None
+    has_darkening: bool = False
+    has_narrowing: bool = False
+    sample_text: str = ""
+    font_cycle_accel_at_s: float | None = None
+
+    @field_validator("text_color")
+    @classmethod
+    def validate_hex_color(cls, v: str) -> str:
+        import re  # noqa: PLC0415
+
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", v):
+            raise ValueError(f"text_color must be a hex color (#RRGGBB), got '{v}'")
+        return v.upper()
+
+    @model_validator(mode="after")
+    def validate_timing(self) -> "RecipeTextOverlaySchema":
+        if self.end_s <= self.start_s:
+            raise ValueError(
+                f"Overlay end_s ({self.end_s}) must be > start_s ({self.start_s})"
+            )
+        return self
+
+
+class RecipeInterstitialSchema(BaseModel):
+    type: InterstitialType
+    after_slot: int
+    hold_s: float
+    hold_color: str = "#000000"
+    animate_s: float = 0.0
+
+    @field_validator("hold_color")
+    @classmethod
+    def validate_hex_color(cls, v: str) -> str:
+        import re  # noqa: PLC0415
+
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", v):
+            raise ValueError(f"hold_color must be a hex color (#RRGGBB), got '{v}'")
+        return v.upper()
+
+    @field_validator("hold_s")
+    @classmethod
+    def validate_hold(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("hold_s must be positive")
+        return v
+
+    @field_validator("after_slot")
+    @classmethod
+    def validate_after_slot(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("after_slot must be >= 1")
+        return v
+
+    @field_validator("animate_s")
+    @classmethod
+    def validate_animate(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("animate_s must be >= 0")
+        return v
+
+
+class RecipeSlotSchema(BaseModel):
+    position: int
+    target_duration_s: float
+    priority: int = 5
+    slot_type: SlotType
+    transition_in: TransitionIn = "hard-cut"
+    color_hint: ColorHint = "none"
+    speed_factor: float = 1.0
+    energy: float = 5.0
+    text_overlays: list[RecipeTextOverlaySchema] = []
+
+    @field_validator("target_duration_s")
+    @classmethod
+    def validate_duration(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("target_duration_s must be positive")
+        return v
+
+    @field_validator("position")
+    @classmethod
+    def validate_position(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("position must be >= 1")
+        return v
+
+    @field_validator("speed_factor")
+    @classmethod
+    def validate_speed(cls, v: float) -> float:
+        if v <= 0 or v > 10:
+            raise ValueError("speed_factor must be between 0 (exclusive) and 10")
+        return v
+
+    @field_validator("energy")
+    @classmethod
+    def validate_energy(cls, v: float) -> float:
+        if v < 0 or v > 10:
+            raise ValueError("energy must be between 0 and 10")
+        return v
+
+
+class RecipeSchema(BaseModel):
+    """Full recipe structure — used for PUT validation."""
+    shot_count: int
+    total_duration_s: float
+    hook_duration_s: float = 0.0
+    slots: list[RecipeSlotSchema]
+    copy_tone: str = ""
+    caption_style: str = ""
+    beat_timestamps_s: list[float] = []
+    creative_direction: str = ""
+    transition_style: str = ""
+    color_grade: ColorHint = "none"
+    pacing_style: str = ""
+    sync_style: SyncStyle = "freeform"
+    interstitials: list[RecipeInterstitialSchema] = []
+
+    @field_validator("slots")
+    @classmethod
+    def validate_slots_nonempty(cls, v: list[RecipeSlotSchema]) -> list[RecipeSlotSchema]:
+        if len(v) == 0:
+            raise ValueError("Recipe must have at least one slot")
+        return v
+
+    @field_validator("total_duration_s")
+    @classmethod
+    def validate_total_duration(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("total_duration_s must be positive")
+        return v
+
+
+class RecipeResponse(BaseModel):
+    recipe: dict
+    version_id: str
+    version_number: int
+
+
+class SaveRecipeRequest(BaseModel):
+    recipe: RecipeSchema
+    base_version_id: str | None = None
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
@@ -313,6 +525,49 @@ async def create_template(
     analyze_template_task.delay(template_id)
 
     log.info("template_created", template_id=template_id, name=req.name)
+    return _template_response(template)
+
+
+@router.post(
+    "/templates/from-url",
+    response_model=TemplateResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_admin)],
+)
+async def create_template_from_url(
+    req: CreateTemplateFromUrlRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateResponse:
+    """Download a video from a URL (TikTok, IG, YT) and create a template from it."""
+    from app.services.url_download import DownloadError, download_and_upload  # noqa: PLC0415
+
+    try:
+        gcs_path = download_and_upload(req.url)
+    except DownloadError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    template_id = str(uuid.uuid4())
+    template = VideoTemplate(
+        id=template_id,
+        name=req.name,
+        gcs_path=gcs_path,
+        analysis_status="analyzing",
+        required_clips_min=req.required_clips_min,
+        required_clips_max=req.required_clips_max,
+        description=req.description,
+        source_url=req.url,
+    )
+    db.add(template)
+    await db.commit()
+    await db.refresh(template)
+
+    from app.tasks.template_orchestrate import analyze_template_task  # noqa: PLC0415
+    analyze_template_task.delay(template_id)
+
+    log.info("template_created_from_url", template_id=template_id, url=req.url)
     return _template_response(template)
 
 
@@ -546,6 +801,129 @@ async def get_recipe_history(
             for v in versions
         ],
         total=total,
+    )
+
+
+# ── Recipe GET/PUT endpoints ──────────────────────────────────────────────────
+
+
+@router.get(
+    "/templates/{template_id}/recipe",
+    response_model=RecipeResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def get_recipe(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> RecipeResponse:
+    """Return the current recipe JSON with version metadata."""
+    template = await get_template_or_404(template_id, db)
+    require_ready(template)
+
+    if not template.recipe_cached:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No recipe found for this template",
+        )
+
+    # Find latest version for metadata
+    result = await db.execute(
+        select(TemplateRecipeVersion)
+        .where(TemplateRecipeVersion.template_id == template_id)
+        .order_by(TemplateRecipeVersion.created_at.desc())
+        .limit(1)
+    )
+    latest_version = result.scalar_one_or_none()
+
+    # Count total versions
+    count_result = await db.execute(
+        select(func.count()).select_from(
+            select(TemplateRecipeVersion)
+            .where(TemplateRecipeVersion.template_id == template_id)
+            .subquery()
+        )
+    )
+    version_count = count_result.scalar() or 0
+
+    return RecipeResponse(
+        recipe=template.recipe_cached,
+        version_id=str(latest_version.id) if latest_version else "",
+        version_number=version_count,
+    )
+
+
+@router.put(
+    "/templates/{template_id}/recipe",
+    response_model=RecipeResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def save_recipe(
+    template_id: str,
+    req: SaveRecipeRequest,
+    db: AsyncSession = Depends(get_db),
+) -> RecipeResponse:
+    """Save a manually edited recipe, creating a new version."""
+    template = await get_template_or_404(template_id, db)
+    require_ready(template)
+
+    # Optimistic lock: reject if a newer version exists
+    if req.base_version_id:
+        result = await db.execute(
+            select(TemplateRecipeVersion)
+            .where(TemplateRecipeVersion.template_id == template_id)
+            .order_by(TemplateRecipeVersion.created_at.desc())
+            .limit(1)
+        )
+        latest = result.scalar_one_or_none()
+        if latest and str(latest.id) != req.base_version_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Recipe was modified since you loaded it "
+                    f"(latest version: {latest.id}, your base: {req.base_version_id}). "
+                    "Reload and try again."
+                ),
+            )
+
+    # Pydantic already validated the schema — convert to dict
+    recipe_dict = req.recipe.model_dump()
+
+    # Create new version (follows pattern from template_orchestrate.py:191-204)
+    version = TemplateRecipeVersion(
+        template_id=template_id,
+        recipe=recipe_dict,
+        trigger="manual_edit",
+    )
+    db.add(version)
+
+    # Update cached recipe
+    template.recipe_cached = recipe_dict
+    template.recipe_cached_at = datetime.now(UTC)
+
+    await db.commit()
+    await db.refresh(version)
+
+    # Count total versions
+    count_result = await db.execute(
+        select(func.count()).select_from(
+            select(TemplateRecipeVersion)
+            .where(TemplateRecipeVersion.template_id == template_id)
+            .subquery()
+        )
+    )
+    version_count = count_result.scalar() or 0
+
+    log.info(
+        "recipe_manual_edit",
+        template_id=template_id,
+        version_id=str(version.id),
+        slot_count=len(recipe_dict.get("slots", [])),
+    )
+
+    return RecipeResponse(
+        recipe=recipe_dict,
+        version_id=str(version.id),
+        version_number=version_count,
     )
 
 
