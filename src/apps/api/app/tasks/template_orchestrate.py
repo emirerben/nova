@@ -999,9 +999,9 @@ def _collect_absolute_overlays(
 
             # 2. Apply timing overrides — recipe can specify exact timestamps
             # to correct Gemini's approximate timing (relative to slot start)
-            if "start_s_override" in ov:
+            if ov.get("start_s_override") is not None:
                 ov_start = cumulative_s + float(ov["start_s_override"])
-            if "end_s_override" in ov:
+            if ov.get("end_s_override") is not None:
                 ov_end = cumulative_s + float(ov["end_s_override"])
             # Guard against negative timestamps from bad override values
             ov_start = max(0.0, ov_start)

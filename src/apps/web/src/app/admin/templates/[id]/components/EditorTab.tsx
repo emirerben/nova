@@ -519,6 +519,39 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
     );
   }
 
+  // Video error state (expired URL, CORS, etc.)
+  if (videoError && latestTestJob?.output_url) {
+    return (
+      <div className="flex gap-6">
+        <div className="w-[280px] aspect-[9/16] bg-zinc-900 rounded flex flex-col items-center justify-center gap-3 flex-shrink-0 border border-zinc-800">
+          <p className="text-zinc-400 text-sm text-center px-4">
+            Video unavailable
+          </p>
+          <p className="text-zinc-600 text-xs text-center px-4">
+            The signed URL may have expired.
+          </p>
+          {latestTestJob.clip_paths.length > 0 && (
+            <button
+              onClick={handleRerun}
+              disabled={isRerunning}
+              className="px-3 py-1.5 text-xs bg-blue-700 hover:bg-blue-600 text-white rounded disabled:opacity-50 flex items-center gap-2"
+            >
+              {isRerunning ? (
+                <>
+                  <span className="w-3 h-3 border-2 border-blue-300 border-t-white rounded-full animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Re-run Test"
+              )}
+            </button>
+          )}
+        </div>
+        {editorContent}
+      </div>
+    );
+  }
+
   // Vertical layout when no video
   return (
     <div className="space-y-4">
@@ -545,16 +578,30 @@ function SyncVideoPlayer({
   onTimeUpdate?: (time: number) => void;
   onError?: () => void;
 }) {
+  const [loading, setLoading] = useState(true);
+  const [errored, setErrored] = useState(false);
+
   return (
-    <div className="w-[280px] aspect-[9/16] bg-black rounded overflow-hidden">
+    <div className="w-[280px] aspect-[9/16] bg-black rounded overflow-hidden relative">
+      {loading && !errored && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 z-10">
+          <div className="w-6 h-6 border-2 border-zinc-600 border-t-white rounded-full animate-spin" />
+          <span className="text-zinc-500 text-xs">Loading video...</span>
+        </div>
+      )}
       <video
         ref={videoRef}
         src={url}
         controls
         className="w-full h-full object-contain"
         playsInline
+        onLoadedData={() => setLoading(false)}
         onTimeUpdate={(e) => onTimeUpdate?.(e.currentTarget.currentTime)}
-        onError={() => onError?.()}
+        onError={() => {
+          setLoading(false);
+          setErrored(true);
+          onError?.();
+        }}
       />
     </div>
   );
