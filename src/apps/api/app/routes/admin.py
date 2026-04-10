@@ -252,14 +252,14 @@ InterstitialType = Literal["curtain-close", "fade-black-hold", "flash-white"]
 
 class RecipeTextOverlaySchema(BaseModel):
     role: OverlayRole
-    text: str
-    position: OverlayPosition
-    effect: OverlayEffect
-    font_style: FontStyle
-    text_size: TextSize
+    text: str = ""
+    position: OverlayPosition = "center"
+    effect: OverlayEffect = "none"
+    font_style: FontStyle = "sans"
+    text_size: TextSize = "medium"
     text_color: str = "#FFFFFF"
-    start_s: float
-    end_s: float
+    start_s: float = 0.0
+    end_s: float = 1.0
     start_s_override: float | None = None
     end_s_override: float | None = None
     has_darkening: bool = False
