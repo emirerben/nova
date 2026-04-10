@@ -1,8 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useRef } from "react";
-import { adminGetRecipe, adminSaveRecipe } from "@/lib/admin-api";
-import type { AdminTemplate } from "@/lib/admin-api";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  adminCreateTestJob,
+  adminGetRecipe,
+  adminSaveRecipe,
+} from "@/lib/admin-api";
+import type { AdminTemplate, LatestTestJob } from "@/lib/admin-api";
 import type {
   EditorAction,
   EditorSelection,
@@ -12,6 +16,9 @@ import type {
 } from "./recipe-types";
 import { EMPTY_INTERSTITIAL, EMPTY_OVERLAY } from "./recipe-types";
 import { PropertyPanel } from "./PropertyPanel";
+import type { TemplateJobStatusResponse } from "@/lib/api";
+import { getTemplateJobStatus } from "@/lib/api";
+import { useJobPoller } from "@/hooks/useJobPoller";
 
 // ── Reducer ─────────────────────────────────────────────────────────────────
 
@@ -131,6 +138,13 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         selection: null,
       };
 
+    case "SET_VERSION":
+      return {
+        ...state,
+        versionId: action.versionId,
+        versionNumber: action.versionNumber,
+      };
+
     default:
       return state;
   }
@@ -155,11 +169,50 @@ const SLOT_COLORS: Record<string, string> = {
   outro: "bg-purple-700/40 border-purple-600",
 };
 
+const TERMINAL_STATUSES = new Set(["template_ready", "processing_failed"]);
+
 // ── EditorTab ───────────────────────────────────────────────────────────────
 
-export function EditorTab({ template }: { template: AdminTemplate }) {
+interface EditorTabProps {
+  template: AdminTemplate;
+  latestTestJob: LatestTestJob | null;
+  onTestJobComplete?: (job: LatestTestJob) => void;
+}
+
+export function EditorTab({ template, latestTestJob, onTestJobComplete }: EditorTabProps) {
   const [state, dispatch] = useReducer(editorReducer, initialState);
-  const savingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [currentTime, setCurrentTime] = useState<number | null>(null);
+  const [videoError, setVideoError] = useState(false);
+  const [savedSinceLastTest, setSavedSinceLastTest] = useState(false);
+
+  // Re-run polling state
+  const [rerunJobId, setRerunJobId] = useState<string | null>(null);
+  const rerunPoller = useJobPoller<TemplateJobStatusResponse>(rerunJobId, {
+    fetchStatus: getTemplateJobStatus,
+    isTerminal: (d) => TERMINAL_STATUSES.has(d.status),
+  });
+
+  // When re-run completes, push result to parent
+  useEffect(() => {
+    if (
+      rerunJobId &&
+      rerunPoller.data?.status === "template_ready" &&
+      rerunPoller.data.assembly_plan?.output_url &&
+      latestTestJob
+    ) {
+      onTestJobComplete?.({
+        job_id: rerunPoller.data.job_id,
+        output_url: rerunPoller.data.assembly_plan.output_url,
+        clip_paths: latestTestJob.clip_paths,
+        created_at: rerunPoller.data.created_at,
+      });
+      setRerunJobId(null);
+      setVideoError(false);
+      setSavedSinceLastTest(false);
+    }
+  }, [rerunJobId, rerunPoller.data, onTestJobComplete, latestTestJob]);
 
   // Fetch recipe on mount
   useEffect(() => {
@@ -168,11 +221,7 @@ export function EditorTab({ template }: { template: AdminTemplate }) {
       .then((res) => {
         if (cancelled) return;
         dispatch({ type: "LOAD_RECIPE", recipe: res.recipe as unknown as Recipe });
-        // Store version metadata outside reducer (simple refs)
-        stateRef.current = {
-          versionId: res.version_id,
-          versionNumber: res.version_number,
-        };
+        dispatch({ type: "SET_VERSION", versionId: res.version_id, versionNumber: res.version_number });
       })
       .catch((err) => {
         if (!cancelled) {
@@ -180,49 +229,110 @@ export function EditorTab({ template }: { template: AdminTemplate }) {
             type: "LOAD_RECIPE",
             recipe: null as unknown as Recipe,
           });
-          // We'll show error via the state.recipe being null
         }
         console.error("Failed to load recipe:", err);
       });
     return () => { cancelled = true; };
   }, [template.id]);
 
-  const stateRef = useRef({ versionId: "", versionNumber: 0 });
-
   const isDirty =
     state.recipe !== null &&
     state.savedRecipe !== null &&
     JSON.stringify(state.recipe) !== JSON.stringify(state.savedRecipe);
 
+  // ── Cumulative slot timing ──────────────────────────────────────────────
+
+  const slotStartTimes = useMemo(() => {
+    if (!state.recipe) return [];
+    const { slots, interstitials } = state.recipe;
+
+    // Build a map: slot position → total interstitial hold_s after it
+    const interstitialHoldMap = new Map<number, number>();
+    for (const inter of interstitials) {
+      const existing = interstitialHoldMap.get(inter.after_slot) ?? 0;
+      interstitialHoldMap.set(inter.after_slot, existing + inter.hold_s);
+    }
+
+    const starts: number[] = [];
+    let cumulative = 0;
+    for (let i = 0; i < slots.length; i++) {
+      starts.push(cumulative);
+      cumulative += slots[i].target_duration_s;
+      const holdAfter = interstitialHoldMap.get(slots[i].position) ?? 0;
+      cumulative += holdAfter;
+    }
+    return starts;
+  }, [state.recipe]);
+
+  // ── Active slot from playhead ──────────────────────────────────────────
+
+  const activeSlotIndex = useMemo(() => {
+    if (currentTime == null || slotStartTimes.length === 0) return -1;
+    for (let i = slotStartTimes.length - 1; i >= 0; i--) {
+      if (currentTime >= slotStartTimes[i]) return i;
+    }
+    return -1;
+  }, [currentTime, slotStartTimes]);
+
+  // ── Slot click → video seek ───────────────────────────────────────────
+
+  const handleSlotSelect = useCallback(
+    (index: number) => {
+      dispatch({ type: "SET_SELECTED", selection: { type: "slot", slotIndex: index } });
+      if (videoRef.current && slotStartTimes[index] != null) {
+        videoRef.current.currentTime = slotStartTimes[index];
+      }
+    },
+    [slotStartTimes],
+  );
+
+  // ── Save ──────────────────────────────────────────────────────────────
+
   const handleSave = useCallback(async () => {
-    if (!state.recipe || savingRef.current) return;
-    savingRef.current = true;
+    if (!state.recipe || saving) return;
+    setSaving(true);
 
     try {
       const res = await adminSaveRecipe(template.id, {
         recipe: state.recipe as unknown as Record<string, unknown>,
-        base_version_id: stateRef.current.versionId || null,
+        base_version_id: state.versionId || null,
       });
       dispatch({
         type: "RESET_TO_SAVED",
         recipe: res.recipe as unknown as Recipe,
       });
-      stateRef.current = {
-        versionId: res.version_id,
-        versionNumber: res.version_number,
-      };
+      dispatch({ type: "SET_VERSION", versionId: res.version_id, versionNumber: res.version_number });
+      setSavedSinceLastTest(true);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Save failed");
     } finally {
-      savingRef.current = false;
+      setSaving(false);
     }
-  }, [state.recipe, template.id]);
+  }, [state.recipe, saving, template.id]);
 
   const handleReset = useCallback(() => {
     if (!state.savedRecipe) return;
     if (!confirm("Discard unsaved changes?")) return;
     dispatch({ type: "RESET_TO_SAVED", recipe: state.savedRecipe });
   }, [state.savedRecipe]);
+
+  // ── Re-run test ───────────────────────────────────────────────────────
+
+  const handleRerun = useCallback(async () => {
+    if (!latestTestJob?.clip_paths.length) return;
+    try {
+      const res = await adminCreateTestJob(template.id, {
+        clip_gcs_paths: latestTestJob.clip_paths,
+      });
+      setRerunJobId(res.job_id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Re-run failed");
+    }
+  }, [template.id, latestTestJob]);
+
+  // ── Recipe changed since last test? ───────────────────────────────────
+
+  const recipeChangedSinceTest = latestTestJob != null && savedSinceLastTest;
 
   // ── Loading / Error states ──────────────────────────────────────────────
 
@@ -253,8 +363,13 @@ export function EditorTab({ template }: { template: AdminTemplate }) {
     0,
   );
 
-  return (
-    <div className="space-y-4">
+  const hasVideo = latestTestJob?.output_url && !videoError;
+  const isRerunning = rerunJobId !== null && rerunPoller.polling;
+
+  // ── Layout: side-by-side with video, or vertical without ──────────────
+
+  const editorContent = (
+    <div className="flex-1 space-y-4 min-w-0">
       {/* Mini-timeline: slot bars */}
       <div className="border border-zinc-800 rounded p-3">
         <div className="flex items-center gap-1 mb-2">
@@ -286,12 +401,8 @@ export function EditorTab({ template }: { template: AdminTemplate }) {
               isSelected={
                 selection?.type === "slot" && selection.slotIndex === i
               }
-              onSelect={() =>
-                dispatch({
-                  type: "SET_SELECTED",
-                  selection: { type: "slot", slotIndex: i },
-                })
-              }
+              isActive={hasVideo ? activeSlotIndex === i : false}
+              onSelect={() => handleSlotSelect(i)}
             />
           ))}
 
@@ -337,7 +448,7 @@ export function EditorTab({ template }: { template: AdminTemplate }) {
         <div className="flex items-center gap-3">
           <button
             onClick={handleSave}
-            disabled={!isDirty || savingRef.current}
+            disabled={!isDirty || saving}
             className="px-4 py-2 text-sm bg-white text-black rounded hover:bg-zinc-200 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Save Recipe
@@ -349,18 +460,102 @@ export function EditorTab({ template }: { template: AdminTemplate }) {
           >
             Reset
           </button>
+          {latestTestJob?.clip_paths.length ? (
+            <button
+              onClick={handleRerun}
+              disabled={isRerunning || isDirty}
+              className="px-4 py-2 text-sm bg-blue-700 hover:bg-blue-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              title={isDirty ? "Save first, then re-run" : "Re-run test with same clips"}
+            >
+              {isRerunning ? (
+                <>
+                  <span className="w-3 h-3 border-2 border-blue-300 border-t-white rounded-full animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Re-run Test"
+              )}
+            </button>
+          ) : null}
           {isDirty && (
             <span className="text-xs text-amber-400">Unsaved changes</span>
+          )}
+          {recipeChangedSinceTest && !isDirty && (
+            <span className="text-xs text-yellow-500/80">
+              Recipe edited since last test — re-run to see changes
+            </span>
+          )}
+          {rerunPoller.data?.status === "processing_failed" && (
+            <span className="text-xs text-red-400">
+              Re-run failed: {rerunPoller.data.error_detail ?? "Unknown error"}
+            </span>
           )}
         </div>
 
         <span className="text-xs text-zinc-500">
-          Version {stateRef.current.versionNumber}
-          {stateRef.current.versionId && (
-            <> &middot; {stateRef.current.versionId.slice(0, 8)}</>
+          Version {state.versionNumber}
+          {state.versionId && (
+            <> &middot; {state.versionId.slice(0, 8)}</>
           )}
         </span>
       </div>
+    </div>
+  );
+
+  // Side-by-side layout when video is available
+  if (hasVideo) {
+    return (
+      <div className="flex gap-6">
+        <div className="flex-shrink-0">
+          <SyncVideoPlayer
+            url={latestTestJob!.output_url!}
+            videoRef={videoRef}
+            onTimeUpdate={setCurrentTime}
+            onError={() => setVideoError(true)}
+          />
+        </div>
+        {editorContent}
+      </div>
+    );
+  }
+
+  // Vertical layout when no video
+  return (
+    <div className="space-y-4">
+      <div className="bg-zinc-900 border border-zinc-800 rounded p-6 text-center">
+        <p className="text-zinc-500 text-sm">
+          Run a test in the Test tab to preview video here.
+        </p>
+      </div>
+      {editorContent}
+    </div>
+  );
+}
+
+// ── SyncVideoPlayer ─────────────────────────────────────────────────────────
+
+function SyncVideoPlayer({
+  url,
+  videoRef,
+  onTimeUpdate,
+  onError,
+}: {
+  url: string;
+  videoRef?: React.RefCallback<HTMLVideoElement> | React.MutableRefObject<HTMLVideoElement | null>;
+  onTimeUpdate?: (time: number) => void;
+  onError?: () => void;
+}) {
+  return (
+    <div className="w-[280px] aspect-[9/16] bg-black rounded overflow-hidden">
+      <video
+        ref={videoRef}
+        src={url}
+        controls
+        className="w-full h-full object-contain"
+        playsInline
+        onTimeUpdate={(e) => onTimeUpdate?.(e.currentTarget.currentTime)}
+        onError={() => onError?.()}
+      />
     </div>
   );
 }
@@ -372,12 +567,14 @@ function SlotBar({
   index,
   totalDuration,
   isSelected,
+  isActive,
   onSelect,
 }: {
   slot: RecipeSlot;
   index: number;
   totalDuration: number;
   isSelected: boolean;
+  isActive: boolean;
   onSelect: () => void;
 }) {
   const widthPct = totalDuration > 0
@@ -393,7 +590,9 @@ function SlotBar({
       className={`relative rounded border transition-all overflow-hidden flex-shrink-0 ${colorClass} ${
         isSelected
           ? "ring-2 ring-white/50 border-white/60"
-          : "hover:border-zinc-400"
+          : isActive
+            ? "ring-2 ring-blue-400/60 border-blue-400/60"
+            : "hover:border-zinc-400"
       }`}
       title={`Slot ${slot.position}: ${slot.target_duration_s.toFixed(1)}s (${slot.slot_type})`}
     >

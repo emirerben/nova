@@ -470,3 +470,159 @@ class TestSaveRecipe:
             )
 
         assert res.status_code == 422
+
+
+class TestLatestTestJob:
+    def test_returns_latest_completed_test_job(self, client):
+        template = _mock_template(recipe_cached=_make_recipe())
+
+        job = MagicMock()
+        job.id = uuid.uuid4()
+        job.assembly_plan = {"output_url": "https://storage.example.com/output.mp4"}
+        job.all_candidates = {"clip_paths": ["clips/a.mp4", "clips/b.mp4"]}
+        job.created_at = datetime.now(UTC)
+
+        mock_db = AsyncMock()
+
+        # get_template_or_404
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+
+        # latest test job query
+        job_result = MagicMock()
+        job_result.scalar_one_or_none.return_value = job
+
+        mock_db.execute.side_effect = [template_result, job_result]
+
+        def _override_db():
+            yield mock_db
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.get(
+                    "/admin/templates/tmpl-123/latest-test-job",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        data = res.json()
+        assert data["job_id"] == str(job.id)
+        assert data["output_url"] == "https://storage.example.com/output.mp4"
+        assert data["clip_paths"] == ["clips/a.mp4", "clips/b.mp4"]
+
+    def test_404_when_no_completed_test_jobs(self, client):
+        template = _mock_template(recipe_cached=_make_recipe())
+
+        mock_db = AsyncMock()
+
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+
+        job_result = MagicMock()
+        job_result.scalar_one_or_none.return_value = None
+
+        mock_db.execute.side_effect = [template_result, job_result]
+
+        def _override_db():
+            yield mock_db
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.get(
+                    "/admin/templates/tmpl-123/latest-test-job",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 404
+        assert "No completed test jobs" in res.json()["detail"]
+
+    def test_returns_most_recent_not_oldest(self, client):
+        """The endpoint should order by created_at DESC, returning the newest."""
+        template = _mock_template(recipe_cached=_make_recipe())
+
+        # Simulate the DB returning the most recent job (the query uses ORDER BY ... DESC LIMIT 1)
+        newest_job = MagicMock()
+        newest_job.id = uuid.uuid4()
+        newest_job.assembly_plan = {"output_url": "https://storage.example.com/newest.mp4"}
+        newest_job.all_candidates = {"clip_paths": ["clips/new.mp4"]}
+        newest_job.created_at = datetime(2026, 4, 10, 12, 0, 0, tzinfo=UTC)
+
+        mock_db = AsyncMock()
+
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+
+        job_result = MagicMock()
+        job_result.scalar_one_or_none.return_value = newest_job
+
+        mock_db.execute.side_effect = [template_result, job_result]
+
+        def _override_db():
+            yield mock_db
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.get(
+                    "/admin/templates/tmpl-123/latest-test-job",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        assert res.json()["output_url"] == "https://storage.example.com/newest.mp4"
+
+    def test_handles_null_assembly_plan_and_all_candidates(self, client):
+        """When assembly_plan or all_candidates are None, return null/empty defaults."""
+        template = _mock_template(recipe_cached=_make_recipe())
+
+        job = MagicMock()
+        job.id = uuid.uuid4()
+        job.assembly_plan = None
+        job.all_candidates = None
+        job.created_at = datetime.now(UTC)
+
+        mock_db = AsyncMock()
+
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+
+        job_result = MagicMock()
+        job_result.scalar_one_or_none.return_value = job
+
+        mock_db.execute.side_effect = [template_result, job_result]
+
+        def _override_db():
+            yield mock_db
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.get(
+                    "/admin/templates/tmpl-123/latest-test-job",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        data = res.json()
+        assert data["output_url"] is None
+        assert data["clip_paths"] == []
+
+    def test_auth_required(self, client):
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            res = client.get("/admin/templates/tmpl-123/latest-test-job")
+        assert res.status_code in (401, 422)

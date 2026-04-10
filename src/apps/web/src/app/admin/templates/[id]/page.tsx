@@ -1,12 +1,14 @@
 "use client";
 
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   type AdminTemplate,
+  type LatestTestJob,
   type RecipeVersionItem,
   type TemplateMetrics,
   adminCreateTestJob,
+  adminGetLatestTestJob,
   adminGetMetrics,
   adminGetPresignedUpload,
   adminGetRecipeHistory,
@@ -50,6 +52,7 @@ export default function TemplateDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
+  const [latestTestJob, setLatestTestJob] = useState<LatestTestJob | null>(null);
 
   // Fetch template data
   useEffect(() => {
@@ -64,6 +67,15 @@ export default function TemplateDetailPage() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [id]);
+
+  // Fetch latest test job for editor video sync
+  useEffect(() => {
+    adminGetLatestTestJob(id).then(setLatestTestJob).catch(() => {});
+  }, [id]);
+
+  const handleTestJobComplete = useCallback((job: LatestTestJob) => {
+    setLatestTestJob(job);
+  }, []);
 
   const setTab = useCallback(
     (tab: TabId) => {
@@ -191,10 +203,18 @@ export default function TemplateDetailPage() {
           />
         )}
         {activeTab === "editor" && (
-          <EditorTab template={template} />
+          <EditorTab
+            template={template}
+            latestTestJob={latestTestJob}
+            onTestJobComplete={handleTestJobComplete}
+          />
         )}
         {activeTab === "test" && (
-          <TestTab template={template} playbackUrl={playbackUrl} />
+          <TestTab
+            template={template}
+            playbackUrl={playbackUrl}
+            onJobComplete={handleTestJobComplete}
+          />
         )}
         {activeTab === "settings" && (
           <SettingsTab template={template} onSave={setTemplate} />
@@ -354,9 +374,11 @@ function RecipeTab({
 function TestTab({
   template,
   playbackUrl,
+  onJobComplete,
 }: {
   template: AdminTemplate;
   playbackUrl: string | null;
+  onJobComplete?: (job: LatestTestJob) => void;
 }) {
   const [testJobId, setTestJobId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -375,6 +397,21 @@ function TestTab({
     fetchStatus: getTemplateJobStatus,
     isTerminal: (d) => TERMINAL_STATUSES.has(d.status),
   });
+
+  // Push completed test job to parent (for editor video sync)
+  useEffect(() => {
+    if (
+      poller.data?.status === "template_ready" &&
+      poller.data.assembly_plan?.output_url
+    ) {
+      onJobComplete?.({
+        job_id: poller.data.job_id,
+        output_url: poller.data.assembly_plan.output_url,
+        clip_paths: upload.successfulPaths,
+        created_at: poller.data.created_at,
+      });
+    }
+  }, [poller.data, onJobComplete, upload.successfulPaths]);
 
   // Fetch metrics
   useEffect(() => {

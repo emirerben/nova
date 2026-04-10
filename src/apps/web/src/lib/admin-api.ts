@@ -222,6 +222,31 @@ export async function adminGetPresignedUpload(
   return res.json();
 }
 
+// ── Latest test job API ───────────────────────────────────────────────────────
+
+export interface LatestTestJob {
+  job_id: string;
+  output_url: string | null;
+  clip_paths: string[];
+  created_at: string;
+}
+
+export async function adminGetLatestTestJob(
+  templateId: string,
+): Promise<LatestTestJob | null> {
+  const token = getAdminToken();
+  if (!token) return null;
+  const res = await fetch(`${API_URL}/admin/templates/${templateId}/latest-test-job`, {
+    headers: { "Content-Type": "application/json", "X-Admin-Token": token },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 // ── Recipe editor API ─────────────────────────────────────────────────────────
 
 export interface RecipeResponse {

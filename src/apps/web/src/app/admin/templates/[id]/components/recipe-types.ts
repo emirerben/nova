@@ -130,7 +130,8 @@ export type EditorAction =
   | { type: "ADD_INTERSTITIAL" }
   | { type: "REMOVE_INTERSTITIAL"; interstitialIndex: number }
   | { type: "SET_SELECTED"; selection: EditorSelection | null }
-  | { type: "RESET_TO_SAVED"; recipe: Recipe };
+  | { type: "RESET_TO_SAVED"; recipe: Recipe }
+  | { type: "SET_VERSION"; versionId: string; versionNumber: number };
 
 export interface EditorState {
   recipe: Recipe | null;

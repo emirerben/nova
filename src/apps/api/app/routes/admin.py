@@ -394,6 +394,13 @@ class RecipeSchema(BaseModel):
         return v
 
 
+class LatestTestJobResponse(BaseModel):
+    job_id: str
+    output_url: str | None
+    clip_paths: list[str]
+    created_at: datetime
+
+
 class RecipeResponse(BaseModel):
     recipe: dict
     version_id: str
@@ -747,6 +754,58 @@ async def get_template_metrics(
         successful_jobs=row.successful,
         failed_jobs=row.failed,
         last_job_at=row.last_job_at,
+    )
+
+
+# ── Latest test job endpoint ───────────────────────────────────────────────────
+
+
+@router.get(
+    "/templates/{template_id}/latest-test-job",
+    response_model=LatestTestJobResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def get_latest_test_job(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> LatestTestJobResponse:
+    """Return the most recent completed test job for a template."""
+    await get_template_or_404(template_id, db)
+
+    result = await db.execute(
+        select(Job)
+        .where(
+            Job.template_id == template_id,
+            Job.job_type == "template",
+            Job.status == "template_ready",
+        )
+        .order_by(Job.created_at.desc())
+        .limit(1)
+    )
+    job = result.scalar_one_or_none()
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No completed test jobs for this template",
+        )
+
+    output_url = (
+        job.assembly_plan.get("output_url")
+        if isinstance(job.assembly_plan, dict)
+        else None
+    )
+    clip_paths = (
+        job.all_candidates.get("clip_paths", [])
+        if isinstance(job.all_candidates, dict)
+        else []
+    )
+
+    return LatestTestJobResponse(
+        job_id=str(job.id),
+        output_url=output_url,
+        clip_paths=clip_paths,
+        created_at=job.created_at,
     )
 
 
