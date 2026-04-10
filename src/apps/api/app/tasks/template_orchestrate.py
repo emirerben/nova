@@ -270,6 +270,11 @@ def _run_template_job(job_id: str) -> None:
         job.status = "processing"
         db.commit()
 
+        # Fast path: locked re-render skips Gemini entirely
+        if isinstance(job.assembly_plan, dict) and job.assembly_plan.get("locked"):
+            _run_rerender(job_id, job)
+            return
+
         # Snapshot fields before session closes
         template_id = job.template_id
         all_candidates = job.all_candidates or {}
@@ -333,12 +338,16 @@ def _run_template_job(job_id: str) -> None:
         except TemplateMismatchError as exc:
             raise ValueError(f"{exc.code}: {exc.message}") from exc
 
+        # Build mapping: Gemini file ref name → GCS path for re-render
+        clip_id_to_gcs = {ref.name: gcs for ref, gcs in zip(file_refs, clip_paths_gcs)}
+
         # Persist assembly plan
         plan_data = {
             "steps": [
                 {
                     "slot": step.slot,
                     "clip_id": step.clip_id,
+                    "clip_gcs_path": clip_id_to_gcs.get(step.clip_id) or "",
                     "moment": step.moment,
                 }
                 for step in assembly_plan.steps
@@ -405,6 +414,131 @@ def _run_template_job(job_id: str) -> None:
                 db.commit()
 
         log.info("template_job_done", job_id=job_id, output_url=video_url)
+
+
+# ── Locked re-render fast path ─────────────────────────────────────────────────
+
+
+def _run_rerender(job_id: str, job: Job) -> None:
+    """Re-render with locked clip-to-slot assignments. Skips Gemini entirely.
+
+    Reads the locked assembly plan, downloads only the used clips,
+    and runs FFmpeg render + audio mix + copy generation + upload.
+    """
+    from app.pipeline.agents.gemini_analyzer import AssemblyStep  # noqa: PLC0415
+
+    plan = job.assembly_plan
+    steps_data = plan.get("steps", [])
+    template_id = job.template_id
+    selected_platforms = job.selected_platforms or ["tiktok", "instagram", "youtube"]
+    user_subject = (job.all_candidates or {}).get("subject", "")
+
+    # Load current recipe from DB (reflects user edits)
+    with _sync_session() as db:
+        template = db.get(VideoTemplate, template_id)
+        if template is None:
+            raise ValueError(f"Template {template_id} not found")
+        if not template.recipe_cached:
+            raise ValueError(f"Template {template_id} has no recipe")
+
+        recipe_data = template.recipe_cached
+        audio_gcs_path = template.audio_gcs_path
+
+    try:
+        recipe = TemplateRecipe(**recipe_data)
+    except (TypeError, ValueError, KeyError) as exc:
+        raise ValueError(f"Template recipe in DB is malformed: {exc}") from exc
+
+    # Sort current recipe slots by position for index-based matching
+    current_slots = sorted(
+        recipe_data.get("slots", []),
+        key=lambda s: s.get("position", 0),
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Collect unique GCS paths from locked steps
+        gcs_paths_unique = list(dict.fromkeys(
+            step["clip_gcs_path"] for step in steps_data
+        ))
+
+        # Download only the used clips
+        local_clip_paths = _download_clips_parallel(gcs_paths_unique, tmpdir)
+        gcs_to_local = dict(zip(gcs_paths_unique, local_clip_paths))
+
+        # Probe all clips
+        probe_map = _probe_clips(local_clip_paths)
+
+        # Reconstruct AssemblyStep objects with CURRENT recipe slots
+        assembly_steps = []
+        clip_id_to_local: dict[str, str] = {}
+        for i, step_data in enumerate(steps_data):
+            # Use current slot (user-edited) matched by index
+            if i >= len(current_slots):
+                raise ValueError(
+                    f"Slot index {i} out of range ({len(current_slots)} slots in recipe)"
+                )
+            slot = current_slots[i]
+            clip_gcs = step_data["clip_gcs_path"]
+            clip_id = step_data["clip_id"]
+            local_path = gcs_to_local[clip_gcs]
+
+            assembly_steps.append(AssemblyStep(
+                slot=slot,
+                clip_id=clip_id,
+                moment=step_data["moment"],
+            ))
+            clip_id_to_local[clip_id] = local_path
+
+        # FFmpeg assemble (clip_metas=None is safe — text comes from recipe)
+        log.info("rerender_assemble_start", job_id=job_id, steps=len(assembly_steps))
+        assembled_path = os.path.join(tmpdir, "assembled.mp4")
+        _assemble_clips(
+            assembly_steps, clip_id_to_local, probe_map,
+            assembled_path, tmpdir,
+            beat_timestamps_s=recipe.beat_timestamps_s,
+            clip_metas=None,
+            global_color_grade=recipe.color_grade,
+            job_id=job_id,
+            user_subject=user_subject,
+            interstitials=recipe.interstitials,
+        )
+
+        # Mix template audio if available
+        if audio_gcs_path:
+            final_path = os.path.join(tmpdir, "final.mp4")
+            _mix_template_audio(assembled_path, audio_gcs_path, final_path, tmpdir)
+            output_path = final_path
+        else:
+            output_path = assembled_path
+
+        # Generate copy
+        from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
+        platform_copy, copy_status = generate_copy(
+            hook_text="",
+            transcript_excerpt="",
+            platforms=selected_platforms,
+            has_transcript=False,
+            template_tone=recipe.copy_tone,
+        )
+
+        # Upload
+        gcs_output_path = f"jobs/{job_id}/template_output.mp4"
+        video_url = upload_public_read(output_path, gcs_output_path)
+
+        # Finalize — keep locked steps plus output metadata
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            if job:
+                job.status = "template_ready"
+                job.assembly_plan = {
+                    **plan,
+                    "output_url": video_url,
+                    "platform_copy": platform_copy.model_dump(),
+                    "copy_status": copy_status,
+                }
+                db.commit()
+
+        log.info("rerender_done", job_id=job_id, output_url=video_url)
 
 
 # ── Parallelism helpers ────────────────────────────────────────────────────────

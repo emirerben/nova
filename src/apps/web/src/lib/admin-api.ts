@@ -228,6 +228,7 @@ export interface LatestTestJob {
   job_id: string;
   output_url: string | null;
   clip_paths: string[];
+  has_rerender_data: boolean;
   created_at: string;
 }
 
@@ -244,6 +245,17 @@ export async function adminGetLatestTestJob(
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Request failed: ${res.status}`);
   }
+  return res.json();
+}
+
+export async function adminCreateRerenderJob(
+  templateId: string,
+  sourceJobId: string,
+): Promise<TestJobResponse> {
+  const res = await adminFetch(`/admin/templates/${templateId}/rerender-job`, {
+    method: "POST",
+    body: JSON.stringify({ source_job_id: sourceJobId }),
+  });
   return res.json();
 }
 

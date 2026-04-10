@@ -408,6 +408,7 @@ function TestTab({
         job_id: poller.data.job_id,
         output_url: poller.data.assembly_plan.output_url,
         clip_paths: upload.successfulPaths,
+        has_rerender_data: true,
         created_at: poller.data.created_at,
       });
     }

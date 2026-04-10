@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
+  adminCreateRerenderJob,
   adminCreateTestJob,
   adminGetRecipe,
   adminSaveRecipe,
@@ -206,6 +207,7 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
         job_id: rerunPoller.data.job_id,
         output_url: rerunPoller.data.assembly_plan.output_url,
         clip_paths: latestTestJob.clip_paths,
+        has_rerender_data: true,
         created_at: rerunPoller.data.created_at,
       });
       setRerunJobId(null);
@@ -318,17 +320,39 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
 
   // ── Re-run test ───────────────────────────────────────────────────────
 
+  const runFullPipeline = useCallback(async () => {
+    if (!latestTestJob?.clip_paths.length) return;
+    const res = await adminCreateTestJob(template.id, {
+      clip_gcs_paths: latestTestJob.clip_paths,
+    });
+    setRerunJobId(res.job_id);
+  }, [template.id, latestTestJob]);
+
   const handleRerun = useCallback(async () => {
     if (!latestTestJob?.clip_paths.length) return;
     try {
-      const res = await adminCreateTestJob(template.id, {
-        clip_gcs_paths: latestTestJob.clip_paths,
-      });
-      setRerunJobId(res.job_id);
+      if (latestTestJob.has_rerender_data) {
+        // Fast path: re-render with locked clip assignments (~1 min)
+        const res = await adminCreateRerenderJob(template.id, latestTestJob.job_id);
+        setRerunJobId(res.job_id);
+      } else {
+        // No rerender data: full pipeline
+        await runFullPipeline();
+      }
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Re-run failed");
+      // Only fall back to full pipeline on 409 (slot count changed) or 422 (missing data)
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("Slot count changed") || msg.includes("clip_gcs_path")) {
+        try {
+          await runFullPipeline();
+        } catch (fallbackErr) {
+          alert(fallbackErr instanceof Error ? fallbackErr.message : "Re-run failed");
+        }
+      } else {
+        alert(msg || "Re-run failed");
+      }
     }
-  }, [template.id, latestTestJob]);
+  }, [template.id, latestTestJob, runFullPipeline]);
 
   // ── Recipe changed since last test? ───────────────────────────────────
 
@@ -465,13 +489,21 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
               onClick={handleRerun}
               disabled={isRerunning || isDirty}
               className="px-4 py-2 text-sm bg-blue-700 hover:bg-blue-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              title={isDirty ? "Save first, then re-run" : "Re-run test with same clips"}
+              title={
+                isDirty
+                  ? "Save first, then re-run"
+                  : latestTestJob.has_rerender_data
+                    ? "Re-render with same clips (fast)"
+                    : "Re-run test with same clips (full pipeline)"
+              }
             >
               {isRerunning ? (
                 <>
                   <span className="w-3 h-3 border-2 border-blue-300 border-t-white rounded-full animate-spin" />
-                  Processing...
+                  {latestTestJob.has_rerender_data ? "Re-rendering..." : "Processing..."}
                 </>
+              ) : latestTestJob.has_rerender_data ? (
+                "Re-render"
               ) : (
                 "Re-run Test"
               )}

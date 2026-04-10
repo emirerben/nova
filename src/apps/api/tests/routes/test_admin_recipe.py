@@ -457,6 +457,266 @@ class TestSaveRecipe:
 
         assert res.status_code == 422
 
+
+# ── Re-render tests ──────────────────────────────────────────────────────────
+
+
+def _make_assembly_plan_with_gcs(slot_count=3):
+    """Build an assembly plan with clip_gcs_path in each step."""
+    return {
+        "steps": [
+            {
+                "slot": {
+                    "position": i + 1,
+                    "target_duration_s": 3.0 + i,
+                    "priority": 5,
+                    "slot_type": "hook" if i == 0 else "broll",
+                    "transition_in": "hard-cut",
+                    "color_hint": "none",
+                    "speed_factor": 1.0,
+                    "energy": 5.0,
+                    "text_overlays": [],
+                },
+                "clip_id": f"files/clip_{i}",
+                "clip_gcs_path": f"clips/user1/clip_{i}.mp4",
+                "moment": {"start_s": 0.0, "end_s": 5.0, "energy": 5.0, "description": "test"},
+            }
+            for i in range(slot_count)
+        ],
+        "output_url": "https://storage.example.com/output.mp4",
+    }
+
+
+def _mock_source_job(template_id="tmpl-123", assembly_plan=None, status="template_ready"):
+    """Create a mock Job for re-render source."""
+    j = MagicMock()
+    j.id = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    j.template_id = template_id
+    j.status = status
+    j.assembly_plan = assembly_plan or _make_assembly_plan_with_gcs()
+    j.selected_platforms = ["tiktok", "instagram"]
+    j.all_candidates = {"clip_paths": ["clips/user1/clip_0.mp4", "clips/user1/clip_1.mp4"]}
+    return j
+
+
+class TestCreateRerenderJob:
+    def test_creates_rerender_job(self, client):
+        """Happy path: re-render with valid source job and matching slot count."""
+        recipe = _make_recipe()
+        template = _mock_template(recipe_cached=recipe)
+        source_job = _mock_source_job()
+
+        mock_db = AsyncMock()
+
+        # get_template_or_404
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+
+        # db.get(Job, ...)
+        mock_db.get = AsyncMock(return_value=source_job)
+        mock_db.execute = AsyncMock(return_value=template_result)
+
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        def _override_db():
+            yield mock_db
+
+        with (
+            patch("app.routes.admin.settings") as mock_settings,
+            patch("app.routes.admin.orchestrate_template_job", create=True) as mock_task,
+        ):
+            mock_settings.admin_api_key = VALID_TOKEN
+            mock_task.delay = MagicMock()
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.post(
+                    "/admin/templates/tmpl-123/rerender-job",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                    json={"source_job_id": str(source_job.id)},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 201
+        data = res.json()
+        assert data["status"] == "queued"
+        assert data["template_id"] == "tmpl-123"
+
+    def test_404_for_wrong_template(self, client):
+        """Source job belongs to a different template."""
+        recipe = _make_recipe()
+        template = _mock_template(recipe_cached=recipe)
+        source_job = _mock_source_job(template_id="other-template")
+
+        mock_db = AsyncMock()
+
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+
+        mock_db.get = AsyncMock(return_value=source_job)
+        mock_db.execute = AsyncMock(return_value=template_result)
+
+        def _override_db():
+            yield mock_db
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.post(
+                    "/admin/templates/tmpl-123/rerender-job",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                    json={"source_job_id": str(source_job.id)},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 404
+
+    def test_422_for_missing_clip_gcs_path(self, client):
+        """Old assembly plan without clip_gcs_path should be rejected."""
+        recipe = _make_recipe()
+        template = _mock_template(recipe_cached=recipe)
+        # Assembly plan WITHOUT clip_gcs_path
+        old_plan = {
+            "steps": [
+                {"slot": {"position": i + 1}, "clip_id": f"files/clip_{i}", "moment": {}}
+                for i in range(3)
+            ]
+        }
+        source_job = _mock_source_job(assembly_plan=old_plan)
+
+        mock_db = AsyncMock()
+
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+
+        mock_db.get = AsyncMock(return_value=source_job)
+        mock_db.execute = AsyncMock(return_value=template_result)
+
+        def _override_db():
+            yield mock_db
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.post(
+                    "/admin/templates/tmpl-123/rerender-job",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                    json={"source_job_id": str(source_job.id)},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 422
+        assert "clip_gcs_path" in res.json()["detail"]
+
+    def test_409_for_slot_count_mismatch(self, client):
+        """Recipe has 3 slots but source job has 2 steps → 409."""
+        recipe = _make_recipe()  # 3 slots
+        template = _mock_template(recipe_cached=recipe)
+        source_job = _mock_source_job(assembly_plan=_make_assembly_plan_with_gcs(slot_count=2))
+
+        mock_db = AsyncMock()
+
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+
+        mock_db.get = AsyncMock(return_value=source_job)
+        mock_db.execute = AsyncMock(return_value=template_result)
+
+        def _override_db():
+            yield mock_db
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.post(
+                    "/admin/templates/tmpl-123/rerender-job",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                    json={"source_job_id": str(source_job.id)},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 409
+        assert "Slot count changed" in res.json()["detail"]
+
+    def test_422_for_source_job_not_ready(self, client):
+        """Source job that hasn't completed should be rejected."""
+        recipe = _make_recipe()
+        template = _mock_template(recipe_cached=recipe)
+        source_job = _mock_source_job(status="processing")
+
+        mock_db = AsyncMock()
+
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+
+        mock_db.get = AsyncMock(return_value=source_job)
+        mock_db.execute = AsyncMock(return_value=template_result)
+
+        def _override_db():
+            yield mock_db
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.post(
+                    "/admin/templates/tmpl-123/rerender-job",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                    json={"source_job_id": str(source_job.id)},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 422
+        assert "template_ready" in res.json()["detail"]
+
+    def test_404_for_nonexistent_source_job(self, client):
+        """Source job ID that doesn't exist → 404."""
+        recipe = _make_recipe()
+        template = _mock_template(recipe_cached=recipe)
+
+        mock_db = AsyncMock()
+
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+
+        mock_db.get = AsyncMock(return_value=None)
+        mock_db.execute = AsyncMock(return_value=template_result)
+
+        def _override_db():
+            yield mock_db
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.post(
+                    "/admin/templates/tmpl-123/rerender-job",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                    json={"source_job_id": str(uuid.uuid4())},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 404
+
+    def test_auth_required(self, client):
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            res = client.post(
+                "/admin/templates/tmpl-123/rerender-job",
+                json={"source_job_id": str(uuid.uuid4())},
+            )
+        assert res.status_code in (401, 422)
+
     def test_rejects_invalid_sync_style(self, client):
         recipe = _make_recipe()
         recipe["sync_style"] = "random-beats"

@@ -394,10 +394,24 @@ class RecipeSchema(BaseModel):
         return v
 
 
+class RerenderJobRequest(BaseModel):
+    source_job_id: str
+
+    @field_validator("source_job_id")
+    @classmethod
+    def validate_uuid(cls, v: str) -> str:
+        try:
+            uuid.UUID(v)
+        except ValueError as exc:
+            raise ValueError("source_job_id must be a valid UUID") from exc
+        return v
+
+
 class LatestTestJobResponse(BaseModel):
     job_id: str
     output_url: str | None
     clip_paths: list[str]
+    has_rerender_data: bool
     created_at: datetime
 
 
@@ -723,6 +737,104 @@ async def create_test_job(
     return TestJobResponse(job_id=job_id, status="queued", template_id=template_id)
 
 
+# ── Re-render endpoint ─────────────────────────────────────────────────────
+
+
+@router.post(
+    "/templates/{template_id}/rerender-job",
+    response_model=TestJobResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_admin)],
+)
+async def create_rerender_job(
+    template_id: str,
+    req: RerenderJobRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TestJobResponse:
+    """Re-render a template with locked clip assignments from a previous job.
+
+    Skips Gemini analysis and clip matching. Uses the current recipe (with
+    user edits) but keeps the same clips in the same slots.
+    """
+    template = await get_template_or_404(template_id, db)
+    require_ready(template)
+
+    if not template.recipe_cached:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Template has no recipe",
+        )
+
+    # Load source job
+    source_job = await db.get(Job, uuid.UUID(req.source_job_id))
+    if source_job is None or source_job.template_id != template_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source job not found for this template",
+        )
+    if source_job.status != "template_ready":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Source job is not in template_ready status",
+        )
+
+    # Validate assembly plan has steps with clip_gcs_path
+    source_plan = source_job.assembly_plan or {}
+    source_steps = source_plan.get("steps", [])
+    if not source_steps or not all(s.get("clip_gcs_path") for s in source_steps):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Source job does not have re-render data (missing clip_gcs_path in steps)",
+        )
+
+    # Validate slot count matches current recipe
+    current_slots = template.recipe_cached.get("slots", [])
+    if len(current_slots) != len(source_steps):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Slot count changed ({len(current_slots)} slots in recipe vs "
+                f"{len(source_steps)} steps in source job). Use full pipeline instead."
+            ),
+        )
+
+    # Build new steps: replace slot data with current recipe, keep clip assignments
+    current_slots_sorted = sorted(current_slots, key=lambda s: s.get("position", 0))
+    new_steps = [
+        {
+            "slot": current_slots_sorted[i],
+            "clip_id": step["clip_id"],
+            "clip_gcs_path": step["clip_gcs_path"],
+            "moment": step["moment"],
+        }
+        for i, step in enumerate(source_steps)
+    ]
+
+    # Create job with locked assembly plan
+    job = Job(
+        user_id=SYNTHETIC_USER_ID,
+        job_type="template",
+        template_id=template_id,
+        raw_storage_path=source_steps[0].get("clip_gcs_path", ""),
+        selected_platforms=source_job.selected_platforms or ["tiktok", "instagram", "youtube"],
+        all_candidates=source_job.all_candidates,
+        assembly_plan={"steps": new_steps, "locked": True},
+        status="queued",
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    job_id = str(job.id)
+
+    from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
+    orchestrate_template_job.delay(job_id)
+
+    log.info("rerender_job_created", job_id=job_id, template_id=template_id,
+             source_job_id=req.source_job_id)
+    return TestJobResponse(job_id=job_id, status="queued", template_id=template_id)
+
+
 # ── Metrics endpoint ───────────────────────────────────────────────────────────
 
 
@@ -801,10 +913,19 @@ async def get_latest_test_job(
         else []
     )
 
+    # Check if assembly plan has clip_gcs_path in all steps (needed for re-render)
+    has_rerender = False
+    if isinstance(job.assembly_plan, dict):
+        steps = job.assembly_plan.get("steps", [])
+        has_rerender = bool(steps) and all(
+            s.get("clip_gcs_path") for s in steps
+        )
+
     return LatestTestJobResponse(
         job_id=str(job.id),
         output_url=output_url,
         clip_paths=clip_paths,
+        has_rerender_data=has_rerender,
         created_at=job.created_at,
     )
 
