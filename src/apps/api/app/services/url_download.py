@@ -79,7 +79,8 @@ def download_and_upload(url: str) -> str:
         blob = bucket.blob(gcs_path)
         blob.upload_from_filename(str(downloaded), content_type="video/mp4")
 
-        log.info("url_download_uploaded", gcs_path=gcs_path, size_mb=round(downloaded.stat().st_size / 1e6, 1))
+        size_mb = round(downloaded.stat().st_size / 1e6, 1)
+        log.info("url_download_uploaded", gcs_path=gcs_path, size_mb=size_mb)
 
     return gcs_path
 
