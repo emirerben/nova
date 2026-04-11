@@ -39,7 +39,11 @@ async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Request failed: ${res.status}`);
+    const detail = err.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join("; ")
+      : detail ?? `Request failed: ${res.status}`;
+    throw new Error(message);
   }
   return res;
 }
@@ -243,7 +247,11 @@ export async function adminGetLatestTestJob(
   if (res.status === 404) return null;
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Request failed: ${res.status}`);
+    const detail = err.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join("; ")
+      : detail ?? `Request failed: ${res.status}`;
+    throw new Error(message);
   }
   return res.json();
 }
