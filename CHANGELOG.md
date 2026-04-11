@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0.0] - 2026-04-11
+
+### Added
+- Visual overlay editor on the admin recipe page: click to select overlays directly on the video preview, drag vertically to reposition (snaps to top/center/bottom), double-click to edit text inline
+- Overlay timeline strip below the video showing each overlay as a colored bar (color-coded by role: hook/reaction/cta/label), with a live playhead indicator
+- Property panel now shows a focused overlay editor when an overlay is selected from the video or timeline, with a Remove button for quick deletion
+- New `overlay-constants.ts` module shared across overlay editor components, with full unit test coverage (22 tests)
+
+### Fixed
+- Inline text edit no longer commits partial text when the user's focus moves to the timeline bar (onBlur/pointerdown ordering)
+- Inline edit commit now guards against stale overlay index when an overlay is deleted externally during an active edit
+
 ## [0.1.10.0] - 2026-04-06
 
 ### Added
