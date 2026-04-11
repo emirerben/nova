@@ -240,6 +240,7 @@ export interface AssemblyPlanData {
     moment: { start_s: number; end_s: number; energy: number; description: string };
   }>;
   output_url?: string;
+  base_output_url?: string;
   platform_copy?: PlatformCopy;
   copy_status?: string;
 }

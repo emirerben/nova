@@ -362,6 +362,7 @@ def _run_template_job(job_id: str) -> None:
         # [6] FFmpeg assemble
         log.info("ffmpeg_assemble_start", job_id=job_id)
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
+        base_path = os.path.join(tmpdir, "base_no_overlays.mp4")
         clip_id_to_local = {
             ref.name: path for ref, path in zip(file_refs, local_clip_paths)
         }
@@ -374,6 +375,7 @@ def _run_template_job(job_id: str) -> None:
             job_id=job_id,
             user_subject=user_subject,
             interstitials=recipe.interstitials,
+            base_output_path=base_path,
         )
 
         # [6b] Mix template audio if available
@@ -381,6 +383,10 @@ def _run_template_job(job_id: str) -> None:
             final_path = os.path.join(tmpdir, "final.mp4")
             _mix_template_audio(assembled_path, audio_gcs_path, final_path, tmpdir)
             output_path = final_path
+            # Also mix audio into the base video for editor preview
+            base_final = os.path.join(tmpdir, "base_final.mp4")
+            _mix_template_audio(base_path, audio_gcs_path, base_final, tmpdir)
+            base_path = base_final
         else:
             output_path = assembled_path
 
@@ -396,9 +402,11 @@ def _run_template_job(job_id: str) -> None:
             template_tone=recipe.copy_tone,
         )
 
-        # [8] Upload assembled video to GCS
+        # [8] Upload assembled video + base video to GCS
         gcs_output_path = f"jobs/{job_id}/template_output.mp4"
         video_url = upload_public_read(output_path, gcs_output_path)
+        gcs_base_path = f"jobs/{job_id}/template_base.mp4"
+        base_video_url = upload_public_read(base_path, gcs_base_path)
 
         # [9] Finalize
         with _sync_session() as db:
@@ -408,6 +416,7 @@ def _run_template_job(job_id: str) -> None:
                 job.assembly_plan = {
                     **plan_data,
                     "output_url": video_url,
+                    "base_output_url": base_video_url,
                     "platform_copy": platform_copy.model_dump(),
                     "copy_status": copy_status,
                 }
@@ -492,6 +501,7 @@ def _run_rerender(job_id: str, job: Job) -> None:
         # FFmpeg assemble (clip_metas=None is safe — text comes from recipe)
         log.info("rerender_assemble_start", job_id=job_id, steps=len(assembly_steps))
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
+        base_path = os.path.join(tmpdir, "base_no_overlays.mp4")
         _assemble_clips(
             assembly_steps, clip_id_to_local, probe_map,
             assembled_path, tmpdir,
@@ -501,6 +511,7 @@ def _run_rerender(job_id: str, job: Job) -> None:
             job_id=job_id,
             user_subject=user_subject,
             interstitials=recipe.interstitials,
+            base_output_path=base_path,
         )
 
         # Mix template audio if available
@@ -508,6 +519,9 @@ def _run_rerender(job_id: str, job: Job) -> None:
             final_path = os.path.join(tmpdir, "final.mp4")
             _mix_template_audio(assembled_path, audio_gcs_path, final_path, tmpdir)
             output_path = final_path
+            base_final = os.path.join(tmpdir, "base_final.mp4")
+            _mix_template_audio(base_path, audio_gcs_path, base_final, tmpdir)
+            base_path = base_final
         else:
             output_path = assembled_path
 
@@ -524,6 +538,8 @@ def _run_rerender(job_id: str, job: Job) -> None:
         # Upload
         gcs_output_path = f"jobs/{job_id}/template_output.mp4"
         video_url = upload_public_read(output_path, gcs_output_path)
+        gcs_base_path = f"jobs/{job_id}/template_base.mp4"
+        base_video_url = upload_public_read(base_path, gcs_base_path)
 
         # Finalize — keep locked steps plus output metadata
         with _sync_session() as db:
@@ -533,6 +549,7 @@ def _run_rerender(job_id: str, job: Job) -> None:
                 job.assembly_plan = {
                     **plan,
                     "output_url": video_url,
+                    "base_output_url": base_video_url,
                     "platform_copy": platform_copy.model_dump(),
                     "copy_status": copy_status,
                 }
@@ -798,6 +815,7 @@ def _assemble_clips(
     job_id: str | None = None,
     user_subject: str = "",
     interstitials: list[dict] | None = None,
+    base_output_path: str | None = None,
 ) -> None:
     """Assemble clips in slot order: render each slot, then join with transitions.
 
@@ -935,6 +953,10 @@ def _assemble_clips(
         slot_count=len(reframed_paths),
         slot_durations_sum=round(sum(slot_durations), 2),
     )
+
+    # ── Save base video (pre-overlay) for editor preview ────────────
+    if base_output_path:
+        shutil.copy2(joined_path, base_output_path)
 
     # ── Post-join text overlays (absolute timestamps, deduplicated) ────
     # Collect overlays across ALL slots, convert to absolute timestamps,

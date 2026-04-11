@@ -210,6 +210,7 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
       onTestJobComplete?.({
         job_id: rerunPoller.data.job_id,
         output_url: rerunPoller.data.assembly_plan.output_url,
+        base_output_url: rerunPoller.data.assembly_plan.base_output_url ?? null,
         clip_paths: latestTestJob.clip_paths,
         has_rerender_data: true,
         created_at: rerunPoller.data.created_at,
@@ -409,7 +410,11 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
     0,
   );
 
-  const hasVideo = latestTestJob?.output_url && !videoError;
+  // Editor shows the base video (without burned overlays) so the
+  // OverlayPreview HTML layer is the sole source of overlay display.
+  // Falls back to output_url for jobs rendered before this change.
+  const editorVideoUrl = latestTestJob?.base_output_url || latestTestJob?.output_url;
+  const hasVideo = editorVideoUrl && !videoError;
   const isRerunning = rerunJobId !== null && rerunPoller.polling;
 
   // ── Layout: side-by-side with video, or vertical without ──────────────
@@ -580,7 +585,7 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
       <div className="flex gap-6">
         <div className="flex-shrink-0 space-y-2">
           <SyncVideoPlayer
-            url={latestTestJob!.output_url!}
+            url={editorVideoUrl!}
             videoRef={videoRef}
             onTimeUpdate={setCurrentTime}
             onError={() => setVideoError(true)}

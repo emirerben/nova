@@ -662,7 +662,8 @@ class TestTemplateAudio:
                 mock_copy.return_value = (mock_platform_copy, "generated")
                 _run_template_job("12345678-1234-5678-1234-567812345678")
 
-        mock_mix.assert_called_once()
+        # Called twice: once for the final video, once for the base (editor preview)
+        assert mock_mix.call_count == 2
 
 
 # ── template_matcher two-pass tolerance ───────────────────────────────────────

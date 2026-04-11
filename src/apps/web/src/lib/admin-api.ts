@@ -231,6 +231,7 @@ export async function adminGetPresignedUpload(
 export interface LatestTestJob {
   job_id: string;
   output_url: string | null;
+  base_output_url: string | null;
   clip_paths: string[];
   has_rerender_data: boolean;
   created_at: string;
