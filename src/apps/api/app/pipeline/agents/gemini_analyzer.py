@@ -437,6 +437,11 @@ _VALID_OVERLAY_EFFECTS = {
     "slide-up", "static",
 }
 _VALID_OVERLAY_POSITIONS = {"center", "top", "bottom"}
+_VALID_OVERLAY_FONT_SIZES = {"small", "medium", "large", "jumbo"}
+_VALID_CAMERA_MOVEMENTS = {
+    "static", "pan-left", "pan-right", "tilt-up", "tilt-down",
+    "zoom-in", "zoom-out", "handheld", "tracking",
+}
 _VALID_TRANSITION_TYPES = {"hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none"}
 _VALID_COLOR_HINTS = {"warm", "cool", "high-contrast", "desaturated", "vintage", "none"}
 _VALID_SYNC_STYLES = {"cut-on-beat", "transition-on-beat", "energy-match", "freeform"}
@@ -462,7 +467,7 @@ def _extract_creative_direction(client: Any, file_ref: Any, genai_types: Any) ->
                 prompt,
             ],
             config=genai_types.GenerateContentConfig(
-                max_output_tokens=150,
+                max_output_tokens=400,
             ),
         )
 
@@ -510,6 +515,13 @@ def _validate_slots(slots: list[dict], global_color_grade: str) -> None:
         if "energy" not in slot:
             slot["energy"] = 5.0
 
+        # ── camera_movement (defaults to "static") ───────────────────
+        camera_movement = slot.get("camera_movement", "static")
+        if camera_movement not in _VALID_CAMERA_MOVEMENTS:
+            slot["camera_movement"] = "static"
+        else:
+            slot["camera_movement"] = camera_movement
+
         # ── text_overlays ────────────────────────────────────────────
         raw_overlays = slot.get("text_overlays", [])
         if not isinstance(raw_overlays, list):
@@ -541,6 +553,11 @@ def _validate_slots(slots: list[dict], global_color_grade: str) -> None:
                 ov.get("position", "center")
                 if ov.get("position") in _VALID_OVERLAY_POSITIONS
                 else "center"
+            )
+            ov["font_size_hint"] = (
+                ov.get("font_size_hint", "large")
+                if ov.get("font_size_hint") in _VALID_OVERLAY_FONT_SIZES
+                else "large"
             )
             ov.setdefault("has_darkening", False)
             ov.setdefault("has_narrowing", False)
