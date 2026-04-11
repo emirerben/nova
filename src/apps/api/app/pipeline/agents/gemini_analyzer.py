@@ -570,6 +570,11 @@ def _validate_slots(slots: list[dict], global_color_grade: str) -> None:
             )
             ov.setdefault("has_darkening", False)
             ov.setdefault("has_narrowing", False)
+            # Gemini returns overlay text in "text"; the burn pipeline reads
+            # "sample_text".  Copy text → sample_text so overlays aren't
+            # silently dropped when sample_text is empty.
+            if not ov.get("sample_text") and ov.get("text"):
+                ov["sample_text"] = ov["text"]
             ov.setdefault("sample_text", "")
             validated.append(ov)
         slot["text_overlays"] = validated

@@ -1332,7 +1332,11 @@ def _burn_text_overlays(
     log.info("burn_text_overlays", count=len(png_configs))
     result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
     if result.returncode != 0:
-        log.warning("burn_text_failed", rc=result.returncode)
+        log.warning(
+            "burn_text_failed",
+            rc=result.returncode,
+            stderr=result.stderr.decode(errors="replace")[-500:],
+        )
         shutil.copy2(input_path, output_path)
     else:
         log.info("burn_text_done")
@@ -1402,7 +1406,7 @@ def _resolve_overlay_text(
     analysis text (e.g. "YOU", "discovering a hidden river") from overriding
     the user's subject.
     """
-    sample = overlay.get("sample_text", "")
+    sample = overlay.get("sample_text", "") or overlay.get("text", "")
 
     if role == "cta":
         return ""  # CTA text generated later by copy_writer
