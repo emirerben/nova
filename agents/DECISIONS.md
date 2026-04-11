@@ -76,6 +76,14 @@
 
 ---
 
+## [2026-04-11] overlay-constants.ts: pure logic extracted from editor components
+
+**Decision:** All canvas math, position maps, font maps, and helper functions (`getEffectiveTiming`, `isOverlayVisible`, `snapToNearestZone`, `computeBarPosition`) live in `overlay-constants.ts`, separate from React components.
+**Why:** Makes the mapping layer independently testable and keeps components free of coordinate arithmetic. Constants must stay in sync with `app/pipeline/text_overlay.py` (same pixel values: CANVAS_W=1080, POSITION_Y_MAP, FONT_SIZE_MAP).
+**Revisit if:** backend constants change — frontend map must be updated to match.
+
+---
+
 ## [2026-03-27] Gemini vocabulary translation layer
 
 **Decision:** Map Gemini's human-friendly transition names (whip-pan, zoom-in, dissolve) to internal FFmpeg xfade types via `translate_transition()`, rather than constraining Gemini's output vocabulary.

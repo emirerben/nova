@@ -11,6 +11,7 @@ Nova transforms raw real-life videos into viral short-form content (TikTok, Reel
 
 ## Key paths
 - src/apps/web/  — Next.js frontend (upload UI, progress tracker, result viewer)
+- src/apps/web/src/app/admin/templates/[id]/components/ — visual overlay editor (OverlayPreview, OverlayTimeline, PropertyPanel, overlay-constants.ts)
 - src/apps/api/  — Python API (upload endpoint, job queue, FFmpeg pipeline)
 - src/apps/api/prompts/ — LLM prompt templates (template analysis, transcription)
 - agents/        — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
