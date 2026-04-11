@@ -90,3 +90,33 @@ export function computeBarPosition(
     widthPct: (Math.max(0, clampedEnd - clampedStart) / slotDuration) * 100,
   };
 }
+
+// Must match _is_subject_placeholder() in template_orchestrate.py:1368
+// See also: Role-Aware Preview Resolution TODO in TODOS.md for known false-positive edge cases
+export function isSubjectPlaceholder(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  // Match Python's str.isupper() semantics: requires at least one letter
+  if (!/[a-zA-Z]/.test(trimmed)) return false;
+  const words = trimmed.split(/\s+/);
+  // ALL-CAPS up to 3 words: "PERU", "NEW YORK", "SAN JUAN PR"
+  if (trimmed === trimmed.toUpperCase() && words.length <= 3) return true;
+  // Title-cased 1-2 words: "Peru", "New York"
+  if (words.length <= 2 && words.every(w => w[0] === w[0].toUpperCase())) return true;
+  return false;
+}
+
+// Must match _resolve_overlay_text() in template_orchestrate.py:1390
+export function resolveOverlayPreview(
+  overlay: RecipeTextOverlay,
+  previewSubject: string,
+): string {
+  const sample = overlay.sample_text || "";
+  if (overlay.role === "cta") return "";
+  if (previewSubject && isSubjectPlaceholder(sample)) {
+    return sample === sample.toUpperCase()
+      ? previewSubject.toUpperCase()
+      : previewSubject;
+  }
+  return sample;
+}

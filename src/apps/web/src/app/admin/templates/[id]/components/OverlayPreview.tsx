@@ -17,6 +17,7 @@ import {
   SCALE,
   SNAP_ZONES,
   isOverlayVisible,
+  resolveOverlayPreview,
   snapToNearestZone,
 } from "./overlay-constants";
 
@@ -26,6 +27,7 @@ interface OverlayPreviewProps {
   currentTimeInSlot: number;
   selection: EditorSelection | null;
   dispatch: Dispatch<EditorAction>;
+  previewSubject: string;
 }
 
 export function OverlayPreview({
@@ -34,6 +36,7 @@ export function OverlayPreview({
   currentTimeInSlot,
   selection,
   dispatch,
+  previewSubject,
 }: OverlayPreviewProps) {
   const [dragState, setDragState] = useState<{
     overlayIndex: number;
@@ -149,7 +152,7 @@ export function OverlayPreview({
       type: "UPDATE_OVERLAY_FIELD",
       slotIndex,
       overlayIndex: editingIndex,
-      field: "text",
+      field: "sample_text",
       value: editText,
     });
     setEditingIndex(null);
@@ -205,7 +208,8 @@ export function OverlayPreview({
           topPct = (POSITION_Y_MAP[overlay.position] ?? 0.5) * 100;
         }
 
-        const displayText = overlay.text || "(empty)";
+        const resolved = resolveOverlayPreview(overlay, previewSubject);
+        const displayText = resolved || (overlay.role === "cta" ? "(CTA — auto)" : "(empty)");
 
         return (
           <div
@@ -219,7 +223,7 @@ export function OverlayPreview({
               cursor: editingIndex === oi ? "text" : "grab",
             }}
             onPointerDown={(e) => handlePointerDown(e, oi)}
-            onDoubleClick={() => startEditing(oi, overlay.text)}
+            onDoubleClick={() => startEditing(oi, overlay.sample_text)}
           >
             {editingIndex === oi ? (
               <input
