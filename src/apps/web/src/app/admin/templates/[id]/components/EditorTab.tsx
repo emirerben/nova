@@ -189,6 +189,7 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
   const [currentTime, setCurrentTime] = useState<number | null>(null);
   const [videoError, setVideoError] = useState(false);
   const [savedSinceLastTest, setSavedSinceLastTest] = useState(false);
+  const [previewSubject, setPreviewSubject] = useState("");
 
   // Re-run polling state
   const [rerunJobId, setRerunJobId] = useState<string | null>(null);
@@ -225,6 +226,16 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
     adminGetRecipe(template.id)
       .then((res) => {
         if (cancelled) return;
+        // Migrate legacy overlays: if sample_text is empty but text has content, copy text → sample_text
+        if (res.recipe) {
+          for (const slot of (res.recipe as any).slots || []) {
+            for (const overlay of slot.text_overlays || []) {
+              if (!overlay.sample_text && overlay.text) {
+                overlay.sample_text = overlay.text;
+              }
+            }
+          }
+        }
         dispatch({ type: "LOAD_RECIPE", recipe: res.recipe as unknown as Recipe });
         dispatch({ type: "SET_VERSION", versionId: res.version_id, versionNumber: res.version_number });
       })
@@ -298,8 +309,16 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
     setSaving(true);
 
     try {
+      // Sync text from sample_text for backward compatibility
+      const recipeToSave = JSON.parse(JSON.stringify(state.recipe));
+      for (const slot of recipeToSave.slots) {
+        for (const overlay of slot.text_overlays) {
+          overlay.text = overlay.sample_text;
+        }
+      }
+
       const res = await adminSaveRecipe(template.id, {
-        recipe: state.recipe as unknown as Record<string, unknown>,
+        recipe: recipeToSave as unknown as Record<string, unknown>,
         base_version_id: state.versionId || null,
       });
       dispatch({
@@ -401,6 +420,16 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
       <div className="border border-zinc-800 rounded p-3">
         <div className="flex items-center gap-1 mb-2">
           <span className="text-xs text-zinc-500 mr-2">Timeline</span>
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-xs text-zinc-500">Preview Subject</span>
+            <input
+              type="text"
+              value={previewSubject}
+              onChange={(e) => setPreviewSubject(e.target.value)}
+              placeholder="e.g. Puerto Rico"
+              className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-zinc-500 w-40"
+            />
+          </div>
           <button
             onClick={() =>
               dispatch({
@@ -467,6 +496,7 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
           recipe={recipe}
           selection={selection}
           dispatch={dispatch}
+          previewSubject={previewSubject}
         />
       </div>
 
@@ -562,6 +592,7 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
                 currentTimeInSlot={currentTimeInSlot}
                 selection={selection}
                 dispatch={dispatch}
+                previewSubject={previewSubject}
               />
             )}
           </SyncVideoPlayer>

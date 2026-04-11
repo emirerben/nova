@@ -9,6 +9,14 @@
 **Effort:** S (human: ~4h / CC: ~15 min)
 **Priority:** P2
 
+### Role-Aware Preview Resolution (V2)
+**What:** Add `_LABEL_CONFIG`-style routing to the frontend `resolveOverlayPreview()` to prevent false-positive subject substitution for title-cased imperative phrases like "Watch Now", "Check This".
+**Why:** The Python backend uses `_LABEL_CONFIG` routing (template_orchestrate.py:1162) to differentiate subject labels from prefix/CTA labels after `_is_subject_placeholder()` returns true. The TS preview port has no equivalent, so the preview incorrectly substitutes the preview subject into these phrases. Preview-only impact (backend renders correctly), but reduces WYSIWYG fidelity.
+**How:** Add a `role`-aware check in `resolveOverlayPreview()`: skip subject substitution for title-cased 2-word inputs when the overlay role is not "label". Alternatively, port the `_LABEL_CONFIG` prefix detection ("welcome", "check", "watch" starts) as a negative filter.
+**Effort:** XS (human: ~1h / CC: ~5 min)
+**Priority:** P3
+**Depends on:** Unify Text Handling PR shipped
+
 ## Gemini + Template Mode (shipped 2026-03-23)
 
 ### Gemini Integration Tests

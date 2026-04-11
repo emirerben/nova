@@ -3,6 +3,8 @@ import {
   FONT_SIZE_MAP,
   POSITION_Y_MAP,
   isOverlayVisible,
+  isSubjectPlaceholder,
+  resolveOverlayPreview,
   snapToNearestZone,
   computeBarPosition,
   getEffectiveTiming,
@@ -200,6 +202,63 @@ describe("overlay-constants", () => {
       const { leftPct, widthPct } = computeBarPosition(overlay, 5.0);
       expect(leftPct).toBe(0);
       expect(widthPct).toBe(40); // 2/5 = 40%
+    });
+  });
+
+  describe("isSubjectPlaceholder", () => {
+    // TRUE cases
+    test("ALL-CAPS 1 word", () => expect(isSubjectPlaceholder("PERU")).toBe(true));
+    test("ALL-CAPS 2 words", () => expect(isSubjectPlaceholder("NEW YORK")).toBe(true));
+    test("ALL-CAPS 3 words", () => expect(isSubjectPlaceholder("SAN JUAN PR")).toBe(true));
+    test("Title-cased 1 word", () => expect(isSubjectPlaceholder("Peru")).toBe(true));
+    test("Title-cased 2 words", () => expect(isSubjectPlaceholder("New York")).toBe(true));
+
+    // FALSE cases
+    test("mixed case 'Welcome to'", () => expect(isSubjectPlaceholder("Welcome to")).toBe(false));
+    test("ALL-CAPS 4+ words", () => expect(isSubjectPlaceholder("LONG FOUR WORD CAPS")).toBe(false));
+    test("empty string", () => expect(isSubjectPlaceholder("")).toBe(false));
+    test("whitespace only", () => expect(isSubjectPlaceholder("   ")).toBe(false));
+    test("long lowercase phrase", () => expect(isSubjectPlaceholder("discovering a hidden river")).toBe(false));
+
+    // hasLetter guard cases
+    test("numeric string '123'", () => expect(isSubjectPlaceholder("123")).toBe(false));
+    test("symbols only '!!!'", () => expect(isSubjectPlaceholder("!!!")).toBe(false));
+  });
+
+  describe("resolveOverlayPreview", () => {
+    test("CTA role returns empty string", () => {
+      const overlay = makeOverlay({ role: "cta", sample_text: "Buy Now" });
+      expect(resolveOverlayPreview(overlay, "Puerto Rico")).toBe("");
+    });
+
+    test("ALL-CAPS placeholder with subject returns uppercase subject", () => {
+      const overlay = makeOverlay({ sample_text: "PERU" });
+      expect(resolveOverlayPreview(overlay, "Puerto Rico")).toBe("PUERTO RICO");
+    });
+
+    test("Title-case placeholder with subject returns subject as-is", () => {
+      const overlay = makeOverlay({ sample_text: "Peru" });
+      expect(resolveOverlayPreview(overlay, "Puerto Rico")).toBe("Puerto Rico");
+    });
+
+    test("Non-placeholder text passes through unchanged", () => {
+      const overlay = makeOverlay({ sample_text: "Welcome to" });
+      expect(resolveOverlayPreview(overlay, "Puerto Rico")).toBe("Welcome to");
+    });
+
+    test("Empty sample_text returns empty string", () => {
+      const overlay = makeOverlay({ role: "hook", sample_text: "" });
+      expect(resolveOverlayPreview(overlay, "Puerto Rico")).toBe("");
+    });
+
+    test("Empty subject with placeholder returns raw sample_text", () => {
+      const overlay = makeOverlay({ sample_text: "PERU" });
+      expect(resolveOverlayPreview(overlay, "")).toBe("PERU");
+    });
+
+    test("Null-ish sample_text returns empty string gracefully", () => {
+      const overlay = makeOverlay({ sample_text: undefined as unknown as string });
+      expect(resolveOverlayPreview(overlay, "Puerto Rico")).toBe("");
     });
   });
 });

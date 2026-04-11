@@ -19,7 +19,7 @@ import {
   TEXT_SIZE_OPTIONS,
   TRANSITION_IN_OPTIONS,
 } from "./recipe-types";
-import { MAX_OVERLAY_TEXT_LEN } from "./overlay-constants";
+import { MAX_OVERLAY_TEXT_LEN, resolveOverlayPreview } from "./overlay-constants";
 
 // ── Shared field components ─────────────────────────────────────────────────
 
@@ -151,10 +151,12 @@ function SlotProperties({
   slot,
   slotIndex,
   dispatch,
+  previewSubject,
 }: {
   slot: RecipeSlot;
   slotIndex: number;
   dispatch: Dispatch<EditorAction>;
+  previewSubject?: string;
 }) {
   const set = (field: keyof RecipeSlot, value: unknown) =>
     dispatch({ type: "UPDATE_SLOT_FIELD", slotIndex, field, value });
@@ -247,6 +249,7 @@ function SlotProperties({
               slotIndex={slotIndex}
               overlayIndex={oi}
               dispatch={dispatch}
+              previewSubject={previewSubject}
             />
           ))}
         </div>
@@ -262,11 +265,13 @@ function OverlayListItem({
   slotIndex,
   overlayIndex,
   dispatch,
+  previewSubject,
 }: {
   overlay: RecipeTextOverlay;
   slotIndex: number;
   overlayIndex: number;
   dispatch: Dispatch<EditorAction>;
+  previewSubject?: string;
 }) {
   const set = (field: keyof RecipeTextOverlay, value: unknown) =>
     dispatch({
@@ -281,7 +286,7 @@ function OverlayListItem({
     <div className="bg-zinc-900/50 border border-zinc-800 rounded p-3 space-y-3">
       <div className="flex items-center justify-between">
         <span className="text-xs text-zinc-400">
-          {overlay.text ? `"${overlay.text.slice(0, 20)}"` : "(empty)"}{" "}
+          {overlay.sample_text ? `"${overlay.sample_text.slice(0, 20)}"` : "(empty)"}{" "}
           <span className="text-zinc-600">| {overlay.effect} | {overlay.position}</span>
         </span>
         <button
@@ -295,7 +300,6 @@ function OverlayListItem({
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <TextInput label="Text" value={overlay.text} onChange={(v) => set("text", v)} maxLength={MAX_OVERLAY_TEXT_LEN} />
         <SelectInput
           label="Role"
           value={overlay.role}
@@ -337,11 +341,20 @@ function OverlayListItem({
           value={overlay.text_color}
           onChange={(v) => set("text_color", v)}
         />
-        <TextInput
-          label="Sample Text"
-          value={overlay.sample_text}
-          onChange={(v) => set("sample_text", v)}
-        />
+        <div>
+          <TextInput
+            label="Text"
+            value={overlay.sample_text}
+            onChange={(v) => set("sample_text", v)}
+            maxLength={MAX_OVERLAY_TEXT_LEN}
+          />
+          {(() => {
+            const resolved = resolveOverlayPreview(overlay, previewSubject || "");
+            return resolved !== overlay.sample_text && resolved ? (
+              <span className="text-xs text-zinc-500">&rarr; {resolved}</span>
+            ) : null;
+          })()}
+        </div>
       </div>
 
       <div className="grid grid-cols-4 gap-2">
@@ -568,10 +581,12 @@ export function PropertyPanel({
   recipe,
   selection,
   dispatch,
+  previewSubject,
 }: {
   recipe: Recipe;
   selection: EditorSelection | null;
   dispatch: Dispatch<EditorAction>;
+  previewSubject?: string;
 }) {
   if (!selection) {
     return (
@@ -593,6 +608,7 @@ export function PropertyPanel({
         slot={slot}
         slotIndex={selection.slotIndex}
         dispatch={dispatch}
+        previewSubject={previewSubject}
       />
     );
   }
@@ -605,7 +621,7 @@ export function PropertyPanel({
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium text-white">
-            Overlay: {overlay.text ? `"${overlay.text.slice(0, 25)}"` : "(empty)"}
+            Overlay: {overlay.sample_text ? `"${overlay.sample_text.slice(0, 25)}"` : "(empty)"}
           </h3>
           <button
             onClick={() =>
@@ -625,6 +641,7 @@ export function PropertyPanel({
           slotIndex={selection.slotIndex}
           overlayIndex={selection.overlayIndex}
           dispatch={dispatch}
+          previewSubject={previewSubject}
         />
       </div>
     );
