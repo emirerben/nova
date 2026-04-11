@@ -69,6 +69,11 @@ class TemplateRecipe:
     pacing_style: str = ""
     sync_style: str = "freeform"
     interstitials: list[dict] = field(default_factory=list)
+    # Content-type context fields
+    subject_niche: str = ""
+    has_talking_head: bool = False
+    has_voiceover: bool = False
+    has_permanent_letterbox: bool = False
 
 
 @dataclass
@@ -425,6 +430,10 @@ def analyze_template(
         pacing_style=str(data.get("pacing_style", "")),
         sync_style=sync_style,
         interstitials=interstitials,
+        subject_niche=str(data.get("subject_niche", "")),
+        has_talking_head=bool(data.get("has_talking_head", False)),
+        has_voiceover=bool(data.get("has_voiceover", False)),
+        has_permanent_letterbox=bool(data.get("has_permanent_letterbox", False)),
     )
 
 
