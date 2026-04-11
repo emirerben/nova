@@ -28,7 +28,7 @@ export function OverlayTimeline({
   const playheadPct = Math.max(0, Math.min(100, (currentTimeInSlot / duration) * 100));
 
   return (
-    <div className="border border-zinc-800 rounded p-2">
+    <div className="border border-zinc-800 rounded p-2" data-overlay-timeline>
       <span className="text-[10px] text-zinc-500 mb-1 block">
         Overlay Timeline — Slot {slot.position} ({duration.toFixed(1)}s)
       </span>

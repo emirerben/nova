@@ -19,6 +19,7 @@ import {
   TEXT_SIZE_OPTIONS,
   TRANSITION_IN_OPTIONS,
 } from "./recipe-types";
+import { MAX_OVERLAY_TEXT_LEN } from "./overlay-constants";
 
 // ── Shared field components ─────────────────────────────────────────────────
 
@@ -294,7 +295,7 @@ function OverlayListItem({
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <TextInput label="Text" value={overlay.text} onChange={(v) => set("text", v)} maxLength={40} />
+        <TextInput label="Text" value={overlay.text} onChange={(v) => set("text", v)} maxLength={MAX_OVERLAY_TEXT_LEN} />
         <SelectInput
           label="Role"
           value={overlay.role}

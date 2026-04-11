@@ -138,6 +138,13 @@ export function OverlayPreview({
 
   const commitEdit = useCallback(() => {
     if (editingIndex === null) return;
+    // Guard against stale index: if an overlay was deleted externally while we
+    // were editing, the index may no longer be valid — cancel silently instead
+    // of writing to the wrong overlay.
+    if (editingIndex >= slot.text_overlays.length) {
+      setEditingIndex(null);
+      return;
+    }
     dispatch({
       type: "UPDATE_OVERLAY_FIELD",
       slotIndex,
@@ -146,7 +153,7 @@ export function OverlayPreview({
       value: editText,
     });
     setEditingIndex(null);
-  }, [editingIndex, editText, dispatch, slotIndex]);
+  }, [editingIndex, editText, dispatch, slotIndex, slot.text_overlays.length]);
 
   const cancelEdit = useCallback(() => {
     setEditingIndex(null);
@@ -223,7 +230,13 @@ export function OverlayPreview({
                   if (e.key === "Enter") commitEdit();
                   if (e.key === "Escape") cancelEdit();
                 }}
-                onBlur={commitEdit}
+                onBlur={(e) => {
+                  // Don't commit when focus moves to the timeline — the timeline's
+                  // pointerdown fires after blur, and we don't want partial text committed
+                  const relatedTarget = e.relatedTarget as HTMLElement | null;
+                  if (relatedTarget?.closest("[data-overlay-timeline]")) return;
+                  commitEdit();
+                }}
                 maxLength={MAX_OVERLAY_TEXT_LEN}
                 className="bg-transparent border-none outline-none text-center px-2"
                 style={{
