@@ -19,6 +19,7 @@ import {
   TEXT_SIZE_OPTIONS,
   TRANSITION_IN_OPTIONS,
 } from "./recipe-types";
+import { MAX_OVERLAY_TEXT_LEN } from "./overlay-constants";
 
 // ── Shared field components ─────────────────────────────────────────────────
 
@@ -74,10 +75,12 @@ function TextInput({
   label,
   value,
   onChange,
+  maxLength,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
+  maxLength?: number;
 }) {
   return (
     <Field label={label}>
@@ -85,6 +88,7 @@ function TextInput({
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        maxLength={maxLength}
         className={inputClass}
       />
     </Field>
@@ -291,7 +295,7 @@ function OverlayListItem({
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <TextInput label="Text" value={overlay.text} onChange={(v) => set("text", v)} />
+        <TextInput label="Text" value={overlay.text} onChange={(v) => set("text", v)} maxLength={MAX_OVERLAY_TEXT_LEN} />
         <SelectInput
           label="Role"
           value={overlay.role}
@@ -590,6 +594,39 @@ export function PropertyPanel({
         slotIndex={selection.slotIndex}
         dispatch={dispatch}
       />
+    );
+  }
+
+  if (selection.type === "overlay" && selection.overlayIndex != null) {
+    const slot = recipe.slots[selection.slotIndex];
+    const overlay = slot?.text_overlays[selection.overlayIndex];
+    if (!slot || !overlay) return null;
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-white">
+            Overlay: {overlay.text ? `"${overlay.text.slice(0, 25)}"` : "(empty)"}
+          </h3>
+          <button
+            onClick={() =>
+              dispatch({
+                type: "REMOVE_OVERLAY",
+                slotIndex: selection.slotIndex,
+                overlayIndex: selection.overlayIndex!,
+              })
+            }
+            className="text-xs text-zinc-600 hover:text-red-400"
+          >
+            Remove
+          </button>
+        </div>
+        <OverlayListItem
+          overlay={overlay}
+          slotIndex={selection.slotIndex}
+          overlayIndex={selection.overlayIndex}
+          dispatch={dispatch}
+        />
+      </div>
     );
   }
 

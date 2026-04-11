@@ -1,5 +1,14 @@
 # Nova — Deferred Work
 
+## Visual Overlay Editor (shipped v0.2.0.0, 2026-04-11)
+
+### Overlay Editor Component Tests (Tier 2)
+**What:** React component tests for `OverlayPreview`, `PropertyPanel` (overlay selection case), and `OverlayTimeline` using `@testing-library/react`.
+**Why:** Pure logic (overlay-constants.ts) is 100% tested. Component render behavior (visible overlays, role colors, selection ring) is untested. Deferred due to missing @testing-library/react setup.
+**How:** Install `@testing-library/react` + `@testing-library/jest-dom`. Write 3 tests: OverlayPreview renders visible overlays at correct positions, PropertyPanel shows overlay form when selection.type === "overlay", OverlayTimeline renders bars with correct role colors.
+**Effort:** S (human: ~4h / CC: ~15 min)
+**Priority:** P2
+
 ## Gemini + Template Mode (shipped 2026-03-23)
 
 ### Gemini Integration Tests

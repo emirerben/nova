@@ -20,6 +20,8 @@ import { PropertyPanel } from "./PropertyPanel";
 import type { TemplateJobStatusResponse } from "@/lib/api";
 import { getTemplateJobStatus } from "@/lib/api";
 import { useJobPoller } from "@/hooks/useJobPoller";
+import { OverlayPreview } from "./OverlayPreview";
+import { OverlayTimeline } from "./OverlayTimeline";
 
 // ── Reducer ─────────────────────────────────────────────────────────────────
 
@@ -534,17 +536,43 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
     </div>
   );
 
+  // Compute slot-relative time for overlays
+  const activeSlot = activeSlotIndex >= 0 ? recipe.slots[activeSlotIndex] : null;
+  const currentTimeInSlot =
+    currentTime != null && activeSlotIndex >= 0
+      ? currentTime - slotStartTimes[activeSlotIndex]
+      : 0;
+
   // Side-by-side layout when video is available
   if (hasVideo) {
     return (
       <div className="flex gap-6">
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0 space-y-2">
           <SyncVideoPlayer
             url={latestTestJob!.output_url!}
             videoRef={videoRef}
             onTimeUpdate={setCurrentTime}
             onError={() => setVideoError(true)}
-          />
+          >
+            {activeSlot && activeSlotIndex >= 0 && (
+              <OverlayPreview
+                slot={activeSlot}
+                slotIndex={activeSlotIndex}
+                currentTimeInSlot={currentTimeInSlot}
+                selection={selection}
+                dispatch={dispatch}
+              />
+            )}
+          </SyncVideoPlayer>
+          {activeSlot && activeSlotIndex >= 0 && (
+            <OverlayTimeline
+              slot={activeSlot}
+              slotIndex={activeSlotIndex}
+              currentTimeInSlot={currentTimeInSlot}
+              selection={selection}
+              dispatch={dispatch}
+            />
+          )}
         </div>
         {editorContent}
       </div>
@@ -604,11 +632,13 @@ function SyncVideoPlayer({
   videoRef,
   onTimeUpdate,
   onError,
+  children,
 }: {
   url: string;
   videoRef?: React.RefCallback<HTMLVideoElement> | React.MutableRefObject<HTMLVideoElement | null>;
   onTimeUpdate?: (time: number) => void;
   onError?: () => void;
+  children?: React.ReactNode;
 }) {
   const [loading, setLoading] = useState(true);
   const [errored, setErrored] = useState(false);
@@ -616,7 +646,7 @@ function SyncVideoPlayer({
   return (
     <div className="w-[280px] aspect-[9/16] bg-black rounded overflow-hidden relative">
       {loading && !errored && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 z-10">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 z-20">
           <div className="w-6 h-6 border-2 border-zinc-600 border-t-white rounded-full animate-spin" />
           <span className="text-zinc-500 text-xs">Loading video...</span>
         </div>
@@ -635,6 +665,7 @@ function SyncVideoPlayer({
           onError?.();
         }}
       />
+      {children}
     </div>
   );
 }
