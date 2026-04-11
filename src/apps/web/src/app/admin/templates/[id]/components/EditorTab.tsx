@@ -547,6 +547,15 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
               )}
             </button>
           ) : null}
+          {latestTestJob?.output_url && !isDirty && !isRerunning && (
+            <a
+              href={latestTestJob.output_url}
+              download
+              className="px-4 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 text-white rounded"
+            >
+              Download Final
+            </a>
+          )}
           {isDirty && (
             <span className="text-xs text-amber-400">Unsaved changes</span>
           )}
