@@ -1189,7 +1189,7 @@ def _collect_absolute_overlays(
                 and inter
                 and inter.get("type") == "curtain-close"
             ):
-                from app.pipeline.interstitials import (  # noqa: PLC0415
+                from app.pipeline.interstitials import (  # noqa: PLC0415, I001
                     MIN_CURTAIN_ANIMATE_S,
                     _CURTAIN_MAX_RATIO,
                 )
