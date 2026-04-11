@@ -410,6 +410,7 @@ class RerenderJobRequest(BaseModel):
 class LatestTestJobResponse(BaseModel):
     job_id: str
     output_url: str | None
+    base_output_url: str | None = None
     clip_paths: list[str]
     has_rerender_data: bool
     created_at: datetime
@@ -921,9 +922,16 @@ async def get_latest_test_job(
             s.get("clip_gcs_path") for s in steps
         )
 
+    base_output_url = (
+        job.assembly_plan.get("base_output_url")
+        if isinstance(job.assembly_plan, dict)
+        else None
+    )
+
     return LatestTestJobResponse(
         job_id=str(job.id),
         output_url=output_url,
+        base_output_url=base_output_url,
         clip_paths=clip_paths,
         has_rerender_data=has_rerender,
         created_at=job.created_at,
