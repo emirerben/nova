@@ -202,6 +202,7 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
     if (
       rerunJobId &&
       rerunPoller.data?.status === "template_ready" &&
+      rerunPoller.data.job_id === rerunJobId &&
       rerunPoller.data.assembly_plan?.output_url &&
       latestTestJob
     ) {

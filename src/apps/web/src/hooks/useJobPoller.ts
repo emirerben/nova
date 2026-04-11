@@ -102,6 +102,8 @@ export function useJobPoller<T>(
     } else if (!jobId) {
       stopPolling();
       activeJobIdRef.current = null;
+      setData(null);
+      setError(null);
     }
     return () => stopPolling();
     // eslint-disable-next-line react-hooks/exhaustive-deps
