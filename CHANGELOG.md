@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1.0] - 2026-04-11
+
+### Changed
+- Unified text handling in admin template editor: admins now work with a single "Text" field per overlay instead of separate "Text" and "Sample Text" fields
+- Overlay preview on the video canvas now shows resolved text (subject substitution applied) instead of raw template text
+- Added "Preview Subject" input in the editor header to preview how placeholder text like "PERU" resolves to a real subject like "PUERTO RICO"
+- CTA overlays now show "(CTA — auto)" hint instead of generic "(empty)" to explain why CTA text is intentionally blank
+- Double-click inline editing and property panel both read/write `sample_text` directly (the backend's source of truth)
+- Legacy recipe migration on load: overlays with populated `text` but empty `sample_text` are automatically migrated
+- 19 new unit tests for `isSubjectPlaceholder` and `resolveOverlayPreview` (41 total overlay editor tests)
+
 ## [0.2.0.0] - 2026-04-11
 
 ### Added
