@@ -240,7 +240,7 @@ class TestSaveRecipe:
         mock_db.execute.side_effect = [template_result, lock_result, count_result]
 
         # Mock version refresh
-        new_version = _mock_version()
+        _mock_version()
         mock_db.refresh = AsyncMock()
 
         def _override_db():
