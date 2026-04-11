@@ -1,6 +1,5 @@
 """Tests for interstitials.py — black segment classification and rendering."""
 
-import pytest
 from unittest.mock import MagicMock, patch  # noqa: I001
 
 from app.pipeline.interstitials import (

@@ -1159,15 +1159,23 @@ def _collect_absolute_overlays(
             role = ov.get("role", "")
             sample_text = ov.get("sample_text", "")
             is_subject = _is_subject_placeholder(sample_text)
-            is_label_like = role == "label" or is_subject or sample_text.lower().startswith("welcome")
+            is_label_like = (
+                role == "label" or is_subject or sample_text.lower().startswith("welcome")
+            )
             if is_label_like:
                 config = _LABEL_CONFIG["subject" if is_subject else "prefix"]
                 # Apply styling keys (skip timing/accel — handled separately)
-                entry.update({k: v for k, v in config.items() if k not in ("start_s", "accel_at_s")})
+                entry.update(
+                    {k: v for k, v in config.items() if k not in ("start_s", "accel_at_s")}
+                )
 
                 # Timing override for first-slot labels only
                 # Guard: don't push start past end (e.g. short overlay)
-                if cumulative_s == 0.0 and "start_s" in config and config["start_s"] < entry["end_s"]:
+                if (
+                    cumulative_s == 0.0
+                    and "start_s" in config
+                    and config["start_s"] < entry["end_s"]
+                ):
                     entry["start_s"] = config["start_s"]
 
                 # Font-cycle acceleration for subject labels
@@ -1181,7 +1189,10 @@ def _collect_absolute_overlays(
                 and inter
                 and inter.get("type") == "curtain-close"
             ):
-                from app.pipeline.interstitials import MIN_CURTAIN_ANIMATE_S, _CURTAIN_MAX_RATIO  # noqa: PLC0415
+                from app.pipeline.interstitials import (  # noqa: PLC0415, I001
+                    MIN_CURTAIN_ANIMATE_S,
+                    _CURTAIN_MAX_RATIO,
+                )
                 animate_s = max(MIN_CURTAIN_ANIMATE_S, float(inter.get("animate_s", 1.0)))
                 # Apply same 60% clamp as apply_curtain_close_tail
                 animate_s = min(animate_s, dur * _CURTAIN_MAX_RATIO)
@@ -1652,7 +1663,8 @@ def _mix_template_audio(
         "-map", "1:a",
         "-c:v", "copy",
         "-c:a", "aac",
-        "-af", f"afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
+        "-af",
+        f"afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
         "-shortest",
         "-y", output_path,
     ]
