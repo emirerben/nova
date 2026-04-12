@@ -1745,7 +1745,7 @@ class TestOverlayFineTuning:
         assert result[0].get("font_cycle_accel_at_s") == 8.0
 
     def test_curtain_accel_clamps_with_font_cycle_effect(self):
-        """Curtain-derived accel (6.0) < config default (8.0) → curtain wins when effect=font-cycle."""
+        """Curtain accel (6.0) < config default (8.0), curtain wins for font-cycle."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step([{
