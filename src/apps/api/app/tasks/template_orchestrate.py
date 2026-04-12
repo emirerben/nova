@@ -45,7 +45,7 @@ from app.pipeline.agents.gemini_analyzer import (
     analyze_template,
     gemini_upload_and_wait,
 )
-from app.pipeline.template_matcher import TemplateMismatchError, match
+from app.pipeline.template_matcher import TemplateMismatchError, consolidate_slots, match
 from app.storage import download_to_file, upload_public_read
 from app.worker import celery_app
 
@@ -334,6 +334,7 @@ def _run_template_job(job_id: str) -> None:
         # [5] Template match
         log.info("template_match_start", job_id=job_id)
         try:
+            recipe = consolidate_slots(recipe, clip_metas)
             assembly_plan = match(recipe, clip_metas)
         except TemplateMismatchError as exc:
             raise ValueError(f"{exc.code}: {exc.message}") from exc

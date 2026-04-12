@@ -731,3 +731,52 @@ class TestConsolidateSlots:
         assert len(set(clip_ids)) == 3, (
             f"Expected all 3 clips used, got: {clip_ids}"
         )
+
+    def test_t14_regression_3clips_11slots_no_excessive_repetition(self):
+        """T14: Regression — 3 clips + 11 slots (passport vlog scenario).
+
+        Without consolidation, max_uses = ceil(11/3) = 4, so each clip repeats
+        3-4 times. With consolidation, slots merge down toward 3, so each clip
+        appears at most twice (limited by MAX_MERGED_DURATION_S).
+        """
+        recipe = _make_recipe([
+            # 5 hook slots + 6 broll slots, mimicking the passport vlog template
+            _slot(1, 3.0, priority=10, slot_type="hook"),
+            _slot(2, 3.0, priority=9, slot_type="hook"),
+            _slot(3, 3.0, priority=8, slot_type="hook"),
+            _slot(4, 3.0, priority=7, slot_type="hook"),
+            _slot(5, 3.0, priority=6, slot_type="hook"),
+            _slot(6, 3.0, priority=5),
+            _slot(7, 3.0, priority=4),
+            _slot(8, 3.0, priority=3),
+            _slot(9, 3.0, priority=2),
+            _slot(10, 3.0, priority=1),
+            _slot(11, 3.0, priority=1),
+        ])
+        clips = [
+            _make_clip("c1", [
+                _moment(0, 3, energy=9.0), _moment(0, 15, energy=7.0),
+            ]),
+            _make_clip("c2", [
+                _moment(0, 15, energy=6.0), _moment(0, 10, energy=5.5),
+            ]),
+            _make_clip("c3", [
+                _moment(0, 15, energy=7.5), _moment(0, 10, energy=6.0),
+            ]),
+        ]
+
+        consolidated = consolidate_slots(recipe, clips)
+        plan = match(consolidated, clips)
+
+        clip_ids = [step.clip_id for step in plan.steps]
+        # All 3 clips must be used
+        assert set(clip_ids) == {"c1", "c2", "c3"}, (
+            f"Expected all 3 clips used, got unique: {set(clip_ids)}"
+        )
+        # No clip should appear more than twice (ideally once after full consolidation)
+        from collections import Counter
+        counts = Counter(clip_ids)
+        for clip_id, count in counts.items():
+            assert count <= 2, (
+                f"Clip {clip_id} appears {count} times — consolidation should prevent this"
+            )
