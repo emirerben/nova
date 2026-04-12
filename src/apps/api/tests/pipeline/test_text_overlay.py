@@ -9,7 +9,6 @@ from app.pipeline.text_overlay import (
     OVERLAY_FONT_PATH,
     OVERLAY_FONT_PATH_REGULAR,
     _build_ass_header,
-    _registry_ass_name,
     _reset_cycle_cache,
     _resolve_cycle_fonts,
     _resolve_font_family,
