@@ -4,9 +4,11 @@ import pytest
 
 from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep, ClipMeta, TemplateRecipe
 from app.pipeline.template_matcher import (
+    MAX_MERGED_DURATION_S,
     TemplateMismatchError,
     _dedup_adjacent,
     _minimum_coverage_pass,
+    consolidate_slots,
     match,
 )
 
@@ -361,4 +363,334 @@ class TestMinimumCoveragePass:
         clip_ids = [step.clip_id for step in plan.steps]
         assert len(set(clip_ids)) == 8, (
             f"Expected 8 unique clips in 8 slots, got {len(set(clip_ids))}: {clip_ids}"
+        )
+
+
+# ── Consolidate slots tests ─────────────────────────────────────────────────
+
+
+def _slot_with_overlays(
+    position: int,
+    target_dur: float,
+    priority: int = 5,
+    slot_type: str = "broll",
+    energy: float = 5.0,
+    text_overlays: list[dict] | None = None,
+) -> dict:
+    """Slot helper that also accepts energy and text_overlays."""
+    s = _slot(position, target_dur, priority, slot_type)
+    s["energy"] = energy
+    if text_overlays is not None:
+        s["text_overlays"] = text_overlays
+    return s
+
+
+class TestConsolidateSlots:
+    """Tests for consolidate_slots() — adaptive slot merging."""
+
+    def test_t1_noop_when_clips_gte_slots(self):
+        """T1: n_clips >= n_slots → recipe returned unchanged."""
+        recipe = _make_recipe([
+            _slot(1, 5.0, slot_type="hook"),
+            _slot(2, 5.0),
+            _slot(3, 5.0),
+        ])
+        clips = [
+            _make_clip("c1", [_moment(0, 5)]),
+            _make_clip("c2", [_moment(0, 5)]),
+            _make_clip("c3", [_moment(0, 5)]),
+        ]
+
+        result = consolidate_slots(recipe, clips)
+
+        assert result is recipe  # identity — no copy made
+
+    def test_t2_basic_merge_2_clips_4_broll(self):
+        """T2: 2 clips, 4 broll slots → merged down to 2 slots."""
+        recipe = _make_recipe([
+            _slot(1, 5.0, priority=5),
+            _slot(2, 5.0, priority=4),
+            _slot(3, 5.0, priority=3),
+            _slot(4, 5.0, priority=2),
+        ])
+        clips = [
+            _make_clip("c1", [_moment(0, 10, energy=7.0)]),
+            _make_clip("c2", [_moment(0, 10, energy=6.0)]),
+        ]
+
+        result = consolidate_slots(recipe, clips)
+
+        assert len(result.slots) == 2
+        assert result.shot_count == 2
+        # Total duration preserved
+        assert result.total_duration_s == pytest.approx(20.0)
+        total_dur = sum(float(s["target_duration_s"]) for s in result.slots)
+        assert total_dur == pytest.approx(20.0)
+
+    def test_t3_hook_never_merged(self):
+        """T3: Hook at position 1 is never merged with adjacent slot."""
+        recipe = _make_recipe([
+            _slot(1, 3.0, priority=10, slot_type="hook"),
+            _slot(2, 5.0, priority=5),
+            _slot(3, 5.0, priority=4),
+            _slot(4, 5.0, priority=3),
+        ])
+        clips = [
+            _make_clip("c1", [_moment(0, 5)]),
+            _make_clip("c2", [_moment(0, 10)]),
+        ]
+
+        result = consolidate_slots(recipe, clips)
+
+        # Hook must survive as its own slot
+        hook_slots = [s for s in result.slots if s.get("slot_type") == "hook"]
+        assert len(hook_slots) == 1
+        assert float(hook_slots[0]["target_duration_s"]) == pytest.approx(3.0)
+
+    def test_t4_min_floor_distinct_types(self):
+        """T4: Distinct slot types preserved — hook+broll+outro → min 3 even with 1 clip."""
+        recipe = _make_recipe([
+            _slot(1, 3.0, slot_type="hook"),
+            _slot(2, 5.0, slot_type="broll"),
+            _slot(3, 5.0, slot_type="broll"),
+            _slot(4, 5.0, slot_type="broll"),
+            _slot(5, 4.0, slot_type="outro"),
+        ])
+        clips = [
+            _make_clip("c1", [_moment(0, 15, energy=6.0)]),
+        ]
+
+        result = consolidate_slots(recipe, clips)
+
+        # Floor = max(1 clip, 3 types, 2 min) = 3
+        assert len(result.slots) == 3
+
+    def test_t5_single_type_floor_is_n_clips(self):
+        """T5: All broll → floor = max(n_clips, 1 type, 2) = n_clips."""
+        recipe = _make_recipe([
+            _slot(1, 5.0), _slot(2, 5.0), _slot(3, 5.0),
+            _slot(4, 5.0), _slot(5, 5.0), _slot(6, 5.0),
+        ])
+        clips = [
+            _make_clip("c1", [_moment(0, 10)]),
+            _make_clip("c2", [_moment(0, 10)]),
+            _make_clip("c3", [_moment(0, 10)]),
+        ]
+
+        result = consolidate_slots(recipe, clips)
+
+        assert len(result.slots) == 3
+
+    def test_t6_max_duration_cap_skips_merge(self):
+        """T6: Two 15s slots → combined 30s > MAX_MERGED_DURATION_S → skip."""
+        recipe = _make_recipe([
+            _slot(1, 15.0, priority=5),
+            _slot(2, 15.0, priority=4),
+            _slot(3, 5.0, priority=3),
+        ])
+        clips = [
+            _make_clip("c1", [_moment(0, 15)]),
+        ]
+
+        result = consolidate_slots(recipe, clips)
+
+        # No slot should exceed the cap
+        durations = [float(s["target_duration_s"]) for s in result.slots]
+        for d in durations:
+            assert d < MAX_MERGED_DURATION_S
+
+    def test_t7_clip_aware_scoring_prefers_matching_duration(self):
+        """T7: Prefers merge whose combined duration matches a clip moment."""
+        recipe = _make_recipe([
+            _slot(1, 3.0, priority=5),   # pair 1-2: 3+3=6s
+            _slot(2, 3.0, priority=4),
+            _slot(3, 5.0, priority=3),   # pair 3-4: 5+5=10s
+            _slot(4, 5.0, priority=2),
+        ])
+        # Only 10s clip moments — pair (3,4)=10s gets exact fit score 3.0,
+        # pair (1,2)=6s gets partial fit score ~1.0 (|10-6|=4, 3*(1-4/6))
+        clips = [
+            _make_clip("c1", [_moment(0, 10, energy=7.0)]),
+            _make_clip("c2", [_moment(0, 10, energy=6.0)]),
+            _make_clip("c3", [_moment(0, 3, energy=5.0)]),
+        ]
+
+        result = consolidate_slots(recipe, clips)
+
+        assert len(result.slots) == 3
+        # Pair (3,4) merged → one 10s slot exists
+        durations = sorted(float(s["target_duration_s"]) for s in result.slots)
+        assert 10.0 in durations
+
+    def test_t8_interstitial_penalty(self):
+        """T8: Prefers merging non-interstitial boundary over one with interstitial."""
+        recipe = TemplateRecipe(
+            shot_count=4,
+            total_duration_s=20.0,
+            hook_duration_s=3.0,
+            slots=[
+                _slot(1, 5.0, priority=5),
+                _slot(2, 5.0, priority=4),
+                _slot(3, 5.0, priority=3),
+                _slot(4, 5.0, priority=2),
+            ],
+            copy_tone="casual",
+            caption_style="bold",
+            interstitials=[{"type": "fade", "after_slot": 1}],
+        )
+        clips = [
+            _make_clip("c1", [_moment(0, 10)]),
+            _make_clip("c2", [_moment(0, 10)]),
+            _make_clip("c3", [_moment(0, 5)]),
+        ]
+
+        result = consolidate_slots(recipe, clips)
+
+        assert len(result.slots) == 3
+        # The interstitial should survive (penalty prevents that merge)
+        assert len(result.interstitials) >= 1
+
+    def test_t9_interior_interstitial_dropped(self):
+        """T9: Interstitial between merged slots is dropped."""
+        recipe = TemplateRecipe(
+            shot_count=4,
+            total_duration_s=20.0,
+            hook_duration_s=3.0,
+            slots=[
+                _slot(1, 5.0, priority=5),
+                _slot(2, 5.0, priority=4),
+                _slot(3, 5.0, priority=3),
+                _slot(4, 5.0, priority=2),
+            ],
+            copy_tone="casual",
+            caption_style="bold",
+            interstitials=[{"type": "fade", "after_slot": 2}],
+        )
+        clips = [
+            _make_clip("c1", [_moment(0, 10)]),
+            _make_clip("c2", [_moment(0, 10)]),
+        ]
+
+        result = consolidate_slots(recipe, clips)
+
+        assert len(result.slots) == 2
+        # All remaining interstitials have valid positions
+        for inter in result.interstitials:
+            after = inter.get("after_slot", 0)
+            assert after <= len(result.slots)
+
+    def test_t10_tail_interstitial_remapped(self):
+        """T10: Interstitial after second slot of merged pair remaps correctly."""
+        recipe = TemplateRecipe(
+            shot_count=4,
+            total_duration_s=20.0,
+            hook_duration_s=3.0,
+            slots=[
+                _slot(1, 5.0, priority=5),
+                _slot(2, 5.0, priority=4),
+                _slot(3, 5.0, priority=3),
+                _slot(4, 5.0, priority=2),
+            ],
+            copy_tone="casual",
+            caption_style="bold",
+            interstitials=[{"type": "fade", "after_slot": 3}],
+        )
+        clips = [
+            _make_clip("c1", [_moment(0, 10)]),
+            _make_clip("c2", [_moment(0, 5)]),
+            _make_clip("c3", [_moment(0, 5)]),
+        ]
+
+        result = consolidate_slots(recipe, clips)
+
+        assert len(result.slots) == 3
+        assert len(result.interstitials) >= 1
+        for inter in result.interstitials:
+            assert 1 <= inter["after_slot"] <= len(result.slots)
+
+    def test_t11_positions_renumbered_sequentially(self):
+        """T11: After merges, positions are sequential 1..N."""
+        recipe = _make_recipe([
+            _slot(1, 5.0), _slot(2, 5.0), _slot(3, 5.0), _slot(4, 5.0),
+        ])
+        clips = [
+            _make_clip("c1", [_moment(0, 10)]),
+            _make_clip("c2", [_moment(0, 10)]),
+        ]
+
+        result = consolidate_slots(recipe, clips)
+
+        positions = [s["position"] for s in result.slots]
+        assert positions == list(range(1, len(result.slots) + 1))
+
+    def test_t12_text_overlay_time_shifting(self):
+        """T12: Slot B overlays get dur_A offset when merged."""
+        recipe = _make_recipe([
+            _slot_with_overlays(1, 5.0, text_overlays=[
+                {"text": "hello", "position": "center", "start_s": 0.0, "end_s": 3.0},
+            ]),
+            _slot_with_overlays(2, 5.0, text_overlays=[
+                {"text": "world", "position": "bottom", "start_s": 1.0, "end_s": 4.0},
+            ]),
+            _slot_with_overlays(3, 5.0),
+        ])
+        clips = [
+            _make_clip("c1", [_moment(0, 10)]),
+            _make_clip("c2", [_moment(0, 5)]),
+        ]
+
+        result = consolidate_slots(recipe, clips)
+
+        # Find the merged slot (should have ~10s duration)
+        merged = next(
+            s for s in result.slots
+            if float(s["target_duration_s"]) == pytest.approx(10.0)
+        )
+        overlays = merged.get("text_overlays", [])
+        assert len(overlays) == 2
+
+        # First overlay (from slot A) unchanged
+        hello_ov = next(o for o in overlays if o["text"] == "hello")
+        assert hello_ov["start_s"] == pytest.approx(0.0)
+        assert hello_ov["end_s"] == pytest.approx(3.0)
+
+        # Second overlay (from slot B) shifted by dur_A=5.0
+        world_ov = next(o for o in overlays if o["text"] == "world")
+        assert world_ov["start_s"] == pytest.approx(6.0)  # 1.0 + 5.0
+        assert world_ov["end_s"] == pytest.approx(9.0)    # 4.0 + 5.0
+
+    def test_t13_integration_consolidate_then_match_no_repetition(self):
+        """T13: consolidate → match produces plan where all clips are used."""
+        # Use shorter broll slots (3s each) so merges stay under the 20s cap.
+        recipe = _make_recipe([
+            _slot(1, 3.0, priority=10, slot_type="hook"),
+            _slot(2, 3.0, priority=5),
+            _slot(3, 3.0, priority=4),
+            _slot(4, 3.0, priority=3),
+            _slot(5, 3.0, priority=2),
+            _slot(6, 3.0, priority=1),
+            _slot(7, 3.0, priority=1),
+            _slot(8, 3.0, priority=1),
+        ])
+        # Each clip provides moments spanning a wide duration range.
+        clips = [
+            _make_clip("c1", [
+                _moment(0, 3, energy=9.0), _moment(0, 12, energy=7.0),
+            ]),
+            _make_clip("c2", [
+                _moment(0, 12, energy=6.0), _moment(0, 9, energy=5.5),
+            ]),
+            _make_clip("c3", [
+                _moment(0, 12, energy=7.5), _moment(0, 9, energy=6.0),
+            ]),
+        ]
+
+        consolidated = consolidate_slots(recipe, clips)
+        plan = match(consolidated, clips)
+
+        clip_ids = [step.clip_id for step in plan.steps]
+        assert len(clip_ids) == len(consolidated.slots)
+        # All 3 clips should be used (no clip left out)
+        assert len(set(clip_ids)) == 3, (
+            f"Expected all 3 clips used, got: {clip_ids}"
         )
