@@ -1,0 +1,85 @@
+{
+  "fonts": {
+    "Playfair Display": {
+      "file": "PlayfairDisplay-Bold.ttf",
+      "ass_name": "Playfair Display",
+      "weight": 700,
+      "category": "serif",
+      "css_family": "'Playfair Display', serif",
+      "cycle_role": "settle"
+    },
+    "Playfair Display Regular": {
+      "file": "PlayfairDisplay-Regular.ttf",
+      "ass_name": "Playfair Display",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Playfair Display', serif"
+    },
+    "Montserrat": {
+      "file": "Montserrat-ExtraBold.ttf",
+      "ass_name": "Montserrat",
+      "weight": 800,
+      "category": "sans",
+      "css_family": "'Montserrat', sans-serif",
+      "cycle_role": "contrast"
+    },
+    "Space Grotesk": {
+      "file": "SpaceGrotesk-Bold.ttf",
+      "ass_name": "Space Grotesk",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Space Grotesk', sans-serif"
+    },
+    "DM Sans": {
+      "file": "DMSans-Bold.ttf",
+      "ass_name": "DM Sans",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'DM Sans', sans-serif"
+    },
+    "Instrument Serif": {
+      "file": "InstrumentSerif-Regular.ttf",
+      "ass_name": "Instrument Serif",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Instrument Serif', serif",
+      "cycle_role": "contrast"
+    },
+    "Bodoni Moda": {
+      "file": "BodoniModa-Bold.ttf",
+      "ass_name": "Bodoni Moda",
+      "weight": 700,
+      "category": "serif",
+      "css_family": "'Bodoni Moda', serif",
+      "cycle_role": "contrast"
+    },
+    "Fraunces": {
+      "file": "Fraunces-Bold.ttf",
+      "ass_name": "Fraunces",
+      "weight": 700,
+      "category": "serif",
+      "css_family": "'Fraunces', serif"
+    },
+    "Space Mono": {
+      "file": "SpaceMono-Bold.ttf",
+      "ass_name": "Space Mono",
+      "weight": 700,
+      "category": "mono",
+      "css_family": "'Space Mono', monospace"
+    },
+    "Outfit": {
+      "file": "Outfit-Bold.ttf",
+      "ass_name": "Outfit",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Outfit', sans-serif"
+    }
+  },
+  "style_defaults": {
+    "display": "Playfair Display",
+    "sans": "Montserrat",
+    "serif": "Playfair Display Regular",
+    "serif_italic": "Instrument Serif",
+    "script": "Fraunces"
+  }
+}
