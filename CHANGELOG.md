@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1.2] - 2026-04-12
+
+### Fixed
+- Wired `consolidate_slots()` into the production pipeline to eliminate excessive clip repetition when users upload fewer clips than template slots (e.g., 3 clips + 11 slots no longer repeats each clip 3-4 times)
+- Moved `consolidate_slots()` call inside the existing error-handling block for consistent error reporting
+
+### Added
+- Regression test (T14) for the 3-clip/11-slot passport vlog scenario
+
 ## [0.2.1.1] - 2026-04-12
 
 ### Fixed
