@@ -20,13 +20,142 @@ export const FONT_SIZE_MAP: Record<string, number> = {
   xlarge: 150,
 };
 
-export const FONT_FAMILY_MAP: Record<string, { family: string; italic?: boolean }> = {
-  display: { family: "'Playfair Display', serif" },
-  sans: { family: "'Montserrat', sans-serif" },
-  serif: { family: "'Playfair Display', serif" },
-  serif_italic: { family: "'Playfair Display', serif", italic: true },
-  script: { family: "cursive" },
+// ── Font registry (must match src/apps/api/assets/fonts/font-registry.json) ──
+
+export interface FontRegistryEntry {
+  file: string;
+  ass_name: string;
+  weight: number;
+  category: string;
+  css_family: string;
+  cycle_role?: string;
+}
+
+export const FONT_REGISTRY: Record<string, FontRegistryEntry> = {
+  "Playfair Display": {
+    file: "PlayfairDisplay-Bold.ttf",
+    ass_name: "Playfair Display",
+    weight: 700,
+    category: "serif",
+    css_family: "'Playfair Display', serif",
+    cycle_role: "settle",
+  },
+  "Playfair Display Regular": {
+    file: "PlayfairDisplay-Regular.ttf",
+    ass_name: "Playfair Display",
+    weight: 400,
+    category: "serif",
+    css_family: "'Playfair Display', serif",
+  },
+  "Montserrat": {
+    file: "Montserrat-ExtraBold.ttf",
+    ass_name: "Montserrat",
+    weight: 800,
+    category: "sans",
+    css_family: "'Montserrat', sans-serif",
+    cycle_role: "contrast",
+  },
+  "Space Grotesk": {
+    file: "SpaceGrotesk-Bold.ttf",
+    ass_name: "Space Grotesk",
+    weight: 700,
+    category: "sans",
+    css_family: "'Space Grotesk', sans-serif",
+  },
+  "DM Sans": {
+    file: "DMSans-Bold.ttf",
+    ass_name: "DM Sans",
+    weight: 700,
+    category: "sans",
+    css_family: "'DM Sans', sans-serif",
+  },
+  "Instrument Serif": {
+    file: "InstrumentSerif-Regular.ttf",
+    ass_name: "Instrument Serif",
+    weight: 400,
+    category: "serif",
+    css_family: "'Instrument Serif', serif",
+    cycle_role: "contrast",
+  },
+  "Bodoni Moda": {
+    file: "BodoniModa-Bold.ttf",
+    ass_name: "Bodoni Moda",
+    weight: 700,
+    category: "serif",
+    css_family: "'Bodoni Moda', serif",
+    cycle_role: "contrast",
+  },
+  "Fraunces": {
+    file: "Fraunces-Bold.ttf",
+    ass_name: "Fraunces",
+    weight: 700,
+    category: "serif",
+    css_family: "'Fraunces', serif",
+  },
+  "Space Mono": {
+    file: "SpaceMono-Bold.ttf",
+    ass_name: "Space Mono",
+    weight: 700,
+    category: "mono",
+    css_family: "'Space Mono', monospace",
+  },
+  "Outfit": {
+    file: "Outfit-Bold.ttf",
+    ass_name: "Outfit",
+    weight: 700,
+    category: "sans",
+    css_family: "'Outfit', sans-serif",
+  },
 };
+
+export const FONT_NAMES = Object.keys(FONT_REGISTRY);
+
+const STYLE_DEFAULTS: Record<string, string> = {
+  display: "Playfair Display",
+  sans: "Montserrat",
+  serif: "Playfair Display Regular",
+  serif_italic: "Instrument Serif",
+  script: "Fraunces",
+};
+
+/** Legacy map — kept for code that still references it by font_style key */
+export const FONT_FAMILY_MAP: Record<string, { family: string; weight: number; italic?: boolean }> = {
+  display: { family: "'Playfair Display', serif", weight: 700 },
+  sans: { family: "'Montserrat', sans-serif", weight: 800 },
+  serif: { family: "'Playfair Display', serif", weight: 400 },
+  serif_italic: { family: "'Instrument Serif', serif", weight: 400, italic: true },
+  script: { family: "'Fraunces', serif", weight: 700 },
+};
+
+/**
+ * Resolve CSS font-family and weight for an overlay.
+ * Priority: font_family (registry) > font_style (legacy map)
+ */
+export function getFontCssFamily(overlay: RecipeTextOverlay): {
+  family: string;
+  weight: number;
+  italic?: boolean;
+} {
+  // 1. Direct font_family lookup
+  if (overlay.font_family) {
+    const entry = FONT_REGISTRY[overlay.font_family];
+    if (entry) {
+      return { family: entry.css_family, weight: entry.weight };
+    }
+  }
+  // 2. Legacy font_style lookup
+  const style = FONT_FAMILY_MAP[overlay.font_style] ?? FONT_FAMILY_MAP.sans;
+  return { family: style.family, weight: style.weight, italic: style.italic };
+}
+
+/**
+ * Get the inferred font name for an overlay (for the font picker placeholder).
+ * If font_family is set, return it. Otherwise, infer from style_defaults.
+ */
+export function getInferredFontName(overlay: RecipeTextOverlay): string {
+  if (overlay.font_family) return overlay.font_family;
+  return STYLE_DEFAULTS[overlay.font_style] ?? "Montserrat";
+}
 
 export const OVERLAY_ROLE_COLORS: Record<OverlayRole, string> = {
   hook: "#F59E0B",
