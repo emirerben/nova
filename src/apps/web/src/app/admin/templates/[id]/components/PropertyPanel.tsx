@@ -9,7 +9,6 @@ import type {
 } from "./recipe-types";
 import {
   COLOR_HINT_OPTIONS,
-  FONT_STYLE_OPTIONS,
   INTERSTITIAL_TYPE_OPTIONS,
   OVERLAY_EFFECT_OPTIONS,
   OVERLAY_POSITION_OPTIONS,
@@ -19,7 +18,13 @@ import {
   TEXT_SIZE_OPTIONS,
   TRANSITION_IN_OPTIONS,
 } from "./recipe-types";
-import { MAX_OVERLAY_TEXT_LEN, resolveOverlayPreview } from "./overlay-constants";
+import {
+  FONT_NAMES,
+  FONT_REGISTRY,
+  MAX_OVERLAY_TEXT_LEN,
+  getInferredFontName,
+  resolveOverlayPreview,
+} from "./overlay-constants";
 
 // ── Shared field components ─────────────────────────────────────────────────
 
@@ -142,6 +147,46 @@ function CheckboxInput({
       />
       {label}
     </label>
+  );
+}
+
+// ── Font Picker ─────────────────────────────────────────────────────────────
+
+function FontPicker({
+  overlay,
+  onChange,
+}: {
+  overlay: RecipeTextOverlay;
+  onChange: (fontName: string | null) => void;
+}) {
+  const inferred = getInferredFontName(overlay);
+  const current = overlay.font_family ?? "";
+
+  return (
+    <Field label="Font">
+      <select
+        value={current}
+        onChange={(e) => onChange(e.target.value || null)}
+        className={selectClass}
+      >
+        {/* Show inferred font as placeholder when font_family is not set */}
+        <option value="">
+          {inferred} (from style)
+        </option>
+        {FONT_NAMES.map((name) => {
+          const entry = FONT_REGISTRY[name];
+          return (
+            <option
+              key={name}
+              value={name}
+              style={{ fontFamily: entry.css_family, fontWeight: entry.weight }}
+            >
+              {name}
+            </option>
+          );
+        })}
+      </select>
+    </Field>
   );
 }
 
@@ -321,11 +366,9 @@ function OverlayListItem({
           options={OVERLAY_EFFECT_OPTIONS}
           onChange={(v) => set("effect", v)}
         />
-        <SelectInput
-          label="Font Style"
-          value={overlay.font_style}
-          options={FONT_STYLE_OPTIONS}
-          onChange={(v) => set("font_style", v)}
+        <FontPicker
+          overlay={overlay}
+          onChange={(fontName) => set("font_family", fontName || undefined)}
         />
       </div>
 

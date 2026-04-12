@@ -256,6 +256,7 @@ class RecipeTextOverlaySchema(BaseModel):
     position: OverlayPosition = "center"
     effect: OverlayEffect = "none"
     font_style: FontStyle = "sans"
+    font_family: str | None = None  # Overrides font_style when set (real font name from registry)
     text_size: TextSize = "medium"
     text_color: str = "#FFFFFF"
     start_s: float = 0.0

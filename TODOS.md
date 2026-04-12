@@ -17,6 +17,24 @@
 **Priority:** P3
 **Depends on:** Unify Text Handling PR shipped
 
+## Font System (shipped v0.2.2.0, 2026-04-12)
+
+### Font-Cycle Cycling Font Customization
+**What:** Let admins pick which fonts appear during the rapid cycling phase (not just the settle font). Currently, cycling fonts are hardcoded from registry fonts with `cycle_role="contrast"`.
+**Why:** Different templates may want different cycling character (e.g., all serifs for editorial, all sans for modern). Currently only the settle font is customizable via `font_family`.
+**How:** Add a `cycle_fonts` array field to the overlay recipe. In `_resolve_cycle_fonts()`, use the admin's list instead of the registry contrast fonts. Frontend: multi-select font picker for cycling fonts.
+**Effort:** S (human: ~4h / CC: ~15 min)
+**Priority:** P3
+**Depends on:** Font expansion PR shipped
+
+### Effect Animation Preview (PR2)
+**What:** CSS/JS animations in the admin editor preview for font-cycle, fade-in, typewriter effects. Currently, the preview shows static text regardless of effect.
+**Why:** WYSIWYG gap: admin sees static text but the video has animated text. Hard to tune timing without seeing the animation.
+**How:** Map each effect to CSS animations (font-cycle: rapid font-family swaps, fade-in: opacity transition, typewriter: clip-path reveal). Only in OverlayPreview component.
+**Effort:** S (human: ~4h / CC: ~15 min)
+**Priority:** P2
+**Depends on:** Font expansion PR shipped
+
 ## Gemini + Template Mode (shipped 2026-03-23)
 
 ### Gemini Integration Tests

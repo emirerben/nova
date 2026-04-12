@@ -51,6 +51,7 @@ export interface RecipeTextOverlay {
   position: OverlayPosition;
   effect: OverlayEffect;
   font_style: FontStyle;
+  font_family?: string;  // Overrides font_style when set (real font name from registry)
   text_size: TextSize;
   text_color: string;
   start_s: number;

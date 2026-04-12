@@ -9,13 +9,13 @@ import type {
   RecipeTextOverlay,
 } from "./recipe-types";
 import {
-  FONT_FAMILY_MAP,
   FONT_SIZE_MAP,
   MAX_OVERLAY_TEXT_LEN,
   POSITION_Y_MAP,
   PREVIEW_W,
   SCALE,
   SNAP_ZONES,
+  getFontCssFamily,
   isOverlayVisible,
   resolveOverlayPreview,
   snapToNearestZone,
@@ -191,7 +191,7 @@ export function OverlayPreview({
         // Don't render if not visible and not selected
         if (!visible && !selected) return null;
 
-        const fontConfig = FONT_FAMILY_MAP[overlay.font_style] ?? FONT_FAMILY_MAP.sans;
+        const fontConfig = getFontCssFamily(overlay);
         const nominalSize = FONT_SIZE_MAP[overlay.text_size] ?? FONT_SIZE_MAP.medium;
         const scaledSize = Math.round(nominalSize * SCALE);
 
@@ -247,7 +247,7 @@ export function OverlayPreview({
                   fontFamily: fontConfig.family,
                   fontStyle: fontConfig.italic ? "italic" : "normal",
                   fontSize: `${scaledSize}px`,
-                  fontWeight: overlay.font_style === "display" || overlay.font_style === "sans" ? 800 : 400,
+                  fontWeight: fontConfig.weight,
                   color: overlay.text_color || "#FFFFFF",
                   textShadow: "0 2px 4px rgba(0,0,0,0.6)",
                   caretColor: "white",
@@ -263,7 +263,7 @@ export function OverlayPreview({
                   fontFamily: fontConfig.family,
                   fontStyle: fontConfig.italic ? "italic" : "normal",
                   fontSize: `${scaledSize}px`,
-                  fontWeight: overlay.font_style === "display" || overlay.font_style === "sans" ? 800 : 400,
+                  fontWeight: fontConfig.weight,
                   color: overlay.text_color || "#FFFFFF",
                   textShadow: "0 2px 4px rgba(0,0,0,0.6)",
                 }}

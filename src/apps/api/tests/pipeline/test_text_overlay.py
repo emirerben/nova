@@ -8,8 +8,10 @@ from app.pipeline.text_overlay import (
     MAX_OVERLAY_TEXT_LEN,
     OVERLAY_FONT_PATH,
     OVERLAY_FONT_PATH_REGULAR,
+    _build_ass_header,
     _reset_cycle_cache,
     _resolve_cycle_fonts,
+    _resolve_font_family,
     _validate_ass_file,
     _validate_overlay,
     generate_animated_overlay_ass,
@@ -719,3 +721,119 @@ class TestFontCycleTextSize:
         if fonts_72 and fonts_120:
             assert fonts_72[0] is not fonts_120[0]
         _reset_cycle_cache()  # clean up
+
+
+# -- font_family resolution ---------------------------------------------------
+
+
+class TestFontFamilyResolution:
+    """Tests for the font_family field — registry-based font resolution."""
+
+    def test_font_family_loads_correct_font(self):
+        """font_family='Space Grotesk' loads the correct .ttf."""
+        font = _resolve_font_family("Space Grotesk", 72)
+        assert font is not None
+
+    def test_font_family_unknown_returns_none(self):
+        """Unknown font_family returns None (falls through to font_style)."""
+        font = _resolve_font_family("NonExistent Font 42", 72)
+        assert font is None
+
+    def test_font_family_renders_png(self, tmp_path):
+        """Overlay with font_family set produces a valid PNG."""
+        from PIL import Image
+
+        result = generate_text_overlay_png(
+            [{"text": "Hello", "start_s": 0.0, "end_s": 3.0,
+              "position": "center", "effect": "none",
+              "font_family": "Space Grotesk"}],
+            5.0, str(tmp_path), 0,
+        )
+        assert result is not None
+        img = Image.open(result[0]["png_path"])
+        assert img.mode == "RGBA"
+        assert img.size == (1080, 1920)
+        alpha = img.split()[3]
+        assert alpha.getextrema()[1] > 0
+
+    def test_font_family_missing_falls_back_to_font_style(self, tmp_path):
+        """Unknown font_family falls back to font_style rendering."""
+        result = generate_text_overlay_png(
+            [{"text": "Fallback", "start_s": 0.0, "end_s": 3.0,
+              "position": "center", "effect": "none",
+              "font_family": "NonExistent Font",
+              "font_style": "sans"}],
+            5.0, str(tmp_path), 0,
+        )
+        assert result is not None
+        assert os.path.exists(result[0]["png_path"])
+
+    def test_no_font_family_renders_identically_to_legacy(self, tmp_path):
+        """REGRESSION: overlay without font_family uses font_style (same as before)."""
+        result = generate_text_overlay_png(
+            [{"text": "Legacy", "start_s": 0.0, "end_s": 3.0,
+              "position": "center", "effect": "none",
+              "font_style": "display", "text_size": "large"}],
+            5.0, str(tmp_path), 0,
+        )
+        assert result is not None
+        assert os.path.exists(result[0]["png_path"])
+
+    def test_font_cycle_with_font_family_settle(self, tmp_path):
+        """font_family set on font-cycle overlay becomes the settle font."""
+        _reset_cycle_cache()
+        result = generate_text_overlay_png(
+            [{"text": "PERU", "start_s": 0.0, "end_s": 2.0,
+              "position": "center", "effect": "font-cycle",
+              "font_family": "Space Grotesk"}],
+            5.0, str(tmp_path), 0,
+        )
+        assert result is not None
+        # Should have cycling + settle frames
+        assert len(result) > 3
+        # Settle PNG should exist
+        settle_pngs = [r for r in result if "settle" in r["png_path"]]
+        assert len(settle_pngs) == 1
+        _reset_cycle_cache()
+
+    def test_cycle_cache_keyed_by_settle_font(self):
+        """Different font_family values get different cycle font lists."""
+        _reset_cycle_cache()
+        fonts_default = _resolve_cycle_fonts(72, settle_font_name="_default")
+        fonts_grotesk = _resolve_cycle_fonts(72, settle_font_name="Space Grotesk")
+        # The settle font (index 0) should be different
+        assert fonts_default[0] is not fonts_grotesk[0]
+        _reset_cycle_cache()
+
+    def test_ass_dynamic_fontname(self):
+        """ASS header uses font_family's ass_name when font_family is set."""
+        header = _build_ass_header("Space Grotesk")
+        assert "Space Grotesk" in header
+        assert "Playfair Display" not in header
+
+    def test_ass_animated_with_font_family(self):
+        """Animated overlay ASS uses font_family's ass_name."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{"text": "Fade", "start_s": 0.0, "end_s": 3.0,
+                  "position": "center", "effect": "fade-in",
+                  "font_family": "Bodoni Moda"}],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None
+            with open(result[0]) as f:
+                content = f.read()
+            assert "Bodoni Moda" in content
+
+    def test_ass_without_font_family_uses_playfair(self):
+        """ASS without font_family defaults to Playfair Display."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{"text": "Default", "start_s": 0.0, "end_s": 3.0,
+                  "position": "center", "effect": "fade-in"}],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None
+            with open(result[0]) as f:
+                content = f.read()
+            assert "Playfair Display" in content

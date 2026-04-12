@@ -11,12 +11,11 @@ Supports effects:
     with a different font, swapped via timed FFmpeg overlays (~7 changes/sec)
   - Animated effects (fade-in, typewriter, slide-up): ASS subtitle files
 
-Font: Playfair Display Bold (bundled, SIL OFL) for titles/display,
-      Playfair Display Regular (bundled) for serif/subtitle text,
-      Montserrat ExtraBold (bundled) as sans fallback + font-cycle contrast.
-Fallback: system Helvetica -> Pillow default.
+Fonts loaded from font-registry.json (shared with frontend).
+Fallback: Pillow default if all resolution fails.
 """
 
+import json
 import os
 
 import structlog
@@ -53,36 +52,75 @@ _POSITION_Y = {
     "bottom": 0.85,
 }
 
-# -- Font style mapping -------------------------------------------------------
-# Gemini reports font_style per overlay -> we pick the best available font.
-# Priority: bundled asset -> macOS system -> fallback.
+# -- Font registry ------------------------------------------------------------
+# Single source of truth for both Python and TypeScript font resolution.
+
+_REGISTRY_PATH = os.path.join(FONTS_DIR, "font-registry.json")
+
+# Hardcoded fallback if font-registry.json fails to parse (critical gap mitigation)
+_FALLBACK_STYLE_MAP: dict[str, str] = {
+    "display": OVERLAY_FONT_PATH,
+    "sans": MONTSERRAT_FONT_PATH,
+    "serif": OVERLAY_FONT_PATH_REGULAR,
+    "serif_italic": OVERLAY_FONT_PATH_REGULAR,
+    "script": OVERLAY_FONT_PATH,
+}
+
+try:
+    with open(_REGISTRY_PATH) as _f:
+        _FONT_REGISTRY: dict = json.load(_f)
+except Exception as _exc:
+    log.error("font_registry_load_failed", error=str(_exc), path=_REGISTRY_PATH)
+    _FONT_REGISTRY = {"fonts": {}, "style_defaults": {}}
+
+
+def _registry_font_path(font_name: str) -> str | None:
+    """Look up the .ttf file path for a font name in the registry."""
+    entry = _FONT_REGISTRY.get("fonts", {}).get(font_name)
+    if not entry:
+        return None
+    path = os.path.join(FONTS_DIR, entry["file"])
+    return path if os.path.exists(path) else None
+
+
+def _registry_ass_name(font_name: str) -> str:
+    """Look up the ASS font name for a font_family from the registry."""
+    entry = _FONT_REGISTRY.get("fonts", {}).get(font_name)
+    if entry:
+        return entry.get("ass_name", font_name)
+    return font_name
+
+
+# -- Font size mapping --------------------------------------------------------
 
 _FONT_SIZE_MAP = {"small": 48, "medium": 72, "large": 120, "xlarge": 150}
 
-_FONT_STYLE_MAP: dict[str, list[str]] = {
-    "serif": [
-        OVERLAY_FONT_PATH_REGULAR,  # Playfair Display Regular
-        "/System/Library/Fonts/Supplemental/Didot.ttc",
-        "/System/Library/Fonts/Supplemental/Baskerville.ttc",
-    ],
-    "serif_italic": [
-        "/System/Library/Fonts/Supplemental/Georgia Bold Italic.ttf",
-        "/System/Library/Fonts/Supplemental/Didot.ttc",
-    ],
-    "script": [
-        "/System/Library/Fonts/Supplemental/SnellRoundhand.ttc",
-        "/System/Library/Fonts/Supplemental/Brush Script.ttf",
-    ],
-    "sans": [
-        MONTSERRAT_FONT_PATH,  # Montserrat ExtraBold
-        "/System/Library/Fonts/Helvetica.ttc",
-    ],
-    "display": [
-        OVERLAY_FONT_PATH,  # Playfair Display Bold
-        "/System/Library/Fonts/Supplemental/Didot.ttc",
-        MONTSERRAT_FONT_PATH,
-    ],
-}
+# -- Font style mapping (backwards compat, now backed by registry) ------------
+
+_FONT_STYLE_MAP: dict[str, list[str]] = {}
+
+
+def _build_style_map() -> dict[str, list[str]]:
+    """Build font style -> file path list from registry, with hardcoded fallback."""
+    style_defaults = _FONT_REGISTRY.get("style_defaults", {})
+    result: dict[str, list[str]] = {}
+
+    for style, font_name in style_defaults.items():
+        path = _registry_font_path(font_name)
+        if path:
+            result[style] = [path]
+        elif style in _FALLBACK_STYLE_MAP:
+            result[style] = [_FALLBACK_STYLE_MAP[style]]
+
+    # Ensure all 5 styles exist even if registry is incomplete
+    for style, fallback_path in _FALLBACK_STYLE_MAP.items():
+        if style not in result:
+            result[style] = [fallback_path]
+
+    return result
+
+
+_FONT_STYLE_MAP = _build_style_map()
 
 
 def _hex_to_rgba(hex_color: str) -> tuple[int, int, int, int]:
@@ -102,7 +140,9 @@ _ASS_POSITION = {
 }
 
 
-_ASS_OVERLAY_HEADER = """\
+def _build_ass_header(fontname: str = "Playfair Display") -> str:
+    """Build ASS header with dynamic font name."""
+    return f"""\
 [Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -111,50 +151,36 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Overlay,Playfair Display,90,&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,-1,0,0,0,100,100,0,0,1,0,2,5,50,50,0,1
+Style: Overlay,{fontname},90,&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,-1,0,0,0,100,100,0,0,1,0,2,5,50,50,0,1
 """  # noqa: E501
 
+
+# Keep static header for backwards compat (used when no font_family set)
+_ASS_OVERLAY_HEADER = _build_ass_header("Playfair Display")
+
 # -- Font-cycle configuration -------------------------------------------------
-# Contrasting font styles for rapid cycling. Uses system fonts with fallbacks.
-# Each entry is a list of candidate paths -- first found is used.
+# Fonts with cycle_role="contrast" are used during rapid cycling.
+# The settle font (index 0) is either the overlay's font_family or Playfair Display Bold.
 
-_CYCLE_FONT_CANDIDATES = [
-    # 0: Elegant serif (primary -- Playfair Display Bold, settle font)
-    [OVERLAY_FONT_PATH],
-    # 1: Bold serif
-    [
-        "/System/Library/Fonts/Supplemental/Georgia Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
-    ],
-    # 2: Condensed impact
-    [
-        "/System/Library/Fonts/Supplemental/Impact.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ],
-    # 3: Script / handwriting
-    [
-        "/System/Library/Fonts/Supplemental/Brush Script.ttf",
-        "/System/Library/Fonts/Supplemental/Papyrus.ttc",
-    ],
-    # 4: Bold sans-serif (contrast during cycling)
-    [MONTSERRAT_FONT_PATH],
-]
-
-# How often the font switches (seconds per frame)
 FONT_CYCLE_INTERVAL_S = 0.15
-
-# Faster interval used when curtain-close is active
 FONT_CYCLE_FAST_INTERVAL_S = 0.07
-
-# Fraction of duration where cycling "settles" on the primary font
 FONT_CYCLE_SETTLE_RATIO = 0.30
-
-# Max font-cycle frames to prevent PNG explosion on long overlays.
-# Keep low — each frame becomes an FFmpeg overlay input, and 60+ inputs
-# OOM-kill FFmpeg on 4GB VMs. 20 frames at ~3 FPS is still visually smooth.
 MAX_FONT_CYCLE_FRAMES = 20
-
 OVERLAY_FONT_SIZE = 90
+
+
+def _build_cycle_contrast_names() -> list[str]:
+    """Get font names with cycle_role='contrast' from the registry."""
+    names: list[str] = []
+    for font_name, entry in _FONT_REGISTRY.get("fonts", {}).items():
+        if entry.get("cycle_role") == "contrast":
+            path = os.path.join(FONTS_DIR, entry["file"])
+            if os.path.exists(path):
+                names.append(font_name)
+    return names
+
+
+_CYCLE_CONTRAST_NAMES = _build_cycle_contrast_names()
 
 
 # -- Public API ---------------------------------------------------------------
@@ -189,13 +215,18 @@ def generate_text_overlay_png(
             if text is None:
                 continue
 
+            font_family = overlay.get("font_family")
             font_style = overlay.get("font_style", "display")
             text_size = overlay.get("text_size", "medium")
             hex_color = overlay.get("text_color", "#FFFFFF")
             text_color = _hex_to_rgba(hex_color)
 
             png_path = os.path.join(output_dir, f"slot_{slot_index}_overlay_{i}.png")
-            _draw_text_png(text, font_style, text_size, position, png_path, text_color=text_color)
+            _draw_text_png(
+                text, position, png_path,
+                font_family=font_family, font_style=font_style,
+                text_size=text_size, text_color=text_color,
+            )
             results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
 
     return results if results else None
@@ -224,9 +255,13 @@ def generate_animated_overlay_ass(
         if text is None:
             continue
 
+        font_family = overlay.get("font_family")
         ass_path = os.path.join(output_dir, f"slot_{slot_index}_anim_{i}.ass")
         try:
-            _write_animated_ass(text, start_s, end_s, position, effect, ass_path)
+            _write_animated_ass(
+                text, start_s, end_s, position, effect, ass_path,
+                font_family=font_family,
+            )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
             else:
@@ -247,6 +282,8 @@ def _write_animated_ass(
     position: str,
     effect: str,
     output_path: str,
+    *,
+    font_family: str | None = None,
 ) -> None:
     """Write an ASS file with animation tags for the given effect."""
     alignment, margin_v = _ASS_POSITION.get(position, (5, 0))
@@ -277,8 +314,15 @@ def _write_animated_ass(
     else:
         dialogue_text = f"{{\\an{alignment}}}{text}"
 
+    # Use dynamic ASS header when font_family is set
+    if font_family:
+        ass_name = _registry_ass_name(font_family)
+        header = _build_ass_header(ass_name)
+    else:
+        header = _ASS_OVERLAY_HEADER
+
     with open(output_path, "w", encoding="utf-8") as f:
-        f.write(_ASS_OVERLAY_HEADER)
+        f.write(header)
         f.write("\n[Events]\n")
         f.write(
             "Format: Layer, Start, End, Style, Name, "
@@ -318,7 +362,10 @@ def _render_font_cycle(
 
     The text stays centered but the font rapidly switches between contrasting
     styles (bold, serif, script, condensed). The last ~30% of the duration
-    "settles" on the primary font (Playfair Display Bold).
+    "settles" on the primary font.
+
+    When ``font_family`` is set on the overlay, that font becomes the settle
+    font (index 0). Otherwise, falls back to Playfair Display Bold.
 
     Supports acceleration: if ``font_cycle_accel_at_s`` is set in the overlay
     dict, the cycling interval drops to FONT_CYCLE_FAST_INTERVAL_S after that
@@ -334,15 +381,21 @@ def _render_font_cycle(
     text_color = _hex_to_rgba(hex_color)
     text_size = overlay.get("text_size", "medium")
     pixel_size = _FONT_SIZE_MAP.get(text_size, 72)
+    font_family = overlay.get("font_family")
 
-    # Resolve available cycle fonts at the requested size
-    cycle_fonts = _resolve_cycle_fonts(pixel_size)
+    # Resolve available cycle fonts at the requested size, keyed by settle font
+    settle_name = font_family or "_default"
+    cycle_fonts = _resolve_cycle_fonts(pixel_size, settle_font_name=settle_name)
     if len(cycle_fonts) < 2:
         # Not enough fonts for cycling -- fall back to static
         log.warning("font_cycle_insufficient_fonts", count=len(cycle_fonts))
         font_style = overlay.get("font_style", "display")
         png_path = os.path.join(output_dir, f"slot_{slot_index}_overlay_{overlay_index}.png")
-        _draw_text_png(text, font_style, text_size, position, png_path, text_color=text_color)
+        _draw_text_png(
+            text, position, png_path,
+            font_family=font_family, font_style=font_style,
+            text_size=text_size, text_color=text_color,
+        )
         return [{"png_path": png_path, "start_s": start_s, "end_s": end_s}]
 
     duration = end_s - start_s
@@ -379,7 +432,7 @@ def _render_font_cycle(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_{frame_idx}.png",
         )
-        _draw_text_png_with_font(text, font, position, png_path, text_color=text_color)
+        _draw_text_png(text, position, png_path, font=font, text_color=text_color)
         results.append({"png_path": png_path, "start_s": t, "end_s": frame_end})
 
         t = frame_end
@@ -394,18 +447,18 @@ def _render_font_cycle(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_{frame_idx}_gapfill.png",
         )
-        _draw_text_png_with_font(text, last_font, position, png_path, text_color=text_color)
+        _draw_text_png(text, position, png_path, font=last_font, text_color=text_color)
         results.append({"png_path": png_path, "start_s": t, "end_s": cycle_end})
         t = cycle_end
 
     # Phase 2: settle on the primary font for the remaining duration
     if settle_start < end_s:
-        primary_font = cycle_fonts[0]  # Playfair Display Bold
+        primary_font = cycle_fonts[0]  # settle font (font_family or Playfair Display Bold)
         png_path = os.path.join(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_settle.png",
         )
-        _draw_text_png_with_font(text, primary_font, position, png_path, text_color=text_color)
+        _draw_text_png(text, position, png_path, font=primary_font, text_color=text_color)
         results.append({"png_path": png_path, "start_s": settle_start, "end_s": end_s})
 
     log.info(
@@ -453,6 +506,39 @@ def _validate_overlay(
     return text, start_s, end_s, position
 
 
+def _resolve_font_family(font_family: str, size: int):
+    """Load a font by font_family name from the registry.
+
+    For variable fonts, sets the weight axis to the registry's declared weight
+    so the render matches the CSS font-weight in the admin preview.
+
+    Returns a Pillow ImageFont, or None if the font_family is not found.
+    """
+    from PIL import ImageFont  # noqa: PLC0415
+
+    entry = _FONT_REGISTRY.get("fonts", {}).get(font_family)
+    if not entry:
+        return None
+    path = os.path.join(FONTS_DIR, entry["file"])
+    if not os.path.exists(path):
+        return None
+    try:
+        font = ImageFont.truetype(path, size)
+        # Variable fonts default to their lightest weight. Set the weight
+        # axis to match the registry's declared weight for WYSIWYG fidelity.
+        try:
+            axes = font.get_variation_axes()
+            if axes:
+                weight = entry.get("weight", 400)
+                font.set_variation_by_axes([weight])
+        except (AttributeError, OSError):
+            pass  # Static font or old Pillow — no axis to set
+        return font
+    except OSError:
+        log.warning("font_family_load_failed", font_family=font_family, path=path)
+    return None
+
+
 def _load_styled_font(
     font_style: str = "display",
     text_size: str = "medium",
@@ -473,11 +559,8 @@ def _load_styled_font(
         except OSError:
             continue
 
-    # Last resort
-    try:
-        return ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size)
-    except OSError:
-        return ImageFont.load_default()
+    # Last resort — no macOS system fonts, just use Pillow default
+    return ImageFont.load_default()
 
 
 def _load_font(font_path: str, size: int = OVERLAY_FONT_SIZE):
@@ -489,37 +572,41 @@ def _load_font(font_path: str, size: int = OVERLAY_FONT_SIZE):
     except OSError:
         pass
 
-    # Fallback: system Helvetica
-    try:
-        return ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size)
-    except OSError:
-        pass
-
     return ImageFont.load_default()
 
 
 def _draw_text_png(
     text: str,
-    font_style: str,
-    text_size: str,
     position: str,
     png_path: str,
+    *,
+    font=None,
+    font_family: str | None = None,
+    font_style: str = "display",
+    text_size: str = "medium",
     text_color: tuple[int, int, int, int] = (255, 255, 255, 255),
 ) -> None:
     """Draw styled text on a transparent 1080x1920 canvas.
 
-    Auto-scales the font so text fills ~80% of canvas width for large/xlarge sizes.
+    Font resolution priority:
+      1. ``font`` — pre-loaded ImageFont (used by font-cycle, skip resolution)
+      2. ``font_family`` — look up in registry by name
+      3. ``font_style`` — legacy style-based lookup
+
     Uses subtle drop shadow instead of outline for a clean TikTok look.
     """
-    from PIL import Image, ImageDraw, ImageFont  # noqa: PLC0415
+    from PIL import Image, ImageDraw, ImageFilter  # noqa: PLC0415
 
     img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # Use the nominal size from the recipe — no auto-scaling.
-    # The admin editor preview uses the same size map, so WYSIWYG.
-    nominal_size = _FONT_SIZE_MAP.get(text_size, 72)
-    font = _load_styled_font(font_style, text_size)
+    # Resolve font: pre-loaded > font_family > font_style
+    if font is None:
+        if font_family:
+            size = _FONT_SIZE_MAP.get(text_size, 72)
+            font = _resolve_font_family(font_family, size)
+        if font is None:
+            font = _load_styled_font(font_style, text_size)
 
     bbox = draw.textbbox((0, 0), text, font=font)
     text_w = bbox[2] - bbox[0]
@@ -530,8 +617,6 @@ def _draw_text_png(
     y = int(CANVAS_H * y_frac - text_h / 2)
 
     # Soft gaussian shadow -- cinematic depth, no hard edges
-    from PIL import ImageFilter  # noqa: PLC0415
-
     shadow_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow_layer)
     shadow_draw.text((x, y + 6), text, font=font, fill=(0, 0, 0, 160))
@@ -547,47 +632,8 @@ def _draw_text_png(
     img.save(png_path, "PNG")
 
 
-def _draw_text_png_with_font(
-    text: str,
-    font,
-    position: str,
-    png_path: str,
-    text_color: tuple[int, int, int, int] = (255, 255, 255, 255),
-) -> None:
-    """Draw centered text with soft gaussian shadow on a transparent canvas.
-
-    Used by font-cycle rendering where the font object is already resolved.
-    """
-    from PIL import Image, ImageDraw, ImageFilter  # noqa: PLC0415
-
-    img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
-
-    x = (CANVAS_W - text_w) // 2
-    y_frac = _POSITION_Y.get(position, 0.5)
-    y = int(CANVAS_H * y_frac - text_h / 2)
-
-    # Soft gaussian shadow -- cinematic depth
-    shadow_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
-    shadow_draw = ImageDraw.Draw(shadow_layer)
-    shadow_draw.text((x, y + 6), text, font=font, fill=(0, 0, 0, 160))
-    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
-    img = Image.alpha_composite(img, shadow_layer)
-
-    # Clean foreground text -- no outline, no stroke
-    fg_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
-    fg_draw = ImageDraw.Draw(fg_layer)
-    fg_draw.text((x, y), text, font=font, fill=text_color)
-    img = Image.alpha_composite(img, fg_layer)
-
-    img.save(png_path, "PNG")
-
-
-_cycle_fonts_cache: dict[int, list] = {}
+# Cache key is (size, settle_font_name) to avoid cross-overlay pollution
+_cycle_fonts_cache: dict[tuple[int, str], list] = {}
 
 
 def _reset_cycle_cache() -> None:
@@ -596,25 +642,47 @@ def _reset_cycle_cache() -> None:
     _cycle_fonts_cache = {}
 
 
-def _resolve_cycle_fonts(size: int = OVERLAY_FONT_SIZE) -> list:
+def _resolve_cycle_fonts(
+    size: int = OVERLAY_FONT_SIZE,
+    settle_font_name: str = "_default",
+) -> list:
     """Resolve available fonts for cycling at the given pixel size.
 
-    Cached per-size after first call so large/medium/small overlays each
-    get fonts loaded at the right dimensions.
+    The settle font (index 0) is determined by settle_font_name:
+    - "_default" -> Playfair Display Bold (classic behavior)
+    - Any other value -> looked up in the registry by font_family name
+
+    Remaining fonts are all registry fonts with cycle_role="contrast".
+
+    Cached per (size, settle_font_name) so different overlays with different
+    font_family get different cycle font lists.
     """
     global _cycle_fonts_cache
-    if size in _cycle_fonts_cache:
-        return _cycle_fonts_cache[size]
+    cache_key = (size, settle_font_name)
+    if cache_key in _cycle_fonts_cache:
+        return _cycle_fonts_cache[cache_key]
 
     fonts = []
-    for candidates in _CYCLE_FONT_CANDIDATES:
-        for path in candidates:
-            if os.path.exists(path):
-                font = _load_font(path, size)
-                fonts.append(font)
-                break
-        # If no candidate found for this style, skip it
 
-    _cycle_fonts_cache[size] = fonts
-    log.info("font_cycle_fonts_resolved", count=len(fonts), size=size)
+    # Index 0: settle font
+    if settle_font_name != "_default":
+        settle = _resolve_font_family(settle_font_name, size)
+        if settle:
+            fonts.append(settle)
+    if not fonts:
+        # Default settle: Playfair Display Bold
+        settle = _load_font(OVERLAY_FONT_PATH, size)
+        fonts.append(settle)
+
+    # Remaining: contrast fonts from registry (with proper weight axis)
+    for name in _CYCLE_CONTRAST_NAMES:
+        font = _resolve_font_family(name, size)
+        if font:
+            fonts.append(font)
+        else:
+            # Fallback: Montserrat is always available as a static font
+            fonts.append(_load_font(MONTSERRAT_FONT_PATH, size))
+
+    _cycle_fonts_cache[cache_key] = fonts
+    log.info("font_cycle_fonts_resolved", count=len(fonts), size=size, settle=settle_font_name)
     return fonts

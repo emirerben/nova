@@ -476,7 +476,6 @@ class TestConsolidateSlots:
         assert len(result.slots) <= 5
         # Hooks merged together, brolls merged together
         hook_slots = [s for s in result.slots if s["slot_type"] == "hook"]
-        broll_slots = [s for s in result.slots if s["slot_type"] == "broll"]
         # Fewer hooks than original 5 (hooks merged together)
         assert len(hook_slots) < 5
         # Total hook duration preserved

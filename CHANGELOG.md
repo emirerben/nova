@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2.0] - 2026-04-12
+
+### Added
+- Font expansion: 7 new curated Google Fonts (Space Grotesk, DM Sans, Instrument Serif, Bodoni Moda, Fraunces, Space Mono, Outfit) alongside existing Playfair Display and Montserrat
+- Shared font registry (`font-registry.json`) as single source of truth for both Python pipeline and TypeScript admin editor
+- Font picker in admin template editor showing real font names instead of abstract style categories ("display", "sans", "serif")
+- `font_family` field on overlay recipes, overriding legacy `font_style` when set
+- Variable font weight axis support in Pillow rendering for WYSIWYG fidelity with CSS preview
+- 31 new tests: 21 registry validation, 10 font_family resolution and regression tests
+
+### Changed
+- Merged duplicate `_draw_text_png` / `_draw_text_png_with_font` into a single function (40 lines DRY reduction)
+- Font-cycle cache now keyed by `(size, settle_font_name)` to prevent cross-overlay pollution
+- Cross-slot overlay merge now compares `font_family` to prevent merging overlays with different fonts
+
+### Fixed
+- Production font fallback: replaced all macOS system font paths (`/System/Library/Fonts/...`) with bundled fonts from the registry, fixing degraded rendering on Fly.io (Linux)
+- Font-cycle contrast fonts now render at correct weight via `set_variation_by_axes` instead of defaulting to Light/Thin
+
 ## [0.2.1.2] - 2026-04-12
 
 ### Fixed
