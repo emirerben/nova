@@ -516,30 +516,10 @@ def _draw_text_png(
     img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # Target width: large/xlarge text should fill most of the frame
-    if text_size in ("large", "xlarge"):
-        target_w = int(CANVAS_W * 0.85)
-    else:
-        target_w = int(CANVAS_W * 0.65)
-
-    # Auto-scale: start from the nominal size, scale up/down to fit target width
+    # Use the nominal size from the recipe — no auto-scaling.
+    # The admin editor preview uses the same size map, so WYSIWYG.
     nominal_size = _FONT_SIZE_MAP.get(text_size, 72)
     font = _load_styled_font(font_style, text_size)
-
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-
-    if text_w > 0 and abs(text_w - target_w) > 20:
-        # Scale font size to fit target width
-        scaled_size = int(nominal_size * target_w / text_w)
-        scaled_size = max(32, min(scaled_size, 300))  # clamp
-        candidates = _FONT_STYLE_MAP.get(font_style, _FONT_STYLE_MAP["sans"])
-        for path in candidates:
-            try:
-                font = ImageFont.truetype(path, scaled_size)
-                break
-            except OSError:
-                continue
 
     bbox = draw.textbbox((0, 0), text, font=font)
     text_w = bbox[2] - bbox[0]
