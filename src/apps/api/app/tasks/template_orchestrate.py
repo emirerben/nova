@@ -1081,9 +1081,9 @@ def _concat_demuxer(
         "-f", "concat",
         "-safe", "0",
         "-i", concat_list,
-        *_encoding_args(output_path),
+        *_encoding_args(output_path, preset="ultrafast"),
     ]
-    result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
+    result = subprocess.run(cmd, capture_output=True, timeout=1200, check=False)
     if result.returncode != 0:
         raise ValueError(f"FFmpeg concat failed: {result.stderr.decode()[:300]}")
 
