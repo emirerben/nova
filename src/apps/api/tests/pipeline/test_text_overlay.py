@@ -5,10 +5,10 @@ import tempfile
 
 from app.pipeline.text_overlay import (
     _ASS_OVERLAY_HEADER,
-    _build_ass_header,
     MAX_OVERLAY_TEXT_LEN,
     OVERLAY_FONT_PATH,
     OVERLAY_FONT_PATH_REGULAR,
+    _build_ass_header,
     _registry_ass_name,
     _reset_cycle_cache,
     _resolve_cycle_fonts,

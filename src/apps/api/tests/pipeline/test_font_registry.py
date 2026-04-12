@@ -6,8 +6,8 @@ import os
 import pytest
 
 from app.pipeline.text_overlay import (
-    FONTS_DIR,
     _FONT_REGISTRY,
+    FONTS_DIR,
     _registry_ass_name,
     _registry_font_path,
 )
