@@ -447,6 +447,43 @@ class TestConsolidateSlots:
         assert len(hook_slots) == 1
         assert float(hook_slots[0]["target_duration_s"]) == pytest.approx(3.0)
 
+    def test_t3b_multi_hook_slots_merge_together(self):
+        """T3b: Multiple hook slots merge with each other but not with broll."""
+        recipe = _make_recipe([
+            _slot(1, 0.7, priority=8, slot_type="hook"),
+            _slot(2, 0.7, priority=8, slot_type="hook"),
+            _slot(3, 0.9, priority=7, slot_type="hook"),
+            _slot(4, 0.9, priority=7, slot_type="hook"),
+            _slot(5, 0.9, priority=7, slot_type="hook"),
+            _slot(6, 0.8, priority=8, slot_type="broll"),
+            _slot(7, 0.9, priority=8, slot_type="broll"),
+            _slot(8, 1.7, priority=9, slot_type="broll"),
+            _slot(9, 1.3, priority=9, slot_type="broll"),
+            _slot(10, 2.5, priority=9, slot_type="broll"),
+            _slot(11, 2.5, priority=9, slot_type="broll"),
+        ])
+        clips = [
+            _make_clip("c1", [_moment(0, 2, energy=9.0)]),
+            _make_clip("c2", [_moment(0, 5, energy=6.0)]),
+            _make_clip("c3", [_moment(0, 5, energy=7.0)]),
+            _make_clip("c4", [_moment(0, 4, energy=7.5)]),
+            _make_clip("c5", [_moment(0, 5, energy=6.5)]),
+        ]
+
+        result = consolidate_slots(recipe, clips)
+
+        # 5 clips → target 5 slots. Hook-hook merges allowed, hook-broll blocked.
+        assert len(result.slots) <= 5
+        # Hooks merged together, brolls merged together
+        hook_slots = [s for s in result.slots if s["slot_type"] == "hook"]
+        broll_slots = [s for s in result.slots if s["slot_type"] == "broll"]
+        # Fewer hooks than original 5 (hooks merged together)
+        assert len(hook_slots) < 5
+        # Total hook duration preserved
+        original_hook_dur = 0.7 + 0.7 + 0.9 + 0.9 + 0.9  # 4.1s
+        merged_hook_dur = sum(float(h["target_duration_s"]) for h in hook_slots)
+        assert merged_hook_dur == pytest.approx(original_hook_dur)
+
     def test_t4_min_floor_distinct_types(self):
         """T4: Distinct slot types preserved — hook+broll+outro → min 3 even with 1 clip."""
         recipe = _make_recipe([

@@ -89,9 +89,9 @@ def _score_merge_pair(
     combined_dur = dur_a + dur_b
     pos_a = slot_a.get("position", 0)
 
-    # Hard blocks
-    if type_a == "hook" or type_b == "hook":
-        return float("-inf")  # never merge the hook
+    # Hard blocks — preserve hook/broll boundary but allow hook+hook merges
+    if (type_a == "hook") != (type_b == "hook"):
+        return float("-inf")  # never merge across hook/broll boundary
     if combined_dur >= MAX_MERGED_DURATION_S:
         return float("-inf")  # too long for a single shot
 
@@ -105,11 +105,11 @@ def _score_merge_pair(
     if abs(energy_a - energy_b) < 2.0:
         score += 1.0
 
-    # Both broll
+    # Both same non-hook content type (broll+broll preferred over hook+hook)
     if type_a == "broll" and type_b == "broll":
         score += 1.0
 
-    # Neither is hook (already blocked above, but reinforces non-hook merges)
+    # Prefer merging non-hook slots when possible
     if type_a != "hook" and type_b != "hook":
         score += 1.0
 
