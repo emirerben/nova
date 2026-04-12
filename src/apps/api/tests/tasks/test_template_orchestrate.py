@@ -1643,8 +1643,8 @@ class TestOverlayFineTuning:
 
     # ── Issues 2+3+4: Label config (subject vs prefix) ─────────────────
 
-    def test_label_subject_gets_large(self):
-        """Subject-placeholder label (PERU) → text_size=large, sans, gold."""
+    def test_label_subject_preserves_recipe_styling(self):
+        """Subject-placeholder label (PERU) preserves recipe styling (WYSIWYG)."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step([{
@@ -1655,12 +1655,13 @@ class TestOverlayFineTuning:
         }])
         result = _collect_absolute_overlays([step], [5.0], None, "Peru")
         assert len(result) == 1
-        assert result[0]["text_size"] == "large"
-        assert result[0]["font_style"] == "sans"
-        assert result[0]["text_color"] == "#F4D03F"
+        # Recipe styling is preserved — no _LABEL_CONFIG override
+        assert result[0]["text_size"] == "medium"
+        assert result[0]["font_style"] == "display"
+        assert result[0]["text_color"] == "#FFFFFF"
 
-    def test_label_prefix_gets_medium(self):
-        """Non-subject label ('Welcome to') → text_size=medium (72px)."""
+    def test_label_prefix_preserves_recipe_styling(self):
+        """Non-subject label ('Welcome to') preserves recipe styling (WYSIWYG)."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step([{
@@ -1671,7 +1672,7 @@ class TestOverlayFineTuning:
         }])
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert len(result) == 1
-        assert result[0]["text_size"] == "medium"
+        assert result[0]["text_size"] == "large"
 
     def test_first_slot_prefix_timing(self):
         """First-slot prefix label starts at 2.0s (not Gemini's 0.0)."""
@@ -1716,8 +1717,8 @@ class TestOverlayFineTuning:
         # cumulative_s = 5.0 (after first slot), so start_s = 5.0 + 0.5 = 5.5
         assert result[0]["start_s"] == 5.5  # Gemini's 0.5 + cumulative 5.0
 
-    def test_subject_label_forced_font_cycle(self):
-        """Subject label gets effect='font-cycle' regardless of Gemini value."""
+    def test_subject_label_preserves_recipe_effect(self):
+        """Subject label preserves recipe effect (WYSIWYG, no forced font-cycle)."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step([{
@@ -1727,7 +1728,7 @@ class TestOverlayFineTuning:
         }])
         result = _collect_absolute_overlays([step], [5.0], None, "Peru")
         assert len(result) == 1
-        assert result[0]["effect"] == "font-cycle"
+        assert result[0]["effect"] == "none"
 
     def test_subject_label_accel_at_8s(self):
         """Subject label gets font_cycle_accel_at_s=8.0 from config."""
@@ -1743,13 +1744,13 @@ class TestOverlayFineTuning:
         assert len(result) == 1
         assert result[0].get("font_cycle_accel_at_s") == 8.0
 
-    def test_curtain_accel_overrides_default(self):
-        """Curtain-derived accel (6.0) < config default (8.0) → curtain wins."""
+    def test_curtain_accel_clamps_with_font_cycle_effect(self):
+        """Curtain-derived accel (6.0) < config default (8.0) → curtain wins when effect=font-cycle."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step([{
             "role": "label", "start_s": 0.0, "end_s": 10.0,
-            "position": "center", "effect": "none",
+            "position": "center", "effect": "font-cycle",
             "sample_text": "PERU",
         }])
         step.slot["target_duration_s"] = 10.0

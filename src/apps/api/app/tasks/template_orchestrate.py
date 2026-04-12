@@ -1186,9 +1186,13 @@ def _collect_absolute_overlays(
             )
             if is_label_like:
                 config = _LABEL_CONFIG["subject" if is_subject else "prefix"]
-                # Apply styling keys (skip timing/accel — handled separately)
+                # Only apply non-styling keys from config. Visual properties
+                # (text_size, font_style, text_color, effect) come from the
+                # recipe so the admin editor preview matches the render.
+                _STYLING_KEYS = {"text_size", "font_style", "text_color", "effect"}
                 entry.update(
-                    {k: v for k, v in config.items() if k not in ("start_s", "accel_at_s")}
+                    {k: v for k, v in config.items()
+                     if k not in ("start_s", "accel_at_s") and k not in _STYLING_KEYS}
                 )
 
                 # Timing override for first-slot labels only
