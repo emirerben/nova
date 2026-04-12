@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1.1] - 2026-04-12
+
+### Fixed
+- FFmpeg concat demuxer timeout on long template jobs: switched intermediate concat to `ultrafast` preset (re-encoded at `fast` in the text overlay pass), bumped timeout from 600s to 1200s
+- Celery worker concurrency reduced from 2 to 1 to give each FFmpeg job the full 2 shared CPUs on Fly.io, preventing CPU contention timeouts
+- Aligned concurrency setting across all deploy configs (fly.toml, Dockerfile.worker, Procfile)
+
 ## [0.2.1.0] - 2026-04-11
 
 ### Changed
