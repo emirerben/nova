@@ -1175,6 +1175,9 @@ def _collect_absolute_overlays(
                 "text_size": ov.get("text_size", "medium"),
                 "text_color": ov.get("text_color", "#FFFFFF"),
             }
+            # Pass through font_family from admin recipe (overrides font_style)
+            if ov.get("font_family"):
+                entry["font_family"] = ov["font_family"]
 
             # 4. Apply label config based on subject vs prefix detection.
             # Gemini inconsistently returns role="hook" for text that should
@@ -1190,7 +1193,7 @@ def _collect_absolute_overlays(
                 # Only apply non-styling keys from config. Visual properties
                 # (text_size, font_style, text_color, effect) come from the
                 # recipe so the admin editor preview matches the render.
-                _STYLING_KEYS = {"text_size", "font_style", "text_color", "effect"}
+                _STYLING_KEYS = {"text_size", "font_style", "font_family", "text_color", "effect"}
                 entry.update(
                     {k: v for k, v in config.items()
                      if k not in ("start_s", "accel_at_s") and k not in _STYLING_KEYS}
@@ -1272,6 +1275,7 @@ def _collect_absolute_overlays(
             if (
                 prev_key == key
                 and prev["position"] == ov["position"]
+                and prev.get("font_family") == ov.get("font_family")
                 and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
             ):
                 # Merge: extend previous overlay's end time
