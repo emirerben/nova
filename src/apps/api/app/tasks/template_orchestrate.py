@@ -20,6 +20,7 @@ all errors caught → job.status = 'processing_failed'
 """
 
 import bisect
+import dataclasses
 import os
 import re
 import shutil
@@ -708,12 +709,138 @@ def _fallback_moments(clip_dur: float) -> list[dict]:
 # ── FFmpeg assembly ────────────────────────────────────────────────────────────
 #
 # Pipeline:
-#   for each slot → _render_slot() → slot_i.mp4
-#   join slots   → _join_or_concat() → assembled.mp4
+#   _plan_slots()  → list[SlotPlan]  (sequential: cursor, beat-snap, speed ramp)
+#   ThreadPool     → render each SlotPlan via FFmpeg (parallel, max_workers=3)
+#   post-render    → curtain-close tails, interstitials, transitions (sequential)
+#   _join_or_concat() → assembled.mp4
 #
-# _render_slot encapsulates: cursor logic, beat-snap, speed ramp source-duration,
-# text overlay routing (ASS animated vs PNG static), color grading, and reframe.
+# _render_slot is kept for backward compatibility but the main path uses
+# _plan_slots + _render_planned_slot for parallel rendering.
 # ──────────────────────────────────────────────────────────────────────────────
+
+_PARALLEL_RENDER_WORKERS = 3  # Fly.io has 2 shared CPUs; 3 overlaps I/O waits
+
+
+@dataclasses.dataclass
+class SlotPlan:
+    """Pre-computed plan for a single slot render (pure arithmetic, no I/O)."""
+
+    slot_idx: int
+    clip_path: str
+    start_s: float
+    end_s: float
+    speed_factor: float
+    slot_target_dur: float
+    cumulative_s: float
+    aspect_ratio: str
+    color_hint: str
+    reframed_path: str  # output path for this slot
+
+
+def _plan_slots(
+    steps: list,
+    clip_id_to_local: dict[str, str],
+    clip_probe_map: dict,
+    beats: list[float],
+    clip_metas: list | None,
+    global_color_grade: str,
+    tmpdir: str,
+) -> tuple[list[SlotPlan], dict[str, float], float]:
+    """Phase 1: sequential arithmetic to plan all slot renders.
+
+    Returns (plans, clip_cursors, final_cumulative_s).
+    No I/O — only cursor tracking, beat-snap, and speed ramp math.
+    """
+    clip_cursors: dict[str, float] = {}
+    cumulative_s = 0.0
+    plans: list[SlotPlan] = []
+
+    for i, step in enumerate(steps):
+        clip_id = step.clip_id
+        local_path = clip_id_to_local.get(clip_id)
+        if not local_path or not os.path.exists(local_path):
+            raise ValueError(f"Local path not found for clip_id {clip_id}")
+
+        probe = clip_probe_map.get(local_path)
+        moment = step.moment
+        slot_target_dur = float(step.slot.get("target_duration_s", 5.0))
+        slot_target_dur = max(slot_target_dur, 0.5)
+
+        # Beat-snap
+        if beats:
+            expected_end = cumulative_s + slot_target_dur
+            snapped_end = _snap_to_beat(expected_end, beats)
+            slot_target_dur = max(0.5, snapped_end - cumulative_s)
+            cumulative_s = snapped_end
+        else:
+            cumulative_s += slot_target_dur
+
+        # Speed ramp
+        speed_factor = float(step.slot.get("speed_factor", 1.0))
+        source_duration = slot_target_dur * speed_factor
+
+        # Time-cursor logic
+        if clip_id not in clip_cursors:
+            start_s = float(moment.get("start_s", 0.0))
+        else:
+            start_s = clip_cursors[clip_id]
+
+        clip_dur = probe.duration_s if probe else 30.0
+        if start_s + source_duration > clip_dur:
+            start_s = max(0.0, clip_dur - source_duration)
+            log.warning(
+                "clip_footage_exhausted",
+                clip_id=clip_id,
+                position=step.slot.get("position"),
+                clip_dur=clip_dur,
+                cursor=clip_cursors.get(clip_id, 0.0),
+            )
+
+        clip_cursors[clip_id] = start_s + source_duration
+        end_s = min(start_s + source_duration, clip_dur)
+
+        aspect_ratio = probe.aspect_ratio if probe else "16:9"
+        slot_color = step.slot.get("color_hint") or global_color_grade or "none"
+
+        log.debug(
+            "slot_planned",
+            position=step.slot.get("position"),
+            target_s=slot_target_dur,
+            actual_s=round(end_s - start_s, 2),
+            speed_factor=speed_factor,
+        )
+
+        plans.append(SlotPlan(
+            slot_idx=i,
+            clip_path=local_path,
+            start_s=start_s,
+            end_s=end_s,
+            speed_factor=speed_factor,
+            slot_target_dur=slot_target_dur,
+            cumulative_s=cumulative_s,
+            aspect_ratio=aspect_ratio,
+            color_hint=slot_color,
+            reframed_path=os.path.join(tmpdir, f"slot_{i}.mp4"),
+        ))
+
+    return plans, clip_cursors, cumulative_s
+
+
+def _render_planned_slot(plan: SlotPlan) -> str:
+    """Phase 2: render a single planned slot via FFmpeg. Thread-safe."""
+    from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
+
+    reframe_and_export(
+        input_path=plan.clip_path,
+        start_s=plan.start_s,
+        end_s=plan.end_s,
+        aspect_ratio=plan.aspect_ratio,
+        ass_subtitle_path=None,
+        output_path=plan.reframed_path,
+        color_hint=plan.color_hint,
+        speed_factor=plan.speed_factor,
+    )
+    return plan.reframed_path
 
 
 def _render_slot(
@@ -1178,6 +1305,9 @@ def _collect_absolute_overlays(
             # Pass through font_family from admin recipe (overrides font_style)
             if ov.get("font_family"):
                 entry["font_family"] = ov["font_family"]
+            # Pass through spans for rich inline formatting
+            if ov.get("spans"):
+                entry["spans"] = ov["spans"]
 
             # 4. Apply label config based on subject vs prefix detection.
             # Gemini inconsistently returns role="hook" for text that should
@@ -1276,6 +1406,7 @@ def _collect_absolute_overlays(
                 prev_key == key
                 and prev["position"] == ov["position"]
                 and prev.get("font_family") == ov.get("font_family")
+                and not prev.get("spans") and not ov.get("spans")
                 and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
             ):
                 # Merge: extend previous overlay's end time
@@ -1357,7 +1488,7 @@ def _burn_text_overlays(
         "-filter_complex", ";".join(fc_parts),
         "-map", f"[{prev}]",
         "-map", "0:a?",
-        *_encoding_args(output_path),
+        *_encoding_args(output_path, preset="ultrafast"),
     ])
 
     log.info("burn_text_overlays", count=len(png_configs))

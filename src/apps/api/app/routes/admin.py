@@ -250,6 +250,24 @@ SyncStyle = Literal[
 InterstitialType = Literal["curtain-close", "fade-black-hold", "flash-white"]
 
 
+class TextSpanSchema(BaseModel):
+    text: str
+    font_family: str | None = None
+    text_color: str | None = None
+    text_size: TextSize | None = None
+
+    @field_validator("text_color")
+    @classmethod
+    def validate_hex_color(cls, v: str | None) -> str | None:
+        import re  # noqa: PLC0415
+
+        if v is None:
+            return v
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", v):
+            raise ValueError(f"span text_color must be a hex color (#RRGGBB), got '{v}'")
+        return v.upper()
+
+
 class RecipeTextOverlaySchema(BaseModel):
     role: OverlayRole
     text: str = ""
@@ -267,6 +285,7 @@ class RecipeTextOverlaySchema(BaseModel):
     has_narrowing: bool = False
     sample_text: str = ""
     font_cycle_accel_at_s: float | None = None
+    spans: list[TextSpanSchema] | None = None
 
     @field_validator("text_color")
     @classmethod

@@ -45,6 +45,13 @@ export type InterstitialType = (typeof INTERSTITIAL_TYPE_OPTIONS)[number];
 
 // ── Data structures ─────────────────────────────────────────────────────────
 
+export interface TextSpan {
+  text: string;
+  font_family?: string;   // Override overlay-level font
+  text_color?: string;     // Override overlay-level color (#RRGGBB)
+  text_size?: TextSize;    // Override overlay-level size
+}
+
 export interface RecipeTextOverlay {
   role: OverlayRole;
   text: string;
@@ -62,6 +69,7 @@ export interface RecipeTextOverlay {
   has_narrowing: boolean;
   sample_text: string;
   font_cycle_accel_at_s: number | null;
+  spans?: TextSpan[];     // When set, overrides flat text for rendering
 }
 
 export interface RecipeInterstitial {

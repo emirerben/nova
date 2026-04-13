@@ -204,12 +204,30 @@ def generate_text_overlay_png(
 
     for i, overlay in enumerate(overlays):
         effect = overlay.get("effect", "none")
+        spans = overlay.get("spans")
 
         if effect == "font-cycle":
             configs = _render_font_cycle(
                 overlay, slot_duration_s, output_dir, slot_index, i,
             )
             results.extend(configs)
+        elif spans:
+            # Rich span rendering — per-word font/color/size
+            text, start_s, end_s, position = _validate_overlay(overlay, slot_duration_s)
+            if text is None:
+                # _validate_overlay returned None — either bad timing or empty text.
+                # Re-extract timing with clamping (spans carry content, so empty text is OK).
+                start_s = float(overlay.get("start_s", 0.0))
+                end_s = float(overlay.get("end_s", 0.0))
+                if end_s > slot_duration_s:
+                    end_s = slot_duration_s
+                if start_s >= end_s:
+                    continue  # genuinely bad timing — skip even with spans
+                position = overlay.get("position", "center")
+            png_path = os.path.join(output_dir, f"slot_{slot_index}_overlay_{i}.png")
+            _draw_spans_png(overlay, spans, position, png_path)
+            if os.path.exists(png_path):
+                results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
         else:
             text, start_s, end_s, position = _validate_overlay(overlay, slot_duration_s)
             if text is None:
@@ -351,6 +369,36 @@ def _validate_ass_file(path: str) -> bool:
 # -- Font-cycle rendering -----------------------------------------------------
 
 
+def _draw_frame(
+    overlay: dict,
+    spans: list[dict] | None,
+    text: str | None,
+    position: str,
+    png_path: str,
+    *,
+    font=None,
+    text_color: tuple[int, int, int, int] = (255, 255, 255, 255),
+    font_family: str | None = None,
+    font_style: str = "display",
+    text_size: str = "medium",
+    cycling_span_indices: list[int] | None = None,
+) -> None:
+    """Dispatch to spans or flat text rendering. Used by font-cycle to avoid repetition."""
+    if spans:
+        overrides = (
+            {idx: font for idx in cycling_span_indices}
+            if font and cycling_span_indices
+            else None
+        )
+        _draw_spans_png(overlay, spans, position, png_path, font_overrides=overrides)
+    else:
+        _draw_text_png(
+            text, position, png_path,
+            font=font, font_family=font_family, font_style=font_style,
+            text_size=text_size, text_color=text_color,
+        )
+
+
 def _render_font_cycle(
     overlay: dict,
     slot_duration_s: float,
@@ -371,10 +419,15 @@ def _render_font_cycle(
     dict, the cycling interval drops to FONT_CYCLE_FAST_INTERVAL_S after that
     absolute timestamp (used to speed up during curtain-close).
 
+    Spans-aware: when ``spans`` is present, spans WITH explicit ``font_family``
+    stay fixed during cycling; spans WITHOUT ``font_family`` get the cycling font.
+    Baseline is locked to max ascender across ALL cycling fonts to prevent jitter.
+
     Returns a list of {png_path, start_s, end_s} configs for FFmpeg overlay.
     """
     text, start_s, end_s, position = _validate_overlay(overlay, slot_duration_s)
-    if text is None:
+    spans = overlay.get("spans")
+    if text is None and not spans:
         return []
 
     hex_color = overlay.get("text_color", "#FFFFFF")
@@ -389,11 +442,10 @@ def _render_font_cycle(
     if len(cycle_fonts) < 2:
         # Not enough fonts for cycling -- fall back to static
         log.warning("font_cycle_insufficient_fonts", count=len(cycle_fonts))
-        font_style = overlay.get("font_style", "display")
         png_path = os.path.join(output_dir, f"slot_{slot_index}_overlay_{overlay_index}.png")
-        _draw_text_png(
-            text, position, png_path,
-            font_family=font_family, font_style=font_style,
+        _draw_frame(
+            overlay, spans, text, position, png_path,
+            font_family=font_family, font_style=overlay.get("font_style", "display"),
             text_size=text_size, text_color=text_color,
         )
         return [{"png_path": png_path, "start_s": start_s, "end_s": end_s}]
@@ -414,6 +466,13 @@ def _render_font_cycle(
         settle_start = start_s + duration * (1.0 - FONT_CYCLE_SETTLE_RATIO)
         cycle_end = settle_start  # cycling stops here, settle begins
 
+    # Determine which spans participate in cycling (no explicit font_family)
+    cycling_span_indices: list[int] = []
+    if spans:
+        cycling_span_indices = [
+            idx for idx, s in enumerate(spans) if not s.get("font_family")
+        ]
+
     results: list[dict] = []
     frame_idx = 0
     t = start_s
@@ -432,7 +491,11 @@ def _render_font_cycle(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_{frame_idx}.png",
         )
-        _draw_text_png(text, position, png_path, font=font, text_color=text_color)
+        _draw_frame(
+            overlay, spans, text, position, png_path,
+            font=font, text_color=text_color,
+            cycling_span_indices=cycling_span_indices,
+        )
         results.append({"png_path": png_path, "start_s": t, "end_s": frame_end})
 
         t = frame_end
@@ -447,7 +510,11 @@ def _render_font_cycle(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_{frame_idx}_gapfill.png",
         )
-        _draw_text_png(text, position, png_path, font=last_font, text_color=text_color)
+        _draw_frame(
+            overlay, spans, text, position, png_path,
+            font=last_font, text_color=text_color,
+            cycling_span_indices=cycling_span_indices,
+        )
         results.append({"png_path": png_path, "start_s": t, "end_s": cycle_end})
         t = cycle_end
 
@@ -458,17 +525,22 @@ def _render_font_cycle(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_settle.png",
         )
-        _draw_text_png(text, position, png_path, font=primary_font, text_color=text_color)
+        _draw_frame(
+            overlay, spans, text, position, png_path,
+            font=primary_font, text_color=text_color,
+            cycling_span_indices=cycling_span_indices,
+        )
         results.append({"png_path": png_path, "start_s": settle_start, "end_s": end_s})
 
     log.info(
         "font_cycle_rendered",
         slot=slot_index,
-        text=text[:20],
+        text=text[:20] if text else "(spans)",
         frames=len(results),
         fonts_available=len(cycle_fonts),
         duration=round(duration, 2),
         accelerated=accel_at is not None,
+        has_spans=bool(spans),
     )
 
     return results
@@ -483,11 +555,13 @@ def _validate_overlay(
     """Validate and sanitize overlay fields. Returns (text, start_s, end_s, position).
 
     Returns (None, 0, 0, "") if the overlay should be skipped.
+    When spans are present, skip text truncation (validate per-span instead).
     """
     text = overlay.get("text", "")
     start_s = float(overlay.get("start_s", 0.0))
     end_s = float(overlay.get("end_s", 0.0))
     position = overlay.get("position", "center")
+    has_spans = bool(overlay.get("spans"))
 
     if start_s >= end_s:
         return None, 0.0, 0.0, ""
@@ -498,9 +572,10 @@ def _validate_overlay(
         return None, 0.0, 0.0, ""
 
     text = sanitize_ass_text(text)
-    if not text:
+    if not text and not has_spans:
         return None, 0.0, 0.0, ""
-    if len(text) > MAX_OVERLAY_TEXT_LEN:
+    # Skip truncation when spans are present — each span is short individually
+    if not has_spans and len(text) > MAX_OVERLAY_TEXT_LEN:
         text = text[: MAX_OVERLAY_TEXT_LEN - 1] + "\u2026"
 
     return text, start_s, end_s, position
@@ -629,6 +704,197 @@ def _draw_text_png(
     fg_draw.text((x, y), text, font=font, fill=text_color)
     img = Image.alpha_composite(img, fg_layer)
 
+    img.save(png_path, "PNG")
+
+
+# -- Span-aware rendering ----------------------------------------------------
+
+# Maximum line width as fraction of canvas width
+_SPAN_MAX_LINE_W = 0.9
+# Gap between words within a line
+_SPAN_WORD_GAP = 16
+# Line spacing (fraction of max line height)
+_SPAN_LINE_SPACING = 1.3
+
+
+def _resolve_span_font(span: dict, overlay: dict):
+    """Resolve a Pillow font for a single span.
+
+    Priority: span.font_family → overlay.font_family → overlay.font_style fallback.
+    """
+    size_key = span.get("text_size") or overlay.get("text_size", "medium")
+    pixel_size = _FONT_SIZE_MAP.get(size_key, 72)
+
+    # 1. Span-level font_family
+    span_family = span.get("font_family")
+    if span_family:
+        font = _resolve_font_family(span_family, pixel_size)
+        if font:
+            return font
+
+    # 2. Overlay-level font_family
+    overlay_family = overlay.get("font_family")
+    if overlay_family:
+        font = _resolve_font_family(overlay_family, pixel_size)
+        if font:
+            return font
+
+    # 3. Overlay font_style fallback
+    font_style = overlay.get("font_style", "display")
+    return _load_styled_font(font_style, size_key)
+
+
+def _draw_spans_png(
+    overlay: dict,
+    spans: list[dict],
+    position: str,
+    png_path: str,
+    *,
+    font_overrides: dict[int, object] | None = None,
+) -> None:
+    """Draw multiple text spans with per-word font/color/size on a 1080x1920 canvas.
+
+    Each span can have its own font_family, text_color, text_size.
+    Spans are laid out left-to-right, wrapped to new lines when exceeding
+    90% of canvas width, baseline-aligned per line, and horizontally centered.
+
+    font_overrides: optional dict mapping span index → pre-loaded Pillow font.
+    Used by font-cycle to override specific spans with the cycling font.
+    """
+    from PIL import Image, ImageDraw, ImageFilter  # noqa: PLC0415
+
+    if not spans:
+        return
+
+    max_line_w = int(CANVAS_W * _SPAN_MAX_LINE_W)
+
+    # Shared measurement surface (avoid per-span allocation)
+    _measure_img = Image.new("RGBA", (1, 1))
+    _measure_draw = ImageDraw.Draw(_measure_img)
+
+    # 1. Resolve font, color, and measure each span
+    span_data = []
+    for idx, span in enumerate(spans):
+        text = sanitize_ass_text(span.get("text", ""))
+        if not text:
+            continue
+        # Per-span length cap (prevent unbounded Pillow measurement)
+        if len(text) > MAX_OVERLAY_TEXT_LEN:
+            text = text[: MAX_OVERLAY_TEXT_LEN - 1] + "\u2026"
+
+        # Font: override (from font-cycle) > span-level > overlay-level
+        if font_overrides and idx in font_overrides:
+            font = font_overrides[idx]
+        else:
+            font = _resolve_span_font(span, overlay)
+
+        hex_color = span.get("text_color") or overlay.get("text_color", "#FFFFFF")
+        color = _hex_to_rgba(hex_color)
+
+        # Measure
+        bbox = _measure_draw.textbbox((0, 0), text, font=font)
+        w = bbox[2] - bbox[0]
+        ascender = -bbox[1]  # bbox[1] is negative for ascent
+        h = bbox[3] - bbox[1]
+
+        # Overflow fallback: if a single span is wider than canvas, scale down
+        if w > max_line_w:
+            scale = max_line_w / w
+            size_key = span.get("text_size") or overlay.get("text_size", "medium")
+            pixel_size = _FONT_SIZE_MAP.get(size_key, 72)
+            new_size = max(24, int(pixel_size * scale))
+            # Try to scale the current font (preserves font_overrides from cycling)
+            scaled = None
+            try:
+                scaled = font.font_variant(size=new_size)
+            except (AttributeError, OSError):
+                pass
+            if scaled:
+                font = scaled
+            else:
+                # Re-resolve at smaller size from registry
+                span_family = span.get("font_family") or overlay.get("font_family")
+                if span_family:
+                    font = _resolve_font_family(span_family, new_size) or _load_styled_font(
+                        overlay.get("font_style", "display"), "small"
+                    )
+                else:
+                    font = _load_styled_font(overlay.get("font_style", "display"), "small")
+            bbox = _measure_draw.textbbox((0, 0), text, font=font)
+            w = bbox[2] - bbox[0]
+            ascender = -bbox[1]
+            h = bbox[3] - bbox[1]
+
+        span_data.append({
+            "text": text,
+            "font": font,
+            "color": color,
+            "w": w,
+            "h": h,
+            "ascender": ascender,
+        })
+
+    if not span_data:
+        return
+
+    # 2. Line wrapping — break between spans when line exceeds max width
+    lines: list[list[dict]] = [[]]
+    line_w = 0
+    for sd in span_data:
+        gap = _SPAN_WORD_GAP if lines[-1] else 0
+        if lines[-1] and line_w + gap + sd["w"] > max_line_w:
+            lines.append([])
+            line_w = 0
+            gap = 0
+        lines[-1].append(sd)
+        line_w += gap + sd["w"]
+
+    # 3. Compute per-line metrics (max ascender for baseline alignment)
+    line_metrics = []
+    for line in lines:
+        max_asc = max(sd["ascender"] for sd in line)
+        max_h = max(sd["h"] for sd in line)
+        total_w = sum(sd["w"] for sd in line) + _SPAN_WORD_GAP * (len(line) - 1)
+        line_metrics.append({"max_asc": max_asc, "max_h": max_h, "total_w": total_w})
+
+    # 4. Total block height
+    total_block_h = sum(int(lm["max_h"] * _SPAN_LINE_SPACING) for lm in line_metrics)
+
+    # 5. Vertical anchor
+    y_frac = _POSITION_Y.get(position, 0.5)
+    block_top = int(CANVAS_H * y_frac - total_block_h / 2)
+
+    # 6. Render
+    img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    shadow_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow_layer)
+    fg_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    fg_draw = ImageDraw.Draw(fg_layer)
+
+    cur_y = block_top
+    for line, lm in zip(lines, line_metrics):
+        # Horizontal centering
+        line_x = (CANVAS_W - lm["total_w"]) // 2
+        x = line_x
+
+        for sd in line:
+            # Baseline alignment: offset from top of line by (max_ascender - this span's ascender)
+            baseline_offset = lm["max_asc"] - sd["ascender"]
+            draw_y = cur_y + baseline_offset
+
+            # Shadow
+            shadow_draw.text((x, draw_y + 6), sd["text"], font=sd["font"], fill=(0, 0, 0, 160))
+            # Foreground
+            fg_draw.text((x, draw_y), sd["text"], font=sd["font"], fill=sd["color"])
+
+            x += sd["w"] + _SPAN_WORD_GAP
+
+        cur_y += int(lm["max_h"] * _SPAN_LINE_SPACING)
+
+    # Apply shadow blur
+    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
+    img = Image.alpha_composite(img, shadow_layer)
+    img = Image.alpha_composite(img, fg_layer)
     img.save(png_path, "PNG")
 
 

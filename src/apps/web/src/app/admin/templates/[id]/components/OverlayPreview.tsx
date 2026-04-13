@@ -18,6 +18,9 @@ import {
   getFontCssFamily,
   isOverlayVisible,
   resolveOverlayPreview,
+  resolveSpanFont,
+  resolveSpanColor,
+  resolveSpanSize,
   snapToNearestZone,
 } from "./overlay-constants";
 
@@ -254,6 +257,34 @@ export function OverlayPreview({
                   width: "90%",
                 }}
               />
+            ) : overlay.spans && overlay.spans.length > 0 ? (
+              <span
+                className={`px-2 max-w-[90%] inline-flex flex-wrap items-baseline justify-center gap-x-1 ${
+                  selected ? "outline outline-2 outline-dashed outline-white/70 rounded" : ""
+                }`}
+              >
+                {overlay.spans.map((span, si) => {
+                  const sf = resolveSpanFont(span, overlay);
+                  const sc = resolveSpanColor(span, overlay);
+                  const ss = resolveSpanSize(span, overlay);
+                  const sScaled = Math.round(ss * SCALE);
+                  return (
+                    <span
+                      key={si}
+                      style={{
+                        fontFamily: sf.family,
+                        fontWeight: sf.weight,
+                        fontStyle: sf.italic ? "italic" : "normal",
+                        fontSize: `${sScaled}px`,
+                        color: sc,
+                        textShadow: "0 2px 4px rgba(0,0,0,0.6)",
+                      }}
+                    >
+                      {span.text || "\u00A0"}
+                    </span>
+                  );
+                })}
+              </span>
             ) : (
               <span
                 className={`px-2 truncate max-w-[90%] inline-block text-center ${

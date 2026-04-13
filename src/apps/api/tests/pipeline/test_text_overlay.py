@@ -837,3 +837,211 @@ class TestFontFamilyResolution:
             with open(result[0]) as f:
                 content = f.read()
             assert "Playfair Display" in content
+
+
+# -- Text span rendering -----------------------------------------------------
+
+
+def _make_span_overlay(
+    spans: list[dict],
+    text: str = "Welcome to PERU",
+    start_s: float = 0.0,
+    end_s: float = 3.0,
+    position: str = "center",
+    effect: str = "none",
+    **kwargs,
+) -> dict:
+    return {
+        "text": text,
+        "start_s": start_s,
+        "end_s": end_s,
+        "position": position,
+        "effect": effect,
+        "spans": spans,
+        **kwargs,
+    }
+
+
+class TestSpanRendering:
+    """Tests for _draw_spans_png and span-aware font-cycle."""
+
+    def test_draw_spans_two_fonts_two_colors(self, tmp_path):
+        """Two spans with different fonts and colors produce a valid PNG."""
+        from PIL import Image
+
+        overlay = _make_span_overlay(
+            spans=[
+                {"text": "Welcome to", "font_family": "Montserrat", "text_color": "#FFFFFF"},
+                {"text": "PERU", "font_family": "Playfair Display", "text_color": "#F4D03F"},
+            ],
+        )
+        result = generate_text_overlay_png(
+            [overlay], slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        assert len(result) == 1
+        img = Image.open(result[0]["png_path"])
+        assert img.mode == "RGBA"
+        assert img.size == (1080, 1920)
+        alpha = img.split()[3]
+        assert alpha.getextrema()[1] > 0  # has visible text
+
+    def test_draw_spans_single_span_matches_flat(self, tmp_path):
+        """A single span should produce a PNG (not crash)."""
+        overlay = _make_span_overlay(
+            spans=[{"text": "Hello"}],
+            text="Hello",
+        )
+        result = generate_text_overlay_png(
+            [overlay], slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        assert os.path.exists(result[0]["png_path"])
+
+    def test_draw_spans_baseline_alignment(self, tmp_path):
+        """Spans with different sizes both render (baseline-aligned)."""
+        from PIL import Image
+
+        overlay = _make_span_overlay(
+            spans=[
+                {"text": "small", "text_size": "small"},
+                {"text": "LARGE", "text_size": "xlarge"},
+            ],
+        )
+        result = generate_text_overlay_png(
+            [overlay], slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        img = Image.open(result[0]["png_path"])
+        alpha = img.split()[3]
+        assert alpha.getextrema()[1] > 0
+
+    def test_draw_spans_multiline_wrap(self, tmp_path):
+        """Many spans exceeding canvas width wrap to multiple lines."""
+        from PIL import Image
+
+        # Create enough spans to exceed 90% of 1080px
+        overlay = _make_span_overlay(
+            spans=[{"text": "LONGWORD" * 3, "text_size": "large"} for _ in range(4)],
+            text="test",
+        )
+        result = generate_text_overlay_png(
+            [overlay], slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        img = Image.open(result[0]["png_path"])
+        assert img.mode == "RGBA"
+        alpha = img.split()[3]
+        assert alpha.getextrema()[1] > 0
+
+    def test_draw_spans_overflow_scaledown(self, tmp_path):
+        """A single span wider than the canvas gets scaled down to fit."""
+        overlay = _make_span_overlay(
+            spans=[{"text": "A" * 80, "text_size": "xlarge"}],
+            text="test",
+        )
+        result = generate_text_overlay_png(
+            [overlay], slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        assert os.path.exists(result[0]["png_path"])
+
+    def test_draw_spans_empty_falls_back(self, tmp_path):
+        """Empty spans array falls back to flat text rendering."""
+        overlay = {
+            "text": "Flat text",
+            "start_s": 0.0,
+            "end_s": 3.0,
+            "position": "center",
+            "effect": "none",
+            "spans": [],
+        }
+        result = generate_text_overlay_png(
+            [overlay], slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        assert os.path.exists(result[0]["png_path"])
+
+    def test_draw_spans_inherits_overlay_defaults(self, tmp_path):
+        """Spans without font_family/text_color inherit from overlay."""
+        from PIL import Image
+
+        overlay = _make_span_overlay(
+            spans=[{"text": "Hello"}, {"text": "World"}],
+            text_color="#FF0000",
+            font_family="Montserrat",
+        )
+        result = generate_text_overlay_png(
+            [overlay], slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        img = Image.open(result[0]["png_path"])
+        pixels = list(img.getdata())
+        visible = [p for p in pixels if p[3] > 100]
+        # Should have red pixels (inherited from overlay text_color)
+        red_pixels = [p for p in visible if p[0] > 200 and p[1] < 50 and p[2] < 50]
+        assert len(red_pixels) > 0, "Spans should inherit overlay text_color"
+
+    def test_font_cycle_with_spans_fixed_and_cycling(self, tmp_path):
+        """Font-cycle with spans: fixed-font spans stay, others cycle."""
+        _reset_cycle_cache()
+        overlay = _make_span_overlay(
+            spans=[
+                {"text": "Welcome to", "font_family": "Montserrat"},  # fixed
+                {"text": "PERU"},  # cycles (no font_family)
+            ],
+            effect="font-cycle",
+            end_s=2.0,
+        )
+        result = generate_text_overlay_png(
+            [overlay], slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        # Should produce multiple font-cycle frames
+        assert len(result) > 3
+        for r in result:
+            assert os.path.exists(r["png_path"])
+        _reset_cycle_cache()
+
+    def test_font_cycle_spans_settle_phase(self, tmp_path):
+        """Font-cycle with spans has a settle phase (no accel)."""
+        _reset_cycle_cache()
+        overlay = _make_span_overlay(
+            spans=[
+                {"text": "Welcome to", "font_family": "Montserrat"},
+                {"text": "PERU"},
+            ],
+            effect="font-cycle",
+            end_s=2.0,
+        )
+        result = generate_text_overlay_png(
+            [overlay], slot_duration_s=5.0,
+            output_dir=str(tmp_path), slot_index=0,
+        )
+        assert result is not None
+        settle_pngs = [r for r in result if "_settle" in os.path.basename(r["png_path"])]
+        assert len(settle_pngs) == 1, "Should have exactly one settle frame"
+        assert result[-1]["end_s"] == 2.0
+        _reset_cycle_cache()
+
+    def test_validate_overlay_skips_truncation_with_spans(self):
+        """_validate_overlay skips 40-char truncation when spans are present."""
+        overlay = {
+            "text": "A" * 60,
+            "start_s": 0.0,
+            "end_s": 3.0,
+            "position": "center",
+            "spans": [{"text": "short"}, {"text": "words"}],
+        }
+        text, start_s, end_s, position = _validate_overlay(overlay, 5.0)
+        assert text is not None
+        assert len(text) == 60  # NOT truncated
+        assert "\u2026" not in text
