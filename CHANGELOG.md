@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3.0] - 2026-04-13
+
+### Added
+- Rich inline text spans: per-word font, color, and size within a single overlay line
+- `TextSpan` data model (TypeScript + Python Pydantic validation) stored in existing recipe JSONB
+- `_draw_spans_png()` renderer with baseline alignment, line wrapping, and overflow scale-down
+- SpanEditor segment list in admin template editor with inline preview and "split text" button
+- OverlayPreview per-word CSS rendering for WYSIWYG span preview
+- Font-cycle spans integration: fixed-font spans stay constant while cycling spans swap fonts
+- `_draw_frame()` DRY helper for spans/flat text dispatch in font-cycle rendering
+- Per-span text sanitization and length cap to prevent unbounded Pillow measurement
+- 10 new backend tests covering all span rendering paths and edge cases
+
+### Fixed
+- Timing bypass when spans present but text empty (dead branch removed, proper clamping added)
+- Ghost PNG reference when all spans have empty text (file existence guard)
+- Overflow scale-down fallback using wrong size key (now correctly scales to "small")
+- Font-cycle override font preserved through overflow scale-down via font_variant()
+
 ## [0.2.2.0] - 2026-04-12
 
 ### Added
