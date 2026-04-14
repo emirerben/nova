@@ -17,6 +17,7 @@ Fallback: Pillow default if all resolution fails.
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import structlog
 
@@ -473,7 +474,8 @@ def _render_font_cycle(
             idx for idx, s in enumerate(spans) if not s.get("font_family")
         ]
 
-    results: list[dict] = []
+    # ── Pre-compute all frame specs (sequential, pure math) ─────────────
+    frame_specs: list[tuple] = []  # (png_path, font, start_s, end_s)
     frame_idx = 0
     t = start_s
 
@@ -491,12 +493,7 @@ def _render_font_cycle(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_{frame_idx}.png",
         )
-        _draw_frame(
-            overlay, spans, text, position, png_path,
-            font=font, text_color=text_color,
-            cycling_span_indices=cycling_span_indices,
-        )
-        results.append({"png_path": png_path, "start_s": t, "end_s": frame_end})
+        frame_specs.append((png_path, font, t, frame_end))
 
         t = frame_end
         frame_idx += 1
@@ -510,12 +507,7 @@ def _render_font_cycle(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_{frame_idx}_gapfill.png",
         )
-        _draw_frame(
-            overlay, spans, text, position, png_path,
-            font=last_font, text_color=text_color,
-            cycling_span_indices=cycling_span_indices,
-        )
-        results.append({"png_path": png_path, "start_s": t, "end_s": cycle_end})
+        frame_specs.append((png_path, last_font, t, cycle_end))
         t = cycle_end
 
     # Phase 2: settle on the primary font for the remaining duration
@@ -525,12 +517,23 @@ def _render_font_cycle(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_settle.png",
         )
+        frame_specs.append((png_path, primary_font, settle_start, end_s))
+
+    # ── Render all frames in parallel (Pillow releases GIL) ───────────
+    def _render_one(spec: tuple) -> dict:
+        png_p, fnt, s, e = spec
         _draw_frame(
-            overlay, spans, text, position, png_path,
-            font=primary_font, text_color=text_color,
+            overlay, spans, text, position, png_p,
+            font=fnt, text_color=text_color,
             cycling_span_indices=cycling_span_indices,
         )
-        results.append({"png_path": png_path, "start_s": settle_start, "end_s": end_s})
+        return {"png_path": png_p, "start_s": s, "end_s": e}
+
+    if len(frame_specs) > 1:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(_render_one, frame_specs))
+    else:
+        results = [_render_one(s) for s in frame_specs]
 
     log.info(
         "font_cycle_rendered",
