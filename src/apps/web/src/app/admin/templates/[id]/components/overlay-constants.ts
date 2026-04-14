@@ -1,4 +1,4 @@
-import type { RecipeTextOverlay, OverlayPosition, OverlayRole } from "./recipe-types";
+import type { RecipeTextOverlay, TextSpan, OverlayPosition, OverlayRole, TextSize } from "./recipe-types";
 
 // ── Backend-to-frontend mapping ─────────────────────────────────────────────
 // Must match src/apps/api/app/pipeline/text_overlay.py constants
@@ -248,4 +248,41 @@ export function resolveOverlayPreview(
       : previewSubject;
   }
   return sample;
+}
+
+// ── Span helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Resolve the CSS font-family for a single span.
+ * Priority: span.font_family → overlay font_family → overlay font_style fallback.
+ */
+export function resolveSpanFont(span: TextSpan, overlay: RecipeTextOverlay): {
+  family: string;
+  weight: number;
+  italic?: boolean;
+} {
+  // 1. Span-level font_family
+  if (span.font_family) {
+    const entry = FONT_REGISTRY[span.font_family];
+    if (entry) {
+      return { family: entry.css_family, weight: entry.weight };
+    }
+  }
+  // 2. Overlay-level resolution
+  return getFontCssFamily(overlay);
+}
+
+/**
+ * Resolve the text color for a span, falling back to overlay color.
+ */
+export function resolveSpanColor(span: TextSpan, overlay: RecipeTextOverlay): string {
+  return span.text_color || overlay.text_color || "#FFFFFF";
+}
+
+/**
+ * Resolve the font size (px) for a span, falling back to overlay size.
+ */
+export function resolveSpanSize(span: TextSpan, overlay: RecipeTextOverlay): number {
+  const sizeKey = span.text_size || overlay.text_size || "medium";
+  return FONT_SIZE_MAP[sizeKey] ?? FONT_SIZE_MAP.medium;
 }

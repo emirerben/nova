@@ -25,6 +25,7 @@ import {
   getInferredFontName,
   resolveOverlayPreview,
 } from "./overlay-constants";
+import { SpanEditor } from "./SpanEditor";
 
 // ── Shared field components ─────────────────────────────────────────────────
 
@@ -445,6 +446,16 @@ function OverlayListItem({
           value={overlay.font_cycle_accel_at_s ?? 0}
           onChange={(v) => set("font_cycle_accel_at_s", v === 0 ? null : v)}
           step={0.5}
+        />
+      </div>
+
+      {/* Rich inline spans */}
+      <div className="border-t border-zinc-800 pt-2 mt-2">
+        <SpanEditor
+          overlay={overlay}
+          slotIndex={slotIndex}
+          overlayIndex={overlayIndex}
+          dispatch={dispatch}
         />
       </div>
     </div>
