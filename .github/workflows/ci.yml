@@ -74,4 +74,4 @@ jobs:
           TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY_TEST }}
           WAITLIST_ADMIN_SECRET: test-admin-secret
           ALLOWED_ORIGINS: '["http://localhost:3000"]'
-        run: pytest tests/ -v --ignore=tests/quality
+        run: pytest tests/ -v --ignore=tests/quality -n auto --timeout=60
