@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3.1] - 2026-04-14
+
+### Changed
+- Parallel slot rendering via ThreadPoolExecutor (max_workers=3), replacing sequential _render_slot loop
+- Parallel font-cycle PNG generation via ThreadPoolExecutor (max_workers=4)
+- Burn preset changed from `fast` to `ultrafast` for final text overlay encode pass
+
+### Removed
+- Dead `_render_slot()` function (replaced by `_plan_slots` + `_render_planned_slot`)
+
+### Added
+- `pytest-xdist` and `pytest-timeout` for parallel CI test execution with timeout protection
+- Jest `maxWorkers: "50%"` to prevent OOM on CI runners
+- CI now runs `pytest -n auto --timeout=60`
+
 ## [0.2.3.0] - 2026-04-13
 
 ### Added
