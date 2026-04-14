@@ -7,13 +7,17 @@ import {
   type LatestTestJob,
   type RecipeVersionItem,
   type TemplateMetrics,
+  type TextPreviewParams,
   adminCreateTestJob,
   adminGetLatestTestJob,
   adminGetMetrics,
   adminGetPresignedUpload,
+  adminGetRecipe,
   adminGetRecipeHistory,
   adminGetTemplate,
   adminReanalyzeTemplate,
+  adminSaveRecipe,
+  adminTextPreview,
   adminUpdateTemplate,
 } from "@/lib/admin-api";
 import {
@@ -382,8 +386,17 @@ function TestTab({
 }) {
   const [testJobId, setTestJobId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [rerolling, setRerolling] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<TemplateMetrics | null>(null);
+  const [latestJob, setLatestJob] = useState<LatestTestJob | null>(null);
+
+  // Load latest test job on mount so previous results are visible
+  useEffect(() => {
+    adminGetLatestTestJob(template.id).then((job) => {
+      if (job) setLatestJob(job);
+    }).catch(() => {});
+  }, [template.id]);
 
   // File upload for test clips
   const upload = useFileUpload({
@@ -398,22 +411,64 @@ function TestTab({
     isTerminal: (d) => TERMINAL_STATUSES.has(d.status),
   });
 
+  // Rerun: rerender with updated recipe (no Gemini needed)
+  const handleRerun = useCallback(async () => {
+    const sourceId = latestJob?.job_id || testJobId;
+    if (!sourceId) return;
+    setRerolling(true);
+    setTestError(null);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const token = typeof window !== "undefined" ? sessionStorage.getItem("nova_admin_token") : null;
+    try {
+      // Try rerender first (no Gemini, uses locked slots)
+      let res = await fetch(`${apiUrl}/admin/templates/${template.id}/rerender-job`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "X-Admin-Token": token } : {}),
+        },
+        body: JSON.stringify({ source_job_id: sourceId }),
+      });
+      if (!res.ok) {
+        // Fallback to reroll if rerender fails (slot mismatch etc.)
+        res = await fetch(`${apiUrl}/template-jobs/${sourceId}/reroll`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.detail || `Rerun failed (${res.status})`);
+      }
+      const data = await res.json();
+      setTestJobId(data.job_id);
+    } catch (err) {
+      setTestError(err instanceof Error ? err.message : "Rerun failed");
+    } finally {
+      setRerolling(false);
+    }
+  }, [latestJob, testJobId, template.id]);
+
   // Push completed test job to parent (for editor video sync)
   useEffect(() => {
     if (
       poller.data?.status === "template_ready" &&
       poller.data.assembly_plan?.output_url
     ) {
-      onJobComplete?.({
+      const completedJob: LatestTestJob = {
         job_id: poller.data.job_id,
         output_url: poller.data.assembly_plan.output_url,
         base_output_url: poller.data.assembly_plan.base_output_url ?? null,
-        clip_paths: upload.successfulPaths,
+        clip_paths: upload.successfulPaths.length > 0
+          ? upload.successfulPaths
+          : latestJob?.clip_paths ?? [],
         has_rerender_data: true,
         created_at: poller.data.created_at,
-      });
+      };
+      setLatestJob(completedJob);
+      onJobComplete?.(completedJob);
     }
-  }, [poller.data, onJobComplete, upload.successfulPaths]);
+  }, [poller.data, onJobComplete, upload.successfulPaths, latestJob]);
 
   // Fetch metrics
   useEffect(() => {
@@ -530,6 +585,28 @@ function TestTab({
         </div>
       </div>
 
+      {/* Rerun with updated recipe */}
+      {(latestJob || testJobId) && (
+        <div className="border border-zinc-800 rounded p-4 space-y-3">
+          <h3 className="text-sm font-medium text-white">Rerun with Updated Recipe</h3>
+          <p className="text-xs text-zinc-500">
+            Re-renders using clips from the latest job — no re-upload needed.
+          </p>
+          <button
+            onClick={handleRerun}
+            disabled={rerolling}
+            className="px-4 py-2 text-sm bg-purple-700 hover:bg-purple-600 text-white rounded disabled:opacity-50"
+          >
+            {rerolling ? "Starting..." : "Rerun"}
+          </button>
+        </div>
+      )}
+
+      {/* Text Tuning */}
+      {(latestJob || testJobId) && (
+        <TextTuningPanel templateId={template.id} />
+      )}
+
       {/* Test job result */}
       {testJobId && (
         <div className="border border-zinc-800 rounded p-4 space-y-4">
@@ -559,6 +636,18 @@ function TestTab({
           )}
         </div>
       )}
+
+      {/* Show latest job result when no active test job */}
+      {!testJobId && latestJob?.output_url && (
+        <div className="border border-zinc-800 rounded p-4 space-y-4">
+          <h3 className="text-sm font-medium text-white">Latest Result</h3>
+          <EvalComparison
+            outputUrl={latestJob.output_url}
+            templateUrl={playbackUrl}
+            assemblyPlan={null}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -572,7 +661,7 @@ function EvalComparison({
 }: {
   outputUrl: string;
   templateUrl: string | null;
-  assemblyPlan: TemplateJobStatusResponse["assembly_plan"];
+  assemblyPlan: TemplateJobStatusResponse["assembly_plan"] | null;
 }) {
   return (
     <div className="space-y-4">
@@ -726,6 +815,213 @@ function SettingsTab({
         <p className="text-sm text-zinc-300 font-mono">{template.gcs_path}</p>
         <p className="text-xs text-zinc-500 mt-3 mb-1">Template ID</p>
         <p className="text-sm text-zinc-300 font-mono">{template.id}</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Text Tuning Panel ─────────────────────────────────────────────────────────
+
+function TextTuningPanel({ templateId }: { templateId: string }) {
+  const [subjectSize, setSubjectSize] = useState(199);
+  const [subjectY, setSubjectY] = useState(0.45);
+  const [prefixSize, setPrefixSize] = useState(36);
+  const [prefixY, setPrefixY] = useState(0.472);
+  const [previewImg, setPreviewImg] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState(false);
+
+  // Load current values from recipe on mount
+  useEffect(() => {
+    adminGetRecipe(templateId)
+      .then((r) => {
+        const slots = (r.recipe as { slots?: Array<{ text_overlays?: Array<Record<string, unknown>>; overlays?: Array<Record<string, unknown>> }> }).slots;
+        if (!slots) return;
+        // Find a slot with overlays containing subject + prefix pattern
+        const sizeMap: Record<string, number> = {
+          small: 36, medium: 72, large: 120, xlarge: 150, xxlarge: 250, jumbo: 199,
+        };
+        for (const slot of slots) {
+          const overlays = slot.text_overlays || slot.overlays;
+          if (!overlays || overlays.length < 2) continue;
+          const subject = overlays.find(
+            (o) => o.effect === "font-cycle" || (o.text_size as string)?.match(/jumbo|xxlarge|xlarge/),
+          );
+          const prefix = overlays.find(
+            (o) => o !== subject && typeof o.sample_text === "string",
+          );
+          if (subject && prefix) {
+            // Use text_size_px if available, otherwise map from name
+            const sz = (subject.text_size_px as number) || sizeMap[subject.text_size as string];
+            if (sz) setSubjectSize(sz);
+            const psz = (prefix.text_size_px as number) || sizeMap[prefix.text_size as string];
+            if (psz) setPrefixSize(psz);
+            // Load saved Y positions
+            if (typeof subject.position_y_frac === "number") setSubjectY(subject.position_y_frac);
+            if (typeof prefix.position_y_frac === "number") setPrefixY(prefix.position_y_frac);
+            break;
+          }
+        }
+      })
+      .catch(() => {});
+  }, [templateId]);
+
+  const handlePreview = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await adminTextPreview(templateId, {
+        subject_size_px: subjectSize,
+        subject_y_frac: subjectY,
+        prefix_size_px: prefixSize,
+        prefix_y_frac: prefixY,
+      });
+      setPreviewImg(`data:image/png;base64,${res.image_base64}`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Preview failed");
+    } finally {
+      setLoading(false);
+    }
+  }, [templateId, subjectSize, subjectY, prefixSize, prefixY]);
+
+  // Auto-preview on slider change (debounced)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      handlePreview();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [handlePreview]);
+
+  const handleApply = useCallback(async () => {
+    setApplying(true);
+    setApplied(false);
+    try {
+      // Load current recipe, update overlay sizes/positions, save
+      const current = await adminGetRecipe(templateId);
+      const recipe = current.recipe as Record<string, unknown>;
+      const slots = recipe.slots as Array<{ text_overlays?: Array<Record<string, unknown>>; overlays?: Array<Record<string, unknown>> }> | undefined;
+
+      if (slots) {
+        for (const slot of slots) {
+          const overlays = slot.text_overlays || slot.overlays;
+          if (!overlays || overlays.length < 2) continue;
+          const subject = overlays.find(
+            (o) => o.effect === "font-cycle" || (o.text_size as string)?.match(/jumbo|xxlarge|xlarge/),
+          );
+          const prefix = overlays.find(
+            (o) => o !== subject && typeof o.sample_text === "string",
+          );
+          if (subject && prefix) {
+            subject.text_size_px = subjectSize;
+            subject.position_y_frac = subjectY;
+            prefix.text_size_px = prefixSize;
+            prefix.position_y_frac = prefixY;
+          }
+        }
+      }
+
+      await adminSaveRecipe(templateId, {
+        recipe,
+        base_version_id: current.version_id,
+      });
+      setApplied(true);
+      setTimeout(() => setApplied(false), 2000);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Apply failed");
+    } finally {
+      setApplying(false);
+    }
+  }, [templateId, subjectSize, subjectY, prefixSize, prefixY]);
+
+  return (
+    <div className="border border-zinc-800 rounded p-5 space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-medium text-white">Text Tuning</h3>
+          <p className="text-xs text-zinc-500 mt-0.5">Adjust size &amp; position, preview live, then apply.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleApply}
+            disabled={applying}
+            className="px-4 py-2 text-sm bg-green-700 hover:bg-green-600 text-white rounded disabled:opacity-50"
+          >
+            {applying ? "Applying..." : "Apply to Recipe"}
+          </button>
+          {applied && <span className="text-green-400 text-sm">Applied!</span>}
+        </div>
+      </div>
+
+      {/* Controls — horizontal compact row */}
+      <div className="grid grid-cols-2 gap-4">
+        {/* Subject (PERU) */}
+        <div className="bg-zinc-900/50 rounded-lg p-3 space-y-2 border border-zinc-800">
+          <p className="text-xs text-yellow-400 font-medium uppercase tracking-wide">Subject (PERU)</p>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-zinc-500 w-8 shrink-0">Size</label>
+            <input type="range" min={80} max={400} step={5} value={subjectSize}
+              onChange={(e) => setSubjectSize(Number(e.target.value))}
+              className="flex-1 accent-yellow-400 h-1" />
+            <code className="text-xs text-yellow-400 font-bold w-12 text-right">{subjectSize}px</code>
+          </div>
+          <div className="flex gap-1">
+            {[150, 199, 250, 320].map((s) => (
+              <button key={s} onClick={() => setSubjectSize(s)}
+                className={`px-2 py-0.5 text-xs rounded ${subjectSize === s ? "bg-yellow-400 text-black" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}`}>
+                {s}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-zinc-500 w-8 shrink-0">Y</label>
+            <input type="range" min={0.2} max={0.7} step={0.001} value={subjectY}
+              onChange={(e) => setSubjectY(Number(e.target.value))}
+              className="flex-1 accent-yellow-400 h-1" />
+            <code className="text-xs text-yellow-400 font-bold w-12 text-right">{subjectY.toFixed(4)}</code>
+          </div>
+        </div>
+
+        {/* Prefix (Welcome to) */}
+        <div className="bg-zinc-900/50 rounded-lg p-3 space-y-2 border border-zinc-800">
+          <p className="text-xs text-white font-medium uppercase tracking-wide">Prefix (Welcome to)</p>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-zinc-500 w-8 shrink-0">Size</label>
+            <input type="range" min={16} max={96} step={2} value={prefixSize}
+              onChange={(e) => setPrefixSize(Number(e.target.value))}
+              className="flex-1 accent-white h-1" />
+            <code className="text-xs text-white font-bold w-12 text-right">{prefixSize}px</code>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-zinc-500 w-8 shrink-0">Y</label>
+            <input type="range" min={0.2} max={0.7} step={0.001} value={prefixY}
+              onChange={(e) => setPrefixY(Number(e.target.value))}
+              className="flex-1 accent-white h-1" />
+            <code className="text-xs text-white font-bold w-12 text-right">{prefixY.toFixed(4)}</code>
+          </div>
+        </div>
+      </div>
+
+      {/* Preview — large centered */}
+      <div className="flex justify-center">
+        {loading && !previewImg && (
+          <div className="w-[320px] aspect-[9/16] bg-zinc-900 rounded-lg flex items-center justify-center">
+            <div className="w-6 h-6 border-2 border-zinc-600 border-t-white rounded-full animate-spin" />
+          </div>
+        )}
+        {previewImg && (
+          <div className="relative">
+            <img
+              src={previewImg}
+              alt="Text preview"
+              className="w-[320px] rounded-lg border border-zinc-700 shadow-lg"
+            />
+            {loading && (
+              <div className="absolute inset-0 bg-black/40 rounded-lg flex items-center justify-center">
+                <div className="w-6 h-6 border-2 border-zinc-600 border-t-white rounded-full animate-spin" />
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

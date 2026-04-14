@@ -886,3 +886,36 @@ class TestLatestTestJob:
             mock_settings.admin_api_key = VALID_TOKEN
             res = client.get("/admin/templates/tmpl-123/latest-test-job")
         assert res.status_code in (401, 422)
+
+
+# ── RecipeInterstitialSchema hold_s validation ──────────────────────────────
+
+
+class TestInterstitialHoldSValidator:
+    """hold_s=0.0 must be accepted (beat-aligned curtain close, no gap)."""
+
+    def test_hold_s_zero_accepted(self):
+        from app.routes.admin import RecipeInterstitialSchema
+
+        inter = RecipeInterstitialSchema(
+            type="curtain-close", after_slot=5, hold_s=0.0,
+            hold_color="#000000", animate_s=2.0,
+        )
+        assert inter.hold_s == 0.0
+
+    def test_hold_s_positive_accepted(self):
+        from app.routes.admin import RecipeInterstitialSchema
+
+        inter = RecipeInterstitialSchema(
+            type="curtain-close", after_slot=3, hold_s=1.5,
+        )
+        assert inter.hold_s == 1.5
+
+    def test_hold_s_negative_rejected(self):
+        from app.routes.admin import RecipeInterstitialSchema
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="hold_s must be >= 0"):
+            RecipeInterstitialSchema(
+                type="curtain-close", after_slot=1, hold_s=-0.5,
+            )

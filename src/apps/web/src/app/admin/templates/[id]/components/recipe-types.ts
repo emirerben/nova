@@ -19,7 +19,7 @@ export const OVERLAY_EFFECT_OPTIONS = [
 ] as const;
 export type OverlayEffect = (typeof OVERLAY_EFFECT_OPTIONS)[number];
 
-export const OVERLAY_POSITION_OPTIONS = ["top", "center", "bottom"] as const;
+export const OVERLAY_POSITION_OPTIONS = ["top", "center", "center-above", "center-label", "center-below", "bottom"] as const;
 export type OverlayPosition = (typeof OVERLAY_POSITION_OPTIONS)[number];
 
 export const FONT_STYLE_OPTIONS = [
@@ -27,7 +27,7 @@ export const FONT_STYLE_OPTIONS = [
 ] as const;
 export type FontStyle = (typeof FONT_STYLE_OPTIONS)[number];
 
-export const TEXT_SIZE_OPTIONS = ["small", "medium", "large", "xlarge"] as const;
+export const TEXT_SIZE_OPTIONS = ["small", "medium", "large", "xlarge", "xxlarge", "jumbo"] as const;
 export type TextSize = (typeof TEXT_SIZE_OPTIONS)[number];
 
 export const OVERLAY_ROLE_OPTIONS = ["hook", "reaction", "cta", "label"] as const;

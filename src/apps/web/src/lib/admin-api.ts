@@ -292,6 +292,36 @@ export async function adminSaveRecipe(
   return res.json();
 }
 
+// ── Text preview API ─────────────────────────────────────────────────────────
+
+export interface TextPreviewParams {
+  subject_text?: string;
+  subject_size_px: number;
+  subject_y_frac: number;
+  subject_color?: string;
+  prefix_text?: string;
+  prefix_size_px: number;
+  prefix_y_frac: number;
+  prefix_color?: string;
+}
+
+export interface TextPreviewResponse {
+  image_base64: string;
+  width: number;
+  height: number;
+}
+
+export async function adminTextPreview(
+  templateId: string,
+  params: TextPreviewParams,
+): Promise<TextPreviewResponse> {
+  const res = await adminFetch(`/admin/templates/${templateId}/text-preview`, {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
 /** Validate admin token by making a lightweight API call. */
 export async function adminValidateToken(): Promise<boolean> {
   try {

@@ -9,6 +9,7 @@ psycopg2-binary>=2.9
 pydantic>=2.7
 pydantic-settings>=2.2
 openai>=1.30
+google-genai>=1.0
 google-cloud-storage>=2.16
 scenedetect[opencv]>=0.6
 opencv-python-headless>=4.9
@@ -18,6 +19,8 @@ email-validator>=2.1
 python-multipart>=0.0.9
 httpx>=0.27
 structlog>=24
+Pillow>=10.0
+yt-dlp>=2024.12
 
 [dev]
 pytest>=8

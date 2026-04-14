@@ -62,11 +62,11 @@ log = structlog.get_logger()
 #            (detected by _is_subject_placeholder returning True)
 _LABEL_CONFIG: dict[str, dict] = {
     "prefix": {
-        "text_size": "medium",      # 72px — smaller, subordinate
+        "text_size": "small",       # 48px — small italic serif, subordinate to subject
         "start_s": 2.0,             # appears at absolute second 2
     },
     "subject": {
-        "text_size": "large",       # 120px — prominent
+        "text_size": "xxlarge",     # 250px — fills ~75% width like reference
         "font_style": "sans",       # Montserrat ExtraBold
         "text_color": "#F4D03F",    # warm maize/gold
         "start_s": 3.0,             # appears 1s after prefix
@@ -1017,6 +1017,14 @@ def _assemble_clips(
         slot_position = int(step.slot.get("position", i + 1))
         inter = interstitial_map.get(slot_position)
         if inter and inter["type"] == "curtain-close":
+            # ── PRE-BURN text onto slot BEFORE curtain ─────────────────
+            # Tiki-style: text appears on video, curtain closes OVER both.
+            # We burn text onto the reframed clip first, then apply curtain
+            # on top, so the black bars cover the text as they sweep down.
+            reframed = _pre_burn_curtain_slot_text(
+                reframed, step, vis_dur, clip_metas, subject, i, tmpdir, inter,
+            )
+
             # Apply curtain-close animation to the tail of this slot
             from app.pipeline.interstitials import (  # noqa: PLC0415
                 MIN_CURTAIN_ANIMATE_S,
@@ -1024,9 +1032,13 @@ def _assemble_clips(
             )
             tail_output = os.path.join(tmpdir, f"slot_{i}_curtain.mp4")
             try:
+                # Use recipe animate_s directly when explicitly set;
+                # only apply MIN_CURTAIN_ANIMATE_S as default fallback.
+                recipe_animate = inter.get("animate_s")
+                curtain_anim = recipe_animate if recipe_animate is not None else MIN_CURTAIN_ANIMATE_S
                 apply_curtain_close_tail(
                     reframed, tail_output,
-                    animate_s=max(MIN_CURTAIN_ANIMATE_S, inter.get("animate_s", 1.0)),
+                    animate_s=curtain_anim,
                 )
                 reframed = tail_output
             except Exception as exc:
@@ -1047,17 +1059,24 @@ def _assemble_clips(
                 raw_transition = str(step.slot.get("transition_in", "none"))
                 transition_types.append(translate_transition(raw_transition))
 
-        # Insert interstitial clip AFTER this slot if one is defined
+        # Insert interstitial clip AFTER this slot if one is defined.
+        # When hold_s=0 the curtain animation (already baked into the slot
+        # above) IS the full transition — skip the colour-hold clip so
+        # nothing sits between the two slots and beat+scene align perfectly.
         prev_had_interstitial = bool(inter)
         if inter:
-            _insert_interstitial(
-                inter, i, reframed_paths, slot_durations,
-                transition_types, tmpdir,
-            )
+            inter_hold = float(inter.get("hold_s", 1.0))
+            if inter_hold > 0:
+                _insert_interstitial(
+                    inter, i, reframed_paths, slot_durations,
+                    transition_types, tmpdir,
+                )
+            else:
+                log.info("interstitial_skip_zero_hold", type=inter["type"], slot=i)
             # Keep beat-snap clock in sync — interstitial hold time is real
             # video duration that must be accounted for when snapping later
             # slot boundaries to musical beats.
-            cumulative_s += float(inter.get("hold_s", 1.0))
+            cumulative_s += inter_hold
 
     if not reframed_paths:
         raise ValueError("No slots to assemble")
@@ -1165,10 +1184,11 @@ def _join_or_concat(
 ) -> None:
     """Join slots with xfade transitions, falling back to concat demuxer on error.
 
-    When has_interstitials is True, always use the xfade re-encode path even if
-    all transitions are "none". Interstitial clips are video-only (-an) while
-    slots have audio — the concat demuxer's stream copy requires matching stream
-    layouts and will fail or drop audio on the mismatch.
+    When has_interstitials is True but no visual transitions exist, use the
+    re-encoding concat demuxer instead of xfade. Chaining 17+ xfade filters
+    with duration=0.001 (hard-cut simulation) causes FFmpeg to drop frames
+    and truncate the output to ~4s. The concat demuxer with re-encode handles
+    mixed audio/no-audio streams correctly.
     """
     has_transitions = any(t != "none" for t in transition_types)
 
@@ -1258,6 +1278,15 @@ def _collect_absolute_overlays(
         slot_position = int(slot.get("position", i + 1))
         inter = inter_map.get(slot_position)
 
+        # Skip overlays for curtain-close slots — they were already
+        # pre-burned onto the slot clip before the curtain effect was
+        # applied (tiki-style: curtain closes OVER the text).
+        if inter and inter.get("type") == "curtain-close":
+            cumulative_s += dur
+            if inter:
+                cumulative_s += float(inter.get("hold_s", 1.0))
+            continue
+
         for ov in slot.get("text_overlays", []):
             clip_meta = _find_clip_meta_by_id(clip_id, clip_metas)
             text = _resolve_overlay_text(ov.get("role", "label"), clip_meta, ov, subject=subject)
@@ -1300,7 +1329,9 @@ def _collect_absolute_overlays(
                 "effect": ov.get("effect", "none"),
                 "font_style": ov.get("font_style", "display"),
                 "text_size": ov.get("text_size", "medium"),
+                "text_size_px": ov.get("text_size_px"),
                 "text_color": ov.get("text_color", "#FFFFFF"),
+                "position_y_frac": ov.get("position_y_frac"),
             }
             # Pass through font_family from admin recipe (overrides font_style)
             if ov.get("font_family"):
@@ -1323,7 +1354,7 @@ def _collect_absolute_overlays(
                 # Only apply non-styling keys from config. Visual properties
                 # (text_size, font_style, text_color, effect) come from the
                 # recipe so the admin editor preview matches the render.
-                _STYLING_KEYS = {"text_size", "font_style", "font_family", "text_color", "effect"}
+                _STYLING_KEYS = {"text_size", "text_size_px", "font_style", "font_family", "text_color", "effect"}
                 entry.update(
                     {k: v for k, v in config.items()
                      if k not in ("start_s", "accel_at_s") and k not in _STYLING_KEYS}
@@ -1349,11 +1380,10 @@ def _collect_absolute_overlays(
                 and inter
                 and inter.get("type") == "curtain-close"
             ):
-                from app.pipeline.interstitials import (  # noqa: PLC0415, I001
-                    MIN_CURTAIN_ANIMATE_S,
-                    _CURTAIN_MAX_RATIO,
-                )
-                animate_s = max(MIN_CURTAIN_ANIMATE_S, float(inter.get("animate_s", 1.0)))
+                from app.pipeline.interstitials import MIN_CURTAIN_ANIMATE_S, _CURTAIN_MAX_RATIO  # noqa: PLC0415
+                # Use recipe animate_s directly when explicitly set
+                recipe_animate = inter.get("animate_s")
+                animate_s = float(recipe_animate) if recipe_animate is not None else MIN_CURTAIN_ANIMATE_S
                 # Apply same 60% clamp as apply_curtain_close_tail
                 animate_s = min(animate_s, dur * _CURTAIN_MAX_RATIO)
                 slot_end_abs = cumulative_s + dur
@@ -1441,6 +1471,148 @@ def _collect_absolute_overlays(
 
     log.info("text_overlays_collected", raw=len(raw), deduped=len(result))
     return result
+
+
+def _pre_burn_curtain_slot_text(
+    clip_path: str,
+    step,
+    slot_dur: float,
+    clip_metas: list | None,
+    subject: str,
+    slot_idx: int,
+    tmpdir: str,
+    inter: dict | None = None,
+) -> str:
+    """Burn text overlays onto a slot clip BEFORE curtain-close is applied.
+
+    This ensures the curtain closes OVER the text (tiki-style), rather than
+    the text floating on top of the curtain bars.  Uses slot-relative
+    timestamps (0 … slot_dur) instead of absolute joined-video timestamps.
+
+    Returns the path to the text-burned clip (or original if no overlays).
+    """
+    from app.pipeline.text_overlay import generate_text_overlay_png  # noqa: PLC0415
+    from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
+
+    slot = step.slot if hasattr(step, "slot") else step.get("slot", {})
+    overlays = slot.get("text_overlays", [])
+    if not overlays:
+        return clip_path
+
+    clip_id = step.clip_id if hasattr(step, "clip_id") else step.get("clip_id", "")
+    clip_meta = _find_clip_meta_by_id(clip_id, clip_metas)
+
+    # Build overlay entries with slot-relative timestamps
+    slot_overlays: list[dict] = []
+    for ov in overlays:
+        text = _resolve_overlay_text(ov.get("role", "label"), clip_meta, ov, subject=subject)
+        if not text or not text.strip():
+            continue
+
+        # Skip combined prefix+subject overlays
+        sample = ov.get("sample_text", "")
+        if (
+            sample
+            and " " in sample
+            and any(w.isupper() and len(w) > 1 for w in sample.split())
+            and sample.lower().startswith("welcome")
+        ):
+            continue
+
+        ov_start = float(ov.get("start_s", 0.0))
+        ov_end = float(ov.get("end_s", slot_dur))
+        # Clamp end to slot duration
+        ov_end = min(ov_end, slot_dur)
+
+        # Apply label config styling
+        entry = {
+            "text": text,
+            "start_s": ov_start,
+            "end_s": ov_end,
+            "position": ov.get("position", "center"),
+            "effect": ov.get("effect", "none"),
+            "font_style": ov.get("font_style", "display"),
+            "text_size": ov.get("text_size", "medium"),
+            "text_size_px": ov.get("text_size_px"),
+            "text_color": ov.get("text_color", "#FFFFFF"),
+            "position_y_frac": ov.get("position_y_frac"),
+        }
+
+        role = ov.get("role", "")
+        sample_text = ov.get("sample_text", "")
+        is_subject = _is_subject_placeholder(sample_text)
+        is_label_like = role == "label" or is_subject or sample_text.lower().startswith("welcome")
+        if is_label_like:
+            config = _LABEL_CONFIG["subject" if is_subject else "prefix"]
+            # Recipe styling takes priority — only apply non-styling keys
+            # from _LABEL_CONFIG so admin editor preview matches render.
+            _STYLING_KEYS = {"text_size", "text_size_px", "font_style", "font_family", "text_color", "effect"}
+            entry.update(
+                {k: v for k, v in config.items()
+                 if k not in ("start_s", "accel_at_s") and k not in _STYLING_KEYS}
+            )
+
+            # Font-cycle acceleration synced with curtain animation
+            if is_subject and entry.get("effect") == "font-cycle" and inter:
+                from app.pipeline.interstitials import MIN_CURTAIN_ANIMATE_S, _CURTAIN_MAX_RATIO  # noqa: PLC0415
+                recipe_animate = inter.get("animate_s")
+                animate_s = float(recipe_animate) if recipe_animate is not None else MIN_CURTAIN_ANIMATE_S
+                animate_s = min(animate_s, slot_dur * _CURTAIN_MAX_RATIO)
+                accel_at = slot_dur - animate_s
+                if accel_at > ov_start:
+                    entry["font_cycle_accel_at_s"] = accel_at
+                # Extend font-cycle to cover entire slot so cycling runs
+                # through the curtain-close animation until bars fully
+                # cover the text. Without this, Gemini's shorter end_s
+                # stops cycling before the curtain finishes.
+                entry["end_s"] = slot_dur
+
+        slot_overlays.append(entry)
+
+    if not slot_overlays:
+        return clip_path
+
+    # Generate PNGs with slot-relative timestamps
+    png_configs = generate_text_overlay_png(slot_overlays, slot_dur, tmpdir, slot_index=slot_idx)
+    if not png_configs:
+        return clip_path
+
+    # Burn PNGs onto clip
+    burned_path = os.path.join(tmpdir, f"slot_{slot_idx}_textburned.mp4")
+    cmd = ["ffmpeg", "-i", clip_path]
+    for cfg in png_configs:
+        cmd.extend(["-i", cfg["png_path"]])
+
+    fc_parts = ["[0:v]null[base]"]
+    prev = "base"
+    for j, cfg in enumerate(png_configs):
+        out = f"txt{j}"
+        fc_parts.append(
+            f"[{prev}][{j + 1}:v]overlay=0:0"
+            f":enable='between(t,{cfg['start_s']:.3f},{cfg['end_s']:.3f})'"
+            f"[{out}]"
+        )
+        prev = out
+
+    cmd.extend([
+        "-filter_complex", ";".join(fc_parts),
+        "-map", f"[{prev}]",
+        "-map", "0:a?",
+        *_encoding_args(burned_path),
+    ])
+
+    log.info("pre_burn_curtain_text", slot=slot_idx, overlays=len(png_configs))
+    result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
+    if result.returncode != 0:
+        log.warning(
+            "pre_burn_curtain_text_failed",
+            slot=slot_idx,
+            rc=result.returncode,
+            stderr=result.stderr[-500:] if result.stderr else b"",
+        )
+        return clip_path  # fallback: no text, curtain still applied
+
+    return burned_path
 
 
 def _burn_text_overlays(

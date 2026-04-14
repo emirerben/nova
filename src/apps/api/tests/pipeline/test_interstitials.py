@@ -218,11 +218,15 @@ class TestCurtainMinAnimateS:
     def test_curtain_max_ratio_constant(self):
         assert _CURTAIN_MAX_RATIO == 0.6
 
-    def test_curtain_min_animate_s_clamped(self):
-        """animate_s below MIN_CURTAIN_ANIMATE_S is clamped to 4.0, then 60% rule applies."""
+    def test_curtain_slots_skipped_in_collect(self):
+        """Curtain-close slots are skipped in _collect_absolute_overlays.
+
+        Text for curtain-close slots is pre-burned onto the slot clip
+        BEFORE the curtain effect (tiki-style), so _collect_absolute_overlays
+        must skip them to avoid double-rendering.
+        """
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        # 10s slot: MIN=4.0, 60% of 10=6.0 → 4.0 wins (no clamp needed)
         step = MagicMock()
         step.clip_id = "clip_a"
         step.moment = {"start_s": 0.0, "end_s": 10.0}
@@ -246,13 +250,11 @@ class TestCurtainMinAnimateS:
             [step], [10.0], None, "Peru",
             interstitial_map=interstitial_map,
         )
-        assert len(result) == 1
-        # animate_s = max(4.0, 0.3) = 4.0, min(4.0, 10*0.6=6.0) = 4.0
-        # accel_at = 10.0 - 4.0 = 6.0
-        assert result[0].get("font_cycle_accel_at_s") == 6.0
+        # Curtain-close slot overlays are pre-burned, so none collected here
+        assert len(result) == 0
 
-    def test_clamp_at_60_pct(self):
-        """60% clamp: 8s slot with 4.0 MIN → 60% clamp gives 4.8, MIN wins at 4.0."""
+    def test_non_curtain_slots_still_collected(self):
+        """Non-curtain slots still have their overlays collected normally."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = MagicMock()
@@ -266,58 +268,14 @@ class TestCurtainMinAnimateS:
                 "start_s": 0.0,
                 "end_s": 8.0,
                 "position": "center",
-                "effect": "font-cycle",
-                "sample_text": "PERU",
+                "effect": "fade-in",
+                "sample_text": "Welcome to",
             }],
         }
 
-        interstitial_map = {
-            1: {"type": "curtain-close", "animate_s": 1.0, "hold_s": 1.0},
-        }
+        # No interstitial → overlays collected normally
         result = _collect_absolute_overlays(
-            [step], [8.0], None, "Peru",
-            interstitial_map=interstitial_map,
+            [step], [8.0], None, "",
+            interstitial_map={},
         )
         assert len(result) == 1
-        # animate_s = max(4.0, 1.0) = 4.0, min(4.0, 8.0*0.6=4.8) = 4.0
-        # accel_at = 8.0 - 4.0 = 4.0
-        # config accel = 8.0, min(8.0, 4.0) = 4.0
-        # entry["start_s"] = 3.0 (subject label first-slot override)
-        # 4.0 > 3.0 → set
-        assert result[0].get("font_cycle_accel_at_s") == 4.0
-
-    def test_clamp_equal_duration(self):
-        """7s slot where 60% clamp (4.2) wins over MIN (4.0)."""
-        from app.tasks.template_orchestrate import _collect_absolute_overlays
-
-        step = MagicMock()
-        step.clip_id = "clip_a"
-        step.moment = {"start_s": 0.0, "end_s": 7.0}
-        step.slot = {
-            "position": 1,
-            "target_duration_s": 7.0,
-            "text_overlays": [{
-                "role": "label",
-                "start_s": 0.0,
-                "end_s": 7.0,
-                "position": "center",
-                "effect": "font-cycle",
-                "sample_text": "PERU",
-            }],
-        }
-
-        interstitial_map = {
-            1: {"type": "curtain-close", "animate_s": 5.0, "hold_s": 1.0},
-        }
-        result = _collect_absolute_overlays(
-            [step], [7.0], None, "Peru",
-            interstitial_map=interstitial_map,
-        )
-        assert len(result) == 1
-        # animate_s = max(4.0, 5.0) = 5.0, min(5.0, 7.0*0.6=4.2) = 4.2
-        # accel_at = 7.0 - 4.2 = 2.8
-        # entry["start_s"] = 3.0 (subject label first-slot override)
-        # 2.8 > 3.0 → False → config accel_at=8.0 stays
-        # But wait, 2.8 < 3.0, so curtain accel is rejected. Config 8.0 stays.
-        # On a 7s slot, 8.0 is past the end. So effectively no accel.
-        assert result[0].get("font_cycle_accel_at_s") == 8.0

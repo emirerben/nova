@@ -1142,8 +1142,8 @@ class TestAssembleClipsTextOverlays:
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert result == []
 
-    def test_font_cycle_accel_injected_for_curtain_close(self):
-        """font-cycle overlays on slots with curtain-close get accel timestamp."""
+    def test_curtain_close_slots_skipped_in_collect(self):
+        """Curtain-close slot overlays are pre-burned, so skipped in _collect."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step_with_overlays(overlays=[{
@@ -1162,13 +1162,9 @@ class TestAssembleClipsTextOverlays:
             [step], [5.0], None, "Peru",
             interstitial_map=interstitial_map,
         )
-        assert len(result) == 1
-        # MIN_CURTAIN_ANIMATE_S=4.0 > 1.5, so animate_s=4.0
-        # 60% clamp: min(4.0, 5.0*0.6=3.0) = 3.0
-        # curtain accel_at = 5.0 - 3.0 = 2.0
-        # But entry["start_s"] = 3.0 (subject label first-slot override)
-        # 2.0 > 3.0 → False → curtain accel rejected, config accel=8.0 stays
-        assert result[0].get("font_cycle_accel_at_s") == 8.0
+        # Curtain-close slot overlays are pre-burned onto slot clip,
+        # so _collect_absolute_overlays skips them entirely
+        assert len(result) == 0
 
     def test_subject_label_gets_accel_without_curtain(self):
         """Subject labels always get accel_at_s=8.0 from _LABEL_CONFIG, even without curtain."""
@@ -1205,8 +1201,8 @@ class TestAssembleClipsTextOverlays:
         assert len(result) == 1
         assert "font_cycle_accel_at_s" not in result[0]
 
-    def test_no_accel_for_static_overlay_with_curtain(self):
-        """Static overlays don't get accel even if slot has curtain-close."""
+    def test_curtain_close_static_overlay_also_skipped(self):
+        """All curtain-close slot overlays are skipped (pre-burned), including static."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step_with_overlays(overlays=[{
@@ -1225,8 +1221,8 @@ class TestAssembleClipsTextOverlays:
             [step], [5.0], None, "",
             interstitial_map=interstitial_map,
         )
-        assert len(result) == 1
-        assert "font_cycle_accel_at_s" not in result[0]
+        # Pre-burned, so skipped
+        assert len(result) == 0
 
 
 class TestCrossSlotMerge:
@@ -1247,9 +1243,10 @@ class TestCrossSlotMerge:
         return step
 
     def test_cross_slot_same_text_merged(self):
-        """Same text on adjacent slots produces one merged overlay."""
+        """Same text on adjacent non-curtain slots produces one merged overlay."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
+        # Use non-curtain slots so overlays are collected normally
         step1 = self._make_step_with_overlays(
             position=1, overlays=[{
                 "role": "label", "start_s": 0.0, "end_s": 5.0,
@@ -1265,26 +1262,17 @@ class TestCrossSlotMerge:
             }],
         )
 
-        # slot1=5s, interstitial hold=1s, slot2=5s → total 11s
-        # First-slot subject label timing override: start_s=3.0 (from _LABEL_CONFIG)
-        # Overlay 1: 3.0-5.0 (clamped by curtain to slot end)
-        # Overlay 2: 6.0-11.0 (gap = 1.0s < 2.0s threshold)
-        interstitial_map = {
-            1: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
-        }
+        # No curtain-close → both slots' overlays collected
         result = _collect_absolute_overlays(
             [step1, step2], [5.0, 5.0], None, "Peru",
-            interstitial_map=interstitial_map,
+            interstitial_map={},
         )
         # Should be merged into one overlay
         peru_overlays = [o for o in result if o["text"].lower() == "peru"]
         assert len(peru_overlays) == 1
-        # Merged overlay: starts at 3.0 (config timing), ends at 11.0
-        assert peru_overlays[0]["start_s"] == 3.0
-        assert peru_overlays[0]["end_s"] == 11.0
 
-    def test_cross_slot_merge_inherits_accel(self):
-        """Merged overlay gets font_cycle_accel_at_s from the later slot."""
+    def test_cross_slot_merge_inherits_effect(self):
+        """Merged overlay gets effect from the later slot."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step1 = self._make_step_with_overlays(
@@ -1302,19 +1290,15 @@ class TestCrossSlotMerge:
             }],
         )
 
-        interstitial_map = {
-            2: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
-        }
+        # No curtain-close → both slots collected
         result = _collect_absolute_overlays(
             [step1, step2], [5.0, 5.0], None, "Peru",
-            interstitial_map=interstitial_map,
+            interstitial_map={},
         )
         peru_overlays = [o for o in result if o["text"].lower() == "peru"]
         assert len(peru_overlays) == 1
         # Should have font-cycle effect from the second slot
         assert peru_overlays[0]["effect"] == "font-cycle"
-        # Should have accel_at from the curtain-close on slot 2
-        assert "font_cycle_accel_at_s" in peru_overlays[0]
 
     def test_non_adjacent_same_text_not_merged(self):
         """Same text with large gap (>2s) stays separate."""
@@ -1744,8 +1728,8 @@ class TestOverlayFineTuning:
         assert len(result) == 1
         assert result[0].get("font_cycle_accel_at_s") == 8.0
 
-    def test_curtain_accel_clamps_with_font_cycle_effect(self):
-        """Curtain accel (6.0) < config default (8.0), curtain wins for font-cycle."""
+    def test_curtain_slots_pre_burned_not_collected(self):
+        """Curtain-close slots are pre-burned so _collect skips them entirely."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step([{
@@ -1761,31 +1745,8 @@ class TestOverlayFineTuning:
             [step], [10.0], None, "Peru",
             interstitial_map=interstitial_map,
         )
-        assert len(result) == 1
-        # Config sets accel_at=8.0, curtain-derived: 10.0 - 4.0 = 6.0
-        # min(8.0, 6.0) = 6.0
-        assert result[0].get("font_cycle_accel_at_s") == 6.0
-
-    def test_text_persists_through_curtain(self):
-        """Text end_s = slot_end_abs (persists through entire curtain close)."""
-        from app.tasks.template_orchestrate import _collect_absolute_overlays
-
-        step = self._make_step([{
-            "role": "label", "start_s": 0.0, "end_s": 10.0,
-            "position": "center", "effect": "font-cycle",
-            "sample_text": "PERU",
-        }])
-        step.slot["target_duration_s"] = 10.0
-        interstitial_map = {
-            1: {"type": "curtain-close", "animate_s": 4.0, "hold_s": 1.0},
-        }
-        result = _collect_absolute_overlays(
-            [step], [10.0], None, "Peru",
-            interstitial_map=interstitial_map,
-        )
-        assert len(result) == 1
-        # end_s should be clamped to slot_end_abs (10.0), not curtain start
-        assert result[0]["end_s"] == 10.0
+        # Pre-burned onto slot clip → skipped here
+        assert len(result) == 0
 
     def test_non_label_hook_passthrough(self):
         """Hook role with non-label-like text keeps Gemini defaults."""
@@ -1805,12 +1766,12 @@ class TestOverlayFineTuning:
 
     # ── Issue 5: Text exit clamped on curtain-close ──────────────────────
 
-    def test_text_exit_clamped_on_curtain(self):
-        """end_s > slot_end is clamped to slot end on curtain-close slots."""
+    def test_curtain_slot_overlays_skipped(self):
+        """Curtain-close slot overlays are pre-burned, so skipped in _collect."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step([{
-            "role": "hook", "start_s": 0.0, "end_s": 7.0,  # extends past 5.0s slot
+            "role": "hook", "start_s": 0.0, "end_s": 7.0,
             "position": "center", "effect": "none", "sample_text": "WOW",
         }])
         interstitial_map = {
@@ -1820,8 +1781,7 @@ class TestOverlayFineTuning:
             [step], [5.0], None, "",
             interstitial_map=interstitial_map,
         )
-        assert len(result) == 1
-        assert result[0]["end_s"] == 5.0  # clamped to slot end
+        assert len(result) == 0  # pre-burned, skipped
 
     def test_text_exit_not_clamped_no_curtain(self):
         """Without curtain-close, end_s is NOT clamped to slot end."""
@@ -1835,8 +1795,8 @@ class TestOverlayFineTuning:
         assert len(result) == 1
         assert result[0]["end_s"] == 7.0  # not clamped
 
-    def test_text_exit_already_within_slot(self):
-        """end_s < slot_end is untouched even with curtain-close."""
+    def test_curtain_slot_short_overlay_also_skipped(self):
+        """Even short overlays on curtain-close slots are pre-burned, skipped."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
         step = self._make_step([{
@@ -1850,49 +1810,351 @@ class TestOverlayFineTuning:
             [step], [5.0], None, "",
             interstitial_map=interstitial_map,
         )
-        assert len(result) == 1
-        assert result[0]["end_s"] == 4.0  # untouched
+        assert len(result) == 0  # pre-burned, skipped
 
-    def test_timing_override_clamped_by_curtain(self):
-        """Timing override past slot end is still clamped by curtain exit."""
+    # ── Issue 4: non-curtain accel still works ─────────────────────────
+
+    def test_accel_at_works_without_curtain(self):
+        """Subject labels get default accel_at_s from _LABEL_CONFIG without curtain."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
-        step = self._make_step([{
-            "role": "hook", "start_s": 0.0, "end_s": 3.0,
-            "end_s_override": 8.0,  # override extends well past slot
-            "position": "center", "effect": "none", "sample_text": "WOW",
-        }])
-        interstitial_map = {
-            1: {"type": "curtain-close", "animate_s": 1.5, "hold_s": 1.0},
-        }
-        result = _collect_absolute_overlays(
-            [step], [5.0], None, "",
-            interstitial_map=interstitial_map,
-        )
-        assert len(result) == 1
-        assert result[0]["end_s"] == 5.0  # clamped by curtain
-
-    # ── Issue 4: accel_at uses clamped animate_s ─────────────────────────
-
-    def test_accel_at_uses_clamped_animate_s(self):
-        """accel timestamp uses 60%-clamped animate_s on longer slots."""
-        from app.tasks.template_orchestrate import _collect_absolute_overlays
-
-        # 10s slot: animate_s = max(4.0, 1.0) = 4.0, min(4.0, 10*0.6=6.0) = 4.0
-        # accel_at = 10.0 - 4.0 = 6.0, entry["start_s"] = 3.0 → 6.0 > 3.0 → set
-        # config accel = 8.0, min(8.0, 6.0) = 6.0
         step = self._make_step([{
             "role": "label", "start_s": 0.0, "end_s": 10.0,
             "position": "center", "effect": "font-cycle", "sample_text": "PERU",
         }])
         step.slot["target_duration_s"] = 10.0
 
-        interstitial_map = {
-            1: {"type": "curtain-close", "animate_s": 1.0, "hold_s": 1.0},
-        }
+        # No curtain-close → normal collection
         result = _collect_absolute_overlays(
             [step], [10.0], None, "Peru",
-            interstitial_map=interstitial_map,
+            interstitial_map={},
         )
         assert len(result) == 1
-        assert result[0].get("font_cycle_accel_at_s") == 6.0
+        assert result[0].get("font_cycle_accel_at_s") == 8.0
+
+
+# ── Font-cycle end_s extension on curtain-close slots ────────────────────────
+
+
+class TestPreBurnCurtainFontCycleEndS:
+    """Font-cycle end_s must extend to slot_dur on curtain-close slots."""
+
+    def test_font_cycle_end_s_extended_to_slot_dur(self, tmp_path):
+        """Gemini end_s < slot_dur → pre-burn extends to slot_dur for font-cycle."""
+        from app.tasks.template_orchestrate import _pre_burn_curtain_slot_text
+
+        clip_file = tmp_path / "slot.mp4"
+        clip_file.write_bytes(b"fake")
+
+        step = MagicMock()
+        step.clip_id = "clip_a"
+        step.slot = {
+            "position": 5,
+            "target_duration_s": 7.0,
+            "text_overlays": [{
+                "role": "label",
+                "start_s": 0.0,
+                "end_s": 5.0,  # Gemini says 5s, slot is 7s
+                "position": "center",
+                "effect": "font-cycle",
+                "sample_text": "PERU",
+            }],
+        }
+
+        inter = {
+            "type": "curtain-close",
+            "hold_s": 0.0,
+            "animate_s": 2.0,
+            "hold_color": "#000000",
+        }
+
+        with patch(
+            "app.pipeline.text_overlay.generate_text_overlay_png",
+        ) as mock_gen:
+            mock_gen.return_value = []  # no PNGs → returns original path
+
+            _pre_burn_curtain_slot_text(
+                str(clip_file), step, 7.0, None, "Peru", 4, str(tmp_path), inter,
+            )
+
+            # Verify the overlay passed to generate_text_overlay_png
+            # has end_s extended to slot_dur (7.0), not Gemini's 5.0
+            assert mock_gen.call_count == 1
+            overlays_arg = mock_gen.call_args[0][0]
+            assert len(overlays_arg) == 1
+            assert overlays_arg[0]["end_s"] == 7.0, (
+                f"Font-cycle end_s should be slot_dur (7.0), got {overlays_arg[0]['end_s']}"
+            )
+
+    def test_font_cycle_accel_at_set_correctly(self, tmp_path):
+        """accel_at = slot_dur - animate_s, within overlay range."""
+        from app.tasks.template_orchestrate import _pre_burn_curtain_slot_text
+
+        clip_file = tmp_path / "slot.mp4"
+        clip_file.write_bytes(b"fake")
+
+        step = MagicMock()
+        step.clip_id = "clip_a"
+        step.slot = {
+            "position": 5,
+            "target_duration_s": 7.0,
+            "text_overlays": [{
+                "role": "label",
+                "start_s": 0.0,
+                "end_s": 5.0,
+                "position": "center",
+                "effect": "font-cycle",
+                "sample_text": "PERU",
+            }],
+        }
+
+        inter = {
+            "type": "curtain-close",
+            "hold_s": 0.0,
+            "animate_s": 2.0,
+            "hold_color": "#000000",
+        }
+
+        with patch(
+            "app.pipeline.text_overlay.generate_text_overlay_png",
+        ) as mock_gen:
+            mock_gen.return_value = []
+
+            _pre_burn_curtain_slot_text(
+                str(clip_file), step, 7.0, None, "Peru", 4, str(tmp_path), inter,
+            )
+
+            overlays_arg = mock_gen.call_args[0][0]
+            # accel_at = 7.0 - 2.0 = 5.0
+            assert overlays_arg[0].get("font_cycle_accel_at_s") == 5.0
+
+    def test_non_font_cycle_overlay_not_extended(self, tmp_path):
+        """Non-font-cycle overlays keep their original end_s."""
+        from app.tasks.template_orchestrate import _pre_burn_curtain_slot_text
+
+        clip_file = tmp_path / "slot.mp4"
+        clip_file.write_bytes(b"fake")
+
+        step = MagicMock()
+        step.clip_id = "clip_a"
+        step.slot = {
+            "position": 5,
+            "target_duration_s": 7.0,
+            "text_overlays": [{
+                "role": "label",
+                "start_s": 0.0,
+                "end_s": 3.0,
+                "position": "top-center",
+                "effect": "fade-in",
+                "sample_text": "Welcome to",
+            }],
+        }
+
+        inter = {
+            "type": "curtain-close",
+            "hold_s": 0.0,
+            "animate_s": 2.0,
+            "hold_color": "#000000",
+        }
+
+        with patch(
+            "app.pipeline.text_overlay.generate_text_overlay_png",
+        ) as mock_gen:
+            mock_gen.return_value = []
+
+            _pre_burn_curtain_slot_text(
+                str(clip_file), step, 7.0, None, "Peru", 4, str(tmp_path), inter,
+            )
+
+            overlays_arg = mock_gen.call_args[0][0]
+            # Non-font-cycle: end_s stays at original 3.0
+            assert overlays_arg[0]["end_s"] == 3.0
+
+
+# ── Interstitial hold_s=0 skip ───────────────────────────────────────────────
+
+
+class TestInterstitialZeroHoldSkip:
+    """hold_s=0 skips the colour-hold clip so curtain close aligns with beat."""
+
+    def _make_step(self, clip_id, position, target_dur):
+        step = MagicMock()
+        step.clip_id = clip_id
+        step.moment = {"start_s": 0.0, "end_s": target_dur + 2.0}
+        step.slot = {"position": position, "target_duration_s": target_dur}
+        return step
+
+    def test_zero_hold_skips_insert_interstitial(self, tmp_path):
+        """hold_s=0 → _insert_interstitial never called, no extra clip added."""
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_a = tmp_path / "clip_a.mp4"
+        clip_b = tmp_path / "clip_b.mp4"
+        clip_a.write_bytes(b"fake")
+        clip_b.write_bytes(b"fake")
+
+        steps = [
+            self._make_step("clip_a", 1, 5.0),
+            self._make_step("clip_b", 2, 5.0),
+        ]
+
+        interstitial_list = [
+            {"type": "curtain-close", "after_slot": 1, "hold_s": 0.0,
+             "animate_s": 2.0, "hold_color": "#000000"},
+        ]
+
+        def fake_reframe(**kwargs):
+            with open(kwargs["output_path"], "wb") as f:
+                f.write(b"\x00" * 64)
+
+        with (
+            patch(
+                "app.pipeline.reframe.reframe_and_export",
+                side_effect=fake_reframe,
+            ) as mock_reframe,
+            patch(
+                "app.tasks.template_orchestrate._insert_interstitial",
+            ) as mock_insert,
+            patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
+        ):
+            def fake_ffmpeg(cmd, **kw):
+                if "-y" in cmd:
+                    idx = cmd.index("-y") + 1
+                    if idx < len(cmd):
+                        with open(cmd[idx], "wb") as f:
+                            f.write(b"\x00" * 64)
+                return MagicMock(returncode=0)
+
+            mock_ffmpeg.side_effect = fake_ffmpeg
+
+            _assemble_clips(
+                steps=steps,
+                clip_id_to_local={
+                    "clip_a": str(clip_a),
+                    "clip_b": str(clip_b),
+                },
+                clip_probe_map={},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                interstitials=interstitial_list,
+            )
+
+            # _insert_interstitial must NOT be called when hold_s=0
+            mock_insert.assert_not_called()
+            # Only 2 reframe calls (one per slot), no extra interstitial clip
+            assert mock_reframe.call_count == 2
+
+    def test_positive_hold_calls_insert_interstitial(self, tmp_path):
+        """hold_s=1.0 → _insert_interstitial IS called."""
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_a = tmp_path / "clip_a.mp4"
+        clip_b = tmp_path / "clip_b.mp4"
+        clip_a.write_bytes(b"fake")
+        clip_b.write_bytes(b"fake")
+
+        steps = [
+            self._make_step("clip_a", 1, 5.0),
+            self._make_step("clip_b", 2, 5.0),
+        ]
+
+        interstitial_list = [
+            {"type": "curtain-close", "after_slot": 1, "hold_s": 1.0,
+             "animate_s": 2.0, "hold_color": "#000000"},
+        ]
+
+        def fake_reframe(**kwargs):
+            with open(kwargs["output_path"], "wb") as f:
+                f.write(b"\x00" * 64)
+
+        with (
+            patch(
+                "app.pipeline.reframe.reframe_and_export",
+                side_effect=fake_reframe,
+            ),
+            patch(
+                "app.tasks.template_orchestrate._insert_interstitial",
+            ) as mock_insert,
+            patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
+        ):
+            def fake_ffmpeg(cmd, **kw):
+                if "-y" in cmd:
+                    idx = cmd.index("-y") + 1
+                    if idx < len(cmd):
+                        with open(cmd[idx], "wb") as f:
+                            f.write(b"\x00" * 64)
+                return MagicMock(returncode=0)
+
+            mock_ffmpeg.side_effect = fake_ffmpeg
+
+            _assemble_clips(
+                steps=steps,
+                clip_id_to_local={
+                    "clip_a": str(clip_a),
+                    "clip_b": str(clip_b),
+                },
+                clip_probe_map={},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                interstitials=interstitial_list,
+            )
+
+            mock_insert.assert_called_once()
+
+    def test_zero_hold_cumulative_stays_in_sync(self, tmp_path):
+        """hold_s=0 still adds 0.0 to cumulative_s (no drift)."""
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_a = tmp_path / "clip_a.mp4"
+        clip_b = tmp_path / "clip_b.mp4"
+        clip_a.write_bytes(b"fake")
+        clip_b.write_bytes(b"fake")
+
+        steps = [
+            self._make_step("clip_a", 1, 5.0),
+            self._make_step("clip_b", 2, 5.0),
+        ]
+
+        interstitial_list = [
+            {"type": "curtain-close", "after_slot": 1, "hold_s": 0.0,
+             "animate_s": 2.0, "hold_color": "#000000"},
+        ]
+
+        def fake_reframe(**kwargs):
+            with open(kwargs["output_path"], "wb") as f:
+                f.write(b"\x00" * 64)
+
+        with (
+            patch(
+                "app.pipeline.reframe.reframe_and_export",
+                side_effect=fake_reframe,
+            ) as mock_reframe,
+            patch(
+                "app.tasks.template_orchestrate._insert_interstitial",
+            ),
+            patch("app.tasks.template_orchestrate.subprocess.run") as mock_ffmpeg,
+        ):
+            def fake_ffmpeg(cmd, **kw):
+                if "-y" in cmd:
+                    idx = cmd.index("-y") + 1
+                    if idx < len(cmd):
+                        with open(cmd[idx], "wb") as f:
+                            f.write(b"\x00" * 64)
+                return MagicMock(returncode=0)
+
+            mock_ffmpeg.side_effect = fake_ffmpeg
+
+            _assemble_clips(
+                steps=steps,
+                clip_id_to_local={
+                    "clip_a": str(clip_a),
+                    "clip_b": str(clip_b),
+                },
+                clip_probe_map={},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                interstitials=interstitial_list,
+            )
+
+            # Both slots rendered — confirms no crash from cumulative_s drift
+            assert mock_reframe.call_count == 2

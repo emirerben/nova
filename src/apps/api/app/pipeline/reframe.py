@@ -34,19 +34,37 @@ class ReframeError(Exception):
     pass
 
 
-def _encoding_args(output_path: str, preset: str = "fast") -> list[str]:
+def _encoding_args(
+    output_path: str,
+    preset: str = "fast",
+    crf: str = "18",
+) -> list[str]:
     """Shared FFmpeg output encoding arguments (DRY).
 
     Args:
         preset: libx264 preset. Use "ultrafast" for intermediate files
                 that will be re-encoded later, "fast" for final output.
+        crf: Constant Rate Factor. Lower = better quality.
+             18 is visually lossless, 23 is default (too lossy for
+             multi-pass pipelines with 3+ re-encodes).
+
+    Color handling: HDR/HLG sources (bt2020, arib-std-b67) are tone-mapped
+    to SDR (bt709) via zscale to prevent washed-out colors when forcing
+    yuv420p output.
     """
     return [
         "-c:v", "libx264",
         "-profile:v", "high",
         "-preset", preset,
-        "-crf", "23",
-        "-pix_fmt", "yuv420p",  # QuickTime/browser compatibility
+        "-crf", crf,
+        "-pix_fmt", "yuv420p",
+        # Tag output as bt709 (SDR) so players render colors correctly.
+        # iPhone clips often come as bt2020/HLG; without explicit tagging
+        # the encoder copies source tags → player misinterprets SDR data
+        # as HDR → washed-out look.
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-colorspace", "bt709",
         "-b:v", settings.output_video_bitrate,
         "-maxrate", settings.output_video_bitrate,
         "-bufsize", "8M",
@@ -244,6 +262,11 @@ def _build_video_filter(
     Text overlays are handled separately via overlay filter (not in this chain).
     """
     filters: list[str] = []
+
+    # 0a. HDR/HLG → SDR color conversion.
+    # iPhone clips are bt2020/HLG; without conversion, colors look washed out
+    # after encoding to bt709 yuv420p. This is safe on bt709 sources (no-op).
+    filters.append("colorspace=all=bt709:iall=bt2020")
 
     # 0. Speed ramp -- FIRST filter to normalize PTS for all subsequent timed filters
     if speed_factor != 1.0 and speed_factor > 0:

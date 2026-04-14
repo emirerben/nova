@@ -9,15 +9,20 @@ export const SCALE = PREVIEW_W / CANVAS_W; // 0.259
 
 export const POSITION_Y_MAP: Record<OverlayPosition, number> = {
   top: 0.15,
-  center: 0.50,
+  "center-above": 0.42,
+  center: 0.45,
+  "center-label": 0.4720,
+  "center-below": 0.55,
   bottom: 0.85,
 };
 
 export const FONT_SIZE_MAP: Record<string, number> = {
-  small: 48,
+  small: 36,
   medium: 72,
   large: 120,
   xlarge: 150,
+  xxlarge: 250,
+  jumbo: 199,
 };
 
 // ── Font registry (must match src/apps/api/assets/fonts/font-registry.json) ──
@@ -169,7 +174,10 @@ export const MAX_OVERLAY_TEXT_LEN = 40;
 // Snap zones for vertical drag (fraction of container height)
 export const SNAP_ZONES: { position: OverlayPosition; y: number }[] = [
   { position: "top", y: POSITION_Y_MAP.top },
+  { position: "center-above", y: POSITION_Y_MAP["center-above"] },
   { position: "center", y: POSITION_Y_MAP.center },
+  { position: "center-label", y: POSITION_Y_MAP["center-label"] },
+  { position: "center-below", y: POSITION_Y_MAP["center-below"] },
   { position: "bottom", y: POSITION_Y_MAP.bottom },
 ];
 

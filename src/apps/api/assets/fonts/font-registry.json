@@ -58,7 +58,8 @@
       "ass_name": "Fraunces",
       "weight": 700,
       "category": "serif",
-      "css_family": "'Fraunces', serif"
+      "css_family": "'Fraunces', serif",
+      "cycle_role": "contrast"
     },
     "Space Mono": {
       "file": "SpaceMono-Bold.ttf",
@@ -73,6 +74,22 @@
       "weight": 700,
       "category": "sans",
       "css_family": "'Outfit', sans-serif"
+    },
+    "Permanent Marker": {
+      "file": "PermanentMarker-Regular.ttf",
+      "ass_name": "Permanent Marker",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Permanent Marker', cursive",
+      "cycle_role": "contrast"
+    },
+    "Pacifico": {
+      "file": "Pacifico-Regular.ttf",
+      "ass_name": "Pacifico",
+      "weight": 400,
+      "category": "script",
+      "css_family": "'Pacifico', cursive",
+      "cycle_role": "contrast"
     }
   },
   "style_defaults": {
