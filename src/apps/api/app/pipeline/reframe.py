@@ -58,10 +58,12 @@ def _encoding_args(
         "-preset", preset,
         "-crf", crf,
         "-pix_fmt", "yuv420p",
-        # Force an I-frame at frame 0 so concat demuxer joins cleanly.
-        # Without this, B-frame reordering across clip boundaries causes
-        # 1-2 frame glitches (horizontal tearing) at slot transitions.
-        "-force_key_frames", "expr:eq(n,0)",
+        # Re-enable scene-change keyframe insertion (ultrafast preset sets
+        # scenecut=0, disabling it). Without keyframes at scene transitions,
+        # players show horizontal tearing when decoding across slot
+        # boundaries — the top half shows the old scene, bottom the new.
+        # keyint=90 = max 3s between keyframes at 30fps (safety net).
+        "-x264-params", "scenecut=40:keyint=90",
         # Tag output as bt709 (SDR) so players render colors correctly.
         # iPhone clips often come as bt2020/HLG; without explicit tagging
         # the encoder copies source tags → player misinterprets SDR data
