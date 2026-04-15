@@ -287,6 +287,7 @@ def generate_animated_overlay_ass(
             _write_animated_ass(
                 text, start_s, end_s, position, effect, ass_path,
                 font_family=font_family,
+                position_y_frac=overlay.get("position_y_frac"),
             )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
@@ -310,14 +311,21 @@ def _write_animated_ass(
     output_path: str,
     *,
     font_family: str | None = None,
+    position_y_frac: float | None = None,
 ) -> None:
     """Write an ASS file with animation tags for the given effect."""
     alignment, margin_v = _ASS_POSITION.get(position, (5, 0))
     start_str = format_ass_time(start_s)
     end_str = format_ass_time(end_s)
 
+    # Custom Y position override via \pos tag
+    pos_tag = ""
+    if position_y_frac is not None:
+        target_y = int(CANVAS_H * position_y_frac)
+        pos_tag = f"\\pos({CANVAS_W // 2},{target_y})"
+
     if effect == "fade-in":
-        dialogue_text = f"{{\\an{alignment}\\fad(500,0)}}{text}"
+        dialogue_text = f"{{\\an5{pos_tag}\\fad(500,0)}}{text}" if pos_tag else f"{{\\an{alignment}\\fad(500,0)}}{text}"
 
     elif effect == "typewriter":
         total_dur_cs = int((end_s - start_s) * 100)
@@ -329,7 +337,7 @@ def _write_animated_ass(
         dialogue_text = "".join(parts)
 
     elif effect == "slide-up":
-        y_frac = _POSITION_Y.get(position, 0.5)
+        y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
         target_y = int(CANVAS_H * y_frac)
         start_y = CANVAS_H + 100
         x = CANVAS_W // 2
@@ -338,7 +346,7 @@ def _write_animated_ass(
         )
 
     else:
-        dialogue_text = f"{{\\an{alignment}}}{text}"
+        dialogue_text = f"{{\\an5{pos_tag}}}{text}" if pos_tag else f"{{\\an{alignment}}}{text}"
 
     # Use dynamic ASS header when font_family is set
     if font_family:
