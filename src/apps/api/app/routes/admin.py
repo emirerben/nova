@@ -286,6 +286,7 @@ class RecipeTextOverlaySchema(BaseModel):
     has_narrowing: bool = False
     sample_text: str = ""
     font_cycle_accel_at_s: float | None = None
+    position_y_frac: float | None = None
     spans: list[TextSpanSchema] | None = None
 
     @field_validator("text_color")
