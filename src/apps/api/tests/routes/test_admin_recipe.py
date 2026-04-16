@@ -912,8 +912,9 @@ class TestInterstitialHoldSValidator:
         assert inter.hold_s == 1.5
 
     def test_hold_s_negative_rejected(self):
-        from app.routes.admin import RecipeInterstitialSchema
         from pydantic import ValidationError
+
+        from app.routes.admin import RecipeInterstitialSchema
 
         with pytest.raises(ValidationError, match="hold_s must be >= 0"):
             RecipeInterstitialSchema(

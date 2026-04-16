@@ -1035,7 +1035,10 @@ def _assemble_clips(
                 # Use recipe animate_s directly when explicitly set;
                 # only apply MIN_CURTAIN_ANIMATE_S as default fallback.
                 recipe_animate = inter.get("animate_s")
-                curtain_anim = recipe_animate if recipe_animate is not None else MIN_CURTAIN_ANIMATE_S
+                curtain_anim = (
+                    recipe_animate if recipe_animate is not None
+                    else MIN_CURTAIN_ANIMATE_S
+                )
                 apply_curtain_close_tail(
                     reframed, tail_output,
                     animate_s=curtain_anim,
@@ -1354,7 +1357,10 @@ def _collect_absolute_overlays(
                 # Only apply non-styling keys from config. Visual properties
                 # (text_size, font_style, text_color, effect) come from the
                 # recipe so the admin editor preview matches the render.
-                _STYLING_KEYS = {"text_size", "text_size_px", "font_style", "font_family", "text_color", "effect"}
+                _STYLING_KEYS = {
+                    "text_size", "text_size_px", "font_style",
+                    "font_family", "text_color", "effect",
+                }
                 entry.update(
                     {k: v for k, v in config.items()
                      if k not in ("start_s", "accel_at_s") and k not in _STYLING_KEYS}
@@ -1380,10 +1386,16 @@ def _collect_absolute_overlays(
                 and inter
                 and inter.get("type") == "curtain-close"
             ):
-                from app.pipeline.interstitials import MIN_CURTAIN_ANIMATE_S, _CURTAIN_MAX_RATIO  # noqa: PLC0415
+                from app.pipeline.interstitials import (  # noqa: PLC0415
+                    _CURTAIN_MAX_RATIO,
+                    MIN_CURTAIN_ANIMATE_S,
+                )
                 # Use recipe animate_s directly when explicitly set
                 recipe_animate = inter.get("animate_s")
-                animate_s = float(recipe_animate) if recipe_animate is not None else MIN_CURTAIN_ANIMATE_S
+                animate_s = (
+                    float(recipe_animate) if recipe_animate is not None
+                    else MIN_CURTAIN_ANIMATE_S
+                )
                 # Apply same 60% clamp as apply_curtain_close_tail
                 animate_s = min(animate_s, dur * _CURTAIN_MAX_RATIO)
                 slot_end_abs = cumulative_s + dur
@@ -1491,8 +1503,8 @@ def _pre_burn_curtain_slot_text(
 
     Returns the path to the text-burned clip (or original if no overlays).
     """
-    from app.pipeline.text_overlay import generate_text_overlay_png  # noqa: PLC0415
     from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
+    from app.pipeline.text_overlay import generate_text_overlay_png  # noqa: PLC0415
 
     slot = step.slot if hasattr(step, "slot") else step.get("slot", {})
     overlays = slot.get("text_overlays", [])
@@ -1546,7 +1558,10 @@ def _pre_burn_curtain_slot_text(
             config = _LABEL_CONFIG["subject" if is_subject else "prefix"]
             # Recipe styling takes priority — only apply non-styling keys
             # from _LABEL_CONFIG so admin editor preview matches render.
-            _STYLING_KEYS = {"text_size", "text_size_px", "font_style", "font_family", "text_color", "effect"}
+            _STYLING_KEYS = {
+                "text_size", "text_size_px", "font_style",
+                "font_family", "text_color", "effect",
+            }
             entry.update(
                 {k: v for k, v in config.items()
                  if k not in ("start_s", "accel_at_s") and k not in _STYLING_KEYS}
@@ -1554,9 +1569,15 @@ def _pre_burn_curtain_slot_text(
 
             # Font-cycle acceleration synced with curtain animation
             if is_subject and entry.get("effect") == "font-cycle" and inter:
-                from app.pipeline.interstitials import MIN_CURTAIN_ANIMATE_S, _CURTAIN_MAX_RATIO  # noqa: PLC0415
+                from app.pipeline.interstitials import (  # noqa: PLC0415
+                    _CURTAIN_MAX_RATIO,
+                    MIN_CURTAIN_ANIMATE_S,
+                )
                 recipe_animate = inter.get("animate_s")
-                animate_s = float(recipe_animate) if recipe_animate is not None else MIN_CURTAIN_ANIMATE_S
+                animate_s = (
+                    float(recipe_animate) if recipe_animate is not None
+                    else MIN_CURTAIN_ANIMATE_S
+                )
                 animate_s = min(animate_s, slot_dur * _CURTAIN_MAX_RATIO)
                 accel_at = slot_dur - animate_s
                 if accel_at > ov_start:
