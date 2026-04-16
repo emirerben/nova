@@ -1981,13 +1981,10 @@ def _mix_template_audio(
         shutil.copy2(video_path, output_path)
         return
 
-    # Sync video ending with music ending. If the video is longer than the
-    # template audio, trim the video to the audio duration so the music
-    # doesn't loop and start a new rhythm in the last slot. The user
-    # expects the existing rhythm to finish naturally, not restart.
-    #
-    # If the audio is longer than the video, use -shortest to cut audio
-    # at the video end (original behavior for shorter videos).
+    # Sync video ending with music ending. Use min(video, audio) as the
+    # output duration so the music doesn't loop and start a new rhythm
+    # in the last slot. If the audio is shorter, video gets trimmed to
+    # match; if the video is shorter, audio gets trimmed instead.
     video_dur = _probe_duration(video_path)
     audio_dur = _probe_duration(audio_local)
 
