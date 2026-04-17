@@ -824,7 +824,8 @@ function TextTuningPanel({ templateId }: { templateId: string }) {
       } as TextPreviewParams);
       setPreviewImg(`data:image/png;base64,${res.image_base64}`);
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Preview failed");
+      // Preview is non-critical — silently ignore (endpoint may not be deployed yet)
+      console.warn("Text preview failed:", err instanceof Error ? err.message : err);
     } finally {
       setLoading(false);
     }
