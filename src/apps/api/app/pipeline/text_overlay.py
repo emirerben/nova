@@ -48,7 +48,10 @@ ASS_ANIMATED_EFFECTS = frozenset({"fade-in", "typewriter", "slide-up"})
 
 # Position -> vertical anchor (fraction of canvas height)
 _POSITION_Y = {
-    "center": 0.5,
+    "center": 0.45,
+    "center-above": 0.42,
+    "center-label": 0.4720,
+    "center-below": 0.55,
     "top": 0.15,
     "bottom": 0.85,
 }
@@ -94,7 +97,7 @@ def _registry_ass_name(font_name: str) -> str:
 
 # -- Font size mapping --------------------------------------------------------
 
-_FONT_SIZE_MAP = {"small": 48, "medium": 72, "large": 120, "xlarge": 150}
+_FONT_SIZE_MAP = {"small": 36, "medium": 72, "large": 120, "xlarge": 150, "xxlarge": 250, "jumbo": 199}
 
 # -- Font style mapping (backwards compat, now backed by registry) ------------
 
@@ -136,6 +139,8 @@ def _hex_to_rgba(hex_color: str) -> tuple[int, int, int, int]:
 # ASS alignment: 2=bottom-center, 5=center, 8=top-center
 _ASS_POSITION = {
     "center": (5, 0),
+    "center-above": (5, 150),
+    "center-below": (5, -100),
     "top": (8, 200),
     "bottom": (2, 200),
 }
@@ -166,7 +171,7 @@ _ASS_OVERLAY_HEADER = _build_ass_header("Playfair Display")
 FONT_CYCLE_INTERVAL_S = 0.15
 FONT_CYCLE_FAST_INTERVAL_S = 0.07
 FONT_CYCLE_SETTLE_RATIO = 0.30
-MAX_FONT_CYCLE_FRAMES = 20
+MAX_FONT_CYCLE_FRAMES = 60
 OVERLAY_FONT_SIZE = 90
 
 
@@ -237,6 +242,7 @@ def generate_text_overlay_png(
             font_family = overlay.get("font_family")
             font_style = overlay.get("font_style", "display")
             text_size = overlay.get("text_size", "medium")
+            text_size_px_val = overlay.get("text_size_px")
             hex_color = overlay.get("text_color", "#FFFFFF")
             text_color = _hex_to_rgba(hex_color)
 
@@ -244,7 +250,9 @@ def generate_text_overlay_png(
             _draw_text_png(
                 text, position, png_path,
                 font_family=font_family, font_style=font_style,
-                text_size=text_size, text_color=text_color,
+                text_size=text_size, text_size_px=text_size_px_val,
+                text_color=text_color,
+                position_y_frac=overlay.get("position_y_frac"),
             )
             results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
 
@@ -280,6 +288,7 @@ def generate_animated_overlay_ass(
             _write_animated_ass(
                 text, start_s, end_s, position, effect, ass_path,
                 font_family=font_family,
+                position_y_frac=overlay.get("position_y_frac"),
             )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
@@ -303,14 +312,21 @@ def _write_animated_ass(
     output_path: str,
     *,
     font_family: str | None = None,
+    position_y_frac: float | None = None,
 ) -> None:
     """Write an ASS file with animation tags for the given effect."""
     alignment, margin_v = _ASS_POSITION.get(position, (5, 0))
     start_str = format_ass_time(start_s)
     end_str = format_ass_time(end_s)
 
+    # Custom Y position override via \pos tag
+    pos_tag = ""
+    if position_y_frac is not None:
+        target_y = int(CANVAS_H * position_y_frac)
+        pos_tag = f"\\pos({CANVAS_W // 2},{target_y})"
+
     if effect == "fade-in":
-        dialogue_text = f"{{\\an{alignment}\\fad(500,0)}}{text}"
+        dialogue_text = f"{{\\an5{pos_tag}\\fad(500,0)}}{text}" if pos_tag else f"{{\\an{alignment}\\fad(500,0)}}{text}"
 
     elif effect == "typewriter":
         total_dur_cs = int((end_s - start_s) * 100)
@@ -322,7 +338,7 @@ def _write_animated_ass(
         dialogue_text = "".join(parts)
 
     elif effect == "slide-up":
-        y_frac = _POSITION_Y.get(position, 0.5)
+        y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
         target_y = int(CANVAS_H * y_frac)
         start_y = CANVAS_H + 100
         x = CANVAS_W // 2
@@ -331,7 +347,7 @@ def _write_animated_ass(
         )
 
     else:
-        dialogue_text = f"{{\\an{alignment}}}{text}"
+        dialogue_text = f"{{\\an5{pos_tag}}}{text}" if pos_tag else f"{{\\an{alignment}}}{text}"
 
     # Use dynamic ASS header when font_family is set
     if font_family:
@@ -383,6 +399,7 @@ def _draw_frame(
     font_style: str = "display",
     text_size: str = "medium",
     cycling_span_indices: list[int] | None = None,
+    position_y_frac: float | None = None,
 ) -> None:
     """Dispatch to spans or flat text rendering. Used by font-cycle to avoid repetition."""
     if spans:
@@ -391,12 +408,13 @@ def _draw_frame(
             if font and cycling_span_indices
             else None
         )
-        _draw_spans_png(overlay, spans, position, png_path, font_overrides=overrides)
+        _draw_spans_png(overlay, spans, position, png_path, font_overrides=overrides, position_y_frac=position_y_frac)
     else:
         _draw_text_png(
             text, position, png_path,
             font=font, font_family=font_family, font_style=font_style,
             text_size=text_size, text_color=text_color,
+            position_y_frac=position_y_frac,
         )
 
 
@@ -434,8 +452,9 @@ def _render_font_cycle(
     hex_color = overlay.get("text_color", "#FFFFFF")
     text_color = _hex_to_rgba(hex_color)
     text_size = overlay.get("text_size", "medium")
-    pixel_size = _FONT_SIZE_MAP.get(text_size, 72)
+    pixel_size = overlay.get("text_size_px") or _FONT_SIZE_MAP.get(text_size, 72)
     font_family = overlay.get("font_family")
+    y_override = overlay.get("position_y_frac")
 
     # Resolve available cycle fonts at the requested size, keyed by settle font
     settle_name = font_family or "_default"
@@ -448,6 +467,7 @@ def _render_font_cycle(
             overlay, spans, text, position, png_path,
             font_family=font_family, font_style=overlay.get("font_style", "display"),
             text_size=text_size, text_color=text_color,
+            position_y_frac=y_override,
         )
         return [{"png_path": png_path, "start_s": start_s, "end_s": end_s}]
 
@@ -526,6 +546,7 @@ def _render_font_cycle(
             overlay, spans, text, position, png_p,
             font=fnt, text_color=text_color,
             cycling_span_indices=cycling_span_indices,
+            position_y_frac=y_override,
         )
         return {"png_path": png_p, "start_s": s, "end_s": e}
 
@@ -620,15 +641,17 @@ def _resolve_font_family(font_family: str, size: int):
 def _load_styled_font(
     font_style: str = "display",
     text_size: str = "medium",
+    text_size_px: int | None = None,
 ):
     """Load a font matching the requested style and size.
 
     font_style: "serif", "serif_italic", "script", "sans", "display"
     text_size:  "small" (48), "medium" (72), "large" (120), "xlarge" (150)
+    text_size_px: exact pixel override (takes priority over text_size name)
     """
     from PIL import ImageFont  # noqa: PLC0415
 
-    size = _FONT_SIZE_MAP.get(text_size, 72)
+    size = text_size_px or _FONT_SIZE_MAP.get(text_size, 72)
     candidates = _FONT_STYLE_MAP.get(font_style, _FONT_STYLE_MAP["sans"])
 
     for path in candidates:
@@ -662,7 +685,9 @@ def _draw_text_png(
     font_family: str | None = None,
     font_style: str = "display",
     text_size: str = "medium",
+    text_size_px: int | None = None,
     text_color: tuple[int, int, int, int] = (255, 255, 255, 255),
+    position_y_frac: float | None = None,
 ) -> None:
     """Draw styled text on a transparent 1080x1920 canvas.
 
@@ -681,17 +706,17 @@ def _draw_text_png(
     # Resolve font: pre-loaded > font_family > font_style
     if font is None:
         if font_family:
-            size = _FONT_SIZE_MAP.get(text_size, 72)
+            size = text_size_px or _FONT_SIZE_MAP.get(text_size, 72)
             font = _resolve_font_family(font_family, size)
         if font is None:
-            font = _load_styled_font(font_style, text_size)
+            font = _load_styled_font(font_style, text_size, text_size_px=text_size_px)
 
     bbox = draw.textbbox((0, 0), text, font=font)
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
 
     x = (CANVAS_W - text_w) // 2
-    y_frac = _POSITION_Y.get(position, 0.5)
+    y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
     y = int(CANVAS_H * y_frac - text_h / 2)
 
     # Soft gaussian shadow -- cinematic depth, no hard edges
@@ -754,6 +779,7 @@ def _draw_spans_png(
     png_path: str,
     *,
     font_overrides: dict[int, object] | None = None,
+    position_y_frac: float | None = None,
 ) -> None:
     """Draw multiple text spans with per-word font/color/size on a 1080x1920 canvas.
 
@@ -864,7 +890,7 @@ def _draw_spans_png(
     total_block_h = sum(int(lm["max_h"] * _SPAN_LINE_SPACING) for lm in line_metrics)
 
     # 5. Vertical anchor
-    y_frac = _POSITION_Y.get(position, 0.5)
+    y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
     block_top = int(CANVAS_H * y_frac - total_block_h / 2)
 
     # 6. Render

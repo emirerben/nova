@@ -34,19 +34,49 @@ class ReframeError(Exception):
     pass
 
 
-def _encoding_args(output_path: str, preset: str = "fast") -> list[str]:
+def _encoding_args(
+    output_path: str,
+    preset: str = "fast",
+    crf: str = "18",
+) -> list[str]:
     """Shared FFmpeg output encoding arguments (DRY).
 
     Args:
         preset: libx264 preset. Use "ultrafast" for intermediate files
                 that will be re-encoded later, "fast" for final output.
+        crf: Constant Rate Factor. Lower = better quality.
+             18 is visually lossless, 23 is default (too lossy for
+             multi-pass pipelines with 3+ re-encodes).
+
+    Color handling: HDR/HLG sources (bt2020, arib-std-b67) are converted
+    to SDR (bt709) via the colorspace filter in _build_video_filter. This
+    function tags the output as bt709 so players render colors correctly.
     """
-    return [
+    args = [
         "-c:v", "libx264",
         "-profile:v", "high",
         "-preset", preset,
-        "-crf", "23",
-        "-pix_fmt", "yuv420p",  # QuickTime/browser compatibility
+        "-crf", crf,
+        "-pix_fmt", "yuv420p",
+    ]
+    # Only re-enable scenecut for final-output encodes (preset="fast").
+    # ultrafast intermediates set scenecut=0 internally — overriding it wastes
+    # CPU and is pointless since intermediates are re-encoded anyway.
+    # scenecut=40 fires at scene transitions, inserting I-frames that prevent
+    # horizontal tearing across slot boundaries in the final video.
+    # keyint=90 = max 3s between keyframes at 30fps (safety net).
+    # Call sites: _concat_demuxer and _burn_text_overlays use "fast".
+    # All other call sites use "ultrafast".
+    if preset == "fast":
+        args += ["-x264-params", "scenecut=40:keyint=90"]
+    args += [
+        # Tag output as bt709 (SDR) so players render colors correctly.
+        # iPhone clips often come as bt2020/HLG; without explicit tagging
+        # the encoder copies source tags → player misinterprets SDR data
+        # as HDR → washed-out look.
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-colorspace", "bt709",
         "-b:v", settings.output_video_bitrate,
         "-maxrate", settings.output_video_bitrate,
         "-bufsize", "8M",
@@ -58,6 +88,7 @@ def _encoding_args(output_path: str, preset: str = "fast") -> list[str]:
         "-y",
         output_path,
     ]
+    return args
 
 
 def reframe_and_export(
@@ -244,6 +275,14 @@ def _build_video_filter(
     Text overlays are handled separately via overlay filter (not in this chain).
     """
     filters: list[str] = []
+
+    # 0a. HDR/HLG → SDR color conversion.
+    # iPhone clips are bt2020/HLG; without conversion, colors look washed out
+    # after encoding to bt709 yuv420p. FFmpeg reads the clip's own stream
+    # metadata to determine the input colorspace — no need to override it.
+    # bt709 clips (Android SDR, screen recordings) are a no-op. HD clips
+    # with no metadata default to bt709, also a no-op.
+    filters.append("colorspace=all=bt709")
 
     # 0. Speed ramp -- FIRST filter to normalize PTS for all subsequent timed filters
     if speed_factor != 1.0 and speed_factor > 0:

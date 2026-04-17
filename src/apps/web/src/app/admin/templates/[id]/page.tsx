@@ -11,9 +11,11 @@ import {
   adminGetLatestTestJob,
   adminGetMetrics,
   adminGetPresignedUpload,
+  adminGetRecipe,
   adminGetRecipeHistory,
   adminGetTemplate,
   adminReanalyzeTemplate,
+  adminSaveRecipe,
   adminUpdateTemplate,
 } from "@/lib/admin-api";
 import {
@@ -382,8 +384,17 @@ function TestTab({
 }) {
   const [testJobId, setTestJobId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [rerolling, setRerolling] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<TemplateMetrics | null>(null);
+  const [latestJob, setLatestJob] = useState<LatestTestJob | null>(null);
+
+  // Load latest test job on mount so previous results are visible
+  useEffect(() => {
+    adminGetLatestTestJob(template.id).then((job) => {
+      if (job) setLatestJob(job);
+    }).catch(() => {});
+  }, [template.id]);
 
   // File upload for test clips
   const upload = useFileUpload({
@@ -398,22 +409,64 @@ function TestTab({
     isTerminal: (d) => TERMINAL_STATUSES.has(d.status),
   });
 
+  // Rerun: rerender with updated recipe (no Gemini needed)
+  const handleRerun = useCallback(async () => {
+    const sourceId = latestJob?.job_id || testJobId;
+    if (!sourceId) return;
+    setRerolling(true);
+    setTestError(null);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const token = typeof window !== "undefined" ? sessionStorage.getItem("nova_admin_token") : null;
+    try {
+      // Try rerender first (no Gemini, uses locked slots)
+      let res = await fetch(`${apiUrl}/admin/templates/${template.id}/rerender-job`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "X-Admin-Token": token } : {}),
+        },
+        body: JSON.stringify({ source_job_id: sourceId }),
+      });
+      if (!res.ok) {
+        // Fallback to reroll if rerender fails (slot mismatch etc.)
+        res = await fetch(`${apiUrl}/template-jobs/${sourceId}/reroll`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.detail || `Rerun failed (${res.status})`);
+      }
+      const data = await res.json();
+      setTestJobId(data.job_id);
+    } catch (err) {
+      setTestError(err instanceof Error ? err.message : "Rerun failed");
+    } finally {
+      setRerolling(false);
+    }
+  }, [latestJob, testJobId, template.id]);
+
   // Push completed test job to parent (for editor video sync)
   useEffect(() => {
     if (
       poller.data?.status === "template_ready" &&
       poller.data.assembly_plan?.output_url
     ) {
-      onJobComplete?.({
+      const completedJob: LatestTestJob = {
         job_id: poller.data.job_id,
         output_url: poller.data.assembly_plan.output_url,
         base_output_url: poller.data.assembly_plan.base_output_url ?? null,
-        clip_paths: upload.successfulPaths,
+        clip_paths: upload.successfulPaths.length > 0
+          ? upload.successfulPaths
+          : latestJob?.clip_paths ?? [],
         has_rerender_data: true,
         created_at: poller.data.created_at,
-      });
+      };
+      setLatestJob(completedJob);
+      onJobComplete?.(completedJob);
     }
-  }, [poller.data, onJobComplete, upload.successfulPaths]);
+  }, [poller.data, onJobComplete, upload.successfulPaths, latestJob]);
 
   // Fetch metrics
   useEffect(() => {
@@ -530,6 +583,23 @@ function TestTab({
         </div>
       </div>
 
+      {/* Rerun with updated recipe */}
+      {(latestJob || testJobId) && (
+        <div className="border border-zinc-800 rounded p-4 space-y-3">
+          <h3 className="text-sm font-medium text-white">Rerun with Updated Recipe</h3>
+          <p className="text-xs text-zinc-500">
+            Re-renders using clips from the latest job — no re-upload needed.
+          </p>
+          <button
+            onClick={handleRerun}
+            disabled={rerolling}
+            className="px-4 py-2 text-sm bg-purple-700 hover:bg-purple-600 text-white rounded disabled:opacity-50"
+          >
+            {rerolling ? "Starting..." : "Rerun"}
+          </button>
+        </div>
+      )}
+
       {/* Test job result */}
       {testJobId && (
         <div className="border border-zinc-800 rounded p-4 space-y-4">
@@ -559,6 +629,18 @@ function TestTab({
           )}
         </div>
       )}
+
+      {/* Show latest job result when no active test job */}
+      {!testJobId && latestJob?.output_url && (
+        <div className="border border-zinc-800 rounded p-4 space-y-4">
+          <h3 className="text-sm font-medium text-white">Latest Result</h3>
+          <EvalComparison
+            outputUrl={latestJob.output_url}
+            templateUrl={playbackUrl}
+            assemblyPlan={null}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -572,7 +654,7 @@ function EvalComparison({
 }: {
   outputUrl: string;
   templateUrl: string | null;
-  assemblyPlan: TemplateJobStatusResponse["assembly_plan"];
+  assemblyPlan: TemplateJobStatusResponse["assembly_plan"] | null;
 }) {
   return (
     <div className="space-y-4">

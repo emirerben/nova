@@ -81,7 +81,7 @@ def render_color_hold(
         "-c:v", "libx264",
         "-profile:v", "high",
         "-preset", "fast",
-        "-crf", "23",
+        "-crf", "18",
         "-pix_fmt", "yuv420p",
         "-r", str(fps),
         "-t", f"{hold_s:.3f}",
@@ -196,7 +196,7 @@ def apply_curtain_close_tail(
         # Step 2: Extract tail segment — re-encode to ensure clean keyframes
         tail_cmd = [
             "ffmpeg", "-ss", f"{anim_start:.3f}", "-i", slot_video_path,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
             "-pix_fmt", "yuv420p", "-an",
             "-y", tail_path,
         ]
@@ -207,7 +207,9 @@ def apply_curtain_close_tail(
             )
 
         # Step 3: Apply geq to tail only — T starts from 0 in this segment
-        # progress grows from 0 to 1 over the full tail duration
+        # progress grows from 0 to 1 over the full tail duration.
+        # Two bars close from top AND bottom, meeting at center —
+        # text gets squeezed between them (Dimples Passport style).
         progress = f"min(1,max(0,T/{animate_s:.3f}))"
         bar_h = f"floor(H/2*{progress})"
         in_bar = f"lt(Y,{bar_h})+gt(Y,H-1-{bar_h})"
@@ -223,7 +225,7 @@ def apply_curtain_close_tail(
             "ffmpeg", "-i", tail_path,
             "-vf", geq_filter,
             "-c:v", "libx264", "-profile:v", "high",
-            "-preset", "fast", "-crf", "23",
+            "-preset", "fast", "-crf", "18",
             "-pix_fmt", "yuv420p", "-an",
             "-movflags", "+faststart",
             "-y", tail_animated_path,
@@ -241,7 +243,7 @@ def apply_curtain_close_tail(
         concat_cmd = [
             "ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_list,
             "-c:v", "libx264", "-profile:v", "high",
-            "-preset", "fast", "-crf", "23",
+            "-preset", "fast", "-crf", "18",
             "-pix_fmt", "yuv420p", "-an",
             "-movflags", "+faststart",
             "-y", output_path,

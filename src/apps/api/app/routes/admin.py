@@ -240,9 +240,9 @@ OverlayEffect = Literal[
     "pop-in", "fade-in", "scale-up", "font-cycle", "typewriter",
     "glitch", "bounce", "slide-in", "slide-up", "static", "none",
 ]
-OverlayPosition = Literal["top", "center", "bottom"]
+OverlayPosition = Literal["top", "center", "center-above", "center-label", "center-below", "bottom"]
 FontStyle = Literal["display", "sans", "serif", "serif_italic", "script"]
-TextSize = Literal["small", "medium", "large", "xlarge"]
+TextSize = Literal["small", "medium", "large", "xlarge", "xxlarge", "jumbo"]
 OverlayRole = Literal["hook", "reaction", "cta", "label"]
 SyncStyle = Literal[
     "cut-on-beat", "transition-on-beat", "energy-match", "freeform"
@@ -276,6 +276,7 @@ class RecipeTextOverlaySchema(BaseModel):
     font_style: FontStyle = "sans"
     font_family: str | None = None  # Overrides font_style when set (real font name from registry)
     text_size: TextSize = "medium"
+    text_size_px: int | None = None  # Exact pixel override (takes priority over text_size name)
     text_color: str = "#FFFFFF"
     start_s: float = 0.0
     end_s: float = 1.0
@@ -285,6 +286,7 @@ class RecipeTextOverlaySchema(BaseModel):
     has_narrowing: bool = False
     sample_text: str = ""
     font_cycle_accel_at_s: float | None = None
+    position_y_frac: float | None = None
     spans: list[TextSpanSchema] | None = None
 
     @field_validator("text_color")
@@ -324,8 +326,8 @@ class RecipeInterstitialSchema(BaseModel):
     @field_validator("hold_s")
     @classmethod
     def validate_hold(cls, v: float) -> float:
-        if v <= 0:
-            raise ValueError("hold_s must be positive")
+        if v < 0:
+            raise ValueError("hold_s must be >= 0")
         return v
 
     @field_validator("after_slot")
@@ -1133,6 +1135,85 @@ async def save_recipe(
         version_id=str(version.id),
         version_number=version_count,
     )
+
+
+# ── Text preview endpoint ─────────────────────────────────────────────────────
+
+
+class TextPreviewRequest(BaseModel):
+    """Parameters for rendering a text overlay preview image."""
+    subject_text: str = "PERU"
+    subject_size_px: int = 199
+    subject_y_frac: float = 0.45
+    subject_color: str = "#F4D03F"
+    prefix_text: str = "Welcome to"
+    prefix_size_px: int = 36
+    prefix_y_frac: float = 0.4720
+    prefix_color: str = "#FFFFFF"
+
+
+@router.post(
+    "/templates/{template_id}/text-preview",
+    dependencies=[Depends(_require_admin)],
+)
+async def text_preview(
+    template_id: str,
+    req: TextPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Render a static PNG preview of text overlay positioning.
+
+    Returns a base64-encoded PNG image for the admin text tuning UI.
+    """
+    import base64  # noqa: PLC0415
+    import io  # noqa: PLC0415
+
+    from PIL import Image, ImageDraw, ImageFont  # noqa: PLC0415
+
+    from app.pipeline.text_overlay import (  # noqa: PLC0415
+        CANVAS_H,
+        CANVAS_W,
+        FONTS_DIR,
+    )
+
+    await get_template_or_404(template_id, db)
+
+    img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (30, 40, 32, 255))
+    draw = ImageDraw.Draw(img)
+
+    # Parse hex colors
+    def hex_to_rgb(h: str) -> tuple[int, int, int, int]:
+        h = h.lstrip("#")
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 255)
+
+    # Render subject text (e.g. PERU)
+    import os  # noqa: PLC0415
+
+    subject_font_path = os.path.join(FONTS_DIR, "Montserrat-ExtraBold.ttf")
+    subject_font = ImageFont.truetype(subject_font_path, req.subject_size_px)
+    s_bbox = draw.textbbox((0, 0), req.subject_text, font=subject_font)
+    s_tw = s_bbox[2] - s_bbox[0]
+    s_th = s_bbox[3] - s_bbox[1]
+    s_x = (CANVAS_W - s_tw) // 2
+    s_y = int(CANVAS_H * req.subject_y_frac - s_th / 2)
+    draw.text((s_x, s_y), req.subject_text, fill=hex_to_rgb(req.subject_color), font=subject_font)
+
+    # Render prefix text (e.g. Welcome to)
+    prefix_font_path = os.path.join(FONTS_DIR, "PlayfairDisplay-Regular.ttf")
+    prefix_font = ImageFont.truetype(prefix_font_path, req.prefix_size_px)
+    p_bbox = draw.textbbox((0, 0), req.prefix_text, font=prefix_font)
+    p_tw = p_bbox[2] - p_bbox[0]
+    p_th = p_bbox[3] - p_bbox[1]
+    p_x = (CANVAS_W - p_tw) // 2
+    p_y = int(CANVAS_H * req.prefix_y_frac - p_th / 2)
+    draw.text((p_x, p_y), req.prefix_text, fill=hex_to_rgb(req.prefix_color), font=prefix_font)
+
+    # Encode as base64 PNG
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
+
+    return {"image_base64": b64, "width": CANVAS_W, "height": CANVAS_H}
 
 
 # ── Presigned upload endpoint ──────────────────────────────────────────────────

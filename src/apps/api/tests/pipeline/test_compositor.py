@@ -67,11 +67,12 @@ class TestBuildVideoFilter:
         joined = ",".join(filters)
         assert "setpts=PTS/0.5" in joined
 
-    def test_setpts_is_first_filter(self):
-        """setpts MUST be first filter (before scale/crop) to normalize PTS."""
+    def test_setpts_is_after_colorspace(self):
+        """colorspace is first (HDR→SDR), then setpts before scale/crop."""
         filters = _build_video_filter("16:9", None, speed_factor=2.0)
-        assert filters[0] == "setpts=PTS/2.0"
-        assert "scale" in filters[1]
+        assert filters[0] == "colorspace=all=bt709"
+        assert filters[1] == "setpts=PTS/2.0"
+        assert "scale" in filters[2]
 
     def test_color_hint_warm(self):
         """Color hint 'warm' adds colorbalance filter."""
@@ -114,6 +115,21 @@ class TestEncodingArgs:
     def test_contains_output_path(self):
         args = _encoding_args("/my/output.mp4")
         assert "/my/output.mp4" in args
+
+    def test_fast_preset_includes_scenecut(self):
+        """Final-output encodes (preset=fast) must include scenecut=40:keyint=90 for clean keyframes."""
+        args = _encoding_args("/tmp/out.mp4", preset="fast")
+        assert "-x264-params" in args
+        x264_idx = args.index("-x264-params")
+        assert "scenecut=40" in args[x264_idx + 1]
+        assert "keyint=90" in args[x264_idx + 1]
+
+    def test_ultrafast_skips_scenecut(self):
+        """Intermediate encodes (preset=ultrafast) must NOT override scenecut=0.
+        ultrafast already sets scenecut=0 internally; re-enabling it wastes CPU.
+        """
+        args = _encoding_args("/tmp/out.mp4", preset="ultrafast")
+        assert "-x264-params" not in args
 
 
 class TestReframeAndExport:
