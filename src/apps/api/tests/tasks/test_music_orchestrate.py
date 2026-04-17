@@ -39,7 +39,8 @@ def _make_mock_track(
 
 def test_analyze_music_track_task_beats_stored_in_db() -> None:
     """analyze_music_track_task stores detected beats and sets status=ready."""
-    mock_track = _make_mock_track()
+    # Need slot_every_n_beats=2 so 6 beats → n_slots=2 (guard requires > 0)
+    mock_track = _make_mock_track(track_config={"slot_every_n_beats": 2})
     mock_beats = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
 
     mock_session = MagicMock()
@@ -51,7 +52,7 @@ def test_analyze_music_track_task_beats_stored_in_db() -> None:
         patch("app.tasks.music_orchestrate._sync_session", return_value=mock_session),
         patch("app.tasks.music_orchestrate.download_to_file"),
         patch("app.tasks.music_orchestrate._detect_audio_beats", return_value=mock_beats),
-        patch("app.tasks.music_orchestrate.auto_best_section", return_value=(30.0, 75.0)),
+        patch("app.tasks.music_orchestrate.auto_best_section", return_value=(0.0, 5.0)),
         patch("tempfile.TemporaryDirectory") as mock_td,
     ):
         mock_td.return_value.__enter__ = lambda s: "/tmp/fake"
@@ -95,8 +96,8 @@ def test_analyze_music_track_task_no_audio_gcs_path() -> None:
     assert "audio" in mock_fail.call_args[0][1].lower()
 
 
-def test_analyze_music_track_task_beat_detection_failure_is_non_fatal() -> None:
-    """If _detect_audio_beats returns [], analysis still completes (uses empty beats)."""
+def test_analyze_music_track_task_zero_beats_fails_track() -> None:
+    """If _detect_audio_beats returns [], the track is failed (0 slots = unsupported audio)."""
     mock_track = _make_mock_track()
 
     mock_session = MagicMock()
@@ -109,6 +110,7 @@ def test_analyze_music_track_task_beat_detection_failure_is_non_fatal() -> None:
         patch("app.tasks.music_orchestrate.download_to_file"),
         patch("app.tasks.music_orchestrate._detect_audio_beats", return_value=[]),
         patch("app.tasks.music_orchestrate.auto_best_section", return_value=(0.0, 45.0)),
+        patch("app.tasks.music_orchestrate._fail_track") as mock_fail,
         patch("tempfile.TemporaryDirectory") as mock_td,
     ):
         mock_td.return_value.__enter__ = lambda s: "/tmp/fake"
@@ -116,8 +118,8 @@ def test_analyze_music_track_task_beat_detection_failure_is_non_fatal() -> None:
 
         analyze_music_track_task(TRACK_ID)
 
-    assert mock_track.beat_timestamps_s == []
-    assert mock_track.analysis_status == "ready"
+    mock_fail.assert_called_once()
+    assert "0 slots" in mock_fail.call_args[0][1]
 
 
 # ── orchestrate_music_job ─────────────────────────────────────────────────────
