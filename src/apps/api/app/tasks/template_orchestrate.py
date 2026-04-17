@@ -714,8 +714,8 @@ def _fallback_moments(clip_dur: float) -> list[dict]:
 #   post-render    → curtain-close tails, interstitials, transitions (sequential)
 #   _join_or_concat() → assembled.mp4
 #
-# _render_slot is kept for backward compatibility but the main path uses
-# _plan_slots + _render_planned_slot for parallel rendering.
+# _plan_slots (sequential math) + _render_planned_slot (parallel FFmpeg)
+# replaced the old _render_slot function.
 # ──────────────────────────────────────────────────────────────────────────────
 
 _PARALLEL_RENDER_WORKERS = 3  # Fly.io has 2 shared CPUs; 3 overlaps I/O waits
@@ -843,94 +843,6 @@ def _render_planned_slot(plan: SlotPlan) -> str:
     return plan.reframed_path
 
 
-def _render_slot(
-    step,
-    clip_path: str,
-    probe,
-    beats: list[float],
-    clip_cursors: dict[str, float],
-    cumulative_s: float,
-    slot_idx: int,
-    clip_metas: list | None,
-    global_color_grade: str,
-    tmpdir: str,
-    subject: str = "",
-) -> tuple[str, float, float]:
-    """Render a single slot to a temp .mp4 file.
-
-    Returns (reframed_path, slot_visual_duration, updated_cumulative_s).
-
-    Speed ramp: source_duration = slot_target_dur * speed_factor
-    (2x speed needs 2x source footage compressed into slot_target_dur).
-    """
-    from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
-
-    clip_id = step.clip_id
-    moment = step.moment
-    slot_target_dur = float(step.slot.get("target_duration_s", 5.0))
-    slot_target_dur = max(slot_target_dur, 0.5)
-
-    # Beat-snap: adjust slot duration so the cut lands on a musical beat
-    if beats:
-        expected_end = cumulative_s + slot_target_dur
-        snapped_end = _snap_to_beat(expected_end, beats)
-        slot_target_dur = max(0.5, snapped_end - cumulative_s)
-        cumulative_s = snapped_end
-    else:
-        cumulative_s += slot_target_dur
-
-    # Speed ramp: source_duration = slot_target_dur * speed_factor
-    # 2x speed (speed_factor=2.0) needs 2x source footage → setpts=PTS/2.0 compresses it
-    speed_factor = float(step.slot.get("speed_factor", 1.0))
-    source_duration = slot_target_dur * speed_factor
-
-    # Time-cursor logic
-    if clip_id not in clip_cursors:
-        start_s = float(moment.get("start_s", 0.0))
-    else:
-        start_s = clip_cursors[clip_id]
-
-    clip_dur = probe.duration_s if probe else 30.0
-    if start_s + source_duration > clip_dur:
-        start_s = max(0.0, clip_dur - source_duration)
-        log.warning(
-            "clip_footage_exhausted",
-            clip_id=clip_id,
-            position=step.slot.get("position"),
-            clip_dur=clip_dur,
-            cursor=clip_cursors.get(clip_id, 0.0),
-        )
-
-    clip_cursors[clip_id] = start_s + source_duration
-    end_s = min(start_s + source_duration, clip_dur)
-
-    aspect_ratio = probe.aspect_ratio if probe else "16:9"
-
-    # ── Color grading (text overlays applied post-join, not per-slot) ────
-    slot_color = step.slot.get("color_hint") or global_color_grade or "none"
-
-    log.debug(
-        "slot_timed",
-        position=step.slot.get("position"),
-        target_s=slot_target_dur,
-        actual_s=round(end_s - start_s, 2),
-        speed_factor=speed_factor,
-    )
-
-    reframed = os.path.join(tmpdir, f"slot_{slot_idx}.mp4")
-    reframe_and_export(
-        input_path=clip_path,
-        start_s=start_s,
-        end_s=end_s,
-        aspect_ratio=aspect_ratio,
-        ass_subtitle_path=None,
-        output_path=reframed,
-        color_hint=slot_color,
-        speed_factor=speed_factor,
-    )
-    return reframed, slot_target_dur, cumulative_s
-
-
 def _assemble_clips(
     steps: list,
     clip_id_to_local: dict[str, str],
@@ -945,10 +857,12 @@ def _assemble_clips(
     interstitials: list[dict] | None = None,
     base_output_path: str | None = None,
 ) -> None:
-    """Assemble clips in slot order: render each slot, then join with transitions.
+    """Assemble clips in slot order: plan, parallel-render, then join with transitions.
 
-    Uses _render_slot() per slot (cursor, beat-snap, speed ramp, overlays, reframe),
-    then joins with xfade transitions or concat demuxer fallback.
+    Phase 1: _plan_slots() computes cursor, beat-snap, speed ramp (sequential math).
+    Phase 2: ThreadPoolExecutor renders each SlotPlan via FFmpeg (parallel, max_workers=3).
+    Phase 3: Apply curtain-close tails, insert interstitials, collect transitions.
+    Then joins with xfade transitions or concat demuxer fallback.
 
     Interstitials (curtain-close, fade-black-hold, etc.) are rendered as separate
     clips and inserted between slots before joining.
@@ -958,8 +872,6 @@ def _assemble_clips(
     from app.pipeline.transitions import translate_transition  # noqa: PLC0415
 
     beats = beat_timestamps_s or []
-    clip_cursors: dict[str, float] = {}
-    cumulative_s = 0.0
 
     # User-provided subject takes priority over auto-detected
     subject = user_subject or _consensus_subject(clip_metas)
@@ -979,39 +891,46 @@ def _assemble_clips(
             )
         interstitial_map[slot_pos] = inter
 
+    # ── Phase 1: plan all slots (sequential, pure math) ───────────────────
+    plans, _clip_cursors, cumulative_s = _plan_slots(
+        steps, clip_id_to_local, clip_probe_map, beats,
+        clip_metas, global_color_grade, tmpdir,
+    )
+
+    # ── Phase 2: render all slots in parallel via FFmpeg ──────────────────
+    render_errors: list[Exception] = []
+    with ThreadPoolExecutor(max_workers=_PARALLEL_RENDER_WORKERS) as pool:
+        futures = {pool.submit(_render_planned_slot, p): p for p in plans}
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as exc:
+                plan = futures[future]
+                log.error("parallel_render_failed", slot=plan.slot_idx, error=str(exc))
+                render_errors.append(exc)
+
+    if render_errors:
+        for p in plans:
+            if os.path.exists(p.reframed_path):
+                os.unlink(p.reframed_path)
+        raise render_errors[0]
+
+    log.info("parallel_render_complete", slots=len(plans))
+
+    # ── Phase 3: post-render (curtain-close, interstitials, transitions) ──
     reframed_paths: list[str] = []
     slot_durations: list[float] = []
     transition_types: list[str] = []
     # Original per-slot durations (excluding interstitials) for overlay timing.
-    # slot_durations grows when interstitials are inserted, breaking the 1:1
-    # correspondence with steps that _collect_absolute_overlays relies on.
     original_slot_durations: list[float] = []
     # When True, the previous slot had an interstitial after it, so the
     # transition INTO this slot must be hard-cut (the interstitial IS the
     # transition effect — adding an xfade from a solid color looks broken).
     prev_had_interstitial = False
 
-    for i, step in enumerate(steps):
-        clip_id = step.clip_id
-        local_path = clip_id_to_local.get(clip_id)
-        if not local_path or not os.path.exists(local_path):
-            raise ValueError(f"Local path not found for clip_id {clip_id}")
-
-        probe = clip_probe_map.get(local_path)
-
-        reframed, vis_dur, cumulative_s = _render_slot(
-            step=step,
-            clip_path=local_path,
-            probe=probe,
-            beats=beats,
-            clip_cursors=clip_cursors,
-            cumulative_s=cumulative_s,
-            slot_idx=i,
-            clip_metas=clip_metas,
-            global_color_grade=global_color_grade,
-            tmpdir=tmpdir,
-            subject=subject,
-        )
+    for plan, step in zip(plans, steps):
+        i = plan.slot_idx
+        reframed = plan.reframed_path
 
         # Check if this slot has an interstitial AFTER it (curtain-close tail effect)
         slot_position = int(step.slot.get("position", i + 1))
@@ -1022,7 +941,7 @@ def _assemble_clips(
             # We burn text onto the reframed clip first, then apply curtain
             # on top, so the black bars cover the text as they sweep down.
             reframed = _pre_burn_curtain_slot_text(
-                reframed, step, vis_dur, clip_metas, subject, i, tmpdir, inter,
+                reframed, step, plan.slot_target_dur, clip_metas, subject, i, tmpdir, inter,
             )
 
             # Apply curtain-close animation to the tail of this slot
@@ -1035,7 +954,10 @@ def _assemble_clips(
                 # Use recipe animate_s directly when explicitly set;
                 # only apply MIN_CURTAIN_ANIMATE_S as default fallback.
                 recipe_animate = inter.get("animate_s")
-                curtain_anim = recipe_animate if recipe_animate is not None else MIN_CURTAIN_ANIMATE_S
+                curtain_anim = (
+                    recipe_animate if recipe_animate is not None
+                    else MIN_CURTAIN_ANIMATE_S
+                )
                 apply_curtain_close_tail(
                     reframed, tail_output,
                     animate_s=curtain_anim,
@@ -1045,8 +967,8 @@ def _assemble_clips(
                 log.warning("curtain_close_tail_failed", slot=i, error=str(exc))
 
         reframed_paths.append(reframed)
-        slot_durations.append(vis_dur)
-        original_slot_durations.append(vis_dur)
+        slot_durations.append(plan.slot_target_dur)
+        original_slot_durations.append(plan.slot_target_dur)
 
         # Collect transition types for boundaries (skip first slot).
         # Force hard-cut if the previous slot had an interstitial — the
@@ -1357,7 +1279,10 @@ def _collect_absolute_overlays(
                 # Only apply non-styling keys from config. Visual properties
                 # (text_size, font_style, text_color, effect) come from the
                 # recipe so the admin editor preview matches the render.
-                _STYLING_KEYS = {"text_size", "text_size_px", "font_style", "font_family", "text_color", "effect"}
+                _STYLING_KEYS = {
+                    "text_size", "text_size_px", "font_style",
+                    "font_family", "text_color", "effect",
+                }
                 entry.update(
                     {k: v for k, v in config.items()
                      if k not in ("start_s", "accel_at_s") and k not in _STYLING_KEYS}
@@ -1383,10 +1308,16 @@ def _collect_absolute_overlays(
                 and inter
                 and inter.get("type") == "curtain-close"
             ):
-                from app.pipeline.interstitials import MIN_CURTAIN_ANIMATE_S, _CURTAIN_MAX_RATIO  # noqa: PLC0415
+                from app.pipeline.interstitials import (  # noqa: PLC0415
+                    _CURTAIN_MAX_RATIO,
+                    MIN_CURTAIN_ANIMATE_S,
+                )
                 # Use recipe animate_s directly when explicitly set
                 recipe_animate = inter.get("animate_s")
-                animate_s = float(recipe_animate) if recipe_animate is not None else MIN_CURTAIN_ANIMATE_S
+                animate_s = (
+                    float(recipe_animate) if recipe_animate is not None
+                    else MIN_CURTAIN_ANIMATE_S
+                )
                 # Apply same 60% clamp as apply_curtain_close_tail
                 animate_s = min(animate_s, dur * _CURTAIN_MAX_RATIO)
                 slot_end_abs = cumulative_s + dur
@@ -1494,8 +1425,8 @@ def _pre_burn_curtain_slot_text(
 
     Returns the path to the text-burned clip (or original if no overlays).
     """
-    from app.pipeline.text_overlay import generate_text_overlay_png  # noqa: PLC0415
     from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
+    from app.pipeline.text_overlay import generate_text_overlay_png  # noqa: PLC0415
 
     slot = step.slot if hasattr(step, "slot") else step.get("slot", {})
     overlays = slot.get("text_overlays", [])
@@ -1549,7 +1480,10 @@ def _pre_burn_curtain_slot_text(
             config = _LABEL_CONFIG["subject" if is_subject else "prefix"]
             # Recipe styling takes priority — only apply non-styling keys
             # from _LABEL_CONFIG so admin editor preview matches render.
-            _STYLING_KEYS = {"text_size", "text_size_px", "font_style", "font_family", "text_color", "effect"}
+            _STYLING_KEYS = {
+                "text_size", "text_size_px", "font_style",
+                "font_family", "text_color", "effect",
+            }
             entry.update(
                 {k: v for k, v in config.items()
                  if k not in ("start_s", "accel_at_s") and k not in _STYLING_KEYS}
@@ -1557,9 +1491,15 @@ def _pre_burn_curtain_slot_text(
 
             # Font-cycle acceleration synced with curtain animation
             if is_subject and entry.get("effect") == "font-cycle" and inter:
-                from app.pipeline.interstitials import MIN_CURTAIN_ANIMATE_S, _CURTAIN_MAX_RATIO  # noqa: PLC0415
+                from app.pipeline.interstitials import (  # noqa: PLC0415
+                    _CURTAIN_MAX_RATIO,
+                    MIN_CURTAIN_ANIMATE_S,
+                )
                 recipe_animate = inter.get("animate_s")
-                animate_s = float(recipe_animate) if recipe_animate is not None else MIN_CURTAIN_ANIMATE_S
+                animate_s = (
+                    float(recipe_animate) if recipe_animate is not None
+                    else MIN_CURTAIN_ANIMATE_S
+                )
                 animate_s = min(animate_s, slot_dur * _CURTAIN_MAX_RATIO)
                 accel_at = slot_dur - animate_s
                 if accel_at > ov_start:

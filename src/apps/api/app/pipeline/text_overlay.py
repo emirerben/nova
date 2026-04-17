@@ -17,6 +17,7 @@ Fallback: Pillow default if all resolution fails.
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import structlog
 
@@ -96,7 +97,10 @@ def _registry_ass_name(font_name: str) -> str:
 
 # -- Font size mapping --------------------------------------------------------
 
-_FONT_SIZE_MAP = {"small": 36, "medium": 72, "large": 120, "xlarge": 150, "xxlarge": 250, "jumbo": 199}
+_FONT_SIZE_MAP = {
+    "small": 36, "medium": 72, "large": 120,
+    "xlarge": 150, "xxlarge": 250, "jumbo": 199,
+}
 
 # -- Font style mapping (backwards compat, now backed by registry) ------------
 
@@ -325,7 +329,10 @@ def _write_animated_ass(
         pos_tag = f"\\pos({CANVAS_W // 2},{target_y})"
 
     if effect == "fade-in":
-        dialogue_text = f"{{\\an5{pos_tag}\\fad(500,0)}}{text}" if pos_tag else f"{{\\an{alignment}\\fad(500,0)}}{text}"
+        if pos_tag:
+            dialogue_text = f"{{\\an5{pos_tag}\\fad(500,0)}}{text}"
+        else:
+            dialogue_text = f"{{\\an{alignment}\\fad(500,0)}}{text}"
 
     elif effect == "typewriter":
         total_dur_cs = int((end_s - start_s) * 100)
@@ -407,7 +414,10 @@ def _draw_frame(
             if font and cycling_span_indices
             else None
         )
-        _draw_spans_png(overlay, spans, position, png_path, font_overrides=overrides, position_y_frac=position_y_frac)
+        _draw_spans_png(
+            overlay, spans, position, png_path,
+            font_overrides=overrides, position_y_frac=position_y_frac,
+        )
     else:
         _draw_text_png(
             text, position, png_path,
@@ -493,7 +503,8 @@ def _render_font_cycle(
             idx for idx, s in enumerate(spans) if not s.get("font_family")
         ]
 
-    results: list[dict] = []
+    # ── Pre-compute all frame specs (sequential, pure math) ─────────────
+    frame_specs: list[tuple] = []  # (png_path, font, start_s, end_s)
     frame_idx = 0
     t = start_s
 
@@ -511,13 +522,7 @@ def _render_font_cycle(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_{frame_idx}.png",
         )
-        _draw_frame(
-            overlay, spans, text, position, png_path,
-            font=font, text_color=text_color,
-            cycling_span_indices=cycling_span_indices,
-            position_y_frac=y_override,
-        )
-        results.append({"png_path": png_path, "start_s": t, "end_s": frame_end})
+        frame_specs.append((png_path, font, t, frame_end))
 
         t = frame_end
         frame_idx += 1
@@ -531,13 +536,7 @@ def _render_font_cycle(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_{frame_idx}_gapfill.png",
         )
-        _draw_frame(
-            overlay, spans, text, position, png_path,
-            font=last_font, text_color=text_color,
-            cycling_span_indices=cycling_span_indices,
-            position_y_frac=y_override,
-        )
-        results.append({"png_path": png_path, "start_s": t, "end_s": cycle_end})
+        frame_specs.append((png_path, last_font, t, cycle_end))
         t = cycle_end
 
     # Phase 2: settle on the primary font for the remaining duration
@@ -547,13 +546,24 @@ def _render_font_cycle(
             output_dir,
             f"slot_{slot_index}_fontcycle_{overlay_index}_settle.png",
         )
+        frame_specs.append((png_path, primary_font, settle_start, end_s))
+
+    # ── Render all frames in parallel (Pillow releases GIL) ───────────
+    def _render_one(spec: tuple) -> dict:
+        png_p, fnt, s, e = spec
         _draw_frame(
-            overlay, spans, text, position, png_path,
-            font=primary_font, text_color=text_color,
+            overlay, spans, text, position, png_p,
+            font=fnt, text_color=text_color,
             cycling_span_indices=cycling_span_indices,
             position_y_frac=y_override,
         )
-        results.append({"png_path": png_path, "start_s": settle_start, "end_s": end_s})
+        return {"png_path": png_p, "start_s": s, "end_s": e}
+
+    if len(frame_specs) > 1:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(_render_one, frame_specs))
+    else:
+        results = [_render_one(s) for s in frame_specs]
 
     log.info(
         "font_cycle_rendered",

@@ -117,7 +117,7 @@ class TestEncodingArgs:
         assert "/my/output.mp4" in args
 
     def test_fast_preset_includes_scenecut(self):
-        """Final-output encodes (preset=fast) must include scenecut=40:keyint=90 for clean keyframes."""
+        """Final-output encodes (preset=fast) include scenecut=40:keyint=90."""
         args = _encoding_args("/tmp/out.mp4", preset="fast")
         assert "-x264-params" in args
         x264_idx = args.index("-x264-params")
