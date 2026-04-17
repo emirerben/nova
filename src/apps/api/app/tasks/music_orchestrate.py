@@ -111,6 +111,13 @@ def analyze_music_track_task(self, track_id: str) -> None:
             window_beats = [b for b in beats if best_start <= b <= best_end]
             n_slots = len(range(0, max(0, len(window_beats) - n), n))
 
+            if n_slots == 0:
+                _fail_track(
+                    track_id,
+                    "Beat detection produced 0 slots — audio may be silent or use an unsupported format.",
+                )
+                return
+
             new_config = {
                 **existing_config,
                 "best_start_s": round(best_start, 3),

@@ -258,7 +258,13 @@ async def update_music_track(
     if req.thumbnail_url is not None:
         track.thumbnail_url = req.thumbnail_url
     if req.track_config is not None:
-        track.track_config = {**(track.track_config or {}), **req.track_config}
+        merged_config = {**(track.track_config or {}), **req.track_config}
+        if merged_config.get("best_end_s", 0) <= merged_config.get("best_start_s", 0):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="best_end_s must be greater than best_start_s",
+            )
+        track.track_config = merged_config
 
     now = datetime.now(UTC)
     if req.publish is True and track.published_at is None:

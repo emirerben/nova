@@ -80,7 +80,7 @@ export default function MusicPage() {
       try {
         const updated = await getMusicJobStatus(jobStatus.job_id);
         setJobStatus(updated);
-        if (terminal.includes(updated.status)) clearInterval(id);
+        if ((TERMINAL_STATUSES as readonly string[]).includes(updated.status)) clearInterval(id);
       } catch {
         // keep polling
       }
