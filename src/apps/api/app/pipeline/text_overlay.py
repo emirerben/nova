@@ -97,7 +97,10 @@ def _registry_ass_name(font_name: str) -> str:
 
 # -- Font size mapping --------------------------------------------------------
 
-_FONT_SIZE_MAP = {"small": 36, "medium": 72, "large": 120, "xlarge": 150, "xxlarge": 250, "jumbo": 199}
+_FONT_SIZE_MAP = {
+    "small": 36, "medium": 72, "large": 120,
+    "xlarge": 150, "xxlarge": 250, "jumbo": 199,
+}
 
 # -- Font style mapping (backwards compat, now backed by registry) ------------
 
@@ -326,7 +329,10 @@ def _write_animated_ass(
         pos_tag = f"\\pos({CANVAS_W // 2},{target_y})"
 
     if effect == "fade-in":
-        dialogue_text = f"{{\\an5{pos_tag}\\fad(500,0)}}{text}" if pos_tag else f"{{\\an{alignment}\\fad(500,0)}}{text}"
+        if pos_tag:
+            dialogue_text = f"{{\\an5{pos_tag}\\fad(500,0)}}{text}"
+        else:
+            dialogue_text = f"{{\\an{alignment}\\fad(500,0)}}{text}"
 
     elif effect == "typewriter":
         total_dur_cs = int((end_s - start_s) * 100)
@@ -408,7 +414,10 @@ def _draw_frame(
             if font and cycling_span_indices
             else None
         )
-        _draw_spans_png(overlay, spans, position, png_path, font_overrides=overrides, position_y_frac=position_y_frac)
+        _draw_spans_png(
+            overlay, spans, position, png_path,
+            font_overrides=overrides, position_y_frac=position_y_frac,
+        )
     else:
         _draw_text_png(
             text, position, png_path,
