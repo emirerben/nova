@@ -261,6 +261,7 @@ export default function UploadPage() {
             key={p.id}
             onClick={() => togglePlatform(p.id)}
             disabled={isBusy}
+            aria-pressed={selectedPlatforms.includes(p.id)}
             className={`px-4 py-2 rounded-full text-sm border transition-colors ${
               selectedPlatforms.includes(p.id)
                 ? "bg-white text-black border-white"
