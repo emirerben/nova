@@ -65,7 +65,7 @@
 **How:** Add librosa dependency (~50MB with numpy/scipy). Replace `_detect_audio_beats()` in `template_orchestrate.py`. Compare quality against FFmpeg approach on 20+ templates.
 **Effort:** S (human: ~1 day / CC: ~15 min)
 **Priority:** P3 — upgrade path if FFmpeg+Gemini beat detection proves insufficient
-**Depends on:** Beat sync feature shipped (this PR)
+**Depends on:** ~~Beat sync feature shipped~~ ✓ unblocked by v0.3.0.0
 
 ### Re-Analyze Existing Templates for Beat Data
 **What:** One-time migration task to re-run `analyze_template_task` on all existing templates so they get `beat_timestamps_s` in their cached recipe.
@@ -73,7 +73,7 @@
 **How:** Admin endpoint or management command that queries all templates with `analysis_status="ready"` and dispatches `analyze_template_task` for each.
 **Effort:** XS (human: ~2 hours / CC: ~5 min)
 **Priority:** P2 — run after beat sync code ships
-**Depends on:** Beat sync feature shipped (this PR)
+**Depends on:** ~~Beat sync feature shipped~~ ✓ unblocked by v0.3.0.0
 
 ### TikTok Content API Application
 **What:** Submit TikTok Content API application at developer.tiktok.com.
