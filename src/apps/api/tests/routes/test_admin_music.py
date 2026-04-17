@@ -24,7 +24,9 @@ def _patch_admin_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture()
 def client() -> TestClient:
-    return TestClient(app, raise_server_exceptions=True)
+    # raise_server_exceptions=False so asyncpg/DB errors surface as HTTP 500
+    # rather than propagating as Python exceptions in tests that lack a DB mock.
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def admin_headers() -> dict:
@@ -57,7 +59,7 @@ def test_create_music_track_success(client: TestClient) -> None:
             "app.routes.admin_music.download_audio_and_upload",
             return_value=("music/uuid/audio.m4a", 180.0, None),
         ),
-        patch("app.routes.admin_music.analyze_music_track_task") as mock_task,
+        patch("app.tasks.music_orchestrate.analyze_music_track_task") as mock_task,
         patch("app.database.get_db") as mock_db,
     ):
         mock_session = MagicMock()
@@ -89,7 +91,10 @@ def test_create_music_track_unsupported_url(client: TestClient) -> None:
         headers=admin_headers(),
     )
     assert resp.status_code == 422
-    assert "YouTube" in resp.json()["detail"] or "SoundCloud" in resp.json()["detail"]
+    # Pydantic v2 returns detail as a list of error objects; check msg fields
+    detail = resp.json()["detail"]
+    error_text = " ".join(e.get("msg", "") for e in detail) if isinstance(detail, list) else detail
+    assert "YouTube" in error_text or "SoundCloud" in error_text
 
 
 def test_create_music_track_invalid_url_format(client: TestClient) -> None:
