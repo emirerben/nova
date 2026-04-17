@@ -3,7 +3,6 @@
 All network and GCS calls are mocked — these tests never hit YouTube or GCS.
 """
 
-import io
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 

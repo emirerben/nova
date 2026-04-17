@@ -10,13 +10,14 @@ DELETE /admin/music-tracks/{id}         — soft-archive only
 Auth: X-Admin-Token header (same as admin.py).
 """
 
+import asyncio
 import hmac
 import uuid
 from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -70,6 +71,16 @@ class UpdateMusicTrackRequest(BaseModel):
     track_config: dict | None = None
     publish: bool | None = None
     archive: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_track_config_bounds(self) -> "UpdateMusicTrackRequest":
+        cfg = self.track_config or {}
+        if "slot_every_n_beats" in cfg and int(cfg["slot_every_n_beats"]) < 1:
+            raise ValueError("slot_every_n_beats must be >= 1")
+        if "best_end_s" in cfg and "best_start_s" in cfg:
+            if float(cfg["best_end_s"]) <= float(cfg["best_start_s"]):
+                raise ValueError("best_end_s must be greater than best_start_s")
+        return self
 
 
 class MusicTrackResponse(BaseModel):
@@ -151,10 +162,12 @@ async def create_music_track(
     """Download audio from URL, upload to GCS, queue analysis task."""
     track_id = str(uuid.uuid4())
 
-    # Synchronous download — runs in Celery worker context when called via admin
-    # For the API route we block briefly (admin-only, low traffic)
+    # Run the blocking yt-dlp download in a thread so the uvicorn event loop
+    # is not frozen for the duration of the download (30-180s for a full track).
     try:
-        gcs_path, duration_s, thumbnail_url = download_audio_and_upload(req.source_url)
+        gcs_path, duration_s, thumbnail_url = await asyncio.to_thread(
+            download_audio_and_upload, req.source_url
+        )
     except DownloadError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

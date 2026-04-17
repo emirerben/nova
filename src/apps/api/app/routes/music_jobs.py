@@ -19,7 +19,11 @@ from app.models import Job, MusicTrack
 log = structlog.get_logger()
 router = APIRouter()
 
-# Synthetic user for MVP (matches template_jobs.py)
+# Synthetic user for MVP (matches template_jobs.py).
+# TODO: replace with get_current_user(db) once auth infrastructure is built.
+#       POST /music-jobs is currently unauthenticated — any caller can trigger
+#       Gemini API calls and GCS reads. Acceptable for internal MVP; must be
+#       fixed before public launch.
 SYNTHETIC_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 

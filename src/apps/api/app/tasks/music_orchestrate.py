@@ -30,7 +30,7 @@ import structlog
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
-from app.pipeline.music_recipe import auto_best_section, generate_music_recipe
+from app.pipeline.music_recipe import DEFAULT_WINDOW_S, auto_best_section, generate_music_recipe
 from app.storage import download_to_file
 from app.tasks.template_orchestrate import (
     _analyze_clips_parallel,
@@ -55,6 +55,7 @@ except ImportError:
 
 log = structlog.get_logger()
 
+MAX_ERROR_DETAIL_LEN = 2000
 
 # ── analyze_music_track_task ──────────────────────────────────────────────────
 
@@ -101,14 +102,14 @@ def analyze_music_track_task(self, track_id: str) -> None:
             if best_end <= best_start:
                 best_start, best_end = auto_best_section(
                     beats,
-                    window_s=45.0,
+                    window_s=DEFAULT_WINDOW_S,
                     track_duration_s=float(duration_s or 0.0),
                 )
 
             # Slot count from best section
             n = int(existing_config.get("slot_every_n_beats", 8))
             window_beats = [b for b in beats if best_start <= b <= best_end]
-            n_slots = max(0, (len(window_beats) - n) // n + (1 if len(window_beats) > n else 0))
+            n_slots = len(range(0, max(0, len(window_beats) - n), n))
 
             new_config = {
                 **existing_config,
@@ -297,6 +298,11 @@ def _run_music_job(job_id: str) -> None:
         log.info("mix_audio_start", job_id=job_id)
         final_path = os.path.join(tmpdir, "final.mp4")
         _mix_template_audio(assembled_path, audio_gcs_path, final_path, tmpdir)
+        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+            raise RuntimeError(
+                "_mix_template_audio produced empty or missing output — "
+                "check FFmpeg audio filter logs above"
+            )
 
         # [11] Upload final video
         from app.storage import upload_public_read  # noqa: PLC0415
@@ -325,7 +331,7 @@ def _fail_job(job_id: str, error_detail: str) -> None:
             job = db.get(Job, uuid.UUID(job_id))
             if job:
                 job.status = "processing_failed"
-                job.error_detail = error_detail[:2000]
+                job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
                 db.commit()
     except Exception as exc:
         log.error("fail_job_db_error", job_id=job_id, error=str(exc))
@@ -337,7 +343,7 @@ def _fail_track(track_id: str, error_detail: str) -> None:
             track = db.get(MusicTrack, track_id)
             if track:
                 track.analysis_status = "failed"
-                track.error_detail = error_detail[:2000]
+                track.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
                 db.commit()
     except Exception as exc:
         log.error("fail_track_db_error", track_id=track_id, error=str(exc))
