@@ -154,10 +154,14 @@ export default function AdminMusicTrackPage({
 
   async function handleTogglePublish() {
     if (!track) return;
-    const updated = await adminUpdateMusicTrack(id, {
-      publish: track.published_at === null,
-    });
-    setTrack(updated);
+    try {
+      const updated = await adminUpdateMusicTrack(id, {
+        publish: track.published_at === null,
+      });
+      setTrack(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update publish status");
+    }
   }
 
   async function handleReanalyze() {
@@ -197,9 +201,6 @@ export default function AdminMusicTrackPage({
   }
 
   const cfg = track.track_config ?? ({} as TrackConfig);
-  const beats: number[] = [];
-  // beats are stored on track but not directly in MusicTrackDetail — we derive from beat_count
-  // The waveform uses track_config window bounds over beat_count as proxy
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 max-w-3xl mx-auto">

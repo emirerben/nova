@@ -4,7 +4,9 @@
  */
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const ADMIN_TOKEN = process.env.NEXT_PUBLIC_ADMIN_TOKEN ?? "";
+// Admin calls go through the Next.js API proxy (/api/admin/...) so the
+// admin token is read server-side only — never embedded in the browser bundle.
+const ADMIN_PROXY = "/api/admin";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -101,30 +103,24 @@ export async function getMusicJobStatus(jobId: string): Promise<MusicJobStatus> 
 }
 
 // ── Admin API ─────────────────────────────────────────────────────────────────
+// All admin requests go through /api/admin/... (Next.js proxy) so the
+// admin token is never sent to the browser.
 
-function adminHeaders(): HeadersInit {
-  return {
-    "Content-Type": "application/json",
-    "X-Admin-Token": ADMIN_TOKEN,
-  };
-}
+const JSON_HEADERS = { "Content-Type": "application/json" };
 
 export async function adminListMusicTracks(
   limit = 50,
   offset = 0,
 ): Promise<AdminMusicListResponse> {
   const res = await fetch(
-    `${API_BASE}/admin/music-tracks?limit=${limit}&offset=${offset}`,
-    { headers: adminHeaders() },
+    `${ADMIN_PROXY}/music-tracks?limit=${limit}&offset=${offset}`,
   );
   if (!res.ok) throw new Error(`Admin list failed: ${res.status}`);
   return res.json();
 }
 
 export async function adminGetMusicTrack(id: string): Promise<MusicTrackDetail> {
-  const res = await fetch(`${API_BASE}/admin/music-tracks/${id}`, {
-    headers: adminHeaders(),
-  });
+  const res = await fetch(`${ADMIN_PROXY}/music-tracks/${id}`);
   if (!res.ok) throw new Error(`Admin get track failed: ${res.status}`);
   return res.json();
 }
@@ -134,9 +130,9 @@ export async function adminCreateMusicTrack(
   title?: string,
   artist?: string,
 ): Promise<{ id: string; analysis_status: string }> {
-  const res = await fetch(`${API_BASE}/admin/music-tracks`, {
+  const res = await fetch(`${ADMIN_PROXY}/music-tracks`, {
     method: "POST",
-    headers: adminHeaders(),
+    headers: JSON_HEADERS,
     body: JSON.stringify({ source_url, title, artist }),
   });
   if (!res.ok) {
@@ -157,9 +153,9 @@ export async function adminUpdateMusicTrack(
     archive?: boolean;
   },
 ): Promise<MusicTrackDetail> {
-  const res = await fetch(`${API_BASE}/admin/music-tracks/${id}`, {
+  const res = await fetch(`${ADMIN_PROXY}/music-tracks/${id}`, {
     method: "PATCH",
-    headers: adminHeaders(),
+    headers: JSON_HEADERS,
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Admin update failed: ${res.status}`);
@@ -169,18 +165,16 @@ export async function adminUpdateMusicTrack(
 export async function adminReanalyzeMusicTrack(
   id: string,
 ): Promise<{ track_id: string; analysis_status: string }> {
-  const res = await fetch(`${API_BASE}/admin/music-tracks/${id}/reanalyze`, {
+  const res = await fetch(`${ADMIN_PROXY}/music-tracks/${id}/reanalyze`, {
     method: "POST",
-    headers: adminHeaders(),
   });
   if (!res.ok) throw new Error(`Reanalyze failed: ${res.status}`);
   return res.json();
 }
 
 export async function adminArchiveMusicTrack(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/admin/music-tracks/${id}`, {
+  const res = await fetch(`${ADMIN_PROXY}/music-tracks/${id}`, {
     method: "DELETE",
-    headers: adminHeaders(),
   });
   if (!res.ok && res.status !== 204) {
     throw new Error(`Archive failed: ${res.status}`);

@@ -9,6 +9,8 @@ import {
   type MusicJobStatus,
 } from "@/lib/music-api";
 
+const TERMINAL_STATUSES = ["music_ready", "processing_failed"] as const;
+
 // ── Track Card ────────────────────────────────────────────────────────────────
 
 function TrackCard({
@@ -72,8 +74,7 @@ export default function MusicPage() {
   // Poll job status until terminal state
   useEffect(() => {
     if (!jobStatus) return;
-    const terminal = ["music_ready", "processing_failed"];
-    if (terminal.includes(jobStatus.status)) return;
+    if ((TERMINAL_STATUSES as readonly string[]).includes(jobStatus.status)) return;
 
     const id = setInterval(async () => {
       try {
@@ -207,7 +208,7 @@ export default function MusicPage() {
             </p>
           )}
 
-          {!["music_ready", "processing_failed"].includes(jobStatus.status) && (
+          {!(TERMINAL_STATUSES as readonly string[]).includes(jobStatus.status) && (
             <p className="text-zinc-400 text-sm mt-2 animate-pulse">Processing…</p>
           )}
         </div>
