@@ -180,7 +180,7 @@ def reframe_and_export(
         )
 
     if result.returncode != 0:
-        stderr = result.stderr.decode(errors="replace")[:500]
+        stderr = result.stderr.decode(errors="replace")[-2000:]
         raise ReframeError(f"FFmpeg failed (rc={result.returncode}): {stderr}")
 
     if not os.path.exists(output_path):
@@ -281,8 +281,11 @@ def _build_video_filter(
     # after encoding to bt709 yuv420p. FFmpeg reads the clip's own stream
     # metadata to determine the input colorspace — no need to override it.
     # bt709 clips (Android SDR, screen recordings) are a no-op. HD clips
-    # with no metadata default to bt709, also a no-op.
-    filters.append("colorspace=all=bt709")
+    # with no metadata default to bt709 via iall=bt709 fallback.
+    # iall=bt709: assume input is bt709 when stream has no colorspace metadata
+    # (common in split/intermediate clips). Stream metadata still overrides
+    # this for real bt2020/HLG iPhone clips.
+    filters.append("colorspace=all=bt709:iall=bt709")
 
     # 0. Speed ramp -- FIRST filter to normalize PTS for all subsequent timed filters
     if speed_factor != 1.0 and speed_factor > 0:

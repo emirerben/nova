@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3.2] - 2026-04-17
+
+### Fixed
+- FFmpeg error messages now visible in logs: stderr truncation changed from first 500 chars (hidden behind FFmpeg config banner) to last 2000 chars, making actual errors readable
+- `colorspace=all=bt709:iall=bt709` fallback added for clips with no colorspace stream metadata (split/intermediate files); real stream metadata (e.g. bt2020/HLG iPhone clips) still overrides and converts correctly
+
 ## [0.2.3.1] - 2026-04-14
 
 ### Changed
