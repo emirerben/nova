@@ -107,6 +107,7 @@ class TestPreBurnCurtainSlotText:
     def test_pre_burn_uses_ultrafast_preset(self):
         """Intermediate clip must use preset=ultrafast to avoid 600s timeouts on Fly.io."""
         import tempfile
+
         from app.tasks.template_orchestrate import _pre_burn_curtain_slot_text
 
         step = {
@@ -130,7 +131,10 @@ class TestPreBurnCurtainSlotText:
         fake_png_configs = [{"png_path": "/tmp/fake_overlay.png", "start_s": 0.0, "end_s": 3.0}]
 
         with (
-            patch("app.tasks.template_orchestrate.subprocess.run", return_value=mock_result) as mock_run,
+            patch(
+                "app.tasks.template_orchestrate.subprocess.run",
+                return_value=mock_result,
+            ) as mock_run,
             patch(
                 "app.pipeline.text_overlay.generate_text_overlay_png",
                 return_value=fake_png_configs,
@@ -167,13 +171,17 @@ class TestConcatDemuxerPreset:
         used, scenecut=0 (native) would remove those keyframes, causing tearing.
         """
         import tempfile
+
         from app.tasks.template_orchestrate import _concat_demuxer
 
         mock_result = MagicMock()
         mock_result.returncode = 0
 
         with (
-            patch("app.tasks.template_orchestrate.subprocess.run", return_value=mock_result) as mock_run,
+            patch(
+                "app.tasks.template_orchestrate.subprocess.run",
+                return_value=mock_result,
+            ) as mock_run,
         ):
             with tempfile.TemporaryDirectory() as tmpdir:
                 _concat_demuxer(
@@ -187,7 +195,7 @@ class TestConcatDemuxerPreset:
         assert "-preset" in cmd, f"No -preset flag in cmd: {cmd}"
         preset_idx = cmd.index("-preset")
         assert cmd[preset_idx + 1] == "fast", (
-            f"concat demuxer must use preset=fast for scenecut keyframes, got: {cmd[preset_idx + 1]}"
+            f"concat must use preset=fast for scenecut, got: {cmd[preset_idx + 1]}"
         )
 
 
