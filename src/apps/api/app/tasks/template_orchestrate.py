@@ -1229,7 +1229,11 @@ def _concat_demuxer(
         "-f", "concat",
         "-safe", "0",
         "-i", concat_list,
-        *_encoding_args(output_path, preset="ultrafast"),
+        # Use preset="fast" (not ultrafast) here: this is the final assembly step
+        # where slot boundaries appear. scenecut=40 fires at scene transitions,
+        # inserting I-frames that prevent horizontal tearing across slot boundaries.
+        # Intermediates use ultrafast; this and _burn_text_overlays are final.
+        *_encoding_args(output_path, preset="fast"),
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=1200, check=False)
     if result.returncode != 0:
@@ -1283,8 +1287,7 @@ def _collect_absolute_overlays(
         # applied (tiki-style: curtain closes OVER the text).
         if inter and inter.get("type") == "curtain-close":
             cumulative_s += dur
-            if inter:
-                cumulative_s += float(inter.get("hold_s", 1.0))
+            cumulative_s += float(inter.get("hold_s", 1.0))
             continue
 
         for ov in slot.get("text_overlays", []):
@@ -1598,7 +1601,7 @@ def _pre_burn_curtain_slot_text(
         "-filter_complex", ";".join(fc_parts),
         "-map", f"[{prev}]",
         "-map", "0:a?",
-        *_encoding_args(burned_path),
+        *_encoding_args(burned_path, preset="ultrafast"),
     ])
 
     log.info("pre_burn_curtain_text", slot=slot_idx, overlays=len(png_configs))
@@ -1660,7 +1663,10 @@ def _burn_text_overlays(
         "-filter_complex", ";".join(fc_parts),
         "-map", f"[{prev}]",
         "-map", "0:a?",
-        *_encoding_args(output_path, preset="ultrafast"),
+        # preset="fast" for the same reason as _concat_demuxer: this is the
+        # final re-encode when text overlays exist. scenecut=40 must fire here
+        # (not just at concat) to preserve I-frames at slot boundaries.
+        *_encoding_args(output_path, preset="fast"),
     ])
 
     log.info("burn_text_overlays", count=len(png_configs))

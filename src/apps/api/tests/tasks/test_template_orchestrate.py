@@ -101,6 +101,96 @@ class TestOrchestratePipelineHelpers:
         assert len(metas) == 0
 
 
+class TestPreBurnCurtainSlotText:
+    """Test _pre_burn_curtain_slot_text encodes intermediates with ultrafast."""
+
+    def test_pre_burn_uses_ultrafast_preset(self):
+        """Intermediate clip must use preset=ultrafast to avoid 600s timeouts on Fly.io."""
+        import tempfile
+        from app.tasks.template_orchestrate import _pre_burn_curtain_slot_text
+
+        step = {
+            "clip_id": "clip_a",
+            "slot": {
+                "text_overlays": [
+                    {
+                        "role": "label",
+                        "sample_text": "PERU",
+                        "start_s": 0.0,
+                        "end_s": 3.0,
+                        "position": "bottom",
+                    }
+                ]
+            },
+        }
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+
+        fake_png_configs = [{"png_path": "/tmp/fake_overlay.png", "start_s": 0.0, "end_s": 3.0}]
+
+        with (
+            patch("app.tasks.template_orchestrate.subprocess.run", return_value=mock_result) as mock_run,
+            patch(
+                "app.pipeline.text_overlay.generate_text_overlay_png",
+                return_value=fake_png_configs,
+            ),
+        ):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                _pre_burn_curtain_slot_text(
+                    "/tmp/clip.mp4",
+                    step,
+                    slot_dur=5.0,
+                    clip_metas=[_make_clip_meta("clip_a")],
+                    subject="PERU",
+                    slot_idx=0,
+                    tmpdir=tmpdir,
+                )
+
+        assert mock_run.called, "subprocess.run was not called — no overlays processed?"
+        cmd = mock_run.call_args[0][0]
+        assert "-preset" in cmd, f"No -preset flag in cmd: {cmd}"
+        preset_idx = cmd.index("-preset")
+        assert cmd[preset_idx + 1] == "ultrafast", (
+            f"Expected ultrafast preset for intermediate, got: {cmd[preset_idx + 1]}"
+        )
+
+
+class TestConcatDemuxerPreset:
+    """_concat_demuxer must use preset=fast so scenecut=40 fires at slot boundaries."""
+
+    def test_concat_uses_fast_preset(self):
+        """Final assembly (concat) must use preset=fast to prevent horizontal tearing.
+
+        All per-slot intermediates use ultrafast. The concat step is where slot
+        boundaries appear — scenecut=40 inserts I-frames here. If ultrafast were
+        used, scenecut=0 (native) would remove those keyframes, causing tearing.
+        """
+        import tempfile
+        from app.tasks.template_orchestrate import _concat_demuxer
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+
+        with (
+            patch("app.tasks.template_orchestrate.subprocess.run", return_value=mock_result) as mock_run,
+        ):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                _concat_demuxer(
+                    ["/tmp/slot_0.mp4", "/tmp/slot_1.mp4"],
+                    "/tmp/joined.mp4",
+                    tmpdir,
+                )
+
+        assert mock_run.called
+        cmd = mock_run.call_args[0][0]
+        assert "-preset" in cmd, f"No -preset flag in cmd: {cmd}"
+        preset_idx = cmd.index("-preset")
+        assert cmd[preset_idx + 1] == "fast", (
+            f"concat demuxer must use preset=fast for scenecut keyframes, got: {cmd[preset_idx + 1]}"
+        )
+
+
 class TestAnalyzeTemplateTask:
     def test_happy_path_sets_ready_status(self):
         from app.tasks.template_orchestrate import analyze_template_task
