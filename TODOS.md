@@ -120,6 +120,18 @@
 
 ---
 
+## Music Beat-Sync (shipped v0.3.0.0, 2026-04-17)
+
+### Auth on POST /music-jobs
+**What:** Replace the synthetic `SYNTHETIC_USER_ID` stub in `music_jobs.py` with real user authentication via `get_current_user(db)`.
+**Why:** `POST /music-jobs` is currently unauthenticated — any caller can trigger Gemini API calls and GCS reads. Acceptable for internal MVP; must be fixed before public launch. See `src/apps/api/app/routes/music_jobs.py:23`.
+**How:** Wire in the existing `get_current_user` dependency (already used by other routes). Add user_id to music job records for attribution.
+**Effort:** XS (human: ~1h / CC: ~5 min)
+**Priority:** P1 — required before public launch
+**Depends on:** Auth infrastructure (already exists in other routes)
+
+---
+
 ## P1 — Required before GTM campaigns go live
 
 ### UTM Capture
