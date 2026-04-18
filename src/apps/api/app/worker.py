@@ -11,6 +11,7 @@ celery_app = Celery(
         "app.tasks.orchestrate",
         "app.tasks.template_orchestrate",
         "app.tasks.drive_import",
+        "app.tasks.music_orchestrate",
     ],
 )
 

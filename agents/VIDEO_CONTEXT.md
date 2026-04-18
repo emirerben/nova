@@ -85,6 +85,39 @@ subtitles=overlay.ass:fontsdir=/path/to/assets/fonts
 
 **Transition vocabulary** (`transitions.py`): Gemini outputs human-friendly names, translated to FFmpeg xfade types: hard-cut to none, whip-pan to wipe_left, zoom-in to crossfade, dissolve to crossfade, curtain-close to none (handled by interstitial clip instead).
 
+## Music Beat-Sync Pipeline
+
+Beat-sync mode creates videos where every clip cut lands on a detected musical beat.
+
+**Beat detection** (`audio_download.py → _detect_audio_beats`):
+- Audio downloaded via yt-dlp subprocess: `yt-dlp -x --audio-format mp3 -o <path> <url>`
+- FFmpeg energy-peak analysis: `silencedetect` + `astats` to find transient onsets
+- Result: list of float timestamps in seconds (`beat_timestamps_s`)
+- Tracks with 0 beats are marked `failed` immediately to prevent silent downstream failures
+
+**Best-section auto-select** (`_auto_best_section`):
+- Scores 30-second windows by beat density (beats per second)
+- Stores result in `MusicTrack.track_config`: `best_start_s`, `best_end_s`, `slot_every_n_beats`
+- Admins can override via `PATCH /admin/music-tracks/{id}`
+
+**Recipe generation** (`music_recipe.py → generate_music_recipe`):
+- Slices the best section into N slots: N = beat_count / `slot_every_n_beats`
+- Each slot target duration = beats-per-slot × average beat interval
+- Returns a list of `{start_beat_s, end_beat_s, target_duration_s}` dicts
+
+**Job orchestration** (`music_orchestrate.py → orchestrate_music_job`):
+- Parallel Gemini clip analysis (same as template mode)
+- `template_matcher.match` assigns clips to slots
+- `_assemble_clips` with beat-snap: each cut aligns to the nearest beat timestamp
+- `_mix_template_audio`: overlays the music track audio on the assembled video
+
+**Audio mixing pattern** (FFmpeg):
+```
+ffmpeg -i assembled_video.mp4 -i music_track.mp3 \
+  -filter_complex "[1:a]atrim=start={best_start_s}:end={best_end_s},asetpts=PTS-STARTPTS[music];[0:a][music]amix=inputs=2:duration=first[aout]" \
+  -map 0:v -map "[aout]" output.mp4
+```
+
 ## Virality Framework
 - **Hook (0-3s):** Create a question/curiosity/emotion. Cut dead air. Start mid-action.
 - **Retention (3-30s):** Remove pauses >1s. Add captions (Whisper timestamps). Keep energy high.

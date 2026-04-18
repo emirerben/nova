@@ -65,7 +65,7 @@
 **How:** Add librosa dependency (~50MB with numpy/scipy). Replace `_detect_audio_beats()` in `template_orchestrate.py`. Compare quality against FFmpeg approach on 20+ templates.
 **Effort:** S (human: ~1 day / CC: ~15 min)
 **Priority:** P3 — upgrade path if FFmpeg+Gemini beat detection proves insufficient
-**Depends on:** Beat sync feature shipped (this PR)
+**Depends on:** ~~Beat sync feature shipped~~ ✓ unblocked by v0.3.0.0
 
 ### Re-Analyze Existing Templates for Beat Data
 **What:** One-time migration task to re-run `analyze_template_task` on all existing templates so they get `beat_timestamps_s` in their cached recipe.
@@ -73,7 +73,7 @@
 **How:** Admin endpoint or management command that queries all templates with `analysis_status="ready"` and dispatches `analyze_template_task` for each.
 **Effort:** XS (human: ~2 hours / CC: ~5 min)
 **Priority:** P2 — run after beat sync code ships
-**Depends on:** Beat sync feature shipped (this PR)
+**Depends on:** ~~Beat sync feature shipped~~ ✓ unblocked by v0.3.0.0
 
 ### TikTok Content API Application
 **What:** Submit TikTok Content API application at developer.tiktok.com.
@@ -117,6 +117,18 @@
 **Effort:** S (human: ~1 day / CC: ~15 min)
 **Priority:** P3 — after audio handling is understood
 **Depends on:** Template prompt improvement merged (for speed_factor data)
+
+---
+
+## Music Beat-Sync (shipped v0.3.0.0, 2026-04-17)
+
+### Auth on POST /music-jobs
+**What:** Replace the synthetic `SYNTHETIC_USER_ID` stub in `music_jobs.py` with real user authentication via `get_current_user(db)`.
+**Why:** `POST /music-jobs` is currently unauthenticated — any caller can trigger Gemini API calls and GCS reads. Acceptable for internal MVP; must be fixed before public launch. See `src/apps/api/app/routes/music_jobs.py:23`.
+**How:** Wire in the existing `get_current_user` dependency (already used by other routes). Add user_id to music job records for attribution.
+**Effort:** XS (human: ~1h / CC: ~5 min)
+**Priority:** P1 — required before public launch
+**Depends on:** Auth infrastructure (already exists in other routes)
 
 ---
 

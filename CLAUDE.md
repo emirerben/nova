@@ -12,7 +12,16 @@ Nova transforms raw real-life videos into viral short-form content (TikTok, Reel
 ## Key paths
 - src/apps/web/  — Next.js frontend (upload UI, progress tracker, result viewer)
 - src/apps/web/src/app/admin/templates/[id]/components/ — visual overlay editor (OverlayPreview, OverlayTimeline, PropertyPanel, overlay-constants.ts)
+- src/apps/web/src/app/music/ — music gallery page (browse tracks, select, upload clips, poll result)
+- src/apps/web/src/app/admin/music/ — admin music management (upload tracks, monitor analysis, publish/archive)
+- src/apps/web/src/lib/music-api.ts — typed API client for music routes
 - src/apps/api/  — Python API (upload endpoint, job queue, FFmpeg pipeline)
+- src/apps/api/app/routes/admin_music.py — admin music-track CRUD + publish/reanalyze endpoints
+- src/apps/api/app/routes/music.py — public music-track gallery endpoint
+- src/apps/api/app/routes/music_jobs.py — beat-sync job submission + status polling
+- src/apps/api/app/pipeline/music_recipe.py — beat-snap recipe generator (slot layout from beats)
+- src/apps/api/app/tasks/music_orchestrate.py — Celery tasks: beat analysis + music job orchestration
+- src/apps/api/app/services/audio_download.py — yt-dlp audio download + beat detection via FFmpeg
 - src/apps/api/prompts/ — LLM prompt templates (template analysis, transcription)
 - agents/        — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
 
@@ -37,6 +46,17 @@ Alternative: `docker-compose up` runs everything in containers (no hot reload fo
 VideoFileClip(path) buffers the entire video into RAM. On a 2GB source file this crashes.
 Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 
+## Music beat-sync pipeline
+- Beat detection: `_detect_audio_beats()` in `audio_download.py` uses FFmpeg `silencedetect`/`astats` energy-peak analysis on the downloaded audio file
+- Best-section auto-select: `_auto_best_section()` scores 30s windows by beat density; result stored in `MusicTrack.track_config` as `best_start_s`/`best_end_s`/`slot_every_n_beats`
+- Recipe generation: `generate_music_recipe()` in `music_recipe.py` slices the best section into N slots where N = beat_count / slot_every_n_beats; each slot target duration = beats-per-slot × beat interval
+- Job orchestration: `orchestrate_music_job` Celery task runs parallel Gemini clip analysis → `template_matcher.match` → `_assemble_clips` with beat-snap → `_mix_template_audio`
+- Audio download: `audio_download.py` uses yt-dlp subprocess (not yt-dlp Python API) to avoid RAM buffering; downloads to a temp path in GCS-mounted storage
+- Track lifecycle: `pending` → `analyzing` → `ready` | `failed`; only `ready`+`published` tracks appear in the public gallery
+- Admin proxy: Next.js `/api/admin/[...path]` route proxies to Fly.io API, keeping the admin token server-side only (never exposed to browser)
+- Clip count: `slot_count` returned by `/music-tracks` tells the frontend exactly how many clips to collect; `POST /music-jobs` validates clip count matches before enqueuing
+- Beat-sync guard: tracks with 0 detected beats are marked `failed` at analysis time; `POST /music-jobs` rejects non-ready or non-published tracks
+
 ## Template pipeline
 - Interstitials: `app/pipeline/interstitials.py` detects curtain-close vs fade-to-black via FFmpeg luminance band analysis, renders color holds and `geq` pixel-expression curtain-close animations (drawbox cannot animate bar height over time)
 - Transitions: `app/pipeline/transitions.py` translates Gemini vocabulary (whip-pan, zoom-in, dissolve) to internal FFmpeg xfade types
@@ -57,6 +77,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - REDIS_URL
 - DATABASE_URL
 - OPENAI_API_KEY
+- GEMINI_API_KEY — required for clip analysis (music jobs) and template analysis
 
 ## Deploy Configuration
 

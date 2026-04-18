@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1.0] - 2026-04-18
+
+### Added
+- Interactive audio player on music track detail page — play/pause, play selected section, click-to-seek, click-to-set start/end times on beat waveform
+- Direct audio file upload (`POST /admin/music-tracks/upload`) — bypasses yt-dlp for environments where YouTube blocks bot IPs (Fly.io, cloud servers)
+- Signed audio URL endpoint (`GET /admin/music-tracks/{id}/audio-url`) — 1-hour GCS signed URL for browser playback
+- Upload file tab on admin music page (default) alongside existing URL tab
+
+### Fixed
+- Beat detection now works on continuous music — replaced `silencedetect` (finds silence gaps, returns 0 for music) with RMS energy peak detection via `astats` (finds rhythmic peaks)
+- Fixed RMS value parsing crash on bare `-` values from FFmpeg `ametadata` output (`could not convert string to float: '-'`)
+- Fixed admin proxy dropping query parameters (e.g., `?limit=50&offset=0` silently stripped)
+- Fixed admin proxy returning raw 500 when backend is unreachable (now returns 502 with clear error)
+- Registered `music_orchestrate` task module in Celery worker (tasks were silently stuck in Redis queue)
+- Documented `ADMIN_TOKEN` env var in `.env.example` (required for Next.js admin proxy)
+
+## [0.3.0.0] - 2026-04-17
+
+### Added
+- **Music beat-sync template** — users can now browse a music gallery, select a song, upload clips, and receive a video where every cut lands on a detected beat
+- `MusicTrack` data model with beat timestamps, track config, publish/archive lifecycle, and GCS audio path
+- Database migrations: `0008_create_music_tracks` table and `0009_add_music_to_jobs` FK column
+- `POST /admin/music-tracks` — admin uploads a YouTube/SoundCloud URL; audio is downloaded via yt-dlp and beat analysis runs as a background Celery task
+- `GET /admin/music-tracks` and `GET /admin/music-tracks/{id}` — admin list and detail views
+- `PATCH /admin/music-tracks/{id}` — tune `best_start_s`, `best_end_s`, `slot_every_n_beats`; publish or archive a track; now validates the merged config window (not just the patch payload)
+- `POST /admin/music-tracks/{id}/reanalyze` — re-trigger beat detection and config computation
+- `GET /music-tracks` — public gallery endpoint returns published, ready tracks with section duration and clip count requirements
+- `POST /music-jobs` — submit a beat-sync job; guards validate track state, publication, analysis readiness, audio availability, and per-track clip count limits
+- `GET /music-jobs/{job_id}/status` — poll job progress
+- `analyze_music_track_task` Celery task: yt-dlp audio download → `_detect_audio_beats` → `_auto_best_section` → config storage
+- `orchestrate_music_job` Celery task: load track → `generate_music_recipe` → parallel Gemini clip analysis → `template_matcher.match` → `_assemble_clips` with beat-snap → `_mix_template_audio` with music track audio
+- Music gallery page (`/music`) — browse tracks, select, upload clips, submit, and poll for result
+- Admin music management pages (`/admin/music`, `/admin/music/[id]`) — upload, monitor analysis, publish/archive, tune config
+- Next.js API proxy for admin routes (`/api/admin/[...path]`) — keeps admin token server-side only
+
+### Fixed
+- Beat-sync polling interval now correctly clears on terminal job states (was referencing undefined `terminal` variable, causing perpetual polling)
+- Tracks with 0 detected beats are now marked `failed` at analysis time with a descriptive error, preventing silent job failures downstream
+- `PATCH /admin/music-tracks/{id}` now validates the merged `track_config` window (not just keys present in the request body), preventing inverted `best_start_s`/`best_end_s` from reaching the pipeline
+
 ## [0.2.3.1] - 2026-04-14
 
 ### Changed

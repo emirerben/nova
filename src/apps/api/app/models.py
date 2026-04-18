@@ -150,6 +150,37 @@ class TemplateRecipeVersion(Base):
     )
 
 
+class MusicTrack(Base):
+    """Admin-registered music tracks used for beat-sync jobs."""
+
+    __tablename__ = "music_tracks"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    artist: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_url: Mapped[str] = mapped_column(Text, nullable=False)
+    audio_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    beat_timestamps_s: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # "queued" | "analyzing" | "ready" | "failed"
+    analysis_status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # per-song admin fine-tuning: best_start_s, best_end_s, slot_every_n_beats,
+    # required_clips_min, required_clips_max
+    track_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("idx_music_tracks_status", "analysis_status"),
+        Index("idx_music_tracks_published", "published_at"),
+    )
+
+
 class Job(Base):
     __tablename__ = "jobs"
 
@@ -163,11 +194,15 @@ class Job(Base):
     # posting|posting_partial|done|posting_failed|processing_failed
     # drive import: importing → queued → processing → ...
     # template jobs: queued → processing → template_ready | processing_failed
+    # music jobs:   queued → processing → music_ready   | processing_failed
     status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
-    # "default" | "template"
+    # "default" | "template" | "music"
     job_type: Mapped[str] = mapped_column(Text, nullable=False, default="default")
     template_id: Mapped[str | None] = mapped_column(
         Text, ForeignKey("video_templates.id"), nullable=True
+    )
+    music_track_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("music_tracks.id"), nullable=True
     )
     assembly_plan: Mapped[dict | None] = mapped_column(JSONB)  # populated for template jobs
     raw_storage_path: Mapped[str] = mapped_column(Text, nullable=False)
@@ -191,6 +226,7 @@ class Job(Base):
         Index("idx_jobs_user_id", "user_id"),
         Index("idx_jobs_status", "status"),
         Index("idx_jobs_template_id", "template_id"),
+        Index("idx_jobs_music_track_id", "music_track_id"),
     )
 
 
