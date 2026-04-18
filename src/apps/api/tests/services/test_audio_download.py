@@ -16,7 +16,6 @@ from app.services.audio_download import (
     is_supported_audio_url,
 )
 
-
 # ── is_supported_audio_url ────────────────────────────────────────────────────
 
 
@@ -100,7 +99,10 @@ def _make_fake_audio(tmpdir: str) -> None:
 
 
 def test_download_audio_and_upload_success(tmp_path: Path) -> None:
-    """Happy path: yt-dlp succeeds, file uploaded to GCS, returns (gcs_path, duration, thumbnail)."""
+    """Happy path: yt-dlp succeeds, file uploaded to GCS.
+
+    Returns (gcs_path, duration, thumbnail).
+    """
     fake_audio = tmp_path / "audio.m4a"
     fake_audio.write_bytes(b"fake audio")
 

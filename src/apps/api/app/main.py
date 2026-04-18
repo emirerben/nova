@@ -6,7 +6,18 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.limiter import limiter
-from app.routes import admin, admin_music, jobs, music, music_jobs, presigned, template_jobs, templates, uploads, waitlist
+from app.routes import (
+    admin,
+    admin_music,
+    jobs,
+    music,
+    music_jobs,
+    presigned,
+    template_jobs,
+    templates,
+    uploads,
+    waitlist,
+)
 
 log = structlog.get_logger()
 

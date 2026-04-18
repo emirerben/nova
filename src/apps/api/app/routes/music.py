@@ -3,10 +3,8 @@
 GET /music-tracks  — list published music tracks for the gallery
 """
 
-from datetime import datetime
-
 import structlog
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

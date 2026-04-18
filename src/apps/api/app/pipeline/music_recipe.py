@@ -36,7 +36,9 @@ def generate_music_recipe(track_data: dict) -> dict:
     duration_s: float = float(track_data.get("duration_s") or 0.0)
 
     start_s: float = float(cfg.get("best_start_s", 0.0))
-    end_s: float = float(cfg.get("best_end_s", min(DEFAULT_WINDOW_S, duration_s or DEFAULT_WINDOW_S)))
+    end_s: float = float(
+        cfg.get("best_end_s", min(DEFAULT_WINDOW_S, duration_s or DEFAULT_WINDOW_S))
+    )
     n: int = int(cfg.get("slot_every_n_beats", DEFAULT_SLOT_EVERY_N_BEATS))
 
     # Beats inside the configured window (inclusive on both ends)

@@ -19,7 +19,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import structlog
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +37,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models import MusicTrack
-from app.services.audio_download import DownloadError, download_audio_and_upload, is_supported_audio_url
+from app.services.audio_download import (
+    DownloadError,
+    download_audio_and_upload,
+    is_supported_audio_url,
+)
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -62,7 +76,8 @@ class CreateMusicTrackRequest(BaseModel):
     def validate_url(cls, v: str) -> str:
         if not is_supported_audio_url(v.strip()):
             raise ValueError(
-                "Only YouTube (youtube.com, youtu.be) and SoundCloud (soundcloud.com) URLs are supported."
+                "Only YouTube (youtube.com, youtu.be) and "
+                "SoundCloud (soundcloud.com) URLs are supported."
             )
         return v.strip()
 

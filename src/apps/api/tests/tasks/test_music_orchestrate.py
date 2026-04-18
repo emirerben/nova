@@ -11,7 +11,6 @@ from app.tasks.music_orchestrate import (
     orchestrate_music_job,
 )
 
-
 TRACK_ID = "test-track-id-0001"
 JOB_ID = str(uuid.uuid4())
 

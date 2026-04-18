@@ -102,7 +102,8 @@ def download_audio_and_upload(url: str) -> tuple[str, float | None, str | None]:
         duration_s = _probe_duration(str(audio_file))
         if duration_s is not None and duration_s > MAX_AUDIO_DURATION_S:
             raise DownloadError(
-                f"Track is {duration_s:.0f}s — maximum allowed is {MAX_AUDIO_DURATION_S}s (10 min). "
+                f"Track is {duration_s:.0f}s — maximum allowed is "
+                f"{MAX_AUDIO_DURATION_S}s (10 min). "
                 "Upload a shorter clip or trim to the best section first."
             )
 

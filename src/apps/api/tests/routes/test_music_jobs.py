@@ -200,7 +200,10 @@ def test_create_music_job_clip_count_above_max(client: TestClient) -> None:
     try:
         resp = client.post(
             "/music-jobs",
-            json={"music_track_id": "track-001", "clip_gcs_paths": ["clips/a.mp4", "clips/b.mp4", "clips/c.mp4"]},
+            json={
+                "music_track_id": "track-001",
+                "clip_gcs_paths": ["clips/a.mp4", "clips/b.mp4", "clips/c.mp4"],
+            },
         )
     finally:
         app.dependency_overrides.clear()

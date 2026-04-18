@@ -7,7 +7,6 @@ import pytest
 
 from app.pipeline.music_recipe import auto_best_section, generate_music_recipe
 
-
 # ── auto_best_section ─────────────────────────────────────────────────────────
 
 

@@ -25,11 +25,9 @@ import re
 import subprocess
 import tempfile
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import structlog
 
-from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
 from app.pipeline.music_recipe import DEFAULT_WINDOW_S, auto_best_section, generate_music_recipe
@@ -73,7 +71,9 @@ def _detect_music_beats(audio_path: str, min_gap_s: float = 0.15) -> list[float]
     """
     cmd = [
         "ffmpeg", "-i", audio_path,
-        "-af", "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+        "-af",
+        "astats=metadata=1:reset=1,"
+        "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
         "-f", "null", "-",
     ]
     try:
@@ -183,7 +183,8 @@ def analyze_music_track_task(self, track_id: str) -> None:
             if n_slots == 0:
                 _fail_track(
                     track_id,
-                    "Beat detection produced 0 slots — audio may be silent or use an unsupported format.",
+                    "Beat detection produced 0 slots — audio may be "
+                    "silent or use an unsupported format.",
                 )
                 return
 
@@ -320,7 +321,9 @@ def _run_music_job(job_id: str) -> None:
         )
 
         # [7] Enrich slots with energy from beats
-        enriched_slots = _enrich_slots_with_energy(recipe_dict["slots"], track_data["beat_timestamps_s"])
+        enriched_slots = _enrich_slots_with_energy(
+            recipe_dict["slots"], track_data["beat_timestamps_s"],
+        )
         recipe_dict = {**recipe_dict, "slots": enriched_slots}
         recipe = TemplateRecipe(**recipe_dict)
 
