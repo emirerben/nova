@@ -112,12 +112,35 @@ class VideoTemplate(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     thumbnail_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Music variant columns
+    template_type: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="standard"
+    )
+    parent_template_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("video_templates.id"), nullable=True
+    )
+    music_track_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("music_tracks.id"), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
     )
 
     recipe_versions: Mapped[list["TemplateRecipeVersion"]] = relationship(
         back_populates="template", cascade="all, delete-orphan"
+    )
+    children: Mapped[list["VideoTemplate"]] = relationship(
+        back_populates="parent",
+        foreign_keys="VideoTemplate.parent_template_id",
+    )
+    parent: Mapped["VideoTemplate | None"] = relationship(
+        back_populates="children",
+        remote_side="VideoTemplate.id",
+        foreign_keys="VideoTemplate.parent_template_id",
+    )
+    music_track: Mapped["MusicTrack | None"] = relationship(
+        foreign_keys="VideoTemplate.music_track_id",
     )
 
 
@@ -133,7 +156,7 @@ class TemplateRecipeVersion(Base):
         Text, ForeignKey("video_templates.id", ondelete="CASCADE"), nullable=False
     )
     recipe: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    # initial_analysis | reanalysis | manual_edit
+    # initial_analysis | reanalysis | manual_edit | remerge
     trigger: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
@@ -143,7 +166,7 @@ class TemplateRecipeVersion(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "trigger IN ('initial_analysis', 'reanalysis', 'manual_edit')",
+            "trigger IN ('initial_analysis', 'reanalysis', 'manual_edit', 'remerge')",
             name="ck_recipe_version_trigger",
         ),
         Index("idx_recipe_versions_template_created", "template_id", "created_at"),
