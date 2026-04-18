@@ -3,14 +3,10 @@
 DB and GCS are mocked. Celery tasks are called directly (not via .delay()).
 """
 
-from unittest.mock import MagicMock, patch
 import uuid
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from app.tasks.music_orchestrate import (
-    _fail_job,
-    _fail_track,
     analyze_music_track_task,
     orchestrate_music_job,
 )
@@ -51,7 +47,7 @@ def test_analyze_music_track_task_beats_stored_in_db() -> None:
     with (
         patch("app.tasks.music_orchestrate._sync_session", return_value=mock_session),
         patch("app.tasks.music_orchestrate.download_to_file"),
-        patch("app.tasks.music_orchestrate._detect_audio_beats", return_value=mock_beats),
+        patch("app.tasks.music_orchestrate._detect_music_beats", return_value=mock_beats),
         patch("app.tasks.music_orchestrate.auto_best_section", return_value=(0.0, 5.0)),
         patch("tempfile.TemporaryDirectory") as mock_td,
     ):
@@ -97,7 +93,7 @@ def test_analyze_music_track_task_no_audio_gcs_path() -> None:
 
 
 def test_analyze_music_track_task_zero_beats_fails_track() -> None:
-    """If _detect_audio_beats returns [], the track is failed (0 slots = unsupported audio)."""
+    """If _detect_music_beats returns [], the track is failed (0 slots = unsupported audio)."""
     mock_track = _make_mock_track()
 
     mock_session = MagicMock()
@@ -108,7 +104,7 @@ def test_analyze_music_track_task_zero_beats_fails_track() -> None:
     with (
         patch("app.tasks.music_orchestrate._sync_session", return_value=mock_session),
         patch("app.tasks.music_orchestrate.download_to_file"),
-        patch("app.tasks.music_orchestrate._detect_audio_beats", return_value=[]),
+        patch("app.tasks.music_orchestrate._detect_music_beats", return_value=[]),
         patch("app.tasks.music_orchestrate.auto_best_section", return_value=(0.0, 45.0)),
         patch("app.tasks.music_orchestrate._fail_track") as mock_fail,
         patch("tempfile.TemporaryDirectory") as mock_td,
