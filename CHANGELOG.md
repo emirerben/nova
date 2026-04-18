@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1.0] - 2026-04-18
+
+### Added
+- Interactive audio player on music track detail page — play/pause, play selected section, click-to-seek, click-to-set start/end times on beat waveform
+- Direct audio file upload (`POST /admin/music-tracks/upload`) — bypasses yt-dlp for environments where YouTube blocks bot IPs (Fly.io, cloud servers)
+- Signed audio URL endpoint (`GET /admin/music-tracks/{id}/audio-url`) — 1-hour GCS signed URL for browser playback
+- Upload file tab on admin music page (default) alongside existing URL tab
+
+### Fixed
+- Beat detection now works on continuous music — replaced `silencedetect` (finds silence gaps, returns 0 for music) with RMS energy peak detection via `astats` (finds rhythmic peaks)
+- Fixed RMS value parsing crash on bare `-` values from FFmpeg `ametadata` output (`could not convert string to float: '-'`)
+- Fixed admin proxy dropping query parameters (e.g., `?limit=50&offset=0` silently stripped)
+- Fixed admin proxy returning raw 500 when backend is unreachable (now returns 502 with clear error)
+- Registered `music_orchestrate` task module in Celery worker (tasks were silently stuck in Redis queue)
+- Documented `ADMIN_TOKEN` env var in `.env.example` (required for Next.js admin proxy)
+
 ## [0.3.0.0] - 2026-04-17
 
 ### Added
