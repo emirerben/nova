@@ -5,7 +5,11 @@ No I/O, no DB — pure algorithm tests.
 
 import pytest
 
-from app.pipeline.music_recipe import auto_best_section, generate_music_recipe
+from app.pipeline.music_recipe import (
+    auto_best_section,
+    generate_music_recipe,
+    merge_template_with_track,
+)
 
 # ── auto_best_section ─────────────────────────────────────────────────────────
 
@@ -135,3 +139,168 @@ def test_generate_music_recipe_sync_style() -> None:
     data = _make_track_data(beats, best_start=0.0, best_end=39.0, slot_every_n=4)
     recipe = generate_music_recipe(data)
     assert recipe["sync_style"] == "cut-on-beat"
+
+
+# ── merge_template_with_track ────────────────────────────────────────────────
+
+
+def _make_parent_recipe(
+    n_slots: int = 8,
+    slot_duration: float = 3.0,
+    with_overlays: bool = True,
+) -> dict:
+    """Build a minimal parent recipe with N slots."""
+    slots = []
+    for i in range(n_slots):
+        slot: dict = {
+            "position": i + 1,
+            "target_duration_s": slot_duration,
+            "slot_type": "hook" if i == 0 else "broll",
+            "transition_in": "whip-pan" if i % 2 == 0 else "dissolve",
+            "color_hint": "warm",
+            "speed_factor": 1.2,
+            "energy": 5.0,
+            "text_overlays": [],
+        }
+        if with_overlays:
+            slot["text_overlays"] = [
+                {
+                    "role": "hook",
+                    "text": f"Overlay {i + 1}",
+                    "start_s": 0.0,
+                    "end_s": slot_duration,
+                    "position": "center",
+                    "effect": "fade-in",
+                    "font_style": "sans",
+                    "text_size": "medium",
+                    "text_color": "#FFFFFF",
+                }
+            ]
+        slots.append(slot)
+
+    return {
+        "shot_count": n_slots,
+        "total_duration_s": n_slots * slot_duration,
+        "slots": slots,
+        "copy_tone": "cinematic",
+        "caption_style": "bold",
+        "creative_direction": "luxury travel",
+        "color_grade": "warm",
+        "transition_style": "whip-pan",
+        "interstitials": [
+            {"type": "curtain-close", "after_slot": 4, "hold_s": 0.5, "hold_color": "#000000"}
+        ],
+        "sync_style": "freeform",
+        "pacing_style": "moderate",
+        "beat_timestamps_s": [],
+    }
+
+
+def test_merge_8_parent_12_music_slots() -> None:
+    """8 parent slots + 12 beat slots → 12 merged slots with visual props."""
+    parent = _make_parent_recipe(n_slots=8)
+    # 50 beats → every 4 → 12 slots (range 0..48, steps of 4 = 12 groups)
+    beats = [float(i) for i in range(50)]
+    track = _make_track_data(beats, best_start=0.0, best_end=49.0, slot_every_n=4)
+
+    merged = merge_template_with_track(parent, track)
+
+    assert len(merged["slots"]) == 12
+    # All slots should have visual properties from parent
+    for slot in merged["slots"]:
+        assert slot["transition_in"] in ("whip-pan", "dissolve")
+        assert slot["color_hint"] == "warm"
+        assert slot["speed_factor"] == 1.2
+    # Beat-sync overrides
+    assert merged["sync_style"] == "cut-on-beat"
+    assert merged["pacing_style"] == "fast"
+    # Top-level fields from parent
+    assert merged["copy_tone"] == "cinematic"
+    assert merged["creative_direction"] == "luxury travel"
+
+
+def test_merge_1_parent_slot_minimal() -> None:
+    """Merge with a single parent slot — all music slots inherit from it."""
+    parent = _make_parent_recipe(n_slots=1, slot_duration=10.0)
+    beats = [float(i) for i in range(20)]
+    track = _make_track_data(beats, best_start=0.0, best_end=19.0, slot_every_n=4)
+
+    merged = merge_template_with_track(parent, track)
+
+    assert len(merged["slots"]) >= 1
+    for slot in merged["slots"]:
+        assert slot["slot_type"] == "hook"  # all inherit from slot 0
+
+
+def test_merge_0_beats_raises() -> None:
+    """Merge with 0 beats → ValueError (from generate_music_recipe)."""
+    parent = _make_parent_recipe(n_slots=4)
+    track = _make_track_data([], best_start=0.0, best_end=30.0)
+
+    with pytest.raises(ValueError, match="0 slots"):
+        merge_template_with_track(parent, track)
+
+
+def test_merge_interstitial_remapping() -> None:
+    """Interstitial after_slot indices are proportionally remapped."""
+    parent = _make_parent_recipe(n_slots=4)
+    parent["interstitials"] = [
+        {"type": "curtain-close", "after_slot": 2, "hold_s": 0.5, "hold_color": "#000000"}
+    ]
+    beats = [float(i) for i in range(40)]
+    track = _make_track_data(beats, best_start=0.0, best_end=39.0, slot_every_n=4)
+
+    merged = merge_template_with_track(parent, track)
+    n_music = len(merged["slots"])
+
+    assert len(merged["interstitials"]) == 1
+    remapped = merged["interstitials"][0]["after_slot"]
+    # after_slot=2 in 4 parent slots → proportional in N music slots
+    expected = max(1, min(round(2 * n_music / 4), n_music))
+    assert remapped == expected
+
+
+def test_merge_text_overlay_timing_scaling() -> None:
+    """Text overlay timing is proportionally scaled to new slot duration."""
+    parent = _make_parent_recipe(n_slots=4, slot_duration=6.0)
+    # Parent slot 0 overlay: start=0, end=6 (full duration)
+    beats = [float(i) for i in range(20)]
+    track = _make_track_data(beats, best_start=0.0, best_end=19.0, slot_every_n=4)
+
+    merged = merge_template_with_track(parent, track)
+
+    # First music slot should have scaled overlay
+    first_slot = merged["slots"][0]
+    assert len(first_slot["text_overlays"]) > 0
+    ov = first_slot["text_overlays"][0]
+    # Overlay should span the full new slot duration (0 to target_duration_s)
+    assert ov["start_s"] == pytest.approx(0.0, abs=0.01)
+    assert ov["end_s"] == pytest.approx(first_slot["target_duration_s"], abs=0.1)
+
+
+def test_merge_parent_no_overlays() -> None:
+    """Merge works cleanly when parent has no text overlays."""
+    parent = _make_parent_recipe(n_slots=4, with_overlays=False)
+    beats = [float(i) for i in range(20)]
+    track = _make_track_data(beats, best_start=0.0, best_end=19.0, slot_every_n=4)
+
+    merged = merge_template_with_track(parent, track)
+
+    for slot in merged["slots"]:
+        assert slot["text_overlays"] == []
+
+
+def test_merge_custom_track_config() -> None:
+    """Merge respects custom best_start_s/best_end_s from track config."""
+    parent = _make_parent_recipe(n_slots=4)
+    beats = [float(i) for i in range(0, 100)]
+    # Only use beats 50-80
+    track = _make_track_data(beats, best_start=50.0, best_end=80.0, slot_every_n=4)
+
+    merged = merge_template_with_track(parent, track)
+
+    # total_duration_s should be ~30s (80-50)
+    assert merged["total_duration_s"] == pytest.approx(30.0, abs=1.0)
+    # All beat timestamps should be relative to start (≥0)
+    for b in merged["beat_timestamps_s"]:
+        assert b >= 0.0

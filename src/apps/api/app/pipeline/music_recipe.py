@@ -9,6 +9,7 @@ Key concepts:
   - _auto_best_section: finds the highest beat-density 45s window (proxy for chorus/drop)
 """
 
+import copy
 import math
 from bisect import bisect_left, bisect_right
 
@@ -93,6 +94,100 @@ def generate_music_recipe(track_data: dict) -> dict:
         "required_clips_max": req_max,
     }
     return recipe
+
+
+def merge_template_with_track(parent_recipe: dict, track_data: dict) -> dict:
+    """Merge a parent template's visual recipe with a music track's beat-based timing.
+
+    Algorithm:
+      1. Generate beat-based slots from track_data via generate_music_recipe().
+      2. For each music slot at position P, find the parent slot at
+         floor(P * len(parent_slots) / len(music_slots)) — proportional mapping.
+      3. Copy visual properties (text_overlays, transition_in, color_hint, etc.)
+         from the mapped parent slot, scaling overlay timing proportionally.
+      4. Carry over top-level recipe fields from parent.
+      5. Override beat/sync/pacing from the music recipe.
+
+    Args:
+        parent_recipe: The parent template's recipe_cached dict.
+        track_data: dict with beat_timestamps_s, track_config, duration_s
+                    (same shape as generate_music_recipe expects).
+
+    Returns:
+        A merged recipe dict ready for recipe_cached.
+
+    Raises:
+        ValueError: If the music recipe produces 0 slots.
+    """
+    music_recipe = generate_music_recipe(track_data)
+    music_slots = music_recipe["slots"]
+    parent_slots = parent_recipe.get("slots", [])
+
+    if not parent_slots:
+        # No visual data to merge — return music recipe as-is
+        return music_recipe
+
+    n_parent = len(parent_slots)
+    n_music = len(music_slots)
+
+    for i, m_slot in enumerate(music_slots):
+        # Proportional index into parent slots
+        p_idx = min(math.floor(i * n_parent / n_music), n_parent - 1)
+        p_slot = parent_slots[p_idx]
+
+        # Copy visual properties from parent slot
+        for key in ("transition_in", "color_hint", "slot_type", "speed_factor"):
+            if key in p_slot:
+                m_slot[key] = p_slot[key]
+
+        # Copy and scale text overlays
+        p_overlays = p_slot.get("text_overlays", [])
+        if p_overlays:
+            p_duration = p_slot.get("target_duration_s", 1.0)
+            m_duration = m_slot["target_duration_s"]
+            scaled_overlays = []
+            for ov in p_overlays:
+                scaled = copy.deepcopy(ov)
+                if p_duration > 0:
+                    start_frac = ov.get("start_s", 0.0) / p_duration
+                    end_frac = ov.get("end_s", p_duration) / p_duration
+                    scaled["start_s"] = round(start_frac * m_duration, 3)
+                    scaled["end_s"] = round(min(end_frac * m_duration, m_duration), 3)
+                    # Ensure end > start
+                    if scaled["end_s"] <= scaled["start_s"]:
+                        scaled["end_s"] = round(
+                            min(scaled["start_s"] + 0.1, m_duration), 3
+                        )
+                scaled_overlays.append(scaled)
+            m_slot["text_overlays"] = scaled_overlays
+
+    # Remap interstitials proportionally
+    parent_interstitials = parent_recipe.get("interstitials", [])
+    if parent_interstitials and n_parent > 0:
+        mapped_interstitials = []
+        for inter in parent_interstitials:
+            old_after = inter.get("after_slot", 1)
+            # Proportional mapping: parent slot index → music slot index
+            new_after = max(
+                1, min(round(old_after * n_music / n_parent), n_music)
+            )
+            mapped = dict(inter)
+            mapped["after_slot"] = new_after
+            mapped_interstitials.append(mapped)
+        music_recipe["interstitials"] = mapped_interstitials
+
+    # Carry over top-level visual fields from parent
+    for key in (
+        "copy_tone", "caption_style", "creative_direction",
+        "color_grade", "transition_style",
+    ):
+        if key in parent_recipe:
+            music_recipe[key] = parent_recipe[key]
+
+    # Music recipe overrides stay (beat_timestamps_s, sync_style, pacing_style)
+    music_recipe["slots"] = music_slots
+
+    return music_recipe
 
 
 def auto_best_section(
