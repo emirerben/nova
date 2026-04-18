@@ -1,6 +1,7 @@
 """Admin endpoints for managing music tracks.
 
 POST   /admin/music-tracks              — add track from YouTube/SoundCloud URL
+POST   /admin/music-tracks/upload       — add track from direct audio file upload
 GET    /admin/music-tracks              — list all tracks (including unpublished)
 GET    /admin/music-tracks/{id}         — full track detail + beat count
 PATCH  /admin/music-tracks/{id}         — update config, title, artist, publish/archive
@@ -12,11 +13,13 @@ Auth: X-Admin-Token header (same as admin.py).
 
 import asyncio
 import hmac
+import tempfile
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,6 +94,7 @@ class MusicTrackResponse(BaseModel):
     audio_gcs_path: str | None
     duration_s: float | None
     beat_count: int
+    beat_timestamps_s: list[float] | None
     analysis_status: str
     error_detail: str | None
     thumbnail_url: str | None
@@ -128,6 +132,7 @@ def _to_response(t: MusicTrack) -> MusicTrackResponse:
         audio_gcs_path=t.audio_gcs_path,
         duration_s=t.duration_s,
         beat_count=len(beats),
+        beat_timestamps_s=beats or None,
         analysis_status=t.analysis_status,
         error_detail=t.error_detail,
         thumbnail_url=t.thumbnail_url,
@@ -193,6 +198,76 @@ async def create_music_track(
     analyze_music_track_task.delay(track_id)
 
     log.info("music_track_created", track_id=track_id, source_url=req.source_url)
+    return CreateMusicTrackResponse(id=track_id, analysis_status="queued")
+
+
+@router.post(
+    "/upload",
+    response_model=CreateMusicTrackResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_admin)],
+)
+async def upload_music_track(
+    file: UploadFile = File(...),
+    title: str = Form(""),
+    artist: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+) -> CreateMusicTrackResponse:
+    """Upload an audio file directly (bypasses yt-dlp). Accepts m4a, mp3, wav, ogg, aac."""
+    allowed = {
+        "audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg", "audio/aac",
+        "audio/x-m4a", "audio/m4a", "audio/mp3", "audio/x-wav",
+        "video/mp4",  # some browsers report m4a as video/mp4
+    }
+    ct = (file.content_type or "").lower()
+    ext = Path(file.filename or "audio.m4a").suffix.lower()
+    if ct not in allowed and ext not in {".m4a", ".mp3", ".wav", ".ogg", ".aac", ".mp4"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unsupported audio format: {ct} / {ext}. Use m4a, mp3, wav, ogg, or aac.",
+        )
+
+    track_id = str(uuid.uuid4())
+    gcs_path = f"music/{track_id}/audio{ext or '.m4a'}"
+
+    # Save upload to temp file, probe duration, upload to GCS
+    with tempfile.NamedTemporaryFile(suffix=ext or ".m4a", delete=True) as tmp:
+        content = await file.read()
+        if len(content) > 50 * 1024 * 1024:  # 50 MB limit
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Audio file too large. Maximum 50 MB.",
+            )
+        tmp.write(content)
+        tmp.flush()
+
+        # Probe duration via ffprobe
+        from app.services.audio_download import _probe_duration  # noqa: PLC0415
+        duration_s = _probe_duration(tmp.name)
+
+        # Upload to GCS
+        from app.storage import _get_client  # noqa: PLC0415
+        bucket = _get_client().bucket(settings.storage_bucket)
+        blob = bucket.blob(gcs_path)
+        blob.upload_from_filename(tmp.name, content_type=ct or "audio/mp4")
+
+    track = MusicTrack(
+        id=track_id,
+        title=title.strip() or file.filename or f"Track {track_id[:8]}",
+        artist=artist.strip(),
+        source_url=f"upload://{file.filename}",
+        audio_gcs_path=gcs_path,
+        duration_s=duration_s,
+        analysis_status="queued",
+    )
+    db.add(track)
+    await db.commit()
+    await db.refresh(track)
+
+    from app.tasks.music_orchestrate import analyze_music_track_task  # noqa: PLC0415
+    analyze_music_track_task.delay(track_id)
+
+    log.info("music_track_uploaded", track_id=track_id, filename=file.filename)
     return CreateMusicTrackResponse(id=track_id, analysis_status="queued")
 
 
@@ -310,6 +385,35 @@ async def reanalyze_music_track(
 
     log.info("music_track_reanalyze_dispatched", track_id=track_id)
     return ReanalyzeResponse(track_id=track_id, analysis_status="queued")
+
+
+@router.get(
+    "/{track_id}/audio-url",
+    dependencies=[Depends(_require_admin)],
+)
+async def get_audio_url(
+    track_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return a short-lived signed URL for the track's audio file."""
+    track = await _get_track_or_404(track_id, db)
+    if not track.audio_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Track has no audio file yet.",
+        )
+    from app.storage import _get_client  # noqa: PLC0415
+
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(track.audio_gcs_path)
+    import datetime as _dt  # noqa: PLC0415
+
+    url = blob.generate_signed_url(
+        version="v4",
+        expiration=_dt.timedelta(hours=1),
+        method="GET",
+    )
+    return {"audio_url": url}
 
 
 @router.delete(

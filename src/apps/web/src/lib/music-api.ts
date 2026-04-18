@@ -34,6 +34,7 @@ export interface MusicTrackDetail {
   audio_gcs_path: string | null;
   duration_s: number | null;
   beat_count: number;
+  beat_timestamps_s: number[] | null;
   analysis_status: "queued" | "analyzing" | "ready" | "failed";
   error_detail: string | null;
   thumbnail_url: string | null;
@@ -170,6 +171,33 @@ export async function adminReanalyzeMusicTrack(
   });
   if (!res.ok) throw new Error(`Reanalyze failed: ${res.status}`);
   return res.json();
+}
+
+export async function adminUploadMusicTrack(
+  file: File,
+  title?: string,
+  artist?: string,
+): Promise<{ id: string; analysis_status: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (title) formData.append("title", title);
+  if (artist) formData.append("artist", artist);
+  const res = await fetch(`${ADMIN_PROXY}/music-tracks/upload`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? "Failed to upload audio");
+  }
+  return res.json();
+}
+
+export async function adminGetAudioUrl(id: string): Promise<string> {
+  const res = await fetch(`${ADMIN_PROXY}/music-tracks/${id}/audio-url`);
+  if (!res.ok) throw new Error(`Failed to get audio URL: ${res.status}`);
+  const data = await res.json();
+  return data.audio_url;
 }
 
 export async function adminArchiveMusicTrack(id: string): Promise<void> {

@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   adminListMusicTracks,
   adminCreateMusicTrack,
+  adminUploadMusicTrack,
   type MusicTrackDetail,
 } from "@/lib/music-api";
 
@@ -21,11 +22,13 @@ export default function AdminMusicPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [addMode, setAddMode] = useState<"url" | "upload">("upload");
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [artist, setArtist] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
 
   async function loadTracks() {
     setLoading(true);
@@ -49,8 +52,14 @@ export default function AdminMusicPage() {
     setCreating(true);
     setCreateError(null);
     try {
-      await adminCreateMusicTrack(url, title || undefined, artist || undefined);
-      setUrl("");
+      if (addMode === "upload") {
+        if (!file) return;
+        await adminUploadMusicTrack(file, title || undefined, artist || undefined);
+        setFile(null);
+      } else {
+        await adminCreateMusicTrack(url, title || undefined, artist || undefined);
+        setUrl("");
+      }
       setTitle("");
       setArtist("");
       await loadTracks();
@@ -72,24 +81,60 @@ export default function AdminMusicPage() {
       </div>
 
       {/* Add track form */}
-      <form
-        onSubmit={handleCreate}
-        className="bg-zinc-900 rounded-xl border border-zinc-700 p-5 mb-8"
-      >
-        <h2 className="font-semibold mb-4">Add track from URL</h2>
-        <div className="space-y-3">
-          <input
-            required
-            type="url"
-            placeholder="YouTube or SoundCloud URL"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            className="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 text-sm font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-violet-500"
-          />
+      <div className="bg-zinc-900 rounded-xl border border-zinc-700 p-5 mb-8">
+        <div className="flex items-center gap-1 mb-4">
+          <button
+            type="button"
+            onClick={() => setAddMode("upload")}
+            className={`text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+              addMode === "upload"
+                ? "bg-violet-600 text-white"
+                : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            Upload file
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddMode("url")}
+            className={`text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+              addMode === "url"
+                ? "bg-violet-600 text-white"
+                : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            From URL
+          </button>
+        </div>
+        <form onSubmit={handleCreate} className="space-y-3">
+          {addMode === "upload" ? (
+            <div>
+              <input
+                type="file"
+                accept=".m4a,.mp3,.wav,.ogg,.aac,.mp4,audio/*"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                className="w-full text-sm text-zinc-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-zinc-700 file:text-zinc-200 file:font-semibold file:text-sm hover:file:bg-zinc-600 file:cursor-pointer file:transition-colors"
+              />
+              {file && (
+                <p className="text-xs text-zinc-500 mt-1">
+                  {file.name} ({(file.size / 1024 / 1024).toFixed(1)} MB)
+                </p>
+              )}
+            </div>
+          ) : (
+            <input
+              required={addMode === "url"}
+              type="url"
+              placeholder="YouTube or SoundCloud URL"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              className="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 text-sm font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-violet-500"
+            />
+          )}
           <div className="flex gap-3">
             <input
               type="text"
-              placeholder="Title (optional — auto-detected)"
+              placeholder="Title (optional)"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               className="flex-1 bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-violet-500"
@@ -102,16 +147,18 @@ export default function AdminMusicPage() {
               className="flex-1 bg-zinc-800 border border-zinc-600 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-violet-500"
             />
           </div>
-        </div>
-        {createError && <p className="text-red-400 text-sm mt-2">{createError}</p>}
-        <button
-          type="submit"
-          disabled={creating || !url.trim()}
-          className="mt-4 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
-        >
-          {creating ? "Downloading…" : "Add track"}
-        </button>
-      </form>
+          {createError && <p className="text-red-400 text-sm mt-2">{createError}</p>}
+          <button
+            type="submit"
+            disabled={creating || (addMode === "upload" ? !file : !url.trim())}
+            className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
+          >
+            {creating
+              ? addMode === "upload" ? "Uploading..." : "Downloading..."
+              : addMode === "upload" ? "Upload & analyze" : "Add track"}
+          </button>
+        </form>
+      </div>
 
       {/* Track list */}
       {loading ? (

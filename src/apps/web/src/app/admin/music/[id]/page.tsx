@@ -1,9 +1,10 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   adminGetMusicTrack,
+  adminGetAudioUrl,
   adminUpdateMusicTrack,
   adminReanalyzeMusicTrack,
   adminArchiveMusicTrack,
@@ -11,36 +12,157 @@ import {
   type TrackConfig,
 } from "@/lib/music-api";
 
-// ── Beat waveform ─────────────────────────────────────────────────────────────
+// ── Audio player with interactive waveform ────────────────────────────────────
 
-function BeatWaveform({
+type SelectionMode = "start" | "end" | null;
+
+function AudioPlayer({
+  trackId,
   beats,
   duration,
   start,
   end,
+  onStartChange,
+  onEndChange,
 }: {
+  trackId: string;
   beats: number[];
   duration: number;
   start: number;
   end: number;
+  onStartChange: (s: number) => void;
+  onEndChange: (s: number) => void;
 }) {
-  if (!beats.length || !duration) return null;
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrent] = useState(0);
+  const [selectMode, setSelectMode] = useState<SelectionMode>(null);
+  const rafRef = useRef<number>(0);
 
-  const W = 600;
-  const H = 40;
+  // Fetch signed audio URL
+  useEffect(() => {
+    let cancelled = false;
+    adminGetAudioUrl(trackId)
+      .then((url) => { if (!cancelled) setAudioUrl(url); })
+      .catch((e) => { if (!cancelled) setAudioError(e.message); });
+    return () => { cancelled = true; };
+  }, [trackId]);
+
+  // Animation frame loop for playhead tracking
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    function tick() {
+      if (audio) setCurrent(audio.currentTime);
+      rafRef.current = requestAnimationFrame(tick);
+    }
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [audioUrl]);
+
+  const togglePlay = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) { audio.play(); setPlaying(true); }
+    else { audio.pause(); setPlaying(false); }
+  }, []);
+
+  // Play just the selected section
+  const playSection = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = start;
+    audio.play();
+    setPlaying(true);
+    const checkEnd = () => {
+      if (audio.currentTime >= end) {
+        audio.pause();
+        setPlaying(false);
+        audio.removeEventListener("timeupdate", checkEnd);
+      }
+    };
+    audio.addEventListener("timeupdate", checkEnd);
+  }, [start, end]);
+
+  const W = 700;
+  const H = 56;
   const barW = 2;
 
+  function handleWaveformClick(e: React.MouseEvent<SVGSVGElement>) {
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const t = (x / rect.width) * duration;
+
+    if (selectMode === "start") {
+      onStartChange(Math.round(t * 10) / 10);
+      setSelectMode(null);
+    } else if (selectMode === "end") {
+      onEndChange(Math.round(t * 10) / 10);
+      setSelectMode(null);
+    } else {
+      // Default: seek audio to clicked position
+      const audio = audioRef.current;
+      if (audio) audio.currentTime = t;
+    }
+  }
+
+  if (audioError) {
+    return <p className="text-sm text-red-400">Could not load audio: {audioError}</p>;
+  }
+  if (!audioUrl) {
+    return <p className="text-sm text-zinc-500">Loading audio...</p>;
+  }
+
+  const playheadX = duration > 0 ? (currentTime / duration) * W : 0;
+
   return (
-    <div className="mt-3 overflow-x-auto">
-      <svg width={W} height={H} className="bg-zinc-800 rounded">
+    <div>
+      <audio
+        ref={audioRef}
+        src={audioUrl}
+        preload="auto"
+        onEnded={() => setPlaying(false)}
+      />
+
+      {/* Transport controls */}
+      <div className="flex items-center gap-3 mb-3">
+        <button
+          onClick={togglePlay}
+          className="bg-zinc-700 hover:bg-zinc-600 text-white text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors"
+        >
+          {playing ? "⏸ Pause" : "▶ Play"}
+        </button>
+        <button
+          onClick={playSection}
+          className="bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold px-3 py-1.5 rounded-lg transition-colors"
+        >
+          ▶ Play section ({start.toFixed(1)}s – {end.toFixed(1)}s)
+        </button>
+        <span className="text-xs text-zinc-400 font-mono tabular-nums">
+          {currentTime.toFixed(1)}s / {duration.toFixed(1)}s
+        </span>
+      </div>
+
+      {/* Interactive waveform */}
+      <svg
+        width={W}
+        height={H}
+        className={`bg-zinc-800 rounded cursor-${selectMode ? "crosshair" : "pointer"} block`}
+        style={{ cursor: selectMode ? "crosshair" : "pointer" }}
+        onClick={handleWaveformClick}
+      >
         {/* Selected window highlight */}
         <rect
           x={(start / duration) * W}
           y={0}
           width={Math.max(0, ((end - start) / duration) * W)}
           height={H}
-          fill="rgba(139,92,246,0.2)"
+          fill="rgba(139,92,246,0.15)"
         />
+
         {/* Beat markers */}
         {beats.map((b, i) => {
           const x = (b / duration) * W;
@@ -49,17 +171,72 @@ function BeatWaveform({
             <rect
               key={i}
               x={x}
-              y={inWindow ? 4 : 10}
+              y={inWindow ? 4 : 14}
               width={barW}
-              height={inWindow ? H - 8 : H - 20}
+              height={inWindow ? H - 8 : H - 28}
               fill={inWindow ? "#8b5cf6" : "#52525b"}
+              rx={1}
             />
           );
         })}
+
+        {/* Start marker */}
+        <line
+          x1={(start / duration) * W}
+          y1={0}
+          x2={(start / duration) * W}
+          y2={H}
+          stroke="#22c55e"
+          strokeWidth={2}
+        />
+        {/* End marker */}
+        <line
+          x1={(end / duration) * W}
+          y1={0}
+          x2={(end / duration) * W}
+          y2={H}
+          stroke="#ef4444"
+          strokeWidth={2}
+        />
+
+        {/* Playhead */}
+        <line
+          x1={playheadX}
+          y1={0}
+          x2={playheadX}
+          y2={H}
+          stroke="#ffffff"
+          strokeWidth={1.5}
+          opacity={0.8}
+        />
       </svg>
-      <p className="text-xs text-zinc-500 mt-1">
-        {beats.length} beats · window {start.toFixed(1)}s–{end.toFixed(1)}s highlighted
-      </p>
+
+      {/* Section selection buttons */}
+      <div className="flex items-center gap-3 mt-2">
+        <button
+          onClick={() => setSelectMode(selectMode === "start" ? null : "start")}
+          className={`text-xs font-semibold px-3 py-1 rounded-lg transition-colors ${
+            selectMode === "start"
+              ? "bg-green-600 text-white"
+              : "bg-zinc-700 hover:bg-zinc-600 text-zinc-300"
+          }`}
+        >
+          {selectMode === "start" ? "Click waveform to set start..." : "Set start"}
+        </button>
+        <button
+          onClick={() => setSelectMode(selectMode === "end" ? null : "end")}
+          className={`text-xs font-semibold px-3 py-1 rounded-lg transition-colors ${
+            selectMode === "end"
+              ? "bg-red-600 text-white"
+              : "bg-zinc-700 hover:bg-zinc-600 text-zinc-300"
+          }`}
+        >
+          {selectMode === "end" ? "Click waveform to set end..." : "Set end"}
+        </button>
+        <span className="text-xs text-zinc-500">
+          {beats.length} beats · <span className="text-green-400">green</span> = start · <span className="text-red-400">red</span> = end · white = playhead
+        </span>
+      </div>
     </div>
   );
 }
@@ -76,9 +253,9 @@ const STATUS_COLORS: Record<string, string> = {
 export default function AdminMusicTrackPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: { id: string };
 }) {
-  const { id } = use(params);
+  const { id } = params;
   const [track, setTrack] = useState<MusicTrackDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -259,15 +436,21 @@ export default function AdminMusicTrackPage({
         )}
       </div>
 
-      {/* Beat waveform placeholder — real waveform needs beat array from API */}
-      {track.analysis_status === "ready" && track.beat_count > 0 && (
+      {/* Audio player + beat waveform */}
+      {track.analysis_status === "ready" && track.beat_timestamps_s && track.beat_timestamps_s.length > 0 && (
         <div className="bg-zinc-900 rounded-xl border border-zinc-700 p-5 mb-6">
-          <h2 className="font-semibold mb-1 text-sm text-zinc-400 uppercase tracking-wide">
-            Beat map ({track.beat_count} beats)
+          <h2 className="font-semibold mb-3 text-sm text-zinc-400 uppercase tracking-wide">
+            Audio · {track.beat_count} beats
           </h2>
-          <p className="text-xs text-zinc-500">
-            Waveform renders from beat timestamps. Fetch the full track JSON for a detailed view.
-          </p>
+          <AudioPlayer
+            trackId={id}
+            beats={track.beat_timestamps_s}
+            duration={track.duration_s ?? 0}
+            start={parseFloat(bestStart) || cfg.best_start_s ?? 0}
+            end={parseFloat(bestEnd) || cfg.best_end_s ?? 0}
+            onStartChange={(s) => setBestStart(s.toString())}
+            onEndChange={(s) => setBestEnd(s.toString())}
+          />
         </div>
       )}
 

@@ -16,7 +16,8 @@ async function proxy(
   params: Promise<{ path: string[] }>,
 ): Promise<NextResponse> {
   const { path } = await params;
-  const upstream = `${API_BASE}/admin/${path.join("/")}`;
+  const qs = req.nextUrl.search;
+  const upstream = `${API_BASE}/admin/${path.join("/")}${qs}`;
 
   const headers: Record<string, string> = {
     "X-Admin-Token": ADMIN_TOKEN,
@@ -29,11 +30,20 @@ async function proxy(
       ? await req.arrayBuffer()
       : undefined;
 
-  const upstreamRes = await fetch(upstream, {
-    method: req.method,
-    headers,
-    body: body ? Buffer.from(body) : undefined,
-  });
+  let upstreamRes: Response;
+  try {
+    upstreamRes = await fetch(upstream, {
+      method: req.method,
+      headers,
+      body: body ? Buffer.from(body) : undefined,
+    });
+  } catch (err) {
+    console.error("[admin-proxy] upstream fetch failed", { upstream, error: String(err) });
+    return NextResponse.json(
+      { detail: "Backend unavailable" },
+      { status: 502 },
+    );
+  }
 
   const resBody = await upstreamRes.arrayBuffer();
   return new NextResponse(resBody, {
@@ -41,6 +51,10 @@ async function proxy(
     headers: { "Content-Type": upstreamRes.headers.get("content-type") ?? "application/json" },
   });
 }
+
+// Allow up to 50 MB for audio file uploads
+export const config = { api: { bodyParser: false } };
+export const maxDuration = 60;
 
 export const GET = (req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) =>
   proxy(req, ctx.params);
