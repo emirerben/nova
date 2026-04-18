@@ -26,17 +26,27 @@ import {
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { useJobPoller } from "@/hooks/useJobPoller";
 import { EditorTab } from "./components/EditorTab";
+import { MusicTab } from "./components/MusicTab";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type TabId = "recipe" | "editor" | "test" | "settings";
+type TabId = "recipe" | "editor" | "test" | "music" | "settings";
 
-const TABS: { id: TabId; label: string }[] = [
+const ALL_TABS: { id: TabId; label: string }[] = [
   { id: "recipe", label: "Recipe" },
   { id: "editor", label: "Editor" },
   { id: "test", label: "Test" },
+  { id: "music", label: "Music" },
   { id: "settings", label: "Settings" },
 ];
+
+function getVisibleTabs(templateType: string): { id: TabId; label: string }[] {
+  if (templateType === "music_parent") {
+    return ALL_TABS; // all 5 tabs
+  }
+  // standard and music_child: no Music tab
+  return ALL_TABS.filter((t) => t.id !== "music");
+}
 
 const TERMINAL_STATUSES = new Set(["template_ready", "processing_failed"]);
 
@@ -150,18 +160,36 @@ export default function TemplateDetailPage() {
     );
   }
 
+  const visibleTabs = getVisibleTabs(template.template_type ?? "standard");
+  const resolvedTab = visibleTabs.some((t) => t.id === activeTab) ? activeTab : "recipe";
+
   return (
     <div className="flex flex-col min-h-screen">
       {/* Header */}
       <div className="border-b border-zinc-800 px-6 py-4">
-        <button onClick={() => router.push("/admin")} className="text-sm text-zinc-500 hover:text-zinc-300 mb-2 block">
-          ← Back to dashboard
-        </button>
+        {template.template_type === "music_child" && template.parent_template_id ? (
+          <button
+            onClick={() => router.push(`/admin/templates/${template.parent_template_id}?tab=music`)}
+            className="text-sm text-zinc-500 hover:text-zinc-300 mb-2 block"
+          >
+            ← Back to parent template
+          </button>
+        ) : (
+          <button onClick={() => router.push("/admin")} className="text-sm text-zinc-500 hover:text-zinc-300 mb-2 block">
+            ← Back to dashboard
+          </button>
+        )}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold text-white">{template.name}</h1>
             <div className="flex items-center gap-3 mt-1">
               <StatusBadge status={template.analysis_status} />
+              {template.template_type === "music_child" && (
+                <span className="text-xs bg-purple-900/40 text-purple-400 px-2 py-0.5 rounded">Music Variant</span>
+              )}
+              {template.template_type === "music_parent" && (
+                <span className="text-xs bg-blue-900/40 text-blue-400 px-2 py-0.5 rounded">Music Parent</span>
+              )}
               {template.published_at && !template.archived_at && (
                 <span className="text-xs bg-green-900/40 text-green-400 px-2 py-0.5 rounded">Published</span>
               )}
@@ -179,12 +207,12 @@ export default function TemplateDetailPage() {
       {/* Tabs */}
       <div className="border-b border-zinc-800 px-6">
         <div className="flex gap-1">
-          {TABS.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setTab(tab.id)}
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab.id
+                resolvedTab === tab.id
                   ? "border-white text-white"
                   : "border-transparent text-zinc-500 hover:text-zinc-300"
               }`}
@@ -197,28 +225,31 @@ export default function TemplateDetailPage() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-auto px-6 py-6">
-        {activeTab === "recipe" && (
+        {resolvedTab === "recipe" && (
           <RecipeTab
             template={template}
             playbackUrl={playbackUrl}
             onRefresh={refreshTemplate}
           />
         )}
-        {activeTab === "editor" && (
+        {resolvedTab === "editor" && (
           <EditorTab
             template={template}
             latestTestJob={latestTestJob}
             onTestJobComplete={handleTestJobComplete}
           />
         )}
-        {activeTab === "test" && (
+        {resolvedTab === "test" && (
           <TestTab
             template={template}
             playbackUrl={playbackUrl}
             onJobComplete={handleTestJobComplete}
           />
         )}
-        {activeTab === "settings" && (
+        {resolvedTab === "music" && template.template_type === "music_parent" && (
+          <MusicTab template={template} />
+        )}
+        {resolvedTab === "settings" && (
           <SettingsTab template={template} onSave={setTemplate} />
         )}
       </div>
@@ -719,6 +750,10 @@ function SettingsTab({
   const [clipsMax, setClipsMax] = useState(template.required_clips_max);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [togglingMusic, setTogglingMusic] = useState(false);
+
+  const isMusicParent = (template.template_type ?? "standard") === "music_parent";
+  const isMusicChild = (template.template_type ?? "standard") === "music_child";
 
   const handleSave = async () => {
     setSaving(true);
@@ -738,6 +773,22 @@ function SettingsTab({
       alert(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleToggleMusic = async () => {
+    const newType = isMusicParent ? "standard" : "music_parent";
+    if (isMusicParent && !confirm("Disable Music Variants? You must delete all sub-templates first.")) return;
+    setTogglingMusic(true);
+    try {
+      const updated = await adminUpdateTemplate(template.id, {
+        template_type: newType,
+      });
+      onSave(updated);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Toggle failed");
+    } finally {
+      setTogglingMusic(false);
     }
   };
 
@@ -802,6 +853,35 @@ function SettingsTab({
         </button>
         {saved && <span className="text-green-400 text-sm">Saved</span>}
       </div>
+
+      {/* Music Variants toggle — only for standard/music_parent (not children) */}
+      {!isMusicChild && (
+        <div className="border-t border-zinc-800 pt-5 mt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-white font-medium">Enable Music Variants</p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Create beat-synced sub-templates for different songs
+              </p>
+            </div>
+            <button
+              onClick={handleToggleMusic}
+              disabled={togglingMusic}
+              role="switch"
+              aria-checked={isMusicParent}
+              className={`relative w-11 h-6 rounded-full transition-colors ${
+                isMusicParent ? "bg-blue-600" : "bg-zinc-700"
+              } ${togglingMusic ? "opacity-50" : ""}`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                  isMusicParent ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="border-t border-zinc-800 pt-4 mt-6">
         <p className="text-xs text-zinc-500 mb-1">GCS Path</p>

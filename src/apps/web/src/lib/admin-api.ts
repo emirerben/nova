@@ -62,6 +62,9 @@ export interface AdminTemplate {
   description: string | null;
   source_url: string | null;
   thumbnail_gcs_path: string | null;
+  template_type: string;
+  parent_template_id: string | null;
+  music_track_id: string | null;
   created_at: string;
 }
 
@@ -139,6 +142,7 @@ export async function adminUpdateTemplate(
     required_clips_max?: number;
     publish?: boolean;
     archive?: boolean;
+    template_type?: string;
   },
 ): Promise<AdminTemplate> {
   const res = await adminFetch(`/admin/templates/${id}`, {
@@ -330,4 +334,73 @@ export async function adminValidateToken(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ── Music variant (child template) types ────────────────────────────────────
+
+export interface ChildTemplate {
+  id: string;
+  name: string;
+  music_track_id: string;
+  track_title: string;
+  track_artist: string;
+  beat_count: number;
+  analysis_status: string;
+  published_at: string | null;
+  created_at: string;
+}
+
+export interface ChildrenListResponse {
+  children: ChildTemplate[];
+  total: number;
+}
+
+// ── Music variant (child template) API calls ────────────────────────────────
+
+export async function adminCreateChildTemplate(
+  parentId: string,
+  musicTrackId: string,
+): Promise<AdminTemplate> {
+  const res = await adminFetch(`/admin/templates/${parentId}/children`, {
+    method: "POST",
+    body: JSON.stringify({ music_track_id: musicTrackId }),
+  });
+  return res.json();
+}
+
+export async function adminListChildren(
+  parentId: string,
+): Promise<ChildrenListResponse> {
+  const res = await adminFetch(`/admin/templates/${parentId}/children`);
+  return res.json();
+}
+
+export async function adminRemergeChildren(
+  parentId: string,
+): Promise<{ updated: number }> {
+  const res = await adminFetch(`/admin/templates/${parentId}/remerge-children`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
+/** List published+ready music tracks for the child template picker. */
+export interface MusicTrackPickerItem {
+  id: string;
+  title: string;
+  artist: string;
+  duration_s: number | null;
+  beat_count: number;
+  analysis_status: string;
+  published_at: string | null;
+}
+
+export async function adminListPublishedMusicTracks(): Promise<MusicTrackPickerItem[]> {
+  const res = await adminFetch("/admin/music-tracks?limit=200&offset=0");
+  const data = await res.json();
+  // Filter to ready + published tracks client-side
+  return (data.tracks ?? []).filter(
+    (t: MusicTrackPickerItem & { analysis_status: string; published_at: string | null }) =>
+      t.analysis_status === "ready" && t.published_at != null,
+  );
 }
