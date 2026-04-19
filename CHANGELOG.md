@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.3.0] - 2026-04-19
+
+### Added
+- Audio-only template creation: admins can create templates directly from music tracks without a reference video
+- Gemini audio analysis: `analyze_audio_template()` listens to audio tracks and designs visual recipes with mood-driven transitions, energy-based color grading, and beat-synced slots
+- `POST /admin/templates/from-music-track` endpoint creates `audio_only` templates from analyzed tracks
+- `merge_audio_recipe()` combines exact FFmpeg beat timing with Gemini visual properties via proportional mapping
+- "Create Template" button on music track detail page (visible when track analysis is ready)
+- Audio-only template handling in admin UI: amber badge, audio placeholder instead of video player, gcs_path null guards throughout
+- Migration `0011_music_track_recipe`: adds `recipe_cached` and `recipe_cached_at` to music_tracks, makes `video_templates.gcs_path` nullable, extends template_type enum with `audio_only`
+- Gemini audio analysis prompt template (`prompts/analyze_audio_template.txt`)
+- Graceful fallback: if Gemini audio analysis fails, tracks still reach "ready" status with a beat-only recipe
+- 16 new tests: 4 Gemini analyzer, 2 merge algorithm, 4 orchestration task, 6 API endpoint
+
+### Fixed
+- TypeScript operator precedence: `||` and `??` mixed without parentheses in music track audio player props
+
 ## [0.3.2.0] - 2026-04-18
 
 ### Added
