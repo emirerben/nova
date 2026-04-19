@@ -698,3 +698,148 @@ def transcribe(file_ref: Any) -> "Transcript":  # noqa: F821
                 log.error("whisper_fallback_also_failed", error=str(whisper_exc))
 
         return Transcript(words=[], full_text="", low_confidence=True)
+
+
+# ── Audio-only template analysis ─────────────────────────────────────────────
+
+
+def analyze_audio_template(
+    file_ref: Any,
+    beat_timestamps_s: list[float],
+    track_config: dict,
+    duration_s: float,
+) -> dict:
+    """Analyze an audio file with Gemini to produce a visual recipe.
+
+    Sends the audio file + beat context to Gemini, which designs a
+    short-form video recipe matching the music's energy, mood, and structure.
+
+    Args:
+        file_ref: Gemini file reference (must be ACTIVE).
+        beat_timestamps_s: Beat timestamps from FFmpeg detection.
+        track_config: Track configuration with best_start_s, best_end_s.
+        duration_s: Total track duration.
+
+    Returns:
+        Recipe dict (same shape as analyze_template output, JSON-serializable).
+
+    Raises:
+        GeminiRefusalError: On safety refusal or missing fields.
+        GeminiAnalysisError: On other Gemini failures.
+    """
+    from app.pipeline.prompt_loader import load_prompt  # noqa: PLC0415
+
+    client = _get_client()
+    from google.genai import types as genai_types  # type: ignore[import]
+
+    best_start = track_config.get("best_start_s", 0.0)
+    best_end = track_config.get("best_end_s", duration_s)
+    section_duration = best_end - best_start
+
+    # Filter beats to best section for context
+    section_beats = [b for b in beat_timestamps_s if best_start <= b <= best_end]
+
+    schema = load_prompt("analyze_template_schema")
+    prompt = load_prompt(
+        "analyze_audio_template",
+        beat_timestamps_s=str([round(b, 2) for b in section_beats]),
+        best_start_s=str(round(best_start, 2)),
+        best_end_s=str(round(best_end, 2)),
+        duration_s=str(round(section_duration, 2)),
+        schema=schema,
+    )
+
+    from google.api_core import exceptions as gapi_exc  # type: ignore[import]
+
+    response = None
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model=settings.gemini_model,
+                contents=[
+                    genai_types.Part.from_uri(
+                        file_uri=file_ref.uri,
+                        mime_type=file_ref.mime_type or "audio/mp4",
+                    ),
+                    prompt,
+                ],
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                ),
+            )
+            break
+        except gapi_exc.ResourceExhausted:
+            if attempt >= 2:
+                raise
+            log.warning("audio_analysis_rate_limited", attempt=attempt)
+            time.sleep(15)
+
+    if response is None:
+        raise GeminiAnalysisError("Failed to get Gemini response after retries")
+
+    data = _check_refusal(response, ["slots", "shot_count", "total_duration_s"])
+
+    # Validate and normalize slots (reuse existing validation)
+    slots = data.get("slots", [])
+    for i, slot in enumerate(slots):
+        dur = slot.get("target_duration_s")
+        try:
+            dur_val = float(dur) if dur is not None else 0.0
+        except (TypeError, ValueError):
+            raise GeminiRefusalError(
+                f"Slot {i + 1} has non-numeric target_duration_s: {dur}"
+            )
+        if dur_val <= 0 or math.isnan(dur_val) or math.isinf(dur_val):
+            raise GeminiRefusalError(
+                f"Slot {i + 1} missing or invalid target_duration_s"
+            )
+        if not slot.get("slot_type"):
+            slot["slot_type"] = "broll"
+
+    global_color_grade = str(data.get("color_grade", "none"))
+    if global_color_grade not in _VALID_COLOR_HINTS:
+        global_color_grade = "none"
+
+    _validate_slots(slots, global_color_grade)
+
+    interstitials = _validate_interstitials(
+        data.get("interstitials", []), int(data.get("shot_count", 0))
+    )
+
+    # Force audio-only flags
+    data["has_talking_head"] = False
+    data["has_voiceover"] = False
+    data["has_permanent_letterbox"] = False
+
+    sync_style = str(data.get("sync_style", "cut-on-beat"))
+    if sync_style not in _VALID_SYNC_STYLES:
+        sync_style = "cut-on-beat"
+
+    recipe = {
+        "shot_count": int(data.get("shot_count", len(slots))),
+        "total_duration_s": float(data.get("total_duration_s", section_duration)),
+        "hook_duration_s": float(data.get("hook_duration_s", 0.0)),
+        "slots": slots,
+        "copy_tone": str(data.get("copy_tone", "energetic")),
+        "caption_style": str(data.get("caption_style", "")),
+        "beat_timestamps_s": [round(b - best_start, 3) for b in section_beats],
+        "creative_direction": str(data.get("creative_direction", "")),
+        "transition_style": str(data.get("transition_style", "")),
+        "color_grade": global_color_grade,
+        "pacing_style": str(data.get("pacing_style", "")),
+        "sync_style": sync_style,
+        "interstitials": interstitials,
+        "subject_niche": str(data.get("subject_niche", "")),
+        "has_talking_head": False,
+        "has_voiceover": False,
+        "has_permanent_letterbox": False,
+    }
+
+    log.info(
+        "audio_template_analysis_done",
+        slot_count=len(slots),
+        color_grade=global_color_grade,
+        interstitials=len(interstitials),
+    )
+
+    return recipe

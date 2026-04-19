@@ -55,6 +55,7 @@ async def list_templates(
         select(VideoTemplate).where(
             VideoTemplate.published_at.isnot(None),
             VideoTemplate.archived_at.is_(None),
+            VideoTemplate.template_type != "music_child",
         )
     )
     templates = result.scalars().all()
