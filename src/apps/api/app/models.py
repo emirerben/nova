@@ -97,7 +97,7 @@ class VideoTemplate(Base):
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    gcs_path: Mapped[str] = mapped_column(Text, nullable=False)
+    gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     recipe_cached: Mapped[dict | None] = mapped_column(JSONB)
     recipe_cached_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
     # "analyzing" → Gemini analysis in progress; "ready" → recipe_cached populated
@@ -194,6 +194,9 @@ class MusicTrack(Base):
     # per-song admin fine-tuning: best_start_s, best_end_s, slot_every_n_beats,
     # required_clips_min, required_clips_max
     track_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Gemini audio analysis → cached recipe for audio-only template creation
+    recipe_cached: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    recipe_cached_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
     )

@@ -30,7 +30,7 @@ import structlog
 
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
-from app.pipeline.music_recipe import DEFAULT_WINDOW_S, auto_best_section, generate_music_recipe
+from app.pipeline.music_recipe import DEFAULT_WINDOW_S, auto_best_section, generate_music_recipe, merge_audio_recipe
 from app.storage import download_to_file
 from app.tasks.template_orchestrate import (
     _analyze_clips_parallel,
@@ -46,11 +46,15 @@ from app.worker import celery_app
 try:
     from app.pipeline.agents.gemini_analyzer import (
         GeminiAnalysisError,
+        analyze_audio_template,
+        gemini_upload_and_wait,
     )
     from app.pipeline.template_matcher import TemplateMismatchError, consolidate_slots, match
 except ImportError:
     GeminiAnalysisError = Exception  # type: ignore[assignment, misc]
     TemplateMismatchError = Exception  # type: ignore[assignment, misc]
+    analyze_audio_template = None  # type: ignore[assignment]
+    gemini_upload_and_wait = None  # type: ignore[assignment]
 
 log = structlog.get_logger()
 
@@ -197,11 +201,23 @@ def analyze_music_track_task(self, track_id: str) -> None:
                 "required_clips_max": max(1, n_slots),
             }
 
+            # ── Gemini audio analysis (new) ──────────────────────────────
+            recipe_cached = None
+            if gemini_upload_and_wait is not None and analyze_audio_template is not None:
+                recipe_cached = _run_gemini_audio_analysis(
+                    local_audio, beats, new_config, float(duration_s or 0.0),
+                    track_id,
+                )
+
         with _sync_session() as db:
             track = db.get(MusicTrack, track_id)
             if track:
                 track.beat_timestamps_s = beats
                 track.track_config = new_config
+                if recipe_cached is not None:
+                    from datetime import UTC, datetime  # noqa: PLC0415
+                    track.recipe_cached = recipe_cached
+                    track.recipe_cached_at = datetime.now(UTC)
                 track.analysis_status = "ready"
                 db.commit()
 
@@ -212,6 +228,7 @@ def analyze_music_track_task(self, track_id: str) -> None:
             best_start=best_start,
             best_end=best_end,
             n_slots=n_slots,
+            has_gemini_recipe=recipe_cached is not None,
         )
 
     except Exception as exc:
@@ -399,6 +416,64 @@ def _run_music_job(job_id: str) -> None:
             db.commit()
 
     log.info("music_job_done", job_id=job_id)
+
+
+# ── Gemini audio analysis helper ──────────────────────────────────────────────
+
+
+def _run_gemini_audio_analysis(
+    local_audio: str,
+    beats: list[float],
+    track_config: dict,
+    duration_s: float,
+    track_id: str,
+) -> dict | None:
+    """Upload audio to Gemini and get a visual recipe. Falls back to beat-only on failure."""
+    try:
+        log.info("gemini_audio_analysis_start", track_id=track_id)
+        file_ref = gemini_upload_and_wait(local_audio, timeout=120)
+
+        gemini_recipe = analyze_audio_template(
+            file_ref=file_ref,
+            beat_timestamps_s=beats,
+            track_config=track_config,
+            duration_s=duration_s,
+        )
+
+        # Merge: beat timing (exact) + Gemini visuals (creative)
+        track_data = {
+            "beat_timestamps_s": beats,
+            "track_config": track_config,
+            "duration_s": duration_s,
+        }
+        beat_recipe = generate_music_recipe(track_data)
+        merged = merge_audio_recipe(beat_recipe, gemini_recipe)
+
+        log.info(
+            "gemini_audio_analysis_done",
+            track_id=track_id,
+            gemini_slots=len(gemini_recipe.get("slots", [])),
+            merged_slots=len(merged.get("slots", [])),
+        )
+        return merged
+
+    except Exception as exc:
+        # Gemini failure is non-fatal: fall back to beat-only recipe
+        log.warning(
+            "gemini_audio_analysis_failed",
+            track_id=track_id,
+            error=str(exc),
+        )
+        # Return beat-only recipe as fallback
+        try:
+            track_data = {
+                "beat_timestamps_s": beats,
+                "track_config": track_config,
+                "duration_s": duration_s,
+            }
+            return generate_music_recipe(track_data)
+        except Exception:
+            return None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

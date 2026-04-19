@@ -96,6 +96,83 @@ def generate_music_recipe(track_data: dict) -> dict:
     return recipe
 
 
+def merge_audio_recipe(beat_recipe: dict, gemini_recipe: dict) -> dict:
+    """Merge beat-based timing with Gemini visual properties.
+
+    Beat detection (FFmpeg) gives exact cut points. Gemini gives visual style
+    (transitions, color, overlays). This function combines both using
+    proportional mapping — the same algorithm as merge_template_with_track.
+
+    Args:
+        beat_recipe: Recipe from generate_music_recipe() with exact beat timing.
+        gemini_recipe: Recipe from analyze_audio_template() with visual properties.
+
+    Returns:
+        A merged recipe with beat timing + Gemini visuals.
+    """
+    beat_slots = beat_recipe["slots"]
+    gemini_slots = gemini_recipe.get("slots", [])
+
+    if not gemini_slots:
+        # No visual data from Gemini — return beat recipe as-is
+        return beat_recipe
+
+    n_beat = len(beat_slots)
+    n_gemini = len(gemini_slots)
+
+    for i, b_slot in enumerate(beat_slots):
+        # Proportional index into Gemini slots
+        g_idx = min(math.floor(i * n_gemini / n_beat), n_gemini - 1)
+        g_slot = gemini_slots[g_idx]
+
+        # Copy visual properties from Gemini slot
+        for key in ("transition_in", "color_hint", "speed_factor", "slot_type"):
+            if key in g_slot:
+                b_slot[key] = g_slot[key]
+
+        # Copy text overlays (scale timing proportionally)
+        g_overlays = g_slot.get("text_overlays", [])
+        if g_overlays:
+            g_duration = g_slot.get("target_duration_s", 1.0)
+            b_duration = b_slot["target_duration_s"]
+            scaled = []
+            for ov in g_overlays:
+                s = copy.deepcopy(ov)
+                if g_duration > 0:
+                    start_frac = ov.get("start_s", 0.0) / g_duration
+                    end_frac = ov.get("end_s", g_duration) / g_duration
+                    s["start_s"] = round(start_frac * b_duration, 3)
+                    s["end_s"] = round(min(end_frac * b_duration, b_duration), 3)
+                    if s["end_s"] <= s["start_s"]:
+                        s["end_s"] = round(min(s["start_s"] + 0.1, b_duration), 3)
+                scaled.append(s)
+            b_slot["text_overlays"] = scaled
+
+    # Copy top-level visual fields from Gemini
+    for key in (
+        "copy_tone", "caption_style", "creative_direction",
+        "color_grade", "transition_style", "pacing_style",
+        "subject_niche",
+    ):
+        if key in gemini_recipe:
+            beat_recipe[key] = gemini_recipe[key]
+
+    # Remap interstitials proportionally
+    gemini_interstitials = gemini_recipe.get("interstitials", [])
+    if gemini_interstitials and n_gemini > 0:
+        mapped = []
+        for inter in gemini_interstitials:
+            old_after = inter.get("after_slot", 1)
+            new_after = max(1, min(round(old_after * n_beat / n_gemini), n_beat))
+            m = dict(inter)
+            m["after_slot"] = new_after
+            mapped.append(m)
+        beat_recipe["interstitials"] = mapped
+
+    beat_recipe["slots"] = beat_slots
+    return beat_recipe
+
+
 def merge_template_with_track(parent_recipe: dict, track_data: dict) -> dict:
     """Merge a parent template's visual recipe with a music track's beat-based timing.
 

@@ -304,3 +304,88 @@ def test_merge_custom_track_config() -> None:
     # All beat timestamps should be relative to start (≥0)
     for b in merged["beat_timestamps_s"]:
         assert b >= 0.0
+
+
+# ── merge_audio_recipe ───────────────────────────────────────────────────────
+
+from app.pipeline.music_recipe import merge_audio_recipe
+
+
+class TestMergeAudioRecipe:
+    def test_proportional_mapping_n_beat_m_gemini(self):
+        """N beat slots + M Gemini slots → N merged slots with Gemini visuals."""
+        beat_recipe = {
+            "shot_count": 4,
+            "total_duration_s": 16.0,
+            "slots": [
+                {"position": i + 1, "target_duration_s": 4.0, "slot_type": "broll",
+                 "energy": 5.0, "priority": 5, "text_overlays": [],
+                 "transition_in": "cut", "speed_factor": 1.0}
+                for i in range(4)
+            ],
+            "beat_timestamps_s": [0.0, 4.0, 8.0, 12.0],
+            "sync_style": "cut-on-beat",
+            "pacing_style": "fast",
+            "color_grade": "none",
+            "transition_style": "cut",
+            "copy_tone": "energetic",
+            "caption_style": "none",
+            "creative_direction": "beat-sync",
+            "interstitials": [],
+        }
+        gemini_recipe = {
+            "slots": [
+                {"position": 1, "target_duration_s": 8.0, "slot_type": "hook",
+                 "transition_in": "whip-pan", "color_hint": "warm", "speed_factor": 0.8,
+                 "text_overlays": []},
+                {"position": 2, "target_duration_s": 8.0, "slot_type": "broll",
+                 "transition_in": "dissolve", "color_hint": "cool", "speed_factor": 1.2,
+                 "text_overlays": []},
+            ],
+            "color_grade": "warm",
+            "transition_style": "whip-pans on drops",
+            "pacing_style": "fast-paced",
+            "copy_tone": "bold",
+            "creative_direction": "Energetic music video",
+            "caption_style": "bold overlay",
+            "subject_niche": "pop",
+            "interstitials": [],
+        }
+
+        merged = merge_audio_recipe(beat_recipe, gemini_recipe)
+
+        # Should have 4 slots (beat count preserved)
+        assert len(merged["slots"]) == 4
+        # Beat timing preserved
+        assert merged["slots"][0]["target_duration_s"] == 4.0
+        assert merged["slots"][3]["target_duration_s"] == 4.0
+        # Gemini visuals applied (slots 0,1 map to Gemini slot 0; slots 2,3 map to Gemini slot 1)
+        assert merged["slots"][0]["transition_in"] == "whip-pan"
+        assert merged["slots"][0]["color_hint"] == "warm"
+        assert merged["slots"][2]["transition_in"] == "dissolve"
+        assert merged["slots"][2]["color_hint"] == "cool"
+        # Top-level fields from Gemini
+        assert merged["color_grade"] == "warm"
+        assert merged["copy_tone"] == "bold"
+        assert merged["creative_direction"] == "Energetic music video"
+
+    def test_gemini_zero_slots_returns_beat_only(self):
+        """When Gemini returns 0 slots, beat recipe is returned unchanged."""
+        beat_recipe = {
+            "shot_count": 2,
+            "total_duration_s": 8.0,
+            "slots": [
+                {"position": 1, "target_duration_s": 4.0, "slot_type": "broll",
+                 "transition_in": "cut", "text_overlays": []},
+                {"position": 2, "target_duration_s": 4.0, "slot_type": "broll",
+                 "transition_in": "cut", "text_overlays": []},
+            ],
+            "color_grade": "none",
+        }
+        gemini_recipe = {"slots": [], "color_grade": "warm"}
+
+        merged = merge_audio_recipe(beat_recipe, gemini_recipe)
+
+        # No Gemini visuals applied
+        assert merged["slots"][0]["transition_in"] == "cut"
+        assert merged["color_grade"] == "none"  # unchanged

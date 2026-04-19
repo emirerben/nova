@@ -126,7 +126,7 @@ class CreateTemplateFromUrlRequest(BaseModel):
 class TemplateResponse(BaseModel):
     id: str
     name: str
-    gcs_path: str
+    gcs_path: str | None
     analysis_status: str
     required_clips_min: int
     required_clips_max: int
@@ -1562,3 +1562,120 @@ async def upload_presigned(
     )
 
     return PresignedUploadResponse(upload_url=url, gcs_path=gcs_path)
+
+
+# ── Create template from music track ─────────────────────────────────────────
+
+
+class CreateTemplateFromMusicTrackRequest(BaseModel):
+    music_track_id: str
+    name: str | None = None
+
+
+@router.post(
+    "/templates/from-music-track",
+    response_model=TemplateResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def create_template_from_music_track(
+    req: CreateTemplateFromMusicTrackRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateResponse:
+    """Create an audio-only template from a music track's cached recipe."""
+    track = await db.get(MusicTrack, req.music_track_id)
+    if track is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Music track {req.music_track_id} not found",
+        )
+
+    if track.analysis_status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Music track is not ready (status: {track.analysis_status})",
+        )
+
+    if not track.audio_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Music track has no audio file",
+        )
+
+    # Load recipe: prefer cached Gemini recipe, fall back to beat-only
+    recipe = track.recipe_cached
+    if recipe is None:
+        from app.pipeline.music_recipe import generate_music_recipe  # noqa: PLC0415
+
+        track_data = {
+            "beat_timestamps_s": track.beat_timestamps_s or [],
+            "track_config": track.track_config or {},
+            "duration_s": track.duration_s,
+        }
+        try:
+            recipe = generate_music_recipe(track_data)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot generate recipe: {exc}",
+            ) from exc
+
+    # Derive clip counts from recipe
+    n_slots = len(recipe.get("slots", []))
+    req_min = recipe.get("required_clips_min", max(1, n_slots // 2))
+    req_max = recipe.get("required_clips_max", max(1, n_slots))
+
+    template_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+
+    template = VideoTemplate(
+        id=template_id,
+        name=req.name or track.title,
+        gcs_path=None,
+        template_type="audio_only",
+        audio_gcs_path=track.audio_gcs_path,
+        music_track_id=track.id,
+        recipe_cached=recipe,
+        recipe_cached_at=now,
+        analysis_status="ready",
+        required_clips_min=req_min,
+        required_clips_max=req_max,
+        created_at=now,
+    )
+    db.add(template)
+
+    # Create initial recipe version
+    version = TemplateRecipeVersion(
+        template_id=template_id,
+        recipe=recipe,
+        trigger="initial_analysis",
+    )
+    db.add(version)
+
+    await db.commit()
+    await db.refresh(template)
+
+    log.info(
+        "template_from_music_track_created",
+        template_id=template_id,
+        track_id=req.music_track_id,
+        slot_count=n_slots,
+    )
+
+    return TemplateResponse(
+        id=template.id,
+        name=template.name,
+        gcs_path=template.gcs_path or "",
+        analysis_status=template.analysis_status,
+        required_clips_min=template.required_clips_min,
+        required_clips_max=template.required_clips_max,
+        published_at=template.published_at,
+        archived_at=template.archived_at,
+        description=template.description,
+        source_url=template.source_url,
+        thumbnail_gcs_path=template.thumbnail_gcs_path,
+        error_detail=template.error_detail,
+        template_type=template.template_type,
+        parent_template_id=template.parent_template_id,
+        music_track_id=template.music_track_id,
+        created_at=template.created_at,
+    )

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   adminGetMusicTrack,
   adminGetAudioUrl,
@@ -11,6 +12,7 @@ import {
   type MusicTrackDetail,
   type TrackConfig,
 } from "@/lib/music-api";
+import { adminCreateTemplateFromMusicTrack } from "@/lib/admin-api";
 
 // ── Audio player with interactive waveform ────────────────────────────────────
 
@@ -256,9 +258,11 @@ export default function AdminMusicTrackPage({
   params: { id: string };
 }) {
   const { id } = params;
+  const router = useRouter();
   const [track, setTrack] = useState<MusicTrackDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [creatingTemplate, setCreatingTemplate] = useState(false);
 
   // Config form state
   const [bestStart, setBestStart] = useState("");
@@ -354,6 +358,18 @@ export default function AdminMusicTrackPage({
     }
   }
 
+  async function handleCreateTemplate() {
+    if (!track) return;
+    setCreatingTemplate(true);
+    try {
+      const template = await adminCreateTemplateFromMusicTrack(track.id);
+      router.push(`/admin/templates/${template.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create template");
+      setCreatingTemplate(false);
+    }
+  }
+
   async function handleArchive() {
     if (!track) return;
     if (!confirm("Archive this track? It will be hidden from the gallery.")) return;
@@ -446,8 +462,8 @@ export default function AdminMusicTrackPage({
             trackId={id}
             beats={track.beat_timestamps_s}
             duration={track.duration_s ?? 0}
-            start={parseFloat(bestStart) || cfg.best_start_s ?? 0}
-            end={parseFloat(bestEnd) || cfg.best_end_s ?? 0}
+            start={parseFloat(bestStart) || (cfg.best_start_s ?? 0)}
+            end={parseFloat(bestEnd) || (cfg.best_end_s ?? 0)}
             onStartChange={(s) => setBestStart(s.toString())}
             onEndChange={(s) => setBestEnd(s.toString())}
           />
@@ -515,6 +531,16 @@ export default function AdminMusicTrackPage({
 
       {/* Actions */}
       <div className="flex flex-wrap gap-3">
+        {track.analysis_status === "ready" && (
+          <button
+            onClick={handleCreateTemplate}
+            disabled={creatingTemplate}
+            className="text-sm font-semibold px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white transition-colors"
+          >
+            {creatingTemplate ? "Creating…" : "Create Template"}
+          </button>
+        )}
+
         <button
           onClick={handleTogglePublish}
           className={`text-sm font-semibold px-4 py-2 rounded-lg transition-colors ${

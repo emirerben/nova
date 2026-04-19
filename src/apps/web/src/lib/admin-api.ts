@@ -53,7 +53,7 @@ async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
 export interface AdminTemplate {
   id: string;
   name: string;
-  gcs_path: string;
+  gcs_path: string | null;
   analysis_status: string;
   required_clips_min: number;
   required_clips_max: number;
@@ -322,6 +322,17 @@ export async function adminTextPreview(
   const res = await adminFetch(`/admin/templates/${templateId}/text-preview`, {
     method: "POST",
     body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+export async function adminCreateTemplateFromMusicTrack(
+  musicTrackId: string,
+  name?: string,
+): Promise<AdminTemplate> {
+  const res = await adminFetch("/admin/templates/from-music-track", {
+    method: "POST",
+    body: JSON.stringify({ music_track_id: musicTrackId, name }),
   });
   return res.json();
 }
