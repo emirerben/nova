@@ -97,6 +97,10 @@ def reframe_and_export(
     speed_factor: float = 1.0,
     darkening_windows: list[tuple[float, float]] | None = None,
     narrowing_windows: list[tuple[float, float]] | None = None,
+    has_grid: bool = False,
+    grid_color: str = "#FFFFFF",
+    grid_opacity: float = 0.6,
+    grid_thickness: int = 3,
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
 
@@ -118,6 +122,10 @@ def reframe_and_export(
         speed_factor=speed_factor,
         darkening_windows=darkening_windows,
         narrowing_windows=narrowing_windows,
+        has_grid=has_grid,
+        grid_color=grid_color,
+        grid_opacity=grid_opacity,
+        grid_thickness=grid_thickness,
     )
 
     # Build command -- use filter_complex when overlays are present
@@ -170,6 +178,10 @@ def reframe_and_export(
             speed_factor=speed_factor,
             darkening_windows=darkening_windows,
             narrowing_windows=narrowing_windows,
+            has_grid=has_grid,
+            grid_color=grid_color,
+            grid_opacity=grid_opacity,
+            grid_thickness=grid_thickness,
         )
 
     if result.returncode != 0:
@@ -259,13 +271,19 @@ def _build_video_filter(
     speed_factor: float = 1.0,
     darkening_windows: list[tuple[float, float]] | None = None,
     narrowing_windows: list[tuple[float, float]] | None = None,
+    has_grid: bool = False,
+    grid_color: str = "#FFFFFF",
+    grid_opacity: float = 0.6,
+    grid_thickness: int = 3,
 ) -> list[str]:
     """Return list of filter segments to join with commas.
 
     Filter order: setpts (speed) -> scale/crop -> color grading
-                  -> darkening -> narrowing -> caption ASS.
+                  -> darkening -> narrowing -> grid -> caption ASS.
     setpts MUST be first to normalize PTS before timed filters (darkening, narrowing).
     Text overlays are handled separately via overlay filter (not in this chain).
+    Grid (rule-of-thirds) is drawn after visual adjustments but before captions so it
+    sits above the footage and behind any text overlays burned in post-assembly.
     """
     filters: list[str] = []
 
@@ -313,7 +331,17 @@ def _build_video_filter(
             f"drawbox=x=0:y=ih-120:w=iw:h=120:color=black@0.85:t=fill:{enable}"
         )
 
-    # 5. Caption ASS (speech captions -- distinct from text overlay ASS)
+    # 5. Rule-of-thirds grid overlay (per-slot)
+    if has_grid:
+        # FFmpeg drawgrid: one cell = iw/3 x ih/3, drawn at every 1/3 boundary.
+        # Hex → FFmpeg color spec: strip "#" and append @opacity.
+        color_hex = grid_color.lstrip("#")
+        filters.append(
+            f"drawgrid=w=iw/3:h=ih/3:t={grid_thickness}"
+            f":c=0x{color_hex}@{grid_opacity:.2f}"
+        )
+
+    # 6. Caption ASS (speech captions -- distinct from text overlay ASS)
     if ass_path and os.path.exists(ass_path):
         escaped = ass_path.replace("\\", "/").replace(":", "\\:")
         escaped_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")

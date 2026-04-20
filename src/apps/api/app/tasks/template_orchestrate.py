@@ -917,6 +917,26 @@ def _render_slot(
         speed_factor=speed_factor,
     )
 
+    # Rule-of-thirds grid overlay (opt-in per slot).
+    # Recipes are stored as raw JSON in the DB and loaded here without re-running
+    # the RecipeSlotSchema validator, so we defensively clamp/validate each field
+    # at the FFmpeg boundary. A bad value must never reach the filter graph.
+    has_grid = bool(step.slot.get("has_grid", False))
+    raw_color = step.slot.get("grid_color", "#FFFFFF")
+    grid_color = (
+        raw_color
+        if isinstance(raw_color, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", raw_color)
+        else "#FFFFFF"
+    )
+    try:
+        grid_opacity = max(0.0, min(1.0, float(step.slot.get("grid_opacity", 0.6))))
+    except (TypeError, ValueError):
+        grid_opacity = 0.6
+    try:
+        grid_thickness = max(1, min(20, int(step.slot.get("grid_thickness", 3))))
+    except (TypeError, ValueError):
+        grid_thickness = 3
+
     reframed = os.path.join(tmpdir, f"slot_{slot_idx}.mp4")
     reframe_and_export(
         input_path=clip_path,
@@ -927,6 +947,10 @@ def _render_slot(
         output_path=reframed,
         color_hint=slot_color,
         speed_factor=speed_factor,
+        has_grid=has_grid,
+        grid_color=grid_color,
+        grid_opacity=grid_opacity,
+        grid_thickness=grid_thickness,
     )
     return reframed, slot_target_dur, cumulative_s
 

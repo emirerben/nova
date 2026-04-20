@@ -14,6 +14,7 @@ Auth: X-Admin-Token header (static key from settings.admin_api_key).
 """
 
 import hmac
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
@@ -355,6 +356,11 @@ class RecipeSlotSchema(BaseModel):
     speed_factor: float = 1.0
     energy: float = 5.0
     text_overlays: list[RecipeTextOverlaySchema] = []
+    # Rule-of-thirds grid overlay (drawn after scale/crop, before text overlays)
+    has_grid: bool = False
+    grid_color: str = "#FFFFFF"
+    grid_opacity: float = 0.6
+    grid_thickness: int = 3
 
     @field_validator("target_duration_s")
     @classmethod
@@ -382,6 +388,30 @@ class RecipeSlotSchema(BaseModel):
     def validate_energy(cls, v: float) -> float:
         if v < 0 or v > 10:
             raise ValueError("energy must be between 0 and 10")
+        return v
+
+    @field_validator("grid_opacity")
+    @classmethod
+    def validate_grid_opacity(cls, v: float) -> float:
+        if v < 0 or v > 1:
+            raise ValueError("grid_opacity must be between 0 and 1")
+        return v
+
+    @field_validator("grid_thickness")
+    @classmethod
+    def validate_grid_thickness(cls, v: int) -> int:
+        if v < 1 or v > 20:
+            raise ValueError("grid_thickness must be between 1 and 20")
+        return v
+
+    @field_validator("grid_color")
+    @classmethod
+    def validate_grid_color(cls, v: str) -> str:
+        # Strict 6-digit hex only. RGBA (#RRGGBBAA) is rejected because
+        # the rendering code already specifies alpha via @opacity — combining
+        # both produces an invalid FFmpeg filter.
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", v):
+            raise ValueError("grid_color must be a 6-digit hex color like #FFFFFF")
         return v
 
 

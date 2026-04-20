@@ -95,6 +95,77 @@ class TestBuildVideoFilter:
         assert "colorlevels" in joined
         assert "between(t,0.000,2.000)" in joined
 
+    def test_grid_overlay_disabled_by_default(self):
+        """has_grid=False (default) adds no drawgrid filter."""
+        filters = _build_video_filter("9:16", None)
+        assert not any("drawgrid" in f for f in filters)
+
+    def test_grid_overlay_adds_drawgrid_filter(self):
+        """has_grid=True appends a drawgrid filter with rule-of-thirds geometry."""
+        filters = _build_video_filter("9:16", None, has_grid=True)
+        grid_filter = next((f for f in filters if "drawgrid" in f), None)
+        assert grid_filter is not None
+        assert "drawgrid=w=iw/3:h=ih/3" in grid_filter
+        # Default white color @ 0.6 opacity, thickness 3
+        assert ":t=3:" in grid_filter
+        assert "c=0xFFFFFF@0.60" in grid_filter
+
+    def test_grid_overlay_custom_color_opacity_thickness(self):
+        """Grid respects custom color/opacity/thickness."""
+        filters = _build_video_filter(
+            "9:16", None,
+            has_grid=True,
+            grid_color="#E63946",
+            grid_opacity=0.8,
+            grid_thickness=5,
+        )
+        joined = ",".join(filters)
+        assert "c=0xE63946@0.80" in joined
+        assert "t=5" in joined
+
+    def test_grid_color_validator_rejects_non_hex(self):
+        """RecipeSlotSchema rejects grid_color values that aren't 6-digit hex."""
+        from pydantic import ValidationError
+
+        from app.routes.admin import RecipeSlotSchema
+
+        for bad in ("#XXXXXX", "#GGGGGG", "FFFFFF", "#FF", "#FFFFFFFF", "red", "#;rm -r"):
+            with pytest.raises(ValidationError):
+                RecipeSlotSchema(
+                    position=1, target_duration_s=2.0, slot_type="b-roll",
+                    has_grid=True, grid_color=bad,
+                )
+
+    def test_grid_color_validator_rejects_rgba(self):
+        """9-char RGBA form is rejected (conflicts with @opacity spec)."""
+        from pydantic import ValidationError
+
+        from app.routes.admin import RecipeSlotSchema
+
+        with pytest.raises(ValidationError):
+            RecipeSlotSchema(
+                position=1, target_duration_s=2.0, slot_type="b-roll",
+                has_grid=True, grid_color="#FFFFFFAA",
+            )
+
+    def test_grid_overlay_before_caption_ass(self):
+        """Grid filter must come before ass subtitle so captions render on top."""
+        import os
+        import tempfile
+        # Create a temp file that exists so ass filter is appended
+        with tempfile.NamedTemporaryFile(suffix=".ass", delete=False) as tmp:
+            tmp.write(b"[Script Info]\n")
+            ass_path = tmp.name
+        try:
+            filters = _build_video_filter(
+                "9:16", ass_path, has_grid=True,
+            )
+            grid_idx = next(i for i, f in enumerate(filters) if "drawgrid" in f)
+            ass_idx = next(i for i, f in enumerate(filters) if f.startswith("ass="))
+            assert grid_idx < ass_idx
+        finally:
+            os.unlink(ass_path)
+
     def test_narrowing_window_adds_drawbox(self):
         filters = _build_video_filter(
             "16:9", None, narrowing_windows=[(1.0, 3.0)]
