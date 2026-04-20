@@ -4,6 +4,10 @@ Creates a VideoTemplate row with a hand-crafted recipe that uses:
   - Rich inline text spans ("The Rule of" white + "Thirds" red) in the hook
   - Per-slot rule-of-thirds grid overlay (drawgrid) on content slots
 
+Safety: prints the target DB host before writing. Pass `--yes` to skip the
+confirmation prompt (required for non-interactive runs; fails otherwise so a
+stale env file can't accidentally seed staging/prod).
+
 Run: cd src/apps/api && .venv/bin/python scripts/seed_rule_of_thirds.py
 """
 from __future__ import annotations
@@ -13,6 +17,7 @@ import os
 import sys
 import uuid
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 # Bootstrap imports when run directly
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -124,11 +129,14 @@ def build_recipe() -> dict:
 async def seed() -> None:
     recipe = build_recipe()
     async with AsyncSessionLocal() as db:
-        # Idempotent: replace any existing row with same name
+        # Idempotent: replace any existing row with same name.
+        # Use .first() rather than .scalar_one_or_none() so an accidental
+        # duplicate name (e.g., admin renamed another template to match)
+        # doesn't crash the seed run with MultipleResultsFound.
         existing = await db.execute(
             select(VideoTemplate).where(VideoTemplate.name == TEMPLATE_NAME)
         )
-        row = existing.scalar_one_or_none()
+        row = existing.scalars().first()
         now = datetime.now(UTC)
         if row:
             row.recipe_cached = recipe
@@ -159,5 +167,28 @@ async def seed() -> None:
         await db.commit()
 
 
+def _confirm_target_db() -> None:
+    """Print target DB host and require confirmation before seeding.
+
+    Protects against running this script with a stale .env pointing at
+    staging/prod by mistake. Pass `--yes` for non-interactive runs.
+    """
+    db_url = os.environ.get("DATABASE_URL", "")
+    parsed = urlparse(db_url)
+    display = f"{parsed.hostname or '?'}:{parsed.port or '?'}{parsed.path or ''}"
+    print(f"Target DB: {display}")
+    if "--yes" in sys.argv:
+        return
+    if not sys.stdin.isatty():
+        # Non-interactive + no --yes: refuse rather than silently proceeding.
+        print("ERROR: non-interactive run requires --yes flag.", file=sys.stderr)
+        sys.exit(2)
+    answer = input("Proceed? [y/N]: ").strip().lower()
+    if answer != "y":
+        print("Aborted.")
+        sys.exit(0)
+
+
 if __name__ == "__main__":
+    _confirm_target_db()
     asyncio.run(seed())

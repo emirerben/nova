@@ -585,6 +585,58 @@ class TestTemplateAudio:
 
         mock_copy.assert_called_once_with("/tmp/assembled.mp4", str(tmp_path / "final.mp4"))
 
+    def _run_mix_and_capture_cmd(self, tmp_path, video_dur: float, audio_dur: float):
+        """Helper: invoke _mix_template_audio with mocked probes and capture the
+        FFmpeg cmd that was built."""
+        from app.tasks.template_orchestrate import _mix_template_audio
+
+        ok_proc = MagicMock()
+        ok_proc.returncode = 0
+
+        def fake_probe(path: str) -> float:
+            return audio_dur if path.endswith(".m4a") else video_dur
+
+        with (
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch("app.tasks.template_orchestrate._probe_duration", side_effect=fake_probe),
+            patch(
+                "app.tasks.template_orchestrate.subprocess.run", return_value=ok_proc,
+            ) as mock_run,
+        ):
+            _mix_template_audio(
+                video_path="/tmp/assembled.mp4",
+                audio_gcs_path="templates/t1/audio.m4a",
+                output_path=str(tmp_path / "final.mp4"),
+                tmpdir=str(tmp_path),
+            )
+        return mock_run.call_args.args[0]
+
+    def test_mix_audio_trims_video_when_audio_slightly_shorter(self, tmp_path):
+        """Video 24.2s / audio 21.4s (target bug): -t uses audio length."""
+        cmd = self._run_mix_and_capture_cmd(tmp_path, video_dur=24.2, audio_dur=21.4)
+        assert "-t" in cmd, "expected -t flag when gap is within sync threshold"
+        t_val = cmd[cmd.index("-t") + 1]
+        assert t_val == "21.400"
+
+    def test_mix_audio_keeps_video_when_audio_catastrophically_short(self, tmp_path):
+        """Video 30s / audio 3s: DO NOT truncate video to 3s. Use video length."""
+        cmd = self._run_mix_and_capture_cmd(tmp_path, video_dur=30.0, audio_dur=3.0)
+        assert "-t" in cmd
+        t_val = cmd[cmd.index("-t") + 1]
+        assert t_val == "30.000", "must keep video length when audio is catastrophically short"
+
+    def test_mix_audio_uses_video_length_when_audio_longer(self, tmp_path):
+        """Video 20s / audio 30s: -t uses video length (natural cut)."""
+        cmd = self._run_mix_and_capture_cmd(tmp_path, video_dur=20.0, audio_dur=30.0)
+        assert "-t" in cmd
+        t_val = cmd[cmd.index("-t") + 1]
+        assert t_val == "20.000"
+
+    def test_mix_audio_skips_t_flag_when_both_probes_fail(self, tmp_path):
+        """Both probes return 0.0 sentinel: omit -t entirely (natural stream lengths)."""
+        cmd = self._run_mix_and_capture_cmd(tmp_path, video_dur=0.0, audio_dur=0.0)
+        assert "-t" not in cmd, "with both probes failed, -t must be omitted"
+
     def test_run_template_job_uses_final_path_when_audio_available(self):
         """With audio_gcs_path set: _mix_template_audio called and final.mp4 uploaded."""
         from app.tasks.template_orchestrate import _run_template_job

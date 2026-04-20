@@ -1999,7 +1999,13 @@ def _extract_template_audio(local_video_path: str, output_path: str) -> bool:
 
 
 def _probe_duration(path: str) -> float:
-    """Return the duration in seconds of a media file via ffprobe."""
+    """Return the duration in seconds of a media file via ffprobe.
+
+    Returns 0.0 as a sentinel on probe failure. Callers that depend on
+    accurate duration (e.g., _mix_template_audio for trim math) must
+    check for 0.0 and degrade gracefully rather than silently treat it
+    as a real duration.
+    """
     result = subprocess.run(
         ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", path],
@@ -2008,7 +2014,7 @@ def _probe_duration(path: str) -> float:
     try:
         return float(result.stdout.strip())
     except (ValueError, TypeError):
-        return 30.0  # safe fallback
+        return 0.0  # sentinel: probe failed
 
 
 def _mix_template_audio(
@@ -2026,17 +2032,54 @@ def _mix_template_audio(
         shutil.copy2(video_path, output_path)
         return
 
-    # Sync video ending with music ending. Use min(video, audio) as the
-    # output duration so the music doesn't loop and start a new rhythm
-    # in the last slot. If the audio is shorter, video gets trimmed to
-    # match; if the video is shorter, audio gets trimmed instead.
+    # Sync video ending with music ending — but only when they're close.
+    #
+    # Intent: when the assembled video slightly exceeds the template audio
+    # (the original bug: video 24.2s vs audio 21.4s), trim video to the
+    # audio length so the music ends naturally instead of looping into a
+    # restarted rhythm.
+    #
+    # BUT: if audio is catastrophically short (e.g., bad extract yielding
+    # 3s for a 30s video), trimming video would delete 27s of content.
+    # In that case, keep video at natural length and accept that audio
+    # ends early (silence tail) — silent data loss beats catastrophic
+    # content loss.
+    #
+    # Defensive: probe failures return 0.0 sentinel. Fall back gracefully.
     video_dur = _probe_duration(video_path)
     audio_dur = _probe_duration(audio_local)
 
-    # Determine effective output duration: min of video and audio.
-    # When video > audio, we trim video to audio length so the music
-    # ends naturally without looping.
-    use_duration = min(video_dur, audio_dur)
+    # Only trim video when audio is within this many seconds of video.
+    # Chosen because real template audio / video pairs are authored
+    # together and never diverge by more than a few seconds.
+    _AUDIO_SYNC_MAX_GAP_S = 5.0
+
+    if video_dur <= 0 and audio_dur <= 0:
+        log.warning("audio_mix_probe_both_failed", falling_back_to="natural-length")
+        use_duration = 0.0  # will skip -t below
+    elif video_dur <= 0:
+        log.warning("audio_mix_video_probe_failed", audio_dur=audio_dur)
+        use_duration = audio_dur
+    elif audio_dur <= 0:
+        log.warning("audio_mix_audio_probe_failed", video_dur=video_dur)
+        use_duration = video_dur
+    else:
+        gap = video_dur - audio_dur
+        if 0 < gap <= _AUDIO_SYNC_MAX_GAP_S:
+            # Slight overhang (the target bug): trim video to audio length.
+            use_duration = audio_dur
+        elif gap > _AUDIO_SYNC_MAX_GAP_S:
+            # Audio catastrophically short — keep video, accept silent tail.
+            log.warning(
+                "audio_much_shorter_than_video_keeping_video",
+                video_dur=round(video_dur, 2),
+                audio_dur=round(audio_dur, 2),
+                gap_s=round(gap, 2),
+            )
+            use_duration = video_dur
+        else:
+            # Audio >= video: cut at video end (ffmpeg handles natural).
+            use_duration = video_dur
     fade_start = max(0, use_duration - 0.5)
 
     log.info(
@@ -2057,7 +2100,7 @@ def _mix_template_audio(
         "-c:a", "aac",
         "-af",
         f"afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
-        "-t", f"{use_duration:.3f}",
+        *(["-t", f"{use_duration:.3f}"] if use_duration > 0 else []),
         "-y", output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
