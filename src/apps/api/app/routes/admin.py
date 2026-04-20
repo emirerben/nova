@@ -1142,7 +1142,7 @@ async def save_recipe(
 
 class TextPreviewRequest(BaseModel):
     """Parameters for rendering a text overlay preview image."""
-    subject_text: str = "PERU"
+    subject_text: str = "BRAZIL"
     subject_size_px: int = 199
     subject_y_frac: float = 0.45
     subject_color: str = "#F4D03F"

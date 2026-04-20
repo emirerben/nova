@@ -1927,21 +1927,30 @@ def _mix_template_audio(
         shutil.copy2(video_path, output_path)
         return
 
-    # Loop audio so it always covers the full video length.  The previous
-    # approach used `-shortest` which truncated the output when the template
-    # audio was shorter than the assembled video (common with TikTok audio
-    # that has mismatched container duration metadata).
-    #
-    # With `-stream_loop -1` the audio repeats forever, so `-shortest` now
-    # correctly cuts to the VIDEO length (which is always the shorter stream).
-    # We also add a short audio fade-out so the loop cut isn't abrupt.
+    # Sync video ending with music ending. Use min(video, audio) as the
+    # output duration so the music doesn't loop and start a new rhythm
+    # in the last slot. If the audio is shorter, video gets trimmed to
+    # match; if the video is shorter, audio gets trimmed instead.
     video_dur = _probe_duration(video_path)
-    fade_start = max(0, video_dur - 0.5)
+    audio_dur = _probe_duration(audio_local)
+
+    # Determine effective output duration: min of video and audio.
+    # When video > audio, we trim video to audio length so the music
+    # ends naturally without looping.
+    use_duration = min(video_dur, audio_dur)
+    fade_start = max(0, use_duration - 0.5)
+
+    log.info(
+        "audio_mix_durations",
+        video_dur=round(video_dur, 2),
+        audio_dur=round(audio_dur, 2),
+        use_duration=round(use_duration, 2),
+        trimming_video=video_dur > audio_dur,
+    )
 
     cmd = [
         "ffmpeg",
         "-i", video_path,
-        "-stream_loop", "-1",
         "-i", audio_local,
         "-map", "0:v",
         "-map", "1:a",
@@ -1949,7 +1958,7 @@ def _mix_template_audio(
         "-c:a", "aac",
         "-af",
         f"afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
-        "-shortest",
+        "-t", f"{use_duration:.3f}",
         "-y", output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
