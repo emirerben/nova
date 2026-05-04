@@ -36,7 +36,12 @@ TEMPLATE_DESCRIPTION = (
     "Inspired by @blessa079 on TikTok."
 )
 SOURCE_URL = "https://www.tiktok.com/@blessa079/video/7611396753882877202"
-INTRO_DURATION_S = 10.5
+# Intro duration extended from 10.5s → 11.2s. Audio analysis showed the word
+# "life?" actually ends at t=10.85s in the source TikTok (followed by ~350ms
+# of breath silence before the music kicks in). Cutting at 10.5s chopped the
+# punchline mid-word. 11.2s captures the full "life?" + a little silence
+# tail where intro audio fades out and music fades in cleanly.
+INTRO_DURATION_S = 11.2
 TOTAL_DURATION_S = 30.0
 BODY_DURATION_S = TOTAL_DURATION_S - INTRO_DURATION_S  # 19.5
 
@@ -48,11 +53,11 @@ BODY_DURATION_S = TOTAL_DURATION_S - INTRO_DURATION_S  # 19.5
 # These are stored as object keys (not full gs:// URIs) for parity with
 # `audio_gcs_path` on existing templates.
 TEMPLATE_AUDIO_GCS_PATH = (
-    "templates/how-do-you-enjoy-your-life/music_30s_loop.m4a"
+    "templates/how-do-you-enjoy-your-life/body_music_15s.m4a"
 )
-TEMPLATE_VOICEOVER_GCS_PATH = (
-    "templates/how-do-you-enjoy-your-life/intro_voiceover.m4a"
-)
+# Voiceover field is unused in v2 (intro audio comes from the reference
+# video copy), kept here for backward compat with the schema.
+TEMPLATE_VOICEOVER_GCS_PATH = None
 # Reference video. analysis_status="ready" skips Gemini re-analysis.
 REFERENCE_GCS_PATH = (
     "templates/how-do-you-enjoy-your-life/reference.mp4"
@@ -70,7 +75,7 @@ INTRO_CAPTIONS = [
     {"text": "Do you have a girlfriend?",    "start_s": 5.7,  "end_s": 7.1},
     {"text": "I don't have",                 "start_s": 7.3,  "end_s": 8.5},
     {"text": "Then...",                      "start_s": 8.7,  "end_s": 9.4},
-    {"text": "How do you enjoy your life?",  "start_s": 9.6,  "end_s": 10.5},
+    {"text": "How do you enjoy your life?",  "start_s": 9.8,  "end_s": 10.85},
 ]
 
 
@@ -99,40 +104,33 @@ def _validate_intro_captions(captions: list[dict], intro_duration_s: float) -> N
 
 
 def build_recipe() -> dict:
-    """Build the fixed-intro-dynamic-body recipe."""
+    """Build the fixed-intro-dynamic-body recipe — v2.
+
+    v2 changes vs v1:
+      - intro is now COPIED from the template's reference video (no synth
+        captions, no separate VO). intro_captions / intro_caption_style /
+        intro_background_color are kept for documentation only — they are
+        no longer consumed by the orchestrator.
+      - body length is variable (peak-anchored), not fixed 19.5s.
+      - music plays its natural melody at the drop, no loop, no ducking.
+    """
     _validate_intro_captions(INTRO_CAPTIONS, INTRO_DURATION_S)
     return {
         "template_kind": "fixed_intro_dynamic_body",
-        "total_duration_s": TOTAL_DURATION_S,
         "intro_duration_s": INTRO_DURATION_S,
-        "intro_captions": INTRO_CAPTIONS,
-        "intro_caption_style": {
-            "font_family": "DMSans-Bold",
-            "font_size": 64,
-            "color": "#FFFFFF",
-            "shadow_color": "#000000",
-            "shadow_blur": 8,
-            "position": "center",
-        },
-        "intro_background_color": "#000000",
-        "music_duck_db_intro": -12.0,
-        "music_fadeup_ms": 200,
+        # Documentation-only — for human readability of the template config.
+        # The orchestrator reads the intro from the reference video, not these.
+        "intro_captions_doc": INTRO_CAPTIONS,
         "body": {
-            "target_duration_s": BODY_DURATION_S,
-            "tolerance_s": 1.5,
-            "selection_strategy": "energy_hook",
-            # Only start_s snaps to the nearest scene cut within tolerance.
-            # end_s is fixed at start_s + target_duration_s so the total
-            # output is always exactly TOTAL_DURATION_S. Bad end-cuts are
-            # masked by the 0.5s music fade-out.
-            "scene_snap_start": True,
+            # Peak-anchored window. Body starts pre_roll_s seconds before
+            # the audio energy peak (the goal moment, the drop, the
+            # punchline) and runs at most max_duration_s. Adapts to the
+            # user clip's length.
+            "pre_roll_s": 4.0,
+            "max_duration_s": 14.0,
+            "min_duration_s": 8.0,
         },
-        # Compatibility shims: the admin EditorTab and other UI components
-        # were built for the multi_clip_montage shape and call recipe.slots
-        # / recipe.interstitials directly without null guards. Empty arrays
-        # let those views render an "empty editor" instead of crashing. The
-        # orchestrator routes on template_kind first, so neither field is
-        # actually consumed for this template family.
+        # Compatibility shims for admin EditorTab (null-guard avoidance).
         "slots": [],
         "interstitials": [],
     }
