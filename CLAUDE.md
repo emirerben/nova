@@ -58,6 +58,9 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Beat-sync guard: tracks with 0 detected beats are marked `failed` at analysis time; `POST /music-jobs` rejects non-ready or non-published tracks
 
 ## Template pipeline
+- Template kinds (`recipe.template_kind`): `multi_clip_montage` (default — Rule of Thirds, Music Beat-Sync, etc.) and `fixed_intro_dynamic_body` (How do you enjoy your life?). Discriminator routes `_run_template_job` to the right render path. Existing rows backfilled by migration 0010.
+- Fixed-intro family: `_run_fixed_intro_dynamic_body_job` in `template_orchestrate.py` renders a black hold + ASS captions intro, picks the best body window from a single user clip (`_select_body_window` with optional scene-snap on start), concats silent, then mixes VO + ducked-then-full music via `pipeline/intro_voiceover_mix.py`. Uploads via `copy_object_signed_url` because the editor's "without overlays" preview is byte-identical for this family.
+- Audio mix safety (`_mix_template_audio` in `template_orchestrate.py`): trims video to audio length only when gap is in `(0, 5]` seconds; catastrophic-short-audio (gap > 5s) keeps natural video length to avoid 0-second outputs from corrupt probes.
 - Interstitials: `app/pipeline/interstitials.py` detects curtain-close vs fade-to-black via FFmpeg luminance band analysis, renders color holds and `geq` pixel-expression curtain-close animations (drawbox cannot animate bar height over time)
 - Transitions: `app/pipeline/transitions.py` translates Gemini vocabulary (whip-pan, zoom-in, dissolve) to internal FFmpeg xfade types
 - Font bundle: Playfair Display (Bold + Regular) in `assets/fonts/`, referenced via `fontsdir` in ASS subtitle filters
