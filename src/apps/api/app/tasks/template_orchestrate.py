@@ -46,8 +46,9 @@ from app.pipeline.agents.gemini_analyzer import (
     analyze_template,
     gemini_upload_and_wait,
 )
+from app.pipeline.intro_voiceover_mix import render_intro_voiceover_mix
 from app.pipeline.template_matcher import TemplateMismatchError, consolidate_slots, match
-from app.storage import download_to_file, upload_public_read
+from app.storage import copy_object_signed_url, download_to_file, upload_public_read
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -309,6 +310,24 @@ def _run_template_job(job_id: str) -> None:
 
         recipe_data = template.recipe_cached
         audio_gcs_path = template.audio_gcs_path  # may be None
+        voiceover_gcs_path = template.voiceover_gcs_path  # may be None
+
+    # Route on template_kind discriminator. Existing rows without template_kind
+    # are backfilled to "multi_clip_montage" by migration 0010, so .get() with
+    # a default is just a belt-and-suspenders guard.
+    template_kind = recipe_data.get("template_kind", "multi_clip_montage")
+    if template_kind == "fixed_intro_dynamic_body":
+        _run_fixed_intro_dynamic_body_job(
+            job_id=job_id,
+            template_id=template_id,
+            recipe_data=recipe_data,
+            clip_paths_gcs=clip_paths_gcs,
+            audio_gcs_path=audio_gcs_path,
+            voiceover_gcs_path=voiceover_gcs_path,
+            user_subject=user_subject,
+            selected_platforms=selected_platforms,
+        )
+        return
 
     try:
         recipe = _build_recipe(recipe_data)
@@ -1940,16 +1959,61 @@ def _mix_template_audio(
         shutil.copy2(video_path, output_path)
         return
 
-    # Loop audio so it always covers the full video length.  The previous
-    # approach used `-shortest` which truncated the output when the template
-    # audio was shorter than the assembled video (common with TikTok audio
-    # that has mismatched container duration metadata).
+    # Sync video ending with music ending — but only when they're close.
     #
-    # With `-stream_loop -1` the audio repeats forever, so `-shortest` now
-    # correctly cuts to the VIDEO length (which is always the shorter stream).
-    # We also add a short audio fade-out so the loop cut isn't abrupt.
+    # Intent: when the assembled video slightly exceeds the template audio
+    # (the original bug: video 24.2s vs audio 21.4s), trim video to the
+    # audio length so the music ends naturally instead of looping into a
+    # restarted rhythm.
+    #
+    # BUT: if audio is catastrophically short (e.g., bad extract yielding
+    # 3s for a 30s video), trimming video would delete 27s of content.
+    # In that case, keep video at natural length and accept that audio
+    # ends early (silence tail) — silent data loss beats catastrophic
+    # content loss.
+    #
+    # Defensive: probe failures return 0.0 sentinel. Fall back gracefully.
     video_dur = _probe_duration(video_path)
-    fade_start = max(0, video_dur - 0.5)
+    audio_dur = _probe_duration(audio_local)
+
+    # Only trim video when audio is within this many seconds of video.
+    _AUDIO_SYNC_MAX_GAP_S = 5.0
+
+    if video_dur <= 0 and audio_dur <= 0:
+        log.warning("audio_mix_probe_both_failed", falling_back_to="natural-length")
+        use_duration = 0.0  # will skip -t below
+    elif video_dur <= 0:
+        log.warning("audio_mix_video_probe_failed", audio_dur=audio_dur)
+        use_duration = audio_dur
+    elif audio_dur <= 0:
+        log.warning("audio_mix_audio_probe_failed", video_dur=video_dur)
+        use_duration = video_dur
+    else:
+        gap = video_dur - audio_dur
+        if 0 < gap <= _AUDIO_SYNC_MAX_GAP_S:
+            # Slight overhang (the target bug): trim video to audio length.
+            use_duration = audio_dur
+        elif gap > _AUDIO_SYNC_MAX_GAP_S:
+            # Audio catastrophically short — keep video, accept silent tail.
+            log.warning(
+                "audio_much_shorter_than_video_keeping_video",
+                video_dur=round(video_dur, 2),
+                audio_dur=round(audio_dur, 2),
+                gap_s=round(gap, 2),
+            )
+            use_duration = video_dur
+        else:
+            # Audio >= video: cut at video end (ffmpeg handles natural).
+            use_duration = video_dur
+    fade_start = max(0, use_duration - 0.5)
+
+    log.info(
+        "audio_mix_durations",
+        video_dur=round(video_dur, 2),
+        audio_dur=round(audio_dur, 2),
+        use_duration=round(use_duration, 2),
+        trimming_video=video_dur > audio_dur,
+    )
 
     cmd = [
         "ffmpeg",
@@ -1962,7 +2026,7 @@ def _mix_template_audio(
         "-c:a", "aac",
         "-af",
         f"afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
-        "-shortest",
+        *(["-t", f"{use_duration:.3f}"] if use_duration > 0 else []),
         "-y", output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
@@ -1994,3 +2058,506 @@ def _extract_transcript(clip_metas: list[ClipMeta], steps: list) -> str:
         if meta.clip_id in used_clip_ids and meta.transcript
     ]
     return " ".join(parts)[:500]
+
+
+# ── Fixed-intro / dynamic-body template family ─────────────────────────────────
+
+
+# Map seed-script font_family values to ASS-registered font names. The seed
+# uses file-root names ("DMSans-Bold") for clarity in code, but libass needs
+# the family name registered in the font file ("DM Sans").
+_FIXED_INTRO_FONT_TO_ASS: dict[str, str] = {
+    "DMSans-Bold": "DM Sans",
+    "Montserrat-ExtraBold": "Montserrat",
+    "Outfit-Bold": "Outfit",
+    "PlayfairDisplay-Bold": "Playfair Display",
+}
+
+# Output spec for the intro and body. Mirrors interstitials._WIDTH/_HEIGHT/_FPS
+# but kept local to avoid coupling to that private API.
+_FIXED_INTRO_WIDTH = 1080
+_FIXED_INTRO_HEIGHT = 1920
+_FIXED_INTRO_FPS = 30
+
+
+def _seconds_to_ass_time(seconds: float) -> str:
+    """Convert a float seconds value to ASS H:MM:SS.cc format."""
+    if seconds < 0:
+        seconds = 0.0
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def _build_fixed_intro_ass(
+    captions: list[dict],
+    style: dict,
+    out_path: str,
+) -> None:
+    """Write an ASS subtitle file with one Dialogue per caption.
+
+    Style notes:
+    - PlayResX/Y match the render canvas (1080x1920) so positioning math is 1:1.
+    - BorderStyle=1 + Shadow=2 produces a soft drop shadow (no hard outline)
+      to match the reference TikTok aesthetic.
+    - Alignment=5 = center-anchored, MarginV=0 puts the caption vertically
+      centered in the frame.
+    """
+    font_family_seed = style.get("font_family", "DMSans-Bold")
+    fontname = _FIXED_INTRO_FONT_TO_ASS.get(font_family_seed, font_family_seed)
+    font_size = int(style.get("font_size", 64))
+    # ASS uses &HBBGGRR (no alpha for primary). Strip leading '#'.
+    color_hex = (style.get("color") or "#FFFFFF").lstrip("#")
+    # ASS expects BGR; flip RGB.
+    primary_bgr = f"{color_hex[4:6]}{color_hex[2:4]}{color_hex[0:2]}".upper()
+    # Shadow color (back). Default black.
+    shadow_hex = (style.get("shadow_color") or "#000000").lstrip("#")
+    shadow_bgr = f"{shadow_hex[4:6]}{shadow_hex[2:4]}{shadow_hex[0:2]}".upper()
+    shadow_blur = int(style.get("shadow_blur", 8))
+
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {_FIXED_INTRO_WIDTH}\n"
+        f"PlayResY: {_FIXED_INTRO_HEIGHT}\n"
+        "ScaledBorderAndShadow: yes\n"
+        "\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+        "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Caption,{fontname},{font_size},"
+        f"&H00{primary_bgr},&H00{primary_bgr},"
+        f"&H00{shadow_bgr},&H80{shadow_bgr},"
+        "-1,0,0,0,100,100,0,0,1,0,"
+        f"{shadow_blur},5,80,80,0,1\n"
+        "\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
+        "MarginV, Effect, Text\n"
+    )
+
+    lines: list[str] = [header]
+    for cap in captions:
+        start = _seconds_to_ass_time(float(cap["start_s"]))
+        end = _seconds_to_ass_time(float(cap["end_s"]))
+        # ASS-escape order matters: backslash first, then override braces,
+        # then newline. `{...}` is libass override syntax (e.g. `{\fs100}`)
+        # so unescaped braces from JSONB-stored or admin-edited captions
+        # would silently mutate rendering. Comma escape is unnecessary —
+        # Text is the trailing field, commas inside it are not collisions.
+        text = (
+            str(cap["text"])
+            .replace("\\", "\\\\")
+            .replace("{", "\\{")
+            .replace("}", "\\}")
+            .replace("\n", "\\N")
+        )
+        lines.append(
+            f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{text}\n"
+        )
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+
+def _render_intro_with_captions(
+    captions: list[dict],
+    style: dict,
+    intro_duration_s: float,
+    background_color: str,
+    out_path: str,
+    tmpdir: str,
+) -> None:
+    """Render the silent intro: black hold + ASS captions burned on top.
+
+    Single FFmpeg pass: lavfi color generator → subtitles filter → libx264.
+    No intermediate files, no audio stream.
+    """
+    from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
+
+    ass_path = os.path.join(tmpdir, "intro_captions.ass")
+    _build_fixed_intro_ass(captions, style, ass_path)
+
+    # FFmpeg subtitles filter requires escaped path on macOS/Linux.
+    # Single-quote the path inside the filter to be safe with special chars.
+    ass_filter_path = ass_path.replace(":", "\\:").replace("'", "\\'")
+    fonts_dir_escaped = FONTS_DIR.replace(":", "\\:").replace("'", "\\'")
+
+    cmd = [
+        "ffmpeg",
+        "-f", "lavfi",
+        "-i", (
+            f"color=c={background_color}:"
+            f"s={_FIXED_INTRO_WIDTH}x{_FIXED_INTRO_HEIGHT}:"
+            f"d={intro_duration_s:.3f}:r={_FIXED_INTRO_FPS}"
+        ),
+        "-vf", f"subtitles='{ass_filter_path}':fontsdir='{fonts_dir_escaped}'",
+        "-c:v", "libx264",
+        "-profile:v", "high",
+        "-preset", "fast",
+        "-crf", "18",
+        "-pix_fmt", "yuv420p",
+        # Pin color metadata so the concat-copy boundary with body.mp4
+        # doesn't produce a sudden color shift on QuickTime/Safari/iOS.
+        "-color_range", "tv",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-colorspace", "bt709",
+        "-r", str(_FIXED_INTRO_FPS),
+        "-t", f"{intro_duration_s:.3f}",
+        "-an",
+        "-movflags", "+faststart",
+        "-y",
+        out_path,
+    ]
+
+    log.info("fixed_intro_render_start", duration_s=intro_duration_s, captions=len(captions))
+    result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")[-500:]
+        raise RuntimeError(f"intro render failed: {stderr}")
+    log.info("fixed_intro_render_done", out=out_path)
+
+
+def _cut_body_segment(
+    src_video: str,
+    start_s: float,
+    duration_s: float,
+    out_path: str,
+) -> None:
+    """Cut a body segment from src_video, scaled+padded to 9:16, silent.
+
+    Forces CFR @ 30fps so the body matches the intro's frame timebase.
+    Strips audio (-an) — audio is added later by the mixer.
+    """
+    # scale: fit within 1080x1920, preserving aspect
+    # pad: center on a 1080x1920 black canvas
+    vf = (
+        f"scale=w={_FIXED_INTRO_WIDTH}:h={_FIXED_INTRO_HEIGHT}:"
+        "force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"pad={_FIXED_INTRO_WIDTH}:{_FIXED_INTRO_HEIGHT}:"
+        "(ow-iw)/2:(oh-ih)/2:color=black,"
+        "setsar=1"
+    )
+    cmd = [
+        "ffmpeg",
+        "-ss", f"{start_s:.3f}",
+        "-t", f"{duration_s:.3f}",
+        "-i", src_video,
+        "-vf", vf,
+        "-c:v", "libx264",
+        "-profile:v", "high",
+        "-preset", "fast",
+        "-crf", "18",
+        "-pix_fmt", "yuv420p",
+        # Match intro's color metadata so concat-copy doesn't produce a
+        # sudden color shift at the boundary on QuickTime/Safari/iOS.
+        "-color_range", "tv",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-colorspace", "bt709",
+        "-r", str(_FIXED_INTRO_FPS),
+        "-vsync", "cfr",
+        "-an",
+        "-movflags", "+faststart",
+        "-y",
+        out_path,
+    ]
+    log.info("body_cut_start", start_s=start_s, duration_s=duration_s)
+    result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")[-500:]
+        raise RuntimeError(f"body cut failed: {stderr}")
+
+
+def _concat_silent(segments: list[str], out_path: str, tmpdir: str) -> None:
+    """Concat already-encoded mp4 segments via concat demuxer (-c copy).
+
+    All segments must share codec/fps/timebase. Output is silent (-an).
+    """
+    list_path = os.path.join(tmpdir, "concat_list.txt")
+    with open(list_path, "w", encoding="utf-8") as f:
+        for seg in segments:
+            # concat demuxer needs single-quoted paths; escape any single quotes.
+            escaped = seg.replace("'", r"'\''")
+            f.write(f"file '{escaped}'\n")
+
+    cmd = [
+        "ffmpeg",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", list_path,
+        "-c", "copy",
+        "-an",
+        "-movflags", "+faststart",
+        "-y",
+        out_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")[-500:]
+        raise RuntimeError(f"concat failed: {stderr}")
+
+
+def _select_body_window(
+    user_video_path: str,
+    target_duration_s: float,
+    tolerance_s: float,
+    snap_start_to_scene: bool,
+) -> tuple[float, float]:
+    """Pick the best `target_duration_s` window from the user's single clip.
+
+    Heuristic:
+    - Probe duration. If shorter than target, raise; the API layer rejects
+      this earlier but we double-check here.
+    - Walk a sliding window of (target_duration_s) seconds and pick the
+      candidate whose start_s aligns closest to a scene cut (when snap is
+      enabled) within `tolerance_s` of the natural midpoint of the video.
+    - End is fixed at start_s + target_duration_s — total budget guaranteed.
+    """
+    from app.pipeline.probe import probe_video  # noqa: PLC0415
+    from app.pipeline.scene_detect import detect_scenes  # noqa: PLC0415
+
+    probe = probe_video(user_video_path)
+    user_dur = probe.duration_s
+    if user_dur < target_duration_s:
+        raise ValueError(
+            f"User video too short for body: have {user_dur:.2f}s, "
+            f"need ≥ {target_duration_s:.2f}s"
+        )
+
+    # Default natural pick: middle of the video.
+    natural_start = max(0.0, (user_dur - target_duration_s) / 2.0)
+
+    if not snap_start_to_scene:
+        end_s = min(user_dur, natural_start + target_duration_s)
+        return natural_start, end_s
+
+    cuts = detect_scenes(user_video_path)
+    if not cuts:
+        log.info("body_window_no_scene_cuts", natural_start=natural_start)
+        return natural_start, natural_start + target_duration_s
+
+    # Filter cuts that leave room for a full target_duration_s window.
+    max_start = user_dur - target_duration_s
+    eligible = [c.timestamp_s for c in cuts if 0.0 <= c.timestamp_s <= max_start]
+    if not eligible:
+        return natural_start, natural_start + target_duration_s
+
+    candidates = [c for c in eligible if abs(c - natural_start) <= tolerance_s]
+    if candidates:
+        chosen = min(candidates, key=lambda c: abs(c - natural_start))
+    else:
+        # Fall back to the cut closest to the natural midpoint.
+        chosen = min(eligible, key=lambda c: abs(c - natural_start))
+
+    log.info(
+        "body_window_chosen",
+        natural_start=round(natural_start, 3),
+        chosen_start=round(chosen, 3),
+        snapped=chosen != natural_start,
+    )
+    return chosen, chosen + target_duration_s
+
+
+def _run_fixed_intro_dynamic_body_job(
+    *,
+    job_id: str,
+    template_id: str,
+    recipe_data: dict,
+    clip_paths_gcs: list[str],
+    audio_gcs_path: str | None,
+    voiceover_gcs_path: str | None,
+    user_subject: str,
+    selected_platforms: list[str],
+) -> None:
+    """Render path for `template_kind="fixed_intro_dynamic_body"`.
+
+    Pipeline:
+        download user clip (1)
+            → render fixed black intro + ASS captions (silent video)
+            → select best body window from user clip (scene-snap on start)
+            → cut body segment, scale+pad to 9:16 (silent)
+            → concat intro + body (silent)
+            → mix VO + ducked-then-full music
+            → upload + persist + generate copy
+    """
+    if len(clip_paths_gcs) != 1:
+        raise ValueError(
+            "fixed_intro_dynamic_body templates expect exactly 1 user clip; "
+            f"got {len(clip_paths_gcs)}"
+        )
+
+    intro_duration_s = float(recipe_data.get("intro_duration_s", 10.5))
+    intro_captions = recipe_data.get("intro_captions") or []
+    intro_style = recipe_data.get("intro_caption_style") or {}
+    bg_color = recipe_data.get("intro_background_color", "#000000")
+    body_cfg = recipe_data.get("body") or {}
+    body_target = float(body_cfg.get("target_duration_s", 19.5))
+    body_tolerance = float(body_cfg.get("tolerance_s", 1.5))
+    snap_start = bool(body_cfg.get("scene_snap_start", True))
+    music_duck_db = float(recipe_data.get("music_duck_db_intro", -12.0))
+    music_fadeup_ms = int(recipe_data.get("music_fadeup_ms", 200))
+
+    # Defensive runtime guard mirroring seed-time validation.
+    if not intro_captions:
+        raise ValueError("recipe.intro_captions must be non-empty")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # [1] Download user clip
+        user_local = os.path.join(tmpdir, "user_clip.mp4")
+        download_to_file(clip_paths_gcs[0], user_local)
+
+        # [2] Pick body window. Surface a clean user-facing error when the
+        # video is too short; the user doesn't need to see a stack trace.
+        # Required minimum is intro_duration_s + body_target (typically 30s
+        # for HDYE: 10.5s intro + 19.5s body).
+        try:
+            body_start, body_end = _select_body_window(
+                user_local,
+                target_duration_s=body_target,
+                tolerance_s=body_tolerance,
+                snap_start_to_scene=snap_start,
+            )
+        except ValueError as exc:
+            min_required = intro_duration_s + body_target
+            user_msg = (
+                f"Video too short for this template. "
+                f"Need at least {min_required:.1f}s. ({exc})"
+            )
+            log.warning(
+                "fixed_intro_video_too_short",
+                job_id=job_id,
+                min_required_s=min_required,
+                error=str(exc),
+            )
+            with _sync_session() as db:
+                job = db.get(Job, uuid.UUID(job_id))
+                if job:
+                    job.status = "failed"
+                    job.error_detail = user_msg
+                    db.commit()
+            return
+        body_dur = body_end - body_start
+
+        # [3] Render intro (silent video)
+        intro_path = os.path.join(tmpdir, "intro.mp4")
+        _render_intro_with_captions(
+            captions=intro_captions,
+            style=intro_style,
+            intro_duration_s=intro_duration_s,
+            background_color=bg_color,
+            out_path=intro_path,
+            tmpdir=tmpdir,
+        )
+
+        # [4] Cut body segment (silent, scaled to 9:16)
+        body_path = os.path.join(tmpdir, "body.mp4")
+        _cut_body_segment(user_local, body_start, body_dur, body_path)
+
+        # [5] Concat intro + body (silent)
+        silent_full = os.path.join(tmpdir, "silent_full.mp4")
+        _concat_silent([intro_path, body_path], silent_full, tmpdir)
+
+        # [6] Mix VO + music. Both assets are required; if either is missing,
+        # the mixer degrades gracefully (silent intro / silent body / copy).
+        # Track audio_health so step [9] can persist a job-level warning when
+        # the user gets a fully silent output (otherwise the failure is only
+        # visible in worker logs).
+        audio_health: list[str] = []
+        if not audio_gcs_path or not voiceover_gcs_path:
+            log.warning(
+                "fixed_intro_missing_audio_assets",
+                audio=audio_gcs_path,
+                voiceover=voiceover_gcs_path,
+            )
+            final_path = silent_full
+            if not audio_gcs_path:
+                audio_health.append("music_path_unset")
+            if not voiceover_gcs_path:
+                audio_health.append("voiceover_path_unset")
+        else:
+            music_local = os.path.join(tmpdir, "music.m4a")
+            vo_local = os.path.join(tmpdir, "voiceover.m4a")
+            try:
+                download_to_file(audio_gcs_path, music_local)
+            except Exception as exc:
+                log.warning("fixed_intro_music_download_failed", error=str(exc))
+                music_local = ""
+                audio_health.append("music_download_failed")
+            try:
+                download_to_file(voiceover_gcs_path, vo_local)
+            except Exception as exc:
+                log.warning("fixed_intro_vo_download_failed", error=str(exc))
+                vo_local = ""
+                audio_health.append("voiceover_download_failed")
+
+            final_path = os.path.join(tmpdir, "final.mp4")
+            render_intro_voiceover_mix(
+                video_path=silent_full,
+                music_path=music_local,
+                voiceover_path=vo_local,
+                output_path=final_path,
+                intro_duration_s=intro_duration_s,
+                music_duck_db=music_duck_db,
+                music_fadeup_ms=music_fadeup_ms,
+            )
+
+        # [7] Upload primary + base output (same file for this template family —
+        # there are no slot-level overlays to strip for an "editor preview")
+        # template_output.mp4 and template_base.mp4 are byte-identical for
+        # this template family (no slot-level overlays to strip for the
+        # editor's "without overlays" preview). Upload once, server-side
+        # copy to the second key — saves egress + re-upload bandwidth.
+        gcs_output_path = f"jobs/{job_id}/template_output.mp4"
+        video_url = upload_public_read(final_path, gcs_output_path)
+        gcs_base_path = f"jobs/{job_id}/template_base.mp4"
+        base_video_url = copy_object_signed_url(gcs_output_path, gcs_base_path)
+
+        # [8] Generate copy. Hook text = the punchline question.
+        hook_text = intro_captions[-1].get("text", "") if intro_captions else ""
+        from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
+        platform_copy, copy_status = generate_copy(
+            hook_text=hook_text,
+            transcript_excerpt="",
+            platforms=selected_platforms,
+            has_transcript=False,
+            template_tone="provocative",
+        )
+
+        # [9] Persist
+        plan_data = {
+            "template_kind": "fixed_intro_dynamic_body",
+            "intro_duration_s": intro_duration_s,
+            "body_window": {"start_s": body_start, "end_s": body_end},
+            "output_url": video_url,
+            "base_output_url": base_video_url,
+            "platform_copy": platform_copy.model_dump(),
+            "copy_status": copy_status,
+            # Audio health: empty list means VO + music both rendered;
+            # any non-empty list means the user got a degraded output.
+            # Surfaces silent-video failures that would otherwise be invisible
+            # outside worker logs.
+            "audio_health": audio_health,
+        }
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            if job:
+                job.status = "template_ready"
+                job.assembly_plan = plan_data
+                if audio_health:
+                    job.error_detail = (
+                        f"audio assets unavailable: {','.join(audio_health)}"
+                    )
+                db.commit()
+
+        log.info(
+            "fixed_intro_template_done",
+            job_id=job_id,
+            output_url=video_url,
+            body_start=round(body_start, 3),
+            body_end=round(body_end, 3),
+        )
