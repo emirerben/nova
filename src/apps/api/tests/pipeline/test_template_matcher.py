@@ -779,3 +779,329 @@ class TestConsolidateSlots:
             assert count <= 2, (
                 f"Clip {clip_id} appears {count} times — consolidation should prevent this"
             )
+
+
+# ── Hook legibility pre-pass tests ───────────────────────────────────────────
+
+
+class TestHookLegibilityPrePass:
+    """Tests for _hook_legibility_pre_pass and _hook_legibility_score."""
+
+    def test_picks_lower_energy_clip_for_hook(self):
+        """Among multiple duration-fit clips, hook slot prefers lower energy."""
+        from app.pipeline.template_matcher import _hook_legibility_pre_pass
+
+        slots = [_slot(1, 3.0, priority=10, slot_type="hook")]
+        # clip_high_energy: noisy, hook would be hard to read
+        # clip_calm: low energy, better backdrop
+        clip_high = _make_clip("clip_high", [_moment(0.0, 3.0, energy=9.0)])
+        clip_calm = _make_clip("clip_calm", [_moment(0.0, 3.0, energy=2.0)])
+
+        pre = _hook_legibility_pre_pass(slots, [clip_high, clip_calm])
+
+        assert 1 in pre
+        meta, _ = pre[1]
+        assert meta.clip_id == "clip_calm"
+
+    def test_keyword_bonus_overrides_energy(self):
+        """Description with legibility keywords should outrank lower-energy clip."""
+        from app.pipeline.template_matcher import _hook_legibility_pre_pass
+
+        slots = [_slot(1, 3.0, priority=10, slot_type="hook")]
+        # noisy energy but described as "wide static sky scenic"
+        keyword_moment = {
+            "start_s": 0.0, "end_s": 3.0, "energy": 7.0,
+            "description": "wide static sky scenic landscape",
+        }
+        # lower energy but no descriptive bonus
+        plain_moment = {
+            "start_s": 0.0, "end_s": 3.0, "energy": 4.0, "description": "test",
+        }
+        clip_keyword = _make_clip("clip_keyword", [keyword_moment])
+        clip_plain = _make_clip("clip_plain", [plain_moment])
+
+        pre = _hook_legibility_pre_pass(slots, [clip_keyword, clip_plain])
+
+        # clip_keyword score: -7 + 4*1.0 = -3.0
+        # clip_plain score:   -4 + 0    = -4.0
+        # keyword wins
+        assert pre[1][0].clip_id == "clip_keyword"
+
+    def test_busy_keywords_penalize(self):
+        """Description with busy/chaotic keywords should be deprioritized."""
+        from app.pipeline.template_matcher import _hook_legibility_pre_pass
+
+        slots = [_slot(1, 3.0, priority=10, slot_type="hook")]
+        busy_moment = {
+            "start_s": 0.0, "end_s": 3.0, "energy": 4.0,
+            "description": "crowded busy fast-paced scene",
+        }
+        clean_moment = {
+            "start_s": 0.0, "end_s": 3.0, "energy": 5.0, "description": "test",
+        }
+        clip_busy = _make_clip("clip_busy", [busy_moment])
+        clip_clean = _make_clip("clip_clean", [clean_moment])
+
+        pre = _hook_legibility_pre_pass(slots, [clip_busy, clip_clean])
+
+        # clip_busy: -4 + (-1.5*3) = -8.5
+        # clip_clean: -5 + 0 = -5.0
+        # clean wins despite higher energy
+        assert pre[1][0].clip_id == "clip_clean"
+
+    def test_degraded_clips_excluded(self):
+        """analysis_degraded clips never win the hook slot."""
+        from app.pipeline.template_matcher import _hook_legibility_pre_pass
+
+        slots = [_slot(1, 3.0, priority=10, slot_type="hook")]
+        good_clip = _make_clip("clip_good", [_moment(0.0, 3.0, energy=6.0)])
+        degraded_clip = _make_clip("clip_degraded", [_moment(0.0, 3.0, energy=1.0)])
+        degraded_clip.analysis_degraded = True
+
+        pre = _hook_legibility_pre_pass(slots, [degraded_clip, good_clip])
+
+        assert pre[1][0].clip_id == "clip_good"
+
+    def test_no_hook_slots_returns_empty(self):
+        """Templates without any hook slots get no pre-assignments."""
+        from app.pipeline.template_matcher import _hook_legibility_pre_pass
+
+        slots = [_slot(1, 3.0, slot_type="broll"), _slot(2, 5.0, slot_type="broll")]
+        clips = [_make_clip("clip_a", [_moment(0.0, 3.0)])]
+
+        pre = _hook_legibility_pre_pass(slots, clips)
+        assert pre == {}
+
+    def test_no_duration_compatible_returns_empty_for_that_slot(self):
+        """If no clip fits the hook duration, that slot stays unassigned."""
+        from app.pipeline.template_matcher import _hook_legibility_pre_pass
+
+        slots = [_slot(1, 30.0, priority=10, slot_type="hook")]  # very long hook
+        clips = [_make_clip("clip_short", [_moment(0.0, 2.0)])]
+
+        pre = _hook_legibility_pre_pass(slots, clips)
+        assert pre == {}
+
+    def test_match_skips_pre_pass_when_would_drain_clip_pool(self):
+        """Guard: with only 1 clip and 2 slots (1 hook, 1 broll), pre-pass
+        would leave 0 clips for the broll slot. Must fall back to baseline
+        (which reuses the single clip via max_uses)."""
+        slots = [
+            _slot(1, 3.0, priority=10, slot_type="hook"),
+            _slot(2, 5.0, priority=5, slot_type="broll"),
+        ]
+        recipe = _make_recipe(slots)
+        clips = [_make_clip("only_clip", [
+            _moment(0.0, 3.0, energy=5.0), _moment(0.0, 5.0, energy=5.0),
+        ])]
+
+        # Should NOT raise — guard kicks in, baseline reuses the single clip
+        plan = match(recipe, clips)
+        assert len(plan.steps) == 2
+
+    def test_dark_frame_outranks_bright_frame(self, monkeypatch):
+        """When color probe sees a dark frame, that clip wins even if energy ties."""
+        from app.pipeline import template_matcher as tm
+
+        slots = [_slot(1, 3.0, priority=10, slot_type="hook")]
+        clip_dark = _make_clip("clip_dark", [_moment(0.0, 3.0, energy=5.0)])
+        clip_bright = _make_clip("clip_bright", [_moment(0.0, 3.0, energy=5.0)])
+
+        # Mock probe: dark clip → luma=20, bright clip → luma=240, both red_ratio=0
+        def fake_probe(path, start_s):
+            return {"path_dark": (20.0, 0.0), "path_bright": (240.0, 0.0)}[path]
+
+        monkeypatch.setattr(
+            "app.pipeline.color_probe.probe_clip_color", fake_probe
+        )
+        clip_paths = {"clip_dark": "path_dark", "clip_bright": "path_bright"}
+
+        pre = tm._hook_legibility_pre_pass(
+            slots, [clip_dark, clip_bright], clip_paths=clip_paths
+        )
+        assert pre[1][0].clip_id == "clip_dark"
+
+    def test_red_frame_penalized_against_neutral(self, monkeypatch):
+        """Red-dominant frame loses to neutral frame at same luma — clash penalty."""
+        from app.pipeline import template_matcher as tm
+
+        slots = [_slot(1, 3.0, priority=10, slot_type="hook")]
+        clip_red = _make_clip("clip_red", [_moment(0.0, 3.0, energy=5.0)])
+        clip_neutral = _make_clip("clip_neutral", [_moment(0.0, 3.0, energy=5.0)])
+
+        # Both at mid luma; red has dominance, neutral does not.
+        def fake_probe(path, start_s):
+            return {"path_red": (100.0, 0.9), "path_neutral": (100.0, 0.0)}[path]
+
+        monkeypatch.setattr(
+            "app.pipeline.color_probe.probe_clip_color", fake_probe
+        )
+        clip_paths = {"clip_red": "path_red", "clip_neutral": "path_neutral"}
+
+        pre = tm._hook_legibility_pre_pass(
+            slots, [clip_red, clip_neutral], clip_paths=clip_paths
+        )
+        assert pre[1][0].clip_id == "clip_neutral"
+
+    def test_color_probe_failure_does_not_drop_slot(self, monkeypatch):
+        """Probe raising an unexpected exception falls back to no-color scoring."""
+        from app.pipeline import template_matcher as tm
+
+        slots = [_slot(1, 3.0, priority=10, slot_type="hook")]
+        clip_a = _make_clip("clip_a", [_moment(0.0, 3.0, energy=2.0)])
+        clip_b = _make_clip("clip_b", [_moment(0.0, 3.0, energy=8.0)])
+
+        def fake_probe(path, start_s):
+            raise RuntimeError("ffmpeg blew up")
+
+        monkeypatch.setattr(
+            "app.pipeline.color_probe.probe_clip_color", fake_probe
+        )
+        clip_paths = {"clip_a": "path_a", "clip_b": "path_b"}
+
+        # Should not raise; falls back to keyword/energy-only score → clip_a wins
+        pre = tm._hook_legibility_pre_pass(
+            slots, [clip_a, clip_b], clip_paths=clip_paths
+        )
+        assert pre[1][0].clip_id == "clip_a"
+
+    def test_color_probe_skipped_when_clip_paths_none(self, monkeypatch):
+        """When no clip_paths are passed, probe is never invoked (test mode)."""
+        from app.pipeline import template_matcher as tm
+
+        slots = [_slot(1, 3.0, priority=10, slot_type="hook")]
+        clip_a = _make_clip("clip_a", [_moment(0.0, 3.0, energy=2.0)])
+
+        called = {"n": 0}
+
+        def fake_probe(path, start_s):
+            called["n"] += 1
+            return (0.0, 0.0)
+
+        monkeypatch.setattr(
+            "app.pipeline.color_probe.probe_clip_color", fake_probe
+        )
+
+        tm._hook_legibility_pre_pass(slots, [clip_a])  # no clip_paths
+        assert called["n"] == 0
+
+    def test_color_results_cached_per_clip_moment(self, monkeypatch):
+        """Same (clip_id, start_s) is probed once even across multiple slots."""
+        from app.pipeline import template_matcher as tm
+
+        # Two hook slots with same target_dur — both reuse the same candidates,
+        # but the FIRST hook's winner is removed, so the second probes only
+        # remaining candidates. We test the cache by giving a single clip
+        # multiple best_moments at the same start_s (impossible in practice
+        # but isolates the cache path).
+        slots = [_slot(1, 3.0, priority=10, slot_type="hook")]
+        moments = [
+            _moment(0.0, 3.0, energy=5.0),
+            _moment(0.0, 3.0, energy=5.0),  # duplicate start_s
+        ]
+        clip = _make_clip("clip_a", moments)
+
+        called = {"n": 0}
+
+        def fake_probe(path, start_s):
+            called["n"] += 1
+            return (50.0, 0.0)
+
+        monkeypatch.setattr(
+            "app.pipeline.color_probe.probe_clip_color", fake_probe
+        )
+        tm._hook_legibility_pre_pass(slots, [clip], clip_paths={"clip_a": "p"})
+        # Two moments, same (clip_id, 0.0) key → cache hit, only one probe call
+        assert called["n"] == 1
+
+
+# ── color_probe unit tests ───────────────────────────────────────────────────
+
+
+class TestColorProbe:
+    """Unit tests for app.pipeline.color_probe.probe_clip_color."""
+
+    def test_parses_signalstats_output(self, monkeypatch):
+        """Probe extracts YAVG and VAVG from FFmpeg stderr correctly."""
+        from app.pipeline import color_probe as cp
+
+        fake_stderr = (
+            "frame:0    pts:0       pts_time:0\n"
+            "lavfi.signalstats.YAVG=42.5\n"
+            "lavfi.signalstats.UAVG=128.0\n"
+            "lavfi.signalstats.VAVG=192.0\n"
+        )
+
+        class FakeResult:
+            stderr = fake_stderr
+            returncode = 0
+
+        monkeypatch.setattr(cp.subprocess, "run", lambda *a, **kw: FakeResult())
+        luma, red = cp.probe_clip_color("/fake/path.mp4", 1.5)
+        assert luma == 42.5
+        # V=192 → (192-128)/64 = 1.0 (saturated red)
+        assert red == 1.0
+
+    def test_red_ratio_clamped_to_zero_when_v_below_neutral(self, monkeypatch):
+        """VAVG ≤ 128 (blue-leaning or neutral) → red_ratio = 0 (not negative)."""
+        from app.pipeline import color_probe as cp
+
+        fake_stderr = (
+            "lavfi.signalstats.YAVG=128\n"
+            "lavfi.signalstats.VAVG=100\n"
+        )
+
+        class FakeResult:
+            stderr = fake_stderr
+            returncode = 0
+
+        monkeypatch.setattr(cp.subprocess, "run", lambda *a, **kw: FakeResult())
+        _, red = cp.probe_clip_color("/fake/path.mp4", 0.0)
+        assert red == 0.0
+
+    def test_falls_back_on_parse_failure(self, monkeypatch):
+        """Missing signalstats lines → NEUTRAL_FALLBACK, no exception."""
+        from app.pipeline import color_probe as cp
+
+        class FakeResult:
+            stderr = "ffmpeg: garbage output, no signalstats\n"
+            returncode = 1
+
+        monkeypatch.setattr(cp.subprocess, "run", lambda *a, **kw: FakeResult())
+        result = cp.probe_clip_color("/fake/path.mp4", 0.0)
+        assert result == cp.NEUTRAL_FALLBACK
+
+    def test_falls_back_on_timeout(self, monkeypatch):
+        """subprocess.TimeoutExpired → NEUTRAL_FALLBACK, no propagation."""
+        from app.pipeline import color_probe as cp
+
+        def raise_timeout(*a, **kw):
+            raise cp.subprocess.TimeoutExpired(cmd="ffmpeg", timeout=10)
+
+        monkeypatch.setattr(cp.subprocess, "run", raise_timeout)
+        result = cp.probe_clip_color("/fake/path.mp4", 0.0)
+        assert result == cp.NEUTRAL_FALLBACK
+
+    def test_negative_start_s_clamped(self, monkeypatch):
+        """Negative start_s passed as 0.0 to ffmpeg (no negative seek)."""
+        from app.pipeline import color_probe as cp
+
+        captured = {}
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+
+            class FakeResult:
+                stderr = (
+                    "lavfi.signalstats.YAVG=10\n"
+                    "lavfi.signalstats.VAVG=128\n"
+                )
+                returncode = 0
+
+            return FakeResult()
+
+        monkeypatch.setattr(cp.subprocess, "run", fake_run)
+        cp.probe_clip_color("/fake.mp4", -3.5)
+        ss_idx = captured["cmd"].index("-ss")
+        assert captured["cmd"][ss_idx + 1] == "0.000"
+

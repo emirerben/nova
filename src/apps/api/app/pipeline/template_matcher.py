@@ -446,10 +446,160 @@ def _minimum_coverage_pass(
     return pre_assigned
 
 
+# ── Hook legibility pre-pass ─────────────────────────────────────────────────
+
+
+# Keywords parsed from Gemini moment descriptions to proxy "background quietness"
+# without doing per-frame brightness analysis. Tuned for B1 scope (existing
+# clip_meta only, no new image-analysis pass).
+_LEGIBLE_DESC_KEYWORDS = frozenset({
+    "wide", "static", "sky", "uniform", "scenic", "overhead",
+    "minimal", "calm", "open", "still", "horizon", "sunset", "sunrise",
+})
+_BUSY_DESC_KEYWORDS = frozenset({
+    "crowded", "busy", "fast", "chaotic", "complex", "fast-paced",
+    "cluttered", "dense", "rapid",
+})
+
+
+def _hook_legibility_score(
+    meta: ClipMeta,
+    moment: dict,
+    color: tuple[float, float] | None = None,
+) -> float:
+    """Score a (clip, moment) pair for title-text legibility.
+
+    Higher = better backdrop for the white/red title rendered on the hook slot.
+
+    Signal sources:
+      - Lower energy → calmer, often less visually noisy → text reads better.
+      - Description keywords → "wide/sky/scenic" hints at uniform backgrounds,
+        "crowded/busy/chaotic" hints at backgrounds that swallow text.
+      - Optional color tuple (avg_luma, red_ratio) from FFmpeg signalstats
+        (see app.pipeline.color_probe). Dark frames boost contrast for white
+        title text; red-dominant frames clash with the red "Thirds" overlay.
+
+    Color weights: dark bonus capped at +2.0 (full black), red penalty capped
+    at -3.0 (saturated red). Red weighted higher because color clash hurts
+    readability more than low contrast on a non-red bright frame.
+
+    Degraded or failed analyses score -inf so they never win the hook slot.
+    """
+    if meta.analysis_degraded or meta.failed:
+        return float("-inf")
+    energy = float(moment.get("energy", 5.0))
+    score = -energy  # invert so higher = better
+    desc = str(moment.get("description") or "").lower()
+    for kw in _LEGIBLE_DESC_KEYWORDS:
+        if kw in desc:
+            score += 1.0
+    for kw in _BUSY_DESC_KEYWORDS:
+        if kw in desc:
+            score -= 1.5
+    if color is not None:
+        avg_luma, red_ratio = color
+        score += (255.0 - max(0.0, min(255.0, avg_luma))) / 255.0 * 2.0
+        score -= max(0.0, min(1.0, red_ratio)) * 3.0
+    return score
+
+
+def _hook_legibility_pre_pass(
+    slots: list[dict],
+    clip_metas: list[ClipMeta],
+    *,
+    clip_paths: dict[str, str] | None = None,
+) -> dict[int, tuple[ClipMeta, dict]]:
+    """Pre-assign hook slots to the most legibility-friendly clip.
+
+    Why before _minimum_coverage_pass: hook slots host the title text overlay,
+    so the clip behind them must not fight the text. Coverage/greedy passes
+    only score on duration+energy fit and ignore visual legibility.
+
+    If clip_paths is provided (clip_id → local file path), each candidate gets
+    a per-frame color probe at moment.start_s. Probe failures fall back to
+    NEUTRAL_FALLBACK inside color_probe so a single broken clip doesn't drop
+    the slot. Color contribution is skipped entirely when clip_paths is None
+    (e.g., unit tests that mock out the probe).
+
+    Returns: {hook_slot_position: (ClipMeta, moment)}.
+    """
+    # Local import to keep the matcher importable in environments without ffmpeg
+    # (the import is a no-op for callers that pass clip_paths=None).
+    from app.pipeline.color_probe import probe_clip_color  # noqa: PLC0415
+
+    pre: dict[int, tuple[ClipMeta, dict]] = {}
+    used: set[str] = set()
+    color_cache: dict[tuple[str, float], tuple[float, float] | None] = {}
+
+    def _color_for(meta: ClipMeta, moment: dict) -> tuple[float, float] | None:
+        if not clip_paths:
+            return None
+        path = clip_paths.get(meta.clip_id)
+        if not path:
+            return None
+        start_s = float(moment.get("start_s", 0.0) or 0.0)
+        key = (meta.clip_id, round(start_s, 3))
+        if key in color_cache:
+            return color_cache[key]
+        try:
+            color = probe_clip_color(path, start_s)
+        except Exception as exc:  # noqa: BLE001 — never fail the matcher on probe errors
+            log.warning(
+                "color_probe_unexpected",
+                clip_id=meta.clip_id,
+                start_s=start_s,
+                err=str(exc),
+            )
+            color = None
+        color_cache[key] = color
+        return color
+
+    for slot in [s for s in slots if s.get("slot_type") == "hook"]:
+        target_dur = float(
+            slot.get("target_duration_s", slot.get("target_duration", 5.0))
+        )
+        candidates: list[tuple[ClipMeta, dict, float, tuple[float, float] | None]] = []
+        for meta in clip_metas:
+            if meta.clip_id in used:
+                continue
+            for moment in meta.best_moments:
+                if not isinstance(moment, dict):
+                    continue
+                if (
+                    abs(_moment_duration(moment) - target_dur)
+                    <= DURATION_TOLERANCE_FALLBACK_S
+                ):
+                    color = _color_for(meta, moment)
+                    candidates.append(
+                        (meta, moment, _hook_legibility_score(meta, moment, color), color)
+                    )
+        if not candidates:
+            continue
+        candidates.sort(key=lambda c: c[2], reverse=True)
+        best_meta, best_moment, best_score, best_color = candidates[0]
+        pos = slot.get("position", 1)
+        pre[pos] = (best_meta, best_moment)
+        used.add(best_meta.clip_id)
+        log.info(
+            "hook_legibility_pre_assigned",
+            slot=pos,
+            clip_id=best_meta.clip_id,
+            score=round(best_score, 2),
+            avg_luma=round(best_color[0], 1) if best_color else None,
+            red_ratio=round(best_color[1], 3) if best_color else None,
+        )
+    return pre
+
+
 # ── Greedy match ─────────────────────────────────────────────────────────────
 
 
-def match(recipe: TemplateRecipe, clip_metas: list[ClipMeta]) -> AssemblyPlan:
+def match(
+    recipe: TemplateRecipe,
+    clip_metas: list[ClipMeta],
+    *,
+    clip_paths: dict[str, str] | None = None,
+) -> AssemblyPlan:
     """Greedy template match. Returns AssemblyPlan sorted by slot.position.
 
     Args:
@@ -457,6 +607,11 @@ def match(recipe: TemplateRecipe, clip_metas: list[ClipMeta]) -> AssemblyPlan:
         clip_metas: list of ClipMeta from Gemini clip analysis (may include
                     degraded/fallback metas — callers must threshold-filter
                     fatal failures before calling this).
+        clip_paths: optional clip_id → local file path map. When provided,
+                    the hook legibility pre-pass probes each candidate's
+                    avg luminance + red ratio via FFmpeg signalstats so the
+                    title sits on a dark, non-red backdrop. Tests omit this
+                    to keep the matcher pure.
 
     Raises:
         TemplateMismatchError: if no clips are provided, or if any slot
@@ -485,8 +640,48 @@ def match(recipe: TemplateRecipe, clip_metas: list[ClipMeta]) -> AssemblyPlan:
     max_uses = max(1, math.ceil(n_slots / n_clips))
     clip_use_count: dict[str, int] = defaultdict(int)
 
-    # Run coverage-first pre-assignment — guarantees maximum clip variety
-    pre_assigned = _minimum_coverage_pass(recipe.slots, clip_metas)
+    # Hook legibility pre-pass: pick the most title-friendly clip for each
+    # hook slot BEFORE the coverage pass so the title doesn't end up over a
+    # busy/bright background. Coverage pass then runs on remaining clips/slots.
+    #
+    # GUARD: skip pre-pass if it would drain the clip pool. With few clips
+    # (e.g., 1 clip + 7 slots), the baseline reuses the same clip across
+    # slots via max_uses; our pre-pass would claim that one clip and leave
+    # zero for non-hook slots, raising TemplateMismatchError. Baseline first
+    # in that case.
+    hook_pre_candidate = _hook_legibility_pre_pass(
+        recipe.slots, clip_metas, clip_paths=clip_paths
+    )
+    non_hook_slots_exist = any(
+        s.get("position", 0) not in hook_pre_candidate
+        for s in recipe.slots
+    )
+    remaining_clip_count = len(clip_metas) - len(hook_pre_candidate)
+    if non_hook_slots_exist and remaining_clip_count == 0:
+        log.info(
+            "hook_legibility_pre_pass_skipped",
+            reason="would_drain_clip_pool",
+            clips=len(clip_metas),
+            hook_assignments=len(hook_pre_candidate),
+        )
+        hook_pre = {}
+    else:
+        hook_pre = hook_pre_candidate
+
+    used_clip_ids = {meta.clip_id for meta, _ in hook_pre.values()}
+    remaining_metas = (
+        [m for m in clip_metas if m.clip_id not in used_clip_ids]
+        if hook_pre else clip_metas
+    )
+    remaining_slots = (
+        [s for s in recipe.slots if s.get("position", 0) not in hook_pre]
+        if hook_pre else recipe.slots
+    )
+
+    # Run coverage-first pre-assignment — guarantees maximum clip variety.
+    # When hook_pre claimed clips/slots, coverage operates on the remainder.
+    coverage_pre = _minimum_coverage_pass(remaining_slots, remaining_metas)
+    pre_assigned = {**hook_pre, **coverage_pre}
     plan: list[AssemblyStep] = []
 
     # Seed plan + use counts from pre-assigned slots

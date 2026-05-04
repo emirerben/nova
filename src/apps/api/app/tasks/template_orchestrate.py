@@ -372,9 +372,14 @@ def _run_template_job(job_id: str) -> None:
 
         # [5] Template match
         log.info("template_match_start", job_id=job_id)
+        # Built before match() so the hook legibility pre-pass can probe
+        # per-frame color (avg_luma + red_ratio) on candidate clips.
+        clip_id_to_local = {
+            ref.name: path for ref, path in zip(file_refs, local_clip_paths)
+        }
         try:
             recipe = consolidate_slots(recipe, clip_metas)
-            assembly_plan = match(recipe, clip_metas)
+            assembly_plan = match(recipe, clip_metas, clip_paths=clip_id_to_local)
         except TemplateMismatchError as exc:
             raise ValueError(f"{exc.code}: {exc.message}") from exc
 
@@ -403,9 +408,6 @@ def _run_template_job(job_id: str) -> None:
         log.info("ffmpeg_assemble_start", job_id=job_id)
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
         base_path = os.path.join(tmpdir, "base_no_overlays.mp4")
-        clip_id_to_local = {
-            ref.name: path for ref, path in zip(file_refs, local_clip_paths)
-        }
         _assemble_clips(
             assembly_plan.steps, clip_id_to_local, probe_map,
             assembled_path, tmpdir,
@@ -887,6 +889,152 @@ def _render_planned_slot(plan: SlotPlan) -> str:
     return plan.reframed_path
 
 
+def _render_slot(
+    step,
+    clip_path: str,
+    probe,
+    beats: list[float],
+    clip_cursors: dict[str, float],
+    cumulative_s: float,
+    slot_idx: int,
+    clip_metas: list | None,
+    global_color_grade: str,
+    tmpdir: str,
+    subject: str = "",
+) -> tuple[str, float, float]:
+    """Render a single slot to a temp .mp4 file.
+
+    Returns (reframed_path, slot_visual_duration, updated_cumulative_s).
+
+    Speed ramp: source_duration = slot_target_dur * speed_factor
+    (2x speed needs 2x source footage compressed into slot_target_dur).
+    """
+    from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
+
+    clip_id = step.clip_id
+    moment = step.moment
+    slot_target_dur = float(step.slot.get("target_duration_s", 5.0))
+    slot_target_dur = max(slot_target_dur, 0.5)
+
+    # Beat-snap: adjust slot duration so the cut lands on a musical beat
+    if beats:
+        expected_end = cumulative_s + slot_target_dur
+        snapped_end = _snap_to_beat(expected_end, beats)
+        slot_target_dur = max(0.5, snapped_end - cumulative_s)
+        cumulative_s = snapped_end
+    else:
+        cumulative_s += slot_target_dur
+
+    # Speed ramp: source_duration = slot_target_dur * speed_factor
+    # 2x speed (speed_factor=2.0) needs 2x source footage → setpts=PTS/2.0 compresses it
+    speed_factor = float(step.slot.get("speed_factor", 1.0))
+    source_duration = slot_target_dur * speed_factor
+
+    # Time-cursor logic
+    if clip_id not in clip_cursors:
+        start_s = float(moment.get("start_s", 0.0))
+    else:
+        start_s = clip_cursors[clip_id]
+
+    clip_dur = probe.duration_s if probe else 30.0
+    if start_s + source_duration > clip_dur:
+        start_s = max(0.0, clip_dur - source_duration)
+        log.warning(
+            "clip_footage_exhausted",
+            clip_id=clip_id,
+            position=step.slot.get("position"),
+            clip_dur=clip_dur,
+            cursor=clip_cursors.get(clip_id, 0.0),
+        )
+
+    clip_cursors[clip_id] = start_s + source_duration
+    end_s = min(start_s + source_duration, clip_dur)
+
+    aspect_ratio = probe.aspect_ratio if probe else "16:9"
+
+    # ── Color grading (text overlays applied post-join, not per-slot) ────
+    slot_color = step.slot.get("color_hint") or global_color_grade or "none"
+
+    log.debug(
+        "slot_timed",
+        position=step.slot.get("position"),
+        target_s=slot_target_dur,
+        actual_s=round(end_s - start_s, 2),
+        speed_factor=speed_factor,
+    )
+
+    # Rule-of-thirds grid overlay (opt-in per slot).
+    # Recipes are stored as raw JSON in the DB and loaded here without re-running
+    # the RecipeSlotSchema validator, so we defensively clamp/validate each field
+    # at the FFmpeg boundary. A bad value must never reach the filter graph.
+    has_grid = bool(step.slot.get("has_grid", False))
+    raw_color = step.slot.get("grid_color", "#FFFFFF")
+    grid_color = (
+        raw_color
+        if isinstance(raw_color, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", raw_color)
+        else "#FFFFFF"
+    )
+    try:
+        grid_opacity = max(0.0, min(1.0, float(step.slot.get("grid_opacity", 0.6))))
+    except (TypeError, ValueError):
+        grid_opacity = 0.6
+    try:
+        grid_thickness = max(1, min(20, int(step.slot.get("grid_thickness", 3))))
+    except (TypeError, ValueError):
+        grid_thickness = 3
+
+    # Optional per-intersection highlight (same defensive validation).
+    _VALID_INTERSECTIONS = {"top-left", "top-right", "bottom-left", "bottom-right"}
+    raw_intersection = step.slot.get("grid_highlight_intersection")
+    grid_highlight_intersection: str | None = (
+        raw_intersection if raw_intersection in _VALID_INTERSECTIONS else None
+    )
+    raw_highlight_color = step.slot.get("grid_highlight_color", "#D9435A")
+    grid_highlight_color = (
+        raw_highlight_color
+        if isinstance(raw_highlight_color, str)
+        and re.fullmatch(r"#[0-9A-Fa-f]{6}", raw_highlight_color)
+        else "#D9435A"
+    )
+    raw_highlight_windows = step.slot.get("grid_highlight_windows")
+    grid_highlight_windows: list[tuple[float, float]] | None = None
+    if isinstance(raw_highlight_windows, list):
+        clamped: list[tuple[float, float]] = []
+        for w in raw_highlight_windows:
+            if not isinstance(w, (list, tuple)) or len(w) != 2:
+                continue
+            try:
+                s, e = float(w[0]), float(w[1])
+            except (TypeError, ValueError):
+                continue
+            # Clamp to slot duration and enforce 0 <= s < e.
+            s = max(0.0, min(s, slot_target_dur))
+            e = max(s + 0.01, min(e, slot_target_dur))
+            clamped.append((s, e))
+        if clamped:
+            grid_highlight_windows = clamped
+
+    reframed = os.path.join(tmpdir, f"slot_{slot_idx}.mp4")
+    reframe_and_export(
+        input_path=clip_path,
+        start_s=start_s,
+        end_s=end_s,
+        aspect_ratio=aspect_ratio,
+        ass_subtitle_path=None,
+        output_path=reframed,
+        color_hint=slot_color,
+        speed_factor=speed_factor,
+        has_grid=has_grid,
+        grid_color=grid_color,
+        grid_opacity=grid_opacity,
+        grid_thickness=grid_thickness,
+        grid_highlight_intersection=grid_highlight_intersection,
+        grid_highlight_color=grid_highlight_color,
+        grid_highlight_windows=grid_highlight_windows,
+    )
+    return reframed, slot_target_dur, cumulative_s
+
+
 def _assemble_clips(
     steps: list,
     clip_id_to_local: dict[str, str],
@@ -1259,6 +1407,11 @@ def _collect_absolute_overlays(
         for ov in slot.get("text_overlays", []):
             clip_meta = _find_clip_meta_by_id(clip_id, clip_metas)
             text = _resolve_overlay_text(ov.get("role", "label"), clip_meta, ov, subject=subject)
+            # Recipe-defined inline spans carry their own text; derive a
+            # combined string so the empty-text gate doesn't drop overlays
+            # that render correctly via _draw_spans_png downstream.
+            if (not text or not text.strip()) and ov.get("spans"):
+                text = " ".join(s.get("text", "") for s in ov["spans"]).strip()
             if not text or not text.strip():
                 continue
 
@@ -1414,6 +1567,7 @@ def _collect_absolute_overlays(
                 prev_key == key
                 and prev["position"] == ov["position"]
                 and prev.get("font_family") == ov.get("font_family")
+                and prev.get("text_color") == ov.get("text_color")
                 and not prev.get("spans") and not ov.get("spans")
                 and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
             ):
@@ -1430,13 +1584,20 @@ def _collect_absolute_overlays(
         if not merged:
             unique.append(ov)
 
-    # ── Dedup 2: prevent same-position time overlap ───────────────────────
-    # Sort by position then start time. If two overlays share a position
-    # and overlap in time, truncate the earlier one to end before the
-    # later one starts (with a small gap for visual clarity).
-    unique.sort(key=lambda o: (o["position"], o["start_s"]))
+    # ── Dedup 2: prevent same-slot time overlap ──────────────────────────
+    # Sort by (position, position_y_frac, start_s). If two overlays share
+    # both position AND y_frac (i.e. they truly stack at the same spot)
+    # and overlap in time, truncate the earlier one. Stacked title lines
+    # with different y_fracs are NOT same-slot — they coexist.
+    def _slot_key(o):
+        return (o["position"], o.get("position_y_frac"), o["start_s"])
+    unique.sort(key=_slot_key)
     for i in range(len(unique) - 1):
-        if unique[i]["position"] == unique[i + 1]["position"]:
+        same_slot = (
+            unique[i]["position"] == unique[i + 1]["position"]
+            and unique[i].get("position_y_frac") == unique[i + 1].get("position_y_frac")
+        )
+        if same_slot:
             if unique[i]["end_s"] > unique[i + 1]["start_s"]:
                 unique[i]["end_s"] = unique[i + 1]["start_s"] - 0.1
                 # Keep font-cycle accel timestamp within the truncated range

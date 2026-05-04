@@ -155,6 +155,26 @@
 
 ---
 
+## Template "How do you enjoy your life?" (from eng review 2026-05-04)
+
+### Audio Mixer Unification
+**What:** Unify `_mix_template_audio` (template_orchestrate.py:2069) and the new `pipeline/intro_voiceover_mix.py` into a single `pipeline/audio_mixer.py` module that handles both music-only replace AND voiceover+ducked-music+full-music mixing via an optional `voiceover_path` parameter.
+**Why:** DRY — every future template family will route through audio mixing. Two near-duplicate LUFS+fade implementations is a smell. A 3rd template variant would force a choice between extending one of the two existing mixers (technical debt) or adding a 3rd mixer (chaos). Outside voice flagged this during eng review on 2026-05-04 as the riskiest part of the original plan if done in the same PR as the new template.
+**How:** Generic `mix_audio(*, video_path, music_path, output_path, voiceover_path=None, intro_duration_s=0.0, ...)`. When `voiceover_path` is None, behavior is identical to current `_mix_template_audio` (preserve cf03b89 catastrophic-gap guard, all 4 probe-failure branches). When set, behaves like the new intro_voiceover_mix. **Critical**: ship with property-based regression suite that reproduces the cf03b89 bug scenario (audio much shorter than video) and all 4 probe-failure branches (video probe fails / audio probe fails / both fail / neither). Single PR scoped to refactor only — NO feature changes mixed in.
+**Effort:** M (human: ~2 days / CC: ~1 hour)
+**Priority:** P2 — do after the new template ships and validates in prod, but before a 3rd template variant is built
+**Depends on:** "How do you enjoy your life?" template shipped (this PR)
+
+### Whisper Forced-Align for VO Swap Support
+**What:** At seed time, optionally use OpenAI Whisper word-level timestamps to auto-align caption timings against the VO audio file, instead of hand-coded `INTRO_CAPTIONS[i].start_s/end_s`.
+**Why:** Currently VO is a fixed asset and timings are hand-tuned from frame analysis (±100ms, verified visually). If we ever need to swap VO (TTS-generated, multi-language, or new creator voice), hand-tuning every variant is tedious and error-prone. Forced-align makes VO swap a one-line config change.
+**How:** New module `app/pipeline/vo_aligner.py`. Seed script: download VO, call `openai.audio.transcriptions.create(model="whisper-1", file=vo, response_format="verbose_json", timestamp_granularities=["word"])`, then greedy-match expected captions against the word stream (case-insensitive, punct-stripped longest contiguous span). If alignment fails for any caption, fall back to hand-coded `INTRO_CAPTIONS` and log warning. Adds OPENAI_API_KEY dep to seed env.
+**Effort:** S (human: ~0.5 day / CC: ~30 min)
+**Priority:** P3 — only build when there's a concrete VO swap use case (multi-language, A/B test, new creator)
+**Depends on:** "How do you enjoy your life?" template shipped (this PR)
+
+---
+
 ## Template Fidelity (from CEO/eng review 2026-03-25)
 
 ### Automated Visual Regression Testing

@@ -160,7 +160,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Overlay,{fontname},90,&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,-1,0,0,0,100,100,0,0,1,0,2,5,50,50,0,1
+Style: Overlay,{fontname},90,&H00FFFFFF,&H00FFFFFF,&H00000000,&H20000000,-1,0,0,0,100,100,0,0,1,0,6,5,50,50,0,1
 """  # noqa: E501
 
 
@@ -286,12 +286,19 @@ def generate_animated_overlay_ass(
             continue
 
         font_family = overlay.get("font_family")
+        # Resolve effective pixel size: explicit text_size_px wins, else map
+        # the named text_size; default matches the ASS Style fallback (90).
+        text_size_px = overlay.get("text_size_px")
+        if text_size_px is None:
+            text_size_px = _FONT_SIZE_MAP.get(overlay.get("text_size", "medium"), 90)
         ass_path = os.path.join(output_dir, f"slot_{slot_index}_anim_{i}.ass")
         try:
             _write_animated_ass(
                 text, start_s, end_s, position, effect, ass_path,
                 font_family=font_family,
                 position_y_frac=overlay.get("position_y_frac"),
+                text_size_px=int(text_size_px),
+                text_color=overlay.get("text_color"),
             )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
@@ -316,8 +323,17 @@ def _write_animated_ass(
     *,
     font_family: str | None = None,
     position_y_frac: float | None = None,
+    text_size_px: int | None = None,
+    text_color: str | None = None,
 ) -> None:
-    """Write an ASS file with animation tags for the given effect."""
+    """Write an ASS file with animation tags for the given effect.
+
+    text_size_px and text_color, when provided, are injected as ASS dialogue
+    overrides (\\fs and \\c) so per-overlay sizing and color flow through to
+    libass — the ASS Style line is a fallback (fontsize 90, color white).
+    Without these overrides, every animated overlay rendered at the Style's
+    hardcoded size regardless of recipe values.
+    """
     alignment, margin_v = _ASS_POSITION.get(position, (5, 0))
     start_str = format_ass_time(start_s)
     end_str = format_ass_time(end_s)
@@ -328,17 +344,25 @@ def _write_animated_ass(
         target_y = int(CANVAS_H * position_y_frac)
         pos_tag = f"\\pos({CANVAS_W // 2},{target_y})"
 
+    # Per-overlay size + color overrides applied to every effect branch.
+    style_tag = ""
+    if text_size_px is not None:
+        style_tag += f"\\fs{int(text_size_px)}"
+    if text_color:
+        # ASS color: &H00BBGGRR — ASS is BGR not RGB, alpha 00 = opaque.
+        hex6 = text_color.lstrip("#")
+        if len(hex6) == 6:
+            r, g, b = hex6[0:2], hex6[2:4], hex6[4:6]
+            style_tag += f"\\c&H00{b}{g}{r}&"
+
     if effect == "fade-in":
-        if pos_tag:
-            dialogue_text = f"{{\\an5{pos_tag}\\fad(500,0)}}{text}"
-        else:
-            dialogue_text = f"{{\\an{alignment}\\fad(500,0)}}{text}"
+        dialogue_text = f"{{\\an5{pos_tag}{style_tag}\\fad(500,0)}}{text}" if pos_tag else f"{{\\an{alignment}{style_tag}\\fad(500,0)}}{text}"
 
     elif effect == "typewriter":
         total_dur_cs = int((end_s - start_s) * 100)
         char_count = max(len(text), 1)
         per_char_cs = max(1, total_dur_cs // char_count)
-        parts = [f"{{\\an{alignment}}}"]
+        parts = [f"{{\\an{alignment}{style_tag}}}"]
         for ch in text:
             parts.append(f"{{\\k{per_char_cs}}}{ch}")
         dialogue_text = "".join(parts)
@@ -349,11 +373,11 @@ def _write_animated_ass(
         start_y = CANVAS_H + 100
         x = CANVAS_W // 2
         dialogue_text = (
-            f"{{\\an5\\move({x},{start_y},{x},{target_y},0,500)}}{text}"
+            f"{{\\an5{style_tag}\\move({x},{start_y},{x},{target_y},0,500)}}{text}"
         )
 
     else:
-        dialogue_text = f"{{\\an5{pos_tag}}}{text}" if pos_tag else f"{{\\an{alignment}}}{text}"
+        dialogue_text = f"{{\\an5{pos_tag}{style_tag}}}{text}" if pos_tag else f"{{\\an{alignment}{style_tag}}}{text}"
 
     # Use dynamic ASS header when font_family is set
     if font_family:

@@ -388,6 +388,7 @@ function TestTab({
   const [testError, setTestError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<TemplateMetrics | null>(null);
   const [latestJob, setLatestJob] = useState<LatestTestJob | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   // Load latest test job on mount so previous results are visible
   useEffect(() => {
@@ -513,8 +514,29 @@ function TestTab({
 
         <div
           className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-            upload.uploading ? "border-zinc-700 bg-zinc-900/50" : "border-zinc-700 hover:border-zinc-500"
+            upload.uploading
+              ? "border-zinc-700 bg-zinc-900/50"
+              : dragOver
+              ? "border-blue-500 bg-blue-900/10"
+              : "border-zinc-700 hover:border-zinc-500"
           }`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (!upload.uploading) setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            if (upload.uploading) return;
+            const files = Array.from(e.dataTransfer.files).filter((f) =>
+              f.type === "video/mp4" || f.type === "video/quicktime" ||
+              /\.(mp4|mov)$/i.test(f.name),
+            );
+            if (files.length === 0) return;
+            const entries = upload.addFiles(files);
+            upload.startUpload(entries);
+          }}
         >
           <input
             type="file"
@@ -524,6 +546,8 @@ function TestTab({
               if (e.target.files) {
                 const entries = upload.addFiles(Array.from(e.target.files));
                 upload.startUpload(entries);
+                // Clear the input so selecting the same file twice works.
+                e.target.value = "";
               }
             }}
             disabled={upload.uploading}
@@ -532,10 +556,17 @@ function TestTab({
           />
           <label
             htmlFor="test-clip-input"
-            className="cursor-pointer text-sm text-zinc-400 hover:text-white"
+            className="cursor-pointer text-sm text-zinc-400 hover:text-white block"
           >
-            {upload.uploading ? "Uploading..." : "Click to select clips or drag and drop"}
+            {upload.uploading
+              ? "Uploading..."
+              : dragOver
+              ? "Drop videos here"
+              : "Click to select clips or drag and drop (MP4, MOV)"}
           </label>
+          <p className="text-xs text-zinc-600 mt-2">
+            Tip: Cmd+click to pick multiple, or drag a whole group from Finder.
+          </p>
         </div>
 
         {/* Upload progress */}

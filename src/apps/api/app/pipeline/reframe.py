@@ -104,6 +104,13 @@ def reframe_and_export(
     speed_factor: float = 1.0,
     darkening_windows: list[tuple[float, float]] | None = None,
     narrowing_windows: list[tuple[float, float]] | None = None,
+    has_grid: bool = False,
+    grid_color: str = "#FFFFFF",
+    grid_opacity: float = 0.6,
+    grid_thickness: int = 3,
+    grid_highlight_intersection: str | None = None,
+    grid_highlight_color: str = "#E63946",
+    grid_highlight_windows: list[tuple[float, float]] | None = None,
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
 
@@ -125,6 +132,13 @@ def reframe_and_export(
         speed_factor=speed_factor,
         darkening_windows=darkening_windows,
         narrowing_windows=narrowing_windows,
+        has_grid=has_grid,
+        grid_color=grid_color,
+        grid_opacity=grid_opacity,
+        grid_thickness=grid_thickness,
+        grid_highlight_intersection=grid_highlight_intersection,
+        grid_highlight_color=grid_highlight_color,
+        grid_highlight_windows=grid_highlight_windows,
     )
 
     # Build command -- use filter_complex when overlays are present
@@ -177,6 +191,13 @@ def reframe_and_export(
             speed_factor=speed_factor,
             darkening_windows=darkening_windows,
             narrowing_windows=narrowing_windows,
+            has_grid=has_grid,
+            grid_color=grid_color,
+            grid_opacity=grid_opacity,
+            grid_thickness=grid_thickness,
+            grid_highlight_intersection=grid_highlight_intersection,
+            grid_highlight_color=grid_highlight_color,
+            grid_highlight_windows=grid_highlight_windows,
         )
 
     if result.returncode != 0:
@@ -266,13 +287,30 @@ def _build_video_filter(
     speed_factor: float = 1.0,
     darkening_windows: list[tuple[float, float]] | None = None,
     narrowing_windows: list[tuple[float, float]] | None = None,
+    has_grid: bool = False,
+    grid_color: str = "#FFFFFF",
+    grid_opacity: float = 0.6,
+    grid_thickness: int = 3,
+    grid_highlight_intersection: str | None = None,
+    grid_highlight_color: str = "#E63946",
+    grid_highlight_windows: list[tuple[float, float]] | None = None,
 ) -> list[str]:
     """Return list of filter segments to join with commas.
 
     Filter order: setpts (speed) -> scale/crop -> color grading
-                  -> darkening -> narrowing -> caption ASS.
+                  -> darkening -> narrowing -> grid (base) -> grid-highlight
+                  -> caption ASS.
     setpts MUST be first to normalize PTS before timed filters (darkening, narrowing).
     Text overlays are handled separately via overlay filter (not in this chain).
+    Grid (rule-of-thirds) is drawn after visual adjustments but before captions so it
+    sits above the footage and behind any text overlays burned in post-assembly.
+
+    Grid-highlight is a per-intersection accent: when an intersection is given,
+    the ONE vertical + ONE horizontal line bordering that corner are drawn in
+    highlight_color on top of the white base grid, but only during the given
+    (start_s, end_s) windows. This matches the Rule-of-Thirds template aesthetic
+    where the line pair pointing at the subject's compositional position turns
+    red on every beat.
     """
     filters: list[str] = []
 
@@ -323,7 +361,79 @@ def _build_video_filter(
             f"drawbox=x=0:y=ih-120:w=iw:h=120:color=black@0.85:t=fill:{enable}"
         )
 
-    # 5. Caption ASS (speech captions -- distinct from text overlay ASS)
+    # 5. Rule-of-thirds grid overlay (per-slot)
+    if has_grid:
+        # Draw only the 4 INNER lines (2 vertical at iw/3 and 2*iw/3,
+        # 2 horizontal at ih/3 and 2*ih/3). FFmpeg's drawgrid would also
+        # render the outer frame at x=0/iw and y=0/ih which doesn't belong
+        # to the rule-of-thirds grid — explicit drawbox per inner line
+        # avoids that. Stroke is centered on the line via half-thickness.
+        color_hex = grid_color.lstrip("#")
+        half_g = grid_thickness // 2
+        for v_x in ("iw/3", "2*iw/3"):
+            filters.append(
+                f"drawbox=x={v_x}-{half_g}:y=0:w={grid_thickness}:h=ih"
+                f":color=0x{color_hex}@{grid_opacity:.2f}:t=fill"
+            )
+        for h_y in ("ih/3", "2*ih/3"):
+            filters.append(
+                f"drawbox=x=0:y={h_y}-{half_g}:w=iw:h={grid_thickness}"
+                f":color=0x{color_hex}@{grid_opacity:.2f}:t=fill"
+            )
+
+        # 5b. Per-intersection highlight on top of the base grid.
+        # Two drawbox calls render the vertical + horizontal line that border
+        # the chosen rule-of-thirds intersection corner. The highlight is drawn
+        # 3x thicker than the base grid so the red L visually dominates the
+        # white grid at the ~3:1 ratio measured from the reference TikTok.
+        # When no time windows are given the highlight is on for the whole
+        # slot; otherwise it's gated.
+        if grid_highlight_intersection:
+            _v_line_x = {
+                "top-left": "iw/3",
+                "bottom-left": "iw/3",
+                "top-right": "2*iw/3",
+                "bottom-right": "2*iw/3",
+            }
+            _h_line_y = {
+                "top-left": "ih/3",
+                "top-right": "ih/3",
+                "bottom-left": "2*ih/3",
+                "bottom-right": "2*ih/3",
+            }
+            v_x = _v_line_x[grid_highlight_intersection]
+            h_y = _h_line_y[grid_highlight_intersection]
+
+            highlight_hex = grid_highlight_color.lstrip("#")
+            highlight_opacity = min(0.95, grid_opacity + 0.3)
+            highlight_thickness = grid_thickness * 3
+            half_t = highlight_thickness // 2
+
+            if grid_highlight_windows:
+                enable_parts = [
+                    f"between(t,{s:.3f},{e:.3f})" for s, e in grid_highlight_windows
+                ]
+                enable_clause = f":enable='{'+'.join(enable_parts)}'"
+            else:
+                enable_clause = ""
+
+            # `replace=1` overwrites pixels directly so the red dominates the
+            # white base-grid line below it (without it, the alpha-blended
+            # result reads as pinkish-white and is barely visible).
+            filters.append(
+                f"drawbox=x={v_x}-{half_t}:y=0:w={highlight_thickness}:h=ih"
+                f":color=0x{highlight_hex}@{highlight_opacity:.2f}:t=fill"
+                f":replace=1"
+                f"{enable_clause}"
+            )
+            filters.append(
+                f"drawbox=x=0:y={h_y}-{half_t}:w=iw:h={highlight_thickness}"
+                f":color=0x{highlight_hex}@{highlight_opacity:.2f}:t=fill"
+                f":replace=1"
+                f"{enable_clause}"
+            )
+
+    # 6. Caption ASS (speech captions -- distinct from text overlay ASS)
     if ass_path and os.path.exists(ass_path):
         escaped = ass_path.replace("\\", "/").replace(":", "\\:")
         escaped_fonts = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
