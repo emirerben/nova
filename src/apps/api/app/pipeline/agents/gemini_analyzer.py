@@ -198,12 +198,23 @@ def analyze_clip(
 ) -> ClipMeta:
     """Analyze a video clip or time range. Returns ClipMeta.
 
+    Retry policy: up to 3 attempts on transient Google API errors
+    (503 ServiceUnavailable from "high demand" spikes, 429
+    ResourceExhausted from rate limits). Exponential backoff with
+    jitter: 3s, 9s, 27s. Refusals and 4xx (except 429) fail
+    immediately — those won't get better with retries.
+
+    Without this retry loop a single Google capacity dip would fail
+    the entire template job (>50% clip-fail threshold trips at 11/20).
+
     If start_s and end_s are provided, focuses analysis on that segment.
-    Raises GeminiAnalysisError on failure.
+    Raises GeminiAnalysisError on terminal failure.
     """
-    client = _get_client()
+    from google.api_core import exceptions as gapi_exc  # type: ignore[import]
 
     from app.pipeline.prompt_loader import load_prompt  # noqa: PLC0415
+
+    client = _get_client()
 
     if start_s is not None and end_s is not None:
         segment_instruction = f"Analyze the video segment from {start_s:.1f}s to {end_s:.1f}s."
@@ -212,43 +223,64 @@ def analyze_clip(
 
     prompt = load_prompt("analyze_clip", segment_instruction=segment_instruction)
 
-    try:
-        from google.genai import types as genai_types  # type: ignore[import]
+    from google.genai import types as genai_types  # type: ignore[import]
 
-        response = client.models.generate_content(
-            model=settings.gemini_model,
-            contents=[
-                genai_types.Part.from_uri(
-                    file_uri=file_ref.uri,
-                    mime_type=file_ref.mime_type or "video/mp4",
+    last_transient_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model=settings.gemini_model,
+                contents=[
+                    genai_types.Part.from_uri(
+                        file_uri=file_ref.uri,
+                        mime_type=file_ref.mime_type or "video/mp4",
+                    ),
+                    prompt,
+                ],
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
                 ),
-                prompt,
-            ],
-            config=genai_types.GenerateContentConfig(
-                response_mime_type="application/json",
-            ),
-        )
+            )
 
-        data = _check_refusal(response, ["hook_text", "hook_score", "best_moments"])
+            data = _check_refusal(response, ["hook_text", "hook_score", "best_moments"])
 
-        hook_score = float(data.get("hook_score", 5.0))
-        hook_score = max(0.0, min(10.0, hook_score))
+            hook_score = float(data.get("hook_score", 5.0))
+            hook_score = max(0.0, min(10.0, hook_score))
 
-        clip_id = getattr(file_ref, "name", str(id(file_ref)))
+            clip_id = getattr(file_ref, "name", str(id(file_ref)))
 
-        return ClipMeta(
-            clip_id=clip_id,
-            transcript=data.get("transcript", ""),
-            hook_text=data.get("hook_text", ""),
-            hook_score=hook_score,
-            best_moments=data.get("best_moments", []),
-            detected_subject=data.get("detected_subject", ""),
-        )
+            return ClipMeta(
+                clip_id=clip_id,
+                transcript=data.get("transcript", ""),
+                hook_text=data.get("hook_text", ""),
+                hook_score=hook_score,
+                best_moments=data.get("best_moments", []),
+                detected_subject=data.get("detected_subject", ""),
+            )
 
-    except (GeminiRefusalError, GeminiAnalysisError):
-        raise
-    except Exception as exc:
-        raise GeminiAnalysisError(f"Clip analysis failed: {exc}") from exc
+        except (GeminiRefusalError, GeminiAnalysisError):
+            raise
+        except (gapi_exc.ServiceUnavailable, gapi_exc.ResourceExhausted) as exc:
+            # 503 / 429: Google capacity spike. Retry with exponential backoff.
+            last_transient_exc = exc
+            if attempt >= 2:
+                break  # exhausted retries; fall through to raise below
+            backoff_s = 3.0 * (3 ** attempt)  # 3s, 9s
+            log.warning(
+                "gemini_analyze_clip_transient_retry",
+                attempt=attempt,
+                backoff_s=backoff_s,
+                error_type=type(exc).__name__,
+            )
+            time.sleep(backoff_s)
+        except Exception as exc:
+            # Non-transient failure (4xx, parse errors, network) — raise immediately.
+            raise GeminiAnalysisError(f"Clip analysis failed: {exc}") from exc
+
+    # All retries exhausted on a transient error.
+    raise GeminiAnalysisError(
+        f"Clip analysis failed after 3 attempts (last error: {last_transient_exc})"
+    ) from last_transient_exc
 
 
 # ── Template analysis ─────────────────────────────────────────────────────────
