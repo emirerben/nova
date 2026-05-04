@@ -109,39 +109,63 @@ def _get_client() -> Any:
 def gemini_upload_and_wait(path: str, timeout: int = 120) -> Any:
     """Upload a local file to Gemini File API and poll until state == ACTIVE.
 
-    Raises PollingTimeoutError if the file doesn't become ACTIVE within `timeout` seconds.
-    Retries up to 2× on ResourceExhausted (rate limit) with 15s backoff.
-    Raises immediately on InvalidArgument.
+    Retry policy: 5 attempts with backoff 3s/9s/27s/60s on transient
+    Google errors (503 ServiceUnavailable, 429 ResourceExhausted).
+    Same shape as analyze_clip — every Gemini call should survive a
+    ~99s capacity dip without failing the whole job.
+    Raises PollingTimeoutError if the file doesn't become ACTIVE
+    within `timeout` seconds. Raises immediately on InvalidArgument
+    or after retry exhaustion.
     """
     from google.api_core import exceptions as gapi_exc  # type: ignore[import]
 
     client = _get_client()
 
-    # Upload with retry for rate limits
+    # Upload with retry for rate limits and 503 spikes
+    backoff_schedule = [3.0, 9.0, 27.0, 60.0]
+    max_attempts = len(backoff_schedule) + 1  # 5 total
     file_ref = None
-    for attempt in range(3):
+    for attempt in range(max_attempts):
         try:
             file_ref = client.files.upload(file=path)
             break
-        except gapi_exc.ResourceExhausted:
-            if attempt >= 2:
+        except (gapi_exc.ServiceUnavailable, gapi_exc.ResourceExhausted) as exc:
+            if attempt >= max_attempts - 1:
                 raise
-            log.warning("gemini_upload_rate_limited", attempt=attempt, path=path)
-            time.sleep(15)
+            backoff_s = backoff_schedule[attempt]
+            log.warning(
+                "gemini_upload_transient_retry",
+                attempt=attempt + 1,
+                of=max_attempts,
+                backoff_s=backoff_s,
+                error_type=type(exc).__name__,
+                path=path,
+            )
+            time.sleep(backoff_s)
         except gapi_exc.InvalidArgument:
             raise
 
     if file_ref is None:
         raise GeminiAnalysisError("Failed to upload file after retries")
 
-    # Poll until ACTIVE
+    # Poll until ACTIVE — same retry shape on transient errors
     deadline = time.time() + timeout
+    poll_attempt = 0
     while time.time() < deadline:
         try:
             file_ref = client.files.get(name=file_ref.name)
-        except gapi_exc.ResourceExhausted:
-            log.warning("gemini_poll_rate_limited", name=file_ref.name)
-            time.sleep(15)
+            poll_attempt = 0  # reset on success
+        except (gapi_exc.ServiceUnavailable, gapi_exc.ResourceExhausted) as exc:
+            backoff_s = backoff_schedule[min(poll_attempt, len(backoff_schedule) - 1)]
+            log.warning(
+                "gemini_poll_transient_retry",
+                attempt=poll_attempt + 1,
+                backoff_s=backoff_s,
+                error_type=type(exc).__name__,
+                name=file_ref.name,
+            )
+            poll_attempt += 1
+            time.sleep(backoff_s)
             continue
 
         state_name = file_ref.state.name if hasattr(file_ref.state, "name") else str(file_ref.state)
@@ -198,14 +222,18 @@ def analyze_clip(
 ) -> ClipMeta:
     """Analyze a video clip or time range. Returns ClipMeta.
 
-    Retry policy: up to 3 attempts on transient Google API errors
+    Retry policy: up to 5 attempts on transient Google API errors
     (503 ServiceUnavailable from "high demand" spikes, 429
-    ResourceExhausted from rate limits). Exponential backoff with
-    jitter: 3s, 9s, 27s. Refusals and 4xx (except 429) fail
-    immediately — those won't get better with retries.
+    ResourceExhausted from rate limits). Exponential backoff:
+    3s, 9s, 27s, 60s — total worst-case patience ~99s, which covers
+    most observed Google capacity dips ("Spikes are usually
+    temporary" per their 503 message). Refusals and 4xx (except
+    429) fail immediately — those won't get better with retries.
 
-    Without this retry loop a single Google capacity dip would fail
-    the entire template job (>50% clip-fail threshold trips at 11/20).
+    Without this retry loop a single Google capacity dip fails the
+    entire template job (>50% clip-fail threshold trips at 11/20).
+    With 5 attempts + 99s budget per clip, jobs survive multi-minute
+    Google overload windows.
 
     If start_s and end_s are provided, focuses analysis on that segment.
     Raises GeminiAnalysisError on terminal failure.
@@ -226,7 +254,10 @@ def analyze_clip(
     from google.genai import types as genai_types  # type: ignore[import]
 
     last_transient_exc: Exception | None = None
-    for attempt in range(3):
+    # Backoff schedule: 3s, 9s, 27s, 60s between attempts 0→1, 1→2, 2→3, 3→4
+    backoff_schedule = [3.0, 9.0, 27.0, 60.0]
+    max_attempts = len(backoff_schedule) + 1  # 5 total attempts
+    for attempt in range(max_attempts):
         try:
             response = client.models.generate_content(
                 model=settings.gemini_model,
@@ -261,14 +292,15 @@ def analyze_clip(
         except (GeminiRefusalError, GeminiAnalysisError):
             raise
         except (gapi_exc.ServiceUnavailable, gapi_exc.ResourceExhausted) as exc:
-            # 503 / 429: Google capacity spike. Retry with exponential backoff.
+            # 503 / 429: Google capacity spike. Retry per backoff_schedule.
             last_transient_exc = exc
-            if attempt >= 2:
+            if attempt >= max_attempts - 1:
                 break  # exhausted retries; fall through to raise below
-            backoff_s = 3.0 * (3 ** attempt)  # 3s, 9s
+            backoff_s = backoff_schedule[attempt]
             log.warning(
                 "gemini_analyze_clip_transient_retry",
-                attempt=attempt,
+                attempt=attempt + 1,
+                of=max_attempts,
                 backoff_s=backoff_s,
                 error_type=type(exc).__name__,
             )
@@ -279,7 +311,8 @@ def analyze_clip(
 
     # All retries exhausted on a transient error.
     raise GeminiAnalysisError(
-        f"Clip analysis failed after 3 attempts (last error: {last_transient_exc})"
+        f"Clip analysis failed after {max_attempts} attempts "
+        f"(last error: {last_transient_exc})"
     ) from last_transient_exc
 
 
