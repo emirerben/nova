@@ -71,6 +71,9 @@ class TestRenderHappyPath:
         assert "acrossfade=d=0.200" in fc
         assert "amix=inputs=2" in fc
         assert "loudnorm=I=-14.0" in fc
+        # Output sample rate locked to 48kHz to avoid the loudnorm 96kHz upsample
+        # bug (heard as "weird" / wrong-pitch on some playback paths).
+        assert "aresample=48000" in fc
         assert "afade=t=out" in fc
         # Output stream mapping
         assert "[out_a]" in cmd
@@ -132,6 +135,9 @@ class TestProbeFailures:
         assert "asplit" not in fc
         assert "amix" not in fc
         assert "loudnorm=I=-14.0" in fc
+        # Output sample rate locked to 48kHz to avoid the loudnorm 96kHz upsample
+        # bug (heard as "weird" / wrong-pitch on some playback paths).
+        assert "aresample=48000" in fc
         assert "afade=t=out" in fc
 
     @patch("app.pipeline.intro_voiceover_mix.subprocess.run")

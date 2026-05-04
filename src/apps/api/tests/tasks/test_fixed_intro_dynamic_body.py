@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.tasks.template_orchestrate import (
+    _audio_energy_curve,
     _build_fixed_intro_ass,
     _concat_silent,
     _render_intro_with_captions,
@@ -184,12 +185,16 @@ class TestConcatSilent:
 
 
 # ── _select_body_window ──────────────────────────────────────────────────────
+# Tests assume `_audio_energy_curve` returns [] (no audio peak) unless the
+# test explicitly patches it — keeping the existing tests valid as
+# "midpoint-fallback" cases. Audio-peak behavior gets its own block below.
 
 
 class TestSelectBodyWindow:
+    @patch("app.tasks.template_orchestrate._audio_energy_curve", return_value=[])
     @patch("app.pipeline.scene_detect.detect_scenes")
     @patch("app.pipeline.probe.probe_video")
-    def test_no_scene_cuts_uses_natural_midpoint(self, mock_probe, mock_scenes):
+    def test_no_scene_cuts_uses_natural_midpoint(self, mock_probe, mock_scenes, _energy):
         mock_probe.return_value = MagicMock(duration_s=60.0)
         mock_scenes.return_value = []
         start, end = _select_body_window(
@@ -204,9 +209,10 @@ class TestSelectBodyWindow:
         # End MUST be exactly start + target — total budget guaranteed
         assert (end - start) == pytest.approx(19.5)
 
+    @patch("app.tasks.template_orchestrate._audio_energy_curve", return_value=[])
     @patch("app.pipeline.scene_detect.detect_scenes")
     @patch("app.pipeline.probe.probe_video")
-    def test_snap_to_nearest_scene_within_tolerance(self, mock_probe, mock_scenes):
+    def test_snap_to_nearest_scene_within_tolerance(self, mock_probe, mock_scenes, _energy):
         from app.pipeline.scene_detect import SceneCut
         mock_probe.return_value = MagicMock(duration_s=60.0)
         # natural midpoint is 20.25; cuts at 19.0 (Δ1.25), 22.0 (Δ1.75), 30.0 (Δ9.75)
@@ -226,12 +232,14 @@ class TestSelectBodyWindow:
         # end ALWAYS = start + target — invariant under refactor
         assert end == pytest.approx(19.0 + 19.5)
 
+    @patch("app.tasks.template_orchestrate._audio_energy_curve", return_value=[])
     @patch("app.pipeline.scene_detect.detect_scenes")
     @patch("app.pipeline.probe.probe_video")
-    def test_no_eligible_cuts_falls_back_to_closest(self, mock_probe, mock_scenes):
+    def test_no_eligible_cuts_keeps_base_pick(self, mock_probe, mock_scenes, _energy):
         from app.pipeline.scene_detect import SceneCut
         mock_probe.return_value = MagicMock(duration_s=60.0)
-        # All cuts outside ±1.5 of natural=20.25; nearest is 25.0
+        # No cuts within ±1.5 of natural=20.25 → keep base_start (no forced snap).
+        # New behavior: don't drag the window to a far cut just because it exists.
         mock_scenes.return_value = [
             SceneCut(timestamp_s=10.0, score=0),
             SceneCut(timestamp_s=25.0, score=1),
@@ -242,13 +250,13 @@ class TestSelectBodyWindow:
             tolerance_s=1.5,
             snap_start_to_scene=True,
         )
-        # 25.0 is closer to 20.25 than 10.0
-        assert start == 25.0
-        assert end == pytest.approx(25.0 + 19.5)
+        assert start == pytest.approx(20.25)
+        assert end == pytest.approx(20.25 + 19.5)
 
+    @patch("app.tasks.template_orchestrate._audio_energy_curve", return_value=[])
     @patch("app.pipeline.scene_detect.detect_scenes")
     @patch("app.pipeline.probe.probe_video")
-    def test_snap_disabled_returns_natural_midpoint(self, mock_probe, mock_scenes):
+    def test_snap_disabled_returns_natural_midpoint(self, mock_probe, mock_scenes, _energy):
         mock_probe.return_value = MagicMock(duration_s=60.0)
         # detect_scenes should not be called when snap is off
         start, end = _select_body_window(
@@ -261,9 +269,10 @@ class TestSelectBodyWindow:
         assert start == pytest.approx(20.25)
         assert end == pytest.approx(20.25 + 19.5)
 
+    @patch("app.tasks.template_orchestrate._audio_energy_curve", return_value=[])
     @patch("app.pipeline.scene_detect.detect_scenes")
     @patch("app.pipeline.probe.probe_video")
-    def test_short_video_raises(self, mock_probe, mock_scenes):
+    def test_short_video_raises(self, mock_probe, mock_scenes, _energy):
         mock_probe.return_value = MagicMock(duration_s=10.0)
         with pytest.raises(ValueError, match="too short"):
             _select_body_window(
@@ -273,9 +282,10 @@ class TestSelectBodyWindow:
                 snap_start_to_scene=True,
             )
 
+    @patch("app.tasks.template_orchestrate._audio_energy_curve", return_value=[])
     @patch("app.pipeline.scene_detect.detect_scenes")
     @patch("app.pipeline.probe.probe_video")
-    def test_cut_too_close_to_end_excluded(self, mock_probe, mock_scenes):
+    def test_cut_too_close_to_end_excluded(self, mock_probe, mock_scenes, _energy):
         from app.pipeline.scene_detect import SceneCut
         mock_probe.return_value = MagicMock(duration_s=21.0)
         # max_start = 21 - 19.5 = 1.5; cut at 5.0 would overflow
@@ -293,4 +303,129 @@ class TestSelectBodyWindow:
         assert start == 0.5
         assert end == pytest.approx(0.5 + 19.5)
         # Total still bounded
-        assert end <= 21.0
+
+
+# ── Audio-peak path (the actual fix for the Cavani penalty bug) ──────────────
+
+
+class TestAudioEnergyPeakSelection:
+    """Audio-peak detection beats midpoint when the action is off-center."""
+
+    @patch("app.pipeline.scene_detect.detect_scenes", return_value=[])
+    @patch("app.pipeline.probe.probe_video")
+    @patch("app.tasks.template_orchestrate._audio_energy_curve")
+    def test_picks_loudest_window_not_midpoint(
+        self, mock_energy, mock_probe, _scenes
+    ):
+        """User clip 50s; loudest 19.5s window starts at t=25 — not midpoint=15.25."""
+        mock_probe.return_value = MagicMock(duration_s=50.0)
+        # 50 buckets of 1s. Buckets 25..44 (the celebration) are loud.
+        energy = [0.05] * 25 + [0.5] * 20 + [0.05] * 5
+        mock_energy.return_value = energy
+        start, end = _select_body_window(
+            "/u.mp4",
+            target_duration_s=19.5,
+            tolerance_s=1.5,
+            snap_start_to_scene=True,
+        )
+        # window_buckets = round(19.5) = 20; sliding sum picks index 25
+        assert start == pytest.approx(25.0)
+        assert end == pytest.approx(25.0 + 19.5)
+        assert (end - start) == pytest.approx(19.5)
+
+    @patch("app.pipeline.scene_detect.detect_scenes", return_value=[])
+    @patch("app.pipeline.probe.probe_video")
+    @patch("app.tasks.template_orchestrate._audio_energy_curve", return_value=[])
+    def test_no_audio_falls_back_to_midpoint(self, _energy, mock_probe, _scenes):
+        mock_probe.return_value = MagicMock(duration_s=60.0)
+        start, end = _select_body_window(
+            "/u.mp4",
+            target_duration_s=19.5,
+            tolerance_s=1.5,
+            snap_start_to_scene=True,
+        )
+        assert start == pytest.approx(20.25)  # natural midpoint
+        assert end == pytest.approx(20.25 + 19.5)
+
+    @patch("app.pipeline.scene_detect.detect_scenes", return_value=[])
+    @patch("app.pipeline.probe.probe_video")
+    @patch("app.tasks.template_orchestrate._audio_energy_curve")
+    def test_audio_peak_clamped_to_max_start(self, mock_energy, mock_probe, _scenes):
+        """Peak window can't slide past (user_dur - target_duration_s)."""
+        mock_probe.return_value = MagicMock(duration_s=25.0)
+        # Loudest single bucket at end, but window can't start past max_start=5.5
+        energy = [0.05] * 24 + [10.0]
+        mock_energy.return_value = energy
+        start, end = _select_body_window(
+            "/u.mp4",
+            target_duration_s=19.5,
+            tolerance_s=1.5,
+            snap_start_to_scene=True,
+        )
+        # max_start = 25 - 19.5 = 5.5; peak idx 5 (last valid sliding-window index)
+        # is the only window containing the loud bucket → start=5
+        assert 0.0 <= start <= 5.5
+        assert end == pytest.approx(start + 19.5)
+
+    @patch("app.pipeline.scene_detect.detect_scenes", return_value=[])
+    @patch("app.pipeline.probe.probe_video")
+    @patch("app.tasks.template_orchestrate._audio_energy_curve")
+    def test_audio_peak_overrides_midpoint_in_quiet_video_too(
+        self, mock_energy, mock_probe, _scenes
+    ):
+        """Even with all-quiet audio, the algorithm still picks SOME peak —
+        slight noise variance produces a deterministic best window."""
+        mock_probe.return_value = MagicMock(duration_s=30.0)
+        # All buckets nearly equal; first bucket marginally louder
+        energy = [0.11] + [0.10] * 29
+        mock_energy.return_value = energy
+        start, end = _select_body_window(
+            "/u.mp4",
+            target_duration_s=19.5,
+            tolerance_s=1.5,
+            snap_start_to_scene=True,
+        )
+        # First window includes the marginal-louder bucket
+        assert start == pytest.approx(0.0)
+        assert end == pytest.approx(19.5)
+
+
+# ── _audio_energy_curve direct probe ─────────────────────────────────────────
+
+
+class TestAudioEnergyCurve:
+    @patch("app.tasks.template_orchestrate.subprocess.run")
+    def test_parses_rms_lines(self, mock_run):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        # ffmpeg writes astats output to stderr.
+        mock_result.stderr = (
+            b"some ignorable line\n"
+            b"[ametadata @ 0x1] lavfi.astats.Overall.RMS_level=-12.50\n"
+            b"[ametadata @ 0x1] lavfi.astats.Overall.RMS_level=-20.00\n"
+            b"[ametadata @ 0x1] lavfi.astats.Overall.RMS_level=-inf\n"
+        )
+        mock_run.return_value = mock_result
+        curve = _audio_energy_curve("/x.mp4", bucket_s=1.0)
+        # Three samples; -inf is clamped to -90dB → tiny linear value
+        assert len(curve) == 3
+        # -12.5dB → ~0.237 linear amplitude
+        assert curve[0] == pytest.approx(10 ** (-12.5 / 20), rel=1e-3)
+        # -inf-clamped sample is essentially silence
+        assert curve[2] < 1e-4
+
+    @patch("app.tasks.template_orchestrate.subprocess.run")
+    def test_returns_empty_on_ffmpeg_failure(self, mock_run):
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = b"some error"
+        mock_run.return_value = mock_result
+        assert _audio_energy_curve("/x.mp4", bucket_s=1.0) == []
+
+    @patch("app.tasks.template_orchestrate.subprocess.run")
+    def test_returns_empty_when_no_audio(self, mock_run):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stderr = b"Stream #0: Video only - no audio metadata\n"
+        mock_run.return_value = mock_result
+        assert _audio_energy_curve("/x.mp4", bucket_s=1.0) == []
