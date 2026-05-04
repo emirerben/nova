@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1.0] - 2026-05-04
+
+### Changed
+- **"How do you enjoy your life?" template — v2 architecture.** The intro is now a byte-faithful copy of the source TikTok's first 11.2s (audio + video) instead of a synthesized black-hold + ASS captions + ducked-music mix. Tıpatıp aynı intro, no synth artifacts, no audio re-encode degradation.
+- Body window selector switched from midpoint heuristic to **peak-anchored placement**: finds the loudest moment in the user's clip (goal/celebration/drop), places the body to start ~4s before the peak, runs up to 14s. Captures the action instead of the calm middle.
+- Music asset is now a single 15s natural-melody clip (Tom Odell — Another Love, slowed-and-reverb style) extracted at the matching timecode. No looping, no seam pops every 3 seconds.
+
+### Fixed
+- **Output sample rate landed at 96kHz** (loudnorm internally upsamples to 192kHz; without an explicit `aresample=48000` after, the AAC encoder picks 96kHz). Pinned output to 48kHz — no more "wrong-pitch / weird sound" playback bug on certain browsers.
+- **"life?" word in punchline was chopped mid-syllable.** Audio analysis showed the word ends at t=10.85s in the source TikTok, but intro was cutting at t=10.5s. Extended `intro_duration_s` to 11.2s and added a 350ms breath-region overlap window for the intro→music transition.
+- **`amix` gain underflow:** `amix` defaulted to `normalize=1`, dividing each input by the sum of weights. With weights `1 1` this dropped every stream by 6dB, leaving the final mix at -21 LUFS even after loudnorm. Set `normalize=0` and weight intro `1.5` so the VO sits clearly over the music during the 300ms transition overlap.
+- **Worker hardened against stale Redis messages.** A pre-existing queue could deliver `job_id=None` to `orchestrate_template_job`; the body would `uuid.UUID(None)`, crash, then the exception handler ALSO called `uuid.UUID(None)` and double-failed. Validate the UUID up-front and drop invalid messages cleanly.
+
+### Removed
+- Synthesized intro path (`_render_intro_with_captions`, ASS subtitle generation, separate VO+ducked-music mixer) — superseded by the byte-faithful copy approach above. The `pipeline/intro_voiceover_mix.py` module remains in the tree for backward compatibility but is no longer wired into the live orchestrator.
+
 ## [0.4.0.0] - 2026-05-04
 
 ### Added

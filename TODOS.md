@@ -58,6 +58,7 @@
 **Why:** v1 validates the single-template UX; after validation, multiple templates unlock more use cases.
 **Effort:** M (human: ~1 week / CC: ~30 min)
 **Priority:** P2 — after v1 template validated in production
+**Completed:** v0.4.0.0 (2026-05-04) — `template_kind` discriminator added (`multi_clip_montage` / `fixed_intro_dynamic_body`); v0.4.1.0 ships the second template family ("How do you enjoy your life?")
 
 ### Librosa-Based Beat Detection
 **What:** Replace or augment FFmpeg energy-peak beat detection with librosa's onset detection and beat tracking.
