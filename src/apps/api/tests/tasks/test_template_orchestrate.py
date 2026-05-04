@@ -2256,3 +2256,46 @@ class TestInterstitialZeroHoldSkip:
 
             # Both slots rendered — confirms no crash from cumulative_s drift
             assert mock_reframe.call_count == 2
+
+
+# ── Regression: template_kind kwarg strip ────────────────────────────────────
+# Migration 0010 backfilled `template_kind: "multi_clip_montage"` onto every
+# existing recipe. TemplateRecipe is a strict dataclass; without stripping
+# the routing-only field, every legacy template crashes at init.
+
+class TestTemplateKindStrip:
+    def test_template_recipe_init_succeeds_with_template_kind_in_data(self):
+        """Recipe payload (as backfilled by migration 0010) must construct
+        cleanly after the orchestrator's strip step."""
+        from app.pipeline.agents.gemini_analyzer import TemplateRecipe
+
+        # Realistic shape from a backfilled multi_clip_montage template
+        recipe_data = {
+            "template_kind": "multi_clip_montage",  # ← what the migration added
+            "shot_count": 3,
+            "total_duration_s": 12.0,
+            "hook_duration_s": 3.0,
+            "slots": [
+                {"position": 1, "target_duration_s": 3.0, "priority": 10, "slot_type": "hook"},
+                {"position": 2, "target_duration_s": 4.5, "priority": 8, "slot_type": "content"},
+                {"position": 3, "target_duration_s": 4.5, "priority": 8, "slot_type": "content"},
+            ],
+            "copy_tone": "energetic",
+            "caption_style": "default",
+            "interstitials": [],
+            "beat_timestamps_s": [],
+        }
+
+        # Direct init MUST raise — proves the regression existed
+        import pytest
+        with pytest.raises(TypeError, match="template_kind"):
+            TemplateRecipe(**recipe_data)
+
+        # The orchestrator's strip pattern MUST succeed
+        recipe_kwargs = {
+            k: v for k, v in recipe_data.items()
+            if k not in ("template_kind",)
+        }
+        recipe = TemplateRecipe(**recipe_kwargs)
+        assert recipe.shot_count == 3
+        assert len(recipe.slots) == 3
