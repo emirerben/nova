@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0.0] - 2026-05-04
+
+### Added
+- **"How do you enjoy your life?" template** — fixed-intro Q/A captions on a black screen with a recorded voiceover, then a hard drop into the best 19.5s segment auto-selected from your single uploaded video. Music ducks under the voiceover and rises to full at the drop. Total output 30s, 1080x1920.
+- New `template_kind` discriminator on recipes (`multi_clip_montage` vs `fixed_intro_dynamic_body`) — existing templates auto-backfilled to `multi_clip_montage`. Routes the orchestrator to the right render path per template family.
+- `voiceover_gcs_path` column on `video_templates` for fixed-intro templates that ship with a recorded voiceover asset.
+- `pipeline/intro_voiceover_mix.py` — single-pass FFmpeg filter graph mixing voiceover + ducked-then-full music onto a silent video. Graceful degradation: voiceover probe fails → music-only; music probe fails → voiceover-only; both fail → silent video copied.
+- `_select_body_window` picks the user's best 19.5s segment with optional scene-cut snapping at the start; end is fixed so total duration stays exactly 30s.
+- `scripts/seed_how_do_you_enjoy_your_life.py` with caption timings extracted from frame analysis of the reference TikTok and inline timing validation.
+- Pre-flight error message for "video too short" — user sees `"Video too short for this template. Need at least 30s."` instead of a generic 500.
+- Job-level `audio_health` flag — silent outputs caused by missing/failed audio asset downloads now surface to `job.error_detail` so QA can detect them without trawling worker logs.
+
+### Changed
+- `_mix_template_audio` now restores the catastrophic-short-audio guard: when audio probes corrupt as 3s for a 30s video, video is no longer truncated to 3s. Trim only when audio is within 5s of video duration.
+- ASS caption escape order in `_build_fixed_intro_ass` corrected: backslash first, then override braces (`{`, `}`), then newline. Prevents JSONB-stored or admin-edited caption text from silently mutating libass rendering.
+- Color metadata (`bt709 tv`) explicitly pinned on intro and body encodes — concat-copy boundary no longer produces sudden color shifts on QuickTime/Safari/iOS.
+- Acrossfade duration is now capped against `intro_duration_s` and `video_dur * 0.5` — prevents double-volume artifact when a recipe sets `intro_duration_s < music_fadeup_ms / 1000`.
+- Migration 0010 downgrade is value-aware: only strips `template_kind` from rows where the value is the backfilled default (`multi_clip_montage`), preserving authored discriminators.
+- Duplicate upload of `template_output.mp4` and `template_base.mp4` (byte-identical for fixed-intro templates) replaced with server-side GCS copy, halving egress + upload bandwidth per job.
+
+### Fixed
+- Pre-existing `_mix_template_audio` regression that silently truncated video to 0s when audio probe returned the 0.0 sentinel.
+
 ## [0.3.1.0] - 2026-04-18
 
 ### Added
