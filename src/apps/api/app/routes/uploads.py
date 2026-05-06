@@ -1,19 +1,22 @@
 """Upload endpoints: presigned URLs, Google Drive import (single + batch)."""
 
 import json
+import os
 import re
+import tempfile
 import uuid
 
 import structlog
 from cryptography.fernet import Fernet
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, field_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
 from app.config import settings
 from app.database import get_db
-from app.models import Job
+from app.models import Job, VideoTemplate
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -394,6 +397,128 @@ async def import_batch_from_drive(
 
     log.info("batch_drive_import_enqueued", batch_id=batch_id, file_count=len(body.files))
     return DriveImportBatchResponse(batch_id=batch_id, gcs_paths=gcs_paths, status="importing")
+
+
+# ── Template photo upload (image → looping mp4) ──────────────────────────────
+
+
+# Photo MIME types we accept on the server. HEIC support comes via pillow-heif.
+PHOTO_ALLOWED_MIME = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+}
+PHOTO_MAX_BYTES = 25 * 1024 * 1024  # 25 MB — keep direct uploads small
+
+
+class TemplatePhotoUploadResponse(BaseModel):
+    gcs_path: str
+    duration_s: float
+
+
+@router.post(
+    "/template-photo",
+    response_model=TemplatePhotoUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_template_photo(
+    template_id: str = Form(...),
+    slot_position: int = Form(..., ge=1),
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> TemplatePhotoUploadResponse:
+    """Upload a still image, convert it to a 1080x1920 looping mp4, store in GCS.
+
+    The slot's target_duration_s drives the output mp4 length so the orchestrator
+    can probe the file and use its duration directly. This keeps the photo path
+    out of the Gemini analysis flow entirely.
+    """
+    from app.services.image_to_video import (  # noqa: PLC0415
+        ImageConversionError,
+        image_bytes_to_mp4,
+    )
+
+    if file.content_type and file.content_type.lower() not in PHOTO_ALLOWED_MIME:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=(
+                f"Unsupported image type: {file.content_type}. "
+                "Allowed: JPEG, PNG, WEBP, HEIC, HEIF."
+            ),
+        )
+
+    # Look up template + slot to resolve target duration and validate media_type
+    result = await db.execute(
+        select(VideoTemplate).where(VideoTemplate.id == template_id)
+    )
+    template = result.scalar_one_or_none()
+    if template is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if template.analysis_status != "ready" or not template.recipe_cached:
+        raise HTTPException(status_code=409, detail="Template is not ready")
+
+    slots = (template.recipe_cached or {}).get("slots", [])
+    slot = next(
+        (s for s in slots if int(s.get("position", 0)) == slot_position),
+        None,
+    )
+    if slot is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Template has no slot at position {slot_position}",
+        )
+    if str(slot.get("media_type", "video")) != "photo":
+        raise HTTPException(
+            status_code=415,
+            detail=f"Slot {slot_position} expects video, not photo",
+        )
+
+    target_duration_s = float(slot.get("target_duration_s", 5.0))
+    # Beat-snap (orchestrator: BEAT_SNAP_TOLERANCE_S=0.4) may extend the slot
+    # past target_duration_s. Add a 1s buffer so the static-photo mp4 is long
+    # enough for any beat-snap shift; otherwise music drifts and the video
+    # ends short. Admins who tweak target_duration_s in the editor by <1s
+    # post-upload also benefit from this slack.
+    BEAT_SNAP_BUFFER_S = 1.0
+    mp4_duration_s = target_duration_s + BEAT_SNAP_BUFFER_S
+
+    # Read with hard size cap to avoid OOM on huge files
+    raw = await file.read(PHOTO_MAX_BYTES + 1)
+    if len(raw) > PHOTO_MAX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Image exceeds {PHOTO_MAX_BYTES // (1024 * 1024)}MB limit",
+        )
+
+    user_id = "dev-user"  # TODO: real user from JWT
+    job_id = str(uuid.uuid4())
+    gcs_path = f"{user_id}/{job_id}/raw.mp4"
+
+    with tempfile.TemporaryDirectory(prefix="nova_photo_") as tmpdir:
+        out_path = os.path.join(tmpdir, "out.mp4")
+        try:
+            image_bytes_to_mp4(raw, out_path, duration_s=mp4_duration_s)
+        except ImageConversionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+        bucket = storage._get_client().bucket(settings.storage_bucket)
+        blob = bucket.blob(gcs_path)
+        blob.upload_from_filename(out_path, content_type="video/mp4")
+
+    log.info(
+        "template_photo_uploaded",
+        template_id=template_id,
+        slot_position=slot_position,
+        gcs_path=gcs_path,
+        target_duration_s=target_duration_s,
+        mp4_duration_s=mp4_duration_s,
+    )
+    return TemplatePhotoUploadResponse(gcs_path=gcs_path, duration_s=mp4_duration_s)
 
 
 @router.get("/drive-import-batch/{batch_id}/status", response_model=DriveImportBatchStatus)

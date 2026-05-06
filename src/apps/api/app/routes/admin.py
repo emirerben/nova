@@ -236,6 +236,7 @@ ColorHint = Literal[
     "warm", "cool", "high-contrast", "desaturated", "vintage", "none"
 ]
 SlotType = Literal["hook", "broll", "outro"]
+MediaType = Literal["video", "photo"]
 OverlayEffect = Literal[
     "pop-in", "fade-in", "scale-up", "font-cycle", "typewriter",
     "glitch", "bounce", "slide-in", "slide-up", "static", "none",
@@ -354,6 +355,7 @@ class RecipeSlotSchema(BaseModel):
     color_hint: ColorHint = "none"
     speed_factor: float = 1.0
     energy: float = 5.0
+    media_type: MediaType = "video"
     text_overlays: list[RecipeTextOverlaySchema] = []
 
     @field_validator("target_duration_s")

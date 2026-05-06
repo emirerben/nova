@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type AdminTemplate,
   type LatestTestJob,
@@ -22,6 +22,8 @@ import {
   type TemplateJobStatusResponse,
   getTemplateJobStatus,
   getTemplatePlaybackUrl,
+  uploadFileToGcs,
+  uploadTemplatePhoto,
 } from "@/lib/api";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { useJobPoller } from "@/hooks/useJobPoller";
@@ -388,6 +390,12 @@ function TestTab({
   const [testError, setTestError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<TemplateMetrics | null>(null);
   const [latestJob, setLatestJob] = useState<LatestTestJob | null>(null);
+  // Recipe slot summary — drives slot-bound upload for mixed-media templates.
+  const [recipeSlots, setRecipeSlots] = useState<Array<{
+    position: number;
+    target_duration_s: number;
+    media_type: "video" | "photo";
+  }>>([]);
 
   // Load latest test job on mount so previous results are visible
   useEffect(() => {
@@ -395,6 +403,28 @@ function TestTab({
       if (job) setLatestJob(job);
     }).catch(() => {});
   }, [template.id]);
+
+  // Load recipe slots so we can render slot-bound UI when any slot wants a photo
+  useEffect(() => {
+    adminGetRecipe(template.id).then((r) => {
+      const raw = (r.recipe as { slots?: unknown }).slots;
+      if (!Array.isArray(raw)) return;
+      const parsed = raw.map((s, i) => {
+        const slot = s as Record<string, unknown>;
+        return {
+          position: typeof slot.position === "number" ? slot.position : i + 1,
+          target_duration_s:
+            typeof slot.target_duration_s === "number" ? slot.target_duration_s : 5.0,
+          media_type:
+            (slot.media_type === "photo" ? "photo" : "video") as "video" | "photo",
+        };
+      });
+      parsed.sort((a, b) => a.position - b.position);
+      setRecipeSlots(parsed);
+    }).catch(() => {});
+  }, [template.id]);
+
+  const isSlotBound = recipeSlots.some((s) => s.media_type === "photo");
 
   // File upload for test clips
   const upload = useFileUpload({
@@ -507,7 +537,20 @@ function TestTab({
         </div>
       )}
 
-      {/* Upload clips section */}
+      {/* Slot-bound upload (mixed-media templates: video + photo, in slot order) */}
+      {isSlotBound && (
+        <AdminSlotBoundUpload
+          template={template}
+          slots={recipeSlots}
+          onJobCreated={(jobId) => {
+            setTestJobId(jobId);
+            setTestError(null);
+          }}
+        />
+      )}
+
+      {/* Free-form upload (legacy: all-video templates) */}
+      {!isSlotBound && (
       <div className="border border-zinc-800 rounded p-4 space-y-4">
         <h3 className="text-sm font-medium text-white">Upload Test Clips</h3>
 
@@ -582,6 +625,7 @@ function TestTab({
           )}
         </div>
       </div>
+      )}
 
       {/* Rerun with updated recipe */}
       {(latestJob || testJobId) && (
@@ -699,6 +743,185 @@ function EvalComparison({
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Slot-bound upload (mixed-media: video + photo, in slot order) ─────────────
+
+type AdminSlot = {
+  position: number;
+  target_duration_s: number;
+  media_type: "video" | "photo";
+};
+
+type AdminSlotState = {
+  slot: AdminSlot;
+  file: File | null;
+  uploading: boolean;
+  error: string | null;
+  gcsPath: string | null;
+};
+
+function AdminSlotBoundUpload({
+  template,
+  slots,
+  onJobCreated,
+}: {
+  template: AdminTemplate;
+  slots: AdminSlot[];
+  onJobCreated: (jobId: string) => void;
+}) {
+  const [items, setItems] = useState<AdminSlotState[]>(
+    () => slots.map((s) => ({ slot: s, file: null, uploading: false, error: null, gcsPath: null })),
+  );
+  const [phase, setPhase] = useState<"ready" | "uploading" | "creating" | "error">("ready");
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
+
+  // Reset state if slots change (admin saved a new recipe)
+  useEffect(() => {
+    setItems(slots.map((s) => ({ slot: s, file: null, uploading: false, error: null, gcsPath: null })));
+    setPhase("ready");
+    setSubmitError(null);
+  }, [slots]);
+
+  function patch(idx: number, p: Partial<AdminSlotState>) {
+    setItems((prev) => prev.map((s, i) => (i === idx ? { ...s, ...p } : s)));
+  }
+
+  function pickFile(idx: number, file: File) {
+    const slot = items[idx].slot;
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    if (slot.media_type === "photo") {
+      const ok =
+        ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"].includes(file.type) ||
+        ext === "heic" || ext === "heif";
+      if (!ok) return patch(idx, { file: null, error: "Pick a photo (JPEG/PNG/WEBP/HEIC)" });
+      if (file.size > 25 * 1024 * 1024) return patch(idx, { file: null, error: "Image > 25MB" });
+    } else {
+      const ok = ["video/mp4", "video/quicktime"].includes(file.type);
+      if (!ok) return patch(idx, { file: null, error: "Pick a video (MP4/MOV)" });
+      if (file.size > 4 * 1024 * 1024 * 1024) return patch(idx, { file: null, error: "Video > 4GB" });
+    }
+    patch(idx, { file, error: null, gcsPath: null });
+  }
+
+  async function uploadOne(idx: number, current: AdminSlotState): Promise<string> {
+    if (!current.file) throw new Error("No file");
+    patch(idx, { uploading: true, error: null });
+
+    if (current.slot.media_type === "photo") {
+      const { gcs_path } = await uploadTemplatePhoto({
+        templateId: template.id,
+        slotPosition: current.slot.position,
+        file: current.file,
+      });
+      patch(idx, { uploading: false, gcsPath: gcs_path });
+      return gcs_path;
+    }
+
+    // Video: admin presigned upload (admin token + bypasses public upload)
+    const presigned = await adminGetPresignedUpload(
+      current.file.name,
+      current.file.type || "video/mp4",
+    );
+    await uploadFileToGcs(presigned.upload_url, current.file);
+    patch(idx, { uploading: false, gcsPath: presigned.gcs_path });
+    return presigned.gcs_path;
+  }
+
+  async function handleSubmit() {
+    if (items.some((s) => !s.file)) {
+      setSubmitError("Fill every slot before submitting.");
+      return;
+    }
+    setSubmitError(null);
+    setPhase("uploading");
+    try {
+      const paths: string[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const p = await uploadOne(i, items[i]);
+        paths.push(p);
+      }
+      setPhase("creating");
+      const res = await adminCreateTestJob(template.id, { clip_gcs_paths: paths });
+      onJobCreated(res.job_id);
+      setPhase("ready");
+    } catch (err) {
+      setPhase("error");
+      setSubmitError(err instanceof Error ? err.message : "Failed");
+    }
+  }
+
+  const allReady = items.every((s) => s.file);
+  const submitting = phase === "uploading" || phase === "creating";
+
+  return (
+    <div className="border border-zinc-800 rounded p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-white">Upload Test Clips ({items.length} slots)</h3>
+        <span className="text-xs text-zinc-500">slot order matters</span>
+      </div>
+
+      <ol className="space-y-2">
+        {items.map((s, i) => {
+          const isPhoto = s.slot.media_type === "photo";
+          const accept = isPhoto
+            ? "image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
+            : "video/mp4,video/quicktime";
+          return (
+            <li key={s.slot.position} className="border border-zinc-800 rounded p-3 bg-zinc-900/40">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-zinc-300">
+                  Slot {s.slot.position} · {isPhoto ? "Photo" : "Video"}
+                </span>
+                <span className="text-xs text-zinc-500">~{s.slot.target_duration_s.toFixed(1)}s</span>
+              </div>
+              <button
+                onClick={() => inputRefs.current[i]?.click()}
+                disabled={submitting}
+                className="w-full px-3 py-2 rounded text-xs border border-zinc-700 hover:border-zinc-500 disabled:opacity-50 text-left text-zinc-300"
+              >
+                {s.file ? s.file.name : isPhoto ? "Choose a photo…" : "Choose a video…"}
+              </button>
+              <input
+                ref={(el) => { inputRefs.current[i] = el; }}
+                type="file"
+                accept={accept}
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) pickFile(i, f);
+                  e.target.value = "";
+                }}
+              />
+              {s.uploading && <p className="mt-1 text-xs text-blue-400">Uploading…</p>}
+              {s.gcsPath && !s.uploading && <p className="mt-1 text-xs text-green-400">✓ Uploaded</p>}
+              {s.error && <p className="mt-1 text-xs text-red-400">{s.error}</p>}
+            </li>
+          );
+        })}
+      </ol>
+
+      {submitError && (
+        <div className="bg-red-900/40 border border-red-700 rounded px-3 py-2 text-xs text-red-300">
+          {submitError}
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleSubmit}
+          disabled={!allReady || submitting || template.analysis_status !== "ready"}
+          className="px-4 py-2 text-sm bg-blue-700 hover:bg-blue-600 text-white rounded disabled:opacity-50"
+        >
+          {phase === "uploading" ? "Uploading…" : phase === "creating" ? "Starting…" : "Create Test Job"}
+        </button>
+        <span className="text-xs text-zinc-500">
+          {items.filter((s) => s.gcsPath).length}/{items.length} ready
+        </span>
+      </div>
     </div>
   );
 }

@@ -3,13 +3,14 @@
 
 FROM python:3.11-slim
 
-# System deps required by FFmpeg pipeline, opencv, and python-magic
+# System deps for FFmpeg pipeline, opencv, python-magic, libheif (HEIC photo support)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     fonts-dejavu-core \
     libmagic1 \
     libgl1 \
     libglib2.0-0 \
+    libheif1 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

@@ -429,6 +429,33 @@ class TestSharedValidation:
         template = _make_template(required_clips_min=3, required_clips_max=10)
         validate_clip_count(template, 5)  # Should not raise
 
+    @pytest.mark.anyio
+    async def test_validate_clip_count_mixed_media_requires_exact_slot_count(self):
+        """Mixed-media templates (any photo slot) need exactly slot_count clips."""
+        from app.services.template_validation import validate_clip_count
+
+        recipe = {
+            "slots": [
+                {"position": 1, "media_type": "video"},
+                {"position": 2, "media_type": "photo"},
+            ],
+            "total_duration_s": 8.0,
+        }
+        # min/max are deliberately wider — the photo branch must override them
+        template = _make_template(
+            required_clips_min=1, required_clips_max=20, recipe_cached=recipe
+        )
+
+        with pytest.raises(Exception) as exc_info:
+            validate_clip_count(template, 1)
+        assert "422" in str(exc_info.value.status_code)
+
+        with pytest.raises(Exception) as exc_info:
+            validate_clip_count(template, 3)
+        assert "422" in str(exc_info.value.status_code)
+
+        validate_clip_count(template, 2)  # Exact slot count → ok
+
 
 # ── Reanalyze clears error_detail ────────────────────────────────────────────
 

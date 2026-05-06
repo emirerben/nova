@@ -13,6 +13,9 @@ export type ColorHint = (typeof COLOR_HINT_OPTIONS)[number];
 export const SLOT_TYPE_OPTIONS = ["hook", "broll", "outro"] as const;
 export type SlotType = (typeof SLOT_TYPE_OPTIONS)[number];
 
+export const MEDIA_TYPE_OPTIONS = ["video", "photo"] as const;
+export type MediaType = (typeof MEDIA_TYPE_OPTIONS)[number];
+
 export const OVERLAY_EFFECT_OPTIONS = [
   "pop-in", "fade-in", "scale-up", "font-cycle", "typewriter",
   "glitch", "bounce", "slide-in", "slide-up", "static", "none",
@@ -89,6 +92,7 @@ export interface RecipeSlot {
   color_hint: ColorHint;
   speed_factor: number;
   energy: number;
+  media_type: MediaType;
   text_overlays: RecipeTextOverlay[];
 }
 
