@@ -104,6 +104,27 @@ def download_to_file(object_path: str, local_path: str) -> None:
     blob.download_to_filename(local_path)
 
 
+def copy_object_signed_url(
+    src_object_path: str, dst_object_path: str
+) -> str:
+    """Server-side copy a GCS object to a new key, returns signed URL for the copy.
+
+    Uses bucket.copy_blob (server-side rewrite) so we don't pay egress + re-upload
+    bandwidth when the source file is identical to the destination. Avoids the
+    cost of `download → upload` for jobs that produce two outputs from the same
+    bytes (e.g. single_video templates where template_output and
+    template_base are byte-identical).
+    """
+    bucket = _get_client().bucket(settings.storage_bucket)
+    src_blob = bucket.blob(src_object_path)
+    dst_blob = bucket.copy_blob(src_blob, bucket, dst_object_path)
+    return dst_blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(days=7),
+        method="GET",
+    )
+
+
 def object_exists(object_path: str) -> bool:
     """Check whether a GCS object exists. Used for GCS path validation."""
     bucket = _get_client().bucket(settings.storage_bucket)
