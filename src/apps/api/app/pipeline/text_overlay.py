@@ -865,8 +865,57 @@ def _draw_text_png(
     fg_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     fg_draw = ImageDraw.Draw(fg_layer)
 
+    # Pre-compute emoji metrics so we can offset the FIRST line's x position
+    # to keep emoji + line 1 visually centered as one block. Without this
+    # the emoji gets pasted to the left of an already-centered text and
+    # overflows the canvas edge.
+    emoji_metrics: dict | None = None
+    if emoji_prefix and lines:
+        emoji_path = _emoji_png_path(emoji_prefix)
+        if emoji_path:
+            try:
+                emoji_img = Image.open(emoji_path).convert("RGBA")
+                first_line_h = line_heights[0]
+                emoji_size = max(24, int(first_line_h * 0.95))
+                gap = max(8, emoji_size // 6)
+                # Combined width: emoji + gap + line 1 text. If this exceeds
+                # 95% canvas width, shrink the emoji proportionally so it
+                # still fits without cropping.
+                combined = emoji_size + gap + line_widths[0]
+                max_combined = int(CANVAS_W * 0.95)
+                if combined > max_combined:
+                    overshoot = combined - max_combined
+                    new_emoji_size = max(20, emoji_size - overshoot)
+                    if new_emoji_size != emoji_size:
+                        emoji_size = new_emoji_size
+                        gap = max(6, emoji_size // 6)
+                        combined = emoji_size + gap + line_widths[0]
+                emoji_img = emoji_img.resize(
+                    (emoji_size, emoji_size), Image.Resampling.LANCZOS
+                )
+                emoji_metrics = {
+                    "img": emoji_img,
+                    "size": emoji_size,
+                    "gap": gap,
+                    "combined_w": combined,
+                }
+            except Exception as exc:
+                log.warning("emoji_load_failed", emoji=emoji_prefix, error=str(exc))
+        else:
+            log.warning(
+                "emoji_asset_missing",
+                emoji=emoji_prefix,
+                codepoint=_emoji_codepoint(emoji_prefix),
+            )
+
     for i, ln in enumerate(lines):
-        x = (CANVAS_W - line_widths[i]) // 2
+        if i == 0 and emoji_metrics:
+            # Center emoji + line 1 together as a single unit
+            combined_w = emoji_metrics["combined_w"]
+            combined_x = max(0, (CANVAS_W - combined_w) // 2)
+            x = combined_x + emoji_metrics["size"] + emoji_metrics["gap"]
+        else:
+            x = (CANVAS_W - line_widths[i]) // 2
         y = block_top + i * line_step
         # Soft drop shadow (always on — gives depth on busy backgrounds)
         shadow_draw.text((x, y + 6), ln, font=font, fill=(0, 0, 0, 160))
@@ -885,50 +934,14 @@ def _draw_text_png(
     img = Image.alpha_composite(img, shadow_layer)
     img = Image.alpha_composite(img, fg_layer)
 
-    # Composite emoji prefix to the left of the FIRST line. Pillow can't
-    # render color emoji glyphs without raqm/HarfBuzz, so we paste a static
-    # Twemoji PNG (assets/emoji/<codepoint>.png) instead. Sized to ~88% of
-    # text_height so it sits on the same baseline.
-    if emoji_prefix and lines:
-        emoji_path = _emoji_png_path(emoji_prefix)
-        if emoji_path:
-            try:
-                emoji_img = Image.open(emoji_path).convert("RGBA")
-                first_line_h = line_heights[0]
-                emoji_size = max(24, int(first_line_h * 0.95))
-                emoji_img = emoji_img.resize(
-                    (emoji_size, emoji_size), Image.Resampling.LANCZOS
-                )
-                # Place left of the first line, separated by a small gap
-                first_line_x = (CANVAS_W - line_widths[0]) // 2
-                first_line_y = block_top
-                gap = max(8, emoji_size // 6)
-                emoji_x = first_line_x - emoji_size - gap
-                # Vertically nudge emoji down a touch so it's centered against
-                # the cap-height letters (text bbox top != cap-height top).
-                emoji_y = first_line_y + (first_line_h - emoji_size) // 2
-                if emoji_x < 0:
-                    # Whole block is too wide; skip emoji rather than overflow
-                    log.warning(
-                        "emoji_prefix_overflow",
-                        emoji=emoji_prefix,
-                        first_line_w=line_widths[0],
-                        emoji_size=emoji_size,
-                    )
-                else:
-                    img.alpha_composite(emoji_img, dest=(emoji_x, emoji_y))
-            except Exception as exc:
-                log.warning(
-                    "emoji_composite_failed",
-                    emoji=emoji_prefix,
-                    error=str(exc),
-                )
-        else:
-            log.warning(
-                "emoji_asset_missing",
-                emoji=emoji_prefix,
-                codepoint=_emoji_codepoint(emoji_prefix),
-            )
+    # Paste emoji to the left of line 1's NEW (combined-centered) position.
+    if emoji_metrics:
+        first_line_h = line_heights[0]
+        combined_w = emoji_metrics["combined_w"]
+        combined_x = max(0, (CANVAS_W - combined_w) // 2)
+        emoji_x = combined_x
+        emoji_y = block_top + (first_line_h - emoji_metrics["size"]) // 2
+        img.alpha_composite(emoji_metrics["img"], dest=(emoji_x, emoji_y))
 
     img.save(png_path, "PNG")
 
