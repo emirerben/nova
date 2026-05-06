@@ -1,8 +1,13 @@
 """Add voiceover_gcs_path column + backfill template_kind discriminator.
 
-Revision ID: 0010
-Revises: 0009
+Revision ID: 0012
+Revises: 0011
 Create Date: 2026-05-04
+
+Originally numbered 0010, renumbered to 0012 because PR #43 had already
+deployed its own 0010 (template_music_variants) and 0011 (music_track_recipe)
+to production. Renumbering keeps a single linear alembic head and lets this
+migration land on top of prod's existing 0011 state cleanly.
 
 Zero-downtime safe:
 - Additive nullable column (voiceover_gcs_path)
@@ -14,8 +19,8 @@ Zero-downtime safe:
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0010"
-down_revision = "0009"
+revision = "0012"
+down_revision = "0011"
 branch_labels = None
 depends_on = None
 

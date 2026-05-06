@@ -857,3 +857,152 @@ class TestSlotSemanticValidation:
 
             with pytest.raises(GeminiRefusalError, match="slot_type"):
                 analyze_template(file_ref)
+
+
+# ── analyze_audio_template ─────────────────────────────────────────────────────
+
+from app.pipeline.agents.gemini_analyzer import analyze_audio_template  # noqa: E402
+
+
+def _make_audio_file_ref(name: str = "files/audio123") -> MagicMock:
+    ref = MagicMock()
+    ref.name = name
+    ref.uri = f"https://generativelanguage.googleapis.com/{name}"
+    ref.mime_type = "audio/mp4"
+    ref.state.name = "ACTIVE"
+    return ref
+
+
+def _valid_audio_recipe() -> dict:
+    """A valid Gemini audio analysis response."""
+    return {
+        "shot_count": 3,
+        "total_duration_s": 12.0,
+        "hook_duration_s": 4.0,
+        "slots": [
+            {
+                "position": 1, "target_duration_s": 4.0, "slot_type": "hook",
+                "energy": 7.0, "priority": 8, "transition_in": "hard-cut",
+                "color_hint": "warm", "speed_factor": 1.0,
+                "camera_movement": "static", "text_overlays": [],
+            },
+            {
+                "position": 2, "target_duration_s": 4.0, "slot_type": "broll",
+                "energy": 9.0, "priority": 5, "transition_in": "whip-pan",
+                "color_hint": "high-contrast", "speed_factor": 1.0,
+                "camera_movement": "handheld", "text_overlays": [],
+            },
+            {
+                "position": 3, "target_duration_s": 4.0, "slot_type": "broll",
+                "energy": 5.0, "priority": 5, "transition_in": "dissolve",
+                "color_hint": "cool", "speed_factor": 1.0,
+                "camera_movement": "static", "text_overlays": [],
+            },
+        ],
+        "copy_tone": "energetic",
+        "caption_style": "bold overlay",
+        "creative_direction": "High energy beat-driven cuts",
+        "transition_style": "whip-pans on drops",
+        "color_grade": "warm",
+        "pacing_style": "fast-paced 1-2s cuts",
+        "sync_style": "cut-on-beat",
+        "beat_timestamps_s": [0.0, 4.0, 8.0],
+        "interstitials": [],
+        "subject_niche": "energetic-pop",
+        "has_talking_head": False,
+        "has_voiceover": False,
+        "has_permanent_letterbox": False,
+    }
+
+
+class TestAnalyzeAudioTemplate:
+    def test_happy_path_returns_valid_recipe(self):
+        """analyze_audio_template returns a recipe dict with all expected fields."""
+        file_ref = _make_audio_file_ref()
+        data = _valid_audio_recipe()
+
+        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_gc:
+            mock_client = MagicMock()
+            mock_gc.return_value = mock_client
+            mock_client.models.generate_content.return_value = _make_gemini_response(data)
+
+            result = analyze_audio_template(
+                file_ref=file_ref,
+                beat_timestamps_s=[0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0],
+                track_config={"best_start_s": 0.0, "best_end_s": 12.0},
+                duration_s=120.0,
+            )
+
+        assert isinstance(result, dict)
+        assert result["shot_count"] == 3
+        assert len(result["slots"]) == 3
+        assert result["color_grade"] == "warm"
+        assert result["sync_style"] == "cut-on-beat"
+        assert result["has_talking_head"] is False
+        assert result["has_voiceover"] is False
+
+    def test_gemini_refusal_raises(self):
+        """analyze_audio_template raises GeminiRefusalError on safety refusal."""
+        file_ref = _make_audio_file_ref()
+
+        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_gc:
+            mock_client = MagicMock()
+            mock_gc.return_value = mock_client
+            mock_client.models.generate_content.return_value = _make_gemini_response(
+                {}, finish_reason="SAFETY"
+            )
+
+            with pytest.raises(GeminiRefusalError, match="Content policy"):
+                analyze_audio_template(
+                    file_ref=file_ref,
+                    beat_timestamps_s=[1.0, 2.0],
+                    track_config={"best_start_s": 0.0, "best_end_s": 10.0},
+                    duration_s=60.0,
+                )
+
+    def test_rate_limit_retries(self):
+        """analyze_audio_template retries on ResourceExhausted."""
+        file_ref = _make_audio_file_ref()
+        data = _valid_audio_recipe()
+
+        from google.api_core import exceptions as gapi_exc
+
+        with (
+            patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_gc,
+            patch("time.sleep"),
+        ):
+            mock_client = MagicMock()
+            mock_gc.return_value = mock_client
+            mock_client.models.generate_content.side_effect = [
+                gapi_exc.ResourceExhausted("quota"),
+                _make_gemini_response(data),
+            ]
+
+            result = analyze_audio_template(
+                file_ref=file_ref,
+                beat_timestamps_s=[1.0, 2.0, 3.0],
+                track_config={"best_start_s": 0.0, "best_end_s": 12.0},
+                duration_s=120.0,
+            )
+
+        assert result["shot_count"] == 3
+        assert mock_client.models.generate_content.call_count == 2
+
+    def test_missing_required_fields_raises(self):
+        """analyze_audio_template raises on missing required fields."""
+        file_ref = _make_audio_file_ref()
+        # Missing 'slots' field
+        data = {"shot_count": 3, "total_duration_s": 12.0}
+
+        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_gc:
+            mock_client = MagicMock()
+            mock_gc.return_value = mock_client
+            mock_client.models.generate_content.return_value = _make_gemini_response(data)
+
+            with pytest.raises(GeminiRefusalError, match="slots"):
+                analyze_audio_template(
+                    file_ref=file_ref,
+                    beat_timestamps_s=[1.0],
+                    track_config={"best_start_s": 0.0, "best_end_s": 10.0},
+                    duration_s=60.0,
+                )
