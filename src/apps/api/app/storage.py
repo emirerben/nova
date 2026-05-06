@@ -112,7 +112,7 @@ def copy_object_signed_url(
     Uses bucket.copy_blob (server-side rewrite) so we don't pay egress + re-upload
     bandwidth when the source file is identical to the destination. Avoids the
     cost of `download → upload` for jobs that produce two outputs from the same
-    bytes (e.g. fixed_intro_dynamic_body templates where template_output and
+    bytes (e.g. single_video templates where template_output and
     template_base are byte-identical).
     """
     bucket = _get_client().bucket(settings.storage_bucket)

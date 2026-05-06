@@ -47,7 +47,7 @@ from app.pipeline.agents.gemini_analyzer import (
     gemini_upload_and_wait,
 )
 from app.pipeline.template_matcher import TemplateMismatchError, consolidate_slots, match
-from app.storage import download_to_file, upload_public_read
+from app.storage import copy_object_signed_url, download_to_file, upload_public_read
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -253,12 +253,23 @@ def orchestrate_template_job(self, job_id: str) -> None:
     """Full template-mode pipeline. Never raises — all errors go to processing_failed."""
     log.info("template_job_start", job_id=job_id)
 
+    # Defensive: validate job_id BEFORE entering try/except. A stale Redis
+    # queue message (worker restart picking up an old enqueue) can deliver
+    # job_id=None or a non-UUID string. Without this guard, both the body
+    # and the exception handler call uuid.UUID(None) and the task ends in
+    # an "unexpected raise" rather than a clean drop.
+    try:
+        job_uuid = uuid.UUID(str(job_id))
+    except (ValueError, TypeError, AttributeError):
+        log.error("template_job_invalid_id", job_id=repr(job_id))
+        return
+
     try:
         _run_template_job(job_id)
     except SoftTimeLimitExceeded:
         log.error("template_job_timeout", job_id=job_id)
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
+            job = db.get(Job, job_uuid)
             if job:
                 job.status = "processing_failed"
                 job.error_detail = "Template job timed out (exceeded 1740s soft limit)"
@@ -266,7 +277,7 @@ def orchestrate_template_job(self, job_id: str) -> None:
     except Exception as exc:
         log.error("template_job_fatal", job_id=job_id, error=str(exc))
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
+            job = db.get(Job, job_uuid)
             if job:
                 job.status = "processing_failed"
                 job.error_detail = str(exc)[:1000]
@@ -309,6 +320,24 @@ def _run_template_job(job_id: str) -> None:
 
         recipe_data = template.recipe_cached
         audio_gcs_path = template.audio_gcs_path  # may be None
+        voiceover_gcs_path = template.voiceover_gcs_path  # may be None
+
+    # Route on template_kind discriminator. Existing rows without template_kind
+    # are backfilled to "multiple_videos" by migration 0010, so .get() with
+    # a default is just a belt-and-suspenders guard.
+    template_kind = recipe_data.get("template_kind", "multiple_videos")
+    if template_kind == "single_video":
+        _run_single_video_job(
+            job_id=job_id,
+            template_id=template_id,
+            recipe_data=recipe_data,
+            clip_paths_gcs=clip_paths_gcs,
+            audio_gcs_path=audio_gcs_path,
+            voiceover_gcs_path=voiceover_gcs_path,
+            user_subject=user_subject,
+            selected_platforms=selected_platforms,
+        )
+        return
 
     try:
         recipe = _build_recipe(recipe_data)
@@ -1940,16 +1969,61 @@ def _mix_template_audio(
         shutil.copy2(video_path, output_path)
         return
 
-    # Loop audio so it always covers the full video length.  The previous
-    # approach used `-shortest` which truncated the output when the template
-    # audio was shorter than the assembled video (common with TikTok audio
-    # that has mismatched container duration metadata).
+    # Sync video ending with music ending — but only when they're close.
     #
-    # With `-stream_loop -1` the audio repeats forever, so `-shortest` now
-    # correctly cuts to the VIDEO length (which is always the shorter stream).
-    # We also add a short audio fade-out so the loop cut isn't abrupt.
+    # Intent: when the assembled video slightly exceeds the template audio
+    # (the original bug: video 24.2s vs audio 21.4s), trim video to the
+    # audio length so the music ends naturally instead of looping into a
+    # restarted rhythm.
+    #
+    # BUT: if audio is catastrophically short (e.g., bad extract yielding
+    # 3s for a 30s video), trimming video would delete 27s of content.
+    # In that case, keep video at natural length and accept that audio
+    # ends early (silence tail) — silent data loss beats catastrophic
+    # content loss.
+    #
+    # Defensive: probe failures return 0.0 sentinel. Fall back gracefully.
     video_dur = _probe_duration(video_path)
-    fade_start = max(0, video_dur - 0.5)
+    audio_dur = _probe_duration(audio_local)
+
+    # Only trim video when audio is within this many seconds of video.
+    _AUDIO_SYNC_MAX_GAP_S = 5.0
+
+    if video_dur <= 0 and audio_dur <= 0:
+        log.warning("audio_mix_probe_both_failed", falling_back_to="natural-length")
+        use_duration = 0.0  # will skip -t below
+    elif video_dur <= 0:
+        log.warning("audio_mix_video_probe_failed", audio_dur=audio_dur)
+        use_duration = audio_dur
+    elif audio_dur <= 0:
+        log.warning("audio_mix_audio_probe_failed", video_dur=video_dur)
+        use_duration = video_dur
+    else:
+        gap = video_dur - audio_dur
+        if 0 < gap <= _AUDIO_SYNC_MAX_GAP_S:
+            # Slight overhang (the target bug): trim video to audio length.
+            use_duration = audio_dur
+        elif gap > _AUDIO_SYNC_MAX_GAP_S:
+            # Audio catastrophically short — keep video, accept silent tail.
+            log.warning(
+                "audio_much_shorter_than_video_keeping_video",
+                video_dur=round(video_dur, 2),
+                audio_dur=round(audio_dur, 2),
+                gap_s=round(gap, 2),
+            )
+            use_duration = video_dur
+        else:
+            # Audio >= video: cut at video end (ffmpeg handles natural).
+            use_duration = video_dur
+    fade_start = max(0, use_duration - 0.5)
+
+    log.info(
+        "audio_mix_durations",
+        video_dur=round(video_dur, 2),
+        audio_dur=round(audio_dur, 2),
+        use_duration=round(use_duration, 2),
+        trimming_video=video_dur > audio_dur,
+    )
 
     cmd = [
         "ffmpeg",
@@ -1962,7 +2036,7 @@ def _mix_template_audio(
         "-c:a", "aac",
         "-af",
         f"afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
-        "-shortest",
+        *(["-t", f"{use_duration:.3f}"] if use_duration > 0 else []),
         "-y", output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
@@ -1994,3 +2068,830 @@ def _extract_transcript(clip_metas: list[ClipMeta], steps: list) -> str:
         if meta.clip_id in used_clip_ids and meta.transcript
     ]
     return " ".join(parts)[:500]
+
+
+# ── Fixed-intro / dynamic-body template family ─────────────────────────────────
+
+
+# Map seed-script font_family values to ASS-registered font names. The seed
+# uses file-root names ("DMSans-Bold") for clarity in code, but libass needs
+# the family name registered in the font file ("DM Sans").
+_FIXED_INTRO_FONT_TO_ASS: dict[str, str] = {
+    "DMSans-Bold": "DM Sans",
+    "Montserrat-ExtraBold": "Montserrat",
+    "Outfit-Bold": "Outfit",
+    "PlayfairDisplay-Bold": "Playfair Display",
+}
+
+# Output spec for the intro and body. Mirrors interstitials._WIDTH/_HEIGHT/_FPS
+# but kept local to avoid coupling to that private API.
+_FIXED_INTRO_WIDTH = 1080
+_FIXED_INTRO_HEIGHT = 1920
+_FIXED_INTRO_FPS = 30
+
+
+def _seconds_to_ass_time(seconds: float) -> str:
+    """Convert a float seconds value to ASS H:MM:SS.cc format."""
+    if seconds < 0:
+        seconds = 0.0
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def _build_fixed_intro_ass(
+    captions: list[dict],
+    style: dict,
+    out_path: str,
+) -> None:
+    """Write an ASS subtitle file with one Dialogue per caption.
+
+    Style notes:
+    - PlayResX/Y match the render canvas (1080x1920) so positioning math is 1:1.
+    - BorderStyle=1 + Shadow=2 produces a soft drop shadow (no hard outline)
+      to match the reference TikTok aesthetic.
+    - Alignment=5 = center-anchored, MarginV=0 puts the caption vertically
+      centered in the frame.
+    """
+    font_family_seed = style.get("font_family", "DMSans-Bold")
+    fontname = _FIXED_INTRO_FONT_TO_ASS.get(font_family_seed, font_family_seed)
+    font_size = int(style.get("font_size", 64))
+    # ASS uses &HBBGGRR (no alpha for primary). Strip leading '#'.
+    color_hex = (style.get("color") or "#FFFFFF").lstrip("#")
+    # ASS expects BGR; flip RGB.
+    primary_bgr = f"{color_hex[4:6]}{color_hex[2:4]}{color_hex[0:2]}".upper()
+    # Shadow color (back). Default black.
+    shadow_hex = (style.get("shadow_color") or "#000000").lstrip("#")
+    shadow_bgr = f"{shadow_hex[4:6]}{shadow_hex[2:4]}{shadow_hex[0:2]}".upper()
+    shadow_blur = int(style.get("shadow_blur", 8))
+
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {_FIXED_INTRO_WIDTH}\n"
+        f"PlayResY: {_FIXED_INTRO_HEIGHT}\n"
+        "ScaledBorderAndShadow: yes\n"
+        "\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+        "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Caption,{fontname},{font_size},"
+        f"&H00{primary_bgr},&H00{primary_bgr},"
+        f"&H00{shadow_bgr},&H80{shadow_bgr},"
+        "-1,0,0,0,100,100,0,0,1,0,"
+        f"{shadow_blur},5,80,80,0,1\n"
+        "\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
+        "MarginV, Effect, Text\n"
+    )
+
+    lines: list[str] = [header]
+    for cap in captions:
+        start = _seconds_to_ass_time(float(cap["start_s"]))
+        end = _seconds_to_ass_time(float(cap["end_s"]))
+        # ASS-escape order matters: backslash first, then override braces,
+        # then newline. `{...}` is libass override syntax (e.g. `{\fs100}`)
+        # so unescaped braces from JSONB-stored or admin-edited captions
+        # would silently mutate rendering. Comma escape is unnecessary —
+        # Text is the trailing field, commas inside it are not collisions.
+        text = (
+            str(cap["text"])
+            .replace("\\", "\\\\")
+            .replace("{", "\\{")
+            .replace("}", "\\}")
+            .replace("\n", "\\N")
+        )
+        lines.append(
+            f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{text}\n"
+        )
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+
+def _render_intro_with_captions(
+    captions: list[dict],
+    style: dict,
+    intro_duration_s: float,
+    background_color: str,
+    out_path: str,
+    tmpdir: str,
+) -> None:
+    """Render the silent intro: black hold + ASS captions burned on top.
+
+    Single FFmpeg pass: lavfi color generator → subtitles filter → libx264.
+    No intermediate files, no audio stream.
+    """
+    from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
+
+    ass_path = os.path.join(tmpdir, "intro_captions.ass")
+    _build_fixed_intro_ass(captions, style, ass_path)
+
+    # FFmpeg subtitles filter requires escaped path on macOS/Linux.
+    # Single-quote the path inside the filter to be safe with special chars.
+    ass_filter_path = ass_path.replace(":", "\\:").replace("'", "\\'")
+    fonts_dir_escaped = FONTS_DIR.replace(":", "\\:").replace("'", "\\'")
+
+    cmd = [
+        "ffmpeg",
+        "-f", "lavfi",
+        "-i", (
+            f"color=c={background_color}:"
+            f"s={_FIXED_INTRO_WIDTH}x{_FIXED_INTRO_HEIGHT}:"
+            f"d={intro_duration_s:.3f}:r={_FIXED_INTRO_FPS}"
+        ),
+        "-vf", f"subtitles='{ass_filter_path}':fontsdir='{fonts_dir_escaped}'",
+        "-c:v", "libx264",
+        "-profile:v", "high",
+        "-preset", "fast",
+        "-crf", "18",
+        "-pix_fmt", "yuv420p",
+        # Pin color metadata so the concat-copy boundary with body.mp4
+        # doesn't produce a sudden color shift on QuickTime/Safari/iOS.
+        "-color_range", "tv",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-colorspace", "bt709",
+        "-r", str(_FIXED_INTRO_FPS),
+        "-t", f"{intro_duration_s:.3f}",
+        "-an",
+        "-movflags", "+faststart",
+        "-y",
+        out_path,
+    ]
+
+    log.info("fixed_intro_render_start", duration_s=intro_duration_s, captions=len(captions))
+    result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")[-500:]
+        raise RuntimeError(f"intro render failed: {stderr}")
+    log.info("fixed_intro_render_done", out=out_path)
+
+
+def _cut_body_segment(
+    src_video: str,
+    start_s: float,
+    duration_s: float,
+    out_path: str,
+) -> None:
+    """Cut a body segment from src_video, scaled+padded to 9:16, silent.
+
+    Forces CFR @ 30fps so the body matches the intro's frame timebase.
+    Strips audio (-an) — audio is added later by the mixer.
+    """
+    # scale: fit within 1080x1920, preserving aspect
+    # pad: center on a 1080x1920 black canvas
+    vf = (
+        f"scale=w={_FIXED_INTRO_WIDTH}:h={_FIXED_INTRO_HEIGHT}:"
+        "force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"pad={_FIXED_INTRO_WIDTH}:{_FIXED_INTRO_HEIGHT}:"
+        "(ow-iw)/2:(oh-ih)/2:color=black,"
+        "setsar=1"
+    )
+    cmd = [
+        "ffmpeg",
+        "-ss", f"{start_s:.3f}",
+        "-t", f"{duration_s:.3f}",
+        "-i", src_video,
+        "-vf", vf,
+        "-c:v", "libx264",
+        "-profile:v", "high",
+        "-preset", "fast",
+        "-crf", "18",
+        "-pix_fmt", "yuv420p",
+        # Match intro's color metadata so concat-copy doesn't produce a
+        # sudden color shift at the boundary on QuickTime/Safari/iOS.
+        "-color_range", "tv",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-colorspace", "bt709",
+        "-r", str(_FIXED_INTRO_FPS),
+        "-vsync", "cfr",
+        "-an",
+        "-movflags", "+faststart",
+        "-y",
+        out_path,
+    ]
+    log.info("body_cut_start", start_s=start_s, duration_s=duration_s)
+    result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")[-500:]
+        raise RuntimeError(f"body cut failed: {stderr}")
+
+
+def _concat_silent(segments: list[str], out_path: str, tmpdir: str) -> None:
+    """Concat already-encoded mp4 segments via concat demuxer (-c copy).
+
+    All segments must share codec/fps/timebase. Output is silent (-an).
+    """
+    list_path = os.path.join(tmpdir, "concat_list.txt")
+    with open(list_path, "w", encoding="utf-8") as f:
+        for seg in segments:
+            # concat demuxer needs single-quoted paths; escape any single quotes.
+            escaped = seg.replace("'", r"'\''")
+            f.write(f"file '{escaped}'\n")
+
+    cmd = [
+        "ffmpeg",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", list_path,
+        "-c", "copy",
+        "-an",
+        "-movflags", "+faststart",
+        "-y",
+        out_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")[-500:]
+        raise RuntimeError(f"concat failed: {stderr}")
+
+
+def _audio_energy_curve(
+    user_video_path: str,
+    bucket_s: float = 1.0,
+) -> list[float]:
+    """Return per-bucket linear RMS energy for the audio of `user_video_path`.
+
+    Each bucket is `bucket_s` seconds wide. Returns an empty list if the
+    video has no audio stream or ffmpeg fails — caller falls back to the
+    midpoint heuristic.
+
+    Linear (not dB) RMS lets the caller sum windows directly to find the
+    loudest contiguous range. Soccer celebrations, drum drops, and "loud
+    reaction" content all map cleanly to peaks; quiet talking-head content
+    degrades gracefully (curve is flat → midpoint wins).
+    """
+    samples_per_bucket = int(bucket_s * 44100)
+    cmd = [
+        "ffmpeg", "-i", user_video_path, "-vn",
+        "-af",
+        f"asetnsamples={samples_per_bucket},"
+        "astats=metadata=1:reset=1,"
+        "ametadata=print:key=lavfi.astats.Overall.RMS_level",
+        "-f", "null", "-",
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
+    if result.returncode != 0:
+        log.warning("audio_energy_probe_failed", path=user_video_path)
+        return []
+
+    rms_db: list[float] = []
+    for line in result.stderr.decode(errors="replace").splitlines():
+        if "RMS_level" in line:
+            try:
+                val = line.rsplit("=", 1)[-1].strip()
+                # Skip "-inf" sentinels — silent buckets become very-low energy.
+                if val == "-inf":
+                    rms_db.append(-90.0)
+                else:
+                    rms_db.append(float(val))
+            except (ValueError, IndexError):
+                continue
+
+    # dB → linear amplitude. Sums are meaningful in linear space.
+    return [10 ** (db / 20) for db in rms_db]
+
+
+def _select_body_window_peak_anchored(
+    user_video_path: str,
+    *,
+    pre_roll_s: float,
+    max_body_s: float,
+    min_body_s: float,
+) -> tuple[float, float]:
+    """Peak-anchored body picker (the v2 algorithm — replaces midpoint heuristic).
+
+    Centers the body around the user clip's loudest moment, with a small
+    pre-roll so the buildup-to-action is included. Trails as far as the
+    available music allows so the celebration plays out naturally.
+
+    Returns (start_s, end_s). Body length is variable, NOT fixed: it adapts
+    to the user's clip length, respecting `min_body_s` and `max_body_s`.
+
+    Algorithm:
+      peak_t   = argmax of per-second audio energy (e.g. crowd noise peak)
+      start    = max(0, peak_t - pre_roll_s)
+      end      = min(user_dur, start + max_body_s)
+      // if too short to be useful, drag start earlier
+      if end - start < min_body_s:
+          start = max(0, end - min_body_s)
+    """
+    from app.pipeline.probe import probe_video  # noqa: PLC0415
+
+    probe = probe_video(user_video_path)
+    user_dur = probe.duration_s
+    if user_dur < min_body_s:
+        raise ValueError(
+            f"User video too short: have {user_dur:.2f}s, "
+            f"need at least {min_body_s:.2f}s of body"
+        )
+
+    energy = _audio_energy_curve(user_video_path, bucket_s=1.0)
+    if energy:
+        peak_t = float(energy.index(max(energy)))
+        log.info("body_v2_audio_peak", peak_t=peak_t, buckets=len(energy))
+    else:
+        # No audio → assume action is in the back half of the clip.
+        peak_t = max(0.0, user_dur * 0.6)
+        log.info("body_v2_no_audio_curve", fallback_peak_t=peak_t)
+
+    start = max(0.0, peak_t - pre_roll_s)
+    end = min(user_dur, start + max_body_s)
+
+    if end - start < min_body_s:
+        # Drag start earlier so we always render at least min_body_s.
+        start = max(0.0, end - min_body_s)
+
+    log.info(
+        "body_v2_window_chosen",
+        peak_t=round(peak_t, 2),
+        start=round(start, 2),
+        end=round(end, 2),
+        dur=round(end - start, 2),
+        user_dur=round(user_dur, 2),
+    )
+    return start, end
+
+
+def _extract_intro_from_template_video(
+    template_video_path: str,
+    intro_duration_s: float,
+    out_path: str,
+    width: int = _FIXED_INTRO_WIDTH,
+    height: int = _FIXED_INTRO_HEIGHT,
+    fps: int = _FIXED_INTRO_FPS,
+) -> None:
+    """Cut the first `intro_duration_s` of the template reference video.
+
+    Scales + pads to (width × height) at `fps`. KEEPS audio unchanged so the
+    intro is byte-faithful to the original (VO + any background bleed all in
+    one shot — no synthetic ASS captions, no ducked-music logic).
+    """
+    vf = (
+        f"scale=w={width}:h={height}:force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,"
+        "setsar=1"
+    )
+    cmd = [
+        "ffmpeg",
+        "-ss", "0",
+        "-t", f"{intro_duration_s:.3f}",
+        "-i", template_video_path,
+        "-vf", vf,
+        "-c:v", "libx264",
+        "-profile:v", "high",
+        "-preset", "fast",
+        "-crf", "18",
+        "-pix_fmt", "yuv420p",
+        "-color_range", "tv",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-colorspace", "bt709",
+        "-r", str(fps),
+        "-vsync", "cfr",
+        # Audio: pass through at source quality. Re-encoding here was
+        # the first of TWO encode passes degrading the intro VO. The
+        # composer below mixes it once more — that's the only encode
+        # the intro audio should suffer, not two.
+        "-c:a", "copy",
+        "-movflags", "+faststart",
+        "-y",
+        out_path,
+    ]
+    log.info("intro_extract_start", duration_s=intro_duration_s)
+    result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")[-500:]
+        raise RuntimeError(f"intro extract failed: {stderr}")
+
+
+def _compose_intro_body_with_music(
+    intro_path: str,
+    body_path: str,
+    music_path: str,
+    output_path: str,
+    intro_duration_s: float,
+    output_lufs: float = -14.0,
+) -> None:
+    """Concat intro+body video AND mix audio in a single ffmpeg pass.
+
+    Audio composition:
+      - intro audio passes through unchanged for [0..intro_duration_s)
+      - silence from intro_duration_s onward (apad on intro)
+      - music starts AT intro_duration_s (delayed via adelay), no loop
+      - amix the two streams; intro dominates first segment, music the rest
+      - final loudnorm + 300ms fade-out
+
+    Music must be at LEAST (total_duration - intro_duration_s) seconds long.
+    Caller is responsible for asset prep — this function does NOT loop.
+    """
+    intro_dur = _probe_duration_for_compose(intro_path)
+    body_dur = _probe_duration_for_compose(body_path)
+    music_dur = _probe_duration_for_compose(music_path)
+    total_dur = intro_dur + body_dur
+
+    log.info(
+        "compose_start",
+        intro_dur=round(intro_dur, 3),
+        body_dur=round(body_dur, 3),
+        music_dur=round(music_dur, 3),
+        total_dur=round(total_dur, 3),
+    )
+
+    if music_dur > 0 and music_dur < (body_dur - 0.1):
+        log.warning(
+            "music_shorter_than_body",
+            music_dur=round(music_dur, 3),
+            body_dur=round(body_dur, 3),
+            note="body tail will be silent — caller should provide longer music",
+        )
+
+    intro_end_ms = int(round(intro_duration_s * 1000))
+    fade_out_start = max(0.0, total_dur - 0.5)
+
+    # Transition timing: intro audio fades out 300ms before the drop, music
+    # fades in 300ms before the drop with a longer 800ms ramp. The two
+    # streams overlap during the silence region at the end of intro (most
+    # TikTok intros end with a brief breath/silence after the punchline)
+    # so neither clashes with active speech.
+    intro_fadeout_d = 0.3
+    music_fadein_d = 0.8
+    intro_fade_start = max(0.0, intro_duration_s - intro_fadeout_d)
+    music_fade_start = max(0.0, intro_duration_s - intro_fadeout_d)
+
+    filter_complex = (
+        # Video: concat intro + body
+        "[0:v][1:v]concat=n=2:v=1:a=0[v_out];"
+        # Intro audio: pass through at native quality (NO loudnorm — that
+        # compressor was killing the VO dynamics and the user heard "kalite
+        # bozuk"). Just pad to total duration, fade out before the drop.
+        f"[0:a]apad=pad_dur={total_dur:.3f},atrim=0:{total_dur:.3f},"
+        "asetpts=PTS-STARTPTS,"
+        f"afade=t=out:st={intro_fade_start:.3f}:d={intro_fadeout_d}[a_intro];"
+        # Music: delayed to start at drop, padded, faded in. Loudnorm is
+        # applied ONLY to the music branch — keeps body music consistent
+        # across templates without touching the intro VO.
+        f"[2:a]adelay={intro_end_ms}|{intro_end_ms},"
+        f"apad=pad_dur={total_dur:.3f},atrim=0:{total_dur:.3f},"
+        "asetpts=PTS-STARTPTS,"
+        f"afade=t=in:st={music_fade_start:.3f}:d={music_fadein_d}[a_music];"
+        # Mix. CRITICAL: normalize=0 disables amix's automatic gain reduction
+        # (default normalize=1 divides by sum-of-weights, dropping each input
+        # by ~6dB and making the whole output sound quiet). With normalize=0
+        # each stream keeps its native level — clipping prevented by the
+        # final loudnorm below. Weights stay 1:1 because intro and music
+        # don't overlap in time except for the 300ms transition.
+        "[a_intro][a_music]amix=inputs=2:duration=longest:weights=1 1:normalize=0[mix];"
+        # Final loudness pass on the MIX. Removed the per-branch loudnorm
+        # on music so the intro VO and music end up in the same dynamic
+        # space. LRA=14 gives more headroom than the default 11, leaving
+        # the VO dynamics intact while still hitting the target loudness.
+        # aresample AFTER loudnorm pins output to 48kHz (otherwise the AAC
+        # encoder lands on 96kHz = "weird pitch" playback bug).
+        f"[mix]loudnorm=I={output_lufs}:TP=-1.5:LRA=14,"
+        f"aresample=48000,"
+        f"afade=t=out:st={fade_out_start:.3f}:d=0.5[a_out]"
+    )
+
+    cmd = [
+        "ffmpeg",
+        "-i", intro_path,
+        "-i", body_path,
+        "-i", music_path,
+        "-filter_complex", filter_complex,
+        "-map", "[v_out]",
+        "-map", "[a_out]",
+        "-c:v", "libx264",
+        "-profile:v", "high",
+        "-preset", "fast",
+        "-crf", "18",
+        "-pix_fmt", "yuv420p",
+        "-color_range", "tv",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-colorspace", "bt709",
+        "-r", str(_FIXED_INTRO_FPS),
+        "-vsync", "cfr",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-t", f"{total_dur:.3f}",
+        "-movflags", "+faststart",
+        "-y",
+        output_path,
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")[-800:]
+        log.warning("compose_failed", stderr=stderr)
+        # Last-resort fallback: at least ship a video without music.
+        shutil.copy2(intro_path, output_path)
+        return
+
+    log.info("compose_done", output=output_path)
+
+
+def _probe_duration_for_compose(path: str) -> float:
+    """Same as _probe_duration in intro_voiceover_mix; redeclared locally to
+    avoid pulling that whole module into orchestrator scope just for one helper."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "quiet",
+         "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", path],
+        capture_output=True, timeout=10, check=False,
+    )
+    try:
+        return float(result.stdout.strip())
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _select_body_window(
+    user_video_path: str,
+    target_duration_s: float,
+    tolerance_s: float,
+    snap_start_to_scene: bool,
+) -> tuple[float, float]:
+    """Pick the best `target_duration_s` window from the user's single clip.
+
+    Algorithm (in priority order):
+    1. Compute per-second audio energy. Find the contiguous N-second window
+       with the highest summed energy — this is the "action peak" (crowd
+       celebration in sports, drop in music, dramatic line in talking head).
+    2. If audio energy is unavailable (no audio stream, probe failure),
+       fall back to the natural midpoint.
+    3. If `snap_start_to_scene` is True, snap the chosen start to the
+       nearest scene cut within `tolerance_s` so the cut doesn't land mid-
+       motion. Snap is best-effort; no eligible cut → keep the audio pick.
+
+    End is ALWAYS `start_s + target_duration_s` — total budget guaranteed.
+    """
+    from app.pipeline.probe import probe_video  # noqa: PLC0415
+    from app.pipeline.scene_detect import detect_scenes  # noqa: PLC0415
+
+    probe = probe_video(user_video_path)
+    user_dur = probe.duration_s
+    if user_dur < target_duration_s:
+        raise ValueError(
+            f"User video too short for body: have {user_dur:.2f}s, "
+            f"need ≥ {target_duration_s:.2f}s"
+        )
+
+    natural_start = max(0.0, (user_dur - target_duration_s) / 2.0)
+    max_start = max(0.0, user_dur - target_duration_s)
+
+    # ── Step 1: audio-energy peak detection ─────────────────────────────
+    energy = _audio_energy_curve(user_video_path, bucket_s=1.0)
+    window_buckets = max(1, int(round(target_duration_s)))
+    energy_chosen: float | None = None
+    if len(energy) >= window_buckets:
+        # Sliding window sum over linear energy; highest sum wins.
+        best_sum = -1.0
+        best_idx = 0
+        running = sum(energy[:window_buckets])
+        if running > best_sum:
+            best_sum = running
+            best_idx = 0
+        for i in range(1, len(energy) - window_buckets + 1):
+            running += energy[i + window_buckets - 1] - energy[i - 1]
+            if running > best_sum:
+                best_sum = running
+                best_idx = i
+        # Don't let the window slide past the end of the video.
+        energy_chosen = float(min(best_idx, max_start))
+        log.info(
+            "body_window_audio_peak",
+            chosen_start=round(energy_chosen, 3),
+            natural_start=round(natural_start, 3),
+            buckets=len(energy),
+            window_buckets=window_buckets,
+        )
+    else:
+        log.info(
+            "body_window_audio_unavailable",
+            buckets=len(energy),
+            falling_back="midpoint",
+        )
+
+    # ── Step 2: choose base start (audio peak if available, else midpoint) ─
+    base_start = energy_chosen if energy_chosen is not None else natural_start
+
+    if not snap_start_to_scene:
+        return base_start, base_start + target_duration_s
+
+    # ── Step 3: scene-snap (best-effort, doesn't override audio pick if
+    # no eligible cut is nearby) ────────────────────────────────────────
+    cuts = detect_scenes(user_video_path)
+    if not cuts:
+        log.info("body_window_no_scene_cuts", chosen_start=round(base_start, 3))
+        return base_start, base_start + target_duration_s
+
+    eligible = [c.timestamp_s for c in cuts if 0.0 <= c.timestamp_s <= max_start]
+    if not eligible:
+        return base_start, base_start + target_duration_s
+
+    nearby = [c for c in eligible if abs(c - base_start) <= tolerance_s]
+    chosen = (
+        min(nearby, key=lambda c: abs(c - base_start)) if nearby else base_start
+    )
+
+    log.info(
+        "body_window_chosen",
+        natural_start=round(natural_start, 3),
+        audio_pick=round(energy_chosen, 3) if energy_chosen is not None else None,
+        chosen_start=round(chosen, 3),
+        snapped=chosen != base_start,
+    )
+    return chosen, chosen + target_duration_s
+
+
+def _run_single_video_job(
+    *,
+    job_id: str,
+    template_id: str,
+    recipe_data: dict,
+    clip_paths_gcs: list[str],
+    audio_gcs_path: str | None,
+    voiceover_gcs_path: str | None,  # kept for backward compat; unused in v2
+    user_subject: str,
+    selected_platforms: list[str],
+) -> None:
+    """Render path for `template_kind="single_video"` — v2.
+
+    Pipeline (v2):
+        download template reference video (= the original TikTok)
+            → cut first `intro_duration_s` of it WITH AUDIO (no synth, no ASS)
+        download user clip
+            → pick peak-anchored body window (audio peak + pre-roll)
+            → cut body, scale+pad to 9:16, silent
+        compose: concat (intro_with_audio + body_silent)
+                 + mix (intro audio passthrough + body music delayed to drop)
+        upload + persist + generate copy
+
+    The v1 path (synth black hold + ASS captions + dueled VO mix) is gone.
+    The intro is now byte-faithful to the original TikTok.
+    """
+    if len(clip_paths_gcs) != 1:
+        raise ValueError(
+            "single_video templates expect exactly 1 user clip; "
+            f"got {len(clip_paths_gcs)}"
+        )
+
+    intro_duration_s = float(recipe_data.get("intro_duration_s", 10.5))
+    body_cfg = recipe_data.get("body") or {}
+    pre_roll_s = float(body_cfg.get("pre_roll_s", 4.0))
+    max_body_s = float(body_cfg.get("max_duration_s", 14.0))
+    min_body_s = float(body_cfg.get("min_duration_s", 8.0))
+
+    # Look up the template's reference video (the original TikTok).
+    # gcs_path on VideoTemplate IS the source we cut the intro from.
+    with _sync_session() as db:
+        template = db.get(VideoTemplate, template_id)
+        if template is None:
+            raise ValueError(f"Template {template_id} not found")
+        template_video_gcs = template.gcs_path
+
+    audio_health: list[str] = []
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # [1] Download template's reference video (intro source).
+        ref_video_local = os.path.join(tmpdir, "template_ref.mp4")
+        try:
+            download_to_file(template_video_gcs, ref_video_local)
+        except Exception as exc:
+            log.error(
+                "fixed_intro_template_ref_download_failed",
+                gcs_path=template_video_gcs, error=str(exc),
+            )
+            raise
+
+        # [2] Download user clip.
+        user_local = os.path.join(tmpdir, "user_clip.mp4")
+        download_to_file(clip_paths_gcs[0], user_local)
+
+        # [3] Pick body window (peak-anchored, variable length).
+        try:
+            body_start, body_end = _select_body_window_peak_anchored(
+                user_local,
+                pre_roll_s=pre_roll_s,
+                max_body_s=max_body_s,
+                min_body_s=min_body_s,
+            )
+        except ValueError as exc:
+            user_msg = (
+                f"Video too short for this template. "
+                f"Need at least {min_body_s + 1:.1f}s. ({exc})"
+            )
+            log.warning(
+                "fixed_intro_video_too_short",
+                job_id=job_id, min_required_s=min_body_s, error=str(exc),
+            )
+            with _sync_session() as db:
+                job = db.get(Job, uuid.UUID(job_id))
+                if job:
+                    job.status = "failed"
+                    job.error_detail = user_msg
+                    db.commit()
+            return
+        body_dur = body_end - body_start
+
+        # [4] Extract intro from template reference (KEEPS audio).
+        intro_path = os.path.join(tmpdir, "intro.mp4")
+        _extract_intro_from_template_video(
+            ref_video_local, intro_duration_s, intro_path,
+        )
+
+        # [5] Cut body segment (silent, 9:16).
+        body_path = os.path.join(tmpdir, "body.mp4")
+        _cut_body_segment(user_local, body_start, body_dur, body_path)
+
+        # [6] Compose final: concat video + mix audio (intro audio + body music).
+        if not audio_gcs_path:
+            # Music missing — produce video with silent body. Better than failure.
+            log.warning("fixed_intro_no_music_asset", template_id=template_id)
+            audio_health.append("music_path_unset")
+            final_path = os.path.join(tmpdir, "final.mp4")
+            _concat_silent([intro_path, body_path], final_path, tmpdir)
+        else:
+            music_local = os.path.join(tmpdir, "music.m4a")
+            try:
+                download_to_file(audio_gcs_path, music_local)
+            except Exception as exc:
+                log.warning("fixed_intro_music_download_failed", error=str(exc))
+                audio_health.append("music_download_failed")
+                final_path = os.path.join(tmpdir, "final.mp4")
+                _concat_silent([intro_path, body_path], final_path, tmpdir)
+            else:
+                final_path = os.path.join(tmpdir, "final.mp4")
+                _compose_intro_body_with_music(
+                    intro_path=intro_path,
+                    body_path=body_path,
+                    music_path=music_local,
+                    output_path=final_path,
+                    intro_duration_s=intro_duration_s,
+                )
+
+        # [7] Upload primary + base output (same file for this template family —
+        # there are no slot-level overlays to strip for an "editor preview")
+        # template_output.mp4 and template_base.mp4 are byte-identical for
+        # this template family (no slot-level overlays to strip for the
+        # editor's "without overlays" preview). Upload once, server-side
+        # copy to the second key — saves egress + re-upload bandwidth.
+        gcs_output_path = f"jobs/{job_id}/template_output.mp4"
+        video_url = upload_public_read(final_path, gcs_output_path)
+        gcs_base_path = f"jobs/{job_id}/template_base.mp4"
+        base_video_url = copy_object_signed_url(gcs_output_path, gcs_base_path)
+
+        # [8] Generate copy. Hook text = the template's signature punchline.
+        # We hardcode the well-known punchline rather than reading from a
+        # captions list (v2 doesn't render captions any more — they live in
+        # the source TikTok we copied from).
+        hook_text = "How do you enjoy your life?"
+        from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
+        platform_copy, copy_status = generate_copy(
+            hook_text=hook_text,
+            transcript_excerpt="",
+            platforms=selected_platforms,
+            has_transcript=False,
+            template_tone="provocative",
+        )
+
+        # [9] Persist
+        plan_data = {
+            "template_kind": "single_video",
+            "intro_duration_s": intro_duration_s,
+            "body_window": {"start_s": body_start, "end_s": body_end},
+            "output_url": video_url,
+            "base_output_url": base_video_url,
+            "platform_copy": platform_copy.model_dump(),
+            "copy_status": copy_status,
+            # Audio health: empty list means VO + music both rendered;
+            # any non-empty list means the user got a degraded output.
+            # Surfaces silent-video failures that would otherwise be invisible
+            # outside worker logs.
+            "audio_health": audio_health,
+        }
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            if job:
+                job.status = "template_ready"
+                job.assembly_plan = plan_data
+                if audio_health:
+                    job.error_detail = (
+                        f"audio assets unavailable: {','.join(audio_health)}"
+                    )
+                db.commit()
+
+        log.info(
+            "fixed_intro_template_done",
+            job_id=job_id,
+            output_url=video_url,
+            body_start=round(body_start, 3),
+            body_end=round(body_end, 3),
+        )

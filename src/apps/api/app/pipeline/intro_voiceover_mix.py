@@ -1,6 +1,6 @@
 """Audio mixer for templates with a fixed-intro voiceover plus body music.
 
-Used by the `fixed_intro_dynamic_body` template family (e.g. "How do you enjoy
+Used by the `single_video` template family (e.g. "How do you enjoy
 your life?"). Mixes a voiceover that plays during a black-screen intro window
 with a music track that is ducked under the voiceover and rises to full volume
 when the body video starts.
@@ -150,6 +150,18 @@ def render_intro_voiceover_mix(
     filter_parts: list[str] = []
     final_audio_label = "[out_a]"
 
+    # All three branches end with `loudnorm,aresample=48000,afade`. The
+    # aresample is critical — loudnorm internally upsamples to 192kHz and
+    # without an explicit downsample the AAC encoder picks 96kHz, which
+    # plays back as "weird" / wrong-pitch on some browsers and devices.
+    # 48kHz is the modern TikTok/YouTube standard.
+    _OUTPUT_SAMPLE_RATE = 48000
+    _TAIL = (
+        f"loudnorm=I={output_lufs}:TP=-1.5:LRA=11,"
+        f"aresample={_OUTPUT_SAMPLE_RATE},"
+        f"afade=t=out:st={fade_out_start:.3f}:d=0.5[out_a]"
+    )
+
     if music_idx is not None and vo_idx is not None:
         # Both streams present — full graph (intro low → drop → body full + VO mixed in)
         intro_end = max(intro_duration_s, fadeup_s)
@@ -164,23 +176,20 @@ def render_intro_voiceover_mix(
             f"[{vo_idx}:a]apad=pad_dur={video_dur:.3f},"
             f"atrim=0:{video_dur:.3f},asetpts=PTS-STARTPTS[vo_padded];"
             f"[m_mixed][vo_padded]amix=inputs=2:duration=longest:weights=1 1[mix];"
-            f"[mix]loudnorm=I={output_lufs}:TP=-1.5:LRA=11,"
-            f"afade=t=out:st={fade_out_start:.3f}:d=0.5[out_a]"
+            f"[mix]{_TAIL}"
         )
     elif music_idx is not None:
         # Music only (VO probe failed) — same shape as old _mix_template_audio.
         filter_parts.append(
             f"[{music_idx}:a]atrim=0:{video_dur:.3f},asetpts=PTS-STARTPTS,"
-            f"loudnorm=I={output_lufs}:TP=-1.5:LRA=11,"
-            f"afade=t=out:st={fade_out_start:.3f}:d=0.5[out_a]"
+            f"{_TAIL}"
         )
     else:
         # VO only (music probe failed). Pad VO with silence for body, no music.
         filter_parts.append(
             f"[{vo_idx}:a]apad=pad_dur={video_dur:.3f},"
             f"atrim=0:{video_dur:.3f},asetpts=PTS-STARTPTS,"
-            f"loudnorm=I={output_lufs}:TP=-1.5:LRA=11,"
-            f"afade=t=out:st={fade_out_start:.3f}:d=0.5[out_a]"
+            f"{_TAIL}"
         )
 
     cmd: list[str] = (
