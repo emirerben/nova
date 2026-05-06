@@ -46,7 +46,6 @@ from app.pipeline.agents.gemini_analyzer import (
     analyze_template,
     gemini_upload_and_wait,
 )
-from app.pipeline.intro_voiceover_mix import render_intro_voiceover_mix
 from app.pipeline.template_matcher import TemplateMismatchError, consolidate_slots, match
 from app.storage import copy_object_signed_url, download_to_file, upload_public_read
 from app.worker import celery_app
@@ -324,11 +323,11 @@ def _run_template_job(job_id: str) -> None:
         voiceover_gcs_path = template.voiceover_gcs_path  # may be None
 
     # Route on template_kind discriminator. Existing rows without template_kind
-    # are backfilled to "multi_clip_montage" by migration 0010, so .get() with
+    # are backfilled to "multiple_videos" by migration 0010, so .get() with
     # a default is just a belt-and-suspenders guard.
-    template_kind = recipe_data.get("template_kind", "multi_clip_montage")
-    if template_kind == "fixed_intro_dynamic_body":
-        _run_fixed_intro_dynamic_body_job(
+    template_kind = recipe_data.get("template_kind", "multiple_videos")
+    if template_kind == "single_video":
+        _run_single_video_job(
             job_id=job_id,
             template_id=template_id,
             recipe_data=recipe_data,
@@ -2712,7 +2711,7 @@ def _select_body_window(
     return chosen, chosen + target_duration_s
 
 
-def _run_fixed_intro_dynamic_body_job(
+def _run_single_video_job(
     *,
     job_id: str,
     template_id: str,
@@ -2723,7 +2722,7 @@ def _run_fixed_intro_dynamic_body_job(
     user_subject: str,
     selected_platforms: list[str],
 ) -> None:
-    """Render path for `template_kind="fixed_intro_dynamic_body"` — v2.
+    """Render path for `template_kind="single_video"` — v2.
 
     Pipeline (v2):
         download template reference video (= the original TikTok)
@@ -2740,7 +2739,7 @@ def _run_fixed_intro_dynamic_body_job(
     """
     if len(clip_paths_gcs) != 1:
         raise ValueError(
-            "fixed_intro_dynamic_body templates expect exactly 1 user clip; "
+            "single_video templates expect exactly 1 user clip; "
             f"got {len(clip_paths_gcs)}"
         )
 
@@ -2865,7 +2864,7 @@ def _run_fixed_intro_dynamic_body_job(
 
         # [9] Persist
         plan_data = {
-            "template_kind": "fixed_intro_dynamic_body",
+            "template_kind": "single_video",
             "intro_duration_s": intro_duration_s,
             "body_window": {"start_s": body_start, "end_s": body_end},
             "output_url": video_url,

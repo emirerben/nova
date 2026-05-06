@@ -1,4 +1,4 @@
-"""Integration tests for the fixed_intro_dynamic_body template path.
+"""Integration tests for the single_video template path.
 
 Tests the helper functions in template_orchestrate.py that compose the new
 template: ASS subtitle generation, body window selection, and silent concat.
@@ -9,9 +9,7 @@ orchestrator entry (Celery task, GCS download, copy gen) are out of scope
 here — see eval/ for end-to-end smoke runs.
 """
 
-import os
 import subprocess
-import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest

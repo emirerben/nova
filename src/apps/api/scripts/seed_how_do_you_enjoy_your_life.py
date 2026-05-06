@@ -1,6 +1,6 @@
 """Seed the "How do you enjoy your life?" template into the local DB.
 
-Recipe shape: `template_kind="fixed_intro_dynamic_body"`. The template renders
+Recipe shape: `template_kind="single_video"`. The template renders
 ~10.5s of fixed black-screen Q/A captions with a fixed voiceover, then drops
 to a 19.5s segment auto-selected from the user's single uploaded video.
 
@@ -116,7 +116,7 @@ def build_recipe() -> dict:
     """
     _validate_intro_captions(INTRO_CAPTIONS, INTRO_DURATION_S)
     return {
-        "template_kind": "fixed_intro_dynamic_body",
+        "template_kind": "single_video",
         "intro_duration_s": INTRO_DURATION_S,
         # Documentation-only — for human readability of the template config.
         # The orchestrator reads the intro from the reference video, not these.

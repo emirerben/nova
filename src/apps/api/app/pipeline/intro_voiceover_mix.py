@@ -1,6 +1,6 @@
 """Audio mixer for templates with a fixed-intro voiceover plus body music.
 
-Used by the `fixed_intro_dynamic_body` template family (e.g. "How do you enjoy
+Used by the `single_video` template family (e.g. "How do you enjoy
 your life?"). Mixes a voiceover that plays during a black-screen intro window
 with a music track that is ducked under the voiceover and rises to full volume
 when the body video starts.
