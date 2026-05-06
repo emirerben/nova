@@ -2259,7 +2259,7 @@ class TestInterstitialZeroHoldSkip:
 
 
 # ── Regression: template_kind kwarg strip ────────────────────────────────────
-# Migration 0010 backfilled `template_kind: "multi_clip_montage"` onto every
+# Migration 0010 backfilled `template_kind: "multiple_videos"` onto every
 # existing recipe. TemplateRecipe is a strict dataclass; without stripping
 # the routing-only field, every legacy template crashes at init.
 
@@ -2269,9 +2269,9 @@ class TestTemplateKindStrip:
         cleanly after the orchestrator's strip step."""
         from app.pipeline.agents.gemini_analyzer import TemplateRecipe
 
-        # Realistic shape from a backfilled multi_clip_montage template
+        # Realistic shape from a backfilled multiple_videos template
         recipe_data = {
-            "template_kind": "multi_clip_montage",  # ← what the migration added
+            "template_kind": "multiple_videos",  # ← what the migration added
             "shot_count": 3,
             "total_duration_s": 12.0,
             "hook_duration_s": 3.0,

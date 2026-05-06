@@ -8,7 +8,7 @@ Zero-downtime safe:
 - Additive nullable column (voiceover_gcs_path)
 - JSONB backfill of template_kind on existing rows is idempotent
   (only sets when missing). Existing templates start working with
-  the new "multi_clip_montage" discriminator immediately.
+  the new "multiple_videos" discriminator immediately.
 """
 
 import sqlalchemy as sa
@@ -31,7 +31,7 @@ def upgrade() -> None:
         SET recipe_cached = jsonb_set(
             COALESCE(recipe_cached, '{}'::jsonb),
             '{template_kind}',
-            '"multi_clip_montage"'
+            '"multiple_videos"'
         )
         WHERE recipe_cached IS NULL
            OR NOT (recipe_cached ? 'template_kind')
@@ -41,17 +41,17 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Forward-only data: only strip template_kind from rows that the upgrade
-    # backfilled (value == 'multi_clip_montage'). Rows authored AFTER this
-    # migration with template_kind='fixed_intro_dynamic_body' (or any other
-    # non-default value) keep their discriminator. Otherwise downgrade-then-
-    # upgrade would silently rewrite those rows back to 'multi_clip_montage'
-    # and mis-route the job.
+    # backfilled (value == 'multiple_videos'). Rows authored AFTER this
+    # migration with template_kind='single_video' (or any other non-default
+    # value) keep their discriminator. Otherwise downgrade-then-upgrade would
+    # silently rewrite those rows back to 'multiple_videos' and mis-route the
+    # job.
     op.execute(
         """
         UPDATE video_templates
         SET recipe_cached = recipe_cached - 'template_kind'
         WHERE recipe_cached ? 'template_kind'
-          AND recipe_cached->>'template_kind' = 'multi_clip_montage'
+          AND recipe_cached->>'template_kind' = 'multiple_videos'
         """
     )
     op.drop_column("video_templates", "voiceover_gcs_path")
