@@ -23,6 +23,7 @@ import subprocess
 import structlog
 
 from app.config import settings
+from app.pipeline.probe import probe_video
 from app.pipeline.text_overlay import FONTS_DIR
 
 log = structlog.get_logger()
@@ -118,6 +119,13 @@ def reframe_and_export(
     if duration <= 0:
         raise ReframeError(f"Invalid duration: {duration}s")
 
+    # Probe color transfer characteristic to select the right HDR→SDR filter.
+    try:
+        clip_probe = probe_video(input_path)
+        color_trc = clip_probe.color_trc
+    except Exception:
+        color_trc = "bt709"
+
     # Build video filter chain
     vf_parts = _build_video_filter(
         aspect_ratio, ass_subtitle_path,
@@ -125,6 +133,18 @@ def reframe_and_export(
         speed_factor=speed_factor,
         darkening_windows=darkening_windows,
         narrowing_windows=narrowing_windows,
+        color_trc=color_trc,
+    )
+
+    # Debug: log final filter chain to diagnose darkness/color issues.
+    log.info(
+        "reframe_filter_chain",
+        input=input_path,
+        color_trc=color_trc,
+        color_hint=color_hint,
+        darkening_windows=darkening_windows or [],
+        narrowing_windows=narrowing_windows or [],
+        filters=vf_parts,
     )
 
     # Build command -- use filter_complex when overlays are present
@@ -180,8 +200,9 @@ def reframe_and_export(
         )
 
     if result.returncode != 0:
-        stderr = result.stderr.decode(errors="replace")[:500]
-        raise ReframeError(f"FFmpeg failed (rc={result.returncode}): {stderr}")
+        # Take last 1500 chars — FFmpeg banner is ~500, real errors come at the end
+        stderr = result.stderr.decode(errors="replace")[-1500:]
+        raise ReframeError(f"FFmpeg failed (rc={result.returncode}): ...{stderr}")
 
     if not os.path.exists(output_path):
         raise ReframeError("FFmpeg exited 0 but output file not found")
@@ -259,6 +280,32 @@ def _build_overlay_cmd(
     return cmd
 
 
+_HLG_TRANSFER = "arib-std-b67"
+_HDR10_TRANSFER = "smpte2084"
+
+# zscale tonemap pipeline for HLG/HDR10 → SDR conversion.
+# FFmpeg's `colorspace` filter does not support HLG (arib-std-b67) or PQ input;
+# zscale (libzimg) handles the full HDR transfer function correctly.
+#
+# npl=400 + mobius: tuned empirically against iPhone HLG samples.
+#   npl=203 + clip overshot (output YAVG=203 vs source ~170) because clip
+#   passed midtones through unchanged and HLG diffuse-white-200nit ended up at
+#   near-white in SDR. npl=400 expects peaks up to 400 nits, so 200-nit scene
+#   white maps to linear ~0.5 and bt709 gamma yields ~73% display luma —
+#   matching natural iPhone footage brightness.
+# tonemap=mobius: smooth shoulder rolloff for values approaching 1.0,
+#   preserves midtone contrast better than reinhard, less aggressive than
+#   hable. Specular highlights compressed gracefully instead of clipped.
+_ZSCALE_SDR_PIPELINE = (
+    "zscale=t=linear:npl=400"
+    ",format=gbrpf32le"
+    ",zscale=p=bt709"
+    ",tonemap=tonemap=mobius"
+    ",zscale=t=bt709:m=bt709:r=tv"
+    ",format=yuv420p"
+)
+
+
 def _build_video_filter(
     aspect_ratio: str,
     ass_path: str | None,
@@ -266,6 +313,7 @@ def _build_video_filter(
     speed_factor: float = 1.0,
     darkening_windows: list[tuple[float, float]] | None = None,
     narrowing_windows: list[tuple[float, float]] | None = None,
+    color_trc: str = "bt709",
 ) -> list[str]:
     """Return list of filter segments to join with commas.
 
@@ -277,12 +325,13 @@ def _build_video_filter(
     filters: list[str] = []
 
     # 0a. HDR/HLG → SDR color conversion.
-    # iPhone clips are bt2020/HLG; without conversion, colors look washed out
-    # after encoding to bt709 yuv420p. FFmpeg reads the clip's own stream
-    # metadata to determine the input colorspace — no need to override it.
-    # bt709 clips (Android SDR, screen recordings) are a no-op. HD clips
-    # with no metadata default to bt709, also a no-op.
-    filters.append("colorspace=all=bt709")
+    # HLG (arib-std-b67) and HDR10 (smpte2084) require zscale tonemap pipeline —
+    # FFmpeg's `colorspace` filter rejects these transfer characteristics.
+    # bt709 clips (Android SDR, screen recordings) use colorspace=all=bt709 (no-op for SDR).
+    if color_trc in (_HLG_TRANSFER, _HDR10_TRANSFER):
+        filters.append(_ZSCALE_SDR_PIPELINE)
+    else:
+        filters.append("colorspace=all=bt709")
 
     # 0. Speed ramp -- FIRST filter to normalize PTS for all subsequent timed filters
     if speed_factor != 1.0 and speed_factor > 0:

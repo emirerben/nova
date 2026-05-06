@@ -288,6 +288,7 @@ class RecipeTextOverlaySchema(BaseModel):
     font_cycle_accel_at_s: float | None = None
     position_y_frac: float | None = None
     spans: list[TextSpanSchema] | None = None
+    outline_px: int | None = None  # When set, draws black outline of N pixels around text for legibility
 
     @field_validator("text_color")
     @classmethod
