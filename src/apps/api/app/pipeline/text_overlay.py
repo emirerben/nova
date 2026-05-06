@@ -27,7 +27,11 @@ log = structlog.get_logger()
 
 # -- Constants ----------------------------------------------------------------
 
-MAX_OVERLAY_TEXT_LEN = 40
+# Hard char cap as a safety net only — the renderer now word-wraps long text
+# to multi-line and shrinks fonts on single-word overflow, so this limit
+# should never trigger for real captions. 300 = far above any sane caption
+# length but still bounds Pillow measurement time on adversarial input.
+MAX_OVERLAY_TEXT_LEN = 300
 
 # Output dimensions (must match reframe output)
 CANVAS_W = 1080
