@@ -685,6 +685,39 @@ def _load_font(font_path: str, size: int = OVERLAY_FONT_SIZE):
     return ImageFont.load_default()
 
 
+# Maximum text width as fraction of canvas width (matches _SPAN_MAX_LINE_W).
+# Text wider than this is wrapped to multiple lines, then if a SINGLE word is
+# still too wide the font is shrunk to fit.
+_TEXT_MAX_LINE_W = 0.9
+# Line spacing as multiplier of max line height for multi-line wrapping.
+_TEXT_LINE_SPACING = 1.15
+
+
+def _wrap_text_to_lines(text: str, font, max_width: int, draw) -> list[str]:
+    """Greedy word-wrap: returns list of lines that each fit within max_width.
+
+    If a single word exceeds max_width on its own (e.g. very long URL),
+    it stays on its own line — caller should shrink the font.
+    """
+    words = text.split()
+    if not words:
+        return [text]
+
+    lines: list[str] = []
+    current: list[str] = []
+    for word in words:
+        candidate = " ".join([*current, word]) if current else word
+        bbox = draw.textbbox((0, 0), candidate, font=font)
+        if bbox[2] - bbox[0] <= max_width or not current:
+            current.append(word)
+        else:
+            lines.append(" ".join(current))
+            current = [word]
+    if current:
+        lines.append(" ".join(current))
+    return lines
+
+
 def _draw_text_png(
     text: str,
     position: str,
@@ -705,7 +738,9 @@ def _draw_text_png(
       2. ``font_family`` — look up in registry by name
       3. ``font_style`` — legacy style-based lookup
 
-    Uses subtle drop shadow instead of outline for a clean TikTok look.
+    Wraps long text by words to fit within 90% of canvas width. If a single
+    word still exceeds that width (rare — long URL, no spaces), shrinks the
+    font enough to make it fit. Uses subtle drop shadow for clean TikTok look.
     """
     from PIL import Image, ImageDraw, ImageFilter  # noqa: PLC0415
 
@@ -713,32 +748,82 @@ def _draw_text_png(
     draw = ImageDraw.Draw(img)
 
     # Resolve font: pre-loaded > font_family > font_style
+    # Track whether we own font resolution — only then do we shrink on overflow.
+    # Pre-loaded fonts come from font-cycle which renders many frames with
+    # different fonts at the same size; shrinking would make text jump.
+    own_font = font is None
     if font is None:
+        size = text_size_px or _FONT_SIZE_MAP.get(text_size, 72)
         if font_family:
-            size = text_size_px or _FONT_SIZE_MAP.get(text_size, 72)
             font = _resolve_font_family(font_family, size)
         if font is None:
             font = _load_styled_font(font_style, text_size, text_size_px=text_size_px)
+    else:
+        size = getattr(font, "size", text_size_px or _FONT_SIZE_MAP.get(text_size, 72))
 
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
+    max_width = int(CANVAS_W * _TEXT_MAX_LINE_W)
+    lines = _wrap_text_to_lines(text, font, max_width, draw)
 
-    x = (CANVAS_W - text_w) // 2
+    # Safety: if a single word can't be word-wrapped to fit (no spaces, very
+    # long URL), shrink the font until the widest line fits. Caps iterations
+    # to avoid pathological inputs blowing render time. Skip when we don't
+    # own the font (font-cycle case: caller is responsible for sizing).
+    if own_font:
+        def _max_line_w(ls: list[str]) -> int:
+            widest = 0
+            for ln in ls:
+                b = draw.textbbox((0, 0), ln, font=font)
+                widest = max(widest, b[2] - b[0])
+            return widest
+
+        iterations = 0
+        while _max_line_w(lines) > max_width and iterations < 6 and size > 24:
+            size = int(size * 0.85)
+            if font_family:
+                new_font = _resolve_font_family(font_family, size)
+            else:
+                new_font = _load_styled_font(font_style, "medium", text_size_px=size)
+            if new_font is None:
+                break
+            font = new_font
+            lines = _wrap_text_to_lines(text, font, max_width, draw)
+            iterations += 1
+
+    # Compute per-line metrics + total block height for vertical centering.
+    line_heights: list[int] = []
+    line_widths: list[int] = []
+    for ln in lines:
+        b = draw.textbbox((0, 0), ln, font=font)
+        line_widths.append(b[2] - b[0])
+        line_heights.append(b[3] - b[1])
+    line_step = int(max(line_heights) * _TEXT_LINE_SPACING) if line_heights else 0
+    block_h = (
+        sum(line_heights[:-1])
+        + (line_step - max(line_heights)) * (len(lines) - 1)
+        + line_heights[-1]
+        if lines
+        else 0
+    )
+    # Simpler/predictable: stack each line at top + i*line_step.
+    block_h = line_step * (len(lines) - 1) + (line_heights[-1] if line_heights else 0)
+
     y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
-    y = int(CANVAS_H * y_frac - text_h / 2)
+    block_top = int(CANVAS_H * y_frac - block_h / 2)
 
-    # Soft gaussian shadow -- cinematic depth, no hard edges
+    # Soft gaussian shadow layer (drawn once, all lines).
     shadow_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow_layer)
-    shadow_draw.text((x, y + 6), text, font=font, fill=(0, 0, 0, 160))
-    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
-    img = Image.alpha_composite(img, shadow_layer)
-
-    # Clean foreground text -- no outline, no stroke
     fg_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     fg_draw = ImageDraw.Draw(fg_layer)
-    fg_draw.text((x, y), text, font=font, fill=text_color)
+
+    for i, ln in enumerate(lines):
+        x = (CANVAS_W - line_widths[i]) // 2
+        y = block_top + i * line_step
+        shadow_draw.text((x, y + 6), ln, font=font, fill=(0, 0, 0, 160))
+        fg_draw.text((x, y), ln, font=font, fill=text_color)
+
+    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
+    img = Image.alpha_composite(img, shadow_layer)
     img = Image.alpha_composite(img, fg_layer)
 
     img.save(png_path, "PNG")
