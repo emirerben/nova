@@ -44,6 +44,13 @@
       "category": "sans",
       "css_family": "'Inter', sans-serif"
     },
+    "Inter Tight": {
+      "file": "InterTight-Bold.ttf",
+      "ass_name": "Inter Tight",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Inter Tight', sans-serif"
+    },
     "Instrument Serif": {
       "file": "InstrumentSerif-Regular.ttf",
       "ass_name": "Instrument Serif",
