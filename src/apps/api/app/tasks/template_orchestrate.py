@@ -322,9 +322,15 @@ def _run_template_job(job_id: str) -> None:
         file_refs = _upload_clips_parallel(local_clip_paths)
         log.info("gemini_upload_clips_done", job_id=job_id)
 
-        # [4] Analyze all clips in parallel
+        # [4] Analyze all clips in parallel — pass per-template filter_hint so
+        # Gemini biases best_moments toward the desired content (e.g. ball-in-frame).
         log.info("gemini_analyze_clips_start", job_id=job_id)
-        clip_metas, failed_count = _analyze_clips_parallel(file_refs, local_clip_paths, probe_map)
+        clip_metas, failed_count = _analyze_clips_parallel(
+            file_refs,
+            local_clip_paths,
+            probe_map,
+            filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
+        )
 
         # Threshold check: >50% failure → fatal
         total = len(clip_metas) + failed_count
@@ -340,11 +346,28 @@ def _run_template_job(job_id: str) -> None:
             failed=failed_count,
         )
 
-        # [5] Template match
+        # [5] Template match.
+        # Pin clip 0 to slot 1 when the template's first slot is "hook"-typed —
+        # this keeps user-uploaded face/intro clips locked to position 1
+        # (where the recipe expects a closeup) regardless of how Gemini scores
+        # the other clips' opening moments.
         log.info("template_match_start", job_id=job_id)
+        pinned_assignments: dict[int, str] = {}
+        slot_1 = next((s for s in recipe.slots if s.get("position") == 1), None)
+        if (
+            slot_1
+            and slot_1.get("slot_type") in ("hook", "face")
+            and file_refs
+        ):
+            pinned_assignments[1] = file_refs[0].name
+            log.info("matcher_pin", slot=1, clip_id=file_refs[0].name)
         try:
             recipe = consolidate_slots(recipe, clip_metas)
-            assembly_plan = match(recipe, clip_metas)
+            assembly_plan = match(
+                recipe, clip_metas,
+                pinned_assignments=pinned_assignments,
+                filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
+            )
         except TemplateMismatchError as exc:
             raise ValueError(f"{exc.code}: {exc.message}") from exc
 
@@ -386,6 +409,7 @@ def _run_template_job(job_id: str) -> None:
             user_subject=user_subject,
             interstitials=recipe.interstitials,
             base_output_path=base_path,
+            output_fit=getattr(recipe, "output_fit", None) or "crop",
         )
 
         # [6b] Mix template audio if available
@@ -528,6 +552,7 @@ def _run_rerender(job_id: str, job: Job) -> None:
             user_subject=user_subject,
             interstitials=recipe.interstitials,
             base_output_path=base_path,
+            output_fit=getattr(recipe, "output_fit", None) or "crop",
         )
 
         # Mix template audio if available
@@ -640,7 +665,10 @@ def _upload_clips_parallel(local_paths: list[str]) -> list:
 
 
 def _analyze_clips_parallel(
-    file_refs: list, local_paths: list[str], probe_map: dict | None = None
+    file_refs: list,
+    local_paths: list[str],
+    probe_map: dict | None = None,
+    filter_hint: str = "",
 ) -> tuple[list[ClipMeta], int]:
     """Analyze all clips with Gemini in parallel.
 
@@ -648,6 +676,8 @@ def _analyze_clips_parallel(
     Per-clip failures are logged but don't raise — caller applies threshold.
     probe_map is used in the Whisper fallback path to get clip duration without
     a second FFprobe call.
+    filter_hint biases best_moments selection per-template (e.g. "ball in frame"
+    for football templates).
     """
     clip_metas: list[ClipMeta] = []
     failed_count = 0
@@ -655,7 +685,7 @@ def _analyze_clips_parallel(
     def _analyze_one(args: tuple[int, object, str]) -> tuple[ClipMeta | None, str | None]:
         idx, ref, path = args
         try:
-            meta = analyze_clip(ref)
+            meta = analyze_clip(ref, filter_hint=filter_hint)
             meta.clip_path = path
             return meta, None
         except (GeminiRefusalError, GeminiAnalysisError, Exception) as exc:
@@ -749,6 +779,7 @@ class SlotPlan:
     aspect_ratio: str
     color_hint: str
     reframed_path: str  # output path for this slot
+    output_fit: str = "crop"  # "crop" (default) | "letterbox" (preserve full frame + blurred bg)
 
 
 def _plan_slots(
@@ -759,6 +790,7 @@ def _plan_slots(
     clip_metas: list | None,
     global_color_grade: str,
     tmpdir: str,
+    output_fit: str = "crop",
 ) -> tuple[list[SlotPlan], dict[str, float], float]:
     """Phase 1: sequential arithmetic to plan all slot renders.
 
@@ -835,6 +867,7 @@ def _plan_slots(
             aspect_ratio=aspect_ratio,
             color_hint=slot_color,
             reframed_path=os.path.join(tmpdir, f"slot_{i}.mp4"),
+            output_fit=output_fit,
         ))
 
     return plans, clip_cursors, cumulative_s
@@ -853,6 +886,7 @@ def _render_planned_slot(plan: SlotPlan) -> str:
         output_path=plan.reframed_path,
         color_hint=plan.color_hint,
         speed_factor=plan.speed_factor,
+        output_fit=plan.output_fit,
     )
     return plan.reframed_path
 
@@ -870,6 +904,7 @@ def _assemble_clips(
     user_subject: str = "",
     interstitials: list[dict] | None = None,
     base_output_path: str | None = None,
+    output_fit: str = "crop",
 ) -> None:
     """Assemble clips in slot order: plan, parallel-render, then join with transitions.
 
@@ -909,6 +944,7 @@ def _assemble_clips(
     plans, _clip_cursors, cumulative_s = _plan_slots(
         steps, clip_id_to_local, clip_probe_map, beats,
         clip_metas, global_color_grade, tmpdir,
+        output_fit=output_fit,
     )
 
     # ── Phase 2: render all slots in parallel via FFmpeg ──────────────────
@@ -1278,6 +1314,15 @@ def _collect_absolute_overlays(
             # Pass through spans for rich inline formatting
             if ov.get("spans"):
                 entry["spans"] = ov["spans"]
+            # Pass through player-card fields so the renderer receives
+            # jersey_no + player_name (the special-effect path needs both).
+            if ov.get("jersey_no"):
+                entry["jersey_no"] = ov["jersey_no"]
+            if ov.get("player_name"):
+                entry["player_name"] = ov["player_name"]
+            # Pass through stroke_width (TikTok-style outline)
+            if ov.get("stroke_width") is not None:
+                entry["stroke_width"] = ov["stroke_width"]
 
             # 4. Apply label config based on subject vs prefix detection.
             # Gemini inconsistently returns role="hook" for text that should
