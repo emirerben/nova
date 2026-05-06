@@ -41,6 +41,42 @@ CANVAS_H = 1920
 _ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "fonts")
 FONTS_DIR = os.path.normpath(_ASSETS_DIR)
 
+# Pre-rendered emoji PNGs (Twemoji 72x72 transparent). Pillow can't render
+# color emoji glyphs without raqm/HarfBuzz, so we composite a static PNG
+# to the left of caption text instead. Filename = lowercase hex codepoint
+# of the BASE emoji (variation selectors stripped).
+_EMOJI_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "assets", "emoji")
+)
+
+
+def _emoji_codepoint(emoji: str) -> str:
+    """Return lowercase hex codepoint of the base char in `emoji`.
+
+    Strips ZWJ (U+200D) and variation selectors (U+FE0F/U+FE0E). For our
+    use case we only handle single-char emoji like 🗣️ -> "1f5e3". Multi-
+    glyph compositions (skin tones, family combos) just use the leading
+    base codepoint, which usually has its own Twemoji asset.
+    """
+    if not emoji:
+        return ""
+    for ch in emoji:
+        cp = ord(ch)
+        # Skip variation selectors and ZWJ
+        if cp in (0xFE0F, 0xFE0E, 0x200D):
+            continue
+        return f"{cp:x}"
+    return ""
+
+
+def _emoji_png_path(emoji: str) -> str | None:
+    """Return absolute path to the emoji PNG asset, or None if missing."""
+    cp = _emoji_codepoint(emoji)
+    if not cp:
+        return None
+    path = os.path.join(_EMOJI_DIR, f"{cp}.png")
+    return path if os.path.exists(path) else None
+
 OVERLAY_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "PlayfairDisplay-Bold.ttf"))
 OVERLAY_FONT_PATH_REGULAR = os.path.normpath(
     os.path.join(_ASSETS_DIR, "PlayfairDisplay-Regular.ttf")
@@ -261,6 +297,7 @@ def generate_text_overlay_png(
                 text_color=text_color,
                 position_y_frac=overlay.get("position_y_frac"),
                 stroke_width=int(overlay.get("stroke_width", 0)),
+                emoji_prefix=overlay.get("emoji_prefix", ""),
             )
             results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
 
@@ -737,6 +774,7 @@ def _draw_text_png(
     position_y_frac: float | None = None,
     stroke_width: int = 0,
     stroke_color: tuple[int, int, int, int] = (0, 0, 0, 230),
+    emoji_prefix: str = "",
 ) -> None:
     """Draw styled text on a transparent 1080x1920 canvas.
 
@@ -846,6 +884,51 @@ def _draw_text_png(
     shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
     img = Image.alpha_composite(img, shadow_layer)
     img = Image.alpha_composite(img, fg_layer)
+
+    # Composite emoji prefix to the left of the FIRST line. Pillow can't
+    # render color emoji glyphs without raqm/HarfBuzz, so we paste a static
+    # Twemoji PNG (assets/emoji/<codepoint>.png) instead. Sized to ~88% of
+    # text_height so it sits on the same baseline.
+    if emoji_prefix and lines:
+        emoji_path = _emoji_png_path(emoji_prefix)
+        if emoji_path:
+            try:
+                emoji_img = Image.open(emoji_path).convert("RGBA")
+                first_line_h = line_heights[0]
+                emoji_size = max(24, int(first_line_h * 0.95))
+                emoji_img = emoji_img.resize(
+                    (emoji_size, emoji_size), Image.Resampling.LANCZOS
+                )
+                # Place left of the first line, separated by a small gap
+                first_line_x = (CANVAS_W - line_widths[0]) // 2
+                first_line_y = block_top
+                gap = max(8, emoji_size // 6)
+                emoji_x = first_line_x - emoji_size - gap
+                # Vertically nudge emoji down a touch so it's centered against
+                # the cap-height letters (text bbox top != cap-height top).
+                emoji_y = first_line_y + (first_line_h - emoji_size) // 2
+                if emoji_x < 0:
+                    # Whole block is too wide; skip emoji rather than overflow
+                    log.warning(
+                        "emoji_prefix_overflow",
+                        emoji=emoji_prefix,
+                        first_line_w=line_widths[0],
+                        emoji_size=emoji_size,
+                    )
+                else:
+                    img.alpha_composite(emoji_img, dest=(emoji_x, emoji_y))
+            except Exception as exc:
+                log.warning(
+                    "emoji_composite_failed",
+                    emoji=emoji_prefix,
+                    error=str(exc),
+                )
+        else:
+            log.warning(
+                "emoji_asset_missing",
+                emoji=emoji_prefix,
+                codepoint=_emoji_codepoint(emoji_prefix),
+            )
 
     img.save(png_path, "PNG")
 
