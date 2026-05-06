@@ -256,6 +256,7 @@ def generate_text_overlay_png(
                 text_size=text_size, text_size_px=text_size_px_val,
                 text_color=text_color,
                 position_y_frac=overlay.get("position_y_frac"),
+                stroke_width=int(overlay.get("stroke_width", 0)),
             )
             results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
 
@@ -730,6 +731,8 @@ def _draw_text_png(
     text_size_px: int | None = None,
     text_color: tuple[int, int, int, int] = (255, 255, 255, 255),
     position_y_frac: float | None = None,
+    stroke_width: int = 0,
+    stroke_color: tuple[int, int, int, int] = (0, 0, 0, 230),
 ) -> None:
     """Draw styled text on a transparent 1080x1920 canvas.
 
@@ -740,7 +743,11 @@ def _draw_text_png(
 
     Wraps long text by words to fit within 90% of canvas width. If a single
     word still exceeds that width (rare — long URL, no spaces), shrinks the
-    font enough to make it fit. Uses subtle drop shadow for clean TikTok look.
+    font enough to make it fit.
+
+    Two compositing layers: a soft drop shadow for depth, and an optional
+    crisp black stroke (Pillow's stroke_width) for the TikTok caption look.
+    Stroke is opt-in — old behaviour (shadow only) when stroke_width=0.
     """
     from PIL import Image, ImageDraw, ImageFilter  # noqa: PLC0415
 
@@ -819,8 +826,18 @@ def _draw_text_png(
     for i, ln in enumerate(lines):
         x = (CANVAS_W - line_widths[i]) // 2
         y = block_top + i * line_step
+        # Soft drop shadow (always on — gives depth on busy backgrounds)
         shadow_draw.text((x, y + 6), ln, font=font, fill=(0, 0, 0, 160))
-        fg_draw.text((x, y), ln, font=font, fill=text_color)
+        # Foreground: optional crisp stroke (TikTok caption look) + fill.
+        # Pillow renders stroke + fill in a single pass when stroke_width > 0,
+        # so glyph anti-aliasing stays clean.
+        if stroke_width > 0:
+            fg_draw.text(
+                (x, y), ln, font=font, fill=text_color,
+                stroke_width=stroke_width, stroke_fill=stroke_color,
+            )
+        else:
+            fg_draw.text((x, y), ln, font=font, fill=text_color)
 
     shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
     img = Image.alpha_composite(img, shadow_layer)

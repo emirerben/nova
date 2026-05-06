@@ -288,6 +288,7 @@ class RecipeTextOverlaySchema(BaseModel):
     sample_text: str = ""
     font_cycle_accel_at_s: float | None = None
     position_y_frac: float | None = None
+    stroke_width: int = 0  # 0 = no outline; 3-5 = TikTok-style black outline
     spans: list[TextSpanSchema] | None = None
 
     @field_validator("text_color")

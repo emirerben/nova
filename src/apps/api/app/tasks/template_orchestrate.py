@@ -1404,6 +1404,7 @@ def _collect_absolute_overlays(
                 "text_size_px": ov.get("text_size_px"),
                 "text_color": ov.get("text_color", "#FFFFFF"),
                 "position_y_frac": ov.get("position_y_frac"),
+                "stroke_width": int(ov.get("stroke_width", 0)),
             }
             # Pass through font_family from admin recipe (overrides font_style)
             if ov.get("font_family"):
