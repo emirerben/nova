@@ -104,6 +104,7 @@ class VideoTemplate(Base):
     analysis_status: Mapped[str] = mapped_column(Text, nullable=False, default="analyzing")
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     audio_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    voiceover_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     required_clips_min: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     required_clips_max: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     # Admin lifecycle columns (nullable for backward compat)

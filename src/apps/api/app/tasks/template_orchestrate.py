@@ -76,6 +76,19 @@ _LABEL_CONFIG: dict[str, dict] = {
 }
 
 
+# Routing-only keys that live on `recipe_cached` JSON but are NOT valid
+# TemplateRecipe constructor kwargs. Migration 0010 backfilled `template_kind`
+# onto every existing recipe; future routing/dispatch fields go here.
+_ROUTING_ONLY_RECIPE_KEYS: frozenset[str] = frozenset({"template_kind"})
+
+
+def _build_recipe(recipe_data: dict) -> TemplateRecipe:
+    """Construct a TemplateRecipe from a DB `recipe_cached` blob, stripping
+    routing-only fields the dataclass doesn't accept as kwargs."""
+    kwargs = {k: v for k, v in recipe_data.items() if k not in _ROUTING_ONLY_RECIPE_KEYS}
+    return TemplateRecipe(**kwargs)
+
+
 # ── analyze_template_task ─────────────────────────────────────────────────────
 
 
@@ -298,7 +311,7 @@ def _run_template_job(job_id: str) -> None:
         audio_gcs_path = template.audio_gcs_path  # may be None
 
     try:
-        recipe = TemplateRecipe(**recipe_data)
+        recipe = _build_recipe(recipe_data)
     except (TypeError, ValueError, KeyError) as exc:
         raise ValueError(f"Template recipe in DB is malformed: {exc}") from exc
 
@@ -456,7 +469,7 @@ def _run_rerender(job_id: str, job: Job) -> None:
         audio_gcs_path = template.audio_gcs_path
 
     try:
-        recipe = TemplateRecipe(**recipe_data)
+        recipe = _build_recipe(recipe_data)
     except (TypeError, ValueError, KeyError) as exc:
         raise ValueError(f"Template recipe in DB is malformed: {exc}") from exc
 
