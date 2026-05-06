@@ -89,6 +89,7 @@ def orchestrate_job(self, job_id: str) -> None:
                     "codec": video_probe.codec,
                     "aspect_ratio": video_probe.aspect_ratio,
                     "file_size_bytes": video_probe.file_size_bytes,
+                    "color_transfer": video_probe.color_transfer,
                 }
                 db.commit()
 
@@ -230,7 +231,9 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
         hook_text = clip.hook_text or ""
         rank = clip.rank
         raw_path = job.raw_storage_path
-        aspect_ratio = (job.probe_metadata or {}).get("aspect_ratio", "16:9")
+        probe_meta = job.probe_metadata or {}
+        aspect_ratio = probe_meta.get("aspect_ratio", "16:9")
+        input_color_transfer = str(probe_meta.get("color_transfer") or "")
         selected_platforms = job.selected_platforms or ["instagram", "youtube"]
         user_id = str(job.user_id)
 
@@ -281,6 +284,7 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
                 aspect_ratio=aspect_ratio,
                 ass_subtitle_path=ass_path,
                 output_path=output_path,
+                input_color_transfer=input_color_transfer,
             )
 
             # Validate output spec

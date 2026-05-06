@@ -104,6 +104,7 @@ def reframe_and_export(
     speed_factor: float = 1.0,
     darkening_windows: list[tuple[float, float]] | None = None,
     narrowing_windows: list[tuple[float, float]] | None = None,
+    input_color_transfer: str = "",
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
 
@@ -125,6 +126,7 @@ def reframe_and_export(
         speed_factor=speed_factor,
         darkening_windows=darkening_windows,
         narrowing_windows=narrowing_windows,
+        input_color_transfer=input_color_transfer,
     )
 
     # Build command -- use filter_complex when overlays are present
@@ -262,6 +264,9 @@ def _build_overlay_cmd(
     return cmd
 
 
+_HDR_TRANSFERS = {"arib-std-b67", "smpte2084"}  # HLG, PQ
+
+
 def _build_video_filter(
     aspect_ratio: str,
     ass_path: str | None,
@@ -269,29 +274,45 @@ def _build_video_filter(
     speed_factor: float = 1.0,
     darkening_windows: list[tuple[float, float]] | None = None,
     narrowing_windows: list[tuple[float, float]] | None = None,
+    input_color_transfer: str = "",
 ) -> list[str]:
     """Return list of filter segments to join with commas.
 
-    Filter order: setpts (speed) -> scale/crop -> color grading
-                  -> darkening -> narrowing -> caption ASS.
+    Filter order: HDR tonemap (if needed) -> setpts (speed) -> scale/crop
+                  -> color grading -> darkening -> narrowing -> caption ASS.
     setpts MUST be first to normalize PTS before timed filters (darkening, narrowing).
     Text overlays are handled separately via overlay filter (not in this chain).
     """
     filters: list[str] = []
 
-    # 0a. Force-tag input as bt709 so downstream encoder writes consistent
-    # SDR metadata. We use setparams (relabels metadata, no pixel conversion)
-    # rather than the colorspace filter, because FFmpeg 7.x's colorspace
-    # filter rejects:
-    #   - iPhone HLG/HDR clips (transfer=arib-std-b67) — no built-in
-    #     HLG->bt709 path without zscale
-    #   - clips with unknown/missing primaries (e.g. our generated photo mp4s
-    #     before they're tagged) — Invalid argument
-    # Trade-off: HDR pixel values are stored as-is and tagged SDR, so HDR
-    # clips look slightly washed out. The previous behavior crashed instead.
-    filters.append(
-        "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709"
-    )
+    # 0a. Color handling — branch on the source's transfer characteristic.
+    # The legacy `colorspace=all=bt709` filter doesn't work in FFmpeg 7.x:
+    # it crashes on iPhone HLG (arib-std-b67) and on clips with unknown
+    # primaries. Instead we either:
+    #   - Real HDR->SDR tonemap via zscale + tonemap (HLG/PQ sources)
+    #   - Plain metadata relabel via setparams (SDR / unknown sources)
+    if input_color_transfer in _HDR_TRANSFERS:
+        # Proper HDR->SDR pipeline. Steps:
+        #   1. Convert to linear light in float32 GBR
+        #   2. Tonemap (Hable curve, peak luminance 100 nits = SDR target)
+        #   3. Re-encode to bt709 in tv-range yuv420p
+        # If zscale isn't compiled in, this filter chain will fail at run
+        # time with "no such filter" — caller's stderr will show that and
+        # we can fall back to setparams. For now we trust the Debian build
+        # (libzimg is part of standard ffmpeg packaging).
+        filters.append("zscale=t=linear:npl=100")
+        filters.append("format=gbrpf32le")
+        filters.append("tonemap=tonemap=hable:desat=0")
+        filters.append("zscale=p=bt709:t=bt709:m=bt709:r=tv")
+        filters.append("format=yuv420p")
+    else:
+        # SDR or unknown source — just relabel metadata. setparams doesn't
+        # touch pixel data, so it cannot fail like colorspace did. Safe for
+        # everything from screen recordings to our generated photo mp4s
+        # (which we now tag bt709 at generation time anyway).
+        filters.append(
+            "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709"
+        )
 
     # 0. Speed ramp -- FIRST filter to normalize PTS for all subsequent timed filters
     if speed_factor != 1.0 and speed_factor > 0:

@@ -878,6 +878,7 @@ class SlotPlan:
     aspect_ratio: str
     color_hint: str
     reframed_path: str  # output path for this slot
+    color_transfer: str = ""  # from probe; drives HLG/PQ tonemap decision in reframe
 
 
 def _plan_slots(
@@ -943,6 +944,7 @@ def _plan_slots(
         end_s = min(start_s + source_duration, clip_dur)
 
         aspect_ratio = probe.aspect_ratio if probe else "16:9"
+        color_transfer = probe.color_transfer if probe else ""
         slot_color = step.slot.get("color_hint") or global_color_grade or "none"
 
         log.debug(
@@ -964,6 +966,7 @@ def _plan_slots(
             aspect_ratio=aspect_ratio,
             color_hint=slot_color,
             reframed_path=os.path.join(tmpdir, f"slot_{i}.mp4"),
+            color_transfer=color_transfer,
         ))
 
     return plans, clip_cursors, cumulative_s
@@ -982,6 +985,7 @@ def _render_planned_slot(plan: SlotPlan) -> str:
         output_path=plan.reframed_path,
         color_hint=plan.color_hint,
         speed_factor=plan.speed_factor,
+        input_color_transfer=plan.color_transfer,
     )
     return plan.reframed_path
 
