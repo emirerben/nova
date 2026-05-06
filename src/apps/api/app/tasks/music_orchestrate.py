@@ -30,7 +30,12 @@ import structlog
 
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
-from app.pipeline.music_recipe import DEFAULT_WINDOW_S, auto_best_section, generate_music_recipe, merge_audio_recipe
+from app.pipeline.music_recipe import (
+    DEFAULT_WINDOW_S,
+    auto_best_section,
+    generate_music_recipe,
+    merge_audio_recipe,
+)
 from app.storage import download_to_file
 from app.tasks.template_orchestrate import (
     _analyze_clips_parallel,

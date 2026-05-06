@@ -10,16 +10,14 @@ Tests:
 Uses FastAPI's TestClient with dependency overrides for DB.
 """
 
-import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.main import app
-from app.models import MusicTrack, TemplateRecipeVersion, VideoTemplate
+from app.models import MusicTrack, VideoTemplate
 
 ADMIN_TOKEN = "test-admin-token"
 

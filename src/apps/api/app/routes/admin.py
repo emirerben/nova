@@ -714,7 +714,10 @@ async def update_template(
             if (child_count.scalar() or 0) > 0:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Cannot switch to standard — template has music children. Delete them first.",
+                    detail=(
+                        "Cannot switch to standard — template has music "
+                        "children. Delete them first."
+                    ),
                 )
         if req.template_type == "music_parent" and template.parent_template_id:
             raise HTTPException(
@@ -1441,7 +1444,12 @@ async def remerge_children(
         updated += 1
 
     await db.commit()
-    log.info("remerge_children_done", parent_id=template_id, updated=updated, skipped=len(skipped_ids))
+    log.info(
+        "remerge_children_done",
+        parent_id=template_id,
+        updated=updated,
+        skipped=len(skipped_ids),
+    )
     return RemergeResponse(updated=updated, skipped=len(skipped_ids), skipped_ids=skipped_ids)
 
 

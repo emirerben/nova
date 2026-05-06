@@ -252,7 +252,10 @@ def test_analyze_music_track_task_gemini_populates_recipe_cached() -> None:
         patch("app.tasks.music_orchestrate._detect_music_beats", return_value=mock_beats),
         patch("app.tasks.music_orchestrate.auto_best_section", return_value=(0.0, 5.0)),
         patch("app.tasks.music_orchestrate.gemini_upload_and_wait", return_value=mock_file_ref),
-        patch("app.tasks.music_orchestrate.analyze_audio_template", return_value=mock_gemini_recipe),
+        patch(
+            "app.tasks.music_orchestrate.analyze_audio_template",
+            return_value=mock_gemini_recipe,
+        ),
         patch("tempfile.TemporaryDirectory") as mock_td,
     ):
         mock_td.return_value.__enter__ = lambda s: "/tmp/fake"
@@ -282,7 +285,10 @@ def test_analyze_music_track_task_gemini_failure_falls_back_to_beat_only() -> No
         patch("app.tasks.music_orchestrate.download_to_file"),
         patch("app.tasks.music_orchestrate._detect_music_beats", return_value=mock_beats),
         patch("app.tasks.music_orchestrate.auto_best_section", return_value=(0.0, 5.0)),
-        patch("app.tasks.music_orchestrate.gemini_upload_and_wait", side_effect=Exception("rate limited")),
+        patch(
+            "app.tasks.music_orchestrate.gemini_upload_and_wait",
+            side_effect=Exception("rate limited"),
+        ),
         patch("tempfile.TemporaryDirectory") as mock_td,
     ):
         mock_td.return_value.__enter__ = lambda s: "/tmp/fake"

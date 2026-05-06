@@ -308,7 +308,7 @@ def test_merge_custom_track_config() -> None:
 
 # ── merge_audio_recipe ───────────────────────────────────────────────────────
 
-from app.pipeline.music_recipe import merge_audio_recipe
+from app.pipeline.music_recipe import merge_audio_recipe  # noqa: E402
 
 
 class TestMergeAudioRecipe:

@@ -861,7 +861,7 @@ class TestSlotSemanticValidation:
 
 # ── analyze_audio_template ─────────────────────────────────────────────────────
 
-from app.pipeline.agents.gemini_analyzer import analyze_audio_template
+from app.pipeline.agents.gemini_analyzer import analyze_audio_template  # noqa: E402
 
 
 def _make_audio_file_ref(name: str = "files/audio123") -> MagicMock:
