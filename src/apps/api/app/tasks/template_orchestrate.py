@@ -76,6 +76,19 @@ _LABEL_CONFIG: dict[str, dict] = {
 }
 
 
+# Routing-only keys that live on `recipe_cached` JSON but are NOT valid
+# TemplateRecipe constructor kwargs. Migration 0010 backfilled `template_kind`
+# onto every existing recipe; future routing/dispatch fields go here.
+_ROUTING_ONLY_RECIPE_KEYS: frozenset[str] = frozenset({"template_kind"})
+
+
+def _build_recipe(recipe_data: dict) -> TemplateRecipe:
+    """Construct a TemplateRecipe from a DB `recipe_cached` blob, stripping
+    routing-only fields the dataclass doesn't accept as kwargs."""
+    kwargs = {k: v for k, v in recipe_data.items() if k not in _ROUTING_ONLY_RECIPE_KEYS}
+    return TemplateRecipe(**kwargs)
+
+
 # ── analyze_template_task ─────────────────────────────────────────────────────
 
 
@@ -297,16 +310,8 @@ def _run_template_job(job_id: str) -> None:
         recipe_data = template.recipe_cached
         audio_gcs_path = template.audio_gcs_path  # may be None
 
-    # Strip routing-only fields that aren't valid TemplateRecipe constructor
-    # args. Migration 0010 backfilled `template_kind` onto every existing
-    # recipe; the dataclass doesn't accept that kwarg, so every legacy
-    # template was crashing at init with "unexpected keyword argument".
-    recipe_kwargs = {
-        k: v for k, v in recipe_data.items()
-        if k not in ("template_kind",)
-    }
     try:
-        recipe = TemplateRecipe(**recipe_kwargs)
+        recipe = _build_recipe(recipe_data)
     except (TypeError, ValueError, KeyError) as exc:
         raise ValueError(f"Template recipe in DB is malformed: {exc}") from exc
 
@@ -463,14 +468,8 @@ def _run_rerender(job_id: str, job: Job) -> None:
         recipe_data = template.recipe_cached
         audio_gcs_path = template.audio_gcs_path
 
-    # Same template_kind strip as the main entry path — the rerender route
-    # also has to tolerate the migration-backfilled discriminator field.
-    recipe_kwargs = {
-        k: v for k, v in recipe_data.items()
-        if k not in ("template_kind",)
-    }
     try:
-        recipe = TemplateRecipe(**recipe_kwargs)
+        recipe = _build_recipe(recipe_data)
     except (TypeError, ValueError, KeyError) as exc:
         raise ValueError(f"Template recipe in DB is malformed: {exc}") from exc
 
