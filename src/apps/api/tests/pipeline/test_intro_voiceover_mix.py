@@ -17,7 +17,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.pipeline.intro_voiceover_mix import (
-    IntroVoiceoverMixError,
     _probe_duration,
     render_intro_voiceover_mix,
 )
