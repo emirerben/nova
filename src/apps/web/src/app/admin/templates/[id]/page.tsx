@@ -22,6 +22,7 @@ import {
   type TemplateJobStatusResponse,
   getTemplateJobStatus,
   getTemplatePlaybackUrl,
+  normaliseMimeType,
   uploadFileToGcs,
   uploadTemplatePhoto,
 } from "@/lib/api";
@@ -821,10 +822,14 @@ function AdminSlotBoundUpload({
       return gcs_path;
     }
 
-    // Video: admin presigned upload (admin token + bypasses public upload)
+    // Video: admin presigned upload. GCS signs against the exact content-type,
+    // and uploadFileToGcs normalises video/quicktime -> video/mp4 before PUT,
+    // so we must request the presigned URL with the *same* normalised type.
+    // Otherwise GCS rejects the PUT with 403 (signature mismatch).
+    const signingContentType = normaliseMimeType(current.file.type);
     const presigned = await adminGetPresignedUpload(
       current.file.name,
-      current.file.type || "video/mp4",
+      signingContentType,
     );
     await uploadFileToGcs(presigned.upload_url, current.file);
     patch(idx, { uploading: false, gcsPath: presigned.gcs_path });
