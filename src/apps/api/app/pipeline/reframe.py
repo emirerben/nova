@@ -279,13 +279,19 @@ def _build_video_filter(
     """
     filters: list[str] = []
 
-    # 0a. HDR/HLG → SDR color conversion.
-    # iPhone clips are bt2020/HLG; without conversion, colors look washed out
-    # after encoding to bt709 yuv420p. FFmpeg reads the clip's own stream
-    # metadata to determine the input colorspace — no need to override it.
-    # bt709 clips (Android SDR, screen recordings) are a no-op. HD clips
-    # with no metadata default to bt709, also a no-op.
-    filters.append("colorspace=all=bt709")
+    # 0a. Force-tag input as bt709 so downstream encoder writes consistent
+    # SDR metadata. We use setparams (relabels metadata, no pixel conversion)
+    # rather than the colorspace filter, because FFmpeg 7.x's colorspace
+    # filter rejects:
+    #   - iPhone HLG/HDR clips (transfer=arib-std-b67) — no built-in
+    #     HLG->bt709 path without zscale
+    #   - clips with unknown/missing primaries (e.g. our generated photo mp4s
+    #     before they're tagged) — Invalid argument
+    # Trade-off: HDR pixel values are stored as-is and tagged SDR, so HDR
+    # clips look slightly washed out. The previous behavior crashed instead.
+    filters.append(
+        "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709"
+    )
 
     # 0. Speed ramp -- FIRST filter to normalize PTS for all subsequent timed filters
     if speed_factor != 1.0 and speed_factor > 0:

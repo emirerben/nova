@@ -106,6 +106,12 @@ def image_bytes_to_mp4(
             "-pix_fmt", "yuv420p",
             "-preset", "veryfast",
             "-crf", "20",
+            # Tag explicit bt709 color metadata so the downstream reframe
+            # pipeline's colorspace handling doesn't see "primaries=unknown"
+            # and reject the clip.
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
+            "-colorspace", "bt709",
             "-movflags", "+faststart",
             out_path,
         ]
