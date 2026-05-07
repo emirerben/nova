@@ -367,6 +367,11 @@ class RecipeSlotSchema(BaseModel):
     speed_factor: float = 1.0
     energy: float = 5.0
     text_overlays: list[RecipeTextOverlaySchema] = []
+    # Lock this slot to a fixed range of the original template video instead
+    # of filling it with a user clip (e.g. Morocco's "This is AFRICA" hook).
+    locked: bool = False
+    source_start_s: float | None = None
+    source_end_s: float | None = None
 
     @field_validator("target_duration_s")
     @classmethod

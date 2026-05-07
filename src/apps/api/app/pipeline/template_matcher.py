@@ -46,6 +46,14 @@ DURATION_TOLERANCE_FALLBACK_S = 6.0  # loose pass — only if no tight match exi
 MAX_MERGED_DURATION_S = 20.0   # hard cap — no single slot longer than this
 CONSOLIDATION_MIN_SLOTS = 2    # absolute floor (even if only 1 slot type)
 
+# Sentinel clip_id for slots locked to the original template's source video.
+# Resolved to template.gcs_path's local download in the orchestrator.
+LOCKED_TEMPLATE_CLIP_ID = "__TEMPLATE_LOCKED__"
+
+
+def _is_locked_slot(slot: dict) -> bool:
+    return bool(slot.get("locked", False))
+
 # Curtain-close constraints (must stay in sync with text_overlay.py)
 _MIN_CURTAIN_ANIMATE_S = 4.0
 _CURTAIN_MAX_RATIO = 0.6
@@ -90,6 +98,8 @@ def _score_merge_pair(
     pos_a = slot_a.get("position", 0)
 
     # Hard blocks — preserve hook/broll boundary but allow hook+hook merges
+    if _is_locked_slot(slot_a) or _is_locked_slot(slot_b):
+        return float("-inf")  # locked slots have exact source ranges, never merge
     if (type_a == "hook") != (type_b == "hook"):
         return float("-inf")  # never merge across hook/broll boundary
     if combined_dur >= MAX_MERGED_DURATION_S:
@@ -374,11 +384,14 @@ def _minimum_coverage_pass(
     Returns:
         dict mapping slot_position → (ClipMeta, moment) for pre-assigned slots.
     """
+    # Locked slots are filled with template source — they don't accept user clips.
+    unlocked_slots = [s for s in slots if not _is_locked_slot(s)]
+
     # Build compatibility matrix: for each clip, which slots are duration-compatible?
     clip_valid_slots: dict[str, list[tuple[dict, dict]]] = {}
     for meta in clip_metas:
         valid: list[tuple[dict, dict]] = []
-        for slot in slots:
+        for slot in unlocked_slots:
             target_dur = float(
                 slot.get("target_duration_s", slot.get("target_duration", 5.0))
             )
@@ -474,12 +487,42 @@ def match(recipe: TemplateRecipe, clip_metas: list[ClipMeta]) -> AssemblyPlan:
             code="TEMPLATE_CLIP_DURATION_MISMATCH",
         )
 
+    plan: list[AssemblyStep] = []
+    locked_positions: set[int] = set()
+
+    # Pre-emit locked slots — they bypass user-clip distribution entirely.
+    # The orchestrator resolves LOCKED_TEMPLATE_CLIP_ID to the template's
+    # downloaded source file at render time.
+    for slot in recipe.slots:
+        if not _is_locked_slot(slot):
+            continue
+        src_start = float(slot.get("source_start_s", 0.0))
+        src_end = float(slot.get("source_end_s", src_start + float(
+            slot.get("target_duration_s", slot.get("target_duration", 0.0))
+        )))
+        plan.append(AssemblyStep(
+            slot=slot,
+            clip_id=LOCKED_TEMPLATE_CLIP_ID,
+            moment={
+                "start_s": src_start,
+                "end_s": src_end,
+                "energy": float(slot.get("energy", 5.0)),
+                "description": "locked template source",
+            },
+        ))
+        locked_positions.add(slot.get("position", 0))
+
+    unlocked_slots = [s for s in recipe.slots if not _is_locked_slot(s)]
+    if not unlocked_slots:
+        # Whole template is locked — no user clips to match.
+        return AssemblyPlan(steps=sorted(plan, key=lambda s: s.slot.get("position", 0)))
+
     # Sort slots by priority descending — assign best moments to highest-priority slots
     slots_by_priority = sorted(
-        recipe.slots, key=lambda s: s.get("priority", 1), reverse=True
+        unlocked_slots, key=lambda s: s.get("priority", 1), reverse=True
     )
 
-    n_slots = len(recipe.slots)
+    n_slots = len(unlocked_slots)
     n_clips = len(clip_metas)
     # Hard cap: spread usage as evenly as possible. ceil(5/5)=1, ceil(8/3)=3, etc.
     max_uses = max(1, math.ceil(n_slots / n_clips))
@@ -487,7 +530,6 @@ def match(recipe: TemplateRecipe, clip_metas: list[ClipMeta]) -> AssemblyPlan:
 
     # Run coverage-first pre-assignment — guarantees maximum clip variety
     pre_assigned = _minimum_coverage_pass(recipe.slots, clip_metas)
-    plan: list[AssemblyStep] = []
 
     # Seed plan + use counts from pre-assigned slots
     for pos, (meta, moment) in pre_assigned.items():
@@ -608,8 +650,13 @@ def _dedup_adjacent(steps: list[AssemblyStep]) -> list[AssemblyStep]:
     Best-effort: if no compatible swap exists, accepts the adjacent duplicate.
     """
     for i in range(1, len(steps)):
+        # Locked steps reference the template source — never swap them.
+        if steps[i].clip_id == LOCKED_TEMPLATE_CLIP_ID or steps[i - 1].clip_id == LOCKED_TEMPLATE_CLIP_ID:
+            continue
         if steps[i].clip_id == steps[i - 1].clip_id:
             for j in range(i + 1, len(steps)):
+                if steps[j].clip_id == LOCKED_TEMPLATE_CLIP_ID:
+                    continue  # don't swap into locked position
                 if steps[j].clip_id != steps[i - 1].clip_id:
                     dur_i = float(
                         steps[i].slot.get("target_duration_s", 5.0)

@@ -321,6 +321,7 @@ def _run_template_job(job_id: str) -> None:
         recipe_data = template.recipe_cached
         audio_gcs_path = template.audio_gcs_path  # may be None
         voiceover_gcs_path = template.voiceover_gcs_path  # may be None
+        template_gcs_path = template.gcs_path  # for locked-slot rendering
 
     # Route on template_kind discriminator. Existing rows without template_kind
     # are backfilled to "multiple_videos" by migration 0010, so .get() with
@@ -410,6 +411,10 @@ def _run_template_job(job_id: str) -> None:
         clip_id_to_local = {
             ref.name: path for ref, path in zip(file_refs, local_clip_paths)
         }
+        _add_locked_template_source(
+            recipe_data, template_gcs_path, tmpdir,
+            clip_id_to_local, probe_map,
+        )
         _assemble_clips(
             assembly_plan.steps, clip_id_to_local, probe_map,
             assembled_path, tmpdir,
@@ -496,6 +501,7 @@ def _run_rerender(job_id: str, job: Job) -> None:
 
         recipe_data = template.recipe_cached
         audio_gcs_path = template.audio_gcs_path
+        template_gcs_path = template.gcs_path
 
     try:
         recipe = _build_recipe(recipe_data)
@@ -541,6 +547,11 @@ def _run_rerender(job_id: str, job: Job) -> None:
                 moment=step_data["moment"],
             ))
             clip_id_to_local[clip_id] = local_path
+
+        _add_locked_template_source(
+            recipe_data, template_gcs_path, tmpdir,
+            clip_id_to_local, probe_map,
+        )
 
         # FFmpeg assemble (clip_metas=None is safe — text comes from recipe)
         log.info("rerender_assemble_start", job_id=job_id, steps=len(assembly_steps))
@@ -603,6 +614,42 @@ def _run_rerender(job_id: str, job: Job) -> None:
 
 
 # ── Parallelism helpers ────────────────────────────────────────────────────────
+
+
+def _add_locked_template_source(
+    recipe_data: dict,
+    template_gcs_path: str | None,
+    tmpdir: str,
+    clip_id_to_local: dict[str, str],
+    probe_map: dict,
+) -> None:
+    """If recipe has any locked slot, download the template video and register
+    it under LOCKED_TEMPLATE_CLIP_ID so _plan_slots/_render_planned_slot can
+    trim segments from it like any other clip.
+    """
+    from app.pipeline.probe import VideoProbe, probe_video  # noqa: PLC0415
+    from app.pipeline.template_matcher import LOCKED_TEMPLATE_CLIP_ID  # noqa: PLC0415
+
+    has_locked = any(
+        s.get("locked", False) for s in recipe_data.get("slots", [])
+    )
+    if not has_locked:
+        return
+    if not template_gcs_path:
+        log.warning("locked_slot_skipped_no_template_path")
+        return
+
+    local_path = os.path.join(tmpdir, "template_source.mp4")
+    download_to_file(template_gcs_path, local_path)
+    clip_id_to_local[LOCKED_TEMPLATE_CLIP_ID] = local_path
+    try:
+        probe_map[local_path] = probe_video(local_path)
+    except Exception as exc:
+        log.warning("template_probe_failed_using_default", error=str(exc))
+        probe_map[local_path] = VideoProbe(
+            duration_s=60.0, fps=30.0, width=1920, height=1080,
+            aspect_ratio="16:9",
+        )
 
 
 def _download_clips_parallel(gcs_paths: list[str], tmpdir: str) -> list[str]:
@@ -808,38 +855,49 @@ def _plan_slots(
         slot_target_dur = float(step.slot.get("target_duration_s", 5.0))
         slot_target_dur = max(slot_target_dur, 0.5)
 
-        # Beat-snap
-        if beats:
-            expected_end = cumulative_s + slot_target_dur
-            snapped_end = _snap_to_beat(expected_end, beats)
-            slot_target_dur = max(0.5, snapped_end - cumulative_s)
-            cumulative_s = snapped_end
-        else:
-            cumulative_s += slot_target_dur
+        is_locked = bool(step.slot.get("locked", False))
 
-        # Speed ramp
-        speed_factor = float(step.slot.get("speed_factor", 1.0))
-        source_duration = slot_target_dur * speed_factor
-
-        # Time-cursor logic
-        if clip_id not in clip_cursors:
+        if is_locked:
+            # Locked source range is exact — bypass beat-snap, cursor sharing,
+            # and speed ramp so the segment matches the template audio frame-by-frame.
             start_s = float(moment.get("start_s", 0.0))
+            end_s = float(moment.get("end_s", start_s + slot_target_dur))
+            slot_target_dur = max(0.5, end_s - start_s)
+            speed_factor = 1.0
+            cumulative_s += slot_target_dur
         else:
-            start_s = clip_cursors[clip_id]
+            # Beat-snap
+            if beats:
+                expected_end = cumulative_s + slot_target_dur
+                snapped_end = _snap_to_beat(expected_end, beats)
+                slot_target_dur = max(0.5, snapped_end - cumulative_s)
+                cumulative_s = snapped_end
+            else:
+                cumulative_s += slot_target_dur
 
-        clip_dur = probe.duration_s if probe else 30.0
-        if start_s + source_duration > clip_dur:
-            start_s = max(0.0, clip_dur - source_duration)
-            log.warning(
-                "clip_footage_exhausted",
-                clip_id=clip_id,
-                position=step.slot.get("position"),
-                clip_dur=clip_dur,
-                cursor=clip_cursors.get(clip_id, 0.0),
-            )
+            # Speed ramp
+            speed_factor = float(step.slot.get("speed_factor", 1.0))
+            source_duration = slot_target_dur * speed_factor
 
-        clip_cursors[clip_id] = start_s + source_duration
-        end_s = min(start_s + source_duration, clip_dur)
+            # Time-cursor logic
+            if clip_id not in clip_cursors:
+                start_s = float(moment.get("start_s", 0.0))
+            else:
+                start_s = clip_cursors[clip_id]
+
+            clip_dur = probe.duration_s if probe else 30.0
+            if start_s + source_duration > clip_dur:
+                start_s = max(0.0, clip_dur - source_duration)
+                log.warning(
+                    "clip_footage_exhausted",
+                    clip_id=clip_id,
+                    position=step.slot.get("position"),
+                    clip_dur=clip_dur,
+                    cursor=clip_cursors.get(clip_id, 0.0),
+                )
+
+            clip_cursors[clip_id] = start_s + source_duration
+            end_s = min(start_s + source_duration, clip_dur)
 
         aspect_ratio = probe.aspect_ratio if probe else "16:9"
         slot_color = step.slot.get("color_hint") or global_color_grade or "none"
