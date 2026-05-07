@@ -79,7 +79,8 @@ def _build_recipe(audio_duration_s: float) -> dict:
                 "slot_type": "user_upload",
                 "accepts": ["video", "image"],
                 "target_duration_s": slot2_dur,
-                "ken_burns": "zoom_in",  # only used when user uploads an image
+                "image_duration_s": 5.0,  # shorter hold for photo uploads
+                "ken_burns": "zoom_in",   # only used when user uploads an image
                 "transition_in": "cut",
                 "speed_factor": 1.0,
                 "text_overlays": [],

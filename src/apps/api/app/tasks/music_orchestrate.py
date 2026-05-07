@@ -663,7 +663,13 @@ def _run_templated_music_job(job_id: str) -> None:
             user_clip_id = f"user:slot{position}"
 
             if is_image_file(user_path):
-                # Static image upload → render with default Ken Burns
+                # Static image upload → render with default Ken Burns.
+                # Use slot.image_duration_s (per-template image default) when
+                # set, otherwise fall back to target_duration_s. Photos held
+                # at a video's full ceiling tend to drag — templates that
+                # accept both kinds usually want a shorter image hold.
+                photo_dur = float(slot.get("image_duration_s", target_dur))
+                photo_dur = max(0.5, photo_dur)
                 norm = os.path.join(tmpdir, f"user_{position}.jpg")
                 try:
                     normalize_to_jpeg(user_path, norm)
@@ -673,9 +679,11 @@ def _run_templated_music_job(job_id: str) -> None:
                 render_image_to_clip(
                     image_path=norm,
                     output_path=slot_clip,
-                    duration_s=target_dur,
+                    duration_s=photo_dur,
                     ken_burns=_ken_burns_from_slot(slot, default=SUBTLE_ZOOM_IN),
                 )
+                # Update slot duration so the audio mix trims to the visual.
+                slot["target_duration_s"] = round(photo_dur, 3)
                 slot_position_to_clip[position] = (user_clip_id, slot_clip)
             else:
                 # Video upload — reframe to 1080x1920, picking the best window.
