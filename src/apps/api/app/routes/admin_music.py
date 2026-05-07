@@ -2,6 +2,7 @@
 
 POST   /admin/music-tracks              — add track from YouTube/SoundCloud URL
 POST   /admin/music-tracks/upload       — add track from direct audio file upload
+POST   /admin/music-tracks/templated    — create templated track (typed-slot recipe)
 GET    /admin/music-tracks              — list all tracks (including unpublished)
 GET    /admin/music-tracks/{id}         — full track detail + beat count
 PATCH  /admin/music-tracks/{id}         — update config, title, artist, publish/archive
@@ -13,6 +14,7 @@ Auth: X-Admin-Token header (same as admin.py).
 
 import asyncio
 import hmac
+import json
 import tempfile
 import uuid
 from datetime import UTC, datetime
@@ -284,6 +286,216 @@ async def upload_music_track(
 
     log.info("music_track_uploaded", track_id=track_id, filename=file.filename)
     return CreateMusicTrackResponse(id=track_id, analysis_status="queued")
+
+
+# ── Templated track create ────────────────────────────────────────────────────
+
+
+_IMAGE_CT = {
+    "image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif",
+}
+_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+
+
+def _validate_templated_recipe(recipe: dict) -> tuple[list[dict], list[dict]]:
+    """Return (fixed_slots, user_slots). Raise 422 if shape is wrong."""
+    if not isinstance(recipe, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="recipe must be a JSON object",
+        )
+    slots = recipe.get("slots")
+    if not isinstance(slots, list) or not slots:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="recipe.slots must be a non-empty list",
+        )
+    fixed: list[dict] = []
+    user: list[dict] = []
+    seen_positions: set[int] = set()
+    for slot in slots:
+        if not isinstance(slot, dict):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="every recipe slot must be an object",
+            )
+        position = slot.get("position")
+        if not isinstance(position, int) or position < 1:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="every slot needs an integer position >= 1",
+            )
+        if position in seen_positions:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"duplicate slot position {position}",
+            )
+        seen_positions.add(position)
+        slot_type = slot.get("slot_type")
+        if slot_type == "fixed_asset":
+            fixed.append(slot)
+        elif slot_type == "user_upload":
+            user.append(slot)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"slot {position} has unsupported slot_type {slot_type!r}; "
+                    "expected 'fixed_asset' or 'user_upload'"
+                ),
+            )
+        if not isinstance(slot.get("target_duration_s"), (int, float)):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"slot {position} requires numeric target_duration_s",
+            )
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="recipe must contain at least one user_upload slot",
+        )
+    return fixed, user
+
+
+@router.post(
+    "/templated",
+    response_model=CreateMusicTrackResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_admin)],
+)
+async def create_templated_music_track(
+    audio: UploadFile = File(..., description="Audio file (mp3/m4a/wav)"),
+    recipe_json: str = Form(..., description="JSON recipe with typed slots"),
+    title: str = Form(""),
+    artist: str = Form(""),
+    publish: bool = Form(False),
+    asset_files: list[UploadFile] = File(
+        default_factory=list,
+        description="Slot asset files in the same order as recipe.fixed_asset slots",
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> CreateMusicTrackResponse:
+    """Create a templated music track in one shot.
+
+    Templated tracks bypass beat detection (the audio is usually a spoken quote
+    or a clip whose beat structure is not load-bearing). Instead, the admin
+    supplies a recipe with `fixed_asset` and `user_upload` slots; this endpoint
+    uploads the audio + each fixed-asset image to GCS, patches the recipe with
+    the GCS paths, and stores it on `MusicTrack.recipe_cached` with
+    `analysis_status='ready'`.
+    """
+    try:
+        recipe = json.loads(recipe_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"recipe_json is not valid JSON: {exc}",
+        )
+
+    fixed_slots, _user_slots = _validate_templated_recipe(recipe)
+
+    if len(asset_files) != len(fixed_slots):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Recipe declares {len(fixed_slots)} fixed_asset slot(s); "
+                f"received {len(asset_files)} asset_files. Order must match "
+                "ascending slot.position."
+            ),
+        )
+
+    # Validate audio extension/content-type
+    audio_ext = Path(audio.filename or "audio.m4a").suffix.lower()
+    if audio_ext not in {".m4a", ".mp3", ".wav", ".ogg", ".aac", ".mp4"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unsupported audio extension {audio_ext!r}",
+        )
+
+    track_id = str(uuid.uuid4())
+    audio_gcs = f"music/{track_id}/audio{audio_ext}"
+
+    # Upload audio to GCS, probe duration
+    with tempfile.NamedTemporaryFile(suffix=audio_ext, delete=True) as tmp:
+        content = await audio.read()
+        if len(content) > 50 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Audio file too large. Maximum 50 MB.",
+            )
+        tmp.write(content)
+        tmp.flush()
+
+        from app.services.audio_download import _probe_duration  # noqa: PLC0415
+        duration_s = _probe_duration(tmp.name)
+
+        from app.storage import _get_client  # noqa: PLC0415
+        bucket = _get_client().bucket(settings.storage_bucket)
+        bucket.blob(audio_gcs).upload_from_filename(
+            tmp.name, content_type=audio.content_type or "audio/mp4"
+        )
+
+    # Upload each fixed-asset file to GCS, patch the recipe slot
+    fixed_sorted = sorted(fixed_slots, key=lambda s: int(s["position"]))
+    for slot, asset in zip(fixed_sorted, asset_files):
+        position = int(slot["position"])
+        ct = (asset.content_type or "").lower()
+        ext = Path(asset.filename or "asset").suffix.lower()
+        if ct not in _IMAGE_CT and ext not in _IMAGE_EXT:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Slot {position} asset must be an image "
+                    f"(got content_type={ct!r}, ext={ext!r})"
+                ),
+            )
+        ext = ext or ".jpg"
+        asset_gcs = f"music/{track_id}/assets/slot_{position}{ext}"
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=True) as tmp:
+            data = await asset.read()
+            if len(data) > 20 * 1024 * 1024:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"Slot {position} asset too large. Maximum 20 MB.",
+                )
+            tmp.write(data)
+            tmp.flush()
+            from app.storage import _get_client  # noqa: PLC0415
+            bucket = _get_client().bucket(settings.storage_bucket)
+            bucket.blob(asset_gcs).upload_from_filename(
+                tmp.name, content_type=ct or "image/jpeg"
+            )
+        slot["asset_gcs_path"] = asset_gcs
+        slot.setdefault("asset_kind", "image")
+
+    # Persist track
+    now = datetime.now(UTC)
+    track = MusicTrack(
+        id=track_id,
+        title=title.strip() or audio.filename or f"Track {track_id[:8]}",
+        artist=artist.strip(),
+        source_url=f"templated://{audio.filename or 'audio'}",
+        audio_gcs_path=audio_gcs,
+        duration_s=duration_s,
+        analysis_status="ready",  # bypass beat detection
+        recipe_cached=recipe,
+        recipe_cached_at=now,
+        beat_timestamps_s=[],
+        track_config={},
+        published_at=now if publish else None,
+    )
+    db.add(track)
+    await db.commit()
+    await db.refresh(track)
+
+    log.info(
+        "templated_music_track_created",
+        track_id=track_id,
+        slots=len(recipe.get("slots", [])),
+        fixed=len(fixed_sorted),
+        published=publish,
+    )
+    return CreateMusicTrackResponse(id=track_id, analysis_status="ready")
 
 
 @router.get(
