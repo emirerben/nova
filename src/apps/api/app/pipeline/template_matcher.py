@@ -658,7 +658,10 @@ def _dedup_adjacent(steps: list[AssemblyStep]) -> list[AssemblyStep]:
     """
     for i in range(1, len(steps)):
         # Locked steps reference the template source — never swap them.
-        if steps[i].clip_id == LOCKED_TEMPLATE_CLIP_ID or steps[i - 1].clip_id == LOCKED_TEMPLATE_CLIP_ID:
+        if (
+            steps[i].clip_id == LOCKED_TEMPLATE_CLIP_ID
+            or steps[i - 1].clip_id == LOCKED_TEMPLATE_CLIP_ID
+        ):
             continue
         if steps[i].clip_id == steps[i - 1].clip_id:
             for j in range(i + 1, len(steps)):
