@@ -18,6 +18,20 @@ export interface MusicTrackSummary {
   section_duration_s: number;
   required_clips_min: number;
   required_clips_max: number;
+  /**
+   * "templated" tracks have typed slots (e.g. Love-From-Moon: slot 1 fixed
+   * image, slot 2 user upload). The frontend renders a per-slot upload UI
+   * instead of the generic clip-list textarea.
+   */
+  template_kind: "beat_sync" | "templated";
+  user_slot_count: number;
+  /** One entry per user_upload slot; comma-joined accepted kinds, e.g. "video,image". */
+  user_slot_accepts: string[];
+}
+
+export interface SlotUploadResponse {
+  gcs_path: string;
+  kind: "video" | "image";
 }
 
 export interface MusicTrackListResponse {
@@ -100,6 +114,20 @@ export async function createMusicJob(
 export async function getMusicJobStatus(jobId: string): Promise<MusicJobStatus> {
   const res = await fetch(`${API_BASE}/music-jobs/${jobId}/status`);
   if (!res.ok) throw new Error(`Failed to get job status: ${res.status}`);
+  return res.json();
+}
+
+export async function uploadMusicSlot(file: File): Promise<SlotUploadResponse> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${API_BASE}/music-jobs/upload-slot`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? "Upload failed");
+  }
   return res.json();
 }
 
