@@ -95,7 +95,7 @@ log "Starting Celery worker (watchfiles auto-restart on .py changes)..."
 (
   cd "$REPO/src/apps/api"
   exec .venv/bin/watchfiles --filter python \
-    'celery -A app.worker:celery_app worker --loglevel=info --concurrency=2' \
+    '.venv/bin/celery -A app.worker:celery_app worker --loglevel=info --concurrency=2' \
     app
 ) > "$DEV_DIR/worker.log" 2>&1 &
 echo $! >> "$PID_FILE"
