@@ -109,7 +109,7 @@ export default function TemplatePage() {
   }, []);
 
   // ── Reusable batch polling (used by both new imports and recovery) ────────
-  function startBatchPolling(batchId: string, templateId: string) {
+  function startBatchPolling(batchId: string, templateId: string, requiredClipsMin: number) {
     // Cancel any existing polling to prevent concurrent poll conflict
     if (drivePollRef.current) {
       clearTimeout(drivePollRef.current as unknown as ReturnType<typeof setTimeout>);
@@ -117,7 +117,7 @@ export default function TemplatePage() {
 
     setPageState("drive_importing");
 
-    const minClips = 5;
+    const minClips = requiredClipsMin;
     const maxRetries = 3;
     let consecutiveErrors = 0;
 
@@ -183,16 +183,29 @@ export default function TemplatePage() {
 
   // Recover in-progress batch import from localStorage
   // First validate the batch still exists on the server before polling
+  // Wait until templates load so we can resolve the saved template's clip-min.
+  const recoveryAttempted = useRef(false);
   useEffect(() => {
+    if (recoveryAttempted.current) return;
+    if (loadingTemplates) return;
+    recoveryAttempted.current = true;
+
     const saved = readBatchFromStorage();
     if (!saved) return;
+
+    const savedTemplate = templates.find((t) => t.id === saved.template_id);
+    if (!savedTemplate) {
+      // Template no longer exists — abandon recovery
+      clearBatchStorage();
+      return;
+    }
 
     // Check if batch is still alive before starting to poll
     getDriveImportBatchStatus(saved.batch_id)
       .then((status) => {
         if (status.status === "importing") {
           setIsRecovery(true);
-          startBatchPolling(saved.batch_id, saved.template_id);
+          startBatchPolling(saved.batch_id, saved.template_id, savedTemplate.required_clips_min);
         } else if (status.status === "complete" || status.status === "partial_failure" || status.status === "failed") {
           // Batch finished while we were away, clean up
           clearBatchStorage();
@@ -203,7 +216,7 @@ export default function TemplatePage() {
         clearBatchStorage();
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadingTemplates, templates]);
 
   function selectTemplate(t: TemplateListItem) {
     setSelectedTemplate(t);
@@ -261,10 +274,15 @@ export default function TemplatePage() {
       ? [faceClip, ...clips]
       : clips;
 
-    const minClips = 5;
+    const minClips = selectedTemplate.required_clips_min;
+    const maxClipsForTemplate = Math.min(selectedTemplate.required_clips_max, MAX_CLIPS);
     if (orderedClips.length < minClips) {
       const need = minClips - orderedClips.length;
       setErrorMsg(`This template needs at least ${minClips} clips. Add ${need} more.`);
+      return;
+    }
+    if (orderedClips.length > maxClipsForTemplate) {
+      setErrorMsg(`This template accepts at most ${maxClipsForTemplate} clips. Remove ${orderedClips.length - maxClipsForTemplate}.`);
       return;
     }
 
@@ -355,13 +373,14 @@ export default function TemplatePage() {
       if (files.length === 0) return;
 
       // Validate count
-      const minClips = 5;
+      const minClips = selectedTemplate.required_clips_min;
+      const maxClipsForTemplate = Math.min(selectedTemplate.required_clips_max, MAX_CLIPS);
       if (files.length < minClips) {
         setErrorMsg(`This template needs at least ${minClips} clips. You selected ${files.length}.`);
         return;
       }
-      if (files.length > MAX_CLIPS) {
-        setErrorMsg(`Maximum ${MAX_CLIPS} clips per batch.`);
+      if (files.length > maxClipsForTemplate) {
+        setErrorMsg(`This template accepts at most ${maxClipsForTemplate} clips. You selected ${files.length}.`);
         return;
       }
 
@@ -390,7 +409,7 @@ export default function TemplatePage() {
 
       // Persist for recovery if user navigates away
       saveBatchToStorage(batch_id, selectedTemplate.id);
-      startBatchPolling(batch_id, selectedTemplate.id);
+      startBatchPolling(batch_id, selectedTemplate.id, selectedTemplate.required_clips_min);
     } catch (err) {
       setPageState("error");
       if (err instanceof Error && err.message.includes("denied")) {
@@ -469,7 +488,8 @@ export default function TemplatePage() {
   }
 
   // ── Upload View (template selected) ─────────────────────────────────────────
-  const minClips = 5;
+  const minClips = selectedTemplate?.required_clips_min ?? 5;
+  const maxClips = Math.min(selectedTemplate?.required_clips_max ?? MAX_CLIPS, MAX_CLIPS);
   // Face template needs N action clips + 1 face clip = N+1 total. The minimum
   // is computed against the combined ordered list so users see the right copy.
   const totalClipCount = (isFaceTemplate && faceClip ? 1 : 0) + clips.length;
@@ -504,8 +524,8 @@ export default function TemplatePage() {
           {isSlotBound
             ? "Upload one clip per slot in order."
             : isFaceTemplate
-            ? `Part 1: 1 yakın çekim yüz/intro klibi. Part 2: ${minClips - 1}–${MAX_CLIPS - 1} aksiyon klibi. AI bu sırayla template'e dizecek.`
-            : `Upload ${minClips}–${MAX_CLIPS} raw clips. AI will assemble them to match this template.`}
+            ? `Part 1: 1 yakın çekim yüz/intro klibi. Part 2: ${minClips - 1}–${maxClips - 1} aksiyon klibi. AI bu sırayla template'e dizecek.`
+            : `Upload ${minClips}–${maxClips} raw clips. AI will assemble them to match this template.`}
         </p>
 
         {/* Location input */}
@@ -618,7 +638,7 @@ export default function TemplatePage() {
         {!isSlotBound && (<>
         {isFaceTemplate && (
           <p className="text-zinc-300 text-xs font-semibold mb-1.5 uppercase tracking-wide">
-            Part 2 — Aksiyon klipleri <span className="text-zinc-500">({minClips - 1}–{MAX_CLIPS - 1} video)</span>
+            Part 2 — Aksiyon klipleri <span className="text-zinc-500">({minClips - 1}–{maxClips - 1} video)</span>
           </p>
         )}
         <div
