@@ -15,12 +15,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.tasks.template_orchestrate import (
+    _HARD_MIN_BODY_S,
     _audio_energy_curve,
     _build_fixed_intro_ass,
     _concat_silent,
     _render_intro_with_captions,
     _seconds_to_ass_time,
     _select_body_window,
+    _select_body_window_peak_anchored,
 )
 
 # Skip these tests if ffmpeg is missing (e.g. minimal CI without media tools).
@@ -386,6 +388,66 @@ class TestAudioEnergyPeakSelection:
         # First window includes the marginal-louder bucket
         assert start == pytest.approx(0.0)
         assert end == pytest.approx(19.5)
+
+
+# ── _select_body_window_peak_anchored ────────────────────────────────────────
+
+
+class TestSelectBodyWindowPeakAnchored:
+    """Locks in the short-clip robustness: clips shorter than `min_body_s`
+    use the full available duration instead of raising. Only sub-floor
+    (effectively unreadable) clips fail.
+    """
+
+    @patch(
+        "app.tasks.template_orchestrate._audio_energy_curve",
+        return_value=[0.1, 0.2, 0.3, 0.4],
+    )
+    @patch("app.pipeline.probe.probe_video")
+    def test_short_clip_uses_full_duration(self, mock_probe, _energy):
+        # 5s clip, template wants 8s min — should NOT raise.
+        mock_probe.return_value = MagicMock(duration_s=5.0)
+        start, end = _select_body_window_peak_anchored(
+            "/u.mp4",
+            pre_roll_s=4.0,
+            max_body_s=14.0,
+            min_body_s=8.0,
+        )
+        assert start == pytest.approx(0.0)
+        assert end == pytest.approx(5.0)
+
+    @patch(
+        "app.tasks.template_orchestrate._audio_energy_curve",
+        return_value=[],
+    )
+    @patch("app.pipeline.probe.probe_video")
+    def test_unusable_clip_raises(self, mock_probe, _energy):
+        # Below the hard floor — corrupt / near-empty file.
+        mock_probe.return_value = MagicMock(duration_s=_HARD_MIN_BODY_S / 2)
+        with pytest.raises(ValueError, match="unusable"):
+            _select_body_window_peak_anchored(
+                "/u.mp4",
+                pre_roll_s=4.0,
+                max_body_s=14.0,
+                min_body_s=8.0,
+            )
+
+    @patch(
+        "app.tasks.template_orchestrate._audio_energy_curve",
+        return_value=[0.1] * 5 + [0.9] + [0.1] * 14,  # peak at t=5
+    )
+    @patch("app.pipeline.probe.probe_video")
+    def test_normal_clip_uses_peak_anchored_window(self, mock_probe, _energy):
+        # 20s clip, peak at t=5, pre_roll 4 → start=1, end=15.
+        mock_probe.return_value = MagicMock(duration_s=20.0)
+        start, end = _select_body_window_peak_anchored(
+            "/u.mp4",
+            pre_roll_s=4.0,
+            max_body_s=14.0,
+            min_body_s=8.0,
+        )
+        assert start == pytest.approx(1.0)
+        assert end == pytest.approx(15.0)
 
 
 # ── _audio_energy_curve direct probe ─────────────────────────────────────────

@@ -2355,6 +2355,11 @@ _FIXED_INTRO_WIDTH = 1080
 _FIXED_INTRO_HEIGHT = 1920
 _FIXED_INTRO_FPS = 30
 
+# Floor below which a user clip is considered unusable (corrupt / near-empty
+# file). Shorter-than-target clips above this floor render at their full
+# available duration instead of failing.
+_HARD_MIN_BODY_S = 0.5
+
 
 def _seconds_to_ass_time(seconds: float) -> str:
     """Convert a float seconds value to ASS H:MM:SS.cc format."""
@@ -2647,16 +2652,28 @@ def _select_body_window_peak_anchored(
       // if too short to be useful, drag start earlier
       if end - start < min_body_s:
           start = max(0, end - min_body_s)
+
+    `min_body_s` is a soft target, not a hard requirement: clips shorter than
+    `min_body_s` render as the full available duration rather than failing.
+    Only truly unusable clips (sub-`_HARD_MIN_BODY_S`) raise.
     """
     from app.pipeline.probe import probe_video  # noqa: PLC0415
 
     probe = probe_video(user_video_path)
     user_dur = probe.duration_s
-    if user_dur < min_body_s:
+    if user_dur < _HARD_MIN_BODY_S:
         raise ValueError(
-            f"User video too short: have {user_dur:.2f}s, "
-            f"need at least {min_body_s:.2f}s of body"
+            f"User video unusable: have {user_dur:.2f}s "
+            f"(need at least {_HARD_MIN_BODY_S:.1f}s)"
         )
+
+    if user_dur < min_body_s:
+        log.info(
+            "body_v2_short_clip_full_use",
+            user_dur=round(user_dur, 2),
+            min_body_target_s=min_body_s,
+        )
+        return 0.0, user_dur
 
     energy = _audio_energy_curve(user_video_path, bucket_s=1.0)
     if energy:
@@ -3050,18 +3067,15 @@ def _run_single_video_job(
                 min_body_s=min_body_s,
             )
         except ValueError as exc:
-            user_msg = (
-                f"Video too short for this template. "
-                f"Need at least {min_body_s + 1:.1f}s. ({exc})"
-            )
+            user_msg = f"Could not read user video: {exc}"
             log.warning(
-                "fixed_intro_video_too_short",
-                job_id=job_id, min_required_s=min_body_s, error=str(exc),
+                "fixed_intro_video_unusable",
+                job_id=job_id, error=str(exc),
             )
             with _sync_session() as db:
                 job = db.get(Job, uuid.UUID(job_id))
                 if job:
-                    job.status = "failed"
+                    job.status = "processing_failed"
                     job.error_detail = user_msg
                     db.commit()
             return
