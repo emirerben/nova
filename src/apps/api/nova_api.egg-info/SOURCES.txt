@@ -17,6 +17,7 @@ app/migrations/versions/0006_template_error_detail.py
 app/migrations/versions/0007_seed_synthetic_user.py
 app/migrations/versions/0008_create_music_tracks.py
 app/migrations/versions/0009_add_music_to_jobs.py
+app/migrations/versions/0010_template_voiceover_and_kind.py
 app/migrations/versions/__init__.py
 app/pipeline/__init__.py
 app/pipeline/ass_utils.py

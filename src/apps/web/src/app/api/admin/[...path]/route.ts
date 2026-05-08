@@ -52,8 +52,11 @@ async function proxy(
   });
 }
 
-// Allow up to 50 MB for audio file uploads
-export const config = { api: { bodyParser: false } };
+// App Router route handlers stream the request body directly (via
+// `req.arrayBuffer()`), so the legacy Pages-router `bodyParser` flag
+// is unnecessary and is rejected by Next.js 14's build (see
+// https://nextjs.org/docs/app/api-reference/file-conventions/route-segment-config).
+// `maxDuration` is the supported App Router segment config.
 export const maxDuration = 60;
 
 export const GET = (req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) =>
