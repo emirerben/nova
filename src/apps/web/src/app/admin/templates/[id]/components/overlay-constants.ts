@@ -37,6 +37,20 @@ export interface FontRegistryEntry {
 }
 
 export const FONT_REGISTRY: Record<string, FontRegistryEntry> = {
+  "Inter": {
+    file: "Inter-Regular.ttf",
+    ass_name: "Inter",
+    weight: 400,
+    category: "sans",
+    css_family: "'Inter', sans-serif",
+  },
+  "Inter Medium": {
+    file: "Inter-Medium.ttf",
+    ass_name: "Inter",
+    weight: 500,
+    category: "sans",
+    css_family: "'Inter', sans-serif",
+  },
   "Playfair Display": {
     file: "PlayfairDisplay-Bold.ttf",
     ass_name: "Playfair Display",

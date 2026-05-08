@@ -301,6 +301,7 @@ class RecipeTextOverlaySchema(BaseModel):
     font_cycle_accel_at_s: float | None = None
     position_y_frac: float | None = None
     spans: list[TextSpanSchema] | None = None
+    outline_px: int | None = None  # Black outline thickness in pixels (for legibility)
     # Player-card overlay fields (consumed when effect == "player-card").
     # Both must be non-empty for the overlay to render.
     jersey_no: str | None = None

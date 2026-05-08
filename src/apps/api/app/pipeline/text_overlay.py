@@ -280,7 +280,8 @@ def generate_text_overlay_png(
                     continue  # genuinely bad timing — skip even with spans
                 position = overlay.get("position", "center")
             png_path = os.path.join(output_dir, f"slot_{slot_index}_overlay_{i}.png")
-            _draw_spans_png(overlay, spans, position, png_path)
+            _draw_spans_png(overlay, spans, position, png_path,
+                            outline_px=overlay.get("outline_px"))
             if os.path.exists(png_path):
                 results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
         else:
@@ -302,7 +303,7 @@ def generate_text_overlay_png(
                 text_size=text_size, text_size_px=text_size_px_val,
                 text_color=text_color,
                 position_y_frac=overlay.get("position_y_frac"),
-                stroke_width=int(overlay.get("stroke_width", 0)),
+                stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
                 emoji_prefix=overlay.get("emoji_prefix", ""),
             )
             results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
@@ -340,6 +341,7 @@ def generate_animated_overlay_ass(
                 text, start_s, end_s, position, effect, ass_path,
                 font_family=font_family,
                 position_y_frac=overlay.get("position_y_frac"),
+                outline_px=overlay.get("outline_px"),
             )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
@@ -364,6 +366,7 @@ def _write_animated_ass(
     *,
     font_family: str | None = None,
     position_y_frac: float | None = None,
+    outline_px: int | None = None,
 ) -> None:
     """Write an ASS file with animation tags for the given effect."""
     alignment, margin_v = _ASS_POSITION.get(position, (5, 0))
@@ -376,17 +379,22 @@ def _write_animated_ass(
         target_y = int(CANVAS_H * position_y_frac)
         pos_tag = f"\\pos({CANVAS_W // 2},{target_y})"
 
+    # Optional black outline override via \bord + \3c (outline colour) tags
+    outline_tag = ""
+    if outline_px and outline_px > 0:
+        outline_tag = f"\\bord{outline_px}\\3c&H000000&"
+
     if effect == "fade-in":
         if pos_tag:
-            dialogue_text = f"{{\\an5{pos_tag}\\fad(500,0)}}{text}"
+            dialogue_text = f"{{\\an5{pos_tag}{outline_tag}\\fad(500,0)}}{text}"
         else:
-            dialogue_text = f"{{\\an{alignment}\\fad(500,0)}}{text}"
+            dialogue_text = f"{{\\an{alignment}{outline_tag}\\fad(500,0)}}{text}"
 
     elif effect == "typewriter":
         total_dur_cs = int((end_s - start_s) * 100)
         char_count = max(len(text), 1)
         per_char_cs = max(1, total_dur_cs // char_count)
-        parts = [f"{{\\an{alignment}}}"]
+        parts = [f"{{\\an{alignment}{outline_tag}}}"]
         for ch in text:
             parts.append(f"{{\\k{per_char_cs}}}{ch}")
         dialogue_text = "".join(parts)
@@ -397,11 +405,15 @@ def _write_animated_ass(
         start_y = CANVAS_H + 100
         x = CANVAS_W // 2
         dialogue_text = (
-            f"{{\\an5\\move({x},{start_y},{x},{target_y},0,500)}}{text}"
+            f"{{\\an5\\move({x},{start_y},{x},{target_y},0,500){outline_tag}}}{text}"
         )
 
     else:
-        dialogue_text = f"{{\\an5{pos_tag}}}{text}" if pos_tag else f"{{\\an{alignment}}}{text}"
+        dialogue_text = (
+            f"{{\\an5{pos_tag}{outline_tag}}}{text}"
+            if pos_tag
+            else f"{{\\an{alignment}{outline_tag}}}{text}"
+        )
 
     # Use dynamic ASS header when font_family is set
     if font_family:
@@ -465,6 +477,7 @@ def _draw_frame(
         _draw_spans_png(
             overlay, spans, position, png_path,
             font_overrides=overrides, position_y_frac=position_y_frac,
+            outline_px=overlay.get("outline_px"),
         )
     else:
         _draw_text_png(
@@ -472,6 +485,8 @@ def _draw_frame(
             font=font, font_family=font_family, font_style=font_style,
             text_size=text_size, text_color=text_color,
             position_y_frac=position_y_frac,
+            stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
+            emoji_prefix=overlay.get("emoji_prefix", ""),
         )
 
 
@@ -1211,6 +1226,7 @@ def _draw_spans_png(
     *,
     font_overrides: dict[int, object] | None = None,
     position_y_frac: float | None = None,
+    outline_px: int | None = None,
 ) -> None:
     """Draw multiple text spans with per-word font/color/size on a 1080x1920 canvas.
 
@@ -1344,8 +1360,12 @@ def _draw_spans_png(
 
             # Shadow
             shadow_draw.text((x, draw_y + 6), sd["text"], font=sd["font"], fill=(0, 0, 0, 160))
-            # Foreground
-            fg_draw.text((x, draw_y), sd["text"], font=sd["font"], fill=sd["color"])
+            # Foreground — optional black stroke when overlay sets outline_px
+            if outline_px and outline_px > 0:
+                fg_draw.text((x, draw_y), sd["text"], font=sd["font"], fill=sd["color"],
+                             stroke_width=outline_px, stroke_fill=(0, 0, 0, 255))
+            else:
+                fg_draw.text((x, draw_y), sd["text"], font=sd["font"], fill=sd["color"])
 
             x += sd["w"] + _SPAN_WORD_GAP
 

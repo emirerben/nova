@@ -70,6 +70,7 @@ export interface RecipeTextOverlay {
   sample_text: string;
   font_cycle_accel_at_s: number | null;
   spans?: TextSpan[];     // When set, overrides flat text for rendering
+  outline_px?: number | null;  // When set, draws black outline of N pixels around text for legibility
 }
 
 export interface RecipeInterstitial {

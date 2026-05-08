@@ -68,12 +68,11 @@ class TestBuildVideoFilter:
         assert "setpts=PTS/0.5" in joined
 
     def test_setpts_is_after_colorspace(self):
-        """colorspace+format are first (HDR→SDR), then setpts before scale/crop."""
+        """colorspace is first (SDR no-op), then setpts before scale/crop."""
         filters = _build_video_filter("16:9", None, speed_factor=2.0)
-        assert filters[0] == "colorspace=iall=bt2020:all=bt709"
-        assert filters[1] == "format=yuv420p"
-        assert filters[2] == "setpts=PTS/2.0"
-        assert "scale" in filters[3]
+        assert filters[0] == "colorspace=all=bt709"
+        assert filters[1] == "setpts=PTS/2.0"
+        assert "scale" in filters[2]
 
     def test_color_hint_warm(self):
         """Color hint 'warm' adds colorbalance filter."""
