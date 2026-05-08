@@ -339,14 +339,6 @@ def _run_template_job(job_id: str) -> None:
         )
         return
 
-    # Strip routing-only fields that aren't valid TemplateRecipe constructor
-    # args. Migration 0010 backfilled `template_kind` onto every existing
-    # recipe; the dataclass doesn't accept that kwarg, so every legacy
-    # template was crashing at init with "unexpected keyword argument".
-    recipe_kwargs = {
-        k: v for k, v in recipe_data.items()
-        if k not in ("template_kind",)
-    }
     try:
         recipe = _build_recipe(recipe_data)
     except (TypeError, ValueError, KeyError) as exc:
@@ -529,12 +521,6 @@ def _run_rerender(job_id: str, job: Job) -> None:
         recipe_data = template.recipe_cached
         audio_gcs_path = template.audio_gcs_path
 
-    # Same template_kind strip as the main entry path — the rerender route
-    # also has to tolerate the migration-backfilled discriminator field.
-    recipe_kwargs = {
-        k: v for k, v in recipe_data.items()
-        if k not in ("template_kind",)
-    }
     try:
         recipe = _build_recipe(recipe_data)
     except (TypeError, ValueError, KeyError) as exc:

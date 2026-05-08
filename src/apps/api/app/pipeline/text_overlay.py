@@ -512,7 +512,7 @@ def _render_player_card(
     Reads ``jersey_no`` and ``player_name`` from the overlay dict; both must
     be non-empty or the overlay is silently skipped.
     """
-    from PIL import Image, ImageDraw, ImageFilter, ImageFont  # noqa: PLC0415
+    from PIL import Image  # noqa: PLC0415
 
     jersey_no = str(overlay.get("jersey_no") or "").strip()
     player_name = str(overlay.get("player_name") or "").strip()
