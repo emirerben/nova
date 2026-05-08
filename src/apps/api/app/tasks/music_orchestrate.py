@@ -526,16 +526,16 @@ def _run_templated_music_job(job_id: str) -> None:
       - Skips Gemini / matcher entirely when only one user slot exists or
         when all user inputs are images — there is nothing to match.
     """
+    from app.pipeline.agents.gemini_analyzer import (  # noqa: PLC0415
+        AssemblyStep,
+    )
     from app.pipeline.image_clip import (  # noqa: PLC0415
-        SUBTLE_ZOOM_IN,
         ImageClipError,
+        SUBTLE_ZOOM_IN,
         is_image_file,
         normalize_to_jpeg,
         render_image_to_clip,
         render_video_to_clip,
-    )
-    from app.pipeline.agents.gemini_analyzer import (  # noqa: PLC0415
-        AssemblyStep,
     )
     from app.storage import upload_public_read  # noqa: PLC0415
 
