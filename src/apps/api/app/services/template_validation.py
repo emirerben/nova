@@ -41,7 +41,28 @@ def require_ready(template: VideoTemplate) -> None:
 
 
 def validate_clip_count(template: VideoTemplate, n_clips: int) -> None:
-    """Raise 422 if clip count is outside template bounds."""
+    """Raise 422 if clip count is outside template bounds.
+
+    Mixed-media templates (any slot with media_type=photo) require positional
+    binding: clip count must equal slot count exactly.
+    """
+    slots = (template.recipe_cached or {}).get("slots") or []
+    is_mixed_media = any(
+        str(s.get("media_type", "video")) == "photo" for s in slots
+    )
+
+    if is_mixed_media:
+        slot_count = len(slots)
+        if n_clips != slot_count:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Template has photo slots and requires exactly "
+                    f"{slot_count} clips in slot order, got {n_clips}."
+                ),
+            )
+        return
+
     if n_clips < template.required_clips_min:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

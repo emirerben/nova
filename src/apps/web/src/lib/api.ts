@@ -327,6 +327,12 @@ export async function getBatchPresignedUrls(
   return res.json();
 }
 
+export interface SlotSummary {
+  position: number;
+  target_duration_s: number;
+  media_type: "video" | "photo";
+}
+
 export interface TemplateListItem {
   id: string;
   name: string;
@@ -336,6 +342,30 @@ export interface TemplateListItem {
   total_duration_s: number;
   copy_tone: string;
   thumbnail_url: string | null;
+  required_clips_min: number;
+  required_clips_max: number;
+  slots: SlotSummary[];
+}
+
+export async function uploadTemplatePhoto(params: {
+  templateId: string;
+  slotPosition: number;
+  file: File;
+}): Promise<{ gcs_path: string; duration_s: number }> {
+  const fd = new FormData();
+  fd.append("template_id", params.templateId);
+  fd.append("slot_position", String(params.slotPosition));
+  fd.append("file", params.file);
+
+  const res = await fetch(`${API_URL}/uploads/template-photo`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Photo upload failed: ${res.status}`);
+  }
+  return res.json();
 }
 
 export async function listTemplates(): Promise<TemplateListItem[]> {

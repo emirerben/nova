@@ -25,6 +25,7 @@ import {
   requestDriveAccessToken,
   openDrivePicker,
 } from "@/lib/google-drive-picker";
+import SlotBoundUpload from "./SlotBoundUpload";
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
 const GOOGLE_PICKER_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? "";
@@ -481,6 +482,11 @@ export default function TemplatePage() {
       ? Math.round(clips.reduce((sum, c) => sum + c.progress, 0) / clips.length)
       : 0;
 
+  // Mixed-media templates use slot-bound upload (one input per slot, in order).
+  // All-video templates keep the legacy free-form drop zone (AI assembles).
+  const isSlotBound =
+    !!selectedTemplate?.slots?.some((s) => s.media_type === "photo");
+
   return (
     <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4 py-16">
       <div className="w-full max-w-xl">
@@ -495,7 +501,9 @@ export default function TemplatePage() {
           {selectedTemplate?.name || "Upload Clips"}
         </h1>
         <p className="text-zinc-400 text-sm mb-4">
-          {isFaceTemplate
+          {isSlotBound
+            ? "Upload one clip per slot in order."
+            : isFaceTemplate
             ? `Part 1: 1 yakın çekim yüz/intro klibi. Part 2: ${minClips - 1}–${MAX_CLIPS - 1} aksiyon klibi. AI bu sırayla template'e dizecek.`
             : `Upload ${minClips}–${MAX_CLIPS} raw clips. AI will assemble them to match this template.`}
         </p>
@@ -516,21 +524,35 @@ export default function TemplatePage() {
           />
         </div>
 
-        {/* Compress toggle */}
-        <label className="flex items-center gap-2 mb-5 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={compress}
-            onChange={(e) => setCompress(e.target.checked)}
-            disabled={pageState !== "upload"}
-            className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-white accent-white"
+        {/* Compress toggle (legacy free-form upload only) */}
+        {!isSlotBound && (
+          <label className="flex items-center gap-2 mb-5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={compress}
+              onChange={(e) => setCompress(e.target.checked)}
+              disabled={pageState !== "upload"}
+              className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-white accent-white"
+            />
+            <span className="text-zinc-500 text-xs">Compress to 720p</span>
+            <span className="text-zinc-600 text-xs">(~10x faster for testing)</span>
+          </label>
+        )}
+
+        {/* Slot-bound upload (mixed-media templates) */}
+        {isSlotBound && selectedTemplate && (
+          <SlotBoundUpload
+            template={selectedTemplate}
+            location={location}
+            onJobCreated={(jobId) => {
+              trackRecentJob(jobId, "template");
+              router.push(`/template-jobs/${jobId}`);
+            }}
           />
-          <span className="text-zinc-500 text-xs">Compress to 720p</span>
-          <span className="text-zinc-600 text-xs">(~10x faster for testing)</span>
-        </label>
+        )}
 
         {/* Part 1 — Face/Intro dropzone (face templates only) */}
-        {isFaceTemplate && (
+        {!isSlotBound && isFaceTemplate && (
           <div className="mb-3">
             <p className="text-zinc-300 text-xs font-semibold mb-1.5 uppercase tracking-wide">
               Part 1 — Yüz / Intro klibi <span className="text-amber-400">(1 video)</span>
@@ -593,6 +615,7 @@ export default function TemplatePage() {
         )}
 
         {/* Drop zone — Part 2 for face templates, only zone for others */}
+        {!isSlotBound && (<>
         {isFaceTemplate && (
           <p className="text-zinc-300 text-xs font-semibold mb-1.5 uppercase tracking-wide">
             Part 2 — Aksiyon klipleri <span className="text-zinc-500">({minClips - 1}–{MAX_CLIPS - 1} video)</span>
@@ -764,6 +787,7 @@ export default function TemplatePage() {
             ? `Add ${minClips - totalClipCount} more clip${minClips - totalClipCount !== 1 ? "s" : ""}`
             : "Create with Template"}
         </button>
+        </>)}
       </div>
     </main>
   );

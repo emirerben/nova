@@ -22,6 +22,13 @@ router = APIRouter()
 # ── Response schemas ────────────────────────────────────────────────────────
 
 
+class SlotSummary(BaseModel):
+    """Lightweight slot info for the upload UI: which media to collect per slot."""
+    position: int
+    target_duration_s: float
+    media_type: str  # "video" | "photo"
+
+
 class TemplateListItem(BaseModel):
     id: str
     name: str
@@ -31,6 +38,9 @@ class TemplateListItem(BaseModel):
     total_duration_s: float
     copy_tone: str
     thumbnail_url: str | None
+    required_clips_min: int
+    required_clips_max: int
+    slots: list[SlotSummary]
 
 
 class PlaybackUrlResponse(BaseModel):
@@ -67,10 +77,18 @@ async def list_templates(
 
         try:
             recipe = t.recipe_cached
-            slots = recipe.get("slots", [])
-            slot_count = len(slots)
+            raw_slots = recipe.get("slots", [])
+            slot_count = len(raw_slots)
             total_duration_s = float(recipe.get("total_duration_s", 0))
             copy_tone = str(recipe.get("copy_tone", "casual"))
+            slot_summaries = [
+                SlotSummary(
+                    position=int(s.get("position", i + 1)),
+                    target_duration_s=float(s.get("target_duration_s", 5.0)),
+                    media_type=str(s.get("media_type", "video")),
+                )
+                for i, s in enumerate(raw_slots)
+            ]
         except (TypeError, ValueError, AttributeError):
             # Corrupt recipe_cached — skip this template
             log.warning("template_skipped_corrupt_recipe", template_id=t.id)
@@ -86,6 +104,9 @@ async def list_templates(
                 total_duration_s=total_duration_s,
                 copy_tone=copy_tone,
                 thumbnail_url=None,  # v1: no thumbnails
+                required_clips_min=t.required_clips_min,
+                required_clips_max=t.required_clips_max,
+                slots=slot_summaries,
             )
         )
 

@@ -248,6 +248,7 @@ ColorHint = Literal[
     "warm", "cool", "high-contrast", "desaturated", "vintage", "none"
 ]
 SlotType = Literal["hook", "broll", "outro"]
+MediaType = Literal["video", "photo"]
 OverlayEffect = Literal[
     "pop-in", "fade-in", "scale-up", "font-cycle", "typewriter",
     "glitch", "bounce", "slide-in", "slide-up", "static", "none",
@@ -300,6 +301,8 @@ class RecipeTextOverlaySchema(BaseModel):
     sample_text: str = ""
     font_cycle_accel_at_s: float | None = None
     position_y_frac: float | None = None
+    stroke_width: int = 0  # 0 = no outline; 3-5 = TikTok-style black outline
+    emoji_prefix: str = ""  # e.g. "🗣️" — Twemoji PNG composited left of first line
     spans: list[TextSpanSchema] | None = None
     outline_px: int | None = None  # Black outline thickness in pixels (for legibility)
     # Player-card overlay fields (consumed when effect == "player-card").
@@ -372,6 +375,7 @@ class RecipeSlotSchema(BaseModel):
     color_hint: ColorHint = "none"
     speed_factor: float = 1.0
     energy: float = 5.0
+    media_type: MediaType = "video"
     text_overlays: list[RecipeTextOverlaySchema] = []
     # Lock this slot to a fixed range of the original template video instead
     # of filling it with a user clip (e.g. Morocco's "This is AFRICA" hook).

@@ -22,6 +22,7 @@ class VideoProbe:
     aspect_ratio: str  # "16:9" | "9:16" | "other"
     file_size_bytes: int
     color_trc: str = "bt709"  # e.g. "arib-std-b67" (HLG), "smpte2084" (PQ/HDR10)
+    color_transfer: str = ""  # raw container value; empty = unknown/SDR
 
 
 class ProbeError(Exception):
@@ -98,6 +99,12 @@ def probe_video(file_path: str) -> VideoProbe:
         fps_str = video_stream.get("r_frame_rate", "30/1")
         num, den = fps_str.split("/")
         fps = float(num) / float(den) if float(den) > 0 else 30.0
+
+        # Color transfer for HDR detection downstream.
+        # iPhone HDR clips report "arib-std-b67" (HLG); Apple/Sony PQ clips
+        # report "smpte2084". SDR clips report "bt709", "bt470bg", or are
+        # unset entirely. Empty string here means "unknown — treat as SDR".
+        color_transfer = str(video_stream.get("color_transfer") or "").lower()
     except (KeyError, ValueError, ZeroDivisionError) as exc:
         raise ProbeError(f"Failed to parse probe metadata: {exc}") from exc
 
@@ -112,6 +119,7 @@ def probe_video(file_path: str) -> VideoProbe:
         fps=fps,
         codec=codec,
         color_trc=color_trc,
+        color_transfer=color_transfer or "unknown",
     )
 
     return VideoProbe(
@@ -124,6 +132,7 @@ def probe_video(file_path: str) -> VideoProbe:
         aspect_ratio=aspect_ratio,
         file_size_bytes=file_size_bytes,
         color_trc=color_trc,
+        color_transfer=color_transfer,
     )
 
 

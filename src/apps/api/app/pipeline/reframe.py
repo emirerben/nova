@@ -336,8 +336,8 @@ def _build_video_filter(
 ) -> list[str]:
     """Return list of filter segments to join with commas.
 
-    Filter order: setpts (speed) -> scale/crop -> color grading
-                  -> darkening -> narrowing -> caption ASS.
+    Filter order: HDR tonemap (if needed) -> setpts (speed) -> scale/crop
+                  -> color grading -> darkening -> narrowing -> caption ASS.
     setpts MUST be first to normalize PTS before timed filters (darkening, narrowing).
     Text overlays are handled separately via overlay filter (not in this chain).
     """

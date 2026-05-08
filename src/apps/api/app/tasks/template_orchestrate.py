@@ -38,6 +38,8 @@ from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, TemplateRecipeVersion, VideoTemplate
 from app.pipeline.agents.gemini_analyzer import (
+    AssemblyPlan,
+    AssemblyStep,
     ClipMeta,
     GeminiAnalysisError,
     GeminiRefusalError,
@@ -46,7 +48,11 @@ from app.pipeline.agents.gemini_analyzer import (
     analyze_template,
     gemini_upload_and_wait,
 )
-from app.pipeline.template_matcher import TemplateMismatchError, consolidate_slots, match
+from app.pipeline.template_matcher import (
+    TemplateMismatchError,
+    consolidate_slots,
+    match,
+)
 from app.storage import copy_object_signed_url, download_to_file, upload_public_read
 from app.worker import celery_app
 
@@ -352,34 +358,49 @@ def _run_template_job(job_id: str) -> None:
         # [2b] Probe all clips — get aspect_ratio + duration in a single FFprobe pass
         probe_map = _probe_clips(local_clip_paths)
 
-        # [3] Upload all clips to Gemini in parallel
-        log.info("gemini_upload_clips_start", job_id=job_id, count=len(local_clip_paths))
-        file_refs = _upload_clips_parallel(local_clip_paths)
-        log.info("gemini_upload_clips_done", job_id=job_id)
-
-        # [4] Analyze all clips in parallel — pass per-template filter_hint so
-        # Gemini biases best_moments toward the desired content (e.g. ball-in-frame).
-        log.info("gemini_analyze_clips_start", job_id=job_id)
-        clip_metas, failed_count = _analyze_clips_parallel(
-            file_refs,
-            local_clip_paths,
-            probe_map,
-            filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
-        )
-
-        # Threshold check: >50% failure → fatal
-        total = len(clip_metas) + failed_count
-        if failed_count > total * 0.5:
-            raise GeminiAnalysisError(
-                f"{failed_count}/{total} clips failed Gemini analysis — "
-                "too many failures to produce quality output"
+        mixed_media = _is_mixed_media(recipe.slots)
+        if mixed_media:
+            # Mixed-media template: positional binding (clip[i] → slot[i]).
+            # Photo slots skip Gemini entirely; video slots upload+analyze in parallel.
+            log.info(
+                "template_mixed_media_path",
+                job_id=job_id,
+                slot_count=len(recipe.slots),
             )
-        log.info(
-            "gemini_analyze_clips_done",
-            job_id=job_id,
-            success=len(clip_metas),
-            failed=failed_count,
-        )
+            slots_in_order = _slots_in_position_order(recipe.slots)
+            clip_metas = _build_positional_clip_metas(
+                local_clip_paths, slots_in_order, probe_map
+            )
+            file_refs = []  # not used in this path
+        else:
+            # [3] Upload all clips to Gemini in parallel
+            log.info("gemini_upload_clips_start", job_id=job_id, count=len(local_clip_paths))
+            file_refs = _upload_clips_parallel(local_clip_paths)
+            log.info("gemini_upload_clips_done", job_id=job_id)
+
+            # [4] Analyze all clips in parallel — pass per-template filter_hint so
+            # Gemini biases best_moments toward the desired content (e.g. ball-in-frame).
+            log.info("gemini_analyze_clips_start", job_id=job_id)
+            clip_metas, failed_count = _analyze_clips_parallel(
+                file_refs,
+                local_clip_paths,
+                probe_map,
+                filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
+            )
+
+            # Threshold check: >50% failure → fatal
+            total = len(clip_metas) + failed_count
+            if failed_count > total * 0.5:
+                raise GeminiAnalysisError(
+                    f"{failed_count}/{total} clips failed Gemini analysis — "
+                    "too many failures to produce quality output"
+                )
+            log.info(
+                "gemini_analyze_clips_done",
+                job_id=job_id,
+                success=len(clip_metas),
+                failed=failed_count,
+            )
 
         # [5] Template match.
         # Pin clip 0 to slot 1 when the template's first slot is "hook"-typed —
@@ -397,17 +418,24 @@ def _run_template_job(job_id: str) -> None:
             pinned_assignments[1] = file_refs[0].name
             log.info("matcher_pin", slot=1, clip_id=file_refs[0].name)
         try:
-            recipe = consolidate_slots(recipe, clip_metas)
-            assembly_plan = match(
-                recipe, clip_metas,
-                pinned_assignments=pinned_assignments,
-                filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
-            )
+            if mixed_media:
+                # Positional binding skips consolidate_slots + greedy matcher.
+                assembly_plan = _match_positional(recipe, clip_metas)
+            else:
+                recipe = consolidate_slots(recipe, clip_metas)
+                assembly_plan = match(
+                    recipe, clip_metas,
+                    pinned_assignments=pinned_assignments,
+                    filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
+                )
         except TemplateMismatchError as exc:
             raise ValueError(f"{exc.code}: {exc.message}") from exc
 
-        # Build mapping: Gemini file ref name → GCS path for re-render
-        clip_id_to_gcs = {ref.name: gcs for ref, gcs in zip(file_refs, clip_paths_gcs)}
+        # Build mapping: clip_id → GCS path for re-render
+        if mixed_media:
+            clip_id_to_gcs = {f"clip_{i}": gcs for i, gcs in enumerate(clip_paths_gcs)}
+        else:
+            clip_id_to_gcs = {ref.name: gcs for ref, gcs in zip(file_refs, clip_paths_gcs)}
 
         # Persist assembly plan
         plan_data = {
@@ -431,9 +459,14 @@ def _run_template_job(job_id: str) -> None:
         log.info("ffmpeg_assemble_start", job_id=job_id)
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
         base_path = os.path.join(tmpdir, "base_no_overlays.mp4")
-        clip_id_to_local = {
-            ref.name: path for ref, path in zip(file_refs, local_clip_paths)
-        }
+        if mixed_media:
+            clip_id_to_local = {
+                f"clip_{i}": path for i, path in enumerate(local_clip_paths)
+            }
+        else:
+            clip_id_to_local = {
+                ref.name: path for ref, path in zip(file_refs, local_clip_paths)
+            }
         _add_locked_template_source(
             recipe_data, template_gcs_path, tmpdir,
             clip_id_to_local, probe_map,
@@ -641,6 +674,119 @@ def _run_rerender(job_id: str, job: Job) -> None:
 # ── Parallelism helpers ────────────────────────────────────────────────────────
 
 
+# ── Mixed-media (video + photo) helpers ──────────────────────────────────────
+
+
+def _is_mixed_media(slots: list[dict]) -> bool:
+    """True when any slot expects a still photo (forces positional binding)."""
+    return any(str(s.get("media_type", "video")) == "photo" for s in slots)
+
+
+def _slots_in_position_order(slots: list[dict]) -> list[dict]:
+    return sorted(slots, key=lambda s: int(s.get("position", 0)))
+
+
+def _build_positional_clip_metas(
+    local_paths: list[str],
+    slots_in_order: list[dict],
+    probe_map: dict,
+) -> list[ClipMeta]:
+    """Build one ClipMeta per slot with positional binding (clip[i] → slot[i]).
+
+    Photo slots get a synthetic ClipMeta covering the full clip duration
+    (the upload pipeline already produced a 1080x1920 mp4 at slot.target_duration_s).
+    Video slots run normal Gemini upload+analyze in parallel.
+
+    clip_id is `clip_{i}` so downstream `clip_id_to_local` can be built positionally.
+    """
+    if len(local_paths) != len(slots_in_order):
+        raise ValueError(
+            f"Positional binding needs {len(slots_in_order)} clips, got {len(local_paths)}"
+        )
+
+    video_indices = [
+        i for i, s in enumerate(slots_in_order)
+        if str(s.get("media_type", "video")) != "photo"
+    ]
+
+    video_metas: dict[int, ClipMeta] = {}
+    if video_indices:
+        def _process(idx: int) -> tuple[int, ClipMeta]:
+            path = local_paths[idx]
+            ref = gemini_upload_and_wait(path)
+            meta = analyze_clip(ref)
+            meta.clip_id = f"clip_{idx}"
+            meta.clip_path = path
+            return idx, meta
+
+        with ThreadPoolExecutor(max_workers=min(len(video_indices), 8)) as pool:
+            futures = [pool.submit(_process, i) for i in video_indices]
+            for future in as_completed(futures):
+                try:
+                    idx, meta = future.result()
+                    video_metas[idx] = meta
+                except (GeminiRefusalError, GeminiAnalysisError, Exception) as exc:
+                    log.error("positional_video_analysis_failed", error=str(exc))
+                    raise
+
+    metas: list[ClipMeta] = []
+    for i, slot in enumerate(slots_in_order):
+        path = local_paths[i]
+        if str(slot.get("media_type", "video")) == "photo":
+            probe = probe_map.get(path)
+            dur = probe.duration_s if probe else float(slot.get("target_duration_s", 5.0))
+            metas.append(ClipMeta(
+                clip_id=f"clip_{i}",
+                transcript="",
+                hook_text="",
+                hook_score=5.0,
+                best_moments=[{
+                    "start_s": 0.0,
+                    "end_s": float(dur),
+                    "energy": 5.0,
+                    "description": "static photo",
+                }],
+                clip_path=path,
+            ))
+        else:
+            meta = video_metas.get(i)
+            if meta is None:
+                raise GeminiAnalysisError(
+                    f"Video slot {slot.get('position', i + 1)} analysis failed"
+                )
+            metas.append(meta)
+    return metas
+
+
+def _match_positional(recipe: TemplateRecipe, clip_metas: list[ClipMeta]) -> AssemblyPlan:
+    """Direct slot[i] ← clip_metas[i] binding for mixed-media templates.
+
+    Skips the greedy/coverage matcher entirely; ordering is the contract.
+    Picks the clip's best_moment closest to slot.target_duration_s.
+    """
+    sorted_slots = _slots_in_position_order(recipe.slots)
+    if len(clip_metas) != len(sorted_slots):
+        raise TemplateMismatchError(
+            f"Positional match needs {len(sorted_slots)} clips, got {len(clip_metas)}",
+            code="TEMPLATE_CLIP_DURATION_MISMATCH",
+        )
+
+    steps: list[AssemblyStep] = []
+    for slot, meta in zip(sorted_slots, clip_metas):
+        target_dur = float(slot.get("target_duration_s", 5.0))
+        moments = meta.best_moments or [
+            {"start_s": 0.0, "end_s": target_dur, "energy": 5.0, "description": ""}
+        ]
+        moment = min(
+            moments,
+            key=lambda m: abs(
+                float(m.get("end_s", 0.0)) - float(m.get("start_s", 0.0)) - target_dur
+            ),
+        )
+        steps.append(AssemblyStep(slot=slot, clip_id=meta.clip_id, moment=moment))
+    return AssemblyPlan(steps=steps)
+
+
 def _add_locked_template_source(
     recipe_data: dict,
     template_gcs_path: str | None,
@@ -675,6 +821,7 @@ def _add_locked_template_source(
             duration_s=60.0, fps=30.0, width=1920, height=1080,
             aspect_ratio="16:9",
         )
+
 
 
 def _download_clips_parallel(gcs_paths: list[str], tmpdir: str) -> list[str]:
@@ -854,6 +1001,7 @@ class SlotPlan:
     aspect_ratio: str
     color_hint: str
     reframed_path: str  # output path for this slot
+    color_transfer: str = ""  # from probe; drives HLG/PQ tonemap decision in reframe
     output_fit: str = "crop"  # "crop" (default) | "letterbox" (preserve full frame + blurred bg)
 
 
@@ -937,6 +1085,7 @@ def _plan_slots(
             end_s = min(start_s + source_duration, clip_dur)
 
         aspect_ratio = probe.aspect_ratio if probe else "16:9"
+        color_transfer = probe.color_transfer if probe else ""
         if is_locked:
             aspect_ratio = locked_aspect_override
         slot_color = step.slot.get("color_hint") or global_color_grade or "none"
@@ -960,6 +1109,7 @@ def _plan_slots(
             aspect_ratio=aspect_ratio,
             color_hint=slot_color,
             reframed_path=os.path.join(tmpdir, f"slot_{i}.mp4"),
+            color_transfer=color_transfer,
             output_fit=output_fit,
         ))
 
@@ -1402,6 +1552,8 @@ def _collect_absolute_overlays(
                 "text_size_px": ov.get("text_size_px"),
                 "text_color": ov.get("text_color", "#FFFFFF"),
                 "position_y_frac": ov.get("position_y_frac"),
+                "stroke_width": int(ov.get("stroke_width", 0)),
+                "emoji_prefix": str(ov.get("emoji_prefix", "")),
             }
             # Pass through font_family from admin recipe (overrides font_style)
             if ov.get("font_family"):
@@ -2149,7 +2301,7 @@ def _mix_template_audio(
         "-c:v", "copy",
         "-c:a", "aac",
         "-af",
-        f"afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
+        f"afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",  # noqa: E501
         *(["-t", f"{use_duration:.3f}"] if use_duration > 0 else []),
         "-y", output_path,
     ]

@@ -13,6 +13,7 @@ import {
   OVERLAY_EFFECT_OPTIONS,
   OVERLAY_POSITION_OPTIONS,
   OVERLAY_ROLE_OPTIONS,
+  MEDIA_TYPE_OPTIONS,
   SLOT_TYPE_OPTIONS,
   SYNC_STYLE_OPTIONS,
   TEXT_SIZE_OPTIONS,
@@ -234,6 +235,15 @@ function SlotProperties({
           value={slot.slot_type}
           options={SLOT_TYPE_OPTIONS}
           onChange={(v) => set("slot_type", v)}
+        />
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        <SelectInput
+          label="Media"
+          value={slot.media_type ?? "video"}
+          options={MEDIA_TYPE_OPTIONS}
+          onChange={(v) => set("media_type", v)}
         />
       </div>
 
