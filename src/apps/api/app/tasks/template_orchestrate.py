@@ -26,8 +26,11 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from datetime import UTC
 
 import redis as redis_lib
@@ -86,6 +89,75 @@ _LABEL_CONFIG: dict[str, dict] = {
 # TemplateRecipe constructor kwargs. Migration 0010 backfilled `template_kind`
 # onto every existing recipe; future routing/dispatch fields go here.
 _ROUTING_ONLY_RECIPE_KEYS: frozenset[str] = frozenset({"template_kind"})
+
+
+# Failure-reason taxonomy. Persisted on Job.failure_reason for any
+# processing_failed job. The frontend maps these to user-friendly copy
+# instead of falling back to "Something went wrong".
+FAILURE_REASON_TEMPLATE_MISCONFIGURED = "template_misconfigured"
+FAILURE_REASON_TEMPLATE_ASSETS_MISSING = "template_assets_missing"
+FAILURE_REASON_USER_CLIP_DOWNLOAD_FAILED = "user_clip_download_failed"
+FAILURE_REASON_USER_CLIP_UNUSABLE = "user_clip_unusable"
+FAILURE_REASON_FFMPEG_FAILED = "ffmpeg_failed"
+FAILURE_REASON_GEMINI_ANALYSIS_FAILED = "gemini_analysis_failed"
+FAILURE_REASON_COPY_GENERATION_FAILED = "copy_generation_failed"
+FAILURE_REASON_OUTPUT_UPLOAD_FAILED = "output_upload_failed"
+FAILURE_REASON_TIMEOUT = "timeout"
+FAILURE_REASON_UNKNOWN = "unknown"
+
+
+class _StageError(Exception):
+    """Carries a failure_reason from a stage to the outer task handler.
+
+    Stages raise this (via the `_stage` context manager); the outer Celery
+    task catches it and persists both `error_detail` and `failure_reason`
+    on the Job in one place.
+    """
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.message = message
+
+
+@contextmanager
+def _stage(name: str, on_fail: str, *, job_id: str) -> Iterator[None]:
+    """Time + log a pipeline stage; classify uncaught exceptions.
+
+    Wraps each step of `_run_single_video_job` so a hung or failing stage
+    is identifiable in `fly logs` (which stage, how long it ran) and the
+    failure carries a structured `failure_reason` to the outer handler.
+    Re-raises `_StageError` untouched so an inner stage's classification
+    survives an outer `_stage` block.
+    """
+    t0 = time.monotonic()
+    log.info("fixed_intro_stage_start", stage=name, job_id=job_id)
+    try:
+        yield
+    except _StageError:
+        raise
+    except SoftTimeLimitExceeded:
+        # Don't reclassify — the outer handler maps this to FAILURE_REASON_TIMEOUT.
+        raise
+    except Exception as exc:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        log.error(
+            "fixed_intro_stage_failed",
+            stage=name,
+            failure_reason=on_fail,
+            error=str(exc),
+            elapsed_ms=elapsed_ms,
+            job_id=job_id,
+        )
+        raise _StageError(on_fail, f"{name}: {exc}") from exc
+    else:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        log.info(
+            "fixed_intro_stage_done",
+            stage=name,
+            elapsed_ms=elapsed_ms,
+            job_id=job_id,
+        )
 
 
 def _build_recipe(recipe_data: dict) -> TemplateRecipe:
@@ -272,22 +344,27 @@ def orchestrate_template_job(self, job_id: str) -> None:
 
     try:
         _run_template_job(job_id)
+    except _StageError as stage_err:
+        log.error(
+            "template_job_classified_failure",
+            job_id=job_id,
+            failure_reason=stage_err.reason,
+            error=stage_err.message,
+        )
+        _mark_failed(job_uuid, stage_err.reason, stage_err.message)
     except SoftTimeLimitExceeded:
         log.error("template_job_timeout", job_id=job_id)
-        with _sync_session() as db:
-            job = db.get(Job, job_uuid)
-            if job:
-                job.status = "processing_failed"
-                job.error_detail = "Template job timed out (exceeded 1740s soft limit)"
-                db.commit()
+        _mark_failed(
+            job_uuid,
+            FAILURE_REASON_TIMEOUT,
+            "Template job timed out (exceeded 1740s soft limit)",
+        )
+    except GeminiAnalysisError as exc:
+        log.error("template_job_gemini_failed", job_id=job_id, error=str(exc))
+        _mark_failed(job_uuid, FAILURE_REASON_GEMINI_ANALYSIS_FAILED, str(exc))
     except Exception as exc:
-        log.error("template_job_fatal", job_id=job_id, error=str(exc))
-        with _sync_session() as db:
-            job = db.get(Job, job_uuid)
-            if job:
-                job.status = "processing_failed"
-                job.error_detail = str(exc)[:1000]
-                db.commit()
+        log.exception("template_job_fatal", job_id=job_id, error=str(exc))
+        _mark_failed(job_uuid, FAILURE_REASON_UNKNOWN, str(exc))
 
 
 def _run_template_job(job_id: str) -> None:
@@ -330,9 +407,24 @@ def _run_template_job(job_id: str) -> None:
         template_gcs_path = template.gcs_path  # for locked-slot rendering
 
     # Route on template_kind discriminator. Existing rows without template_kind
-    # are backfilled to "multiple_videos" by migration 0010, so .get() with
+    # are backfilled to "multiple_videos" by migration 0012, so .get() with
     # a default is just a belt-and-suspenders guard.
     template_kind = recipe_data.get("template_kind", "multiple_videos")
+
+    # Smell test: a multi-video pipeline run with only 1 clip is almost
+    # always a routing bug — either the template's recipe was seeded before
+    # the kind discriminator was backfilled, or the seed wrote the wrong
+    # kind. Don't bail (keeps the failure shape unchanged for genuinely
+    # legitimate 1-clip multi-video runs), but make it loud so it's the
+    # first thing visible in `fly logs` when this template misbehaves.
+    if template_kind == "multiple_videos" and len(clip_paths_gcs) == 1:
+        log.error(
+            "template_kind_routing_smell",
+            template_id=template_id,
+            recipe_has_kind=("template_kind" in recipe_data),
+            recipe_kind=recipe_data.get("template_kind"),
+        )
+
     if template_kind == "single_video":
         _run_single_video_job(
             job_id=job_id,
@@ -3017,13 +3109,17 @@ def _run_single_video_job(
                  + mix (intro audio passthrough + body music delayed to drop)
         upload + persist + generate copy
 
-    The v1 path (synth black hold + ASS captions + dueled VO mix) is gone.
-    The intro is now byte-faithful to the original TikTok.
+    Each numbered step runs inside `_stage(name, failure_reason)`. Failures
+    raise `_StageError(reason, msg)` and are persisted by the outer task.
     """
     if len(clip_paths_gcs) != 1:
-        raise ValueError(
+        # Should be impossible — POST /template-jobs validates clip count
+        # against the template's required_clips_min/max. If we get here,
+        # the template's clip-count config is out of sync with its kind.
+        raise _StageError(
+            FAILURE_REASON_TEMPLATE_MISCONFIGURED,
             "single_video templates expect exactly 1 user clip; "
-            f"got {len(clip_paths_gcs)}"
+            f"got {len(clip_paths_gcs)}",
         )
 
     intro_duration_s = float(recipe_data.get("intro_duration_s", 10.5))
@@ -3037,110 +3133,148 @@ def _run_single_video_job(
     with _sync_session() as db:
         template = db.get(VideoTemplate, template_id)
         if template is None:
-            raise ValueError(f"Template {template_id} not found")
+            raise _StageError(
+                FAILURE_REASON_TEMPLATE_MISCONFIGURED,
+                f"Template {template_id} not found",
+            )
         template_video_gcs = template.gcs_path
+
+    if not template_video_gcs:
+        raise _StageError(
+            FAILURE_REASON_TEMPLATE_MISCONFIGURED,
+            f"Template {template_id} has no gcs_path (reference video)",
+        )
 
     audio_health: list[str] = []
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # [1] Download template's reference video (intro source).
         ref_video_local = os.path.join(tmpdir, "template_ref.mp4")
-        try:
+        with _stage(
+            "download_template_ref",
+            FAILURE_REASON_TEMPLATE_ASSETS_MISSING,
+            job_id=job_id,
+        ):
             download_to_file(template_video_gcs, ref_video_local)
-        except Exception as exc:
-            log.error(
-                "fixed_intro_template_ref_download_failed",
-                gcs_path=template_video_gcs, error=str(exc),
-            )
-            raise
 
         # [2] Download user clip.
         user_local = os.path.join(tmpdir, "user_clip.mp4")
-        download_to_file(clip_paths_gcs[0], user_local)
+        with _stage(
+            "download_user_clip",
+            FAILURE_REASON_USER_CLIP_DOWNLOAD_FAILED,
+            job_id=job_id,
+        ):
+            download_to_file(clip_paths_gcs[0], user_local)
 
-        # [3] Pick body window (peak-anchored, variable length).
+        # [3] Pick body window (peak-anchored, variable length). A ValueError
+        # here means the user's clip is unusable (too short, no audio, probe
+        # failure) — surface that to the user with the original message.
         try:
-            body_start, body_end = _select_body_window_peak_anchored(
-                user_local,
-                pre_roll_s=pre_roll_s,
-                max_body_s=max_body_s,
-                min_body_s=min_body_s,
-            )
-        except ValueError as exc:
-            user_msg = f"Could not read user video: {exc}"
-            log.warning(
-                "fixed_intro_video_unusable",
-                job_id=job_id, error=str(exc),
-            )
-            with _sync_session() as db:
-                job = db.get(Job, uuid.UUID(job_id))
-                if job:
-                    job.status = "processing_failed"
-                    job.error_detail = user_msg
-                    db.commit()
-            return
+            with _stage(
+                "select_body_window",
+                FAILURE_REASON_USER_CLIP_UNUSABLE,
+                job_id=job_id,
+            ):
+                body_start, body_end = _select_body_window_peak_anchored(
+                    user_local,
+                    pre_roll_s=pre_roll_s,
+                    max_body_s=max_body_s,
+                    min_body_s=min_body_s,
+                )
+        except _StageError as stage_err:
+            if stage_err.reason == FAILURE_REASON_USER_CLIP_UNUSABLE:
+                # Rewrite to the user-friendly phrasing the previous
+                # implementation produced.
+                raise _StageError(
+                    FAILURE_REASON_USER_CLIP_UNUSABLE,
+                    f"Could not read user video: {stage_err.message}",
+                ) from stage_err
+            raise
         body_dur = body_end - body_start
 
         # [4] Extract intro from template reference (KEEPS audio).
         intro_path = os.path.join(tmpdir, "intro.mp4")
-        _extract_intro_from_template_video(
-            ref_video_local, intro_duration_s, intro_path,
-        )
+        with _stage("extract_intro", FAILURE_REASON_FFMPEG_FAILED, job_id=job_id):
+            _extract_intro_from_template_video(
+                ref_video_local, intro_duration_s, intro_path,
+            )
 
         # [5] Cut body segment (silent, 9:16).
         body_path = os.path.join(tmpdir, "body.mp4")
-        _cut_body_segment(user_local, body_start, body_dur, body_path)
+        with _stage("cut_body", FAILURE_REASON_FFMPEG_FAILED, job_id=job_id):
+            _cut_body_segment(user_local, body_start, body_dur, body_path)
 
         # [6] Compose final: concat video + mix audio (intro audio + body music).
+        # Music download failures fall back to silent-body — the job still
+        # ships, just with `audio_health` populated.
+        final_path = os.path.join(tmpdir, "final.mp4")
         if not audio_gcs_path:
-            # Music missing — produce video with silent body. Better than failure.
             log.warning("fixed_intro_no_music_asset", template_id=template_id)
             audio_health.append("music_path_unset")
-            final_path = os.path.join(tmpdir, "final.mp4")
-            _concat_silent([intro_path, body_path], final_path, tmpdir)
+            with _stage(
+                "concat_silent", FAILURE_REASON_FFMPEG_FAILED, job_id=job_id,
+            ):
+                _concat_silent([intro_path, body_path], final_path, tmpdir)
         else:
             music_local = os.path.join(tmpdir, "music.m4a")
             try:
                 download_to_file(audio_gcs_path, music_local)
+                music_ok = True
             except Exception as exc:
                 log.warning("fixed_intro_music_download_failed", error=str(exc))
                 audio_health.append("music_download_failed")
-                final_path = os.path.join(tmpdir, "final.mp4")
-                _concat_silent([intro_path, body_path], final_path, tmpdir)
+                music_ok = False
+            if not music_ok:
+                with _stage(
+                    "concat_silent", FAILURE_REASON_FFMPEG_FAILED, job_id=job_id,
+                ):
+                    _concat_silent(
+                        [intro_path, body_path], final_path, tmpdir,
+                    )
             else:
-                final_path = os.path.join(tmpdir, "final.mp4")
-                _compose_intro_body_with_music(
-                    intro_path=intro_path,
-                    body_path=body_path,
-                    music_path=music_local,
-                    output_path=final_path,
-                    intro_duration_s=intro_duration_s,
-                )
+                with _stage(
+                    "compose_with_music",
+                    FAILURE_REASON_FFMPEG_FAILED,
+                    job_id=job_id,
+                ):
+                    _compose_intro_body_with_music(
+                        intro_path=intro_path,
+                        body_path=body_path,
+                        music_path=music_local,
+                        output_path=final_path,
+                        intro_duration_s=intro_duration_s,
+                    )
 
-        # [7] Upload primary + base output (same file for this template family —
-        # there are no slot-level overlays to strip for an "editor preview")
-        # template_output.mp4 and template_base.mp4 are byte-identical for
-        # this template family (no slot-level overlays to strip for the
-        # editor's "without overlays" preview). Upload once, server-side
-        # copy to the second key — saves egress + re-upload bandwidth.
+        # [7] Upload primary + base output. template_output.mp4 and
+        # template_base.mp4 are byte-identical for this template family
+        # (no slot-level overlays to strip for the editor's "without
+        # overlays" preview). Upload once, server-side copy to the second
+        # key — saves egress + re-upload bandwidth.
         gcs_output_path = f"jobs/{job_id}/template_output.mp4"
-        video_url = upload_public_read(final_path, gcs_output_path)
         gcs_base_path = f"jobs/{job_id}/template_base.mp4"
-        base_video_url = copy_object_signed_url(gcs_output_path, gcs_base_path)
+        with _stage(
+            "upload_outputs",
+            FAILURE_REASON_OUTPUT_UPLOAD_FAILED,
+            job_id=job_id,
+        ):
+            video_url = upload_public_read(final_path, gcs_output_path)
+            base_video_url = copy_object_signed_url(gcs_output_path, gcs_base_path)
 
         # [8] Generate copy. Hook text = the template's signature punchline.
-        # We hardcode the well-known punchline rather than reading from a
-        # captions list (v2 doesn't render captions any more — they live in
-        # the source TikTok we copied from).
         hook_text = "How do you enjoy your life?"
         from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
-        platform_copy, copy_status = generate_copy(
-            hook_text=hook_text,
-            transcript_excerpt="",
-            platforms=selected_platforms,
-            has_transcript=False,
-            template_tone="provocative",
-        )
+        with _stage(
+            "generate_copy",
+            FAILURE_REASON_COPY_GENERATION_FAILED,
+            job_id=job_id,
+        ):
+            platform_copy, copy_status = generate_copy(
+                hook_text=hook_text,
+                transcript_excerpt="",
+                platforms=selected_platforms,
+                has_transcript=False,
+                template_tone="provocative",
+            )
 
         # [9] Persist
         plan_data = {
@@ -3175,3 +3309,134 @@ def _run_single_video_job(
             body_start=round(body_start, 3),
             body_end=round(body_end, 3),
         )
+
+
+# ── orchestrate_single_video_job ──────────────────────────────────────────────
+#
+# Dedicated Celery task for `template_kind="single_video"` templates. The
+# pipeline is ~5 ffmpeg subprocess calls + 3 GCS round-trips; happy path
+# wall-clock is 30–60s. The 1740s soft timeout on `orchestrate_template_job`
+# is sized for 24-slot Morocco templates with text-burning — applied to a
+# single_video job, it lets a hung run hold the worker for half an hour
+# (compounded by `--concurrency=1` per worker).
+#
+# Tight 240s/300s timeouts here mean a bad job fails fast and frees the
+# queue. Multi-video templates keep their longer budget via the original
+# `orchestrate_template_job` task.
+
+
+# Soft limit picked from observed prod P95: a successful single_video run
+# took ~311s on 2026-05-08, including worker cold-start and Gemini
+# generate_copy. 600s gives ~2x headroom for variance while still killing
+# truly hung jobs in 10 min instead of the 29-min generic budget. The
+# per-stage timing logs added in `_stage()` will let us tighten further
+# once we know where the 311s actually goes.
+_SINGLE_VIDEO_SOFT_TIMEOUT_S = 600
+_SINGLE_VIDEO_HARD_TIMEOUT_S = 720
+
+
+@celery_app.task(
+    name="tasks.orchestrate_single_video_job",
+    bind=True,
+    max_retries=0,
+    soft_time_limit=_SINGLE_VIDEO_SOFT_TIMEOUT_S,
+    time_limit=_SINGLE_VIDEO_HARD_TIMEOUT_S,
+)
+def orchestrate_single_video_job(self, job_id: str) -> None:
+    """single_video pipeline. Never raises — all errors → processing_failed."""
+    log.info("single_video_job_start", job_id=job_id)
+
+    try:
+        job_uuid = uuid.UUID(str(job_id))
+    except (ValueError, TypeError, AttributeError):
+        log.error("single_video_job_invalid_id", job_id=repr(job_id))
+        return
+
+    try:
+        _run_single_video_job_entry(job_id)
+    except _StageError as stage_err:
+        log.error(
+            "single_video_job_classified_failure",
+            job_id=job_id,
+            failure_reason=stage_err.reason,
+            error=stage_err.message,
+        )
+        _mark_failed(job_uuid, stage_err.reason, stage_err.message)
+    except SoftTimeLimitExceeded:
+        log.error("single_video_job_timeout", job_id=job_id)
+        _mark_failed(
+            job_uuid,
+            FAILURE_REASON_TIMEOUT,
+            f"Single-video job timed out "
+            f"(exceeded {_SINGLE_VIDEO_SOFT_TIMEOUT_S}s soft limit)",
+        )
+    except Exception as exc:
+        log.exception("single_video_job_fatal", job_id=job_id, error=str(exc))
+        _mark_failed(job_uuid, FAILURE_REASON_UNKNOWN, str(exc))
+
+
+def _run_single_video_job_entry(job_id: str) -> None:
+    """Hydrate job state, set processing, then call _run_single_video_job."""
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            log.error("single_video_job_not_found", job_id=job_id)
+            return
+
+        job.status = "processing"
+        # Clear any previous failure tags from a re-enqueue.
+        job.error_detail = None
+        job.failure_reason = None
+        db.commit()
+
+        template_id = job.template_id
+        all_candidates = job.all_candidates or {}
+        clip_paths_gcs = all_candidates.get("clip_paths", [])
+        user_subject = all_candidates.get("subject", "")
+        selected_platforms = job.selected_platforms or [
+            "tiktok", "instagram", "youtube",
+        ]
+
+    if not template_id:
+        raise _StageError(
+            FAILURE_REASON_TEMPLATE_MISCONFIGURED,
+            "Job has no template_id",
+        )
+
+    with _sync_session() as db:
+        template = db.get(VideoTemplate, template_id)
+        if template is None:
+            raise _StageError(
+                FAILURE_REASON_TEMPLATE_MISCONFIGURED,
+                f"Template {template_id} not found",
+            )
+        if template.analysis_status != "ready" or not template.recipe_cached:
+            raise _StageError(
+                FAILURE_REASON_TEMPLATE_MISCONFIGURED,
+                f"Template {template_id} analysis not ready",
+            )
+        recipe_data = template.recipe_cached
+        audio_gcs_path = template.audio_gcs_path
+        voiceover_gcs_path = template.voiceover_gcs_path
+
+    _run_single_video_job(
+        job_id=job_id,
+        template_id=template_id,
+        recipe_data=recipe_data,
+        clip_paths_gcs=clip_paths_gcs,
+        audio_gcs_path=audio_gcs_path,
+        voiceover_gcs_path=voiceover_gcs_path,
+        user_subject=user_subject,
+        selected_platforms=selected_platforms,
+    )
+
+
+def _mark_failed(job_uuid: uuid.UUID, reason: str, message: str) -> None:
+    """Persist processing_failed + structured failure_reason in one place."""
+    with _sync_session() as db:
+        job = db.get(Job, job_uuid)
+        if job:
+            job.status = "processing_failed"
+            job.error_detail = message[:1000] if message else None
+            job.failure_reason = reason
+            db.commit()
