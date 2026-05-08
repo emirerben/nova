@@ -38,6 +38,8 @@ from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, TemplateRecipeVersion, VideoTemplate
 from app.pipeline.agents.gemini_analyzer import (
+    AssemblyPlan,
+    AssemblyStep,
     ClipMeta,
     GeminiAnalysisError,
     GeminiRefusalError,
@@ -46,9 +48,10 @@ from app.pipeline.agents.gemini_analyzer import (
     analyze_template,
     gemini_upload_and_wait,
 )
-from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep
 from app.pipeline.template_matcher import (
-    TemplateMismatchError, consolidate_slots, match,
+    TemplateMismatchError,
+    consolidate_slots,
+    match,
 )
 from app.storage import copy_object_signed_url, download_to_file, upload_public_read
 from app.worker import celery_app
@@ -2298,7 +2301,7 @@ def _mix_template_audio(
         "-c:v", "copy",
         "-c:a", "aac",
         "-af",
-        f"afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",
+        f"afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",  # noqa: E501
         *(["-t", f"{use_duration:.3f}"] if use_duration > 0 else []),
         "-y", output_path,
     ]
