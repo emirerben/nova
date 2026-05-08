@@ -203,10 +203,24 @@ def reframe_and_export(
         )
 
     if result.returncode != 0:
-        # Capture the END of stderr — ffmpeg's actual error messages are at the
-        # tail, not the head. The first 500 chars are just version+config noise.
-        stderr = result.stderr.decode(errors="replace")[-1500:]
-        raise ReframeError(f"FFmpeg failed (rc={result.returncode}): {stderr}")
+        # FFmpeg always prints a long version + configuration banner to stderr.
+        # The actual error lives in the lines that *don't* match those headers.
+        # Drop them so we surface the real failure even when the banner alone
+        # exceeds our truncation buffer.
+        full_stderr = result.stderr.decode(errors="replace")
+        meaningful = [
+            ln for ln in full_stderr.splitlines()
+            if ln.strip()
+            and not ln.startswith(("ffmpeg version", "  built with", "  configuration:", "  lib"))
+        ]
+        msg = "\n".join(meaningful[-30:]) or full_stderr[-1500:]
+        log.error(
+            "ffmpeg_failed_detail",
+            rc=result.returncode,
+            cmd=" ".join(cmd),
+            stderr_tail=msg[-2000:],
+        )
+        raise ReframeError(f"FFmpeg failed (rc={result.returncode}): {msg}")
 
     if not os.path.exists(output_path):
         raise ReframeError("FFmpeg exited 0 but output file not found")
