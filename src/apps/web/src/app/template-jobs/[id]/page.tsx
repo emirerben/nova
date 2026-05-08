@@ -7,6 +7,7 @@ import {
   getTemplatePlaybackUrl,
   rerollTemplateJob,
   type AssemblyPlanData,
+  type JobFailureReason,
   type TemplateJobStatus,
   type TemplateJobStatusResponse,
 } from "@/lib/api";
@@ -22,6 +23,48 @@ const STAGE_LABELS: Record<TemplateJobStatus, string> = {
 };
 
 const TERMINAL = new Set<TemplateJobStatus>(["template_ready", "processing_failed"]);
+
+// User-facing copy per structured failure reason. Keep these short and
+// actionable — they replace "Something went wrong" for failures the API
+// has classified. Falls back to error_detail (which is already
+// user-friendly for user_clip_unusable) and finally a generic message.
+const FAILURE_MESSAGES: Record<JobFailureReason, string> = {
+  template_misconfigured:
+    "This template is misconfigured and can't run right now. We've been notified.",
+  template_assets_missing:
+    "A template asset is unavailable. Please try a different template, or try again in a few minutes.",
+  user_clip_download_failed:
+    "We couldn't read your uploaded video. Please re-upload and try again.",
+  user_clip_unusable:
+    "Your video can't be used for this template — it may be too short or have an unsupported format.",
+  ffmpeg_failed:
+    "Video rendering failed. Please try again, and re-upload your clip if the problem persists.",
+  gemini_analysis_failed:
+    "AI analysis is temporarily unavailable. Please try again in a minute.",
+  copy_generation_failed:
+    "We rendered your video but couldn't generate captions. Please try again.",
+  output_upload_failed:
+    "Your video was rendered but we couldn't upload it. Please try again.",
+  timeout:
+    "Processing took too long and was stopped. Try a shorter clip or simpler template.",
+  unknown:
+    "Processing failed. Please try again.",
+};
+
+function failureMessage(
+  reason: JobFailureReason | null,
+  detail: string | null,
+): string {
+  if (reason === "user_clip_unusable" && detail) {
+    // Detail message already includes specific cause ("video unusable: have
+    // 3.00s"), preserve it verbatim — more useful than the generic copy.
+    return detail;
+  }
+  if (reason && reason in FAILURE_MESSAGES) {
+    return FAILURE_MESSAGES[reason];
+  }
+  return detail ?? "Something went wrong.";
+}
 
 export default function TemplateJobPage() {
   const { id } = useParams<{ id: string }>();
@@ -57,7 +100,12 @@ export default function TemplateJobPage() {
   if (error) return <ErrorScreen message={error} jobId={id} />;
   if (!job) return <LoadingScreen message="Loading..." />;
   if (job.status === "processing_failed") {
-    return <ErrorScreen message={job.error_detail ?? "Processing failed. Please try again."} jobId={id} />;
+    return (
+      <ErrorScreen
+        message={failureMessage(job.failure_reason, job.error_detail)}
+        jobId={id}
+      />
+    );
   }
   if (job.status !== "template_ready" || !job.assembly_plan?.output_url) {
     return <LoadingScreen message={STAGE_LABELS[job.status]} />;

@@ -185,6 +185,25 @@ class TemplateMetricsResponse(BaseModel):
     successful_jobs: int
     failed_jobs: int
     last_job_at: datetime | None
+    # Bucketed counts of Job.failure_reason for failed jobs. Empty dict when
+    # there are no failures, or when all failures predate the failure_reason
+    # column (NULL counts are excluded).
+    failure_reasons: dict[str, int] = {}
+
+
+class TemplateAssetHealth(BaseModel):
+    """Health of one GCS asset referenced by a template."""
+
+    role: str  # "reference_video" | "audio" | "voiceover"
+    gcs_path: str | None
+    exists: bool
+
+
+class TemplateHealthResponse(BaseModel):
+    template_id: str
+    template_kind: str
+    healthy: bool  # True iff all required assets exist
+    assets: list[TemplateAssetHealth]
 
 
 class TestJobRequest(BaseModel):
@@ -963,12 +982,96 @@ async def get_template_metrics(
     )
     row = result.one()
 
+    # Group failed jobs by failure_reason so the admin UI can spot patterns
+    # ("12 jobs failed in the last week, all with `template_assets_missing`").
+    breakdown_result = await db.execute(
+        select(Job.failure_reason, func.count(Job.id))
+        .where(
+            Job.template_id == template_id,
+            Job.status == "processing_failed",
+            Job.failure_reason.is_not(None),
+        )
+        .group_by(Job.failure_reason)
+    )
+    failure_reasons = {reason: count for reason, count in breakdown_result.all()}
+
     return TemplateMetricsResponse(
         template_id=template_id,
         total_jobs=row.total,
         successful_jobs=row.successful,
         failed_jobs=row.failed,
         last_job_at=row.last_job_at,
+        failure_reasons=failure_reasons,
+    )
+
+
+# ── Asset health endpoint ──────────────────────────────────────────────────────
+
+
+@router.get(
+    "/templates/{template_id}/health",
+    response_model=TemplateHealthResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def get_template_health(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateHealthResponse:
+    """GCS-stat each asset referenced by the template.
+
+    Surfaces "music asset not uploaded to prod bucket" *before* a single
+    user job runs. Cheap (~1 GCS HEAD per asset) so the admin UI can call
+    it on template-page open. The admin UI is also free to surface a
+    badge that turns red the moment any asset is missing.
+    """
+    template = await get_template_or_404(template_id, db)
+    from app.storage import object_exists  # noqa: PLC0415
+
+    template_kind = "multiple_videos"
+    if isinstance(template.recipe_cached, dict):
+        template_kind = template.recipe_cached.get("template_kind", "multiple_videos")
+
+    asset_specs: list[tuple[str, str | None]] = [
+        ("reference_video", template.gcs_path),
+        ("audio", template.audio_gcs_path),
+        ("voiceover", template.voiceover_gcs_path),
+    ]
+    assets: list[TemplateAssetHealth] = []
+    healthy = True
+    for role, path in asset_specs:
+        if not path:
+            # No path means the template doesn't reference an asset of this
+            # role. That's only a problem for required assets — currently
+            # only `reference_video` is required for every template kind.
+            assets.append(
+                TemplateAssetHealth(role=role, gcs_path=None, exists=False)
+            )
+            if role == "reference_video":
+                healthy = False
+            continue
+        try:
+            exists = object_exists(path)
+        except Exception as exc:
+            log.warning(
+                "template_health_gcs_stat_failed",
+                template_id=template_id,
+                role=role,
+                gcs_path=path,
+                error=str(exc),
+            )
+            exists = False
+        assets.append(TemplateAssetHealth(role=role, gcs_path=path, exists=exists))
+        if not exists and role in ("reference_video", "audio"):
+            # `audio` is required for music-bearing templates. Flagging it
+            # here tells the admin "this template will always render with
+            # silent body" before any user discovers it the hard way.
+            healthy = False
+
+    return TemplateHealthResponse(
+        template_id=template_id,
+        template_kind=template_kind,
+        healthy=healthy,
+        assets=assets,
     )
 
 

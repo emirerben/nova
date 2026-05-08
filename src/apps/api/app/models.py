@@ -239,6 +239,11 @@ class Job(Base):
     scene_cuts: Mapped[dict | None] = mapped_column(JSONB)
     all_candidates: Mapped[dict | None] = mapped_column(JSONB)  # all 9 for re-roll
     error_detail: Mapped[str | None] = mapped_column(Text)
+    # Structured failure taxonomy for processing_failed jobs. Lets the frontend
+    # render specific copy ("music asset missing", "video too short") instead
+    # of a generic "Something went wrong". See FAILURE_REASON in
+    # tasks/template_orchestrate.py for the canonical set.
+    failure_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
     )
@@ -254,6 +259,7 @@ class Job(Base):
         Index("idx_jobs_status", "status"),
         Index("idx_jobs_template_id", "template_id"),
         Index("idx_jobs_music_track_id", "music_track_id"),
+        Index("idx_jobs_failure_reason", "failure_reason"),
     )
 
 

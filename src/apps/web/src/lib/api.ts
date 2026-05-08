@@ -245,12 +245,29 @@ export interface AssemblyPlanData {
   copy_status?: string;
 }
 
+// Structured failure taxonomy from the API. Mirrors FAILURE_REASON_*
+// constants in src/apps/api/app/tasks/template_orchestrate.py. Frontend
+// uses this to choose a specific user-facing message instead of falling
+// back to error_detail or "Something went wrong".
+export type JobFailureReason =
+  | "template_misconfigured"
+  | "template_assets_missing"
+  | "user_clip_download_failed"
+  | "user_clip_unusable"
+  | "ffmpeg_failed"
+  | "gemini_analysis_failed"
+  | "copy_generation_failed"
+  | "output_upload_failed"
+  | "timeout"
+  | "unknown";
+
 export interface TemplateJobStatusResponse {
   job_id: string;
   status: TemplateJobStatus;
   template_id: string | null;
   assembly_plan: AssemblyPlanData | null;
   error_detail: string | null;
+  failure_reason: JobFailureReason | null;
   created_at: string;
   updated_at: string;
 }

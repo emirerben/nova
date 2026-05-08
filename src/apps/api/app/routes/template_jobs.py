@@ -72,6 +72,10 @@ class TemplateJobStatusResponse(BaseModel):
     template_id: str | None
     assembly_plan: dict | None
     error_detail: str | None
+    # Structured failure reason (taxonomy in tasks/template_orchestrate.py).
+    # Null on success or for legacy failed rows from before this column
+    # existed. Frontend prefers this over error_detail for messaging.
+    failure_reason: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -117,13 +121,27 @@ async def create_template_job(
 
     job_id = str(job.id)
 
-    from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
-    orchestrate_template_job.delay(job_id)
+    # Dispatch on template_kind: single_video templates use a tight-timeout
+    # task (240s soft / 300s hard) so a hung run doesn't hold the worker
+    # for the multi-video budget (29 min). All other kinds keep the long
+    # timeout via orchestrate_template_job.
+    recipe = template.recipe_cached or {}
+    template_kind = recipe.get("template_kind", "multiple_videos")
+
+    from app.tasks.template_orchestrate import (  # noqa: PLC0415
+        orchestrate_single_video_job,
+        orchestrate_template_job,
+    )
+    if template_kind == "single_video":
+        orchestrate_single_video_job.delay(job_id)
+    else:
+        orchestrate_template_job.delay(job_id)
 
     log.info(
         "template_job_created",
         job_id=job_id,
         template_id=req.template_id,
+        template_kind=template_kind,
         clips=len(req.clip_gcs_paths),
         subject=req.subject,
     )
@@ -232,10 +250,32 @@ async def reroll_template_job(
 
     new_job_id = str(new_job.id)
 
-    from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
-    orchestrate_template_job.delay(new_job_id)
+    # Match dispatch shape from create_template_job — single_video reuses
+    # the tight-timeout task.
+    template_kind: str = "multiple_videos"
+    if original.template_id:
+        tpl_result = await db.execute(
+            select(VideoTemplate).where(VideoTemplate.id == original.template_id)
+        )
+        tpl = tpl_result.scalar_one_or_none()
+        if tpl and isinstance(tpl.recipe_cached, dict):
+            template_kind = tpl.recipe_cached.get("template_kind", "multiple_videos")
 
-    log.info("template_job_rerolled", new_job_id=new_job_id, original_job_id=job_id)
+    from app.tasks.template_orchestrate import (  # noqa: PLC0415
+        orchestrate_single_video_job,
+        orchestrate_template_job,
+    )
+    if template_kind == "single_video":
+        orchestrate_single_video_job.delay(new_job_id)
+    else:
+        orchestrate_template_job.delay(new_job_id)
+
+    log.info(
+        "template_job_rerolled",
+        new_job_id=new_job_id,
+        original_job_id=job_id,
+        template_kind=template_kind,
+    )
     return TemplateJobResponse(
         job_id=new_job_id,
         status="queued",
@@ -277,6 +317,7 @@ async def get_template_job_debug(
         "job_id": job_id,
         "status": job.status,
         "error_detail": job.error_detail,
+        "failure_reason": job.failure_reason,
         "template_recipe": template_recipe,
         "assembly_plan": {
             "steps": steps,
@@ -377,6 +418,7 @@ async def get_template_job_status(
         template_id=job.template_id,
         assembly_plan=job.assembly_plan,
         error_detail=job.error_detail,
+        failure_reason=job.failure_reason,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
