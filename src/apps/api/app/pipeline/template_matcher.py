@@ -625,7 +625,9 @@ def match(
                  target_dur=slot.get("target_duration_s"))
 
     # Coverage pass excludes locked slots, pinned slots, and pinned clips.
-    coverage_slots = [s for s in unlocked_slots if s.get("position", 0) not in pre_assigned_positions]
+    coverage_slots = [
+        s for s in unlocked_slots if s.get("position", 0) not in pre_assigned_positions
+    ]
     coverage_metas = [m for m in clip_metas if m.clip_id not in pinned_clip_ids]
     pre_assigned = (
         _minimum_coverage_pass(coverage_slots, coverage_metas, apply_ball_bonus=apply_ball_bonus)
