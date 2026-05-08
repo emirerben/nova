@@ -90,6 +90,13 @@
       "category": "script",
       "css_family": "'Pacifico', cursive",
       "cycle_role": "contrast"
+    },
+    "Inter": {
+      "file": "Inter-ExtraBold.ttf",
+      "ass_name": "Inter",
+      "weight": 800,
+      "category": "sans",
+      "css_family": "'Inter', sans-serif"
     }
   },
   "style_defaults": {

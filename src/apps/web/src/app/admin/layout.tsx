@@ -85,6 +85,12 @@ const FONT_FACES = `
   font-weight: 400;
   font-display: swap;
 }
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-ExtraBold.ttf') format('truetype');
+  font-weight: 800;
+  font-display: swap;
+}
 `;
 
 /**
