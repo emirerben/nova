@@ -430,6 +430,11 @@ function TestTab({
   const [metrics, setMetrics] = useState<TemplateMetrics | null>(null);
   const [latestJob, setLatestJob] = useState<LatestTestJob | null>(null);
 
+  // Face-first templates split the upload into Part 1 (single face/intro
+  // clip pinned to slot 1) and Part 2 (action clips for the rest). Detected
+  // by name containing "face" so future face-style templates auto-pick it up.
+  const isFaceTemplate = template.name.toLowerCase().includes("face");
+
   // Load latest test job on mount so previous results are visible
   useEffect(() => {
     adminGetLatestTestJob(template.id).then((job) => {
@@ -439,6 +444,14 @@ function TestTab({
 
   // File upload for test clips
   const upload = useFileUpload({
+    getPresignedUrl: async (file) => {
+      return adminGetPresignedUpload(file.name, file.type || "video/mp4");
+    },
+  });
+
+  // Separate uploader for the face/intro clip — single file, prepended to
+  // the action-clip list at submit time so slot 1 receives face footage.
+  const faceUpload = useFileUpload({
     getPresignedUrl: async (file) => {
       return adminGetPresignedUpload(file.name, file.type || "video/mp4");
     },
@@ -515,15 +528,27 @@ function TestTab({
   }, [template.id]);
 
   const handleCreateTestJob = useCallback(async () => {
+    if (isFaceTemplate && faceUpload.successfulPaths.length === 0) {
+      setTestError("Önce Part 1'e yüz/intro klibi yükle");
+      return;
+    }
     if (upload.successfulPaths.length === 0) {
-      setTestError("Upload clips first");
+      setTestError(
+        isFaceTemplate
+          ? "Part 2'ye aksiyon klipleri yükle"
+          : "Upload clips first",
+      );
       return;
     }
     setCreating(true);
     setTestError(null);
     try {
+      // Face clip first → matcher's highest-priority hook slot picks it up.
+      const orderedPaths = isFaceTemplate
+        ? [...faceUpload.successfulPaths, ...upload.successfulPaths]
+        : upload.successfulPaths;
       const res = await adminCreateTestJob(template.id, {
-        clip_gcs_paths: upload.successfulPaths,
+        clip_gcs_paths: orderedPaths,
       });
       setTestJobId(res.job_id);
     } catch (err) {
@@ -531,7 +556,7 @@ function TestTab({
     } finally {
       setCreating(false);
     }
-  }, [template.id, upload.successfulPaths]);
+  }, [template.id, upload.successfulPaths, faceUpload.successfulPaths, isFaceTemplate]);
 
   return (
     <div className="space-y-6">
@@ -550,8 +575,88 @@ function TestTab({
 
       {/* Upload clips section */}
       <div className="border border-zinc-800 rounded p-4 space-y-4">
-        <h3 className="text-sm font-medium text-white">Upload Test Clips</h3>
+        <h3 className="text-sm font-medium text-white">
+          {isFaceTemplate ? "Test Clips (Part 1 + Part 2)" : "Upload Test Clips"}
+        </h3>
 
+        {/* Part 1 — Face/Intro dropzone (face templates only) */}
+        {isFaceTemplate && (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-amber-300 uppercase tracking-wide">
+              Part 1 — Yüz / Intro klibi (1 video)
+            </p>
+            <div
+              className={`border-2 border-dashed rounded-lg p-5 text-center transition-colors ${
+                faceUpload.uploading
+                  ? "border-amber-700/40 bg-amber-950/10"
+                  : faceUpload.successfulPaths.length > 0
+                  ? "border-amber-700/60 bg-amber-950/10"
+                  : "border-amber-700/40 hover:border-amber-500/60"
+              }`}
+            >
+              <input
+                type="file"
+                accept="video/mp4,video/quicktime"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  // Replace any existing face clip — only ever one allowed
+                  faceUpload.files.forEach((existing) => faceUpload.removeFile(existing.id));
+                  const entries = faceUpload.addFiles([f]);
+                  faceUpload.startUpload(entries);
+                }}
+                disabled={faceUpload.uploading}
+                className="hidden"
+                id="face-clip-input"
+              />
+              <label
+                htmlFor="face-clip-input"
+                className="cursor-pointer text-sm text-zinc-400 hover:text-white"
+              >
+                {faceUpload.uploading
+                  ? "Uploading..."
+                  : faceUpload.successfulPaths.length > 0
+                  ? "Yüz klibi yüklendi — değiştirmek için tıkla"
+                  : "Yakın çekim yüz / röportaj klibi seç"}
+              </label>
+            </div>
+
+            {faceUpload.files.length > 0 && (
+              <div className="space-y-1">
+                {faceUpload.files.map((f) => (
+                  <div key={f.id} className="flex items-center gap-3 text-sm">
+                    <span className="text-amber-300 truncate flex-1">{f.file.name}</span>
+                    {f.error ? (
+                      <span className="text-red-400 text-xs">{f.error}</span>
+                    ) : f.progress === 100 ? (
+                      <span className="text-green-400 text-xs">Done</span>
+                    ) : (
+                      <div className="w-24 bg-zinc-800 rounded-full h-1.5">
+                        <div
+                          className="bg-amber-500 h-full rounded-full transition-all"
+                          style={{ width: `${f.progress}%` }}
+                        />
+                      </div>
+                    )}
+                    <button
+                      onClick={() => faceUpload.removeFile(f.id)}
+                      className="text-zinc-600 hover:text-zinc-400 text-xs"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Part 2 (face templates) / sole zone (others) */}
+        {isFaceTemplate && (
+          <p className="text-xs font-semibold text-zinc-300 uppercase tracking-wide mt-4">
+            Part 2 — Aksiyon klipleri
+          </p>
+        )}
         <div
           className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
             upload.uploading ? "border-zinc-700 bg-zinc-900/50" : "border-zinc-700 hover:border-zinc-500"
@@ -575,7 +680,11 @@ function TestTab({
             htmlFor="test-clip-input"
             className="cursor-pointer text-sm text-zinc-400 hover:text-white"
           >
-            {upload.uploading ? "Uploading..." : "Click to select clips or drag and drop"}
+            {upload.uploading
+              ? "Uploading..."
+              : isFaceTemplate
+              ? "Aksiyon kliplerini seç (multi-select)"
+              : "Click to select clips or drag and drop"}
           </label>
         </div>
 

@@ -104,6 +104,7 @@ def reframe_and_export(
     speed_factor: float = 1.0,
     darkening_windows: list[tuple[float, float]] | None = None,
     narrowing_windows: list[tuple[float, float]] | None = None,
+    output_fit: str = "crop",  # "crop" (default — center-crop sides) | "letterbox" (pad with bg)
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
 
@@ -125,6 +126,7 @@ def reframe_and_export(
         speed_factor=speed_factor,
         darkening_windows=darkening_windows,
         narrowing_windows=narrowing_windows,
+        output_fit=output_fit,
     )
 
     # Build command -- use filter_complex when overlays are present
@@ -177,6 +179,7 @@ def reframe_and_export(
             speed_factor=speed_factor,
             darkening_windows=darkening_windows,
             narrowing_windows=narrowing_windows,
+            output_fit=output_fit,
         )
 
     if result.returncode != 0:
@@ -282,6 +285,7 @@ def _build_video_filter(
     speed_factor: float = 1.0,
     darkening_windows: list[tuple[float, float]] | None = None,
     narrowing_windows: list[tuple[float, float]] | None = None,
+    output_fit: str = "crop",
 ) -> list[str]:
     """Return list of filter segments to join with commas.
 
@@ -307,8 +311,32 @@ def _build_video_filter(
     if speed_factor != 1.0 and speed_factor > 0:
         filters.append(f"setpts=PTS/{speed_factor}")
 
-    # 1. Scale/crop
-    if aspect_ratio == "16:9":
+    # 1. Scale/crop. Default "crop" mode center-crops 16:9 source to 9:16 (loses
+    # the sides — fine for talking heads / single-subject shots). "letterbox"
+    # variants preserve the entire source frame: scale-to-fit, then pad with
+    # either a blurred zoom of the same source or flat black bars.
+    ow = settings.output_width
+    oh = settings.output_height
+    if output_fit == "letterbox" or output_fit == "letterbox_blur":
+        # Foreground = original frame fit-into-canvas;
+        # Background = same source upscaled + blurred + cropped to fill 9:16.
+        filters.append(
+            "split=2[bg][fg];"
+            f"[bg]scale={ow}:{oh}:force_original_aspect_ratio=increase,"
+            f"crop={ow}:{oh},gblur=sigma=30[bg];"
+            f"[fg]scale={ow}:{oh}:force_original_aspect_ratio=decrease[fg];"
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2"
+        )
+    elif output_fit == "letterbox_black":
+        # Pure black bars — match reference TikToks that don't blend the source
+        # behind itself. Crisper but reads more "letterbox-y."
+        filters.append(
+            f"scale={ow}:{oh}:force_original_aspect_ratio=decrease"
+        )
+        filters.append(
+            f"pad={ow}:{oh}:(ow-iw)/2:(oh-ih)/2:color=black"
+        )
+    elif aspect_ratio == "16:9":
         filters.append(f"scale=-2:{settings.output_height}")
         filters.append(f"crop={settings.output_width}:{settings.output_height}")
     else:

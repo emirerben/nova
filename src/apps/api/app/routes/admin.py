@@ -251,6 +251,7 @@ SlotType = Literal["hook", "broll", "outro"]
 OverlayEffect = Literal[
     "pop-in", "fade-in", "scale-up", "font-cycle", "typewriter",
     "glitch", "bounce", "slide-in", "slide-up", "static", "none",
+    "player-card",  # giant kit number + italic red name overlay
 ]
 OverlayPosition = Literal["top", "center", "center-above", "center-label", "center-below", "bottom"]
 FontStyle = Literal["display", "sans", "serif", "serif_italic", "script"]
@@ -300,6 +301,10 @@ class RecipeTextOverlaySchema(BaseModel):
     font_cycle_accel_at_s: float | None = None
     position_y_frac: float | None = None
     spans: list[TextSpanSchema] | None = None
+    # Player-card overlay fields (consumed when effect == "player-card").
+    # Both must be non-empty for the overlay to render.
+    jersey_no: str | None = None
+    player_name: str | None = None
 
     @field_validator("text_color")
     @classmethod
@@ -419,6 +424,12 @@ class RecipeSchema(BaseModel):
     interstitials: list[RecipeInterstitialSchema] = []
     # Snappy-pacing floor — consolidate won't merge below this when set.
     min_slots: int = 0
+    # Render-side controls (admin-tunable per template).
+    # output_fit: "crop" (center-crop sides on 16:9 source — default),
+    #   "letterbox" / "letterbox_blur" (preserve full frame, blurred bg),
+    #   "letterbox_black" (preserve full frame, black bars).
+    output_fit: Literal["crop", "letterbox", "letterbox_blur", "letterbox_black"] = "crop"
+    clip_filter_hint: str = ""          # natural-language Gemini bias for best_moments
 
     @field_validator("slots")
     @classmethod

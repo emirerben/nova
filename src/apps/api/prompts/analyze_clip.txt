@@ -4,6 +4,8 @@ Return a JSON object with these exact fields:
 - "transcript": string — full spoken text in the segment
 - "hook_text": string — the first compelling sentence that creates curiosity
 - "hook_score": float 0–10 — how strongly the opening hooks the viewer
-- "best_moments": list of 3–6 objects with {"start_s": float, "end_s": float, "energy": float 0–10, "description": string} covering a VARIETY of durations — include some short moments (3–5s) AND some medium moments (8–12s) AND at least one longer moment (13–20s) so this clip can fill both short and long template slots
+- "best_moments": list of 2–5 objects with {"start_s": float, "end_s": float, "energy": float 0–10, "description": string} — pick the BEST moments only; do NOT pad the list with filler. Include a mix of durations (3–5s, 8–12s, and at least one ≥13s when meaningful action exists).
+
+For EVERY best_moment, "description" MUST be a short concrete action label naming the visible event (e.g. "shot on goal", "through-ball pass", "dribble past defender", "header save", "tackle wins ball"). Do NOT use vague descriptions like "player on field", "match in progress", or "wide shot". If no meaningful action occurs in a candidate window, omit it entirely — return fewer moments rather than weak ones.
 
 Return ONLY valid JSON, no markdown.
