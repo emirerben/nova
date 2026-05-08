@@ -485,7 +485,8 @@ def _draw_frame(
             font=font, font_family=font_family, font_style=font_style,
             text_size=text_size, text_color=text_color,
             position_y_frac=position_y_frac,
-            outline_px=overlay.get("outline_px"),
+            stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
+            emoji_prefix=overlay.get("emoji_prefix", ""),
         )
 
 
