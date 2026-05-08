@@ -615,7 +615,8 @@ export default function TemplatePage() {
         )}
 
         {/* Drop zone — Part 2 for face templates, only zone for others */}
-        {!isSlotBound && isFaceTemplate && (
+        {!isSlotBound && (<>
+        {isFaceTemplate && (
           <p className="text-zinc-300 text-xs font-semibold mb-1.5 uppercase tracking-wide">
             Part 2 — Aksiyon klipleri <span className="text-zinc-500">({minClips - 1}–{MAX_CLIPS - 1} video)</span>
           </p>
