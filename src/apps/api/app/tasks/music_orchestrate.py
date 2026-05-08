@@ -530,8 +530,8 @@ def _run_templated_music_job(job_id: str) -> None:
         AssemblyStep,
     )
     from app.pipeline.image_clip import (  # noqa: PLC0415
-        ImageClipError,
         SUBTLE_ZOOM_IN,
+        ImageClipError,
         is_image_file,
         normalize_to_jpeg,
         render_image_to_clip,
