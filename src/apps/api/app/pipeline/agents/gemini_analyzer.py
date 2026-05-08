@@ -109,39 +109,80 @@ def _get_client() -> Any:
 def gemini_upload_and_wait(path: str, timeout: int = 120) -> Any:
     """Upload a local file to Gemini File API and poll until state == ACTIVE.
 
-    Raises PollingTimeoutError if the file doesn't become ACTIVE within `timeout` seconds.
-    Retries up to 2× on ResourceExhausted (rate limit) with 15s backoff.
-    Raises immediately on InvalidArgument.
+    Retry policy: 5 attempts with backoff 3s/9s/27s/60s on transient
+    Google errors (503 ServerError from genai SDK, 429 rate-limit
+    ClientError). Same shape as analyze_clip — every Gemini call
+    should survive a ~99s capacity dip without failing the whole job.
+    Raises PollingTimeoutError if the file doesn't become ACTIVE
+    within `timeout` seconds. Raises immediately on permanent 4xx
+    errors (InvalidArgument etc.) or after retry exhaustion.
+
+    Catches `google.genai.errors.APIError` subclasses (NOT
+    `google.api_core.exceptions`) since the genai SDK has its own
+    error hierarchy.
     """
-    from google.api_core import exceptions as gapi_exc  # type: ignore[import]
+    from google.genai import errors as genai_errors  # type: ignore[import]
 
     client = _get_client()
 
-    # Upload with retry for rate limits
+    def _is_transient_api_error(exc: Exception) -> bool:
+        """503 ServerError or 429 rate-limit ClientError."""
+        if not isinstance(exc, genai_errors.APIError):
+            return False
+        if isinstance(exc, genai_errors.ServerError):
+            return True
+        code = getattr(exc, "code", None)
+        return code == 429 or (isinstance(code, int) and 500 <= code < 600)
+
+    # Upload with retry for rate limits and 503 spikes
+    backoff_schedule = [3.0, 9.0, 27.0, 60.0]
+    max_attempts = len(backoff_schedule) + 1  # 5 total
     file_ref = None
-    for attempt in range(3):
+    for attempt in range(max_attempts):
         try:
             file_ref = client.files.upload(file=path)
             break
-        except gapi_exc.ResourceExhausted:
-            if attempt >= 2:
+        except genai_errors.APIError as exc:
+            if not _is_transient_api_error(exc):
+                raise  # permanent 4xx → fail immediately
+            if attempt >= max_attempts - 1:
                 raise
-            log.warning("gemini_upload_rate_limited", attempt=attempt, path=path)
-            time.sleep(15)
-        except gapi_exc.InvalidArgument:
-            raise
+            backoff_s = backoff_schedule[attempt]
+            log.warning(
+                "gemini_upload_transient_retry",
+                attempt=attempt + 1,
+                of=max_attempts,
+                backoff_s=backoff_s,
+                error_type=type(exc).__name__,
+                http_code=getattr(exc, "code", None),
+                path=path,
+            )
+            time.sleep(backoff_s)
 
     if file_ref is None:
         raise GeminiAnalysisError("Failed to upload file after retries")
 
-    # Poll until ACTIVE
+    # Poll until ACTIVE — same retry shape on transient errors
     deadline = time.time() + timeout
+    poll_attempt = 0
     while time.time() < deadline:
         try:
             file_ref = client.files.get(name=file_ref.name)
-        except gapi_exc.ResourceExhausted:
-            log.warning("gemini_poll_rate_limited", name=file_ref.name)
-            time.sleep(15)
+            poll_attempt = 0  # reset on success
+        except genai_errors.APIError as exc:
+            if not _is_transient_api_error(exc):
+                raise  # permanent error during polling — bail
+            backoff_s = backoff_schedule[min(poll_attempt, len(backoff_schedule) - 1)]
+            log.warning(
+                "gemini_poll_transient_retry",
+                attempt=poll_attempt + 1,
+                backoff_s=backoff_s,
+                error_type=type(exc).__name__,
+                http_code=getattr(exc, "code", None),
+                name=file_ref.name,
+            )
+            poll_attempt += 1
+            time.sleep(backoff_s)
             continue
 
         state_name = file_ref.state.name if hasattr(file_ref.state, "name") else str(file_ref.state)
@@ -198,12 +239,35 @@ def analyze_clip(
 ) -> ClipMeta:
     """Analyze a video clip or time range. Returns ClipMeta.
 
+    Retry policy: up to 5 attempts on transient Google API errors
+    (503 ServiceUnavailable from "high demand" spikes, 429
+    ResourceExhausted from rate limits). Exponential backoff:
+    3s, 9s, 27s, 60s — total worst-case patience ~99s, which covers
+    most observed Google capacity dips ("Spikes are usually
+    temporary" per their 503 message). Refusals and 4xx (except
+    429) fail immediately — those won't get better with retries.
+
+    Without this retry loop a single Google capacity dip fails the
+    entire template job (>50% clip-fail threshold trips at 11/20).
+    With 5 attempts + 99s budget per clip, jobs survive multi-minute
+    Google overload windows.
+
     If start_s and end_s are provided, focuses analysis on that segment.
-    Raises GeminiAnalysisError on failure.
+    Raises GeminiAnalysisError on terminal failure.
+
+    NOTE: the `google.genai` SDK (which `client.models.generate_content`
+    calls into) raises its own ServerError/ClientError classes, NOT the
+    `google.api_core.exceptions` ones. An earlier version of this code
+    caught `gapi_exc.ServiceUnavailable` and never matched — every 503
+    fell through to the catch-all and was wrapped as GeminiAnalysisError
+    on the first attempt with no retries. We now catch the genai SDK's
+    own error hierarchy.
     """
-    client = _get_client()
+    from google.genai import errors as genai_errors  # type: ignore[import]
 
     from app.pipeline.prompt_loader import load_prompt  # noqa: PLC0415
+
+    client = _get_client()
 
     if start_s is not None and end_s is not None:
         segment_instruction = f"Analyze the video segment from {start_s:.1f}s to {end_s:.1f}s."
@@ -212,43 +276,80 @@ def analyze_clip(
 
     prompt = load_prompt("analyze_clip", segment_instruction=segment_instruction)
 
-    try:
-        from google.genai import types as genai_types  # type: ignore[import]
+    from google.genai import types as genai_types  # type: ignore[import]
 
-        response = client.models.generate_content(
-            model=settings.gemini_model,
-            contents=[
-                genai_types.Part.from_uri(
-                    file_uri=file_ref.uri,
-                    mime_type=file_ref.mime_type or "video/mp4",
+    last_transient_exc: Exception | None = None
+    # Backoff schedule: 3s, 9s, 27s, 60s between attempts 0→1, 1→2, 2→3, 3→4
+    backoff_schedule = [3.0, 9.0, 27.0, 60.0]
+    max_attempts = len(backoff_schedule) + 1  # 5 total attempts
+    for attempt in range(max_attempts):
+        try:
+            response = client.models.generate_content(
+                model=settings.gemini_model,
+                contents=[
+                    genai_types.Part.from_uri(
+                        file_uri=file_ref.uri,
+                        mime_type=file_ref.mime_type or "video/mp4",
+                    ),
+                    prompt,
+                ],
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
                 ),
-                prompt,
-            ],
-            config=genai_types.GenerateContentConfig(
-                response_mime_type="application/json",
-            ),
-        )
+            )
 
-        data = _check_refusal(response, ["hook_text", "hook_score", "best_moments"])
+            data = _check_refusal(response, ["hook_text", "hook_score", "best_moments"])
 
-        hook_score = float(data.get("hook_score", 5.0))
-        hook_score = max(0.0, min(10.0, hook_score))
+            hook_score = float(data.get("hook_score", 5.0))
+            hook_score = max(0.0, min(10.0, hook_score))
 
-        clip_id = getattr(file_ref, "name", str(id(file_ref)))
+            clip_id = getattr(file_ref, "name", str(id(file_ref)))
 
-        return ClipMeta(
-            clip_id=clip_id,
-            transcript=data.get("transcript", ""),
-            hook_text=data.get("hook_text", ""),
-            hook_score=hook_score,
-            best_moments=data.get("best_moments", []),
-            detected_subject=data.get("detected_subject", ""),
-        )
+            return ClipMeta(
+                clip_id=clip_id,
+                transcript=data.get("transcript", ""),
+                hook_text=data.get("hook_text", ""),
+                hook_score=hook_score,
+                best_moments=data.get("best_moments", []),
+                detected_subject=data.get("detected_subject", ""),
+            )
 
-    except (GeminiRefusalError, GeminiAnalysisError):
-        raise
-    except Exception as exc:
-        raise GeminiAnalysisError(f"Clip analysis failed: {exc}") from exc
+        except (GeminiRefusalError, GeminiAnalysisError):
+            raise
+        except genai_errors.APIError as exc:
+            # genai SDK errors carry HTTP status code in .code (int).
+            # ServerError = 5xx (Google capacity dip). ClientError 429 = rate limit.
+            # Anything else (4xx) is a permanent client-side problem — bail.
+            code = getattr(exc, "code", None)
+            is_transient = (
+                isinstance(exc, genai_errors.ServerError)
+                or code == 429
+                or (isinstance(code, int) and 500 <= code < 600)
+            )
+            if not is_transient:
+                raise GeminiAnalysisError(f"Clip analysis failed: {exc}") from exc
+            last_transient_exc = exc
+            if attempt >= max_attempts - 1:
+                break
+            backoff_s = backoff_schedule[attempt]
+            log.warning(
+                "gemini_analyze_clip_transient_retry",
+                attempt=attempt + 1,
+                of=max_attempts,
+                backoff_s=backoff_s,
+                error_type=type(exc).__name__,
+                http_code=code,
+            )
+            time.sleep(backoff_s)
+        except Exception as exc:
+            # Non-transient failure (parse errors, network) — raise immediately.
+            raise GeminiAnalysisError(f"Clip analysis failed: {exc}") from exc
+
+    # All retries exhausted on a transient error.
+    raise GeminiAnalysisError(
+        f"Clip analysis failed after {max_attempts} attempts "
+        f"(last error: {last_transient_exc})"
+    ) from last_transient_exc
 
 
 # ── Template analysis ─────────────────────────────────────────────────────────
@@ -698,3 +799,148 @@ def transcribe(file_ref: Any) -> "Transcript":  # noqa: F821
                 log.error("whisper_fallback_also_failed", error=str(whisper_exc))
 
         return Transcript(words=[], full_text="", low_confidence=True)
+
+
+# ── Audio-only template analysis ─────────────────────────────────────────────
+
+
+def analyze_audio_template(
+    file_ref: Any,
+    beat_timestamps_s: list[float],
+    track_config: dict,
+    duration_s: float,
+) -> dict:
+    """Analyze an audio file with Gemini to produce a visual recipe.
+
+    Sends the audio file + beat context to Gemini, which designs a
+    short-form video recipe matching the music's energy, mood, and structure.
+
+    Args:
+        file_ref: Gemini file reference (must be ACTIVE).
+        beat_timestamps_s: Beat timestamps from FFmpeg detection.
+        track_config: Track configuration with best_start_s, best_end_s.
+        duration_s: Total track duration.
+
+    Returns:
+        Recipe dict (same shape as analyze_template output, JSON-serializable).
+
+    Raises:
+        GeminiRefusalError: On safety refusal or missing fields.
+        GeminiAnalysisError: On other Gemini failures.
+    """
+    from app.pipeline.prompt_loader import load_prompt  # noqa: PLC0415
+
+    client = _get_client()
+    from google.genai import types as genai_types  # type: ignore[import]
+
+    best_start = track_config.get("best_start_s", 0.0)
+    best_end = track_config.get("best_end_s", duration_s)
+    section_duration = best_end - best_start
+
+    # Filter beats to best section for context
+    section_beats = [b for b in beat_timestamps_s if best_start <= b <= best_end]
+
+    schema = load_prompt("analyze_template_schema")
+    prompt = load_prompt(
+        "analyze_audio_template",
+        beat_timestamps_s=str([round(b, 2) for b in section_beats]),
+        best_start_s=str(round(best_start, 2)),
+        best_end_s=str(round(best_end, 2)),
+        duration_s=str(round(section_duration, 2)),
+        schema=schema,
+    )
+
+    from google.api_core import exceptions as gapi_exc  # type: ignore[import]
+
+    response = None
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model=settings.gemini_model,
+                contents=[
+                    genai_types.Part.from_uri(
+                        file_uri=file_ref.uri,
+                        mime_type=file_ref.mime_type or "audio/mp4",
+                    ),
+                    prompt,
+                ],
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                ),
+            )
+            break
+        except gapi_exc.ResourceExhausted:
+            if attempt >= 2:
+                raise
+            log.warning("audio_analysis_rate_limited", attempt=attempt)
+            time.sleep(15)
+
+    if response is None:
+        raise GeminiAnalysisError("Failed to get Gemini response after retries")
+
+    data = _check_refusal(response, ["slots", "shot_count", "total_duration_s"])
+
+    # Validate and normalize slots (reuse existing validation)
+    slots = data.get("slots", [])
+    for i, slot in enumerate(slots):
+        dur = slot.get("target_duration_s")
+        try:
+            dur_val = float(dur) if dur is not None else 0.0
+        except (TypeError, ValueError):
+            raise GeminiRefusalError(
+                f"Slot {i + 1} has non-numeric target_duration_s: {dur}"
+            )
+        if dur_val <= 0 or math.isnan(dur_val) or math.isinf(dur_val):
+            raise GeminiRefusalError(
+                f"Slot {i + 1} missing or invalid target_duration_s"
+            )
+        if not slot.get("slot_type"):
+            slot["slot_type"] = "broll"
+
+    global_color_grade = str(data.get("color_grade", "none"))
+    if global_color_grade not in _VALID_COLOR_HINTS:
+        global_color_grade = "none"
+
+    _validate_slots(slots, global_color_grade)
+
+    interstitials = _validate_interstitials(
+        data.get("interstitials", []), int(data.get("shot_count", 0))
+    )
+
+    # Force audio-only flags
+    data["has_talking_head"] = False
+    data["has_voiceover"] = False
+    data["has_permanent_letterbox"] = False
+
+    sync_style = str(data.get("sync_style", "cut-on-beat"))
+    if sync_style not in _VALID_SYNC_STYLES:
+        sync_style = "cut-on-beat"
+
+    recipe = {
+        "shot_count": int(data.get("shot_count", len(slots))),
+        "total_duration_s": float(data.get("total_duration_s", section_duration)),
+        "hook_duration_s": float(data.get("hook_duration_s", 0.0)),
+        "slots": slots,
+        "copy_tone": str(data.get("copy_tone", "energetic")),
+        "caption_style": str(data.get("caption_style", "")),
+        "beat_timestamps_s": [round(b - best_start, 3) for b in section_beats],
+        "creative_direction": str(data.get("creative_direction", "")),
+        "transition_style": str(data.get("transition_style", "")),
+        "color_grade": global_color_grade,
+        "pacing_style": str(data.get("pacing_style", "")),
+        "sync_style": sync_style,
+        "interstitials": interstitials,
+        "subject_niche": str(data.get("subject_niche", "")),
+        "has_talking_head": False,
+        "has_voiceover": False,
+        "has_permanent_letterbox": False,
+    }
+
+    log.info(
+        "audio_template_analysis_done",
+        slot_count=len(slots),
+        color_grade=global_color_grade,
+        interstitials=len(interstitials),
+    )
+
+    return recipe

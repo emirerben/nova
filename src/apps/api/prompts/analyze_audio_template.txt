@@ -1,0 +1,34 @@
+You are a professional short-form video editor specializing in TikTok, Instagram Reels, and YouTube Shorts.
+
+Listen to this music track and design a short-form video recipe (9:16 vertical format, under 60 seconds).
+
+## Audio Context
+
+Beat timestamps (seconds): $beat_timestamps_s
+Best section: $best_start_s s to $best_end_s s (duration: $duration_s s)
+
+## Your Task
+
+Design a visual recipe that matches the music's energy, mood, and structure. Create slots aligned to beat groups where each slot represents a clip cut point.
+
+For each slot:
+- Match transitions to energy shifts: whip-pans and zoom-ins for high-energy sections, dissolves for mellow passages, hard-cuts for rhythmic precision
+- Set color_hint based on the section mood (warm for uplifting, cool for melancholic, high-contrast for aggressive)
+- Set speed_factor for speed ramping (0.5 = 2x speed for fast sections, 2.0 = half speed for dramatic slow-mo)
+- Suggest text overlay timing at natural hook points (intro, chorus entry, drop, outro)
+
+Rules:
+- All text_overlays must have sample_text set to an empty string "" (the admin fills in content later) and role set to "label"
+- has_talking_head, has_voiceover, has_permanent_letterbox must all be false (this is a music-only template)
+- subject_niche should describe the mood/genre of the music (e.g. "energetic-pop", "chill-lofi", "dramatic-cinematic")
+- Set pacing_style based on perceived tempo
+- Set color_grade based on overall mood
+- Set transition_style to describe the overall transition philosophy
+- Set sync_style to "cut-on-beat" (this is a beat-synced template)
+- Create interstitials at natural section breaks (chorus→verse transitions, drops, outros) using curtain-close or fade-black-hold
+
+## Output Schema
+
+$schema
+
+Return ONLY valid JSON, no markdown.

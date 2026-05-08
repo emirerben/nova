@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.3.0] - 2026-04-19
+
+### Added
+- Audio-only template creation: admins can create templates directly from music tracks without a reference video
+- Gemini audio analysis: `analyze_audio_template()` listens to audio tracks and designs visual recipes with mood-driven transitions, energy-based color grading, and beat-synced slots
+- `POST /admin/templates/from-music-track` endpoint creates `audio_only` templates from analyzed tracks
+- `merge_audio_recipe()` combines exact FFmpeg beat timing with Gemini visual properties via proportional mapping
+- "Create Template" button on music track detail page (visible when track analysis is ready)
+- Audio-only template handling in admin UI: amber badge, audio placeholder instead of video player, gcs_path null guards throughout
+- Migration `0011_music_track_recipe`: adds `recipe_cached` and `recipe_cached_at` to music_tracks, makes `video_templates.gcs_path` nullable, extends template_type enum with `audio_only`
+- Gemini audio analysis prompt template (`prompts/analyze_audio_template.txt`)
+- Graceful fallback: if Gemini audio analysis fails, tracks still reach "ready" status with a beat-only recipe
+- 16 new tests: 4 Gemini analyzer, 2 merge algorithm, 4 orchestration task, 6 API endpoint
+
+### Fixed
+- TypeScript operator precedence: `||` and `??` mixed without parentheses in music track audio player props
+
+## [0.3.2.0] - 2026-04-18
+
+### Added
+- Music template variants: parent templates can now have per-song sub-templates with beat-synced timing and the parent's visual recipe merged in
+- "Enable Music Variants" toggle in admin template Settings tab switches template_type between standard and music_parent
+- Music tab on parent templates: browse children, add songs from published track library, navigate to child detail
+- `POST /admin/templates/{id}/children` creates a sub-template by merging parent recipe with a track's beats (proportional slot mapping, overlay timing scaling)
+- `GET /admin/templates/{id}/children` lists sub-templates with track info
+- `POST /admin/templates/{id}/remerge-children` re-merges all children when parent recipe changes, with skipped-child visibility in response
+- `merge_template_with_track()` algorithm: proportional visual mapping, overlay timing scaling, interstitial index remapping
+- Track picker modal in Music tab filters to published+ready tracks, excludes already-added songs
+- Breadcrumb navigation on child templates links back to parent's Music tab
+- Migration `0010_template_music_variants`: adds `template_type`, `parent_template_id`, `music_track_id` columns with FK constraints, unique constraint, and indexes
+- Admin template list now filters out music_child templates by default (`?exclude_children=true`)
+- Public template gallery now excludes music_child templates (they're accessed via their parent)
+- 28 new tests: 7 merge algorithm unit tests, 9 API route tests, 12 existing tests updated
+
+### Fixed
+- `TemplateRecipeVersion` check constraint now includes `'remerge'` trigger in both migration and SQLAlchemy model (was only in migration, causing model/DB drift)
+- Overlay deep copy in merge function prevents parent recipe mutation via shared nested references
+- Tab state gracefully falls back to "recipe" when active tab is removed from visible tabs (e.g., disabling Music Variants while on Music tab)
+
 ## [0.3.1.0] - 2026-04-18
 
 ### Added

@@ -5,6 +5,7 @@ import {
   getMusicTracks,
   createMusicJob,
   getMusicJobStatus,
+  uploadMusicSlot,
   type MusicTrackSummary,
   type MusicJobStatus,
 } from "@/lib/music-api";
@@ -60,6 +61,10 @@ export default function MusicPage() {
 
   const [selectedTrack, setSelectedTrack] = useState<MusicTrackSummary | null>(null);
   const [clipPaths, setClipPaths] = useState("");
+  // Templated tracks (typed slots) collect uploads as GCS paths returned by
+  // /music-jobs/upload-slot. The array length is fixed to user_slot_count.
+  const [slotUploads, setSlotUploads] = useState<(string | null)[]>([]);
+  const [uploadingSlot, setUploadingSlot] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [jobStatus, setJobStatus] = useState<MusicJobStatus | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -88,18 +93,59 @@ export default function MusicPage() {
     return () => clearInterval(id);
   }, [jobStatus]);
 
+  function selectTrack(t: MusicTrackSummary) {
+    setSelectedTrack(t);
+    setJobStatus(null);
+    setSubmitError(null);
+    setClipPaths("");
+    setSlotUploads(
+      t.template_kind === "templated"
+        ? new Array(t.user_slot_count).fill(null)
+        : [],
+    );
+  }
+
+  async function handleSlotUpload(slotIdx: number, file: File) {
+    setUploadingSlot(slotIdx);
+    setSubmitError(null);
+    try {
+      const res = await uploadMusicSlot(file);
+      setSlotUploads((prev) => {
+        const next = [...prev];
+        next[slotIdx] = res.gcs_path;
+        return next;
+      });
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setUploadingSlot(null);
+    }
+  }
+
   async function handleSubmit() {
     if (!selectedTrack) return;
-    const paths = clipPaths
-      .split("\n")
-      .map((p) => p.trim())
-      .filter(Boolean);
 
-    if (paths.length < selectedTrack.required_clips_min) {
-      setSubmitError(
-        `Need at least ${selectedTrack.required_clips_min} clips, got ${paths.length}.`,
-      );
-      return;
+    let paths: string[];
+    if (selectedTrack.template_kind === "templated") {
+      const filled = slotUploads.filter((p): p is string => Boolean(p));
+      if (filled.length !== selectedTrack.user_slot_count) {
+        setSubmitError(
+          `Upload ${selectedTrack.user_slot_count} file${selectedTrack.user_slot_count === 1 ? "" : "s"} first.`,
+        );
+        return;
+      }
+      paths = filled;
+    } else {
+      paths = clipPaths
+        .split("\n")
+        .map((p) => p.trim())
+        .filter(Boolean);
+      if (paths.length < selectedTrack.required_clips_min) {
+        setSubmitError(
+          `Need at least ${selectedTrack.required_clips_min} clips, got ${paths.length}.`,
+        );
+        return;
+      }
     }
 
     setSubmitting(true);
@@ -148,11 +194,7 @@ export default function MusicPage() {
               key={t.id}
               track={t}
               selected={selectedTrack?.id === t.id}
-              onClick={() => {
-                setSelectedTrack(t);
-                setJobStatus(null);
-                setSubmitError(null);
-              }}
+              onClick={() => selectTrack(t)}
             />
           ))}
         </div>
@@ -162,17 +204,87 @@ export default function MusicPage() {
       {selectedTrack && !jobStatus && (
         <div className="bg-zinc-900 rounded-xl border border-zinc-700 p-6">
           <h2 className="text-xl font-semibold mb-1">{selectedTrack.title}</h2>
-          <p className="text-sm text-zinc-400 mb-4">
-            Upload {selectedTrack.required_clips_min}–{selectedTrack.required_clips_max} clips as
-            GCS paths (one per line)
-          </p>
 
-          <textarea
-            className="w-full h-32 bg-zinc-800 border border-zinc-600 rounded-lg p-3 text-sm font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-violet-500"
-            placeholder={"clips/abc123/clip1.mp4\nclips/abc123/clip2.mp4"}
-            value={clipPaths}
-            onChange={(e) => setClipPaths(e.target.value)}
-          />
+          {selectedTrack.template_kind === "templated" ? (
+            <>
+              <p className="text-sm text-zinc-400 mb-4">
+                Upload {selectedTrack.user_slot_count} file
+                {selectedTrack.user_slot_count === 1 ? "" : "s"} (video or photo).
+                The template arranges everything automatically.
+              </p>
+
+              <div className="space-y-3">
+                {Array.from({ length: selectedTrack.user_slot_count }).map(
+                  (_, i) => {
+                    const accepts =
+                      selectedTrack.user_slot_accepts[i] ?? "video,image";
+                    const acceptVideo = accepts.includes("video");
+                    const acceptImage = accepts.includes("image");
+                    const acceptAttr = [
+                      acceptVideo ? "video/mp4,video/quicktime,video/x-m4v" : "",
+                      acceptImage ? "image/*" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(",");
+                    const filled = slotUploads[i];
+                    const busy = uploadingSlot === i;
+                    return (
+                      <label
+                        key={i}
+                        className={`block border-2 rounded-lg p-4 cursor-pointer transition-colors ${
+                          filled
+                            ? "border-green-600 bg-green-950/30"
+                            : "border-zinc-600 bg-zinc-800 hover:border-violet-500"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-semibold">Slot {i + 1}</p>
+                            <p className="text-xs text-zinc-400 mt-1">
+                              {filled
+                                ? `Uploaded · ${filled.split("/").pop()}`
+                                : busy
+                                ? "Uploading…"
+                                : `Choose ${acceptVideo && acceptImage ? "video or photo" : acceptVideo ? "video" : "photo"}`}
+                            </p>
+                          </div>
+                          {filled && (
+                            <span className="text-green-400 text-xl">✓</span>
+                          )}
+                        </div>
+                        <input
+                          type="file"
+                          accept={acceptAttr}
+                          className="hidden"
+                          disabled={busy}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) handleSlotUpload(i, f);
+                            e.currentTarget.value = "";
+                          }}
+                        />
+                      </label>
+                    );
+                  },
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-zinc-400 mb-4">
+                Upload {selectedTrack.required_clips_min}–
+                {selectedTrack.required_clips_max} clips as GCS paths (one per
+                line)
+              </p>
+
+              <textarea
+                className="w-full h-32 bg-zinc-800 border border-zinc-600 rounded-lg p-3 text-sm font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-violet-500"
+                placeholder={"clips/abc123/clip1.mp4\nclips/abc123/clip2.mp4"}
+                value={clipPaths}
+                onChange={(e) => setClipPaths(e.target.value)}
+              />
+            </>
+          )}
 
           {submitError && (
             <p className="text-red-400 text-sm mt-2">{submitError}</p>
@@ -180,10 +292,20 @@ export default function MusicPage() {
 
           <button
             onClick={handleSubmit}
-            disabled={submitting || !clipPaths.trim()}
+            disabled={
+              submitting ||
+              uploadingSlot !== null ||
+              (selectedTrack.template_kind === "templated"
+                ? slotUploads.some((p) => !p)
+                : !clipPaths.trim())
+            }
             className="mt-4 w-full bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-lg transition-colors"
           >
-            {submitting ? "Creating job…" : "Create beat-sync video"}
+            {submitting
+              ? "Creating job…"
+              : selectedTrack.template_kind === "templated"
+              ? "Create video"
+              : "Create beat-sync video"}
           </button>
         </div>
       )}

@@ -200,9 +200,10 @@ def reframe_and_export(
         )
 
     if result.returncode != 0:
-        # Take last 1500 chars — FFmpeg banner is ~500, real errors come at the end
+        # Capture the END of stderr — ffmpeg's actual error messages are at the
+        # tail, not the head. The first 500 chars are just version+config noise.
         stderr = result.stderr.decode(errors="replace")[-1500:]
-        raise ReframeError(f"FFmpeg failed (rc={result.returncode}): ...{stderr}")
+        raise ReframeError(f"FFmpeg failed (rc={result.returncode}): {stderr}")
 
     if not os.path.exists(output_path):
         raise ReframeError("FFmpeg exited 0 but output file not found")
