@@ -160,18 +160,25 @@ def consolidate_slots(
     if n_slots <= CONSOLIDATION_MIN_SLOTS:
         return recipe
 
+    # Per-recipe floor: travel templates with snappy pacing want all 24 slots
+    # preserved even if the user uploads only 15 clips (matcher rotates clips
+    # across slots instead of merging slots into longer chunks).
+    recipe_min_slots = int(getattr(recipe, "min_slots", 0) or 0)
+
     # Count unique clips
     unique_clip_ids = {m.clip_id for m in clip_metas}
     n_unique_clips = len(unique_clip_ids)
 
-    if n_unique_clips >= n_slots:
+    if n_unique_clips >= n_slots or recipe_min_slots >= n_slots:
         return recipe
 
     # Compute target slot count — preserve structural arc
     n_distinct_types = len(
         {s.get("slot_type", "broll") for s in recipe.slots}
     )
-    target = max(n_unique_clips, n_distinct_types, CONSOLIDATION_MIN_SLOTS)
+    target = max(
+        n_unique_clips, n_distinct_types, CONSOLIDATION_MIN_SLOTS, recipe_min_slots
+    )
 
     if target >= n_slots:
         return recipe  # nothing to consolidate

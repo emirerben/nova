@@ -865,6 +865,11 @@ def _plan_slots(
             slot_target_dur = max(0.5, end_s - start_s)
             speed_factor = 1.0
             cumulative_s += slot_target_dur
+            # Force letterbox path for locked sources — the template video may be
+            # 16:9 (e.g. Morocco's 1024x576) and the default crop-to-fill chops
+            # the baked-in hook text on the sides. With aspect_ratio="9:16" the
+            # reframe filter scales-to-fit and pads black bars, preserving text.
+            locked_aspect_override = "9:16"
         else:
             # Beat-snap
             if beats:
@@ -900,6 +905,8 @@ def _plan_slots(
             end_s = min(start_s + source_duration, clip_dur)
 
         aspect_ratio = probe.aspect_ratio if probe else "16:9"
+        if is_locked:
+            aspect_ratio = locked_aspect_override
         slot_color = step.slot.get("color_hint") or global_color_grade or "none"
 
         log.debug(

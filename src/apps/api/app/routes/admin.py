@@ -417,6 +417,8 @@ class RecipeSchema(BaseModel):
     pacing_style: str = ""
     sync_style: SyncStyle = "freeform"
     interstitials: list[RecipeInterstitialSchema] = []
+    # Snappy-pacing floor — consolidate won't merge below this when set.
+    min_slots: int = 0
 
     @field_validator("slots")
     @classmethod

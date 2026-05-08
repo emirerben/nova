@@ -74,6 +74,9 @@ class TemplateRecipe:
     has_talking_head: bool = False
     has_voiceover: bool = False
     has_permanent_letterbox: bool = False
+    # Floor for slot count — when set, consolidate_slots will not merge below
+    # this count (snappier pacing for templates that want all the cuts).
+    min_slots: int = 0
 
 
 @dataclass
