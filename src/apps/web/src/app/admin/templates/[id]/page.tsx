@@ -29,17 +29,27 @@ import {
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { useJobPoller } from "@/hooks/useJobPoller";
 import { EditorTab } from "./components/EditorTab";
+import { MusicTab } from "./components/MusicTab";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type TabId = "recipe" | "editor" | "test" | "settings";
+type TabId = "recipe" | "editor" | "test" | "music" | "settings";
 
-const TABS: { id: TabId; label: string }[] = [
+const ALL_TABS: { id: TabId; label: string }[] = [
   { id: "recipe", label: "Recipe" },
   { id: "editor", label: "Editor" },
   { id: "test", label: "Test" },
+  { id: "music", label: "Music" },
   { id: "settings", label: "Settings" },
 ];
+
+function getVisibleTabs(templateType: string): { id: TabId; label: string }[] {
+  if (templateType === "music_parent") {
+    return ALL_TABS; // all 5 tabs
+  }
+  // standard, music_child, and audio_only: no Music tab
+  return ALL_TABS.filter((t) => t.id !== "music");
+}
 
 const TERMINAL_STATUSES = new Set(["template_ready", "processing_failed"]);
 
@@ -64,10 +74,12 @@ export default function TemplateDetailPage() {
     adminGetTemplate(id)
       .then((t) => {
         setTemplate(t);
-        // Also get playback URL for video player
-        getTemplatePlaybackUrl(id)
-          .then((r) => setPlaybackUrl(r.url))
-          .catch(() => {}); // playback may not be ready yet
+        // Skip playback URL for audio-only templates (no video file)
+        if (t.template_type !== "audio_only" && t.gcs_path) {
+          getTemplatePlaybackUrl(id)
+            .then((r) => setPlaybackUrl(r.url))
+            .catch(() => {}); // playback may not be ready yet
+        }
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -153,18 +165,39 @@ export default function TemplateDetailPage() {
     );
   }
 
+  const visibleTabs = getVisibleTabs(template.template_type ?? "standard");
+  const resolvedTab = visibleTabs.some((t) => t.id === activeTab) ? activeTab : "recipe";
+
   return (
     <div className="flex flex-col min-h-screen">
       {/* Header */}
       <div className="border-b border-zinc-800 px-6 py-4">
-        <button onClick={() => router.push("/admin")} className="text-sm text-zinc-500 hover:text-zinc-300 mb-2 block">
-          ← Back to dashboard
-        </button>
+        {template.template_type === "music_child" && template.parent_template_id ? (
+          <button
+            onClick={() => router.push(`/admin/templates/${template.parent_template_id}?tab=music`)}
+            className="text-sm text-zinc-500 hover:text-zinc-300 mb-2 block"
+          >
+            ← Back to parent template
+          </button>
+        ) : (
+          <button onClick={() => router.push("/admin")} className="text-sm text-zinc-500 hover:text-zinc-300 mb-2 block">
+            ← Back to dashboard
+          </button>
+        )}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold text-white">{template.name}</h1>
             <div className="flex items-center gap-3 mt-1">
               <StatusBadge status={template.analysis_status} />
+              {template.template_type === "music_child" && (
+                <span className="text-xs bg-purple-900/40 text-purple-400 px-2 py-0.5 rounded">Music Variant</span>
+              )}
+              {template.template_type === "music_parent" && (
+                <span className="text-xs bg-blue-900/40 text-blue-400 px-2 py-0.5 rounded">Music Parent</span>
+              )}
+              {template.template_type === "audio_only" && (
+                <span className="text-xs bg-amber-900/40 text-amber-400 px-2 py-0.5 rounded">Audio Only</span>
+              )}
               {template.published_at && !template.archived_at && (
                 <span className="text-xs bg-green-900/40 text-green-400 px-2 py-0.5 rounded">Published</span>
               )}
@@ -182,12 +215,12 @@ export default function TemplateDetailPage() {
       {/* Tabs */}
       <div className="border-b border-zinc-800 px-6">
         <div className="flex gap-1">
-          {TABS.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setTab(tab.id)}
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab.id
+                resolvedTab === tab.id
                   ? "border-white text-white"
                   : "border-transparent text-zinc-500 hover:text-zinc-300"
               }`}
@@ -200,28 +233,31 @@ export default function TemplateDetailPage() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-auto px-6 py-6">
-        {activeTab === "recipe" && (
+        {resolvedTab === "recipe" && (
           <RecipeTab
             template={template}
             playbackUrl={playbackUrl}
             onRefresh={refreshTemplate}
           />
         )}
-        {activeTab === "editor" && (
+        {resolvedTab === "editor" && (
           <EditorTab
             template={template}
             latestTestJob={latestTestJob}
             onTestJobComplete={handleTestJobComplete}
           />
         )}
-        {activeTab === "test" && (
+        {resolvedTab === "test" && (
           <TestTab
             template={template}
             playbackUrl={playbackUrl}
             onJobComplete={handleTestJobComplete}
           />
         )}
-        {activeTab === "settings" && (
+        {resolvedTab === "music" && template.template_type === "music_parent" && (
+          <MusicTab template={template} />
+        )}
+        {resolvedTab === "settings" && (
           <SettingsTab template={template} onSave={setTemplate} />
         )}
       </div>
@@ -292,10 +328,13 @@ function RecipeTab({
 
   const latestRecipe = recipeHistory.length > 0 ? recipeHistory[0] : null;
 
+  const isAudioOnly = template.template_type === "audio_only";
+
   if (template.analysis_status === "analyzing") {
     return (
       <div className="flex gap-6">
         {playbackUrl && <VideoPlayer url={playbackUrl} />}
+        {isAudioOnly && !playbackUrl && <AudioOnlyPlaceholder />}
         <div className="flex-1 flex flex-col items-center justify-center gap-4 py-12">
           <div className="w-8 h-8 border-2 border-zinc-600 border-t-white rounded-full animate-spin" />
           <p className="text-zinc-400 text-sm">Analyzing template with Gemini...</p>
@@ -309,6 +348,7 @@ function RecipeTab({
     return (
       <div className="flex gap-6">
         {playbackUrl && <VideoPlayer url={playbackUrl} />}
+        {isAudioOnly && !playbackUrl && <AudioOnlyPlaceholder />}
         <div className="flex-1 py-12 text-center">
           <p className="text-red-400 mb-2">Analysis failed</p>
           <p className="text-zinc-500 text-sm">Try clicking &ldquo;Reanalyze&rdquo; in the action bar below.</p>
@@ -321,6 +361,7 @@ function RecipeTab({
     <div className="space-y-6">
       <div className="flex gap-6">
         {playbackUrl && <VideoPlayer url={playbackUrl} />}
+        {isAudioOnly && !playbackUrl && <AudioOnlyPlaceholder />}
         <div className="flex-1 space-y-4">
           {latestRecipe && (
             <div className="grid grid-cols-3 gap-3">
@@ -398,6 +439,11 @@ function TestTab({
     media_type: "video" | "photo";
   }>>([]);
 
+  // Face-first templates split the upload into Part 1 (single face/intro
+  // clip pinned to slot 1) and Part 2 (action clips for the rest). Detected
+  // by name containing "face" so future face-style templates auto-pick it up.
+  const isFaceTemplate = template.name.toLowerCase().includes("face");
+
   // Load latest test job on mount so previous results are visible
   useEffect(() => {
     adminGetLatestTestJob(template.id).then((job) => {
@@ -429,6 +475,14 @@ function TestTab({
 
   // File upload for test clips
   const upload = useFileUpload({
+    getPresignedUrl: async (file) => {
+      return adminGetPresignedUpload(file.name, file.type || "video/mp4");
+    },
+  });
+
+  // Separate uploader for the face/intro clip — single file, prepended to
+  // the action-clip list at submit time so slot 1 receives face footage.
+  const faceUpload = useFileUpload({
     getPresignedUrl: async (file) => {
       return adminGetPresignedUpload(file.name, file.type || "video/mp4");
     },
@@ -505,15 +559,27 @@ function TestTab({
   }, [template.id]);
 
   const handleCreateTestJob = useCallback(async () => {
+    if (isFaceTemplate && faceUpload.successfulPaths.length === 0) {
+      setTestError("Önce Part 1'e yüz/intro klibi yükle");
+      return;
+    }
     if (upload.successfulPaths.length === 0) {
-      setTestError("Upload clips first");
+      setTestError(
+        isFaceTemplate
+          ? "Part 2'ye aksiyon klipleri yükle"
+          : "Upload clips first",
+      );
       return;
     }
     setCreating(true);
     setTestError(null);
     try {
+      // Face clip first → matcher's highest-priority hook slot picks it up.
+      const orderedPaths = isFaceTemplate
+        ? [...faceUpload.successfulPaths, ...upload.successfulPaths]
+        : upload.successfulPaths;
       const res = await adminCreateTestJob(template.id, {
-        clip_gcs_paths: upload.successfulPaths,
+        clip_gcs_paths: orderedPaths,
       });
       setTestJobId(res.job_id);
     } catch (err) {
@@ -521,7 +587,7 @@ function TestTab({
     } finally {
       setCreating(false);
     }
-  }, [template.id, upload.successfulPaths]);
+  }, [template.id, upload.successfulPaths, faceUpload.successfulPaths, isFaceTemplate]);
 
   return (
     <div className="space-y-6">
@@ -553,8 +619,88 @@ function TestTab({
       {/* Free-form upload (legacy: all-video templates) */}
       {!isSlotBound && (
       <div className="border border-zinc-800 rounded p-4 space-y-4">
-        <h3 className="text-sm font-medium text-white">Upload Test Clips</h3>
+        <h3 className="text-sm font-medium text-white">
+          {isFaceTemplate ? "Test Clips (Part 1 + Part 2)" : "Upload Test Clips"}
+        </h3>
 
+        {/* Part 1 — Face/Intro dropzone (face templates only) */}
+        {isFaceTemplate && (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-amber-300 uppercase tracking-wide">
+              Part 1 — Yüz / Intro klibi (1 video)
+            </p>
+            <div
+              className={`border-2 border-dashed rounded-lg p-5 text-center transition-colors ${
+                faceUpload.uploading
+                  ? "border-amber-700/40 bg-amber-950/10"
+                  : faceUpload.successfulPaths.length > 0
+                  ? "border-amber-700/60 bg-amber-950/10"
+                  : "border-amber-700/40 hover:border-amber-500/60"
+              }`}
+            >
+              <input
+                type="file"
+                accept="video/mp4,video/quicktime"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  // Replace any existing face clip — only ever one allowed
+                  faceUpload.files.forEach((existing) => faceUpload.removeFile(existing.id));
+                  const entries = faceUpload.addFiles([f]);
+                  faceUpload.startUpload(entries);
+                }}
+                disabled={faceUpload.uploading}
+                className="hidden"
+                id="face-clip-input"
+              />
+              <label
+                htmlFor="face-clip-input"
+                className="cursor-pointer text-sm text-zinc-400 hover:text-white"
+              >
+                {faceUpload.uploading
+                  ? "Uploading..."
+                  : faceUpload.successfulPaths.length > 0
+                  ? "Yüz klibi yüklendi — değiştirmek için tıkla"
+                  : "Yakın çekim yüz / röportaj klibi seç"}
+              </label>
+            </div>
+
+            {faceUpload.files.length > 0 && (
+              <div className="space-y-1">
+                {faceUpload.files.map((f) => (
+                  <div key={f.id} className="flex items-center gap-3 text-sm">
+                    <span className="text-amber-300 truncate flex-1">{f.file.name}</span>
+                    {f.error ? (
+                      <span className="text-red-400 text-xs">{f.error}</span>
+                    ) : f.progress === 100 ? (
+                      <span className="text-green-400 text-xs">Done</span>
+                    ) : (
+                      <div className="w-24 bg-zinc-800 rounded-full h-1.5">
+                        <div
+                          className="bg-amber-500 h-full rounded-full transition-all"
+                          style={{ width: `${f.progress}%` }}
+                        />
+                      </div>
+                    )}
+                    <button
+                      onClick={() => faceUpload.removeFile(f.id)}
+                      className="text-zinc-600 hover:text-zinc-400 text-xs"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Part 2 (face templates) / sole zone (others) */}
+        {isFaceTemplate && (
+          <p className="text-xs font-semibold text-zinc-300 uppercase tracking-wide mt-4">
+            Part 2 — Aksiyon klipleri
+          </p>
+        )}
         <div
           className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
             upload.uploading ? "border-zinc-700 bg-zinc-900/50" : "border-zinc-700 hover:border-zinc-500"
@@ -578,7 +724,11 @@ function TestTab({
             htmlFor="test-clip-input"
             className="cursor-pointer text-sm text-zinc-400 hover:text-white"
           >
-            {upload.uploading ? "Uploading..." : "Click to select clips or drag and drop"}
+            {upload.uploading
+              ? "Uploading..."
+              : isFaceTemplate
+              ? "Aksiyon kliplerini seç (multi-select)"
+              : "Click to select clips or drag and drop"}
           </label>
         </div>
 
@@ -947,6 +1097,11 @@ function SettingsTab({
   const [clipsMax, setClipsMax] = useState(template.required_clips_max);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [togglingMusic, setTogglingMusic] = useState(false);
+
+  const isMusicParent = (template.template_type ?? "standard") === "music_parent";
+  const isMusicChild = (template.template_type ?? "standard") === "music_child";
+  const isAudioOnly = (template.template_type ?? "standard") === "audio_only";
 
   const handleSave = async () => {
     setSaving(true);
@@ -966,6 +1121,22 @@ function SettingsTab({
       alert(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleToggleMusic = async () => {
+    const newType = isMusicParent ? "standard" : "music_parent";
+    if (isMusicParent && !confirm("Disable Music Variants? You must delete all sub-templates first.")) return;
+    setTogglingMusic(true);
+    try {
+      const updated = await adminUpdateTemplate(template.id, {
+        template_type: newType,
+      });
+      onSave(updated);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Toggle failed");
+    } finally {
+      setTogglingMusic(false);
     }
   };
 
@@ -1031,9 +1202,44 @@ function SettingsTab({
         {saved && <span className="text-green-400 text-sm">Saved</span>}
       </div>
 
+      {/* Music Variants toggle — only for standard/music_parent (not children or audio_only) */}
+      {!isMusicChild && !isAudioOnly && (
+        <div className="border-t border-zinc-800 pt-5 mt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-white font-medium">Enable Music Variants</p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Create beat-synced sub-templates for different songs
+              </p>
+            </div>
+            <button
+              onClick={handleToggleMusic}
+              disabled={togglingMusic}
+              role="switch"
+              aria-checked={isMusicParent}
+              className={`relative w-11 h-6 rounded-full transition-colors ${
+                isMusicParent ? "bg-blue-600" : "bg-zinc-700"
+              } ${togglingMusic ? "opacity-50" : ""}`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                  isMusicParent ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="border-t border-zinc-800 pt-4 mt-6">
-        <p className="text-xs text-zinc-500 mb-1">GCS Path</p>
-        <p className="text-sm text-zinc-300 font-mono">{template.gcs_path}</p>
+        {template.gcs_path ? (
+          <>
+            <p className="text-xs text-zinc-500 mb-1">GCS Path</p>
+            <p className="text-sm text-zinc-300 font-mono">{template.gcs_path}</p>
+          </>
+        ) : (
+          <p className="text-xs text-zinc-500 mb-1">Audio-only (no video file)</p>
+        )}
         <p className="text-xs text-zinc-500 mt-3 mb-1">Template ID</p>
         <p className="text-sm text-zinc-300 font-mono">{template.id}</p>
       </div>
@@ -1060,6 +1266,16 @@ function VideoPlaceholder() {
   return (
     <div className="w-[280px] aspect-[9/16] bg-zinc-900 rounded flex items-center justify-center text-zinc-600 text-sm">
       No video
+    </div>
+  );
+}
+
+function AudioOnlyPlaceholder() {
+  return (
+    <div className="w-[280px] aspect-[9/16] bg-zinc-900 rounded flex flex-col items-center justify-center gap-2 flex-shrink-0">
+      <span className="text-3xl">🎵</span>
+      <span className="text-zinc-500 text-sm">Audio-only template</span>
+      <span className="text-zinc-600 text-xs">No reference video</span>
     </div>
   );
 }

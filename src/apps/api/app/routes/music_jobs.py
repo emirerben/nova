@@ -1,18 +1,22 @@
 """Music beat-sync job endpoints.
 
-POST /music-jobs         — create a music-mode job
-GET  /music-jobs/{id}/status — poll job status
+POST /music-jobs                — create a music-mode job
+POST /music-jobs/upload-slot    — direct upload of a video/image for a templated slot
+GET  /music-jobs/{id}/status    — poll job status
 """
 
+import tempfile
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models import Job, MusicTrack
 
@@ -103,6 +107,28 @@ async def _get_published_ready_track(track_id: str, db: AsyncSession) -> MusicTr
 
 
 def _validate_clip_count(track: MusicTrack, n_clips: int) -> None:
+    """Validate the user's clip count against the track's recipe.
+
+    Templated tracks (recipe_cached has typed slots) require exactly one upload
+    per `user_upload` slot. Legacy beat-sync tracks fall back to the
+    track_config min/max bounds.
+    """
+    recipe = track.recipe_cached or {}
+    user_slots = [
+        s for s in recipe.get("slots", []) if s.get("slot_type") == "user_upload"
+    ]
+    if user_slots:
+        expected = len(user_slots)
+        if n_clips != expected:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"This template expects exactly {expected} upload"
+                    f"{'s' if expected != 1 else ''}, got {n_clips}."
+                ),
+            )
+        return
+
     cfg = track.track_config or {}
     req_min = int(cfg.get("required_clips_min", 1))
     req_max = int(cfg.get("required_clips_max", 20))
@@ -155,6 +181,79 @@ async def create_music_job(
         clips=len(req.clip_gcs_paths),
     )
     return MusicJobResponse(job_id=job_id, status="queued", music_track_id=req.music_track_id)
+
+
+_SLOT_UPLOAD_VIDEO_CT = {"video/mp4", "video/quicktime", "video/x-msvideo", "video/x-m4v"}
+_SLOT_UPLOAD_IMAGE_CT = {
+    "image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif",
+}
+_SLOT_UPLOAD_VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi"}
+_SLOT_UPLOAD_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+_SLOT_UPLOAD_MAX_BYTES = 200 * 1024 * 1024  # 200 MB — short user clips, not full source
+
+
+class SlotUploadResponse(BaseModel):
+    gcs_path: str
+    kind: str  # "video" | "image"
+
+
+@router.post(
+    "/upload-slot",
+    response_model=SlotUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_slot_clip(
+    file: UploadFile = File(..., description="Video or image for a templated slot"),
+) -> SlotUploadResponse:
+    """Upload a short clip (video) or still (image) for a templated music slot.
+
+    Used by the user-facing music page when the selected track is templated
+    (e.g. Love-From-Moon). Returns a GCS path that the caller passes to
+    `POST /music-jobs` as the slot's clip.
+    """
+    ct = (file.content_type or "").lower()
+    ext = Path(file.filename or "upload").suffix.lower()
+
+    if ct in _SLOT_UPLOAD_VIDEO_CT or ext in _SLOT_UPLOAD_VIDEO_EXT:
+        kind = "video"
+    elif ct in _SLOT_UPLOAD_IMAGE_CT or ext in _SLOT_UPLOAD_IMAGE_EXT:
+        kind = "image"
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Unsupported file type {ct!r} / {ext!r}. "
+                "Use mp4/mov for video or jpg/png/webp for image."
+            ),
+        )
+
+    upload_id = uuid.uuid4().hex[:12]
+    gcs_path = f"music-uploads/{upload_id}/slot{ext or ('.mp4' if kind == 'video' else '.jpg')}"
+
+    with tempfile.NamedTemporaryFile(suffix=ext or ".bin", delete=True) as tmp:
+        content = await file.read()
+        if len(content) > _SLOT_UPLOAD_MAX_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="File too large. Maximum 200 MB.",
+            )
+        if not content:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Empty file",
+            )
+        tmp.write(content)
+        tmp.flush()
+
+        from app.storage import _get_client  # noqa: PLC0415
+        bucket = _get_client().bucket(settings.storage_bucket)
+        bucket.blob(gcs_path).upload_from_filename(
+            tmp.name,
+            content_type=ct or ("video/mp4" if kind == "video" else "image/jpeg"),
+        )
+
+    log.info("slot_upload_done", gcs_path=gcs_path, kind=kind, bytes=len(content))
+    return SlotUploadResponse(gcs_path=gcs_path, kind=kind)
 
 
 @router.get("/{job_id}/status", response_model=MusicJobStatusResponse)

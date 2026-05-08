@@ -23,6 +23,7 @@ import subprocess
 import structlog
 
 from app.config import settings
+from app.pipeline.probe import probe_video
 from app.pipeline.text_overlay import FONTS_DIR
 
 log = structlog.get_logger()
@@ -104,7 +105,7 @@ def reframe_and_export(
     speed_factor: float = 1.0,
     darkening_windows: list[tuple[float, float]] | None = None,
     narrowing_windows: list[tuple[float, float]] | None = None,
-    input_color_transfer: str = "",
+    output_fit: str = "crop",  # "crop" (default — center-crop sides) | "letterbox" (pad with bg)
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
 
@@ -119,6 +120,13 @@ def reframe_and_export(
     if duration <= 0:
         raise ReframeError(f"Invalid duration: {duration}s")
 
+    # Probe color transfer characteristic to select the right HDR→SDR filter.
+    try:
+        clip_probe = probe_video(input_path)
+        color_trc = clip_probe.color_trc
+    except Exception:
+        color_trc = "bt709"
+
     # Build video filter chain
     vf_parts = _build_video_filter(
         aspect_ratio, ass_subtitle_path,
@@ -126,7 +134,19 @@ def reframe_and_export(
         speed_factor=speed_factor,
         darkening_windows=darkening_windows,
         narrowing_windows=narrowing_windows,
-        input_color_transfer=input_color_transfer,
+        color_trc=color_trc,
+        output_fit=output_fit,
+    )
+
+    # Debug: log final filter chain to diagnose darkness/color issues.
+    log.info(
+        "reframe_filter_chain",
+        input=input_path,
+        color_trc=color_trc,
+        color_hint=color_hint,
+        darkening_windows=darkening_windows or [],
+        narrowing_windows=narrowing_windows or [],
+        filters=vf_parts,
     )
 
     # Build command -- use filter_complex when overlays are present
@@ -179,14 +199,28 @@ def reframe_and_export(
             speed_factor=speed_factor,
             darkening_windows=darkening_windows,
             narrowing_windows=narrowing_windows,
+            output_fit=output_fit,
         )
 
     if result.returncode != 0:
-        # Take the TAIL of stderr — the actual error message is at the end,
-        # not the FFmpeg version banner at the start.
+        # FFmpeg always prints a long version + configuration banner to stderr.
+        # The actual error lives in the lines that *don't* match those headers.
+        # Drop them so we surface the real failure even when the banner alone
+        # exceeds our truncation buffer.
         full_stderr = result.stderr.decode(errors="replace")
-        stderr = full_stderr[-1500:] if len(full_stderr) > 1500 else full_stderr
-        raise ReframeError(f"FFmpeg failed (rc={result.returncode}): ...{stderr}")
+        meaningful = [
+            ln for ln in full_stderr.splitlines()
+            if ln.strip()
+            and not ln.startswith(("ffmpeg version", "  built with", "  configuration:", "  lib"))
+        ]
+        msg = "\n".join(meaningful[-30:]) or full_stderr[-1500:]
+        log.error(
+            "ffmpeg_failed_detail",
+            rc=result.returncode,
+            cmd=" ".join(cmd),
+            stderr_tail=msg[-2000:],
+        )
+        raise ReframeError(f"FFmpeg failed (rc={result.returncode}): {msg}")
 
     if not os.path.exists(output_path):
         raise ReframeError("FFmpeg exited 0 but output file not found")
@@ -264,7 +298,30 @@ def _build_overlay_cmd(
     return cmd
 
 
-_HDR_TRANSFERS = {"arib-std-b67", "smpte2084"}  # HLG, PQ
+_HLG_TRANSFER = "arib-std-b67"
+_HDR10_TRANSFER = "smpte2084"
+
+# zscale tonemap pipeline for HLG/HDR10 → SDR conversion.
+# FFmpeg's `colorspace` filter does not support HLG (arib-std-b67) or PQ input;
+# zscale (libzimg) handles the full HDR transfer function correctly.
+#
+# npl=400 + mobius: tuned empirically against iPhone HLG samples.
+#   npl=203 + clip overshot (output YAVG=203 vs source ~170) because clip
+#   passed midtones through unchanged and HLG diffuse-white-200nit ended up at
+#   near-white in SDR. npl=400 expects peaks up to 400 nits, so 200-nit scene
+#   white maps to linear ~0.5 and bt709 gamma yields ~73% display luma —
+#   matching natural iPhone footage brightness.
+# tonemap=mobius: smooth shoulder rolloff for values approaching 1.0,
+#   preserves midtone contrast better than reinhard, less aggressive than
+#   hable. Specular highlights compressed gracefully instead of clipped.
+_ZSCALE_SDR_PIPELINE = (
+    "zscale=t=linear:npl=400"
+    ",format=gbrpf32le"
+    ",zscale=p=bt709"
+    ",tonemap=tonemap=mobius"
+    ",zscale=t=bt709:m=bt709:r=tv"
+    ",format=yuv420p"
+)
 
 
 def _build_video_filter(
@@ -274,7 +331,8 @@ def _build_video_filter(
     speed_factor: float = 1.0,
     darkening_windows: list[tuple[float, float]] | None = None,
     narrowing_windows: list[tuple[float, float]] | None = None,
-    input_color_transfer: str = "",
+    color_trc: str = "bt709",
+    output_fit: str = "crop",
 ) -> list[str]:
     """Return list of filter segments to join with commas.
 
@@ -285,41 +343,45 @@ def _build_video_filter(
     """
     filters: list[str] = []
 
-    # 0a. Color handling — branch on the source's transfer characteristic.
-    # The legacy `colorspace=all=bt709` filter doesn't work in FFmpeg 7.x:
-    # it crashes on iPhone HLG (arib-std-b67) and on clips with unknown
-    # primaries. Instead we either:
-    #   - Real HDR->SDR tonemap via zscale + tonemap (HLG/PQ sources)
-    #   - Plain metadata relabel via setparams (SDR / unknown sources)
-    if input_color_transfer in _HDR_TRANSFERS:
-        # Proper HDR->SDR pipeline. Steps:
-        #   1. Convert to linear light in float32 GBR
-        #   2. Tonemap (Hable curve, peak luminance 100 nits = SDR target)
-        #   3. Re-encode to bt709 in tv-range yuv420p
-        # If zscale isn't compiled in, this filter chain will fail at run
-        # time with "no such filter" — caller's stderr will show that and
-        # we can fall back to setparams. For now we trust the Debian build
-        # (libzimg is part of standard ffmpeg packaging).
-        filters.append("zscale=t=linear:npl=100")
-        filters.append("format=gbrpf32le")
-        filters.append("tonemap=tonemap=hable:desat=0")
-        filters.append("zscale=p=bt709:t=bt709:m=bt709:r=tv")
-        filters.append("format=yuv420p")
+    # 0a. HDR/HLG → SDR color conversion.
+    # HLG (arib-std-b67) and HDR10 (smpte2084) require zscale tonemap pipeline —
+    # FFmpeg's `colorspace` filter rejects these transfer characteristics.
+    # bt709 clips (Android SDR, screen recordings) use colorspace=all=bt709 (no-op for SDR).
+    if color_trc in (_HLG_TRANSFER, _HDR10_TRANSFER):
+        filters.append(_ZSCALE_SDR_PIPELINE)
     else:
-        # SDR or unknown source — just relabel metadata. setparams doesn't
-        # touch pixel data, so it cannot fail like colorspace did. Safe for
-        # everything from screen recordings to our generated photo mp4s
-        # (which we now tag bt709 at generation time anyway).
-        filters.append(
-            "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709"
-        )
+        filters.append("colorspace=all=bt709")
 
     # 0. Speed ramp -- FIRST filter to normalize PTS for all subsequent timed filters
     if speed_factor != 1.0 and speed_factor > 0:
         filters.append(f"setpts=PTS/{speed_factor}")
 
-    # 1. Scale/crop
-    if aspect_ratio == "16:9":
+    # 1. Scale/crop. Default "crop" mode center-crops 16:9 source to 9:16 (loses
+    # the sides — fine for talking heads / single-subject shots). "letterbox"
+    # variants preserve the entire source frame: scale-to-fit, then pad with
+    # either a blurred zoom of the same source or flat black bars.
+    ow = settings.output_width
+    oh = settings.output_height
+    if output_fit == "letterbox" or output_fit == "letterbox_blur":
+        # Foreground = original frame fit-into-canvas;
+        # Background = same source upscaled + blurred + cropped to fill 9:16.
+        filters.append(
+            "split=2[bg][fg];"
+            f"[bg]scale={ow}:{oh}:force_original_aspect_ratio=increase,"
+            f"crop={ow}:{oh},gblur=sigma=30[bg];"
+            f"[fg]scale={ow}:{oh}:force_original_aspect_ratio=decrease[fg];"
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2"
+        )
+    elif output_fit == "letterbox_black":
+        # Pure black bars — match reference TikToks that don't blend the source
+        # behind itself. Crisper but reads more "letterbox-y."
+        filters.append(
+            f"scale={ow}:{oh}:force_original_aspect_ratio=decrease"
+        )
+        filters.append(
+            f"pad={ow}:{oh}:(ow-iw)/2:(oh-ih)/2:color=black"
+        )
+    elif aspect_ratio == "16:9":
         filters.append(f"scale=-2:{settings.output_height}")
         filters.append(f"crop={settings.output_width}:{settings.output_height}")
     else:

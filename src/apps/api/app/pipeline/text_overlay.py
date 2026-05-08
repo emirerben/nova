@@ -260,6 +260,12 @@ def generate_text_overlay_png(
                 overlay, slot_duration_s, output_dir, slot_index, i,
             )
             results.extend(configs)
+        elif effect == "player-card":
+            cfg = _render_player_card(
+                overlay, slot_duration_s, output_dir, slot_index, i,
+            )
+            if cfg:
+                results.extend(cfg)
         elif spans:
             # Rich span rendering — per-word font/color/size
             text, start_s, end_s, position = _validate_overlay(overlay, slot_duration_s)
@@ -274,7 +280,8 @@ def generate_text_overlay_png(
                     continue  # genuinely bad timing — skip even with spans
                 position = overlay.get("position", "center")
             png_path = os.path.join(output_dir, f"slot_{slot_index}_overlay_{i}.png")
-            _draw_spans_png(overlay, spans, position, png_path)
+            _draw_spans_png(overlay, spans, position, png_path,
+                            outline_px=overlay.get("outline_px"))
             if os.path.exists(png_path):
                 results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
         else:
@@ -296,7 +303,7 @@ def generate_text_overlay_png(
                 text_size=text_size, text_size_px=text_size_px_val,
                 text_color=text_color,
                 position_y_frac=overlay.get("position_y_frac"),
-                stroke_width=int(overlay.get("stroke_width", 0)),
+                stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
                 emoji_prefix=overlay.get("emoji_prefix", ""),
             )
             results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
@@ -334,6 +341,7 @@ def generate_animated_overlay_ass(
                 text, start_s, end_s, position, effect, ass_path,
                 font_family=font_family,
                 position_y_frac=overlay.get("position_y_frac"),
+                outline_px=overlay.get("outline_px"),
             )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
@@ -358,6 +366,7 @@ def _write_animated_ass(
     *,
     font_family: str | None = None,
     position_y_frac: float | None = None,
+    outline_px: int | None = None,
 ) -> None:
     """Write an ASS file with animation tags for the given effect."""
     alignment, margin_v = _ASS_POSITION.get(position, (5, 0))
@@ -370,17 +379,22 @@ def _write_animated_ass(
         target_y = int(CANVAS_H * position_y_frac)
         pos_tag = f"\\pos({CANVAS_W // 2},{target_y})"
 
+    # Optional black outline override via \bord + \3c (outline colour) tags
+    outline_tag = ""
+    if outline_px and outline_px > 0:
+        outline_tag = f"\\bord{outline_px}\\3c&H000000&"
+
     if effect == "fade-in":
         if pos_tag:
-            dialogue_text = f"{{\\an5{pos_tag}\\fad(500,0)}}{text}"
+            dialogue_text = f"{{\\an5{pos_tag}{outline_tag}\\fad(500,0)}}{text}"
         else:
-            dialogue_text = f"{{\\an{alignment}\\fad(500,0)}}{text}"
+            dialogue_text = f"{{\\an{alignment}{outline_tag}\\fad(500,0)}}{text}"
 
     elif effect == "typewriter":
         total_dur_cs = int((end_s - start_s) * 100)
         char_count = max(len(text), 1)
         per_char_cs = max(1, total_dur_cs // char_count)
-        parts = [f"{{\\an{alignment}}}"]
+        parts = [f"{{\\an{alignment}{outline_tag}}}"]
         for ch in text:
             parts.append(f"{{\\k{per_char_cs}}}{ch}")
         dialogue_text = "".join(parts)
@@ -391,11 +405,15 @@ def _write_animated_ass(
         start_y = CANVAS_H + 100
         x = CANVAS_W // 2
         dialogue_text = (
-            f"{{\\an5\\move({x},{start_y},{x},{target_y},0,500)}}{text}"
+            f"{{\\an5\\move({x},{start_y},{x},{target_y},0,500){outline_tag}}}{text}"
         )
 
     else:
-        dialogue_text = f"{{\\an5{pos_tag}}}{text}" if pos_tag else f"{{\\an{alignment}}}{text}"
+        dialogue_text = (
+            f"{{\\an5{pos_tag}{outline_tag}}}{text}"
+            if pos_tag
+            else f"{{\\an{alignment}{outline_tag}}}{text}"
+        )
 
     # Use dynamic ASS header when font_family is set
     if font_family:
@@ -459,6 +477,7 @@ def _draw_frame(
         _draw_spans_png(
             overlay, spans, position, png_path,
             font_overrides=overrides, position_y_frac=position_y_frac,
+            outline_px=overlay.get("outline_px"),
         )
     else:
         _draw_text_png(
@@ -466,7 +485,223 @@ def _draw_frame(
             font=font, font_family=font_family, font_style=font_style,
             text_size=text_size, text_color=text_color,
             position_y_frac=position_y_frac,
+            stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
+            emoji_prefix=overlay.get("emoji_prefix", ""),
         )
+
+
+# ── Player-card overlay (effect="player-card") ─────────────────────────────
+# Renders a translucent player highlight overlay over an existing slot:
+#   - Giant kit number (default Outfit Bold @ ~720px) centered on canvas,
+#     white with thick black outline + drop-shadow.
+#   - Italic-styled red serif player name (Fraunces Bold sheared) overlapping
+#     the lower middle of the number, large (~160px).
+# The PNG is transparent except for the number+name; the slot's footage shows
+# through, matching the "Rayan Cherki / 10" beat in the reference TikTok.
+
+PLAYER_CARD_NUMBER_PX = 720
+PLAYER_CARD_NAME_PX = 200            # bumped — Pacifico script needs more size to read
+PLAYER_CARD_NAME_COLOR = "#C81E32"   # crimson red
+PLAYER_CARD_NUMBER_COLOR = "#FFFFFF"
+PLAYER_CARD_NUMBER_OPACITY = 0.85    # slight transparency so footage bleeds through
+# Animation timing (1.0s window): fade-in + hold + fade-out
+PLAYER_CARD_FADE_IN_S = 0.15
+PLAYER_CARD_FADE_OUT_S = 0.15
+PLAYER_CARD_FADE_STEPS = 4           # smoothness per fade direction
+
+
+def _render_player_card(
+    overlay: dict,
+    slot_duration_s: float,
+    output_dir: str,
+    slot_index: int,
+    overlay_index: int,
+) -> list[dict] | None:
+    """Render the player-highlight card overlay with fade-in/hold/fade-out.
+
+    Returns a list of {png_path, start_s, end_s} time-windowed PNGs that the
+    caller composites in sequence. The card always animates as a SINGLE unit:
+    kit number + script name share the exact same alpha across all frames so
+    the viewer reads them as one element, not two staggered text bursts.
+
+    Reads ``jersey_no`` and ``player_name`` from the overlay dict; both must
+    be non-empty or the overlay is silently skipped.
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    jersey_no = str(overlay.get("jersey_no") or "").strip()
+    player_name = str(overlay.get("player_name") or "").strip()
+    if not jersey_no or not player_name:
+        log.info(
+            "player_card_skipped_missing_fields",
+            slot=slot_index,
+            has_no=bool(jersey_no),
+            has_name=bool(player_name),
+        )
+        return None
+
+    start_s = float(overlay.get("start_s", 0.0))
+    end_s = float(overlay.get("end_s", min(slot_duration_s, start_s + 1.0)))
+    end_s = min(end_s, slot_duration_s)
+    if start_s >= end_s:
+        return None
+
+    duration = end_s - start_s
+    fade_in = min(PLAYER_CARD_FADE_IN_S, duration / 3.0)
+    fade_out = min(PLAYER_CARD_FADE_OUT_S, duration / 3.0)
+    hold_start = start_s + fade_in
+    hold_end = end_s - fade_out
+
+    # ── Build the master player-card frame (alpha=1.0) ──────────────────
+    master = _draw_player_card_master(jersey_no, player_name)
+
+    # ── Multi-frame fade: render N stepped alphas for in + hold + out ──
+    configs: list[dict] = []
+    steps = max(1, PLAYER_CARD_FADE_STEPS)
+
+    def _emit(label: str, alpha: float, t0: float, t1: float) -> None:
+        if t1 <= t0:
+            return
+        png_path = os.path.join(
+            output_dir,
+            f"slot_{slot_index}_player_card_{overlay_index}_{label}.png",
+        )
+        if alpha >= 0.999:
+            master.save(png_path, "PNG")
+        else:
+            faded = Image.eval(master.split()[3], lambda v: int(v * alpha))
+            framed = master.copy()
+            framed.putalpha(faded)
+            framed.save(png_path, "PNG")
+        configs.append({"png_path": png_path, "start_s": t0, "end_s": t1})
+
+    # fade-in stepped frames
+    if fade_in > 0:
+        step_dur = fade_in / steps
+        for i in range(steps):
+            alpha = (i + 1) / steps  # 0.25, 0.50, 0.75, 1.00 for steps=4
+            t0 = start_s + i * step_dur
+            t1 = start_s + (i + 1) * step_dur
+            _emit(f"in{i}", alpha, t0, t1)
+    # hold (full opacity)
+    _emit("hold", 1.0, hold_start, hold_end)
+    # fade-out stepped frames
+    if fade_out > 0:
+        step_dur = fade_out / steps
+        for i in range(steps):
+            alpha = 1.0 - ((i + 1) / steps)  # 0.75, 0.50, 0.25, 0.00
+            t0 = hold_end + i * step_dur
+            t1 = hold_end + (i + 1) * step_dur
+            if alpha > 0.01:  # skip the alpha=0 frame, hard cut off instead
+                _emit(f"out{i}", alpha, t0, t1)
+
+    log.info(
+        "player_card_rendered",
+        slot=slot_index, jersey_no=jersey_no, player_name=player_name,
+        start_s=start_s, end_s=end_s, frames=len(configs),
+    )
+    return configs
+
+
+def _draw_player_card_master(jersey_no: str, player_name: str):
+    """Build the canonical player-card frame (alpha=1.0) on a 1080x1920 canvas.
+
+    Layout:
+      • Giant kit number (Outfit Bold) centered, white with thick black outline
+        and gaussian drop-shadow.
+      • Script-style player name (Pacifico, no shear — already cursive)
+        overlapping the lower portion of the number, crimson red with thin
+        outline + soft shadow for legibility.
+    """
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont  # noqa: PLC0415
+
+    img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+
+    # ── Giant kit number ────────────────────────────────────────────────
+    number_font_path = (
+        _registry_font_path("Outfit")
+        or _registry_font_path("Montserrat")
+        or MONTSERRAT_FONT_PATH
+    )
+    try:
+        number_font = ImageFont.truetype(number_font_path, PLAYER_CARD_NUMBER_PX)
+    except OSError:
+        number_font = ImageFont.load_default()
+
+    measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    n_bbox = measure.textbbox((0, 0), jersey_no, font=number_font)
+    n_w = n_bbox[2] - n_bbox[0]
+    n_h = n_bbox[3] - n_bbox[1]
+    n_x = (CANVAS_W - n_w) // 2 - n_bbox[0]
+    n_y = (CANVAS_H - n_h) // 2 - n_bbox[1]
+
+    shadow = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).text(
+        (n_x, n_y + 12), jersey_no, font=number_font, fill=(0, 0, 0, 200)
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=24))
+    img = Image.alpha_composite(img, shadow)
+
+    number_alpha = int(round(255 * PLAYER_CARD_NUMBER_OPACITY))
+    number_color = _hex_to_rgba(PLAYER_CARD_NUMBER_COLOR)[:3] + (number_alpha,)
+    fg = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    ImageDraw.Draw(fg).text(
+        (n_x, n_y), jersey_no, font=number_font,
+        fill=number_color, stroke_width=12, stroke_fill=(0, 0, 0, 230),
+    )
+    img = Image.alpha_composite(img, fg)
+
+    # ── Script-style player name overlapping the lower portion of the "10" ──
+    # Pacifico is a built-in cursive script — no italic shear needed; matches
+    # the reference TikTok's signature-style "Rayan Cherki" overlay.
+    name_font_path = (
+        _registry_font_path("Pacifico")
+        or _registry_font_path("Permanent Marker")
+        or os.path.join(_ASSETS_DIR, "Pacifico-Regular.ttf")
+    )
+    # Auto-shrink the script font so the rendered name fits within ~88% of canvas
+    # width (Pacifico has wide glyphs; "Rayan Cherki" at 200px exceeds 1080px).
+    name_size = PLAYER_CARD_NAME_PX
+    max_name_width = int(CANVAS_W * 0.88)
+    while name_size > 80:
+        try:
+            test_font = ImageFont.truetype(name_font_path, name_size)
+        except OSError:
+            test_font = ImageFont.load_default()
+            break
+        bbox = measure.textbbox((0, 0), player_name, font=test_font)
+        if (bbox[2] - bbox[0]) <= max_name_width:
+            break
+        name_size -= 8
+    try:
+        name_font = ImageFont.truetype(name_font_path, name_size)
+    except OSError:
+        name_font = ImageFont.load_default()
+
+    name_color = _hex_to_rgba(PLAYER_CARD_NAME_COLOR)
+    nm_bbox = measure.textbbox((0, 0), player_name, font=name_font)
+    base_w = nm_bbox[2] - nm_bbox[0]
+    base_h = nm_bbox[3] - nm_bbox[1]
+    pad = 32
+    name_layer = Image.new(
+        "RGBA", (base_w + pad * 2, base_h + pad * 2), (0, 0, 0, 0)
+    )
+    ImageDraw.Draw(name_layer).text(
+        (pad - nm_bbox[0], pad - nm_bbox[1]),
+        player_name, font=name_font, fill=name_color,
+        stroke_width=4, stroke_fill=(0, 0, 0, 220),
+    )
+
+    name_x = (CANVAS_W - name_layer.width) // 2
+    name_y = n_y + int(n_h * 0.62) - name_layer.height // 2
+    overlay_canvas = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    overlay_canvas.alpha_composite(name_layer, (name_x, name_y))
+
+    name_shadow = overlay_canvas.filter(ImageFilter.GaussianBlur(radius=10))
+    img = Image.alpha_composite(img, name_shadow)
+    img = Image.alpha_composite(img, overlay_canvas)
+
+    return img
 
 
 def _render_font_cycle(
@@ -991,6 +1226,7 @@ def _draw_spans_png(
     *,
     font_overrides: dict[int, object] | None = None,
     position_y_frac: float | None = None,
+    outline_px: int | None = None,
 ) -> None:
     """Draw multiple text spans with per-word font/color/size on a 1080x1920 canvas.
 
@@ -1124,8 +1360,12 @@ def _draw_spans_png(
 
             # Shadow
             shadow_draw.text((x, draw_y + 6), sd["text"], font=sd["font"], fill=(0, 0, 0, 160))
-            # Foreground
-            fg_draw.text((x, draw_y), sd["text"], font=sd["font"], fill=sd["color"])
+            # Foreground — optional black stroke when overlay sets outline_px
+            if outline_px and outline_px > 0:
+                fg_draw.text((x, draw_y), sd["text"], font=sd["font"], fill=sd["color"],
+                             stroke_width=outline_px, stroke_fill=(0, 0, 0, 255))
+            else:
+                fg_draw.text((x, draw_y), sd["text"], font=sd["font"], fill=sd["color"])
 
             x += sd["w"] + _SPAN_WORD_GAP
 

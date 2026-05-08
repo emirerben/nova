@@ -37,6 +37,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools && \
 COPY src/apps/api/app ./app
 COPY src/apps/api/assets ./assets
 COPY src/apps/api/prompts ./prompts
+COPY src/apps/api/scripts ./scripts
 COPY src/apps/api/alembic.ini .
 
 # Own everything under /app by nova

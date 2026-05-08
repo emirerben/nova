@@ -161,14 +161,14 @@ class TestPreBurnCurtainSlotText:
 
 
 class TestConcatDemuxerPreset:
-    """_concat_demuxer must use preset=fast so scenecut=40 fires at slot boundaries."""
+    """_concat_demuxer uses preset=ultrafast for shared-CPU iteration speed."""
 
-    def test_concat_uses_fast_preset(self):
-        """Final assembly (concat) must use preset=fast to prevent horizontal tearing.
-
-        All per-slot intermediates use ultrafast. The concat step is where slot
-        boundaries appear — scenecut=40 inserts I-frames here. If ultrafast were
-        used, scenecut=0 (native) would remove those keyframes, causing tearing.
+    def test_concat_uses_ultrafast_preset(self):
+        """Final concat must use preset=ultrafast to fit Fly.io's 600s ffmpeg
+        timeout on 24-slot recipes. CRF 18 and the 4M bitrate cap keep quality
+        in the visually-lossless band; the scenecut/I-frame benefit of
+        preset=fast was costing 9+ minutes per render — not worth it for
+        marginal seam quality.
         """
         import tempfile
 
@@ -194,8 +194,8 @@ class TestConcatDemuxerPreset:
         cmd = mock_run.call_args[0][0]
         assert "-preset" in cmd, f"No -preset flag in cmd: {cmd}"
         preset_idx = cmd.index("-preset")
-        assert cmd[preset_idx + 1] == "fast", (
-            f"concat must use preset=fast for scenecut, got: {cmd[preset_idx + 1]}"
+        assert cmd[preset_idx + 1] == "ultrafast", (
+            f"concat must use preset=ultrafast, got: {cmd[preset_idx + 1]}"
         )
 
 
@@ -2256,3 +2256,43 @@ class TestInterstitialZeroHoldSkip:
 
             # Both slots rendered — confirms no crash from cumulative_s drift
             assert mock_reframe.call_count == 2
+
+
+# ── Regression: template_kind kwarg strip ────────────────────────────────────
+# Migration 0010 backfilled `template_kind: "multiple_videos"` onto every
+# existing recipe. TemplateRecipe is a strict dataclass; without stripping
+# the routing-only field, every legacy template crashes at init.
+
+class TestTemplateKindStrip:
+    def test_template_recipe_init_succeeds_with_template_kind_in_data(self):
+        """Recipe payload (as backfilled by migration 0010) must construct
+        cleanly after the orchestrator's strip step."""
+        from app.pipeline.agents.gemini_analyzer import TemplateRecipe
+
+        # Realistic shape from a backfilled multiple_videos template
+        recipe_data = {
+            "template_kind": "multiple_videos",  # ← what the migration added
+            "shot_count": 3,
+            "total_duration_s": 12.0,
+            "hook_duration_s": 3.0,
+            "slots": [
+                {"position": 1, "target_duration_s": 3.0, "priority": 10, "slot_type": "hook"},
+                {"position": 2, "target_duration_s": 4.5, "priority": 8, "slot_type": "content"},
+                {"position": 3, "target_duration_s": 4.5, "priority": 8, "slot_type": "content"},
+            ],
+            "copy_tone": "energetic",
+            "caption_style": "default",
+            "interstitials": [],
+            "beat_timestamps_s": [],
+        }
+
+        # Direct init MUST raise — proves the regression existed
+        import pytest
+        with pytest.raises(TypeError, match="template_kind"):
+            TemplateRecipe(**recipe_data)
+
+        # The orchestrator's _build_recipe helper MUST succeed
+        from app.tasks.template_orchestrate import _build_recipe
+        recipe = _build_recipe(recipe_data)
+        assert recipe.shot_count == 3
+        assert len(recipe.slots) == 3

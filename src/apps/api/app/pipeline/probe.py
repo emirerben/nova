@@ -21,10 +21,8 @@ class VideoProbe:
     codec: str
     aspect_ratio: str  # "16:9" | "9:16" | "other"
     file_size_bytes: int
-    # Color transfer characteristic from input metadata. Used to decide whether
-    # we need a real HDR->SDR tonemap (HLG/PQ) or just a metadata relabel.
-    # Empty string = unknown/unset (treat as SDR bt709).
-    color_transfer: str = ""
+    color_trc: str = "bt709"  # e.g. "arib-std-b67" (HLG), "smpte2084" (PQ/HDR10)
+    color_transfer: str = ""  # raw container value; empty = unknown/SDR
 
 
 class ProbeError(Exception):
@@ -86,6 +84,16 @@ def probe_video(file_path: str) -> VideoProbe:
         height = int(video_stream["height"])
         codec = video_stream.get("codec_name", "unknown")
         file_size_bytes = int(fmt.get("size", 0))
+        color_trc_raw = video_stream.get("color_trc", "") or ""
+        color_primaries = video_stream.get("color_primaries", "") or ""
+        # HEVC/Dolby Vision mis-tag detection: iPhone HLG clips sometimes surface
+        # with color_primaries=bt2020 but color_trc=bt709 (or empty) in container
+        # metadata, depending on the ffprobe build. bt2020 primaries with non-HDR
+        # trc is physically impossible for valid SDR — treat as HLG.
+        if color_primaries == "bt2020" and color_trc_raw in ("", "bt709", "unknown", "reserved"):
+            color_trc = "arib-std-b67"
+        else:
+            color_trc = color_trc_raw or "bt709"
 
         # Parse fps from "num/den" rational string
         fps_str = video_stream.get("r_frame_rate", "30/1")
@@ -110,6 +118,7 @@ def probe_video(file_path: str) -> VideoProbe:
         aspect_ratio=aspect_ratio,
         fps=fps,
         codec=codec,
+        color_trc=color_trc,
         color_transfer=color_transfer or "unknown",
     )
 
@@ -122,6 +131,7 @@ def probe_video(file_path: str) -> VideoProbe:
         codec=codec,
         aspect_ratio=aspect_ratio,
         file_size_bytes=file_size_bytes,
+        color_trc=color_trc,
         color_transfer=color_transfer,
     )
 

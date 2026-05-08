@@ -66,8 +66,17 @@ export default function TemplatePage() {
   // Upload state
   const [pageState, setPageState] = useState<PageState>("gallery");
   const [clips, setClips] = useState<ClipFile[]>([]);
+  const [faceClip, setFaceClip] = useState<ClipFile | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [faceDragOver, setFaceDragOver] = useState(false);
+  const faceFileInput = useRef<HTMLInputElement>(null);
+
+  // Face-first template detection — slot 1 is a fixed close-up/face shot
+  // pinned by the user, then action clips fill the rest. Triggered by name
+  // containing "face" so future face-style templates pick this UI up too.
+  const isFaceTemplate =
+    selectedTemplate?.name.toLowerCase().includes("face") ?? false;
 
   // Location (subject) state
   const [location, setLocation] = useState("");
@@ -200,6 +209,7 @@ export default function TemplatePage() {
     setSelectedTemplate(t);
     setPageState("upload");
     setClips([]);
+    setFaceClip(null);
     setErrorMsg(null);
   }
 
@@ -207,7 +217,13 @@ export default function TemplatePage() {
     setPageState("gallery");
     setSelectedTemplate(null);
     setClips([]);
+    setFaceClip(null);
     setErrorMsg(null);
+  }
+
+  function setFaceFromFile(file: File) {
+    if (!ALLOWED_MIME.includes(file.type) || file.size > MAX_BYTES) return;
+    setFaceClip({ file, id: crypto.randomUUID(), progress: 0, error: null });
   }
 
   function addFiles(files: FileList | File[]) {
@@ -234,9 +250,21 @@ export default function TemplatePage() {
     if (!selectedTemplate) return;
     setErrorMsg(null);
 
+    if (isFaceTemplate && !faceClip) {
+      setErrorMsg("Bu template Part 1 için yakın çekim yüz/intro klibi istiyor.");
+      return;
+    }
+
+    // Face clip is uploaded as the first item so the matcher's highest-priority
+    // hook slot (position 1) gets the face footage. Action clips fill the rest.
+    const orderedClips: ClipFile[] = isFaceTemplate && faceClip
+      ? [faceClip, ...clips]
+      : clips;
+
     const minClips = 5;
-    if (clips.length < minClips) {
-      setErrorMsg(`This template needs at least ${minClips} clips. Add ${minClips - clips.length} more.`);
+    if (orderedClips.length < minClips) {
+      const need = minClips - orderedClips.length;
+      setErrorMsg(`This template needs at least ${minClips} clips. Add ${need} more.`);
       return;
     }
 
@@ -246,7 +274,7 @@ export default function TemplatePage() {
       // Step 1: Get batch presigned URLs
       // Normalise MIME here so fileMeta matches what uploadFileToGcs will send —
       // the presigned URL is signed against this exact content-type.
-      const fileMeta: BatchPresignedFile[] = clips.map((c, i) => ({
+      const fileMeta: BatchPresignedFile[] = orderedClips.map((c, i) => ({
         filename: `clip_${i}.${c.file.name.split(".").pop() || "mp4"}`,
         content_type: normaliseMimeType(c.file.type),
         file_size_bytes: c.file.size,
@@ -254,23 +282,29 @@ export default function TemplatePage() {
       const { urls } = await getBatchPresignedUrls(fileMeta);
 
       // Step 2: Upload all clips in parallel with per-file progress
-      const gcsPaths: string[] = new Array(clips.length);
+      const gcsPaths: string[] = new Array(orderedClips.length);
       await Promise.all(
-        clips.map(async (clip, i) => {
+        orderedClips.map(async (clip, i) => {
           try {
             await uploadFileToGcs(urls[i].upload_url, clip.file);
             gcsPaths[i] = urls[i].gcs_path;
-            setClips((prev) =>
-              prev.map((c) => (c.id === clip.id ? { ...c, progress: 100 } : c))
-            );
+            // Update face clip OR action-clip state depending on which list it came from
+            if (isFaceTemplate && i === 0) {
+              setFaceClip((prev) => (prev ? { ...prev, progress: 100 } : prev));
+            } else {
+              setClips((prev) =>
+                prev.map((c) => (c.id === clip.id ? { ...c, progress: 100 } : c))
+              );
+            }
           } catch (err) {
-            setClips((prev) =>
-              prev.map((c) =>
-                c.id === clip.id
-                  ? { ...c, error: err instanceof Error ? err.message : "Upload failed" }
-                  : c
-              )
-            );
+            const errMsg = err instanceof Error ? err.message : "Upload failed";
+            if (isFaceTemplate && i === 0) {
+              setFaceClip((prev) => (prev ? { ...prev, error: errMsg } : prev));
+            } else {
+              setClips((prev) =>
+                prev.map((c) => (c.id === clip.id ? { ...c, error: errMsg } : c))
+              );
+            }
             throw err;
           }
         })
@@ -436,7 +470,13 @@ export default function TemplatePage() {
 
   // ── Upload View (template selected) ─────────────────────────────────────────
   const minClips = 5;
-  const canSubmit = clips.length >= minClips && pageState === "upload";
+  // Face template needs N action clips + 1 face clip = N+1 total. The minimum
+  // is computed against the combined ordered list so users see the right copy.
+  const totalClipCount = (isFaceTemplate && faceClip ? 1 : 0) + clips.length;
+  const canSubmit =
+    totalClipCount >= minClips &&
+    (!isFaceTemplate || faceClip !== null) &&
+    pageState === "upload";
   const totalProgress =
     clips.length > 0
       ? Math.round(clips.reduce((sum, c) => sum + c.progress, 0) / clips.length)
@@ -463,6 +503,8 @@ export default function TemplatePage() {
         <p className="text-zinc-400 text-sm mb-4">
           {isSlotBound
             ? "Upload one clip per slot in order."
+            : isFaceTemplate
+            ? `Part 1: 1 yakın çekim yüz/intro klibi. Part 2: ${minClips - 1}–${MAX_CLIPS - 1} aksiyon klibi. AI bu sırayla template'e dizecek.`
             : `Upload ${minClips}–${MAX_CLIPS} raw clips. AI will assemble them to match this template.`}
         </p>
 
@@ -509,8 +551,75 @@ export default function TemplatePage() {
           />
         )}
 
-        {/* Drop zone (legacy free-form upload) */}
-        {!isSlotBound && (<>
+        {/* Part 1 — Face/Intro dropzone (face templates only) */}
+        {!isSlotBound && isFaceTemplate && (
+          <div className="mb-3">
+            <p className="text-zinc-300 text-xs font-semibold mb-1.5 uppercase tracking-wide">
+              Part 1 — Yüz / Intro klibi <span className="text-amber-400">(1 video)</span>
+            </p>
+            <div
+              className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-colors ${
+                faceDragOver
+                  ? "border-amber-400 bg-amber-950/20"
+                  : faceClip
+                  ? "border-amber-700/60 bg-amber-950/10"
+                  : "border-amber-700/40 hover:border-amber-500/60"
+              }`}
+              onClick={() => faceFileInput.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setFaceDragOver(true); }}
+              onDragLeave={() => setFaceDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setFaceDragOver(false);
+                const f = e.dataTransfer.files[0];
+                if (f) setFaceFromFile(f);
+              }}
+            >
+              {faceClip ? (
+                <div className="flex items-center justify-center gap-2">
+                  <span className="text-amber-300 text-sm truncate">
+                    {faceClip.file.name}
+                  </span>
+                  <span className="text-zinc-500 text-xs">
+                    ({(faceClip.file.size / 1024 / 1024).toFixed(1)} MB)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setFaceClip(null); }}
+                    className="text-zinc-500 hover:text-red-400 text-sm ml-2"
+                    aria-label="Remove face clip"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <p className="text-zinc-400 text-sm">
+                    Yüz / röportaj kapalı çekim — 1 video bırak veya tıkla
+                  </p>
+                  <p className="text-zinc-600 text-xs mt-1">İlk slot bu klipten kesilecek</p>
+                </>
+              )}
+              <input
+                ref={faceFileInput}
+                type="file"
+                accept="video/mp4,video/quicktime"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) setFaceFromFile(f);
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Drop zone — Part 2 for face templates, only zone for others */}
+        {!isSlotBound && isFaceTemplate && (
+          <p className="text-zinc-300 text-xs font-semibold mb-1.5 uppercase tracking-wide">
+            Part 2 — Aksiyon klipleri <span className="text-zinc-500">({minClips - 1}–{MAX_CLIPS - 1} video)</span>
+          </p>
+        )}
         <div
           className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
             dragOver ? "border-white bg-zinc-800" : "border-zinc-600 hover:border-zinc-400"
@@ -526,8 +635,10 @@ export default function TemplatePage() {
         >
           <p className="text-zinc-400 text-sm">
             {clips.length === 0
-              ? "Drop clips here or click to browse"
-              : `${clips.length} clip${clips.length !== 1 ? "s" : ""} selected`}
+              ? isFaceTemplate
+                ? "Aksiyon kliplerini buraya bırak veya tıkla"
+                : "Drop clips here or click to browse"
+              : `${clips.length} ${isFaceTemplate ? "aksiyon klibi" : "clip" + (clips.length !== 1 ? "s" : "")} selected`}
           </p>
           <p className="text-zinc-600 text-xs mt-1">MP4, MOV · Up to 4GB each</p>
           <input
@@ -669,8 +780,10 @@ export default function TemplatePage() {
               : "bg-zinc-800 text-zinc-500 cursor-not-allowed"
           }`}
         >
-          {clips.length < minClips
-            ? `Add ${minClips - clips.length} more clip${minClips - clips.length !== 1 ? "s" : ""}`
+          {isFaceTemplate && !faceClip
+            ? "Önce Part 1'e yüz klibi ekle"
+            : totalClipCount < minClips
+            ? `Add ${minClips - totalClipCount} more clip${minClips - totalClipCount !== 1 ? "s" : ""}`
             : "Create with Template"}
         </button>
         </>)}

@@ -14,6 +14,18 @@ import {
 // Admin-only (2 users), so eager loading is fine. TTF files served from /fonts/.
 const FONT_FACES = `
 @font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
   font-family: 'Playfair Display';
   src: url('/fonts/PlayfairDisplay-Bold.ttf') format('truetype');
   font-weight: 700;

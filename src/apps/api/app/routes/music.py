@@ -24,6 +24,12 @@ class MusicTrackSummary(BaseModel):
     section_duration_s: float
     required_clips_min: int
     required_clips_max: int
+    # When the track has a typed-slot recipe (Love-From-Moon style), the
+    # frontend uses these to render a per-slot upload UI instead of the
+    # generic clip-list textarea.
+    template_kind: str = "beat_sync"  # "beat_sync" | "templated"
+    user_slot_count: int = 0
+    user_slot_accepts: list[str] = []  # ["video","image"] per templated slot
 
 
 class MusicTrackListResponse(BaseModel):
@@ -47,11 +53,32 @@ async def list_music_tracks(
     summaries = []
     for t in tracks:
         cfg = t.track_config or {}
-        start_s = float(cfg.get("best_start_s", 0.0))
-        end_s = float(cfg.get("best_end_s", 0.0))
-        section_duration_s = round(max(0.0, end_s - start_s), 1)
-        req_min = int(cfg.get("required_clips_min", 1))
-        req_max = int(cfg.get("required_clips_max", 10))
+        recipe = t.recipe_cached or {}
+        user_slots = [
+            s for s in recipe.get("slots", [])
+            if s.get("slot_type") == "user_upload"
+        ]
+        is_templated = bool(user_slots)
+
+        if is_templated:
+            section_duration_s = round(
+                sum(float(s.get("target_duration_s", 0.0)) for s in recipe.get("slots", [])),
+                1,
+            )
+            req_min = req_max = len(user_slots)
+            accepts: list[str] = []
+            for s in sorted(user_slots, key=lambda x: int(x.get("position", 0))):
+                a = s.get("accepts") or ["video", "image"]
+                accepts.append(",".join(a))
+            template_kind = "templated"
+        else:
+            start_s = float(cfg.get("best_start_s", 0.0))
+            end_s = float(cfg.get("best_end_s", 0.0))
+            section_duration_s = round(max(0.0, end_s - start_s), 1)
+            req_min = int(cfg.get("required_clips_min", 1))
+            req_max = int(cfg.get("required_clips_max", 10))
+            accepts = []
+            template_kind = "beat_sync"
 
         summaries.append(
             MusicTrackSummary(
@@ -62,6 +89,9 @@ async def list_music_tracks(
                 section_duration_s=section_duration_s,
                 required_clips_min=req_min,
                 required_clips_max=req_max,
+                template_kind=template_kind,
+                user_slot_count=len(user_slots),
+                user_slot_accepts=accepts,
             )
         )
 
