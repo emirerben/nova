@@ -37,11 +37,16 @@ _INLINE_DEFAULTS: dict[str, str] = {
         '- "transcript": string — full spoken text in the segment\n'
         '- "hook_text": string — the first compelling sentence that creates curiosity\n'
         '- "hook_score": float 0–10 — how strongly the opening hooks the viewer\n'
-        '- "best_moments": list of 3–6 objects with '
+        '- "best_moments": list of 2–5 objects with '
         '{"start_s": float, "end_s": float, "energy": float 0–10, "description": string} '
-        "covering a VARIETY of durations — include some short moments (3–5s) AND some "
-        "medium moments (8–12s) AND at least one longer moment (13–20s) so this clip can "
-        "fill both short and long template slots\n\n"
+        "— pick the BEST moments only; do NOT pad the list with filler. Include a mix "
+        "of durations (3–5s, 8–12s, and at least one ≥13s when meaningful action exists).\n\n"
+        "For EVERY best_moment, \"description\" MUST be a short concrete action label "
+        "naming the visible event (e.g. \"shot on goal\", \"through-ball pass\", "
+        "\"dribble past defender\", \"header save\", \"tackle wins ball\"). Do NOT use "
+        "vague descriptions like \"player on field\", \"match in progress\", or "
+        "\"wide shot\". If no meaningful action occurs in a candidate window, omit it "
+        "entirely — return fewer moments rather than weak ones.\n\n"
         "Return ONLY valid JSON, no markdown."
     ),
     "transcribe": (

@@ -27,7 +27,11 @@ log = structlog.get_logger()
 
 # -- Constants ----------------------------------------------------------------
 
-MAX_OVERLAY_TEXT_LEN = 40
+# Hard char cap as a safety net only — the renderer now word-wraps long text
+# to multi-line and shrinks fonts on single-word overflow, so this limit
+# should never trigger for real captions. 300 = far above any sane caption
+# length but still bounds Pillow measurement time on adversarial input.
+MAX_OVERLAY_TEXT_LEN = 300
 
 # Output dimensions (must match reframe output)
 CANVAS_W = 1080
@@ -36,6 +40,42 @@ CANVAS_H = 1920
 # Font path: look next to assets/ dir relative to the api app root
 _ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "fonts")
 FONTS_DIR = os.path.normpath(_ASSETS_DIR)
+
+# Pre-rendered emoji PNGs (Twemoji 72x72 transparent). Pillow can't render
+# color emoji glyphs without raqm/HarfBuzz, so we composite a static PNG
+# to the left of caption text instead. Filename = lowercase hex codepoint
+# of the BASE emoji (variation selectors stripped).
+_EMOJI_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "assets", "emoji")
+)
+
+
+def _emoji_codepoint(emoji: str) -> str:
+    """Return lowercase hex codepoint of the base char in `emoji`.
+
+    Strips ZWJ (U+200D) and variation selectors (U+FE0F/U+FE0E). For our
+    use case we only handle single-char emoji like 🗣️ -> "1f5e3". Multi-
+    glyph compositions (skin tones, family combos) just use the leading
+    base codepoint, which usually has its own Twemoji asset.
+    """
+    if not emoji:
+        return ""
+    for ch in emoji:
+        cp = ord(ch)
+        # Skip variation selectors and ZWJ
+        if cp in (0xFE0F, 0xFE0E, 0x200D):
+            continue
+        return f"{cp:x}"
+    return ""
+
+
+def _emoji_png_path(emoji: str) -> str | None:
+    """Return absolute path to the emoji PNG asset, or None if missing."""
+    cp = _emoji_codepoint(emoji)
+    if not cp:
+        return None
+    path = os.path.join(_EMOJI_DIR, f"{cp}.png")
+    return path if os.path.exists(path) else None
 
 OVERLAY_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "PlayfairDisplay-Bold.ttf"))
 OVERLAY_FONT_PATH_REGULAR = os.path.normpath(
@@ -220,6 +260,12 @@ def generate_text_overlay_png(
                 overlay, slot_duration_s, output_dir, slot_index, i,
             )
             results.extend(configs)
+        elif effect == "player-card":
+            cfg = _render_player_card(
+                overlay, slot_duration_s, output_dir, slot_index, i,
+            )
+            if cfg:
+                results.extend(cfg)
         elif spans:
             # Rich span rendering — per-word font/color/size
             text, start_s, end_s, position = _validate_overlay(overlay, slot_duration_s)
@@ -257,7 +303,8 @@ def generate_text_overlay_png(
                 text_size=text_size, text_size_px=text_size_px_val,
                 text_color=text_color,
                 position_y_frac=overlay.get("position_y_frac"),
-                outline_px=overlay.get("outline_px"),
+                stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
+                emoji_prefix=overlay.get("emoji_prefix", ""),
             )
             results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
 
@@ -440,6 +487,220 @@ def _draw_frame(
             position_y_frac=position_y_frac,
             outline_px=overlay.get("outline_px"),
         )
+
+
+# ── Player-card overlay (effect="player-card") ─────────────────────────────
+# Renders a translucent player highlight overlay over an existing slot:
+#   - Giant kit number (default Outfit Bold @ ~720px) centered on canvas,
+#     white with thick black outline + drop-shadow.
+#   - Italic-styled red serif player name (Fraunces Bold sheared) overlapping
+#     the lower middle of the number, large (~160px).
+# The PNG is transparent except for the number+name; the slot's footage shows
+# through, matching the "Rayan Cherki / 10" beat in the reference TikTok.
+
+PLAYER_CARD_NUMBER_PX = 720
+PLAYER_CARD_NAME_PX = 200            # bumped — Pacifico script needs more size to read
+PLAYER_CARD_NAME_COLOR = "#C81E32"   # crimson red
+PLAYER_CARD_NUMBER_COLOR = "#FFFFFF"
+PLAYER_CARD_NUMBER_OPACITY = 0.85    # slight transparency so footage bleeds through
+# Animation timing (1.0s window): fade-in + hold + fade-out
+PLAYER_CARD_FADE_IN_S = 0.15
+PLAYER_CARD_FADE_OUT_S = 0.15
+PLAYER_CARD_FADE_STEPS = 4           # smoothness per fade direction
+
+
+def _render_player_card(
+    overlay: dict,
+    slot_duration_s: float,
+    output_dir: str,
+    slot_index: int,
+    overlay_index: int,
+) -> list[dict] | None:
+    """Render the player-highlight card overlay with fade-in/hold/fade-out.
+
+    Returns a list of {png_path, start_s, end_s} time-windowed PNGs that the
+    caller composites in sequence. The card always animates as a SINGLE unit:
+    kit number + script name share the exact same alpha across all frames so
+    the viewer reads them as one element, not two staggered text bursts.
+
+    Reads ``jersey_no`` and ``player_name`` from the overlay dict; both must
+    be non-empty or the overlay is silently skipped.
+    """
+    from PIL import Image  # noqa: PLC0415
+
+    jersey_no = str(overlay.get("jersey_no") or "").strip()
+    player_name = str(overlay.get("player_name") or "").strip()
+    if not jersey_no or not player_name:
+        log.info(
+            "player_card_skipped_missing_fields",
+            slot=slot_index,
+            has_no=bool(jersey_no),
+            has_name=bool(player_name),
+        )
+        return None
+
+    start_s = float(overlay.get("start_s", 0.0))
+    end_s = float(overlay.get("end_s", min(slot_duration_s, start_s + 1.0)))
+    end_s = min(end_s, slot_duration_s)
+    if start_s >= end_s:
+        return None
+
+    duration = end_s - start_s
+    fade_in = min(PLAYER_CARD_FADE_IN_S, duration / 3.0)
+    fade_out = min(PLAYER_CARD_FADE_OUT_S, duration / 3.0)
+    hold_start = start_s + fade_in
+    hold_end = end_s - fade_out
+
+    # ── Build the master player-card frame (alpha=1.0) ──────────────────
+    master = _draw_player_card_master(jersey_no, player_name)
+
+    # ── Multi-frame fade: render N stepped alphas for in + hold + out ──
+    configs: list[dict] = []
+    steps = max(1, PLAYER_CARD_FADE_STEPS)
+
+    def _emit(label: str, alpha: float, t0: float, t1: float) -> None:
+        if t1 <= t0:
+            return
+        png_path = os.path.join(
+            output_dir,
+            f"slot_{slot_index}_player_card_{overlay_index}_{label}.png",
+        )
+        if alpha >= 0.999:
+            master.save(png_path, "PNG")
+        else:
+            faded = Image.eval(master.split()[3], lambda v: int(v * alpha))
+            framed = master.copy()
+            framed.putalpha(faded)
+            framed.save(png_path, "PNG")
+        configs.append({"png_path": png_path, "start_s": t0, "end_s": t1})
+
+    # fade-in stepped frames
+    if fade_in > 0:
+        step_dur = fade_in / steps
+        for i in range(steps):
+            alpha = (i + 1) / steps  # 0.25, 0.50, 0.75, 1.00 for steps=4
+            t0 = start_s + i * step_dur
+            t1 = start_s + (i + 1) * step_dur
+            _emit(f"in{i}", alpha, t0, t1)
+    # hold (full opacity)
+    _emit("hold", 1.0, hold_start, hold_end)
+    # fade-out stepped frames
+    if fade_out > 0:
+        step_dur = fade_out / steps
+        for i in range(steps):
+            alpha = 1.0 - ((i + 1) / steps)  # 0.75, 0.50, 0.25, 0.00
+            t0 = hold_end + i * step_dur
+            t1 = hold_end + (i + 1) * step_dur
+            if alpha > 0.01:  # skip the alpha=0 frame, hard cut off instead
+                _emit(f"out{i}", alpha, t0, t1)
+
+    log.info(
+        "player_card_rendered",
+        slot=slot_index, jersey_no=jersey_no, player_name=player_name,
+        start_s=start_s, end_s=end_s, frames=len(configs),
+    )
+    return configs
+
+
+def _draw_player_card_master(jersey_no: str, player_name: str):
+    """Build the canonical player-card frame (alpha=1.0) on a 1080x1920 canvas.
+
+    Layout:
+      • Giant kit number (Outfit Bold) centered, white with thick black outline
+        and gaussian drop-shadow.
+      • Script-style player name (Pacifico, no shear — already cursive)
+        overlapping the lower portion of the number, crimson red with thin
+        outline + soft shadow for legibility.
+    """
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont  # noqa: PLC0415
+
+    img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+
+    # ── Giant kit number ────────────────────────────────────────────────
+    number_font_path = (
+        _registry_font_path("Outfit")
+        or _registry_font_path("Montserrat")
+        or MONTSERRAT_FONT_PATH
+    )
+    try:
+        number_font = ImageFont.truetype(number_font_path, PLAYER_CARD_NUMBER_PX)
+    except OSError:
+        number_font = ImageFont.load_default()
+
+    measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    n_bbox = measure.textbbox((0, 0), jersey_no, font=number_font)
+    n_w = n_bbox[2] - n_bbox[0]
+    n_h = n_bbox[3] - n_bbox[1]
+    n_x = (CANVAS_W - n_w) // 2 - n_bbox[0]
+    n_y = (CANVAS_H - n_h) // 2 - n_bbox[1]
+
+    shadow = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).text(
+        (n_x, n_y + 12), jersey_no, font=number_font, fill=(0, 0, 0, 200)
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=24))
+    img = Image.alpha_composite(img, shadow)
+
+    number_alpha = int(round(255 * PLAYER_CARD_NUMBER_OPACITY))
+    number_color = _hex_to_rgba(PLAYER_CARD_NUMBER_COLOR)[:3] + (number_alpha,)
+    fg = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    ImageDraw.Draw(fg).text(
+        (n_x, n_y), jersey_no, font=number_font,
+        fill=number_color, stroke_width=12, stroke_fill=(0, 0, 0, 230),
+    )
+    img = Image.alpha_composite(img, fg)
+
+    # ── Script-style player name overlapping the lower portion of the "10" ──
+    # Pacifico is a built-in cursive script — no italic shear needed; matches
+    # the reference TikTok's signature-style "Rayan Cherki" overlay.
+    name_font_path = (
+        _registry_font_path("Pacifico")
+        or _registry_font_path("Permanent Marker")
+        or os.path.join(_ASSETS_DIR, "Pacifico-Regular.ttf")
+    )
+    # Auto-shrink the script font so the rendered name fits within ~88% of canvas
+    # width (Pacifico has wide glyphs; "Rayan Cherki" at 200px exceeds 1080px).
+    name_size = PLAYER_CARD_NAME_PX
+    max_name_width = int(CANVAS_W * 0.88)
+    while name_size > 80:
+        try:
+            test_font = ImageFont.truetype(name_font_path, name_size)
+        except OSError:
+            test_font = ImageFont.load_default()
+            break
+        bbox = measure.textbbox((0, 0), player_name, font=test_font)
+        if (bbox[2] - bbox[0]) <= max_name_width:
+            break
+        name_size -= 8
+    try:
+        name_font = ImageFont.truetype(name_font_path, name_size)
+    except OSError:
+        name_font = ImageFont.load_default()
+
+    name_color = _hex_to_rgba(PLAYER_CARD_NAME_COLOR)
+    nm_bbox = measure.textbbox((0, 0), player_name, font=name_font)
+    base_w = nm_bbox[2] - nm_bbox[0]
+    base_h = nm_bbox[3] - nm_bbox[1]
+    pad = 32
+    name_layer = Image.new(
+        "RGBA", (base_w + pad * 2, base_h + pad * 2), (0, 0, 0, 0)
+    )
+    ImageDraw.Draw(name_layer).text(
+        (pad - nm_bbox[0], pad - nm_bbox[1]),
+        player_name, font=name_font, fill=name_color,
+        stroke_width=4, stroke_fill=(0, 0, 0, 220),
+    )
+
+    name_x = (CANVAS_W - name_layer.width) // 2
+    name_y = n_y + int(n_h * 0.62) - name_layer.height // 2
+    overlay_canvas = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    overlay_canvas.alpha_composite(name_layer, (name_x, name_y))
+
+    name_shadow = overlay_canvas.filter(ImageFilter.GaussianBlur(radius=10))
+    img = Image.alpha_composite(img, name_shadow)
+    img = Image.alpha_composite(img, overlay_canvas)
+
+    return img
 
 
 def _render_font_cycle(
@@ -700,6 +961,39 @@ def _load_font(font_path: str, size: int = OVERLAY_FONT_SIZE):
     return ImageFont.load_default()
 
 
+# Maximum text width as fraction of canvas width (matches _SPAN_MAX_LINE_W).
+# Text wider than this is wrapped to multiple lines, then if a SINGLE word is
+# still too wide the font is shrunk to fit.
+_TEXT_MAX_LINE_W = 0.9
+# Line spacing as multiplier of max line height for multi-line wrapping.
+_TEXT_LINE_SPACING = 1.15
+
+
+def _wrap_text_to_lines(text: str, font, max_width: int, draw) -> list[str]:
+    """Greedy word-wrap: returns list of lines that each fit within max_width.
+
+    If a single word exceeds max_width on its own (e.g. very long URL),
+    it stays on its own line — caller should shrink the font.
+    """
+    words = text.split()
+    if not words:
+        return [text]
+
+    lines: list[str] = []
+    current: list[str] = []
+    for word in words:
+        candidate = " ".join([*current, word]) if current else word
+        bbox = draw.textbbox((0, 0), candidate, font=font)
+        if bbox[2] - bbox[0] <= max_width or not current:
+            current.append(word)
+        else:
+            lines.append(" ".join(current))
+            current = [word]
+    if current:
+        lines.append(" ".join(current))
+    return lines
+
+
 def _draw_text_png(
     text: str,
     position: str,
@@ -712,7 +1006,9 @@ def _draw_text_png(
     text_size_px: int | None = None,
     text_color: tuple[int, int, int, int] = (255, 255, 255, 255),
     position_y_frac: float | None = None,
-    outline_px: int | None = None,
+    stroke_width: int = 0,
+    stroke_color: tuple[int, int, int, int] = (0, 0, 0, 230),
+    emoji_prefix: str = "",
 ) -> None:
     """Draw styled text on a transparent 1080x1920 canvas.
 
@@ -721,7 +1017,13 @@ def _draw_text_png(
       2. ``font_family`` — look up in registry by name
       3. ``font_style`` — legacy style-based lookup
 
-    Uses subtle drop shadow instead of outline for a clean TikTok look.
+    Wraps long text by words to fit within 90% of canvas width. If a single
+    word still exceeds that width (rare — long URL, no spaces), shrinks the
+    font enough to make it fit.
+
+    Two compositing layers: a soft drop shadow for depth, and an optional
+    crisp black stroke (Pillow's stroke_width) for the TikTok caption look.
+    Stroke is opt-in — old behaviour (shadow only) when stroke_width=0.
     """
     from PIL import Image, ImageDraw, ImageFilter  # noqa: PLC0415
 
@@ -729,37 +1031,151 @@ def _draw_text_png(
     draw = ImageDraw.Draw(img)
 
     # Resolve font: pre-loaded > font_family > font_style
+    # Track whether we own font resolution — only then do we shrink on overflow.
+    # Pre-loaded fonts come from font-cycle which renders many frames with
+    # different fonts at the same size; shrinking would make text jump.
+    own_font = font is None
     if font is None:
+        size = text_size_px or _FONT_SIZE_MAP.get(text_size, 72)
         if font_family:
-            size = text_size_px or _FONT_SIZE_MAP.get(text_size, 72)
             font = _resolve_font_family(font_family, size)
         if font is None:
             font = _load_styled_font(font_style, text_size, text_size_px=text_size_px)
+    else:
+        size = getattr(font, "size", text_size_px or _FONT_SIZE_MAP.get(text_size, 72))
 
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
+    max_width = int(CANVAS_W * _TEXT_MAX_LINE_W)
+    lines = _wrap_text_to_lines(text, font, max_width, draw)
 
-    x = (CANVAS_W - text_w) // 2
+    # Safety: if a single word can't be word-wrapped to fit (no spaces, very
+    # long URL), shrink the font until the widest line fits. Caps iterations
+    # to avoid pathological inputs blowing render time. Skip when we don't
+    # own the font (font-cycle case: caller is responsible for sizing).
+    if own_font:
+        def _max_line_w(ls: list[str]) -> int:
+            widest = 0
+            for ln in ls:
+                b = draw.textbbox((0, 0), ln, font=font)
+                widest = max(widest, b[2] - b[0])
+            return widest
+
+        iterations = 0
+        while _max_line_w(lines) > max_width and iterations < 6 and size > 24:
+            size = int(size * 0.85)
+            if font_family:
+                new_font = _resolve_font_family(font_family, size)
+            else:
+                new_font = _load_styled_font(font_style, "medium", text_size_px=size)
+            if new_font is None:
+                break
+            font = new_font
+            lines = _wrap_text_to_lines(text, font, max_width, draw)
+            iterations += 1
+
+    # Compute per-line metrics + total block height for vertical centering.
+    line_heights: list[int] = []
+    line_widths: list[int] = []
+    for ln in lines:
+        b = draw.textbbox((0, 0), ln, font=font)
+        line_widths.append(b[2] - b[0])
+        line_heights.append(b[3] - b[1])
+    line_step = int(max(line_heights) * _TEXT_LINE_SPACING) if line_heights else 0
+    block_h = (
+        sum(line_heights[:-1])
+        + (line_step - max(line_heights)) * (len(lines) - 1)
+        + line_heights[-1]
+        if lines
+        else 0
+    )
+    # Simpler/predictable: stack each line at top + i*line_step.
+    block_h = line_step * (len(lines) - 1) + (line_heights[-1] if line_heights else 0)
+
     y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
-    y = int(CANVAS_H * y_frac - text_h / 2)
+    block_top = int(CANVAS_H * y_frac - block_h / 2)
 
-    # Soft gaussian shadow -- cinematic depth, no hard edges
+    # Soft gaussian shadow layer (drawn once, all lines).
     shadow_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow_layer)
-    shadow_draw.text((x, y + 6), text, font=font, fill=(0, 0, 0, 160))
-    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
-    img = Image.alpha_composite(img, shadow_layer)
-
-    # Foreground text — optional black stroke when overlay sets outline_px
     fg_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     fg_draw = ImageDraw.Draw(fg_layer)
-    if outline_px and outline_px > 0:
-        fg_draw.text((x, y), text, font=font, fill=text_color,
-                     stroke_width=outline_px, stroke_fill=(0, 0, 0, 255))
-    else:
-        fg_draw.text((x, y), text, font=font, fill=text_color)
+
+    # Pre-compute emoji metrics so we can offset the FIRST line's x position
+    # to keep emoji + line 1 visually centered as one block. Without this
+    # the emoji gets pasted to the left of an already-centered text and
+    # overflows the canvas edge.
+    emoji_metrics: dict | None = None
+    if emoji_prefix and lines:
+        emoji_path = _emoji_png_path(emoji_prefix)
+        if emoji_path:
+            try:
+                emoji_img = Image.open(emoji_path).convert("RGBA")
+                first_line_h = line_heights[0]
+                emoji_size = max(24, int(first_line_h * 0.95))
+                gap = max(8, emoji_size // 6)
+                # Combined width: emoji + gap + line 1 text. If this exceeds
+                # 95% canvas width, shrink the emoji proportionally so it
+                # still fits without cropping.
+                combined = emoji_size + gap + line_widths[0]
+                max_combined = int(CANVAS_W * 0.95)
+                if combined > max_combined:
+                    overshoot = combined - max_combined
+                    new_emoji_size = max(20, emoji_size - overshoot)
+                    if new_emoji_size != emoji_size:
+                        emoji_size = new_emoji_size
+                        gap = max(6, emoji_size // 6)
+                        combined = emoji_size + gap + line_widths[0]
+                emoji_img = emoji_img.resize(
+                    (emoji_size, emoji_size), Image.Resampling.LANCZOS
+                )
+                emoji_metrics = {
+                    "img": emoji_img,
+                    "size": emoji_size,
+                    "gap": gap,
+                    "combined_w": combined,
+                }
+            except Exception as exc:
+                log.warning("emoji_load_failed", emoji=emoji_prefix, error=str(exc))
+        else:
+            log.warning(
+                "emoji_asset_missing",
+                emoji=emoji_prefix,
+                codepoint=_emoji_codepoint(emoji_prefix),
+            )
+
+    for i, ln in enumerate(lines):
+        if i == 0 and emoji_metrics:
+            # Center emoji + line 1 together as a single unit
+            combined_w = emoji_metrics["combined_w"]
+            combined_x = max(0, (CANVAS_W - combined_w) // 2)
+            x = combined_x + emoji_metrics["size"] + emoji_metrics["gap"]
+        else:
+            x = (CANVAS_W - line_widths[i]) // 2
+        y = block_top + i * line_step
+        # Soft drop shadow (always on — gives depth on busy backgrounds)
+        shadow_draw.text((x, y + 6), ln, font=font, fill=(0, 0, 0, 160))
+        # Foreground: optional crisp stroke (TikTok caption look) + fill.
+        # Pillow renders stroke + fill in a single pass when stroke_width > 0,
+        # so glyph anti-aliasing stays clean.
+        if stroke_width > 0:
+            fg_draw.text(
+                (x, y), ln, font=font, fill=text_color,
+                stroke_width=stroke_width, stroke_fill=stroke_color,
+            )
+        else:
+            fg_draw.text((x, y), ln, font=font, fill=text_color)
+
+    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
+    img = Image.alpha_composite(img, shadow_layer)
     img = Image.alpha_composite(img, fg_layer)
+
+    # Paste emoji to the left of line 1's NEW (combined-centered) position.
+    if emoji_metrics:
+        first_line_h = line_heights[0]
+        combined_w = emoji_metrics["combined_w"]
+        combined_x = max(0, (CANVAS_W - combined_w) // 2)
+        emoji_x = combined_x
+        emoji_y = block_top + (first_line_h - emoji_metrics["size"]) // 2
+        img.alpha_composite(emoji_metrics["img"], dest=(emoji_x, emoji_y))
 
     img.save(png_path, "PNG")
 
