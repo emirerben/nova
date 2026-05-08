@@ -183,10 +183,24 @@ def reframe_and_export(
         )
 
     if result.returncode != 0:
-        # Capture the END of stderr — ffmpeg's actual error messages are at the
-        # tail, not the head. The first 500 chars are just version+config noise.
-        stderr = result.stderr.decode(errors="replace")[-1500:]
-        raise ReframeError(f"FFmpeg failed (rc={result.returncode}): {stderr}")
+        # FFmpeg always prints a long version + configuration banner to stderr.
+        # The actual error lives in the lines that *don't* match those headers.
+        # Drop them so we surface the real failure even when the banner alone
+        # exceeds our truncation buffer.
+        full_stderr = result.stderr.decode(errors="replace")
+        meaningful = [
+            ln for ln in full_stderr.splitlines()
+            if ln.strip()
+            and not ln.startswith(("ffmpeg version", "  built with", "  configuration:", "  lib"))
+        ]
+        msg = "\n".join(meaningful[-30:]) or full_stderr[-1500:]
+        log.error(
+            "ffmpeg_failed_detail",
+            rc=result.returncode,
+            cmd=" ".join(cmd),
+            stderr_tail=msg[-2000:],
+        )
+        raise ReframeError(f"FFmpeg failed (rc={result.returncode}): {msg}")
 
     if not os.path.exists(output_path):
         raise ReframeError("FFmpeg exited 0 but output file not found")
@@ -283,12 +297,15 @@ def _build_video_filter(
     filters: list[str] = []
 
     # 0a. HDR/HLG → SDR color conversion.
-    # iPhone clips are bt2020/HLG; without conversion, colors look washed out
-    # after encoding to bt709 yuv420p. FFmpeg reads the clip's own stream
-    # metadata to determine the input colorspace — no need to override it.
-    # bt709 clips (Android SDR, screen recordings) are a no-op. HD clips
-    # with no metadata default to bt709, also a no-op.
-    filters.append("colorspace=all=bt709")
+    # iPhone HEVC HDR clips have transfer=arib-std-b67 (HLG, value 18). The
+    # colorspace filter does NOT accept HLG/PQ as input transfer and aborts
+    # with "Invalid argument" (-22 → exit 234). Force input to bt2020 (the
+    # closest supported set) so the filter accepts it; quality on real HDR is
+    # approximate (highlights clip) but the render completes. SDR clips
+    # (already bt709) ignore iall and pass through unchanged.
+    # format=yuv420p drops 10-bit → 8-bit so libx264 can encode.
+    filters.append("colorspace=iall=bt2020:all=bt709")
+    filters.append("format=yuv420p")
 
     # 0. Speed ramp -- FIRST filter to normalize PTS for all subsequent timed filters
     if speed_factor != 1.0 and speed_factor > 0:

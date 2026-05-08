@@ -372,6 +372,11 @@ class RecipeSlotSchema(BaseModel):
     speed_factor: float = 1.0
     energy: float = 5.0
     text_overlays: list[RecipeTextOverlaySchema] = []
+    # Lock this slot to a fixed range of the original template video instead
+    # of filling it with a user clip (e.g. Morocco's "This is AFRICA" hook).
+    locked: bool = False
+    source_start_s: float | None = None
+    source_end_s: float | None = None
 
     @field_validator("target_duration_s")
     @classmethod
@@ -417,6 +422,8 @@ class RecipeSchema(BaseModel):
     pacing_style: str = ""
     sync_style: SyncStyle = "freeform"
     interstitials: list[RecipeInterstitialSchema] = []
+    # Snappy-pacing floor — consolidate won't merge below this when set.
+    min_slots: int = 0
     # Render-side controls (admin-tunable per template).
     # output_fit: "crop" (center-crop sides on 16:9 source — default),
     #   "letterbox" / "letterbox_blur" (preserve full frame, blurred bg),
