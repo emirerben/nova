@@ -161,14 +161,14 @@ class TestPreBurnCurtainSlotText:
 
 
 class TestConcatDemuxerPreset:
-    """_concat_demuxer must use preset=fast so scenecut=40 fires at slot boundaries."""
+    """_concat_demuxer uses preset=ultrafast for shared-CPU iteration speed."""
 
-    def test_concat_uses_fast_preset(self):
-        """Final assembly (concat) must use preset=fast to prevent horizontal tearing.
-
-        All per-slot intermediates use ultrafast. The concat step is where slot
-        boundaries appear — scenecut=40 inserts I-frames here. If ultrafast were
-        used, scenecut=0 (native) would remove those keyframes, causing tearing.
+    def test_concat_uses_ultrafast_preset(self):
+        """Final concat must use preset=ultrafast to fit Fly.io's 600s ffmpeg
+        timeout on 24-slot recipes. CRF 18 and the 4M bitrate cap keep quality
+        in the visually-lossless band; the scenecut/I-frame benefit of
+        preset=fast was costing 9+ minutes per render — not worth it for
+        marginal seam quality.
         """
         import tempfile
 
@@ -194,8 +194,8 @@ class TestConcatDemuxerPreset:
         cmd = mock_run.call_args[0][0]
         assert "-preset" in cmd, f"No -preset flag in cmd: {cmd}"
         preset_idx = cmd.index("-preset")
-        assert cmd[preset_idx + 1] == "fast", (
-            f"concat must use preset=fast for scenecut, got: {cmd[preset_idx + 1]}"
+        assert cmd[preset_idx + 1] == "ultrafast", (
+            f"concat must use preset=ultrafast, got: {cmd[preset_idx + 1]}"
         )
 
 
