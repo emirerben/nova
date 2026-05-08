@@ -362,7 +362,11 @@ def _write_animated_ass(
         )
 
     else:
-        dialogue_text = f"{{\\an5{pos_tag}{outline_tag}}}{text}" if pos_tag else f"{{\\an{alignment}{outline_tag}}}{text}"
+        dialogue_text = (
+            f"{{\\an5{pos_tag}{outline_tag}}}{text}"
+            if pos_tag
+            else f"{{\\an{alignment}{outline_tag}}}{text}"
+        )
 
     # Use dynamic ASS header when font_family is set
     if font_family:
