@@ -104,8 +104,10 @@ class TestBuildPositionalClipMetas:
             hook_score=8.0,
             best_moments=[{"start_s": 0, "end_s": 5, "energy": 7, "description": "x"}],
         )
-        with patch("app.tasks.template_orchestrate.gemini_upload_and_wait", return_value=MagicMock()), \
-             patch("app.tasks.template_orchestrate.analyze_clip", return_value=fake_meta):
+        with (
+            patch("app.tasks.template_orchestrate.gemini_upload_and_wait", return_value=MagicMock()),
+            patch("app.tasks.template_orchestrate.analyze_clip", return_value=fake_meta),
+        ):
             metas = _build_positional_clip_metas(local_paths, slots, probe_map)
 
         assert len(metas) == 1
@@ -125,8 +127,10 @@ class TestBuildPositionalClipMetas:
             clip_id="g/x", transcript="", hook_text="", hook_score=5.0,
             best_moments=[{"start_s": 0, "end_s": 5, "energy": 5, "description": ""}],
         )
-        with patch("app.tasks.template_orchestrate.gemini_upload_and_wait", return_value=MagicMock()), \
-             patch("app.tasks.template_orchestrate.analyze_clip", return_value=fake_meta):
+        with (
+            patch("app.tasks.template_orchestrate.gemini_upload_and_wait", return_value=MagicMock()),
+            patch("app.tasks.template_orchestrate.analyze_clip", return_value=fake_meta),
+        ):
             metas = _build_positional_clip_metas(local_paths, slots, probe_map)
 
         assert [m.clip_id for m in metas] == ["clip_0", "clip_1"]

@@ -47,7 +47,9 @@ from app.pipeline.agents.gemini_analyzer import (
     gemini_upload_and_wait,
 )
 from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep
-from app.pipeline.template_matcher import TemplateMismatchError, consolidate_slots, match
+from app.pipeline.template_matcher import (
+    TemplateMismatchError, consolidate_slots, match,
+)
 from app.storage import copy_object_signed_url, download_to_file, upload_public_read
 from app.worker import celery_app
 
