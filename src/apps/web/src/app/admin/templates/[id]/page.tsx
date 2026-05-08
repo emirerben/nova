@@ -26,17 +26,27 @@ import {
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { useJobPoller } from "@/hooks/useJobPoller";
 import { EditorTab } from "./components/EditorTab";
+import { MusicTab } from "./components/MusicTab";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type TabId = "recipe" | "editor" | "test" | "settings";
+type TabId = "recipe" | "editor" | "test" | "music" | "settings";
 
-const TABS: { id: TabId; label: string }[] = [
+const ALL_TABS: { id: TabId; label: string }[] = [
   { id: "recipe", label: "Recipe" },
   { id: "editor", label: "Editor" },
   { id: "test", label: "Test" },
+  { id: "music", label: "Music" },
   { id: "settings", label: "Settings" },
 ];
+
+function getVisibleTabs(templateType: string): { id: TabId; label: string }[] {
+  if (templateType === "music_parent") {
+    return ALL_TABS; // all 5 tabs
+  }
+  // standard, music_child, and audio_only: no Music tab
+  return ALL_TABS.filter((t) => t.id !== "music");
+}
 
 const TERMINAL_STATUSES = new Set(["template_ready", "processing_failed"]);
 
@@ -61,10 +71,12 @@ export default function TemplateDetailPage() {
     adminGetTemplate(id)
       .then((t) => {
         setTemplate(t);
-        // Also get playback URL for video player
-        getTemplatePlaybackUrl(id)
-          .then((r) => setPlaybackUrl(r.url))
-          .catch(() => {}); // playback may not be ready yet
+        // Skip playback URL for audio-only templates (no video file)
+        if (t.template_type !== "audio_only" && t.gcs_path) {
+          getTemplatePlaybackUrl(id)
+            .then((r) => setPlaybackUrl(r.url))
+            .catch(() => {}); // playback may not be ready yet
+        }
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -150,18 +162,39 @@ export default function TemplateDetailPage() {
     );
   }
 
+  const visibleTabs = getVisibleTabs(template.template_type ?? "standard");
+  const resolvedTab = visibleTabs.some((t) => t.id === activeTab) ? activeTab : "recipe";
+
   return (
     <div className="flex flex-col min-h-screen">
       {/* Header */}
       <div className="border-b border-zinc-800 px-6 py-4">
-        <button onClick={() => router.push("/admin")} className="text-sm text-zinc-500 hover:text-zinc-300 mb-2 block">
-          ← Back to dashboard
-        </button>
+        {template.template_type === "music_child" && template.parent_template_id ? (
+          <button
+            onClick={() => router.push(`/admin/templates/${template.parent_template_id}?tab=music`)}
+            className="text-sm text-zinc-500 hover:text-zinc-300 mb-2 block"
+          >
+            ← Back to parent template
+          </button>
+        ) : (
+          <button onClick={() => router.push("/admin")} className="text-sm text-zinc-500 hover:text-zinc-300 mb-2 block">
+            ← Back to dashboard
+          </button>
+        )}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold text-white">{template.name}</h1>
             <div className="flex items-center gap-3 mt-1">
               <StatusBadge status={template.analysis_status} />
+              {template.template_type === "music_child" && (
+                <span className="text-xs bg-purple-900/40 text-purple-400 px-2 py-0.5 rounded">Music Variant</span>
+              )}
+              {template.template_type === "music_parent" && (
+                <span className="text-xs bg-blue-900/40 text-blue-400 px-2 py-0.5 rounded">Music Parent</span>
+              )}
+              {template.template_type === "audio_only" && (
+                <span className="text-xs bg-amber-900/40 text-amber-400 px-2 py-0.5 rounded">Audio Only</span>
+              )}
               {template.published_at && !template.archived_at && (
                 <span className="text-xs bg-green-900/40 text-green-400 px-2 py-0.5 rounded">Published</span>
               )}
@@ -179,12 +212,12 @@ export default function TemplateDetailPage() {
       {/* Tabs */}
       <div className="border-b border-zinc-800 px-6">
         <div className="flex gap-1">
-          {TABS.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setTab(tab.id)}
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab.id
+                resolvedTab === tab.id
                   ? "border-white text-white"
                   : "border-transparent text-zinc-500 hover:text-zinc-300"
               }`}
@@ -197,28 +230,31 @@ export default function TemplateDetailPage() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-auto px-6 py-6">
-        {activeTab === "recipe" && (
+        {resolvedTab === "recipe" && (
           <RecipeTab
             template={template}
             playbackUrl={playbackUrl}
             onRefresh={refreshTemplate}
           />
         )}
-        {activeTab === "editor" && (
+        {resolvedTab === "editor" && (
           <EditorTab
             template={template}
             latestTestJob={latestTestJob}
             onTestJobComplete={handleTestJobComplete}
           />
         )}
-        {activeTab === "test" && (
+        {resolvedTab === "test" && (
           <TestTab
             template={template}
             playbackUrl={playbackUrl}
             onJobComplete={handleTestJobComplete}
           />
         )}
-        {activeTab === "settings" && (
+        {resolvedTab === "music" && template.template_type === "music_parent" && (
+          <MusicTab template={template} />
+        )}
+        {resolvedTab === "settings" && (
           <SettingsTab template={template} onSave={setTemplate} />
         )}
       </div>
@@ -289,10 +325,13 @@ function RecipeTab({
 
   const latestRecipe = recipeHistory.length > 0 ? recipeHistory[0] : null;
 
+  const isAudioOnly = template.template_type === "audio_only";
+
   if (template.analysis_status === "analyzing") {
     return (
       <div className="flex gap-6">
         {playbackUrl && <VideoPlayer url={playbackUrl} />}
+        {isAudioOnly && !playbackUrl && <AudioOnlyPlaceholder />}
         <div className="flex-1 flex flex-col items-center justify-center gap-4 py-12">
           <div className="w-8 h-8 border-2 border-zinc-600 border-t-white rounded-full animate-spin" />
           <p className="text-zinc-400 text-sm">Analyzing template with Gemini...</p>
@@ -306,6 +345,7 @@ function RecipeTab({
     return (
       <div className="flex gap-6">
         {playbackUrl && <VideoPlayer url={playbackUrl} />}
+        {isAudioOnly && !playbackUrl && <AudioOnlyPlaceholder />}
         <div className="flex-1 py-12 text-center">
           <p className="text-red-400 mb-2">Analysis failed</p>
           <p className="text-zinc-500 text-sm">Try clicking &ldquo;Reanalyze&rdquo; in the action bar below.</p>
@@ -318,6 +358,7 @@ function RecipeTab({
     <div className="space-y-6">
       <div className="flex gap-6">
         {playbackUrl && <VideoPlayer url={playbackUrl} />}
+        {isAudioOnly && !playbackUrl && <AudioOnlyPlaceholder />}
         <div className="flex-1 space-y-4">
           {latestRecipe && (
             <div className="grid grid-cols-3 gap-3">
@@ -719,6 +760,11 @@ function SettingsTab({
   const [clipsMax, setClipsMax] = useState(template.required_clips_max);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [togglingMusic, setTogglingMusic] = useState(false);
+
+  const isMusicParent = (template.template_type ?? "standard") === "music_parent";
+  const isMusicChild = (template.template_type ?? "standard") === "music_child";
+  const isAudioOnly = (template.template_type ?? "standard") === "audio_only";
 
   const handleSave = async () => {
     setSaving(true);
@@ -738,6 +784,22 @@ function SettingsTab({
       alert(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleToggleMusic = async () => {
+    const newType = isMusicParent ? "standard" : "music_parent";
+    if (isMusicParent && !confirm("Disable Music Variants? You must delete all sub-templates first.")) return;
+    setTogglingMusic(true);
+    try {
+      const updated = await adminUpdateTemplate(template.id, {
+        template_type: newType,
+      });
+      onSave(updated);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Toggle failed");
+    } finally {
+      setTogglingMusic(false);
     }
   };
 
@@ -803,9 +865,44 @@ function SettingsTab({
         {saved && <span className="text-green-400 text-sm">Saved</span>}
       </div>
 
+      {/* Music Variants toggle — only for standard/music_parent (not children or audio_only) */}
+      {!isMusicChild && !isAudioOnly && (
+        <div className="border-t border-zinc-800 pt-5 mt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-white font-medium">Enable Music Variants</p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Create beat-synced sub-templates for different songs
+              </p>
+            </div>
+            <button
+              onClick={handleToggleMusic}
+              disabled={togglingMusic}
+              role="switch"
+              aria-checked={isMusicParent}
+              className={`relative w-11 h-6 rounded-full transition-colors ${
+                isMusicParent ? "bg-blue-600" : "bg-zinc-700"
+              } ${togglingMusic ? "opacity-50" : ""}`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                  isMusicParent ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="border-t border-zinc-800 pt-4 mt-6">
-        <p className="text-xs text-zinc-500 mb-1">GCS Path</p>
-        <p className="text-sm text-zinc-300 font-mono">{template.gcs_path}</p>
+        {template.gcs_path ? (
+          <>
+            <p className="text-xs text-zinc-500 mb-1">GCS Path</p>
+            <p className="text-sm text-zinc-300 font-mono">{template.gcs_path}</p>
+          </>
+        ) : (
+          <p className="text-xs text-zinc-500 mb-1">Audio-only (no video file)</p>
+        )}
         <p className="text-xs text-zinc-500 mt-3 mb-1">Template ID</p>
         <p className="text-sm text-zinc-300 font-mono">{template.id}</p>
       </div>
@@ -832,6 +929,16 @@ function VideoPlaceholder() {
   return (
     <div className="w-[280px] aspect-[9/16] bg-zinc-900 rounded flex items-center justify-center text-zinc-600 text-sm">
       No video
+    </div>
+  );
+}
+
+function AudioOnlyPlaceholder() {
+  return (
+    <div className="w-[280px] aspect-[9/16] bg-zinc-900 rounded flex flex-col items-center justify-center gap-2 flex-shrink-0">
+      <span className="text-3xl">🎵</span>
+      <span className="text-zinc-500 text-sm">Audio-only template</span>
+      <span className="text-zinc-600 text-xs">No reference video</span>
     </div>
   );
 }

@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import Job, TemplateRecipeVersion, VideoTemplate
+from app.models import Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
 from app.services.template_validation import (
     get_template_or_404,
     require_ready,
@@ -126,7 +126,7 @@ class CreateTemplateFromUrlRequest(BaseModel):
 class TemplateResponse(BaseModel):
     id: str
     name: str
-    gcs_path: str
+    gcs_path: str | None
     analysis_status: str
     required_clips_min: int
     required_clips_max: int
@@ -136,6 +136,9 @@ class TemplateResponse(BaseModel):
     source_url: str | None
     thumbnail_gcs_path: str | None
     error_detail: str | None = None
+    template_type: str = "standard"
+    parent_template_id: str | None = None
+    music_track_id: str | None = None
     created_at: datetime
 
 
@@ -147,6 +150,14 @@ class UpdateTemplateRequest(BaseModel):
     required_clips_max: int | None = None
     publish: bool | None = None   # set True to publish (sets published_at)
     archive: bool | None = None   # set True to archive (sets archived_at)
+    template_type: str | None = None  # "standard" | "music_parent"
+
+    @field_validator("template_type")
+    @classmethod
+    def validate_template_type(cls, v: str | None) -> str | None:
+        if v is not None and v not in ("standard", "music_parent"):
+            raise ValueError("template_type must be 'standard' or 'music_parent'")
+        return v
 
 
 class TemplateListItem(BaseModel):
@@ -158,6 +169,7 @@ class TemplateListItem(BaseModel):
     description: str | None
     thumbnail_gcs_path: str | None
     error_detail: str | None = None
+    template_type: str = "standard"
     job_count: int
     created_at: datetime
 
@@ -466,6 +478,9 @@ def _template_response(t: VideoTemplate) -> TemplateResponse:
         source_url=t.source_url,
         thumbnail_gcs_path=t.thumbnail_gcs_path,
         error_detail=t.error_detail,
+        template_type=t.template_type,
+        parent_template_id=t.parent_template_id,
+        music_track_id=t.music_track_id,
         created_at=t.created_at,
     )
 
@@ -482,8 +497,13 @@ async def list_templates(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    exclude_children: bool = Query(default=True),
 ) -> TemplateListResponse:
-    """List all templates with job counts (admin view, includes unpublished)."""
+    """List all templates with job counts (admin view, includes unpublished).
+
+    By default, music_child templates are hidden (they appear under their parent's
+    Music tab). Pass exclude_children=false to include them.
+    """
     # Subquery for job counts per template
     job_count_sq = (
         select(
@@ -495,16 +515,21 @@ async def list_templates(
         .subquery()
     )
 
+    base_filter = select(VideoTemplate)
+    if exclude_children:
+        base_filter = base_filter.where(VideoTemplate.template_type != "music_child")
+
     query = (
         select(VideoTemplate, func.coalesce(job_count_sq.c.job_count, 0).label("job_count"))
         .outerjoin(job_count_sq, VideoTemplate.id == job_count_sq.c.template_id)
         .order_by(VideoTemplate.created_at.desc())
     )
+    if exclude_children:
+        query = query.where(VideoTemplate.template_type != "music_child")
 
     # Total count
-    count_result = await db.execute(
-        select(func.count()).select_from(select(VideoTemplate).subquery())
-    )
+    count_query = select(func.count()).select_from(base_filter.subquery())
+    count_result = await db.execute(count_query)
     total = count_result.scalar() or 0
 
     # Fetch page
@@ -522,6 +547,7 @@ async def list_templates(
                 description=t.description,
                 thumbnail_gcs_path=t.thumbnail_gcs_path,
                 error_detail=t.error_detail,
+                template_type=t.template_type,
                 job_count=job_count,
                 created_at=t.created_at,
             )
@@ -668,6 +694,37 @@ async def update_template(
                 f"must be <= required_clips_max ({template.required_clips_max})"
             ),
         )
+
+    # Handle template_type transitions
+    if req.template_type is not None and req.template_type != template.template_type:
+        if template.template_type == "music_child":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot change template_type of a music_child template",
+            )
+        if req.template_type == "standard" and template.template_type == "music_parent":
+            # Check for existing children
+            child_count = await db.execute(
+                select(func.count()).select_from(
+                    select(VideoTemplate)
+                    .where(VideoTemplate.parent_template_id == template_id)
+                    .subquery()
+                )
+            )
+            if (child_count.scalar() or 0) > 0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Cannot switch to standard — template has music "
+                        "children. Delete them first."
+                    ),
+                )
+        if req.template_type == "music_parent" and template.parent_template_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot make a child template into a music_parent",
+            )
+        template.template_type = req.template_type
 
     if req.publish:
         if template.analysis_status != "ready":
@@ -1137,6 +1194,265 @@ async def save_recipe(
     )
 
 
+# ── Music variant (children) schemas ──────────────────────────────────────────
+
+
+class CreateChildRequest(BaseModel):
+    music_track_id: str
+
+
+class ChildTemplateItem(BaseModel):
+    id: str
+    name: str
+    music_track_id: str
+    track_title: str
+    track_artist: str
+    beat_count: int
+    analysis_status: str
+    published_at: datetime | None
+    created_at: datetime
+
+
+class ChildrenListResponse(BaseModel):
+    children: list[ChildTemplateItem]
+    total: int
+
+
+class RemergeResponse(BaseModel):
+    updated: int
+    skipped: int = 0
+    skipped_ids: list[str] = []
+
+
+# ── Music variant (children) endpoints ────────────────────────────────────────
+
+
+@router.post(
+    "/templates/{template_id}/children",
+    response_model=TemplateResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_admin)],
+)
+async def create_child_template(
+    template_id: str,
+    req: CreateChildRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateResponse:
+    """Create a music sub-template by merging parent recipe with a track's beats."""
+    from app.pipeline.music_recipe import merge_template_with_track  # noqa: PLC0415
+
+    parent = await get_template_or_404(template_id, db)
+
+    if parent.template_type != "music_parent":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Parent template must have template_type='music_parent'",
+        )
+    if not parent.recipe_cached:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Parent template has no recipe — analyze it first",
+        )
+
+    # Load music track
+    result = await db.execute(
+        select(MusicTrack).where(MusicTrack.id == req.music_track_id)
+    )
+    track = result.scalar_one_or_none()
+    if track is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Music track not found",
+        )
+    if track.analysis_status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Music track is not ready (status: {track.analysis_status})",
+        )
+
+    # Check for duplicate parent+track
+    dup_result = await db.execute(
+        select(func.count()).select_from(
+            select(VideoTemplate)
+            .where(
+                VideoTemplate.parent_template_id == template_id,
+                VideoTemplate.music_track_id == req.music_track_id,
+            )
+            .subquery()
+        )
+    )
+    if (dup_result.scalar() or 0) > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A sub-template for this track already exists",
+        )
+
+    # Build track_data for merge
+    track_data = {
+        "beat_timestamps_s": track.beat_timestamps_s or [],
+        "track_config": track.track_config or {},
+        "duration_s": track.duration_s or 0.0,
+    }
+
+    try:
+        merged_recipe = merge_template_with_track(parent.recipe_cached, track_data)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    child_id = str(uuid.uuid4())
+    child = VideoTemplate(
+        id=child_id,
+        name=f"{parent.name} — {track.title}",
+        gcs_path=parent.gcs_path,
+        template_type="music_child",
+        parent_template_id=parent.id,
+        music_track_id=track.id,
+        recipe_cached=merged_recipe,
+        recipe_cached_at=datetime.now(UTC),
+        analysis_status="ready",
+        audio_gcs_path=track.audio_gcs_path,
+        required_clips_min=merged_recipe.get("required_clips_min", parent.required_clips_min),
+        required_clips_max=merged_recipe.get("required_clips_max", parent.required_clips_max),
+    )
+    db.add(child)
+
+    # Create initial recipe version
+    version = TemplateRecipeVersion(
+        template_id=child_id,
+        recipe=merged_recipe,
+        trigger="initial_analysis",
+    )
+    db.add(version)
+
+    await db.commit()
+    await db.refresh(child)
+
+    log.info(
+        "child_template_created",
+        child_id=child_id,
+        parent_id=template_id,
+        track_id=track.id,
+    )
+    return _template_response(child)
+
+
+@router.get(
+    "/templates/{template_id}/children",
+    response_model=ChildrenListResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def list_children(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> ChildrenListResponse:
+    """List all music sub-templates for a parent template."""
+    await get_template_or_404(template_id, db)
+
+    result = await db.execute(
+        select(VideoTemplate, MusicTrack)
+        .join(MusicTrack, VideoTemplate.music_track_id == MusicTrack.id)
+        .where(VideoTemplate.parent_template_id == template_id)
+        .order_by(VideoTemplate.created_at.desc())
+    )
+    rows = result.all()
+
+    children = [
+        ChildTemplateItem(
+            id=child.id,
+            name=child.name,
+            music_track_id=child.music_track_id or "",
+            track_title=track.title,
+            track_artist=track.artist,
+            beat_count=len(track.beat_timestamps_s or []),
+            analysis_status=child.analysis_status,
+            published_at=child.published_at,
+            created_at=child.created_at,
+        )
+        for child, track in rows
+    ]
+
+    return ChildrenListResponse(children=children, total=len(children))
+
+
+@router.post(
+    "/templates/{template_id}/remerge-children",
+    response_model=RemergeResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def remerge_children(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> RemergeResponse:
+    """Re-merge all children with the parent's latest recipe."""
+    from app.pipeline.music_recipe import merge_template_with_track  # noqa: PLC0415
+
+    parent = await get_template_or_404(template_id, db)
+
+    if parent.template_type != "music_parent":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only music_parent templates can remerge children",
+        )
+    if not parent.recipe_cached:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Parent template has no recipe",
+        )
+
+    # Load children with their tracks
+    result = await db.execute(
+        select(VideoTemplate, MusicTrack)
+        .join(MusicTrack, VideoTemplate.music_track_id == MusicTrack.id)
+        .where(VideoTemplate.parent_template_id == template_id)
+    )
+    rows = result.all()
+
+    updated = 0
+    skipped_ids: list[str] = []
+    for child, track in rows:
+        track_data = {
+            "beat_timestamps_s": track.beat_timestamps_s or [],
+            "track_config": track.track_config or {},
+            "duration_s": track.duration_s or 0.0,
+        }
+        try:
+            merged = merge_template_with_track(parent.recipe_cached, track_data)
+        except ValueError:
+            log.warning(
+                "remerge_skip_child",
+                child_id=child.id,
+                track_id=track.id,
+                reason="merge produced 0 slots",
+            )
+            skipped_ids.append(child.id)
+            continue
+
+        child.recipe_cached = merged
+        child.recipe_cached_at = datetime.now(UTC)
+        child.required_clips_min = merged.get("required_clips_min", child.required_clips_min)
+        child.required_clips_max = merged.get("required_clips_max", child.required_clips_max)
+
+        version = TemplateRecipeVersion(
+            template_id=child.id,
+            recipe=merged,
+            trigger="remerge",
+        )
+        db.add(version)
+        updated += 1
+
+    await db.commit()
+    log.info(
+        "remerge_children_done",
+        parent_id=template_id,
+        updated=updated,
+        skipped=len(skipped_ids),
+    )
+    return RemergeResponse(updated=updated, skipped=len(skipped_ids), skipped_ids=skipped_ids)
+
+
 # ── Text preview endpoint ─────────────────────────────────────────────────────
 
 
@@ -1254,3 +1570,120 @@ async def upload_presigned(
     )
 
     return PresignedUploadResponse(upload_url=url, gcs_path=gcs_path)
+
+
+# ── Create template from music track ─────────────────────────────────────────
+
+
+class CreateTemplateFromMusicTrackRequest(BaseModel):
+    music_track_id: str
+    name: str | None = None
+
+
+@router.post(
+    "/templates/from-music-track",
+    response_model=TemplateResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def create_template_from_music_track(
+    req: CreateTemplateFromMusicTrackRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateResponse:
+    """Create an audio-only template from a music track's cached recipe."""
+    track = await db.get(MusicTrack, req.music_track_id)
+    if track is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Music track {req.music_track_id} not found",
+        )
+
+    if track.analysis_status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Music track is not ready (status: {track.analysis_status})",
+        )
+
+    if not track.audio_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Music track has no audio file",
+        )
+
+    # Load recipe: prefer cached Gemini recipe, fall back to beat-only
+    recipe = track.recipe_cached
+    if recipe is None:
+        from app.pipeline.music_recipe import generate_music_recipe  # noqa: PLC0415
+
+        track_data = {
+            "beat_timestamps_s": track.beat_timestamps_s or [],
+            "track_config": track.track_config or {},
+            "duration_s": track.duration_s,
+        }
+        try:
+            recipe = generate_music_recipe(track_data)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot generate recipe: {exc}",
+            ) from exc
+
+    # Derive clip counts from recipe
+    n_slots = len(recipe.get("slots", []))
+    req_min = recipe.get("required_clips_min", max(1, n_slots // 2))
+    req_max = recipe.get("required_clips_max", max(1, n_slots))
+
+    template_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+
+    template = VideoTemplate(
+        id=template_id,
+        name=req.name or track.title,
+        gcs_path=None,
+        template_type="audio_only",
+        audio_gcs_path=track.audio_gcs_path,
+        music_track_id=track.id,
+        recipe_cached=recipe,
+        recipe_cached_at=now,
+        analysis_status="ready",
+        required_clips_min=req_min,
+        required_clips_max=req_max,
+        created_at=now,
+    )
+    db.add(template)
+
+    # Create initial recipe version
+    version = TemplateRecipeVersion(
+        template_id=template_id,
+        recipe=recipe,
+        trigger="initial_analysis",
+    )
+    db.add(version)
+
+    await db.commit()
+    await db.refresh(template)
+
+    log.info(
+        "template_from_music_track_created",
+        template_id=template_id,
+        track_id=req.music_track_id,
+        slot_count=n_slots,
+    )
+
+    return TemplateResponse(
+        id=template.id,
+        name=template.name,
+        gcs_path=template.gcs_path or "",
+        analysis_status=template.analysis_status,
+        required_clips_min=template.required_clips_min,
+        required_clips_max=template.required_clips_max,
+        published_at=template.published_at,
+        archived_at=template.archived_at,
+        description=template.description,
+        source_url=template.source_url,
+        thumbnail_gcs_path=template.thumbnail_gcs_path,
+        error_detail=template.error_detail,
+        template_type=template.template_type,
+        parent_template_id=template.parent_template_id,
+        music_track_id=template.music_track_id,
+        created_at=template.created_at,
+    )
