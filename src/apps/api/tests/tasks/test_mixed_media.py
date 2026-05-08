@@ -105,7 +105,8 @@ class TestBuildPositionalClipMetas:
             best_moments=[{"start_s": 0, "end_s": 5, "energy": 7, "description": "x"}],
         )
         with (
-            patch("app.tasks.template_orchestrate.gemini_upload_and_wait", return_value=MagicMock()),
+            patch("app.tasks.template_orchestrate.gemini_upload_and_wait",
+                  return_value=MagicMock()),
             patch("app.tasks.template_orchestrate.analyze_clip", return_value=fake_meta),
         ):
             metas = _build_positional_clip_metas(local_paths, slots, probe_map)
@@ -128,7 +129,8 @@ class TestBuildPositionalClipMetas:
             best_moments=[{"start_s": 0, "end_s": 5, "energy": 5, "description": ""}],
         )
         with (
-            patch("app.tasks.template_orchestrate.gemini_upload_and_wait", return_value=MagicMock()),
+            patch("app.tasks.template_orchestrate.gemini_upload_and_wait",
+                  return_value=MagicMock()),
             patch("app.tasks.template_orchestrate.analyze_clip", return_value=fake_meta),
         ):
             metas = _build_positional_clip_metas(local_paths, slots, probe_map)
