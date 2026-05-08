@@ -61,7 +61,7 @@ class TestValidateOverlay:
         assert text is None
 
     def test_truncates_long_text(self):
-        long_text = "A" * 50
+        long_text = "A" * (MAX_OVERLAY_TEXT_LEN + 50)
         text, _, _, _ = _validate_overlay(
             {"text": long_text, "start_s": 0.0, "end_s": 3.0}, 5.0,
         )
@@ -158,7 +158,7 @@ class TestAnimatedOverlayASS:
         """Long text is truncated in ASS content."""
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
-                [{"text": "A" * 50, "start_s": 0.0, "end_s": 3.0,
+                [{"text": "A" * (MAX_OVERLAY_TEXT_LEN + 50), "start_s": 0.0, "end_s": 3.0,
                   "position": "center", "effect": "fade-in"}],
                 5.0, tmpdir, 0,
             )

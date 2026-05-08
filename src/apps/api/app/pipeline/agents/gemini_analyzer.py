@@ -74,6 +74,16 @@ class TemplateRecipe:
     has_talking_head: bool = False
     has_voiceover: bool = False
     has_permanent_letterbox: bool = False
+    # Render-side controls.
+    # output_fit: "crop" (default — center-crop sides on 16:9 source) or
+    # "letterbox" (preserve full source frame, fill 9:16 canvas with blurred bg
+    # of the same source). Use "letterbox" for sports / wide-action templates
+    # where the action covers the full horizontal frame.
+    # clip_filter_hint: optional natural-language constraint prepended to the
+    # Gemini analyze_clip prompt — biases best_moments selection per template
+    # (e.g. "ball must be in frame" for football highlights).
+    output_fit: str = "crop"
+    clip_filter_hint: str = ""
 
 
 @dataclass
@@ -236,6 +246,7 @@ def analyze_clip(
     file_ref: Any,
     start_s: float | None = None,
     end_s: float | None = None,
+    filter_hint: str = "",
 ) -> ClipMeta:
     """Analyze a video clip or time range. Returns ClipMeta.
 
@@ -253,6 +264,8 @@ def analyze_clip(
     Google overload windows.
 
     If start_s and end_s are provided, focuses analysis on that segment.
+    filter_hint is a per-template natural-language constraint that biases
+    best_moments selection (e.g. "ball must be visible in frame" for sports).
     Raises GeminiAnalysisError on terminal failure.
 
     NOTE: the `google.genai` SDK (which `client.models.generate_content`
@@ -273,6 +286,31 @@ def analyze_clip(
         segment_instruction = f"Analyze the video segment from {start_s:.1f}s to {end_s:.1f}s."
     else:
         segment_instruction = "Analyze this video clip."
+
+    if filter_hint.strip():
+        # Strong, non-negotiable filter — placed BEFORE segment_instruction so
+        # Gemini biases its scene scan toward the constraint from the start.
+        hint_lower = filter_hint.lower()
+        is_football = any(k in hint_lower
+                          for k in ("ball", "top", "futbol", "football", "soccer"))
+        if is_football:
+            domain_block = (
+                "STRICT FILTER: " + filter_hint.strip() + "\n"
+                "ONLY include moments where the ball is visible AND a player "
+                "actively interacts with it (shot, pass, dribble, header, save, "
+                "tackle, control, cross, freekick, penalty). REJECT: empty pitch, "
+                "wide stadium shots, celebrations, walking, idle stance, ball out "
+                "of play, referee/crowd shots, training drills, warmup. Each "
+                "selected moment's description MUST name the specific ball "
+                "action that occurs — vague labels are forbidden.\n\n"
+            )
+        else:
+            domain_block = (
+                f"STRICT FILTER: {filter_hint.strip()}\n"
+                "Reject any moment that violates this filter. Only include "
+                "moments that fully satisfy it.\n\n"
+            )
+        segment_instruction = domain_block + segment_instruction
 
     prompt = load_prompt("analyze_clip", segment_instruction=segment_instruction)
 
@@ -305,12 +343,21 @@ def analyze_clip(
 
             clip_id = getattr(file_ref, "name", str(id(file_ref)))
 
+            # Post-filter best_moments using filter_hint as a keyword scan when
+            # the hint mentions a domain-specific subject (e.g. football "ball").
+            # Gemini doesn't always honor STRICT FILTER instructions; this is the
+            # backend safety net that drops moments whose description matches the
+            # blacklist (idle/empty scenes) and prefers whitelisted action terms.
+            moments = data.get("best_moments", []) or []
+            if filter_hint.strip():
+                moments = _filter_moments_by_action(moments, filter_hint)
+
             return ClipMeta(
                 clip_id=clip_id,
                 transcript=data.get("transcript", ""),
                 hook_text=data.get("hook_text", ""),
                 hook_score=hook_score,
-                best_moments=data.get("best_moments", []),
+                best_moments=moments,
                 detected_subject=data.get("detected_subject", ""),
             )
 
@@ -350,6 +397,82 @@ def analyze_clip(
         f"Clip analysis failed after {max_attempts} attempts "
         f"(last error: {last_transient_exc})"
     ) from last_transient_exc
+
+
+# ── Domain-specific moment post-filter ────────────────────────────────────
+# When recipe.clip_filter_hint mentions football/ball, drop best_moments whose
+# description marks them as non-action (celebration, walking, training, idle).
+# Bilingual (EN + TR) keyword lists — Gemini may describe in either language
+# depending on clip language hints.
+
+_BALL_WHITELIST = (
+    "ball", "top", "shot", "şut", "vuruş", "pass", "pas", "asist",
+    "goal", "gol", "dribble", "çalım", "save", "kurtarış", "kurtardı",
+    "tackle", "tekleme", "header", "kafa", "cross", "orta", "ortaladı",
+    "strike", "volley", "voleyle", "korner", "corner", "freekick", "frikik",
+    "penalty", "penaltı", "intercept", "kesme", "control", "kontrol",
+    "attack", "atak", "hücum", "finish", "bitiriş",
+)
+_BALL_BLACKLIST = (
+    "celebration", "kutlama", "celebrating",
+    "empty", "boş", "geniş plan", "wide shot",
+    "walking", "yürüyor", "walks",
+    "training", "antrenman", "warmup", "ısınma",
+    "bench", "yedek",
+    "stoppage", "oyun durması", "stopped",
+    "idle", "hareketsiz",
+    "tribün", "stand", "audience", "crowd",
+    "referee", "hakem", "linesman", "yan hakem",
+    "interview", "röportaj",
+    "halftime", "devre arası",
+    "no ball", "topsuz",
+)
+
+
+def _filter_moments_by_action(moments: list, hint: str) -> list:
+    """Filter moments down to ball-action-only when the hint is football.
+
+    Three-tier output:
+      1) Ball-action moments (whitelist match) — always kept.
+      2) Neutral moments (no whitelist, no blacklist match) — dropped only if
+         we have ≥2 whitelist hits already (better to keep variety than over-filter).
+      3) Blacklisted/empty-description moments — always dropped when football.
+
+    Only activates when the filter hint mentions football/ball. Other templates
+    skip the filter and pass through unchanged.
+
+    Fallback: if the filter would empty the list, keep the highest-energy
+    moment so downstream matcher always has something to work with.
+    """
+    hint_lower = hint.lower()
+    if not any(k in hint_lower for k in ("ball", "top", "futbol", "football", "soccer")):
+        return moments
+
+    whitelist_hits: list = []
+    neutral: list = []
+    for m in moments:
+        if not isinstance(m, dict):
+            continue
+        desc = (m.get("description") or "").lower()
+        if not desc:
+            # Empty description is a red flag for football — Gemini knows the
+            # description rules and silence usually means non-action filler.
+            continue
+        if any(b in desc for b in _BALL_BLACKLIST):
+            continue
+        if any(w in desc for w in _BALL_WHITELIST):
+            whitelist_hits.append(m)
+        else:
+            neutral.append(m)
+
+    if len(whitelist_hits) >= 2:
+        kept = whitelist_hits  # plenty of action; drop neutral filler
+    else:
+        kept = whitelist_hits + neutral  # need fallback variety
+
+    if not kept and moments:
+        kept = [max(moments, key=lambda m: m.get("energy", 0) if isinstance(m, dict) else 0)]
+    return kept
 
 
 # ── Template analysis ─────────────────────────────────────────────────────────
