@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0.1] - 2026-05-09
+
+### Fixed
+- Template-job clip matcher no longer rejects perfectly usable clips when Gemini extracts moments whose durations fall outside the slot's ±6s tolerance window. The downstream assembler uses `moment.start_s` and trims to `slot.target_duration_s`, so a 12s moment is fine for a 5s slot. Added a last-resort fallback that accepts any moment when both tight (±2s) and loose (±6s) passes are empty. The only remaining path to `TEMPLATE_CLIP_DURATION_MISMATCH` is a clip with literally zero `best_moments` (Gemini analysis failure). Reproduces the user-reported case where a 12s upload produced "no clip fits slot 2 requiring ~5.0s."
+
 ## [0.4.0.0] - 2026-05-09
 
 ### Added

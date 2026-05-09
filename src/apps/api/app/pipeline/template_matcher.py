@@ -694,21 +694,36 @@ def match(
             <= DURATION_TOLERANCE_FALLBACK_S
         ]
 
+        # Last-resort fallback: moment-duration mismatch is not actually fatal.
+        # The downstream assembler in template_orchestrate uses moment.start_s
+        # and trims to slot.target_duration_s — it does NOT need the moment's
+        # duration to match the slot. So when both tight and loose passes are
+        # empty (Gemini extracted one super-long moment for a short clip, or
+        # only short moments for a long slot), accept any moment from any clip
+        # rather than failing the whole job. The assembler will handle the trim.
         if not loose_candidates:
-            min_useful_s = max(0.0, target_dur - DURATION_TOLERANCE_FALLBACK_S)
-            max_useful_s = target_dur + DURATION_TOLERANCE_FALLBACK_S
-            hint = (
-                f"Upload longer clips — slot {slot_position} needs a moment "
-                f"about {target_dur:.0f}s long"
-            )
-            if min_useful_s > 0:
-                hint += (
-                    f" (we accept moments {min_useful_s:.0f}s–{max_useful_s:.0f}s)"
+            loose_candidates = [
+                (meta, moment)
+                for meta in greedy_metas
+                for moment in meta.best_moments
+                if isinstance(moment, dict)
+            ]
+            if loose_candidates:
+                log.warning(
+                    "matcher_duration_fallback",
+                    slot_position=slot_position,
+                    target_dur=target_dur,
+                    n_candidates=len(loose_candidates),
                 )
-            hint += "."
+
+        if not loose_candidates:
+            # Truly nothing to assemble — Gemini returned no usable moments
+            # for any clip. This is a Gemini-side failure, not a template
+            # mismatch. We surface it as user_clip_unusable upstream.
             raise TemplateMismatchError(
-                f"No clip fits slot {slot_position} "
-                f"requiring ~{target_dur:.1f}s. {hint}",
+                f"No usable moments in any clip for slot {slot_position} "
+                f"(target ~{target_dur:.1f}s). The clips may have failed "
+                "analysis — try re-uploading or use a shorter clip.",
                 code="TEMPLATE_CLIP_DURATION_MISMATCH",
             )
 

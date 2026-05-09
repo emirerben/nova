@@ -108,43 +108,68 @@ class TestTemplateMatcher:
 
         assert exc_info.value.code == "TEMPLATE_CLIP_DURATION_MISMATCH"
 
-    def test_duration_mismatch_raises_template_mismatch(self):
-        """Clips too short for the slot should raise."""
+    def test_duration_mismatch_falls_back_when_moments_too_short(self):
+        """Moments shorter than the slot's tolerance window should still match
+        via the last-resort fallback. The downstream assembler uses
+        moment.start_s and trims to slot.target_duration_s, so a too-short
+        moment is fine when the underlying clip is long enough."""
         recipe = _make_recipe([_slot(1, 30.0, priority=5)])  # 30s slot
         clips = [
-            _make_clip("clip_a", [_moment(0.0, 5.0)])  # only 5s moment — too short (±6s tolerance)
+            # Only a 5s moment — far below the 30±6s tolerance window.
+            # Old behavior: TemplateMismatchError. New behavior: matches via fallback.
+            _make_clip("clip_a", [_moment(0.0, 5.0)])
         ]
 
-        with pytest.raises(TemplateMismatchError) as exc_info:
-            match(recipe, clips)
+        plan = match(recipe, clips)
 
-        assert exc_info.value.code == "TEMPLATE_CLIP_DURATION_MISMATCH"
-        assert "30.0s" in exc_info.value.message
-        # Hint mentions the actual range, not "≥0s"
-        assert "≥0s" not in exc_info.value.message
-        assert "24s" in exc_info.value.message  # 30 - 6 fallback tolerance
+        assert len(plan.steps) == 1
+        assert plan.steps[0].clip_id == "clip_a"
 
-    def test_duration_mismatch_hint_skips_lower_bound_for_short_slots(self):
-        """When target_dur ≤ tolerance (6s), the lower bound would be 0 — message
-        must not say '0s' since that's not informative.
-
-        For target=5s, fallback tolerance ±6s accepts moments 0-11s long. To force
-        the no-candidate raise we need only moments >11s (way too long for the slot).
-        """
-        recipe = _make_recipe([_slot(2, 5.0, priority=5)])  # 5s slot
+    def test_duration_mismatch_falls_back_when_moments_too_long(self):
+        """Reproduces the prod failure shape: 12s clip uploaded for a template
+        whose slots want ~5s, Gemini extracts one full-clip moment of duration
+        12s, |12-5|=7 > 6 tolerance. Old behavior: TemplateMismatchError. New
+        behavior: matches via fallback — the assembler trims to 5s anyway."""
+        recipe = _make_recipe([
+            _slot(1, 5.0, priority=10),
+            _slot(2, 5.0, priority=5),
+        ])
         clips = [
-            _make_clip("clip_a", [_moment(0.0, 30.0)])  # only a 30s moment, > 5+6=11s
+            # Single 12s clip with one full-clip moment — exactly the prod failure.
+            _make_clip("clip_a", [_moment(0.0, 12.0)])
+        ]
+
+        plan = match(recipe, clips)
+
+        # Both slots fill from the single clip; assembler will pick distinct
+        # windows via clip_cursor. The matcher's job is just clip selection.
+        assert len(plan.steps) == 2
+        assert all(s.clip_id == "clip_a" for s in plan.steps)
+
+    def test_empty_best_moments_still_raises_template_mismatch(self):
+        """When a clip has no best_moments at all (Gemini analysis empty),
+        the matcher has nothing to fall back to and must raise. This is the
+        only legitimate path to TemplateMismatchError now."""
+        recipe = _make_recipe([_slot(1, 5.0, priority=5)])
+        clips = [
+            ClipMeta(
+                clip_id="clip_a",
+                transcript="",
+                hook_text="",
+                hook_score=5.0,
+                best_moments=[],  # empty — nothing to assemble
+                analysis_degraded=False,
+                clip_path="/tmp/x.mp4",
+            )
         ]
 
         with pytest.raises(TemplateMismatchError) as exc_info:
             match(recipe, clips)
 
-        msg = exc_info.value.message
         assert exc_info.value.code == "TEMPLATE_CLIP_DURATION_MISMATCH"
-        assert "≥0s" not in msg
-        assert "0s–" not in msg
-        # Should tell user the target slot length, not a meaningless "0s" floor
-        assert "5s" in msg or "5.0s" in msg
+        # New copy: no longer mentions ">=0s" or talks about "uploading longer clips"
+        assert "≥0s" not in exc_info.value.message
+        assert "no usable moments" in exc_info.value.message.lower()
 
     def test_duration_tolerance_allows_close_matches(self):
         """Moments within ±6s of target should be accepted."""
