@@ -1,13 +1,15 @@
-"""Tests for GET /templates and GET /templates/:id/playback-url."""
+"""Tests for GET /templates, GET /templates/:id, GET /templates/:id/playback-url."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from app.database import get_db
 from app.main import app
+from app.models import VideoTemplate
 
 
 @pytest_asyncio.fixture
@@ -27,6 +29,41 @@ async def client():
     ) as c:
         yield c
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def sync_client():
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _ready_template(template_id: str = "tpl-1") -> MagicMock:
+    t = MagicMock(spec=VideoTemplate)
+    t.id = template_id
+    t.name = "Energetic Intro"
+    t.gcs_path = f"templates/{template_id}/video.mp4"
+    t.analysis_status = "ready"
+    t.required_clips_min = 3
+    t.required_clips_max = 5
+    t.recipe_cached = {
+        "slots": [
+            {"position": 1, "target_duration_s": 1.5, "media_type": "video"},
+            {"position": 2, "target_duration_s": 2.0, "media_type": "video"},
+        ],
+        "total_duration_s": 3.5,
+        "copy_tone": "energetic",
+    }
+    return t
+
+
+def _override_db_with_scalar(template: object | None):
+    """Override get_db so scalar_one_or_none returns the given template."""
+    async def _gen():
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = template
+        mock_db.execute = AsyncMock(return_value=mock_result)
+        yield mock_db
+    return _gen
 
 
 def _mock_template(
@@ -98,3 +135,53 @@ async def test_playback_url_not_found(client):
         res = await client.get("/templates/nonexistent/playback-url")
         # Will return 404 or 500 depending on DB mock
         assert res.status_code in (404, 500)
+
+
+# ── GET /templates/{id} ─────────────────────────────────────────────────────
+
+
+def test_get_template_returns_published(sync_client):
+    """GET /templates/{id} returns the projected list-item shape for a real id."""
+    app.dependency_overrides[get_db] = _override_db_with_scalar(_ready_template("tpl-1"))
+    try:
+        res = sync_client.get("/templates/tpl-1")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["id"] == "tpl-1"
+    assert body["slot_count"] == 2
+    assert body["copy_tone"] == "energetic"
+    # Frontend reads .length / .map on this — must always be a list.
+    assert body["required_inputs"] == []
+
+
+def test_get_template_unknown_id_returns_404_with_detail(sync_client):
+    """Unknown id → 404 with `{"detail": "Template not found"}`.
+
+    The deployed frontend distinguishes this from FastAPI's default
+    `{"detail": "Not Found"}` (unrouted path) — so the message matters.
+    """
+    app.dependency_overrides[get_db] = _override_db_with_scalar(None)
+    try:
+        res = sync_client.get("/templates/missing-id")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert res.status_code == 404
+    assert res.json() == {"detail": "Template not found"}
+
+
+def test_get_template_with_corrupt_recipe_returns_404(sync_client):
+    """A row with recipe_cached=None should not leak through as 200."""
+    tpl = _ready_template("tpl-corrupt")
+    tpl.recipe_cached = None
+    app.dependency_overrides[get_db] = _override_db_with_scalar(tpl)
+    try:
+        res = sync_client.get("/templates/tpl-corrupt")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert res.status_code == 404
+    assert res.json() == {"detail": "Template not found"}
