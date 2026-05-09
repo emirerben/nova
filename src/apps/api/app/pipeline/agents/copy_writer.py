@@ -4,13 +4,9 @@ Character limits enforced + truncated at last sentence.
 Fallback: template strings on any Gemini failure.
 """
 
-import json
 
 import structlog
 from pydantic import BaseModel, field_validator
-
-from app.config import settings
-from app.pipeline.agents.gemini_analyzer import _get_client
 
 log = structlog.get_logger()
 

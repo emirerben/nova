@@ -11,7 +11,6 @@ Handles all Gemini File API interactions:
 """
 
 import json
-import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -286,7 +285,8 @@ def analyze_clip(
         from app.agents._runtime import RefusalError, SchemaError  # noqa: PLC0415
 
         cause = exc.__cause__
-        if isinstance(cause, (RefusalError, SchemaError)) or "refusal" in str(exc) or "schema" in str(exc):
+        msg = str(exc)
+        if isinstance(cause, (RefusalError, SchemaError)) or "refusal" in msg or "schema" in msg:
             raise GeminiRefusalError(str(exc)) from exc
         raise GeminiAnalysisError(str(exc)) from exc
 
@@ -421,7 +421,11 @@ def analyze_template(
     inp = TemplateRecipeInput(
         file_uri=file_ref.uri,
         file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
-        analysis_mode="two_pass_part2" if (analysis_mode == "two_pass" and creative_direction) else "single",
+        analysis_mode=(
+            "two_pass_part2"
+            if (analysis_mode == "two_pass" and creative_direction)
+            else "single"
+        ),
         creative_direction=creative_direction,
         black_segments=bsegs,
     )
@@ -437,7 +441,8 @@ def analyze_template(
         out = agent.run(inp)
     except TerminalError as exc:
         cause = exc.__cause__
-        if isinstance(cause, (RefusalError, SchemaError)) or "refusal" in str(exc) or "schema" in str(exc):
+        msg = str(exc)
+        if isinstance(cause, (RefusalError, SchemaError)) or "refusal" in msg or "schema" in msg:
             raise GeminiRefusalError(str(exc)) from exc
         raise GeminiAnalysisError(str(exc)) from exc
 
@@ -740,7 +745,8 @@ def analyze_audio_template(
         out = AudioTemplateAgent(default_client()).run(inp)
     except TerminalError as exc:
         cause = exc.__cause__
-        if isinstance(cause, (RefusalError, SchemaError)) or "refusal" in str(exc) or "schema" in str(exc):
+        msg = str(exc)
+        if isinstance(cause, (RefusalError, SchemaError)) or "refusal" in msg or "schema" in msg:
             raise GeminiRefusalError(str(exc)) from exc
         raise GeminiAnalysisError(str(exc)) from exc
 

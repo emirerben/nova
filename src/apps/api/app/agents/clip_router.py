@@ -69,7 +69,8 @@ class ClipRouterAgent(Agent[ClipRouterInput, ClipRouterOutput]):
 
     def render_prompt(self, input: ClipRouterInput) -> str:  # noqa: A002
         slots_block = "\n".join(
-            f'  Slot {s.position}: type="{s.slot_type}", target_duration={s.target_duration_s:.1f}s, '
+            f'  Slot {s.position}: type="{s.slot_type}", '
+            f"target_duration={s.target_duration_s:.1f}s, "
             f"energy_target={s.energy:.1f}"
             for s in input.slots
         )

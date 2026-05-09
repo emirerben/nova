@@ -23,9 +23,7 @@ from app.agents._runtime import (
     ModelClient,
     ModelInvocation,
     TerminalError,
-    TransientError,
 )
-
 
 # ── Fake response objects (mimic the Gemini SDK shape) ────────────────────────
 

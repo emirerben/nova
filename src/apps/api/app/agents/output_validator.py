@@ -25,7 +25,6 @@ from pydantic import BaseModel, Field
 
 from app.agents._runtime import Agent, AgentSpec
 
-
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 
@@ -215,7 +214,8 @@ class OutputValidatorAgent(Agent[OutputValidatorInput, OutputValidatorOutput]):
                 )
 
         # ── Hook == caption (lazy duplicate) ──────────────────────
-        if hook and input.platform_copy.tiktok_caption and hook == input.platform_copy.tiktok_caption.strip():
+        tiktok_caption = input.platform_copy.tiktok_caption
+        if hook and tiktok_caption and hook == tiktok_caption.strip():
             issues.append(
                 Issue(
                     severity="warning",

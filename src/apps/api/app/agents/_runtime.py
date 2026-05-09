@@ -31,8 +31,9 @@ from __future__ import annotations
 import json
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar
 
 import structlog
 from pydantic import BaseModel, ValidationError
@@ -140,11 +141,11 @@ class ModelClient:
 # ── Agent base class ──────────────────────────────────────────────────────────
 
 
-I = TypeVar("I", bound=BaseModel)
-O = TypeVar("O", bound=BaseModel)
+InputT = TypeVar("InputT", bound=BaseModel)
+OutputT = TypeVar("OutputT", bound=BaseModel)
 
 
-class Agent(ABC, Generic[I, O]):
+class Agent(ABC, Generic[InputT, OutputT]):
     """Base class for all agents. See module docstring for required overrides."""
 
     spec: ClassVar[AgentSpec]
@@ -160,20 +161,20 @@ class Agent(ABC, Generic[I, O]):
     # ── Required ──────────────────────────────────────────────────
 
     @abstractmethod
-    def render_prompt(self, input: I) -> str:  # noqa: A002
+    def render_prompt(self, input: InputT) -> str:  # noqa: A002
         """Build the prompt string for this input."""
 
     @abstractmethod
-    def parse(self, raw_text: str, input: I) -> O:  # noqa: A002
+    def parse(self, raw_text: str, input: InputT) -> OutputT:  # noqa: A002
         """Parse + validate model output. Raise SchemaError / ValidationError on failure."""
 
     # ── Optional overrides ────────────────────────────────────────
 
-    def media_uri(self, input: I) -> str | None:  # noqa: A002, ARG002
+    def media_uri(self, input: InputT) -> str | None:  # noqa: A002, ARG002
         """Return a Gemini File API URI for video/audio agents, or None."""
         return None
 
-    def media_mime(self, input: I) -> str:  # noqa: A002, ARG002
+    def media_mime(self, input: InputT) -> str:  # noqa: A002, ARG002
         return "video/mp4"
 
     def required_fields(self) -> list[str]:
@@ -192,7 +193,7 @@ class Agent(ABC, Generic[I, O]):
             "No markdown fences, no prose, no comments."
         )
 
-    def compute(self, input: I) -> O:  # noqa: A002, ARG002
+    def compute(self, input: InputT) -> OutputT:  # noqa: A002, ARG002
         """Override for `spec.model == 'rule_based'` agents. LLM path skipped entirely."""
         raise NotImplementedError(
             f"{type(self).__name__}.compute() must be overridden when spec.model='rule_based'"
@@ -200,7 +201,7 @@ class Agent(ABC, Generic[I, O]):
 
     # ── Public entry point ────────────────────────────────────────
 
-    def run(self, input: I | dict, *, ctx: RunContext | None = None) -> O:  # noqa: A002
+    def run(self, input: InputT | dict, *, ctx: RunContext | None = None) -> OutputT:  # noqa: A002
         ctx = ctx or RunContext()
         validated_input = self._validate_input(input)
         start = time.monotonic()
@@ -263,7 +264,7 @@ class Agent(ABC, Generic[I, O]):
                 )
                 raise TerminalError(f"{self.spec.name}: refusal — {exc}") from exc
             except SchemaError as exc:
-                # Schema retries already exhausted — same model can't fix it; same applies to fallback.
+                # Schema retries already exhausted — same model can't fix it; fallback won't either.
                 self._log_outcome(
                     outcome="terminal_schema",
                     model=model,
@@ -299,10 +300,10 @@ class Agent(ABC, Generic[I, O]):
     def _run_on_model(
         self,
         model: str,
-        input: I,  # noqa: A002
+        input: InputT,  # noqa: A002
         ctx: RunContext,
         stats: _RunStats,
-    ) -> O:
+    ) -> OutputT:
         prompt = self.render_prompt(input)
         media = self.media_uri(input)
         mime = self.media_mime(input) if media else None
@@ -375,7 +376,7 @@ class Agent(ABC, Generic[I, O]):
 
     # ── Helpers ───────────────────────────────────────────────────
 
-    def _validate_input(self, input: I | dict) -> I:  # noqa: A002
+    def _validate_input(self, input: InputT | dict) -> InputT:  # noqa: A002
         if isinstance(input, self.Input):
             return input  # type: ignore[return-value]
         return self.Input.model_validate(input)  # type: ignore[return-value]
@@ -447,13 +448,13 @@ class Agent(ABC, Generic[I, O]):
 
 
 def run_with_shadow(
-    primary: Agent[I, O],
-    shadow: Callable[[I], O] | Agent[I, O],
-    input: I,  # noqa: A002
+    primary: Agent[InputT, OutputT],
+    shadow: Callable[[InputT], OutputT] | Agent[InputT, OutputT],
+    input: InputT,  # noqa: A002
     *,
     ctx: RunContext | None = None,
-    diff: Callable[[O, O], str | None] | None = None,
-) -> O:
+    diff: Callable[[OutputT, OutputT], str | None] | None = None,
+) -> OutputT:
     """Run primary; run shadow side-by-side; log divergence; return primary output.
 
     Shadow failure is non-fatal — primary always wins. Used for safe migrations
@@ -465,7 +466,7 @@ def run_with_shadow(
     ctx = ctx or RunContext()
     primary_out = primary.run(input, ctx=ctx)
 
-    shadow_out: O | None = None
+    shadow_out: OutputT | None = None
     shadow_error: str | None = None
     try:
         if isinstance(shadow, Agent):
@@ -478,7 +479,11 @@ def run_with_shadow(
     if shadow_out is not None:
         divergence: str | None
         try:
-            divergence = diff(primary_out, shadow_out) if diff else _default_diff(primary_out, shadow_out)
+            divergence = (
+                diff(primary_out, shadow_out)
+                if diff
+                else _default_diff(primary_out, shadow_out)
+            )
         except Exception as exc:  # noqa: BLE001
             divergence = f"diff_failed: {exc}"
         log.info(

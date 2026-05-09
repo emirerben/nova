@@ -23,7 +23,6 @@ from pydantic import BaseModel, Field
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 
-
 _VALID_TEXT_SIZES = ("small", "medium", "large", "xlarge", "xxlarge")
 _VALID_FONT_STYLES = ("serif", "sans", "mono")
 _VALID_EFFECTS = (

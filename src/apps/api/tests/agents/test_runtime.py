@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from app.agents._runtime import (
     Agent,
     AgentSpec,
+    ModelInvocation,
     RunContext,
     TerminalError,
     TransientError,
@@ -25,8 +26,6 @@ from tests.agents.conftest import (
     SampleOutput,
     safety_response,
 )
-from app.agents._runtime import ModelInvocation
-
 
 # ── Happy paths ───────────────────────────────────────────────────────────────
 

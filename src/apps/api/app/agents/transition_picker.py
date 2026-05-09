@@ -17,7 +17,6 @@ from pydantic import BaseModel, Field
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 
-
 _VALID_TRANSITIONS = ("hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none")
 TransitionType = Literal["hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none"]
 
@@ -72,7 +71,7 @@ class TransitionPickerAgent(Agent[TransitionPickerInput, TransitionPickerOutput]
             "  - zoom-in: 0.3–0.5s, dramatic emphasis on incoming\n"
             "  - dissolve: 0.4–0.8s, slower pacing, reflective tone\n"
             "  - curtain-close: 0.6–1.0s, scene-break, formal\n"
-            "  - none: no transition, hard cut without explicit transition (used between scenes)\n\n"
+            "  - none: hard cut, no explicit transition (used between scenes)\n\n"
             "If the template default already fits the pair, return it. Only override "
             "when the pair clearly needs something different.\n\n"
             'Return JSON: {"transition": str, "duration_s": float, "rationale": short str}\n'

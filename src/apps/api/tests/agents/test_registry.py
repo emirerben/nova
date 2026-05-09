@@ -5,7 +5,6 @@ from __future__ import annotations
 from app.agents._registry import AGENTS, get_agent
 from app.agents._runtime import Agent, AgentSpec
 
-
 _EXPECTED = {
     "nova.video.clip_metadata",
     "nova.compose.template_recipe",
