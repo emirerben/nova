@@ -4,13 +4,9 @@ Character limits enforced + truncated at last sentence.
 Fallback: template strings on any Gemini failure.
 """
 
-import json
 
 import structlog
 from pydantic import BaseModel, field_validator
-
-from app.config import settings
-from app.pipeline.agents.gemini_analyzer import _get_client
 
 log = structlog.get_logger()
 
@@ -86,75 +82,37 @@ class PlatformCopy(BaseModel):
 def generate_copy(
     hook_text: str,
     transcript_excerpt: str,
-    platforms: list[str],
+    platforms: list[str],  # noqa: ARG001 — kept for backwards-compatible signature
     has_transcript: bool = True,
     template_tone: str = "",
 ) -> tuple[PlatformCopy, str]:
-    """Generate platform-native copy for a clip using Gemini.
+    """Generate platform-native copy for a clip — returns (PlatformCopy, status).
 
-    template_tone: optional tone descriptor from a TemplateRecipe (e.g. 'casual',
-                   'energetic') — used for template-mode jobs to match the reference.
-
-    Returns (PlatformCopy, copy_status) where copy_status is one of:
-      'generated' | 'generated_fallback'
+    SHIM (v0.2): delegates to `app.agents.platform_copy.PlatformCopyAgent`.
+    On agent failure, falls back to a hardcoded template via `_template_copy()`,
+    preserving the legacy `'generated_fallback'` status code.
     """
-    client = _get_client()
-
-    transcript_note = (
-        f'Transcript excerpt: "{transcript_excerpt[:500]}"'
-        if has_transcript
-        else "No transcript available — infer content type from the hook text."
-    )
-    tone_note = (
-        f'\nTone guidance: match this style — "{template_tone}".'
-        if template_tone
-        else ""
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import TerminalError  # noqa: PLC0415
+    from app.agents.platform_copy import (  # noqa: PLC0415
+        PlatformCopyAgent,
+        PlatformCopyInput,
     )
 
-    prompt = (
-        "Generate platform-native social media copy for a short-form video clip.\n\n"
-        f"Hook text (first line of clip): \"{hook_text}\"\n"
-        f"{transcript_note}"
-        f"{tone_note}\n\n"
-        "Return a JSON object with this structure:\n"
-        '{"tiktok": {"hook": str, "caption": str, "hashtags": [str, ...]},\n'
-        ' "instagram": {"hook": str, "caption": str, "hashtags": [str, ...]},\n'
-        ' "youtube": {"title": str, "description": str, "tags": [str, ...]}}\n\n'
-        "Requirements:\n"
-        "- TikTok: punchy hook (≤150 chars), caption (≤300 chars), 5 hashtags\n"
-        "- Instagram Reels: engaging hook (≤150 chars), caption (≤300 chars), 10 hashtags\n"
-        "- YouTube Shorts: SEO title (≤100 chars, include #shorts), "
-        "description (≤300 chars), 15 tags\n"
-        "All copy should feel native to each platform. Be direct and energetic.\n"
-        "Return ONLY valid JSON, no markdown."
+    inp = PlatformCopyInput(
+        hook_text=hook_text,
+        transcript_excerpt=transcript_excerpt,
+        has_transcript=has_transcript,
+        template_tone=template_tone,
     )
-
-    from google.genai import types as genai_types  # type: ignore[import]
-
-    for attempt in range(2):
-        try:
-            response = client.models.generate_content(
-                model=settings.gemini_model,
-                contents=[prompt],
-                config=genai_types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                ),
-            )
-            data = json.loads(response.text)
-            result = PlatformCopy(
-                tiktok=TikTokCopy(**data["tiktok"]),
-                instagram=InstagramCopy(**data["instagram"]),
-                youtube=YouTubeCopy(**data["youtube"]),
-            )
-            log.info("copy_generated", hook=hook_text[:50], attempt=attempt)
-            return result, "generated"
-        except Exception as exc:
-            log.warning("copy_writer_api_error", error=str(exc), attempt=attempt)
-            if attempt == 1:
-                log.error("copy_writer_fallback_to_template")
-                return _template_copy(hook_text), "generated_fallback"
-
-    return _template_copy(hook_text), "generated_fallback"
+    try:
+        out = PlatformCopyAgent(default_client()).run(inp)
+        log.info("copy_generated", hook=hook_text[:50])
+        return out.value, "generated"
+    except TerminalError as exc:
+        log.warning("copy_writer_api_error", error=str(exc))
+        log.error("copy_writer_fallback_to_template")
+        return _template_copy(hook_text), "generated_fallback"
 
 
 def _template_copy(hook_text: str) -> PlatformCopy:

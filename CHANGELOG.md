@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0.0] - 2026-05-09
+
+### Added
+- Hand-rolled agent runtime with structured output validation, retry/repair loops, tool-call dispatch, and per-call telemetry
+- 12-agent catalog under `app/pipeline/agents/` with shared registry and conftest fixtures
+- Agent runtime tests: `tests/agents/test_runtime.py`, `test_output_validator.py`, `test_registry.py`
+
+### Changed
+- Refactored `gemini_analyzer.py` and `copy_writer.py` to call agents through the new runtime instead of bespoke per-call wrappers
+
+### Fixed
+- Template-job failures from `TemplateMismatchError` (no clip fits a slot) now persist `failure_reason="user_clip_unusable"` instead of `"unknown"`. The frontend's existing `user_clip_unusable` copy and `error_detail` passthrough now surface the actual matcher reason instead of "Processing failed. Please try again."
+- Same fix applied to single-video orchestrator path with explicit defense-in-depth handler
+- Matcher's "no clip fits" hint no longer renders meaningless `≥0s` for short slots; new copy reads "Upload longer clips — slot N needs a moment about Xs long" with a usable range only when meaningful
+
 ## [0.3.3.0] - 2026-04-19
 
 ### Added

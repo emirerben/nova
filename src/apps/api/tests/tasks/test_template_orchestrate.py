@@ -822,13 +822,18 @@ class TestTemplateMatcher2Pass:
 
 
 class TestOrchestrateTemplateJobErrors:
-    def test_template_mismatch_error_sets_processing_failed(self):
-        """TemplateMismatchError → job.status = processing_failed with code in error_detail."""
+    def test_template_mismatch_error_classifies_as_user_clip_unusable(self):
+        """A TemplateMismatchError reaching the outer handler must be classified
+        as user_clip_unusable (not unknown). Defense-in-depth path: even if the
+        inner _run_template_job lets one slip past the inner _StageError wrap.
+        """
+        from app.pipeline.template_matcher import TemplateMismatchError
         from app.tasks.template_orchestrate import orchestrate_template_job
 
         mock_job = MagicMock()
         mock_job.status = "queued"
         mock_job.error_detail = None
+        mock_job.failure_reason = None
 
         def _mock_ctx():
             ctx = MagicMock()
@@ -841,12 +846,52 @@ class TestOrchestrateTemplateJobErrors:
 
         with patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx), \
              patch("app.tasks.template_orchestrate._run_template_job") as mock_run:
-            mock_run.side_effect = ValueError(
-                "TEMPLATE_CLIP_DURATION_MISMATCH: No clip fits slot"
+            mock_run.side_effect = TemplateMismatchError(
+                "No clip fits slot 2 requiring ~5.0s.",
+                code="TEMPLATE_CLIP_DURATION_MISMATCH",
             )
             orchestrate_template_job("12345678-1234-5678-1234-567812345678")
 
         assert mock_job.status == "processing_failed"
+        assert mock_job.failure_reason == "user_clip_unusable"
+        assert "TEMPLATE_CLIP_DURATION_MISMATCH" in mock_job.error_detail
+
+    def test_inner_stage_error_user_clip_unusable_propagates(self):
+        """_StageError(user_clip_unusable, ...) raised inside _run_template_job
+        must reach the DB with failure_reason='user_clip_unusable'. Covers the
+        normal path where the inner `except TemplateMismatchError` arm wraps
+        the matcher error before the outer handler ever sees it.
+        """
+        from app.tasks.template_orchestrate import (
+            FAILURE_REASON_USER_CLIP_UNUSABLE,
+            _StageError,
+            orchestrate_template_job,
+        )
+
+        mock_job = MagicMock()
+        mock_job.status = "queued"
+        mock_job.error_detail = None
+        mock_job.failure_reason = None
+
+        def _mock_ctx():
+            ctx = MagicMock()
+            ctx.__enter__ = MagicMock(return_value=_mock_session)
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        _mock_session = MagicMock()
+        _mock_session.get.return_value = mock_job
+
+        with patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx), \
+             patch("app.tasks.template_orchestrate._run_template_job") as mock_run:
+            mock_run.side_effect = _StageError(
+                FAILURE_REASON_USER_CLIP_UNUSABLE,
+                "TEMPLATE_CLIP_DURATION_MISMATCH: No clip fits slot 2",
+            )
+            orchestrate_template_job("12345678-1234-5678-1234-567812345678")
+
+        assert mock_job.status == "processing_failed"
+        assert mock_job.failure_reason == "user_clip_unusable"
         assert "TEMPLATE_CLIP_DURATION_MISMATCH" in mock_job.error_detail
 
     def test_never_raises_outer_exception(self):

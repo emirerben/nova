@@ -6,12 +6,12 @@ from app.pipeline.agents.copy_writer import generate_copy
 
 
 def test_copy_fallback_on_double_api_failure():
-    with patch("app.pipeline.agents.copy_writer._get_client") as mock_get_client:
+    # Patch via the canonical _get_client (gemini_analyzer module). The agent
+    # runtime resolves all gemini calls through this singleton.
+    with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client, \
+         patch("time.sleep"):  # don't sleep through the agent's retry backoff
         mock_client = mock_get_client.return_value
-        mock_client.models.generate_content.side_effect = [
-            Exception("first failure"),
-            Exception("second failure"),
-        ]
+        mock_client.models.generate_content.side_effect = Exception("API down")
         copy, status = generate_copy(
             hook_text="Something went wrong",
             transcript_excerpt="",
@@ -33,10 +33,12 @@ def test_copy_status_generated_on_success():
         "youtube": {"title": "t #shorts", "description": "d", "tags": ["t"] * 15},
     }
 
-    with patch("app.pipeline.agents.copy_writer._get_client") as mock_get_client:
+    with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client:
         mock_client = mock_get_client.return_value
         response = mock_client.models.generate_content.return_value
         response.text = json.dumps(mock_data)
+        # Ensure SDK candidates list looks clean (no SAFETY finish_reason)
+        response.candidates = []
         copy, status = generate_copy("hook text", "transcript", ["instagram"])
 
     assert status == "generated"

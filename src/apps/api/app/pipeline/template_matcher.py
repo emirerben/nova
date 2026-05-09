@@ -695,11 +695,20 @@ def match(
         ]
 
         if not loose_candidates:
+            min_useful_s = max(0.0, target_dur - DURATION_TOLERANCE_FALLBACK_S)
+            max_useful_s = target_dur + DURATION_TOLERANCE_FALLBACK_S
+            hint = (
+                f"Upload longer clips — slot {slot_position} needs a moment "
+                f"about {target_dur:.0f}s long"
+            )
+            if min_useful_s > 0:
+                hint += (
+                    f" (we accept moments {min_useful_s:.0f}s–{max_useful_s:.0f}s)"
+                )
+            hint += "."
             raise TemplateMismatchError(
                 f"No clip fits slot {slot_position} "
-                f"requiring ~{target_dur:.1f}s. "
-                "Upload clips with moments "
-                f"≥{max(0.0, target_dur - DURATION_TOLERANCE_FALLBACK_S):.0f}s.",
+                f"requiring ~{target_dur:.1f}s. {hint}",
                 code="TEMPLATE_CLIP_DURATION_MISMATCH",
             )
 

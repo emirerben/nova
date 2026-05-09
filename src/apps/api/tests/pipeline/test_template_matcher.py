@@ -120,6 +120,31 @@ class TestTemplateMatcher:
 
         assert exc_info.value.code == "TEMPLATE_CLIP_DURATION_MISMATCH"
         assert "30.0s" in exc_info.value.message
+        # Hint mentions the actual range, not "≥0s"
+        assert "≥0s" not in exc_info.value.message
+        assert "24s" in exc_info.value.message  # 30 - 6 fallback tolerance
+
+    def test_duration_mismatch_hint_skips_lower_bound_for_short_slots(self):
+        """When target_dur ≤ tolerance (6s), the lower bound would be 0 — message
+        must not say '0s' since that's not informative.
+
+        For target=5s, fallback tolerance ±6s accepts moments 0-11s long. To force
+        the no-candidate raise we need only moments >11s (way too long for the slot).
+        """
+        recipe = _make_recipe([_slot(2, 5.0, priority=5)])  # 5s slot
+        clips = [
+            _make_clip("clip_a", [_moment(0.0, 30.0)])  # only a 30s moment, > 5+6=11s
+        ]
+
+        with pytest.raises(TemplateMismatchError) as exc_info:
+            match(recipe, clips)
+
+        msg = exc_info.value.message
+        assert exc_info.value.code == "TEMPLATE_CLIP_DURATION_MISMATCH"
+        assert "≥0s" not in msg
+        assert "0s–" not in msg
+        # Should tell user the target slot length, not a meaningless "0s" floor
+        assert "5s" in msg or "5.0s" in msg
 
     def test_duration_tolerance_allows_close_matches(self):
         """Moments within ±6s of target should be accepted."""
