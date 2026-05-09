@@ -42,3 +42,28 @@ def test_copy_status_generated_on_success():
         copy, status = generate_copy("hook text", "transcript", ["instagram"])
 
     assert status == "generated"
+
+
+# ── Subject resolution from job.all_candidates ──────────────────────────────
+# These tests cover the read-side fallback for jobs created before the
+# subject → inputs.location rename. Delete after 2026-05-16 along with the
+# fallback in template_orchestrate._resolve_user_subject.
+
+
+def test_subject_resolved_from_new_inputs_shape():
+    from app.tasks.template_orchestrate import _resolve_user_subject
+
+    assert _resolve_user_subject({"inputs": {"location": "Tokyo"}}) == "Tokyo"
+
+
+def test_subject_fallback_to_legacy_field():
+    from app.tasks.template_orchestrate import _resolve_user_subject
+
+    assert _resolve_user_subject({"subject": "Peru"}) == "Peru"
+
+
+def test_subject_empty_when_neither_present():
+    from app.tasks.template_orchestrate import _resolve_user_subject
+
+    assert _resolve_user_subject({}) == ""
+    assert _resolve_user_subject(None) == ""

@@ -1,109 +1,9 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export interface PresignedResponse {
-  upload_url: string;
-  job_id: string;
-  gcs_path: string;
-}
-
-export interface ClipStatus {
-  id: string;
-  rank: number;
-  hook_score: number;
-  engagement_score: number;
-  combined_score: number;
-  start_s: number;
-  end_s: number;
-  hook_text: string | null;
-  render_status: "pending" | "rendering" | "ready" | "failed";
-  video_path: string | null;
-  thumbnail_path: string | null;
-  duration_s: number | null;
-  platform_copy: PlatformCopy | null;
-  copy_status: "generated" | "generated_fallback" | "edited";
-  post_status: Record<string, string> | null;
-}
-
 export interface PlatformCopy {
   tiktok: { hook: string; caption: string; hashtags: string[] };
   instagram: { hook: string; caption: string; hashtags: string[] };
   youtube: { title: string; description: string; tags: string[] };
-}
-
-export type JobStatus =
-  | "importing"
-  | "queued"
-  | "processing"
-  | "clips_ready"
-  | "clips_ready_partial"
-  | "posting"
-  | "posting_partial"
-  | "done"
-  | "posting_failed"
-  | "processing_failed";
-
-/** Terminal job statuses — shared between job tracker and architecture dashboard */
-export const TERMINAL_STATES = new Set<JobStatus>([
-  "clips_ready",
-  "clips_ready_partial",
-  "done",
-  "posting_failed",
-  "processing_failed",
-]);
-
-export interface JobStatusResponse {
-  id: string;
-  status: JobStatus;
-  clips: ClipStatus[];
-  error_detail: string | null;
-  created_at: string;
-  updated_at: string;
-  import_progress_pct: number | null;
-  drive_filename: string | null;
-  drive_file_size_bytes: number | null;
-}
-
-export async function getPresignedUrl(params: {
-  filename: string;
-  file_size_bytes: number;
-  duration_s: number;
-  aspect_ratio: string;
-  platforms: string[];
-  content_type: string;
-}): Promise<PresignedResponse> {
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}/uploads/presigned`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
-    });
-  } catch {
-    throw new Error("Cannot reach the server. Make sure the API is running (`docker-compose up`).");
-  }
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Upload failed: ${res.status}`);
-  }
-  return res.json();
-}
-
-export async function enqueueJob(jobId: string, rawPath: string, platforms: string[]): Promise<void> {
-  const res = await fetch(`${API_URL}/jobs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ job_id: jobId, raw_storage_path: rawPath, platforms }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Enqueue failed: ${res.status}`);
-  }
-}
-
-export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
-  const res = await fetch(`${API_URL}/jobs/${jobId}/status`);
-  if (!res.ok) throw new Error(`Status fetch failed: ${res.status}`);
-  return res.json();
 }
 
 /** Normalise video MIME types for GCS signed uploads.
@@ -136,37 +36,6 @@ export async function uploadFileToGcs(uploadUrl: string, file: File): Promise<vo
 }
 
 // ── Google Drive Import API ────────────────────────────────────────────────
-
-export interface DriveImportResponse {
-  job_id: string;
-  status: string;
-}
-
-export async function importFromDrive(params: {
-  drive_file_id: string;
-  filename: string;
-  file_size_bytes: number;
-  mime_type: string;
-  platforms: string[];
-  google_access_token: string;
-  compress?: boolean;
-}): Promise<DriveImportResponse> {
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}/uploads/drive-import`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
-    });
-  } catch {
-    throw new Error("Cannot reach the server. Make sure the API is running.");
-  }
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Drive import failed: ${res.status}`);
-  }
-  return res.json();
-}
 
 export interface DriveImportBatchResponse {
   batch_id: string;
@@ -285,7 +154,7 @@ export async function createTemplateJob(params: {
   template_id: string;
   clip_gcs_paths: string[];
   selected_platforms: string[];
-  subject?: string;
+  inputs?: Record<string, string>;
 }): Promise<TemplateJobCreateResponse> {
   let res: Response;
   try {
@@ -359,6 +228,14 @@ export interface SlotSummary {
   media_type: "video" | "photo";
 }
 
+export interface RequiredInput {
+  key: string;
+  label: string;
+  placeholder: string;
+  max_length: number;
+  required: boolean;
+}
+
 export interface TemplateListItem {
   id: string;
   name: string;
@@ -371,6 +248,7 @@ export interface TemplateListItem {
   required_clips_min: number;
   required_clips_max: number;
   slots: SlotSummary[];
+  required_inputs: RequiredInput[];
 }
 
 export async function uploadTemplatePhoto(params: {
@@ -397,6 +275,23 @@ export async function uploadTemplatePhoto(params: {
 export async function listTemplates(): Promise<TemplateListItem[]> {
   const res = await fetch(`${API_URL}/templates`);
   if (!res.ok) throw new Error(`Failed to fetch templates: ${res.status}`);
+  return res.json();
+}
+
+export class TemplateNotFoundError extends Error {
+  constructor(templateId: string) {
+    super(`Template not found: ${templateId}`);
+    this.name = "TemplateNotFoundError";
+  }
+}
+
+// Used by /template/[id] for direct/shareable URLs. Throws TemplateNotFoundError
+// on 404 so the page can render a friendly fallback instead of bubbling to
+// the global error boundary.
+export async function getTemplate(templateId: string): Promise<TemplateListItem> {
+  const res = await fetch(`${API_URL}/templates/${encodeURIComponent(templateId)}`);
+  if (res.status === 404) throw new TemplateNotFoundError(templateId);
+  if (!res.ok) throw new Error(`Failed to fetch template: ${res.status}`);
   return res.json();
 }
 

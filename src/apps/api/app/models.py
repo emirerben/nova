@@ -107,6 +107,11 @@ class VideoTemplate(Base):
     voiceover_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     required_clips_min: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     required_clips_max: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    # User inputs the upload UI collects per-template (e.g. location).
+    # Shape: list[{key, label, placeholder, max_length, required}].
+    required_inputs: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
     # Admin lifecycle columns (nullable for backward compat)
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)

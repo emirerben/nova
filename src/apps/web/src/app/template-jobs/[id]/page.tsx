@@ -133,10 +133,10 @@ function ErrorScreen({ message, jobId }: { message: string; jobId: string }) {
       <div className="max-w-md text-center">
         <p className="text-red-400 mb-4">{message}</p>
         <a
-          href="/template"
+          href="/"
           className="inline-block px-6 py-2 bg-zinc-800 text-white rounded-lg text-sm hover:bg-zinc-700 transition-colors"
         >
-          Upload again
+          Back to templates
         </a>
       </div>
     </main>
@@ -542,9 +542,7 @@ function ResultView({
         )}
 
         <p className="mt-8 text-center text-xs text-zinc-600">
-          <a href="/template" className="underline hover:text-zinc-400">← Create another</a>
-          {" · "}
-          <a href="/template-jobs" className="underline hover:text-zinc-400">QA Dashboard</a>
+          <a href="/" className="underline hover:text-zinc-400">← Templates</a>
         </p>
       </div>
     </main>

@@ -331,7 +331,6 @@ const deliveryChildren: Record<string, Module> = {
     description: "Clip cards with scores, thumbnails, download links, and copy",
     level: "L2",
     files: [
-      "src/apps/web/src/app/jobs/[id]/page.tsx",
       "src/apps/web/src/app/template-jobs/[id]/page.tsx",
     ],
     githubLabel: "module:delivery",
@@ -460,7 +459,6 @@ export const modules: Record<string, Module> = {
     description: "Clip results UI, download, and platform posting",
     level: "L1",
     files: [
-      "src/apps/web/src/app/jobs/[id]/page.tsx",
       "src/apps/web/src/app/template-jobs/[id]/page.tsx",
     ],
     githubLabel: "module:delivery",

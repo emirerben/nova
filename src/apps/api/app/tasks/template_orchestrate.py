@@ -120,6 +120,19 @@ class _StageError(Exception):
         self.message = message
 
 
+# REMOVE AFTER 2026-05-16 — see TODOS.md#fallback-removal
+def _resolve_user_subject(all_candidates: dict | None) -> str:
+    """Pull the user's subject (location) from the new inputs shape.
+
+    Falls back to the legacy `subject` field for jobs created before the
+    rename. Delete this fallback (and the inline call sites' REMOVE AFTER
+    blocks) on 2026-05-16; an xfail test in tests/pipeline forces the
+    issue.
+    """
+    ac = all_candidates or {}
+    return (ac.get("inputs") or {}).get("location") or ac.get("subject", "") or ""
+
+
 @contextmanager
 def _stage(name: str, on_fail: str, *, job_id: str) -> Iterator[None]:
     """Time + log a pipeline stage; classify uncaught exceptions.
@@ -399,7 +412,7 @@ def _run_template_job(job_id: str) -> None:
         template_id = job.template_id
         all_candidates = job.all_candidates or {}
         clip_paths_gcs = all_candidates.get("clip_paths", [])
-        user_subject = all_candidates.get("subject", "")
+        user_subject = _resolve_user_subject(all_candidates)
         selected_platforms = job.selected_platforms or ["tiktok", "instagram", "youtube"]
 
     if not clip_paths_gcs:
@@ -653,7 +666,7 @@ def _run_rerender(job_id: str, job: Job) -> None:
     steps_data = plan.get("steps", [])
     template_id = job.template_id
     selected_platforms = job.selected_platforms or ["tiktok", "instagram", "youtube"]
-    user_subject = (job.all_candidates or {}).get("subject", "")
+    user_subject = _resolve_user_subject(job.all_candidates)
 
     # Load current recipe from DB (reflects user edits)
     with _sync_session() as db:
@@ -3454,7 +3467,7 @@ def _run_single_video_job_entry(job_id: str) -> None:
         template_id = job.template_id
         all_candidates = job.all_candidates or {}
         clip_paths_gcs = all_candidates.get("clip_paths", [])
-        user_subject = all_candidates.get("subject", "")
+        user_subject = _resolve_user_subject(all_candidates)
         selected_platforms = job.selected_platforms or [
             "tiktok", "instagram", "youtube",
         ]

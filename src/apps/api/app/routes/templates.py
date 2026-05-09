@@ -1,6 +1,7 @@
 """Public template endpoints.
 
 GET /templates              — list all ready templates (public, no auth)
+GET /templates/:id          — single template by id (public, no auth)
 GET /templates/:id/playback-url — signed GCS URL for template video playback
 """
 
@@ -29,6 +30,15 @@ class SlotSummary(BaseModel):
     media_type: str  # "video" | "photo"
 
 
+class RequiredInput(BaseModel):
+    """User input the upload UI must collect for a given template."""
+    key: str
+    label: str
+    placeholder: str = ""
+    max_length: int = 50
+    required: bool = False
+
+
 class TemplateListItem(BaseModel):
     id: str
     name: str
@@ -41,11 +51,55 @@ class TemplateListItem(BaseModel):
     required_clips_min: int
     required_clips_max: int
     slots: list[SlotSummary]
+    required_inputs: list[RequiredInput] = []
 
 
 class PlaybackUrlResponse(BaseModel):
     url: str
     expires_in_s: int
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _template_to_list_item(t: VideoTemplate) -> TemplateListItem | None:
+    """Project a VideoTemplate row into the public list-item shape.
+
+    Returns None when recipe_cached is missing or corrupt — caller decides
+    whether to skip silently (list endpoint) or raise 404 (detail endpoint).
+    """
+    if t.recipe_cached is None:
+        return None
+    try:
+        recipe = t.recipe_cached
+        raw_slots = recipe.get("slots", [])
+        slot_summaries = [
+            SlotSummary(
+                position=int(s.get("position", i + 1)),
+                target_duration_s=float(s.get("target_duration_s", 5.0)),
+                media_type=str(s.get("media_type", "video")),
+            )
+            for i, s in enumerate(raw_slots)
+        ]
+        return TemplateListItem(
+            id=t.id,
+            name=t.name,
+            gcs_path=t.gcs_path,
+            analysis_status=t.analysis_status,
+            slot_count=len(raw_slots),
+            total_duration_s=float(recipe.get("total_duration_s", 0)),
+            copy_tone=str(recipe.get("copy_tone", "casual")),
+            thumbnail_url=None,  # v1: no thumbnails
+            required_clips_min=t.required_clips_min,
+            required_clips_max=t.required_clips_max,
+            slots=slot_summaries,
+            required_inputs=[
+                RequiredInput(**r) for r in (t.required_inputs or [])
+            ],
+        )
+    except (TypeError, ValueError, AttributeError):
+        log.warning("template_recipe_corrupt", template_id=t.id)
+        return None
 
 
 # ── Endpoints ───────────────────────────────────────────────────────────────
@@ -70,48 +124,51 @@ async def list_templates(
     )
     templates = result.scalars().all()
 
-    items: list[TemplateListItem] = []
-    for t in templates:
-        if t.recipe_cached is None:
-            continue
-
-        try:
-            recipe = t.recipe_cached
-            raw_slots = recipe.get("slots", [])
-            slot_count = len(raw_slots)
-            total_duration_s = float(recipe.get("total_duration_s", 0))
-            copy_tone = str(recipe.get("copy_tone", "casual"))
-            slot_summaries = [
-                SlotSummary(
-                    position=int(s.get("position", i + 1)),
-                    target_duration_s=float(s.get("target_duration_s", 5.0)),
-                    media_type=str(s.get("media_type", "video")),
-                )
-                for i, s in enumerate(raw_slots)
-            ]
-        except (TypeError, ValueError, AttributeError):
-            # Corrupt recipe_cached — skip this template
-            log.warning("template_skipped_corrupt_recipe", template_id=t.id)
-            continue
-
-        items.append(
-            TemplateListItem(
-                id=t.id,
-                name=t.name,
-                gcs_path=t.gcs_path,
-                analysis_status=t.analysis_status,
-                slot_count=slot_count,
-                total_duration_s=total_duration_s,
-                copy_tone=copy_tone,
-                thumbnail_url=None,  # v1: no thumbnails
-                required_clips_min=t.required_clips_min,
-                required_clips_max=t.required_clips_max,
-                slots=slot_summaries,
-            )
-        )
+    items = [item for t in templates if (item := _template_to_list_item(t)) is not None]
 
     log.info("templates_listed", count=len(items))
     return items
+
+
+@router.get("/{template_id}", response_model=TemplateListItem)
+async def get_template(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateListItem:
+    """Return a single published, non-archived template by ID.
+
+    Used by the public template detail page (/template/[id]) for shareable
+    URLs and direct navigation. Same visibility rules as the list endpoint:
+    must be published, not archived, not a music_child, with a parseable
+    recipe. Anything else returns 404.
+    """
+    template = await db.get(VideoTemplate, template_id)
+
+    if template is None or template.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found",
+        )
+    if template.published_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not published",
+        )
+    if template.template_type == "music_child":
+        # Music children are reachable only via their parent template — same
+        # exclusion as the list endpoint.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found",
+        )
+
+    item = _template_to_list_item(template)
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template recipe unavailable",
+        )
+    return item
 
 
 @router.get("/{template_id}/playback-url", response_model=PlaybackUrlResponse)
