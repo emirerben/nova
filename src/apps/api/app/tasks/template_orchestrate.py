@@ -1502,31 +1502,104 @@ def _join_or_concat(
     tmpdir: str,
     has_interstitials: bool = False,
 ) -> None:
-    """Join slots with xfade transitions, falling back to concat demuxer on error.
+    """Join slots, splitting hard-cut runs from real visual transitions.
 
-    When has_interstitials is True but no visual transitions exist, use the
-    re-encoding concat demuxer instead of xfade. Chaining 17+ xfade filters
-    with duration=0.001 (hard-cut simulation) causes FFmpeg to drop frames
-    and truncate the output to ~4s. The concat demuxer with re-encode handles
-    mixed audio/no-audio streams correctly.
+    The 17-slot Dimples Passport recipe (15 hard-cut + 1 dissolve) hit a bug
+    where chaining xfade=fade:duration=0.001 for hard cuts caused FFmpeg to
+    drop frames and truncate output to ~3-4s. Fix: use the concat demuxer
+    (re-encode) for runs of "none" transitions and only invoke xfade for the
+    real visual boundaries. brazil.mp4 (21.4s, ffprobe-confirmed) is the
+    expected output shape for that recipe.
+
+    Pipeline:
+
+        slots:        [s1, s2, s3, s4, s5, s6, ..., s17]
+        transitions:        [n,  n,  n,  n,  X,  n,  ..., n]    (X = visual)
+                            └──── group A ─────┘  └── group B ──┘
+        ┌── concat A ──┐   ┌── concat B ──┐
+        │   (5 slots)  │   │  (12 slots)  │
+        └──────────────┘   └──────────────┘
+                ╲              ╱
+                 xfade(X, group_a, group_b)
+                       ↓
+                  output.mp4
+
+    `has_interstitials` is preserved as a parameter for caller compatibility
+    but no longer triggers a separate code path — every all-"none" sequence
+    now lands in concat naturally because no group splits get created.
     """
-    has_transitions = any(t != "none" for t in transition_types)
+    if not reframed_paths:
+        raise ValueError("_join_or_concat called with empty reframed_paths")
+    if len(transition_types) != len(reframed_paths) - 1:
+        raise ValueError(
+            f"transition_types length {len(transition_types)} != "
+            f"len(reframed_paths)-1 {len(reframed_paths) - 1}"
+        )
+    if len(slot_durations) != len(reframed_paths):
+        raise ValueError(
+            f"slot_durations length {len(slot_durations)} != "
+            f"len(reframed_paths) {len(reframed_paths)}"
+        )
 
-    if has_transitions and len(reframed_paths) > 1:
-        try:
-            from app.pipeline.transitions import join_with_transitions  # noqa: PLC0415
+    if len(reframed_paths) == 1:
+        shutil.copy2(reframed_paths[0], output_path)
+        return
 
-            join_with_transitions(
-                reframed_paths, transition_types, slot_durations, output_path,
-            )
-            return
-        except Exception as exc:
-            log.warning("transition_join_failed_falling_back", error=str(exc))
+    # Group slots by visual-transition boundaries. Adjacent slots joined by
+    # "none" land in the same group; visual transitions split groups.
+    groups: list[tuple[list[str], list[float]]] = []
+    boundary_transitions: list[str] = []
 
-    # Concat demuxer re-encodes (handles mixed audio/no-audio from
-    # interstitials) and doesn't suffer from xfade offset drift that
-    # occurs when slot_durations diverge from actual file durations.
-    _concat_demuxer(reframed_paths, output_path, tmpdir)
+    cur_paths = [reframed_paths[0]]
+    cur_durs = [slot_durations[0]]
+    for i, t in enumerate(transition_types):
+        if t == "none":
+            cur_paths.append(reframed_paths[i + 1])
+            cur_durs.append(slot_durations[i + 1])
+        else:
+            groups.append((cur_paths, cur_durs))
+            boundary_transitions.append(t)
+            cur_paths = [reframed_paths[i + 1]]
+            cur_durs = [slot_durations[i + 1]]
+    groups.append((cur_paths, cur_durs))
+
+    # Concat each group into a single file (1-slot groups pass through).
+    group_files: list[str] = []
+    group_durs: list[float] = []
+    for idx, (paths, durs) in enumerate(groups):
+        if len(paths) == 1:
+            group_files.append(paths[0])
+        else:
+            gf = os.path.join(tmpdir, f"group_{idx}.mp4")
+            _concat_demuxer(paths, gf, tmpdir)
+            group_files.append(gf)
+        group_durs.append(sum(durs))
+
+    log.info(
+        "join_or_concat_groups",
+        slots=len(reframed_paths),
+        groups=len(group_files),
+        visual_boundaries=len(boundary_transitions),
+        has_interstitials=has_interstitials,
+    )
+
+    # No visual transitions → all slots concat'd into one group, done.
+    if len(group_files) == 1:
+        shutil.copy2(group_files[0], output_path)
+        return
+
+    # Stitch groups via xfade for the real visual transitions only.
+    from app.pipeline.transitions import join_with_transitions  # noqa: PLC0415
+
+    try:
+        join_with_transitions(
+            group_files, boundary_transitions, group_durs, output_path,
+        )
+    except Exception as exc:
+        # Last-resort fallback: drop visual transitions, concat all original
+        # slot files. Better to ship a hard-cut version than a 3s truncation.
+        log.warning("transition_join_failed_falling_back", error=str(exc))
+        _concat_demuxer(reframed_paths, output_path, tmpdir)
 
 
 def _concat_demuxer(
