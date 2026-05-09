@@ -660,7 +660,22 @@ def match(
 
     # Greedy phase must NEVER reuse pinned clips — they represent intentional
     # user choices (face/intro). Reusing one in another slot breaks the contract.
-    greedy_metas = [m for m in clip_metas if m.clip_id not in pinned_clip_ids]
+    # EXCEPTION: when n_clips < n_unlocked_slots there is literally nothing else
+    # to fill remaining slots with, so allow the pinned clip back in. The
+    # used_moments variety dedup will still push the matcher to pick a
+    # different moment from the same clip for each remaining slot.
+    non_pinned = [m for m in clip_metas if m.clip_id not in pinned_clip_ids]
+    if non_pinned:
+        greedy_metas = non_pinned
+    else:
+        greedy_metas = list(clip_metas)
+        if pinned_clip_ids:
+            log.warning(
+                "matcher_pinned_reuse_fallback",
+                n_clips=len(clip_metas),
+                n_unlocked_slots=len(unlocked_slots),
+                pinned_clip_ids=sorted(pinned_clip_ids),
+            )
 
     for slot in slots_by_priority:
         # Skip slots already handled by coverage pass
