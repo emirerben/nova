@@ -29,6 +29,15 @@ class SlotSummary(BaseModel):
     media_type: str  # "video" | "photo"
 
 
+class RequiredInput(BaseModel):
+    """User input the upload UI must collect for a given template."""
+    key: str
+    label: str
+    placeholder: str = ""
+    max_length: int = 50
+    required: bool = False
+
+
 class TemplateListItem(BaseModel):
     id: str
     name: str
@@ -41,6 +50,7 @@ class TemplateListItem(BaseModel):
     required_clips_min: int
     required_clips_max: int
     slots: list[SlotSummary]
+    required_inputs: list[RequiredInput] = []
 
 
 class PlaybackUrlResponse(BaseModel):
@@ -107,6 +117,9 @@ async def list_templates(
                 required_clips_min=t.required_clips_min,
                 required_clips_max=t.required_clips_max,
                 slots=slot_summaries,
+                required_inputs=[
+                    RequiredInput(**r) for r in (t.required_inputs or [])
+                ],
             )
         )
 
