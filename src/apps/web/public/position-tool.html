@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Text Position & Size Tool</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #111; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; gap: 32px; }
+
+.container { position: relative; width: 360px; height: 640px; background: #1e2820; border: 2px solid #333; overflow: hidden; flex-shrink: 0; }
+
+.peru-text {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  font-family: 'Montserrat', sans-serif; font-weight: 800;
+  color: #F4D03F; text-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  pointer-events: none; user-select: none; white-space: nowrap;
+  line-height: 1;
+}
+
+.welcome-text {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  font-family: 'Playfair Display', serif; font-weight: 400;
+  color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  cursor: grab; user-select: none; white-space: nowrap;
+  border: 1px dashed rgba(255,255,255,0.3); padding: 2px 6px;
+  line-height: 1;
+}
+.welcome-text:active { cursor: grabbing; }
+
+.guide-line {
+  position: absolute; left: 0; right: 0; height: 1px;
+  background: rgba(255,0,0,0.4); pointer-events: none;
+}
+
+.controls {
+  display: flex; flex-direction: column; gap: 16px; color: #fff; width: 320px;
+}
+.control-group {
+  background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 16px;
+}
+.control-group h3 { font-size: 13px; color: #888; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+.control-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.control-row label { font-size: 13px; color: #aaa; }
+.control-row code { color: #F4D03F; font-size: 15px; font-weight: bold; min-width: 60px; text-align: right; }
+input[type=range] { width: 100%; margin-top: 4px; accent-color: #F4D03F; }
+.output-box {
+  background: #222; border: 1px solid #444; border-radius: 8px; padding: 16px;
+  font-family: monospace; font-size: 13px; line-height: 1.8; color: #ccc;
+}
+.output-box .key { color: #888; }
+.output-box .val { color: #F4D03F; font-weight: bold; }
+.hint { font-size: 11px; color: #666; margin-top: 4px; }
+
+.preset-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.preset-btn {
+  background: #333; border: 1px solid #555; color: #ccc; padding: 4px 10px;
+  border-radius: 4px; font-size: 12px; cursor: pointer;
+}
+.preset-btn:hover { background: #444; color: #fff; }
+.preset-btn.active { background: #F4D03F; color: #000; border-color: #F4D03F; }
+</style>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@800&family=Playfair+Display&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div class="container" id="canvas">
+  <div class="guide-line" id="guideMid"></div>
+  <div class="peru-text" id="peru">PERU</div>
+  <div class="welcome-text" id="welcome">Welcome to</div>
+</div>
+
+<div class="controls">
+  <div class="control-group">
+    <h3>PERU Size</h3>
+    <div class="control-row">
+      <label>Font size (px @ 1080p)</label>
+      <code id="peruSizeVal">265</code>
+    </div>
+    <input type="range" id="peruSize" min="100" max="500" value="265" step="5">
+    <div class="preset-row">
+      <button class="preset-btn" data-size="150">150 (xlarge)</button>
+      <button class="preset-btn" data-size="250">250 (xxlarge)</button>
+      <button class="preset-btn active" data-size="265">265 (jumbo)</button>
+      <button class="preset-btn" data-size="320">320</button>
+      <button class="preset-btn" data-size="400">400</button>
+    </div>
+  </div>
+
+  <div class="control-group">
+    <h3>Welcome to (drag or slider)</h3>
+    <div class="control-row">
+      <label>Y fraction</label>
+      <code id="welcomeYVal">0.4779</code>
+    </div>
+    <input type="range" id="welcomeY" min="0.20" max="0.70" value="0.4779" step="0.0005">
+    <p class="hint">Drag the text directly or use slider. Red line = PERU center.</p>
+  </div>
+
+  <div class="control-group">
+    <h3>Welcome to Size</h3>
+    <div class="control-row">
+      <label>Font size (px @ 1080p)</label>
+      <code id="welcomeSizeVal">48</code>
+    </div>
+    <input type="range" id="welcomeSize" min="24" max="120" value="48" step="2">
+  </div>
+
+  <div class="control-group">
+    <h3>PERU Y Position</h3>
+    <div class="control-row">
+      <label>Y fraction</label>
+      <code id="peruYVal">0.4500</code>
+    </div>
+    <input type="range" id="peruY" min="0.20" max="0.70" value="0.45" step="0.0005">
+  </div>
+
+  <div class="control-group" style="background: #0d1a0d; border-color: #2a4a2a;">
+    <h3 style="color: #4a4;">Output Values</h3>
+    <div class="output-box">
+      <span class="key">peru_size:</span> <span class="val" id="outPeruSize">jumbo (265px)</span><br>
+      <span class="key">peru_y_frac:</span> <span class="val" id="outPeruY">0.4500</span><br>
+      <span class="key">welcome_y_frac:</span> <span class="val" id="outWelcomeY">0.4779</span><br>
+      <span class="key">welcome_size:</span> <span class="val" id="outWelcomeSize">small (48px)</span><br>
+      <span class="key">welcome_pixel_y:</span> <span class="val" id="outWelcomePx">918</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const SCALE = 1920 / 640;
+const CANVAS_H = 1920;
+const CANVAS_W = 1080;
+const VIEW_H = 640;
+const VIEW_W = 360;
+
+const canvas = document.getElementById('canvas');
+const peru = document.getElementById('peru');
+const welcome = document.getElementById('welcome');
+const guideMid = document.getElementById('guideMid');
+
+const peruSizeSlider = document.getElementById('peruSize');
+const peruYSlider = document.getElementById('peruY');
+const welcomeYSlider = document.getElementById('welcomeY');
+const welcomeSizeSlider = document.getElementById('welcomeSize');
+
+function sizeName(px) {
+  if (px <= 48) return `small (${px}px)`;
+  if (px <= 72) return `medium (${px}px)`;
+  if (px <= 120) return `large (${px}px)`;
+  if (px <= 150) return `xlarge (${px}px)`;
+  if (px <= 250) return `xxlarge (${px}px)`;
+  if (px <= 320) return `jumbo (${px}px)`;
+  return `custom (${px}px)`;
+}
+
+function updateAll() {
+  const peruSizePx = parseInt(peruSizeSlider.value);
+  const peruYFrac = parseFloat(peruYSlider.value);
+  const welcomeYFrac = parseFloat(welcomeYSlider.value);
+  const welcomeSizePx = parseInt(welcomeSizeSlider.value);
+
+  const peruViewSize = peruSizePx / SCALE;
+  const welcomeViewSize = welcomeSizePx / SCALE;
+
+  peru.style.fontSize = peruViewSize + 'px';
+  welcome.style.fontSize = welcomeViewSize + 'px';
+
+  const peruH = peru.offsetHeight;
+  const peruTop = (VIEW_H * peruYFrac) - peruH / 2;
+  peru.style.top = peruTop + 'px';
+
+  guideMid.style.top = (VIEW_H * peruYFrac) + 'px';
+
+  const welcomeH = welcome.offsetHeight;
+  const welcomeTop = (VIEW_H * welcomeYFrac) - welcomeH / 2;
+  welcome.style.top = welcomeTop + 'px';
+
+  document.getElementById('peruSizeVal').textContent = peruSizePx;
+  document.getElementById('peruYVal').textContent = peruYFrac.toFixed(4);
+  document.getElementById('welcomeYVal').textContent = welcomeYFrac.toFixed(4);
+  document.getElementById('welcomeSizeVal').textContent = welcomeSizePx;
+
+  document.getElementById('outPeruSize').textContent = sizeName(peruSizePx);
+  document.getElementById('outPeruY').textContent = peruYFrac.toFixed(4);
+  document.getElementById('outWelcomeY').textContent = welcomeYFrac.toFixed(4);
+  document.getElementById('outWelcomeSize').textContent = sizeName(welcomeSizePx);
+  document.getElementById('outWelcomePx').textContent = Math.round(welcomeYFrac * CANVAS_H);
+
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.size) === peruSizePx);
+  });
+
+  welcomeYSlider.value = welcomeYFrac;
+}
+
+peruSizeSlider.addEventListener('input', updateAll);
+peruYSlider.addEventListener('input', updateAll);
+welcomeYSlider.addEventListener('input', updateAll);
+welcomeSizeSlider.addEventListener('input', updateAll);
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    peruSizeSlider.value = btn.dataset.size;
+    updateAll();
+  });
+});
+
+let dragging = false, offsetY = 0;
+
+welcome.addEventListener('mousedown', (e) => {
+  dragging = true;
+  offsetY = e.clientY - welcome.getBoundingClientRect().top;
+  e.preventDefault();
+});
+document.addEventListener('mousemove', (e) => {
+  if (!dragging) return;
+  const cRect = canvas.getBoundingClientRect();
+  let newTop = e.clientY - cRect.top - offsetY;
+  newTop = Math.max(0, Math.min(VIEW_H - welcome.offsetHeight, newTop));
+  const centerY = newTop + welcome.offsetHeight / 2;
+  const frac = centerY / VIEW_H;
+  welcomeYSlider.value = frac.toFixed(4);
+  updateAll();
+});
+document.addEventListener('mouseup', () => { dragging = false; });
+
+welcome.addEventListener('touchstart', (e) => {
+  dragging = true;
+  offsetY = e.touches[0].clientY - welcome.getBoundingClientRect().top;
+  e.preventDefault();
+});
+document.addEventListener('touchmove', (e) => {
+  if (!dragging) return;
+  const cRect = canvas.getBoundingClientRect();
+  let newTop = e.touches[0].clientY - cRect.top - offsetY;
+  newTop = Math.max(0, Math.min(VIEW_H - welcome.offsetHeight, newTop));
+  const centerY = newTop + welcome.offsetHeight / 2;
+  const frac = centerY / VIEW_H;
+  welcomeYSlider.value = frac.toFixed(4);
+  updateAll();
+});
+document.addEventListener('touchend', () => { dragging = false; });
+
+updateAll();
+</script>
+</body>
+</html>
