@@ -2853,8 +2853,13 @@ def _compose_intro_body_with_music(
     output_path: str,
     intro_duration_s: float,
     output_lufs: float = -14.0,
-) -> None:
+) -> bool:
     """Concat intro+body video AND mix audio in a single ffmpeg pass.
+
+    Returns True on success (output_path written), False on graceful failure
+    (timeout or ffmpeg non-zero). On False the caller is expected to fall
+    back to a silent-body concat — output_path is NOT written so the caller
+    still controls the final artifact.
 
     Audio composition:
       - intro audio passes through unchanged for [0..intro_duration_s)
@@ -2944,7 +2949,12 @@ def _compose_intro_body_with_music(
         "-map", "[a_out]",
         "-c:v", "libx264",
         "-profile:v", "high",
-        "-preset", "fast",
+        # ultrafast (was: fast). Matches the prior optimization in commit
+        # 4c678fc which moved _concat_demuxer and _burn_text_overlays to
+        # ultrafast for 3-5x faster encoding. Compose was missed in that
+        # pass and was the bottleneck behind the 300s subprocess timeout
+        # that bricked job ae43a33c on 2026-05-08.
+        "-preset", "ultrafast",
         "-crf", "18",
         "-pix_fmt", "yuv420p",
         "-color_range", "tv",
@@ -2961,15 +2971,23 @@ def _compose_intro_body_with_music(
         output_path,
     ]
 
-    result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
+    except subprocess.TimeoutExpired:
+        # Bug fix: prior to this catch, TimeoutExpired bypassed the non-zero
+        # branch below and bubbled to _stage() as ffmpeg_failed → user got
+        # "Video rendering failed" with no output. Now: degrade to caller's
+        # silent-body fallback (better UX than the previous "ship just the
+        # intro" copy).
+        log.warning("compose_timeout", timeout_s=300)
+        return False
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace")[-800:]
-        log.warning("compose_failed", stderr=stderr)
-        # Last-resort fallback: at least ship a video without music.
-        shutil.copy2(intro_path, output_path)
-        return
+        log.warning("compose_failed", stderr=stderr, returncode=result.returncode)
+        return False
 
     log.info("compose_done", output=output_path)
+    return True
 
 
 def _probe_duration_for_compose(path: str) -> float:
@@ -3232,18 +3250,35 @@ def _run_single_video_job(
                         [intro_path, body_path], final_path, tmpdir,
                     )
             else:
+                # compose returns False on timeout / ffmpeg non-zero. We
+                # degrade to silent-body concat in that case rather than
+                # failing the whole job — a 22.9s intro+body video without
+                # music is a better outcome than a 6-minute "Video
+                # rendering failed". audio_health surfaces the degradation
+                # so admins can spot a pattern.
+                composed_with_music = False
                 with _stage(
                     "compose_with_music",
                     FAILURE_REASON_FFMPEG_FAILED,
                     job_id=job_id,
                 ):
-                    _compose_intro_body_with_music(
+                    composed_with_music = _compose_intro_body_with_music(
                         intro_path=intro_path,
                         body_path=body_path,
                         music_path=music_local,
                         output_path=final_path,
                         intro_duration_s=intro_duration_s,
                     )
+                if not composed_with_music:
+                    audio_health.append("compose_with_music_failed")
+                    with _stage(
+                        "concat_silent_fallback",
+                        FAILURE_REASON_FFMPEG_FAILED,
+                        job_id=job_id,
+                    ):
+                        _concat_silent(
+                            [intro_path, body_path], final_path, tmpdir,
+                        )
 
         # [7] Upload primary + base output. template_output.mp4 and
         # template_base.mp4 are byte-identical for this template family
