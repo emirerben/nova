@@ -3,6 +3,12 @@
 app = "nova-video"
 primary_region = "iad"
 
+# Drain in-flight Celery tasks before SIGKILL on deploy. orchestrate_template_job
+# has a 1800s hard timeout; 30 min gives any almost-done task room to finish.
+# Without this, Fly's 5-min default SIGKILLs every long FFmpeg run during a
+# deploy, leaving jobs orphaned in status=processing.
+kill_timeout = "30m"
+
 [build]
   dockerfile = "Dockerfile"
 
