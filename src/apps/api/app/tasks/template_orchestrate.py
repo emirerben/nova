@@ -375,6 +375,18 @@ def orchestrate_template_job(self, job_id: str) -> None:
     except GeminiAnalysisError as exc:
         log.error("template_job_gemini_failed", job_id=job_id, error=str(exc))
         _mark_failed(job_uuid, FAILURE_REASON_GEMINI_ANALYSIS_FAILED, str(exc))
+    except TemplateMismatchError as exc:
+        log.error(
+            "template_job_clip_mismatch",
+            job_id=job_id,
+            code=exc.code,
+            error=exc.message,
+        )
+        _mark_failed(
+            job_uuid,
+            FAILURE_REASON_USER_CLIP_UNUSABLE,
+            f"{exc.code}: {exc.message}",
+        )
     except Exception as exc:
         log.exception("template_job_fatal", job_id=job_id, error=str(exc))
         _mark_failed(job_uuid, FAILURE_REASON_UNKNOWN, str(exc))
@@ -534,7 +546,10 @@ def _run_template_job(job_id: str) -> None:
                     filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
                 )
         except TemplateMismatchError as exc:
-            raise ValueError(f"{exc.code}: {exc.message}") from exc
+            raise _StageError(
+                FAILURE_REASON_USER_CLIP_UNUSABLE,
+                f"{exc.code}: {exc.message}",
+            ) from exc
 
         # Build mapping: clip_id → GCS path for re-render
         if mixed_media:
@@ -3490,6 +3505,18 @@ def orchestrate_single_video_job(self, job_id: str) -> None:
             FAILURE_REASON_TIMEOUT,
             f"Single-video job timed out "
             f"(exceeded {_SINGLE_VIDEO_SOFT_TIMEOUT_S}s soft limit)",
+        )
+    except TemplateMismatchError as exc:
+        log.error(
+            "single_video_job_clip_mismatch",
+            job_id=job_id,
+            code=exc.code,
+            error=exc.message,
+        )
+        _mark_failed(
+            job_uuid,
+            FAILURE_REASON_USER_CLIP_UNUSABLE,
+            f"{exc.code}: {exc.message}",
         )
     except Exception as exc:
         log.exception("single_video_job_fatal", job_id=job_id, error=str(exc))

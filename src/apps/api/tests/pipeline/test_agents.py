@@ -40,7 +40,7 @@ class TestCopyWriter:
             },
         }
 
-        with patch("app.pipeline.agents.copy_writer._get_client") as mock_get_client:
+        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client:
             mock_client = MagicMock()
             mock_get_client.return_value = mock_client
             mock_client.models.generate_content.return_value = _make_gemini_response(mock_data)
@@ -58,7 +58,7 @@ class TestCopyWriter:
             "youtube": {"title": "t #shorts", "description": "d", "tags": ["t"] * 15},
         }
 
-        with patch("app.pipeline.agents.copy_writer._get_client") as mock_get_client:
+        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client:
             mock_client = MagicMock()
             mock_get_client.return_value = mock_client
             mock_client.models.generate_content.return_value = _make_gemini_response(mock_data)
@@ -70,7 +70,8 @@ class TestCopyWriter:
         assert "casual energetic" in prompt_text
 
     def test_double_failure_returns_template_fallback(self):
-        with patch("app.pipeline.agents.copy_writer._get_client") as mock_get_client:
+        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client, \
+             patch("time.sleep"):  # don't sleep through the agent's transient backoff
             mock_client = MagicMock()
             mock_get_client.return_value = mock_client
             mock_client.models.generate_content.side_effect = Exception("API down")

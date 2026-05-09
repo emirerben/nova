@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+
 export default function GlobalError({
   error,
   reset,
@@ -7,6 +9,13 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // Always log so users with DevTools open can paste the trace to support.
+  useEffect(() => {
+    console.error("[Nova] Unhandled error:", error);
+  }, [error]);
+
+  const isDev = process.env.NODE_ENV !== "production";
+
   return (
     <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4">
       <h2 className="text-xl font-semibold mb-2">Something went wrong</h2>
@@ -27,6 +36,14 @@ export default function GlobalError({
           Back to home
         </a>
       </div>
+      {error.digest && (
+        <p className="text-zinc-600 text-xs mt-6 font-mono">ref: {error.digest}</p>
+      )}
+      {isDev && error.message && (
+        <pre className="text-red-400 text-xs mt-4 font-mono max-w-2xl whitespace-pre-wrap text-center">
+          {error.message}
+        </pre>
+      )}
     </div>
   );
 }

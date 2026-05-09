@@ -11,7 +11,6 @@ Handles all Gemini File API interactions:
 """
 
 import json
-import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -251,155 +250,55 @@ def analyze_clip(
     end_s: float | None = None,
     filter_hint: str = "",
 ) -> ClipMeta:
-    """Analyze a video clip or time range. Returns ClipMeta.
+    """Analyze a video clip / time range — returns ClipMeta.
 
-    Retry policy: up to 5 attempts on transient Google API errors
-    (503 ServiceUnavailable from "high demand" spikes, 429
-    ResourceExhausted from rate limits). Exponential backoff:
-    3s, 9s, 27s, 60s — total worst-case patience ~99s, which covers
-    most observed Google capacity dips ("Spikes are usually
-    temporary" per their 503 message). Refusals and 4xx (except
-    429) fail immediately — those won't get better with retries.
-
-    Without this retry loop a single Google capacity dip fails the
-    entire template job (>50% clip-fail threshold trips at 11/20).
-    With 5 attempts + 99s budget per clip, jobs survive multi-minute
-    Google overload windows.
-
-    If start_s and end_s are provided, focuses analysis on that segment.
-    filter_hint is a per-template natural-language constraint that biases
-    best_moments selection (e.g. "ball must be visible in frame" for sports).
-    Raises GeminiAnalysisError on terminal failure.
-
-    NOTE: the `google.genai` SDK (which `client.models.generate_content`
-    calls into) raises its own ServerError/ClientError classes, NOT the
-    `google.api_core.exceptions` ones. An earlier version of this code
-    caught `gapi_exc.ServiceUnavailable` and never matched — every 503
-    fell through to the catch-all and was wrapped as GeminiAnalysisError
-    on the first attempt with no retries. We now catch the genai SDK's
-    own error hierarchy.
+    SHIM (v0.2): delegates to `app.agents.clip_metadata.ClipMetadataAgent`.
+    Retry/refusal/schema handling is owned by the agent runtime now. This
+    function survives only to preserve the legacy return type (`ClipMeta`)
+    and exception classes (`GeminiAnalysisError` / `GeminiRefusalError`) for
+    callers that haven't migrated yet.
     """
-    from google.genai import errors as genai_errors  # type: ignore[import]
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import TerminalError  # noqa: PLC0415
+    from app.agents.clip_metadata import (  # noqa: PLC0415
+        ClipMetadataAgent,
+        ClipMetadataInput,
+        TimeRange,
+    )
 
-    from app.pipeline.prompt_loader import load_prompt  # noqa: PLC0415
+    segment = (
+        TimeRange(start_s=start_s, end_s=end_s)
+        if start_s is not None and end_s is not None
+        else None
+    )
+    inp = ClipMetadataInput(
+        file_uri=file_ref.uri,
+        file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
+        segment=segment,
+        filter_hint=filter_hint or "",
+    )
+    agent = ClipMetadataAgent(default_client())
+    try:
+        out = agent.run(inp)
+    except TerminalError as exc:
+        # Translate runtime taxonomy back to legacy exception classes.
+        from app.agents._runtime import RefusalError, SchemaError  # noqa: PLC0415
 
-    client = _get_client()
+        cause = exc.__cause__
+        msg = str(exc)
+        if isinstance(cause, (RefusalError, SchemaError)) or "refusal" in msg or "schema" in msg:
+            raise GeminiRefusalError(str(exc)) from exc
+        raise GeminiAnalysisError(str(exc)) from exc
 
-    if start_s is not None and end_s is not None:
-        segment_instruction = f"Analyze the video segment from {start_s:.1f}s to {end_s:.1f}s."
-    else:
-        segment_instruction = "Analyze this video clip."
-
-    if filter_hint.strip():
-        # Strong, non-negotiable filter — placed BEFORE segment_instruction so
-        # Gemini biases its scene scan toward the constraint from the start.
-        hint_lower = filter_hint.lower()
-        is_football = any(k in hint_lower
-                          for k in ("ball", "top", "futbol", "football", "soccer"))
-        if is_football:
-            domain_block = (
-                "STRICT FILTER: " + filter_hint.strip() + "\n"
-                "ONLY include moments where the ball is visible AND a player "
-                "actively interacts with it (shot, pass, dribble, header, save, "
-                "tackle, control, cross, freekick, penalty). REJECT: empty pitch, "
-                "wide stadium shots, celebrations, walking, idle stance, ball out "
-                "of play, referee/crowd shots, training drills, warmup. Each "
-                "selected moment's description MUST name the specific ball "
-                "action that occurs — vague labels are forbidden.\n\n"
-            )
-        else:
-            domain_block = (
-                f"STRICT FILTER: {filter_hint.strip()}\n"
-                "Reject any moment that violates this filter. Only include "
-                "moments that fully satisfy it.\n\n"
-            )
-        segment_instruction = domain_block + segment_instruction
-
-    prompt = load_prompt("analyze_clip", segment_instruction=segment_instruction)
-
-    from google.genai import types as genai_types  # type: ignore[import]
-
-    last_transient_exc: Exception | None = None
-    # Backoff schedule: 3s, 9s, 27s, 60s between attempts 0→1, 1→2, 2→3, 3→4
-    backoff_schedule = [3.0, 9.0, 27.0, 60.0]
-    max_attempts = len(backoff_schedule) + 1  # 5 total attempts
-    for attempt in range(max_attempts):
-        try:
-            response = client.models.generate_content(
-                model=settings.gemini_model,
-                contents=[
-                    genai_types.Part.from_uri(
-                        file_uri=file_ref.uri,
-                        mime_type=file_ref.mime_type or "video/mp4",
-                    ),
-                    prompt,
-                ],
-                config=genai_types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                ),
-            )
-
-            data = _check_refusal(response, ["hook_text", "hook_score", "best_moments"])
-
-            hook_score = float(data.get("hook_score", 5.0))
-            hook_score = max(0.0, min(10.0, hook_score))
-
-            clip_id = getattr(file_ref, "name", str(id(file_ref)))
-
-            # Post-filter best_moments using filter_hint as a keyword scan when
-            # the hint mentions a domain-specific subject (e.g. football "ball").
-            # Gemini doesn't always honor STRICT FILTER instructions; this is the
-            # backend safety net that drops moments whose description matches the
-            # blacklist (idle/empty scenes) and prefers whitelisted action terms.
-            moments = data.get("best_moments", []) or []
-            if filter_hint.strip():
-                moments = _filter_moments_by_action(moments, filter_hint)
-
-            return ClipMeta(
-                clip_id=clip_id,
-                transcript=data.get("transcript", ""),
-                hook_text=data.get("hook_text", ""),
-                hook_score=hook_score,
-                best_moments=moments,
-                detected_subject=data.get("detected_subject", ""),
-            )
-
-        except (GeminiRefusalError, GeminiAnalysisError):
-            raise
-        except genai_errors.APIError as exc:
-            # genai SDK errors carry HTTP status code in .code (int).
-            # ServerError = 5xx (Google capacity dip). ClientError 429 = rate limit.
-            # Anything else (4xx) is a permanent client-side problem — bail.
-            code = getattr(exc, "code", None)
-            is_transient = (
-                isinstance(exc, genai_errors.ServerError)
-                or code == 429
-                or (isinstance(code, int) and 500 <= code < 600)
-            )
-            if not is_transient:
-                raise GeminiAnalysisError(f"Clip analysis failed: {exc}") from exc
-            last_transient_exc = exc
-            if attempt >= max_attempts - 1:
-                break
-            backoff_s = backoff_schedule[attempt]
-            log.warning(
-                "gemini_analyze_clip_transient_retry",
-                attempt=attempt + 1,
-                of=max_attempts,
-                backoff_s=backoff_s,
-                error_type=type(exc).__name__,
-                http_code=code,
-            )
-            time.sleep(backoff_s)
-        except Exception as exc:
-            # Non-transient failure (parse errors, network) — raise immediately.
-            raise GeminiAnalysisError(f"Clip analysis failed: {exc}") from exc
-
-    # All retries exhausted on a transient error.
-    raise GeminiAnalysisError(
-        f"Clip analysis failed after {max_attempts} attempts "
-        f"(last error: {last_transient_exc})"
-    ) from last_transient_exc
+    clip_id = getattr(file_ref, "name", str(id(file_ref)))
+    return ClipMeta(
+        clip_id=clip_id,
+        transcript=out.transcript,
+        hook_text=out.hook_text,
+        hook_score=out.hook_score,
+        best_moments=[m.model_dump() for m in out.best_moments],
+        detected_subject=out.detected_subject,
+    )
 
 
 # ── Domain-specific moment post-filter ────────────────────────────────────
@@ -486,77 +385,50 @@ def analyze_template(
     analysis_mode: str = "single",
     black_segments: list[dict] | None = None,
 ) -> TemplateRecipe:
-    """Extract a structural 'recipe' from a template video.
+    """Extract a structural 'recipe' from a template video — returns TemplateRecipe.
 
-    Args:
-        file_ref: Gemini file reference (must be ACTIVE).
-        analysis_mode: "single" for one-pass expanded prompt,
-                       "two_pass" for creative direction + structural extraction.
-        black_segments: Optional list of black segments from FFmpeg blackdetect.
-                        Passed as context to the Gemini prompt for interstitial detection.
-
-    Failure is fatal (raises) — caller must handle.
+    SHIM (v0.2): delegates to `app.agents.template_recipe.TemplateRecipeAgent`.
+    Two-pass mode is orchestrated here (Pass 1 creative_direction extracted via
+    the existing `_extract_creative_direction` helper, then handed into the
+    agent for Pass 2). Pass 1 will move to its own agent (`creative_direction`)
+    in a follow-up; this shim keeps callers unchanged in the meantime.
     """
-    from app.pipeline.prompt_loader import load_prompt  # noqa: PLC0415
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import RefusalError, SchemaError, TerminalError  # noqa: PLC0415
+    from app.agents.template_recipe import (  # noqa: PLC0415
+        BlackSegment,
+        TemplateRecipeAgent,
+        TemplateRecipeInput,
+    )
 
-    client = _get_client()
-    from google.genai import types as genai_types  # type: ignore[import]
-
-    # ── Build black segments context for prompts ─────────────────────
-    black_segments_context = ""
-    if black_segments:
-        lines = ["Black segments detected by frame analysis:"]
-        has_classified = False
-        for seg in black_segments:
-            likely_type = seg.get("likely_type")
-            line = (
-                f"  - {seg['start_s']:.2f}s to {seg['end_s']:.2f}s "
-                f"(duration: {seg['duration_s']:.2f}s)"
-            )
-            if likely_type == "curtain-close":
-                line += " — CURTAIN-CLOSE detected (black bars closing from top/bottom)"
-                has_classified = True
-            elif likely_type == "fade-black-hold":
-                line += " — FADE-TO-BLACK detected (uniform darkening)"
-                has_classified = True
-            lines.append(line)
-
-        if has_classified:
-            lines.append(
-                "Use the transition type classifications above when populating "
-                "each interstitial's type field. Segments marked CURTAIN-CLOSE "
-                "must use type \"curtain-close\" in the interstitials array."
-            )
-        else:
-            lines.append(
-                "These may indicate curtain-close, fade-to-black, or other "
-                "transitions with a black hold between clips."
-            )
-        black_segments_context = "\n".join(lines)
-
-    # ── Pass 1: creative direction (two_pass mode only) ──────────────
+    # ── Pass 1 (still inline — moves to creative_direction agent next) ──
     creative_direction = ""
     if analysis_mode == "two_pass":
-        creative_direction = _extract_creative_direction(
-            client, file_ref, genai_types,
-        )
+        from google.genai import types as genai_types  # type: ignore[import]
+        client = _get_client()
+        creative_direction = _extract_creative_direction(client, file_ref, genai_types)
 
-    # ── Pass 2 / single-pass: structural JSON extraction ─────────────
-    schema = load_prompt("analyze_template_schema")
-
-    if analysis_mode == "two_pass" and creative_direction:
-        prompt = load_prompt(
-            "analyze_template_pass2",
-            creative_direction=creative_direction,
-            schema=schema,
-            black_segments_context=black_segments_context,
+    # ── Pass 2 / single-pass via agent ───────────────────────────
+    bsegs = [
+        BlackSegment(
+            start_s=float(s["start_s"]),
+            end_s=float(s["end_s"]),
+            duration_s=float(s["duration_s"]),
+            likely_type=s.get("likely_type"),
         )
-    else:
-        prompt = load_prompt(
-            "analyze_template_single",
-            schema=schema,
-            black_segments_context=black_segments_context,
-        )
+        for s in (black_segments or [])
+    ]
+    inp = TemplateRecipeInput(
+        file_uri=file_ref.uri,
+        file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
+        analysis_mode=(
+            "two_pass_part2"
+            if (analysis_mode == "two_pass" and creative_direction)
+            else "single"
+        ),
+        creative_direction=creative_direction,
+        black_segments=bsegs,
+    )
 
     log.info(
         "template_analysis_mode",
@@ -564,103 +436,42 @@ def analyze_template(
         has_creative_direction=bool(creative_direction),
     )
 
-    response = client.models.generate_content(
-        model=settings.gemini_model,
-        contents=[
-            genai_types.Part.from_uri(
-                file_uri=file_ref.uri,
-                mime_type=file_ref.mime_type or "video/mp4",
-            ),
-            prompt,
-        ],
-        config=genai_types.GenerateContentConfig(
-            response_mime_type="application/json",
-        ),
-    )
-
-    data = _check_refusal(response, ["shot_count", "slots"])
-
-    # Semantic validation: each slot must have meaningful content
-    slots = data.get("slots", [])
-    for i, slot in enumerate(slots):
-        duration = slot.get("target_duration_s")
-        try:
-            dur_val = float(duration) if duration is not None else 0.0
-        except (TypeError, ValueError):
-            raise GeminiRefusalError(
-                f"Slot {i + 1} has non-numeric target_duration_s: {duration}"
-            )
-        if dur_val <= 0 or math.isnan(dur_val) or math.isinf(dur_val):
-            raise GeminiRefusalError(
-                f"Slot {i + 1} missing or invalid target_duration_s"
-            )
-        if not slot.get("slot_type"):
-            raise GeminiRefusalError(
-                f"Slot {i + 1} missing slot_type"
-            )
-
-    total_duration_s = float(data.get("total_duration_s", 0.0))
-    slot_duration_sum = sum(float(s.get("target_duration_s", 0.0)) for s in slots)
-    if total_duration_s > 0 and abs(slot_duration_sum - total_duration_s) > 5.0:
-        log.warning(
-            "template_slot_duration_mismatch",
-            slot_sum=round(slot_duration_sum, 1),
-            total_duration_s=round(total_duration_s, 1),
-            delta=round(abs(slot_duration_sum - total_duration_s), 1),
-        )
-
-    # ── Validate per-slot fields ─────────────────────────────────────
-    global_color_grade = str(data.get("color_grade", "none"))
-    if global_color_grade not in _VALID_COLOR_HINTS:
-        global_color_grade = "none"
-
-    _validate_slots(slots, global_color_grade)
-
-    beat_timestamps_s = sorted(
-        float(t) for t in data.get("beat_timestamps_s", [])
-    )
-
-    # Use Gemini's creative_direction from JSON if single-pass, or Pass 1 output
-    if not creative_direction:
-        creative_direction = str(data.get("creative_direction", ""))
-
-    # Validate sync_style
-    sync_style = str(data.get("sync_style", "freeform"))
-    if sync_style not in _VALID_SYNC_STYLES:
-        sync_style = "freeform"
+    agent = TemplateRecipeAgent(default_client())
+    try:
+        out = agent.run(inp)
+    except TerminalError as exc:
+        cause = exc.__cause__
+        msg = str(exc)
+        if isinstance(cause, (RefusalError, SchemaError)) or "refusal" in msg or "schema" in msg:
+            raise GeminiRefusalError(str(exc)) from exc
+        raise GeminiAnalysisError(str(exc)) from exc
 
     log.info(
         "template_color_grade",
-        global_grade=global_color_grade,
+        global_grade=out.color_grade,
         per_slot_overrides=sum(
-            1 for s in slots
-            if s.get("color_hint", "none") != global_color_grade
+            1 for s in out.slots if s.get("color_hint", "none") != out.color_grade
         ),
     )
 
-    # ── Validate interstitials ──────────────────────────────────────
-    interstitials = _validate_interstitials(
-        data.get("interstitials", []), int(data.get("shot_count", 0))
-    )
-
     return TemplateRecipe(
-        shot_count=int(data.get("shot_count", 0)),
-        total_duration_s=total_duration_s,
-        hook_duration_s=float(data.get("hook_duration_s", 0.0)),
-        slots=slots,
-        copy_tone=str(data.get("copy_tone", "casual")),
-        caption_style=str(data.get("caption_style", "")),
-        beat_timestamps_s=beat_timestamps_s,
-        creative_direction=creative_direction,
-        transition_style=str(data.get("transition_style", "")),
-        color_grade=global_color_grade,
-        pacing_style=str(data.get("pacing_style", "")),
-        sync_style=sync_style,
-        interstitials=interstitials,
-        subject_niche=str(data.get("subject_niche", "")),
-        has_talking_head=bool(data.get("has_talking_head", False)),
-        has_voiceover=bool(data.get("has_voiceover", False)),
-        has_permanent_letterbox=bool(data.get("has_permanent_letterbox", False)),
+        shot_count=out.shot_count,
+        total_duration_s=out.total_duration_s,
+        hook_duration_s=out.hook_duration_s,
+        slots=out.slots,
+        copy_tone=out.copy_tone,
+        caption_style=out.caption_style,
+        beat_timestamps_s=out.beat_timestamps_s,
+        creative_direction=out.creative_direction,
+        transition_style=out.transition_style,
+        color_grade=out.color_grade,
+        pacing_style=out.pacing_style,
+        sync_style=out.sync_style,
+        interstitials=out.interstitials,
+        subject_niche=out.subject_niche,
+        has_talking_head=out.has_talking_head,
+        has_voiceover=out.has_voiceover,
+        has_permanent_letterbox=out.has_permanent_letterbox,
     )
 
 
@@ -683,41 +494,31 @@ _VALID_COLOR_HINTS = {"warm", "cool", "high-contrast", "desaturated", "vintage",
 _VALID_SYNC_STYLES = {"cut-on-beat", "transition-on-beat", "energy-match", "freeform"}
 
 
-def _extract_creative_direction(client: Any, file_ref: Any, genai_types: Any) -> str:
-    """Pass 1: extract freeform creative direction from template video.
+def _extract_creative_direction(client: Any, file_ref: Any, genai_types: Any) -> str:  # noqa: ARG001
+    """Pass 1 shim — delegates to `CreativeDirectionAgent`.
 
-    Returns empty string on any failure (graceful degradation).
+    Returns empty string on any failure (graceful degradation, legacy contract).
+    The `client` and `genai_types` args are ignored; kept for signature parity
+    with internal callers that hand-pass them.
     """
-    from app.pipeline.prompt_loader import load_prompt  # noqa: PLC0415
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import TerminalError  # noqa: PLC0415
+    from app.agents.creative_direction import (  # noqa: PLC0415
+        CreativeDirectionAgent,
+        CreativeDirectionInput,
+    )
 
+    inp = CreativeDirectionInput(
+        file_uri=file_ref.uri,
+        file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
+    )
     try:
-        prompt = load_prompt("analyze_template_pass1")
-
-        response = client.models.generate_content(
-            model=settings.gemini_model,
-            contents=[
-                genai_types.Part.from_uri(
-                    file_uri=file_ref.uri,
-                    mime_type=file_ref.mime_type or "video/mp4",
-                ),
-                prompt,
-            ],
-            config=genai_types.GenerateContentConfig(
-                max_output_tokens=400,
-            ),
-        )
-
-        text = (response.text or "").strip()
-        log.info(
-            "template_creative_direction",
-            length=len(text),
-            preview=text[:200],
-        )
-        return text
-
-    except Exception as exc:
+        out = CreativeDirectionAgent(default_client()).run(inp)
+    except TerminalError as exc:
         log.warning("template_creative_direction_failed", error=str(exc))
         return ""
+    log.info("template_creative_direction", length=len(out.text), preview=out.text[:200])
+    return out.text
 
 
 def _validate_slots(slots: list[dict], global_color_grade: str) -> None:
@@ -865,66 +666,44 @@ def _validate_interstitials(raw: list, shot_count: int) -> list[dict]:
 
 
 def transcribe(file_ref: Any) -> "Transcript":  # noqa: F821
-    """Transcribe audio from a Gemini file reference.
+    """Transcribe audio from a Gemini file reference — returns Transcript.
 
-    Falls back to Whisper (via transcribe.py) on any failure.
-    Returns a Transcript with low_confidence=True if both fail.
+    SHIM (v0.2): delegates to `app.agents.transcript.TranscriptAgent` for the
+    Gemini path. On any agent failure, falls through to Whisper via
+    `transcribe_whisper(local_path)` if `file_ref._local_path` is attached
+    (set by callers in `app.pipeline.transcribe.transcribe()`). If both fail,
+    returns a degraded Transcript with `low_confidence=True`.
     """
-    from app.pipeline.prompt_loader import load_prompt  # noqa: PLC0415
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import TerminalError  # noqa: PLC0415
+    from app.agents.transcript import TranscriptAgent, TranscriptInput  # noqa: PLC0415
     from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
 
-    client = _get_client()
-    prompt = load_prompt("transcribe")
-
+    inp = TranscriptInput(
+        file_uri=file_ref.uri,
+        file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
+    )
     try:
-        from google.genai import types as genai_types  # type: ignore[import]
-
-        response = client.models.generate_content(
-            model=settings.gemini_model,
-            contents=[
-                genai_types.Part.from_uri(
-                    file_uri=file_ref.uri,
-                    mime_type=file_ref.mime_type or "video/mp4",
-                ),
-                prompt,
-            ],
-            config=genai_types.GenerateContentConfig(
-                response_mime_type="application/json",
-            ),
-        )
-
-        data = _check_refusal(response, ["full_text", "words"])
-
-        words = [
-            Word(
-                text=w.get("text", ""),
-                start_s=float(w.get("start_s", 0.0)),
-                end_s=float(w.get("end_s", 0.0)),
-                confidence=1.0,  # Gemini doesn't return per-word confidence
-            )
-            for w in data.get("words", [])
-        ]
-
+        out = TranscriptAgent(default_client()).run(inp)
         return Transcript(
-            words=words,
-            full_text=data.get("full_text", ""),
-            low_confidence=bool(data.get("low_confidence", False)),
+            words=[
+                Word(text=w.text, start_s=w.start_s, end_s=w.end_s, confidence=w.confidence)
+                for w in out.words
+            ],
+            full_text=out.full_text,
+            low_confidence=out.low_confidence,
         )
-
-    except (GeminiRefusalError, GeminiAnalysisError, Exception) as exc:
+    except TerminalError as exc:
         log.warning("gemini_transcribe_failed_falling_back", error=str(exc))
 
-        # Whisper fallback — needs a local file path, but we only have a file_ref here.
-        # The caller (transcribe.py) handles the path routing; here we signal unavailability.
-        # If called directly with no path context, return degraded transcript.
-        clip_path = getattr(file_ref, "_local_path", None)
-        if clip_path:
-            try:
-                return transcribe_whisper(clip_path)
-            except Exception as whisper_exc:
-                log.error("whisper_fallback_also_failed", error=str(whisper_exc))
+    clip_path = getattr(file_ref, "_local_path", None)
+    if clip_path:
+        try:
+            return transcribe_whisper(clip_path)
+        except Exception as whisper_exc:  # noqa: BLE001
+            log.error("whisper_fallback_also_failed", error=str(whisper_exc))
 
-        return Transcript(words=[], full_text="", low_confidence=True)
+    return Transcript(words=[], full_text="", low_confidence=True)
 
 
 # ── Audio-only template analysis ─────────────────────────────────────────────
@@ -936,137 +715,45 @@ def analyze_audio_template(
     track_config: dict,
     duration_s: float,
 ) -> dict:
-    """Analyze an audio file with Gemini to produce a visual recipe.
+    """Analyze an audio file with Gemini to produce a visual recipe — returns dict.
 
-    Sends the audio file + beat context to Gemini, which designs a
-    short-form video recipe matching the music's energy, mood, and structure.
-
-    Args:
-        file_ref: Gemini file reference (must be ACTIVE).
-        beat_timestamps_s: Beat timestamps from FFmpeg detection.
-        track_config: Track configuration with best_start_s, best_end_s.
-        duration_s: Total track duration.
-
-    Returns:
-        Recipe dict (same shape as analyze_template output, JSON-serializable).
-
-    Raises:
-        GeminiRefusalError: On safety refusal or missing fields.
-        GeminiAnalysisError: On other Gemini failures.
+    SHIM (v0.2): delegates to `app.agents.audio_template.AudioTemplateAgent`.
+    Output dict shape preserved for backward compatibility with existing callers
+    (music_orchestrate). Failures raise the legacy `GeminiAnalysisError` /
+    `GeminiRefusalError` types.
     """
-    from app.pipeline.prompt_loader import load_prompt  # noqa: PLC0415
-
-    client = _get_client()
-    from google.genai import types as genai_types  # type: ignore[import]
-
-    best_start = track_config.get("best_start_s", 0.0)
-    best_end = track_config.get("best_end_s", duration_s)
-    section_duration = best_end - best_start
-
-    # Filter beats to best section for context
-    section_beats = [b for b in beat_timestamps_s if best_start <= b <= best_end]
-
-    schema = load_prompt("analyze_template_schema")
-    prompt = load_prompt(
-        "analyze_audio_template",
-        beat_timestamps_s=str([round(b, 2) for b in section_beats]),
-        best_start_s=str(round(best_start, 2)),
-        best_end_s=str(round(best_end, 2)),
-        duration_s=str(round(section_duration, 2)),
-        schema=schema,
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import RefusalError, SchemaError, TerminalError  # noqa: PLC0415
+    from app.agents.audio_template import (  # noqa: PLC0415
+        AudioTemplateAgent,
+        AudioTemplateInput,
     )
 
-    from google.api_core import exceptions as gapi_exc  # type: ignore[import]
+    best_start = float(track_config.get("best_start_s", 0.0))
+    best_end = float(track_config.get("best_end_s", duration_s))
 
-    response = None
-    for attempt in range(3):
-        try:
-            response = client.models.generate_content(
-                model=settings.gemini_model,
-                contents=[
-                    genai_types.Part.from_uri(
-                        file_uri=file_ref.uri,
-                        mime_type=file_ref.mime_type or "audio/mp4",
-                    ),
-                    prompt,
-                ],
-                config=genai_types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                ),
-            )
-            break
-        except gapi_exc.ResourceExhausted:
-            if attempt >= 2:
-                raise
-            log.warning("audio_analysis_rate_limited", attempt=attempt)
-            time.sleep(15)
-
-    if response is None:
-        raise GeminiAnalysisError("Failed to get Gemini response after retries")
-
-    data = _check_refusal(response, ["slots", "shot_count", "total_duration_s"])
-
-    # Validate and normalize slots (reuse existing validation)
-    slots = data.get("slots", [])
-    for i, slot in enumerate(slots):
-        dur = slot.get("target_duration_s")
-        try:
-            dur_val = float(dur) if dur is not None else 0.0
-        except (TypeError, ValueError):
-            raise GeminiRefusalError(
-                f"Slot {i + 1} has non-numeric target_duration_s: {dur}"
-            )
-        if dur_val <= 0 or math.isnan(dur_val) or math.isinf(dur_val):
-            raise GeminiRefusalError(
-                f"Slot {i + 1} missing or invalid target_duration_s"
-            )
-        if not slot.get("slot_type"):
-            slot["slot_type"] = "broll"
-
-    global_color_grade = str(data.get("color_grade", "none"))
-    if global_color_grade not in _VALID_COLOR_HINTS:
-        global_color_grade = "none"
-
-    _validate_slots(slots, global_color_grade)
-
-    interstitials = _validate_interstitials(
-        data.get("interstitials", []), int(data.get("shot_count", 0))
+    inp = AudioTemplateInput(
+        file_uri=file_ref.uri,
+        file_mime=getattr(file_ref, "mime_type", None) or "audio/mp4",
+        beat_timestamps_s=list(beat_timestamps_s),
+        best_start_s=best_start,
+        best_end_s=best_end,
+        duration_s=duration_s,
     )
 
-    # Force audio-only flags
-    data["has_talking_head"] = False
-    data["has_voiceover"] = False
-    data["has_permanent_letterbox"] = False
-
-    sync_style = str(data.get("sync_style", "cut-on-beat"))
-    if sync_style not in _VALID_SYNC_STYLES:
-        sync_style = "cut-on-beat"
-
-    recipe = {
-        "shot_count": int(data.get("shot_count", len(slots))),
-        "total_duration_s": float(data.get("total_duration_s", section_duration)),
-        "hook_duration_s": float(data.get("hook_duration_s", 0.0)),
-        "slots": slots,
-        "copy_tone": str(data.get("copy_tone", "energetic")),
-        "caption_style": str(data.get("caption_style", "")),
-        "beat_timestamps_s": [round(b - best_start, 3) for b in section_beats],
-        "creative_direction": str(data.get("creative_direction", "")),
-        "transition_style": str(data.get("transition_style", "")),
-        "color_grade": global_color_grade,
-        "pacing_style": str(data.get("pacing_style", "")),
-        "sync_style": sync_style,
-        "interstitials": interstitials,
-        "subject_niche": str(data.get("subject_niche", "")),
-        "has_talking_head": False,
-        "has_voiceover": False,
-        "has_permanent_letterbox": False,
-    }
+    try:
+        out = AudioTemplateAgent(default_client()).run(inp)
+    except TerminalError as exc:
+        cause = exc.__cause__
+        msg = str(exc)
+        if isinstance(cause, (RefusalError, SchemaError)) or "refusal" in msg or "schema" in msg:
+            raise GeminiRefusalError(str(exc)) from exc
+        raise GeminiAnalysisError(str(exc)) from exc
 
     log.info(
         "audio_template_analysis_done",
-        slot_count=len(slots),
-        color_grade=global_color_grade,
-        interstitials=len(interstitials),
+        slot_count=len(out.slots),
+        color_grade=out.color_grade,
+        interstitials=len(out.interstitials),
     )
-
-    return recipe
+    return out.to_dict()
