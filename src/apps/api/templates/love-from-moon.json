@@ -1,9 +1,10 @@
 {
   "_meta": {
     "exported_at": "2026-05-09",
-    "source_environment": "derived from scripts/seed_love_from_moon.py @ main",
+    "source_environment": "https://nova-video.fly.dev (seeded 2026-05-09)",
+    "prod_track_id": "e7b3ecac-d24f-4f1d-9a9c-725f34e1d10d",
     "kind": "music_track_templated",
-    "note": "Love From Moon — 2-slot templated music track (slot 1 fixed thumbnail with Ken Burns, slot 2 user video-or-image upload). Track does NOT exist in prod yet. To seed: place TikTok audio + thumbnail at /tmp/tiktok-konna/ (or override AUDIO_PATH/THUMB_PATH), then run:\n  API_URL=https://nova-video.fly.dev ADMIN_TOKEN=$TOKEN \\\n    python3 scripts/seed_love_from_moon.py\naudio_duration_s below is approximate (~20.79s); the seed script re-derives the exact duration via ffprobe at run time and rebuilds the recipe."
+    "note": "Love From Moon — 2-slot templated music track (slot 1 fixed thumbnail with Ken Burns, slot 2 user video-or-image upload). Live in prod as track id e7b3ecac-d24f-4f1d-9a9c-725f34e1d10d (audio_duration_s = 20.793, derived by ffprobe). To re-seed in a fresh environment: place TikTok audio + thumbnail at /tmp/tiktok-konna/ (or override AUDIO_PATH/THUMB_PATH), then run:\n  API_URL=https://nova-video.fly.dev ADMIN_TOKEN=$TOKEN \\\n    python3 scripts/seed_love_from_moon.py"
   },
   "track": {
     "title": "Love From Moon",
