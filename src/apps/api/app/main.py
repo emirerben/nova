@@ -9,7 +9,6 @@ from app.limiter import limiter
 from app.routes import (
     admin,
     admin_music,
-    jobs,
     music,
     music_jobs,
     presigned,
@@ -35,7 +34,6 @@ app.add_middleware(
 )
 
 app.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
-app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(admin_music.router, prefix="/admin/music-tracks", tags=["admin-music"])
 app.include_router(template_jobs.router, prefix="/template-jobs", tags=["template-jobs"])

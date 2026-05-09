@@ -34,11 +34,11 @@ type Phase = "ready" | "uploading" | "enqueuing" | "error";
 
 interface Props {
   template: TemplateListItem;
-  location: string;
+  inputs: Record<string, string>;
   onJobCreated: (jobId: string) => void;
 }
 
-export default function SlotBoundUpload({ template, location, onJobCreated }: Props) {
+export default function SlotBoundUpload({ template, inputs, onJobCreated }: Props) {
   const [slots, setSlots] = useState<SlotState[]>(
     () => [...template.slots]
       .sort((a, b) => a.position - b.position)
@@ -137,7 +137,7 @@ export default function SlotBoundUpload({ template, location, onJobCreated }: Pr
         template_id: template.id,
         clip_gcs_paths: gcsPaths,
         selected_platforms: ["tiktok", "instagram", "youtube"],
-        subject: location || undefined,
+        inputs,
       });
       onJobCreated(job_id);
     } catch (err) {

@@ -44,7 +44,7 @@ export default function QADashboardPage() {
             </p>
           </div>
           <a
-            href="/template"
+            href="/"
             className="px-4 py-2 bg-zinc-800 text-zinc-300 rounded-lg text-sm hover:bg-zinc-700 transition-colors"
           >
             + New job
@@ -150,7 +150,7 @@ export default function QADashboardPage() {
         )}
 
         <p className="mt-8 text-center text-xs text-zinc-600">
-          <a href="/template" className="underline hover:text-zinc-400">← Back to templates</a>
+          <a href="/" className="underline hover:text-zinc-400">← Back to templates</a>
         </p>
       </div>
     </main>

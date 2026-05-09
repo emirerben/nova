@@ -1,5 +1,29 @@
 # Nova — Deferred Work
 
+## UX Cleanup (template-first)
+
+### #fallback-removal — Remove subject → inputs.location read-side fallback after 2026-05-16
+**What:** Delete `_resolve_user_subject()` in `src/apps/api/app/tasks/template_orchestrate.py` and inline the `inputs["location"]` read at its call sites. Remove the legacy-subject branch in `routes/template_jobs.py` reroll. Delete `tests/pipeline/test_subject_fallback_removed.py`.
+**Why:** The fallback covers in-flight jobs created before the rename. After 2026-05-16 that window is closed.
+**How:** The xfail in `test_subject_fallback_removed.py` flips on the deadline and CI breaks until the fallback is removed.
+**Priority:** P1
+
+### Real template thumbnails
+**What:** Render a per-template 9:16 still or 3-second loop, upload to GCS, and sign URLs in `/templates`. Today the API returns `thumbnail_url: null` and the gallery falls back to a tone-colored gradient.
+**Priority:** P2
+
+### Typed admin editor for `required_inputs`
+**What:** Build a typed UI under `/admin/templates/[id]` that adds/removes/reorders entries in `video_templates.required_inputs`. v1 admins set this by editing the JSON column directly.
+**Priority:** P3
+
+### Sign-in / auth on the new header
+**What:** The Nova header has a placeholder "Sign in" button. Real auth is its own project.
+**Priority:** P2
+
+### Decision: bring back `/music`
+**What:** The `/music` frontend route is deleted but the backend (`routes/music.py`, `music_jobs.py`, beat-sync orchestrate) is preserved. Revisit when product direction on multi-mode (templates vs music sync) is settled.
+**Priority:** P3
+
 ## Visual Overlay Editor (shipped v0.2.0.0, 2026-04-11)
 
 ### Overlay Editor Component Tests (Tier 2)

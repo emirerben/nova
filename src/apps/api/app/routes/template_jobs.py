@@ -38,8 +38,9 @@ class CreateTemplateJobRequest(BaseModel):
     template_id: str
     clip_gcs_paths: list[str]
     selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
-    # e.g. "Puerto Rico" — replaces template placeholder text
-    subject: str = Field(default="", max_length=50)
+    # Per-template user inputs (e.g. {"location": "Tokyo"}). Keys are validated
+    # against the template's `required_inputs` array.
+    inputs: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("clip_gcs_paths")
     @classmethod
@@ -58,6 +59,46 @@ class CreateTemplateJobRequest(BaseModel):
             if p not in valid:
                 raise ValueError(f"Unknown platform: {p}")
         return v
+
+    @field_validator("inputs")
+    @classmethod
+    def validate_inputs_count(cls, v: dict[str, str]) -> dict[str, str]:
+        # Defensive cap; per-key declared-key/length checks happen against
+        # the template in _validate_inputs below.
+        if len(v) > 10:
+            raise ValueError("Too many input keys (max 10)")
+        return v
+
+
+def _validate_inputs(inputs: dict[str, str], required: list | None) -> None:
+    """Validate inputs against the template's declared required_inputs.
+
+    Raises HTTPException(422) on unknown keys, missing required, or oversized values.
+    """
+    required = required or []
+    declared_keys = {r["key"] for r in required}
+    unknown = set(inputs) - declared_keys
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown input keys: {sorted(unknown)}",
+        )
+    for spec in required:
+        key = spec["key"]
+        max_len = int(spec.get("max_length", 50))
+        is_required = bool(spec.get("required", False))
+        label = spec.get("label", key)
+        value = inputs.get(key, "")
+        if is_required and not value.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"'{label}' is required",
+            )
+        if len(value) > max_len:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"'{label}' exceeds {max_len} chars",
+            )
 
 
 class TemplateJobResponse(BaseModel):
@@ -105,6 +146,7 @@ async def create_template_job(
     template = await get_template_or_404(req.template_id, db)
     require_ready(template)
     validate_clip_count(template, len(req.clip_gcs_paths))
+    _validate_inputs(req.inputs, template.required_inputs)
 
     job = Job(
         user_id=SYNTHETIC_USER_ID,
@@ -112,7 +154,7 @@ async def create_template_job(
         template_id=req.template_id,
         raw_storage_path=req.clip_gcs_paths[0],
         selected_platforms=req.selected_platforms,
-        all_candidates={"clip_paths": req.clip_gcs_paths, "subject": req.subject},
+        all_candidates={"clip_paths": req.clip_gcs_paths, "inputs": req.inputs},
         status="queued",
     )
     db.add(job)
@@ -143,7 +185,7 @@ async def create_template_job(
         template_id=req.template_id,
         template_kind=template_kind,
         clips=len(req.clip_gcs_paths),
-        subject=req.subject,
+        inputs=req.inputs,
     )
     return TemplateJobResponse(job_id=job_id, status="queued", template_id=req.template_id)
 
@@ -232,6 +274,15 @@ async def reroll_template_job(
         )
 
     # Create new job with same clips and template
+    original_candidates = original.all_candidates or {}
+    # REMOVE AFTER 2026-05-16 — see TODOS.md#fallback-removal
+    # Carry forward inputs in the new shape; fall back to legacy `subject`
+    # so reroll works for jobs created before the rename.
+    inherited_inputs = original_candidates.get("inputs")
+    if not inherited_inputs:
+        legacy_subject = original_candidates.get("subject", "")
+        inherited_inputs = {"location": legacy_subject} if legacy_subject else {}
+
     new_job = Job(
         user_id=SYNTHETIC_USER_ID,
         job_type="template",
@@ -240,7 +291,7 @@ async def reroll_template_job(
         selected_platforms=original.selected_platforms or ["tiktok", "instagram", "youtube"],
         all_candidates={
             "clip_paths": clip_paths,
-            "subject": (original.all_candidates or {}).get("subject", ""),
+            "inputs": inherited_inputs,
         },
         status="queued",
     )
