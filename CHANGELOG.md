@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0.2] - 2026-05-09
+
+### Fixed
+- `ClipMetadataAgent.parse()` now raises `SchemaError` when Gemini returns a non-empty `best_moments` list but every entry fails coercion (wrong field types, negative durations, etc.). Previously each malformed entry was silently dropped, parse returned `best_moments=[]` as success, and downstream matching had nothing to work with. The runtime now retries with schema clarification before giving up.
+- Orchestrator's `_analyze_clips_parallel` adds defense-in-depth: if `analyze_clip` succeeds but returns 0 `best_moments`, treat it the same as an analysis failure and engage the Whisper fallback (which generates synthetic moments). This protects against any future regression where moments are silently lost in the agent pipeline.
+
 ## [0.4.0.1] - 2026-05-09
 
 ### Fixed

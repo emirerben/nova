@@ -82,6 +82,45 @@ class TestOrchestratePipelineHelpers:
         # With whisper fallback, no clips should be counted as failed
         assert failed_count == 0
 
+    def test_empty_best_moments_engages_whisper_fallback(self):
+        """Defense-in-depth: when analyze_clip 'succeeds' but returns 0
+        best_moments (a bug we've seen in prod), the orchestrator must treat
+        it the same as an analysis failure and engage the Whisper fallback,
+        which generates synthetic fallback moments. Without this, downstream
+        matching has nothing to work with and the whole job fails."""
+        from app.tasks.template_orchestrate import _analyze_clips_parallel
+
+        file_refs = [MagicMock()]
+        local_paths = ["/tmp/clip_0.mp4"]
+
+        # analyze_clip "succeeds" but returns a meta with empty best_moments.
+        empty_meta = _make_clip_meta("clip_0")
+        empty_meta.best_moments = []
+
+        from app.pipeline.transcribe import Transcript
+        whisper_transcript = Transcript(
+            words=[], full_text="hello world", low_confidence=False
+        )
+
+        with (
+            patch(
+                "app.tasks.template_orchestrate.analyze_clip",
+                return_value=empty_meta,
+            ),
+            patch(
+                "app.pipeline.transcribe.transcribe_whisper",
+                return_value=whisper_transcript,
+            ),
+        ):
+            metas, failed_count = _analyze_clips_parallel(file_refs, local_paths)
+
+        # Whisper fallback engaged → meta is present, marked degraded, with
+        # synthesized fallback moments.
+        assert failed_count == 0
+        assert len(metas) == 1
+        assert metas[0].analysis_degraded is True
+        assert len(metas[0].best_moments) > 0
+
     def test_threshold_check_50_percent_failure(self):
         """If >50% of clips fail even whisper fallback, failed_count > 50%."""
         from app.tasks.template_orchestrate import _analyze_clips_parallel
