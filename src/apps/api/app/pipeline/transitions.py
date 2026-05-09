@@ -56,16 +56,24 @@ def join_with_transitions(
 ) -> None:
     """Join slot video files with xfade transitions. Video-only output (-an).
 
+    Only handles real visual transitions. "none" must be filtered out by the
+    caller — chaining many xfade=fade:duration=0.001 filters caused FFmpeg
+    to drop frames and truncate long outputs to ~3-4s (verified against the
+    17-slot Dimples Passport recipe). The orchestrator now groups runs of
+    "none" transitions via the concat demuxer and only invokes this function
+    for visual boundaries.
+
     Args:
         slot_paths: Paths to rendered slot .mp4 files.
         transitions: Transition type per boundary (len = len(slot_paths) - 1).
-                     Values: "crossfade", "fade_black", "wipe_left", "wipe_right", "none".
+                     Must be one of: "crossfade", "fade_black", "wipe_left", "wipe_right".
+                     "none" is rejected.
         slot_durations: Visual output duration per slot in seconds (post speed-ramp).
         output_path: Where to write the joined output.
 
     Raises:
         TransitionError: If FFmpeg fails.
-        ValueError: If inputs are invalid.
+        ValueError: If inputs are invalid or any transition is "none".
     """
     if len(slot_paths) < 2:
         raise ValueError("Need at least 2 slots for transitions")
@@ -76,6 +84,12 @@ def join_with_transitions(
     if len(slot_durations) != len(slot_paths):
         raise ValueError(
             f"Expected {len(slot_paths)} durations, got {len(slot_durations)}"
+        )
+    if any(t == "none" for t in transitions):
+        raise ValueError(
+            "join_with_transitions does not handle 'none' — caller must "
+            "group consecutive same-clip slots with concat and only pass "
+            "visual transitions here. See _join_or_concat for the grouping."
         )
 
     cmd = ["ffmpeg"]
@@ -122,46 +136,30 @@ def _build_xfade_filter(
 ) -> str:
     """Build the filter_complex string for chained xfade transitions.
 
-    xfade offset for boundary i:
+    Caller guarantees every transition is a real visual effect (no "none"),
+    so every boundary uses a proper duration. xfade offset for boundary i:
       offset_i = (sum of slot durations 0..i+1) - (sum of transition durations 0..i) - trans_dur_i
-
-    For "none" transitions, use a near-zero duration crossfade (0.001s) to keep
-    the filter chain valid while producing a hard cut.
     """
     parts: list[str] = []
     cumulative_dur = slot_durations[0]
     cumulative_trans = 0.0
 
     for i, trans_type in enumerate(transitions):
-        # Determine transition duration — clamp to 30% of either adjacent slot
-        if trans_type == "none":
-            trans_dur = 0.0
-        else:
-            max_dur = min(slot_durations[i], slot_durations[i + 1]) * 0.3
-            trans_dur = min(DEFAULT_TRANSITION_DURATION_S, max_dur)
+        # Clamp transition duration to 30% of the shorter adjacent slot.
+        max_dur = min(slot_durations[i], slot_durations[i + 1]) * 0.3
+        trans_dur = min(DEFAULT_TRANSITION_DURATION_S, max_dur)
 
-        # xfade offset = cumulative video so far minus overlaps minus this transition
-        offset = cumulative_dur - cumulative_trans - trans_dur
-        offset = max(0.0, offset)
+        offset = max(0.0, cumulative_dur - cumulative_trans - trans_dur)
 
-        # Input/output labels
         in_label = "[0:v]" if i == 0 else f"[v{i}]"
         next_input = f"[{i + 1}:v]"
         out_label = f"[v{i + 1}]"
 
         xfade_type = _XFADE_MAP.get(trans_type, "fade")
-
-        if trans_dur > 0:
-            parts.append(
-                f"{in_label}{next_input}xfade=transition={xfade_type}"
-                f":duration={trans_dur:.3f}:offset={offset:.3f}{out_label}"
-            )
-        else:
-            # Hard cut: near-zero duration crossfade
-            parts.append(
-                f"{in_label}{next_input}xfade=transition=fade"
-                f":duration=0.001:offset={offset:.3f}{out_label}"
-            )
+        parts.append(
+            f"{in_label}{next_input}xfade=transition={xfade_type}"
+            f":duration={trans_dur:.3f}:offset={offset:.3f}{out_label}"
+        )
 
         cumulative_dur += slot_durations[i + 1]
         cumulative_trans += trans_dur

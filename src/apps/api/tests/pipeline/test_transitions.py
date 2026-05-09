@@ -1,4 +1,13 @@
-"""Tests for transitions.py — xfade filter chain building."""
+"""Tests for transitions.py — xfade filter chain building.
+
+NOTE on the "none" transition: prior to the Dimples Passport truncation fix,
+_build_xfade_filter handled "none" by emitting xfade=fade:duration=0.001 to
+keep chain logic uniform. That hack caused FFmpeg to drop frames in long
+chains (15+ hard-cuts) and truncate output to ~3-4s. The contract now is:
+join_with_transitions REJECTS "none" outright (caller pre-groups slots via
+_join_or_concat). The rejection is covered by
+tests/pipeline/test_compositor.py::TestJoinWithTransitionsRejectsNone.
+"""
 
 from unittest.mock import MagicMock, patch
 
@@ -31,22 +40,6 @@ class TestBuildXfadeFilter:
         parts = result.split(";")
         assert len(parts) == 2
         assert "fadeblack" in parts[1]
-
-    def test_all_none_produces_hard_cuts(self):
-        """All 'none' transitions produce near-zero duration crossfades."""
-        result = _build_xfade_filter(["none", "none"], [5.0, 5.0, 5.0])
-        assert "duration=0.001" in result
-
-    def test_mixed_none_and_crossfade(self):
-        """Mix of 'none' and real transitions — offsets skip none boundaries."""
-        result = _build_xfade_filter(
-            ["none", "crossfade"],
-            [5.0, 5.0, 5.0],
-        )
-        parts = result.split(";")
-        assert len(parts) == 2
-        assert "duration=0.001" in parts[0]  # none → hard cut
-        assert "duration=0.300" in parts[1]  # crossfade
 
     def test_different_slot_durations(self):
         """Different slot durations produce correct offsets."""

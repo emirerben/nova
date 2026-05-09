@@ -541,3 +541,170 @@ class TestColorGrading:
                 )
                 call_kwargs = mock_bvf.call_args.kwargs
                 assert call_kwargs["color_hint"] == "none"
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Slot assembly: _join_or_concat split-render
+# ──────────────────────────────────────────────────────────────────────────
+#
+# Regression context: the 17-slot Dimples Passport recipe (15 hard-cuts +
+# 1 dissolve) used to truncate to ~3-4s in production because chaining many
+# xfade=fade:duration=0.001 filters causes FFmpeg to drop frames. Reference
+# good output: ~/Downloads/brazil.mp4 — 21.4s, 642 frames @ 30fps.
+#
+# These tests run real FFmpeg (no mocks) because the truncation bug only
+# reproduces with actual frame counting through the filter chain.
+
+import subprocess as _subprocess  # noqa: E402
+
+from app.tasks.template_orchestrate import _join_or_concat, _probe_duration  # noqa: E402, PLC0415
+
+
+def _make_test_clip(tmp_path, idx: int, dur_s: float = 1.2) -> str:
+    """Generate a 1080x1920 30fps test clip of `dur_s` seconds.
+
+    Uses lavfi testsrc so each clip has unique visible content (frame counter
+    + tile pattern), making it easy to eyeball the output if a test ever
+    needs manual debugging.
+    """
+    out = str(tmp_path / f"clip_{idx:02d}.mp4")
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-f", "lavfi",
+        "-i", f"testsrc=duration={dur_s}:size=1080x1920:rate=30",
+        "-pix_fmt", "yuv420p",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        out,
+    ]
+    result = _subprocess.run(cmd, capture_output=True, timeout=30, check=False)
+    if result.returncode != 0:
+        raise AssertionError(
+            f"failed to make test clip {idx}: {result.stderr.decode()[:200]}"
+        )
+    return out
+
+
+@pytest.mark.skipif(
+    _subprocess.run(["ffmpeg", "-version"], capture_output=True, check=False).returncode != 0,
+    reason="ffmpeg not installed",
+)
+class TestJoinOrConcatSplitRender:
+    """The Dimples Passport bug: 17 slots + 15 hard-cut + 1 dissolve must
+    NOT truncate to ~3s. The fix groups hard-cut runs through concat demuxer
+    and only invokes xfade for real visual transitions."""
+
+    def test_dimples_shape_does_not_truncate(self, tmp_path):
+        """REGRESSION: 17 slots, 4 hard-cut + 1 crossfade + 11 hard-cut.
+        Output must be within 1s of sum(durations) - crossfade overlap.
+        Pre-fix this returned ~3-4s; brazil.mp4 reference is 21.4s.
+        """
+        slot_dur = 1.2
+        n_slots = 17
+        paths = [_make_test_clip(tmp_path, i, dur_s=slot_dur) for i in range(n_slots)]
+        durations = [slot_dur] * n_slots
+        # Dimples slot 6 has dissolve → between paths[4] and paths[5].
+        transitions = ["none"] * 4 + ["crossfade"] + ["none"] * 11
+        assert len(transitions) == n_slots - 1
+
+        out = str(tmp_path / "joined.mp4")
+        _join_or_concat(paths, transitions, durations, out, str(tmp_path))
+
+        actual = _probe_duration(out)
+        # Crossfade overlaps ~0.3s (clamped to 30% of shorter neighbour).
+        expected = (slot_dur * n_slots) - 0.3
+        assert abs(actual - expected) < 1.0, (
+            f"output {actual:.2f}s diverged from expected ~{expected:.2f}s "
+            f"— xfade truncation bug returned (compare brazil.mp4 21.4s)"
+        )
+
+    def test_all_hard_cuts_uses_concat_only(self, tmp_path):
+        """All 'none' transitions → single concat group, no xfade call.
+        17-slot all-hard-cut shape (which previously also went through the
+        buggy xfade path when has_interstitials=False)."""
+        slot_dur = 0.8
+        n_slots = 17
+        paths = [_make_test_clip(tmp_path, i, dur_s=slot_dur) for i in range(n_slots)]
+        durations = [slot_dur] * n_slots
+        transitions = ["none"] * (n_slots - 1)
+
+        out = str(tmp_path / "joined.mp4")
+        _join_or_concat(paths, transitions, durations, out, str(tmp_path))
+
+        actual = _probe_duration(out)
+        expected = slot_dur * n_slots  # no xfade overlap
+        assert abs(actual - expected) < 0.5, (
+            f"all-hard-cut output {actual:.2f}s != expected {expected:.2f}s"
+        )
+
+    def test_all_visual_transitions_still_works(self, tmp_path):
+        """Pure xfade chain with real durations — no regression for templates
+        whose every boundary is visual."""
+        slot_dur = 2.0
+        paths = [_make_test_clip(tmp_path, i, dur_s=slot_dur) for i in range(3)]
+        durations = [slot_dur] * 3
+        transitions = ["crossfade", "crossfade"]
+
+        out = str(tmp_path / "joined.mp4")
+        _join_or_concat(paths, transitions, durations, out, str(tmp_path))
+
+        actual = _probe_duration(out)
+        expected = (slot_dur * 3) - 0.6  # 2 × 0.3s overlap
+        assert abs(actual - expected) < 0.5
+
+    def test_single_slot_passthrough(self, tmp_path):
+        """Single slot → copy through, no concat or xfade."""
+        slot_dur = 1.5
+        paths = [_make_test_clip(tmp_path, 0, dur_s=slot_dur)]
+        out = str(tmp_path / "joined.mp4")
+        _join_or_concat(paths, [], [slot_dur], out, str(tmp_path))
+
+        actual = _probe_duration(out)
+        assert abs(actual - slot_dur) < 0.2
+
+    def test_mixed_groups_split_correctly(self, tmp_path):
+        """Pattern: hard,hard,VISUAL,hard,hard → 2 concat groups + 1 xfade.
+        Each group has 3 slots; xfade joins the groups."""
+        slot_dur = 1.0
+        paths = [_make_test_clip(tmp_path, i, dur_s=slot_dur) for i in range(6)]
+        durations = [slot_dur] * 6
+        transitions = ["none", "none", "wipe_left", "none", "none"]
+
+        out = str(tmp_path / "joined.mp4")
+        _join_or_concat(paths, transitions, durations, out, str(tmp_path))
+
+        actual = _probe_duration(out)
+        # Two groups: 3s + 3s, joined with wipe_left (0.3s overlap)
+        expected = 6.0 - 0.3
+        assert abs(actual - expected) < 0.5
+
+
+class TestJoinWithTransitionsRejectsNone:
+    """transitions.py contract: caller must group out 'none' before calling."""
+
+    def test_raises_on_none_transition(self, tmp_path):
+        from app.pipeline.transitions import join_with_transitions  # noqa: PLC0415
+
+        with pytest.raises(ValueError, match="does not handle 'none'"):
+            join_with_transitions(
+                ["a.mp4", "b.mp4", "c.mp4"],
+                ["crossfade", "none"],  # second is invalid
+                [1.0, 1.0, 1.0],
+                str(tmp_path / "out.mp4"),
+            )
+
+    def test_accepts_only_visual_transitions(self, tmp_path):
+        """Sanity: schema validation passes when all transitions are visual.
+        FFmpeg invocation isn't tested here — just the validation gate."""
+        from app.pipeline.transitions import join_with_transitions  # noqa: PLC0415
+
+        # File-not-found error is fine; we only care that ValueError is NOT
+        # raised by the 'none' guard.
+        with pytest.raises(Exception) as excinfo:
+            join_with_transitions(
+                ["/nonexistent_a.mp4", "/nonexistent_b.mp4"],
+                ["crossfade"],
+                [1.0, 1.0],
+                str(tmp_path / "out.mp4"),
+            )
+        assert "does not handle 'none'" not in str(excinfo.value)
