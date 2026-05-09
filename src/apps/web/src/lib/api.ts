@@ -234,7 +234,11 @@ export type TemplateJobStatus =
   | "processing_failed";
 
 export interface AssemblyPlanData {
-  steps: Array<{
+  // Optional because single_video templates produce no slot-step array —
+  // only multi-clip templates have slots. The result page guards on
+  // `steps?.length` and skips the timeline + breakdown sections when
+  // empty.
+  steps?: Array<{
     slot: { position: number; target_duration_s: number; slot_type: string; priority?: number };
     clip_id: string;
     moment: { start_s: number; end_s: number; energy: number; description: string };
@@ -243,6 +247,11 @@ export interface AssemblyPlanData {
   base_output_url?: string;
   platform_copy?: PlatformCopy;
   copy_status?: string;
+  // single_video plans carry these instead of `steps`
+  template_kind?: string;
+  body_window?: { start_s: number; end_s: number };
+  audio_health?: string[];
+  intro_duration_s?: number;
 }
 
 // Structured failure taxonomy from the API. Mirrors FAILURE_REASON_*

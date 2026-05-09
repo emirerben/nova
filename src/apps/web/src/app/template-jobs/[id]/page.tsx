@@ -154,11 +154,13 @@ const SLOT_COLORS: Record<string, string> = {
   transition: "bg-yellow-500",
 };
 
+// `steps` is required here — the parent always guards `steps.length > 0`
+// before rendering this component. Use NonNullable so TS knows.
 function TimelinePlayer({
   steps,
   videoRef,
 }: {
-  steps: AssemblyPlanData["steps"];
+  steps: NonNullable<AssemblyPlanData["steps"]>;
   videoRef: React.RefObject<HTMLVideoElement | null>;
 }) {
   const [currentTime, setCurrentTime] = useState(0);
@@ -415,14 +417,20 @@ function ResultView({
 }) {
   const copy = plan.platform_copy;
   const videoRef = useRef<HTMLVideoElement>(null);
+  // single_video templates write no `steps` array — only multi-clip
+  // templates have slots. Default to [] so the timeline + breakdown
+  // sections collapse cleanly instead of crashing the render.
+  const steps = plan.steps ?? [];
 
   return (
     <main className="min-h-screen bg-black text-white px-4 py-16">
       <div className="max-w-2xl mx-auto">
         <h1 className="text-2xl font-bold mb-2 text-center">Your template video is ready</h1>
-        <p className="text-zinc-400 text-sm text-center mb-8">
-          {plan.steps.length} shot{plan.steps.length !== 1 ? "s" : ""} assembled from your clips
-        </p>
+        {steps.length > 0 && (
+          <p className="text-zinc-400 text-sm text-center mb-8">
+            {steps.length} shot{steps.length !== 1 ? "s" : ""} assembled from your clips
+          </p>
+        )}
 
         {/* Video player */}
         <div className="rounded-2xl overflow-hidden bg-zinc-900">
@@ -435,9 +443,9 @@ function ResultView({
           />
         </div>
 
-        {/* Slot-Aware Timeline */}
-        {plan.steps.length > 0 && (
-          <TimelinePlayer steps={plan.steps} videoRef={videoRef} />
+        {/* Slot-Aware Timeline (multi-clip templates only) */}
+        {steps.length > 0 && (
+          <TimelinePlayer steps={steps} videoRef={videoRef} />
         )}
 
         {/* Download */}
@@ -511,25 +519,27 @@ function ResultView({
           </div>
         )}
 
-        {/* Assembly breakdown */}
-        <div className="mt-8">
-          <h2 className="text-lg font-semibold mb-3">Assembly breakdown</h2>
-          <div className="space-y-2">
-            {plan.steps.map((step, i) => (
-              <div
-                key={i}
-                className="bg-zinc-900 rounded-lg px-4 py-3 text-sm flex items-center justify-between"
-              >
-                <span className="text-zinc-300">
-                  Shot {step.slot.position} · {step.slot.slot_type}
-                </span>
-                <span className="text-zinc-500">
-                  {step.moment.start_s.toFixed(1)}s – {step.moment.end_s.toFixed(1)}s
-                </span>
-              </div>
-            ))}
+        {/* Assembly breakdown (multi-clip templates only) */}
+        {steps.length > 0 && (
+          <div className="mt-8">
+            <h2 className="text-lg font-semibold mb-3">Assembly breakdown</h2>
+            <div className="space-y-2">
+              {steps.map((step, i) => (
+                <div
+                  key={i}
+                  className="bg-zinc-900 rounded-lg px-4 py-3 text-sm flex items-center justify-between"
+                >
+                  <span className="text-zinc-300">
+                    Shot {step.slot.position} · {step.slot.slot_type}
+                  </span>
+                  <span className="text-zinc-500">
+                    {step.moment.start_s.toFixed(1)}s – {step.moment.end_s.toFixed(1)}s
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         <p className="mt-8 text-center text-xs text-zinc-600">
           <a href="/template" className="underline hover:text-zinc-400">← Create another</a>
