@@ -278,6 +278,23 @@ export async function listTemplates(): Promise<TemplateListItem[]> {
   return res.json();
 }
 
+export class TemplateNotFoundError extends Error {
+  constructor(templateId: string) {
+    super(`Template not found: ${templateId}`);
+    this.name = "TemplateNotFoundError";
+  }
+}
+
+// Used by /template/[id] for direct/shareable URLs. Throws TemplateNotFoundError
+// on 404 so the page can render a friendly fallback instead of bubbling to
+// the global error boundary.
+export async function getTemplate(templateId: string): Promise<TemplateListItem> {
+  const res = await fetch(`${API_URL}/templates/${encodeURIComponent(templateId)}`);
+  if (res.status === 404) throw new TemplateNotFoundError(templateId);
+  if (!res.ok) throw new Error(`Failed to fetch template: ${res.status}`);
+  return res.json();
+}
+
 export interface PlaybackUrlResponse {
   url: string;
   expires_in_s: number;

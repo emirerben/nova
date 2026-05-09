@@ -90,7 +90,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Production URL: https://nova-video.vercel.app
 - Framework: Next.js (auto-detected)
 - Root directory: `src/apps/web/`
-- Deploy: auto-deploys on push to `main` via GitHub integration, or `cd src/apps/web && vercel --prod`
+- Deploy: auto-deploys on push to `main` via GitHub integration. **Do NOT run `vercel --prod` from a feature branch** — it overwrites production with whatever is in your local working tree, including routes/files not in `main`. This shipped a `/template/[id]` page without its backing API endpoint, crashing the global error boundary on every template click. If you need an emergency manual deploy, `git checkout main && git pull` first, then `cd src/apps/web && vercel --prod`.
 - Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXT_PUBLIC_GOOGLE_CLIENT_ID, NEXT_PUBLIC_GOOGLE_PICKER_API_KEY, NEXTAUTH_SECRET)
 - Deployment Protection: preview-only (production is public)
 - Preview deploys: full API access via regex CORS (`allow_origin_regex` in `main.py`)

@@ -16,16 +16,28 @@ jest.mock("next/navigation", () => ({
 }));
 
 // Mock the API client + side effects so the page renders synchronously.
-const listTemplatesMock = jest.fn<Promise<TemplateListItem[]>, []>();
-jest.mock("@/lib/api", () => ({
-  listTemplates: () => listTemplatesMock(),
-  createTemplateJob: jest.fn(),
-  getDriveImportBatchStatus: jest.fn(),
-  getBatchPresignedUrls: jest.fn(),
-  importBatchFromDrive: jest.fn(),
-  normaliseMimeType: (m: string) => m,
-  uploadFileToGcs: jest.fn(),
-}));
+const getTemplateMock = jest.fn<Promise<TemplateListItem>, [string]>();
+jest.mock("@/lib/api", () => {
+  // Define inside the factory — jest.mock is hoisted above any `const`s.
+  class TemplateNotFoundError extends Error {
+    constructor(id: string) {
+      super(`Template not found: ${id}`);
+      this.name = "TemplateNotFoundError";
+    }
+  }
+  return {
+    __esModule: true,
+    getTemplate: (id: string) => getTemplateMock(id),
+    TemplateNotFoundError,
+    listTemplates: jest.fn(),
+    createTemplateJob: jest.fn(),
+    getDriveImportBatchStatus: jest.fn(),
+    getBatchPresignedUrls: jest.fn(),
+    importBatchFromDrive: jest.fn(),
+    normaliseMimeType: (m: string) => m,
+    uploadFileToGcs: jest.fn(),
+  };
+});
 
 jest.mock("@/hooks/useArchitectureData", () => ({
   trackRecentJob: jest.fn(),
@@ -71,11 +83,11 @@ function makeTemplate(overrides: Partial<TemplateListItem> = {}): TemplateListIt
 
 describe("/template/[id] required_inputs conditional rendering", () => {
   beforeEach(() => {
-    listTemplatesMock.mockReset();
+    getTemplateMock.mockReset();
   });
 
   it("does not render an inputs section when required_inputs is empty", async () => {
-    listTemplatesMock.mockResolvedValueOnce([makeTemplate()]);
+    getTemplateMock.mockResolvedValueOnce(makeTemplate());
     render(<TemplateDetailPage />);
 
     // Wait for the template to load and the body to render.
@@ -87,7 +99,7 @@ describe("/template/[id] required_inputs conditional rendering", () => {
   });
 
   it("renders one labeled input per required_input entry", async () => {
-    listTemplatesMock.mockResolvedValueOnce([
+    getTemplateMock.mockResolvedValueOnce(
       makeTemplate({
         required_inputs: [
           {
@@ -99,7 +111,7 @@ describe("/template/[id] required_inputs conditional rendering", () => {
           },
         ],
       }),
-    ]);
+    );
     render(<TemplateDetailPage />);
 
     await screen.findByText("Test Template");

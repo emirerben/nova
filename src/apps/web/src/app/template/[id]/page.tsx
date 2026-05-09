@@ -8,11 +8,12 @@ import {
   type DriveImportBatchStatusResponse,
   type RequiredInput,
   type TemplateListItem,
+  TemplateNotFoundError,
   createTemplateJob,
   getDriveImportBatchStatus,
   getBatchPresignedUrls,
+  getTemplate,
   importBatchFromDrive,
-  listTemplates,
   normaliseMimeType,
   uploadFileToGcs,
 } from "@/lib/api";
@@ -90,16 +91,17 @@ export default function TemplateDetailPage() {
   useEffect(() => {
     if (!templateId) return;
     let cancelled = false;
-    listTemplates()
-      .then((list) => {
-        if (cancelled) return;
-        const t = list.find((x) => x.id === templateId) ?? null;
-        setTemplate(t);
-        if (!t) setLoadError("Template not found.");
+    getTemplate(templateId)
+      .then((t) => {
+        if (!cancelled) setTemplate(t);
       })
       .catch((e: unknown) => {
-        if (!cancelled)
+        if (cancelled) return;
+        if (e instanceof TemplateNotFoundError) {
+          setLoadError("Template not found.");
+        } else {
           setLoadError(e instanceof Error ? e.message : "Failed to load template");
+        }
       })
       .finally(() => !cancelled && setLoading(false));
     return () => {
