@@ -227,6 +227,90 @@ class TestTemplateMatcher:
         assert slot1_step.moment["energy"] == pytest.approx(2.5)
 
 
+# ── Pinned-clip reuse regression (1-clip → multi-slot templates) ─────────────
+
+
+class TestPinnedClipReuse:
+    """Regression suite for TEMPLATE_CLIP_DURATION_MISMATCH on 1-clip uploads
+    to multi-slot templates with a "hook" first slot.
+
+    The Just Fine template (2 unlocked slots: hook + outro) auto-pins clip 0 to
+    slot 1 in template_orchestrate.py. Before the fix, that left greedy_metas
+    empty for slot 2 and the matcher raised. The greedy phase now lets a pinned
+    clip back in when there are no other clips, while still excluding it when
+    alternatives exist.
+    """
+
+    def test_single_clip_multi_slot_with_hook_pin(self):
+        """1 clip, 2 unlocked slots, slot 1 pinned (hook). Both slots filled,
+        same clip_id, different moments via variety dedup. This is the exact
+        Just Fine — Sunset Reassurance failure path."""
+        recipe = _make_recipe([
+            _slot(1, 3.468, priority=9, slot_type="hook"),
+            _slot(2, 5.002, priority=9, slot_type="outro"),
+        ])
+        # 12s clip with three moments — enough variety for slot 1 + slot 2
+        clip = _make_clip("clip_0", [
+            _moment(0.0, 3.5, energy=6.0),
+            _moment(3.5, 8.5, energy=8.0),
+            _moment(7.0, 12.0, energy=7.0),
+        ])
+
+        plan = match(recipe, [clip], pinned_assignments={1: "clip_0"})
+
+        assert len(plan.steps) == 2
+        slot1 = next(s for s in plan.steps if s.slot["position"] == 1)
+        slot2 = next(s for s in plan.steps if s.slot["position"] == 2)
+        assert slot1.clip_id == "clip_0"
+        assert slot2.clip_id == "clip_0"
+        # Variety dedup: slot 2 must pick a different moment than slot 1
+        slot1_key = (slot1.moment["start_s"], slot1.moment["end_s"])
+        slot2_key = (slot2.moment["start_s"], slot2.moment["end_s"])
+        assert slot1_key != slot2_key, (
+            "Variety dedup failed — both slots got the same moment range"
+        )
+
+    def test_pinned_reuse_only_when_no_alternatives(self):
+        """2 clips, slot 1 pinned to clip_0. Slot 2 must go to clip_1, NOT
+        reuse the pinned clip. The contract still holds when alternatives
+        exist."""
+        recipe = _make_recipe([
+            _slot(1, 5.0, priority=9, slot_type="hook"),
+            _slot(2, 5.0, priority=5, slot_type="broll"),
+        ])
+        clip_0 = _make_clip("clip_0", [_moment(0.0, 5.0, energy=8.0)])
+        clip_1 = _make_clip("clip_1", [_moment(0.0, 5.0, energy=7.0)])
+
+        plan = match(
+            recipe, [clip_0, clip_1], pinned_assignments={1: "clip_0"}
+        )
+
+        slot2 = next(s for s in plan.steps if s.slot["position"] == 2)
+        assert slot2.clip_id == "clip_1", (
+            "Pinned clip leaked into a non-pinned slot when an alternative "
+            "was available"
+        )
+
+    def test_three_slots_one_clip_pinned(self):
+        """1 clip, 3 unlocked slots, slot 1 pinned. All three filled, all
+        from the same clip, with max_uses=ceil(3/1)=3 honored."""
+        recipe = _make_recipe([
+            _slot(1, 4.0, priority=9, slot_type="hook"),
+            _slot(2, 5.0, priority=7, slot_type="broll"),
+            _slot(3, 6.0, priority=5, slot_type="outro"),
+        ])
+        clip = _make_clip("clip_0", [
+            _moment(0.0, 4.0, energy=8.0),
+            _moment(4.0, 9.0, energy=7.0),
+            _moment(9.0, 15.0, energy=6.0),
+        ])
+
+        plan = match(recipe, [clip], pinned_assignments={1: "clip_0"})
+
+        assert len(plan.steps) == 3
+        assert all(s.clip_id == "clip_0" for s in plan.steps)
+
+
 # ── Adjacency dedup tests ────────────────────────────────────────────────────
 
 
