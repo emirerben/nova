@@ -24,6 +24,28 @@ There is no automated import yet. To restore manually:
 
 A future PR may add a CLI: `python -m app.scripts.import_template src/apps/api/templates/just-fine.json`.
 
+### Templates that exist in prod but are unpublished
+
+If `template.id` already resolves at `GET /admin/templates/{id}` but does not appear in the public `/templates` list, the row is missing `published_at`. To surface it:
+
+```bash
+curl -X PATCH "https://nova-video.fly.dev/admin/templates/{id}" \
+  -H "X-Admin-Token: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"publish": true}'
+```
+
+### Music-track fixtures
+
+`love-from-moon.json` is shaped for a templated **music track**, not a regular template. It records the recipe + asset requirements. Seeding it into a fresh environment runs the existing CLI:
+
+```bash
+API_URL=https://nova-video.fly.dev ADMIN_TOKEN=$TOKEN \
+  python3 scripts/seed_love_from_moon.py
+```
+
+The script requires the audio + thumbnail files at `/tmp/tiktok-konna/` (override via `AUDIO_PATH` / `THUMB_PATH`).
+
 ## When to update a fixture
 
 Re-export when a meaningful, deliberate config change lands (slot timings rebalanced, overlays restructured, music swapped). Skip noise (per-test edits, experimental tweaks).
