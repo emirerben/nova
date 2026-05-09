@@ -1,0 +1,74 @@
+{
+  "_meta": {
+    "exported_at": "2026-05-09",
+    "source_environment": "derived from scripts/seed_love_from_moon.py @ main",
+    "kind": "music_track_templated",
+    "note": "Love From Moon — 2-slot templated music track (slot 1 fixed thumbnail with Ken Burns, slot 2 user video-or-image upload). Track does NOT exist in prod yet. To seed: place TikTok audio + thumbnail at /tmp/tiktok-konna/ (or override AUDIO_PATH/THUMB_PATH), then run:\n  API_URL=https://nova-video.fly.dev ADMIN_TOKEN=$TOKEN \\\n    python3 scripts/seed_love_from_moon.py\naudio_duration_s below is approximate (~20.79s); the seed script re-derives the exact duration via ffprobe at run time and rebuilds the recipe."
+  },
+  "track": {
+    "title": "Love From Moon",
+    "artist": "Victor Glover · Artemis II",
+    "source_url": "TikTok @konnathediver — Hey babe, I love you from the moon",
+    "template_kind": "templated",
+    "user_slot_count": 1,
+    "user_slot_accepts": [
+      "video",
+      "image"
+    ],
+    "publish": true
+  },
+  "asset_requirements": [
+    {
+      "role": "audio",
+      "expected_path": "/tmp/tiktok-konna/7627553879604989207.mp3",
+      "content_type": "audio/mp3"
+    },
+    {
+      "role": "asset_files[0]",
+      "expected_path": "/tmp/tiktok-konna/7627553879604989207.jpeg",
+      "content_type": "image/jpeg",
+      "use": "fixed_asset slot 1 thumbnail"
+    }
+  ],
+  "recipe": {
+    "shot_count": 2,
+    "total_duration_s": 20.79,
+    "hook_duration_s": 4.23,
+    "audio_only": true,
+    "creative_direction": "Spoken-quote intro with reveal — single user moment.",
+    "color_grade": "none",
+    "transition_style": "cut",
+    "pacing_style": "deliberate",
+    "sync_style": "fixed",
+    "interstitials": [],
+    "beat_timestamps_s": [],
+    "slots": [
+      {
+        "position": 1,
+        "slot_type": "fixed_asset",
+        "asset_kind": "image",
+        "target_duration_s": 4.23,
+        "ken_burns": "zoom_in",
+        "transition_in": "cut",
+        "speed_factor": 1.0,
+        "text_overlays": []
+      },
+      {
+        "position": 2,
+        "slot_type": "user_upload",
+        "accepts": [
+          "video",
+          "image"
+        ],
+        "target_duration_s": 16.56,
+        "image_duration_s": 5.0,
+        "ken_burns": "zoom_in",
+        "transition_in": "cut",
+        "speed_factor": 1.0,
+        "text_overlays": []
+      }
+    ],
+    "required_clips_min": 1,
+    "required_clips_max": 1
+  }
+}
