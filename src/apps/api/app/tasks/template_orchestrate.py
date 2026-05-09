@@ -1028,6 +1028,19 @@ def _analyze_clips_parallel(
         idx, ref, path = args
         try:
             meta = analyze_clip(ref, filter_hint=filter_hint)
+            # Defense-in-depth: empty `best_moments` from a "successful" analysis
+            # is unusable downstream (matcher has nothing to match). Treat it the
+            # same as an analysis failure so the Whisper fallback engages and the
+            # job still produces output.
+            if not meta.best_moments:
+                log.warning(
+                    "clip_analysis_empty_moments",
+                    clip_idx=idx,
+                    clip_path=path,
+                )
+                raise GeminiAnalysisError(
+                    "analyze_clip succeeded but returned 0 best_moments"
+                )
             meta.clip_path = path
             return meta, None
         except (GeminiRefusalError, GeminiAnalysisError, Exception) as exc:

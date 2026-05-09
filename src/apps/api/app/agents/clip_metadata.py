@@ -223,6 +223,18 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
             except (ValidationError, TypeError, ValueError):
                 continue
 
+        # Surface "Gemini sent items but every one failed coercion" as a schema
+        # error so the runtime retries with clarification. Without this, an empty
+        # `moments` list silently passes back to the orchestrator (refusal check
+        # already approved the raw JSON because `best_moments` was non-empty),
+        # and downstream matching has nothing to work with.
+        if moments_raw and not moments:
+            raise SchemaError(
+                f"clip_metadata: received {len(moments_raw)} moment(s) but "
+                "every entry failed validation (likely wrong field names or "
+                "non-numeric start_s/end_s)"
+            )
+
         try:
             return ClipMetadataOutput(
                 transcript=str(data.get("transcript", "") or ""),
