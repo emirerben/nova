@@ -3,11 +3,16 @@
 app = "nova-video"
 primary_region = "iad"
 
-# Drain in-flight Celery tasks before SIGKILL on deploy. orchestrate_template_job
-# has a 1800s hard timeout; 30 min gives any almost-done task room to finish.
-# Without this, Fly's 5-min default SIGKILLs every long FFmpeg run during a
-# deploy, leaving jobs orphaned in status=processing.
-kill_timeout = "30m"
+# NOTE: kill_timeout is intentionally NOT set at the top level — Fly applies
+# the top-level value to the release_command machine too, and as of 2026-05-09
+# Fly caps stop_config.timeout at 5m server-side ("invalid stop_config.timeout,
+# cannot exceed 5 minutes"). Setting it here at 30m breaks deploys.
+# Instead, the 30m drain budget is set per-process in the [[vm]] sections
+# below — api and worker both get 30m, the release_command machine uses
+# Fly's default (which fits the new 5m cap).
+# Why we want 30m for workers: orchestrate_template_job has an 1800s hard
+# timeout, so 30m gives any almost-done FFmpeg run room to finish on deploy
+# instead of being SIGKILL'd and leaving jobs orphaned in status=processing.
 
 [build]
   dockerfile = "Dockerfile"
@@ -69,9 +74,11 @@ kill_timeout = "30m"
   cpu_kind = "shared"
   cpus = 1
   memory_mb = 512
+  kill_timeout = "30m"
 
 [[vm]]
   processes = ["worker"]
   cpu_kind = "shared"
   cpus = 2
   memory_mb = 2048
+  kill_timeout = "30m"
