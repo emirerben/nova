@@ -234,19 +234,20 @@ def build_recipe() -> dict:
                     font_style="serif",
                     position_y_frac=WELCOME_Y_FRAC,
                 ),
-                # BRAZIL cycles CONTINUOUSLY from frame zero of slot 5
-                # through the curtain close. Frame-by-frame analysis of the
-                # reference's yazıörnek.mp4 zoom clip (2026-05-10) showed
-                # the cycling runs at ~0.07s interval from the moment BRAZIL
-                # first appears, all the way through curtain. There is NO
-                # static phase — splitting the overlay into static-then-cycle
-                # (commit 8c3351a) made the reveal feel frozen for 4 seconds
-                # before the curtain. Reverting to a single full-slot cycling
-                # overlay matches the reference's "frantic, constant-tempo
-                # font shuffle" look. font_cycle_accel_at_s=0.0 eliminates
-                # the normal-speed ramp-up phase — fast tempo from t=0.
-                # Frame budget: 5.5s / FONT_CYCLE_FAST_INTERVAL_S (0.07s)
-                # = 78.5 frames, within the MAX_FONT_CYCLE_FRAMES=100 cap.
+                # BRAZIL cycles slow-then-fast across slot 5, matching the
+                # reference's accel ramp. Per-frame font-cycle analysis of
+                # brazil.mp4 (analyze_brazil_animation.py, 2026-05-10) over
+                # the full 6s title window showed the reference cycle runs:
+                #   - 0.0s–2.8s into BRAZIL: ~0.132s interval (slow phase,
+                #     matches FONT_CYCLE_INTERVAL_S=0.15)
+                #   - 2.8s–end:              ~0.066s interval (fast phase,
+                #     matches FONT_CYCLE_FAST_INTERVAL_S=0.07)
+                # Earlier commit a5a11b4 set accel_at_s=0.0 based on a narrow
+                # zoom clip (yazıörnek.mp4) that only captured the fast phase;
+                # the wider sample showed the slow ramp the zoom missed.
+                # accel_at_s=2.8 reproduces the reference timing exactly.
+                # Frame budget: 2.8s / 0.15 + 2.7s / 0.07 = 18.6 + 38.6 ≈
+                # 57 frames, well under MAX_FONT_CYCLE_FRAMES=100.
                 # font_style="display" maps to PlayfairDisplay-Bold.ttf as
                 # the settle/anchor font; the cycle rotates through 7
                 # contrast fonts (Montserrat, Bodoni Moda, Fraunces,
@@ -261,7 +262,7 @@ def build_recipe() -> dict:
                     text_color=PERU_COLOR,
                     font_style="display",
                     position_y_frac=PERU_Y_FRAC,
-                    font_cycle_accel_at_s=0.0,
+                    font_cycle_accel_at_s=2.8,
                 ),
             ],
         },

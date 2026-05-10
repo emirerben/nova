@@ -254,16 +254,16 @@ class TestSlot5DualOverlay:
 
 
 class TestFontCycleAccel:
-    """Frame-by-frame analysis of the reference (yazıörnek.mp4, 2026-05-10)
-    showed the BRAZIL title cycles at CONSTANT fast tempo from the moment
-    it first appears, with no slow ramp-up phase. font_cycle_accel_at_s=0.0
-    forces the renderer to skip the normal-speed phase entirely — every
-    frame in the cycle runs at FONT_CYCLE_FAST_INTERVAL_S (0.07s).
+    """Per-frame font-cycle analysis of brazil.mp4 over the full 6s title
+    window (analyze_brazil_animation.py, 2026-05-10) showed the reference
+    has a slow-then-fast accel ramp:
+      - 0.0s–2.8s into BRAZIL: ~0.132s interval (slow phase)
+      - 2.8s–end:              ~0.066s interval (fast phase)
 
-    Without this (or with any positive accel value), the cycle starts in
-    "normal" mode (0.15s interval) and only accelerates after accel_at_s.
-    User feedback "tempo aynı olsun" (same tempo throughout) called this
-    out — the slow-then-fast pattern was visible and wrong."""
+    An earlier commit set accel_at_s=0.0 based on a narrow zoom clip
+    (yazıörnek.mp4) that only captured the fast half. The wider sample
+    surfaced the slow ramp the zoom missed. Pin accel_at_s=2.8 so the
+    cycle matches the reference's two-phase tempo."""
 
     def test_subject_has_explicit_accel_at_s(self):
         recipe = build_recipe()
@@ -271,22 +271,23 @@ class TestFontCycleAccel:
         assert subject["font_cycle_accel_at_s"] is not None, (
             "Without an explicit value, the orchestrator's auto-injected accel "
             "fires at slot_end - animate_s, leaving the first ~4s of the slot "
-            "in slow-cycle mode — reference shows constant fast tempo from t=0"
+            "in slow-cycle mode — reference accel kicks in at ~2.8s"
         )
 
-    def test_accel_at_s_is_zero_for_constant_fast_tempo(self):
-        """Reference cycles at constant fast tempo from BRAZIL's first frame.
-        Any positive accel_at_s value introduces a slow ramp-up that the user
-        called out as wrong ("başta animasyon daha yavaş perde kapanmaya
-        başladığı an hızlanıyor"). Pin accel_at_s=0.0 explicitly so future
-        tweaks can't reintroduce the slow ramp."""
+    def test_accel_at_s_matches_reference_slow_fast_ramp(self):
+        """Reference cycle runs slow (~0.132s) for first ~2.8s then fast
+        (~0.066s) for the remainder. Pin accel_at_s=2.8 so the cycle phase
+        boundary lines up with the reference's tempo shift. Drifting the
+        value silently changes the slow/fast split and breaks the rhythmic
+        feel users called out."""
         recipe = build_recipe()
         subject = _subject_overlay(_slot(recipe, 5))
         accel = subject["font_cycle_accel_at_s"]
-        assert accel == 0.0, (
-            f"font_cycle_accel_at_s={accel} introduces a {accel}s slow-cycle "
-            f"phase at the start of BRAZIL. Reference has zero slow phase — "
-            f"set accel_at_s=0.0 for constant fast tempo from frame zero."
+        assert accel == pytest.approx(2.8), (
+            f"font_cycle_accel_at_s={accel} doesn't match the reference's "
+            f"2.8s slow-phase / fast-phase boundary. Set accel_at_s=2.8 so "
+            f"the first 2.8s of BRAZIL cycles at FONT_CYCLE_INTERVAL_S "
+            f"(0.15s) and the remainder at FONT_CYCLE_FAST_INTERVAL_S (0.07s)."
         )
 
 
