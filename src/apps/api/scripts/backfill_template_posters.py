@@ -23,6 +23,8 @@ from app.database import sync_session as _sync_session
 from app.models import VideoTemplate
 from app.services.template_poster import (
     PosterExtractionError,
+)
+from app.services.template_poster import (
     generate_and_upload as generate_poster,
 )
 from app.storage import download_to_file
@@ -52,8 +54,17 @@ def backfill_one(template_id: str, gcs_path: str) -> str | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dry-run", action="store_true", help="List candidates only, do not modify GCS or DB.")
-    parser.add_argument("--limit", type=int, default=0, help="Cap the number of templates processed (0 = no cap).")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List candidates only, do not modify GCS or DB.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Cap the number of templates processed (0 = no cap).",
+    )
     args = parser.parse_args()
 
     with _sync_session() as db:

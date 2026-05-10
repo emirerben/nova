@@ -58,6 +58,8 @@ from app.pipeline.template_matcher import (
 )
 from app.services.template_poster import (
     PosterExtractionError,
+)
+from app.services.template_poster import (
     generate_and_upload as generate_poster,
 )
 from app.storage import copy_object_signed_url, download_to_file, upload_public_read
@@ -92,7 +94,7 @@ _LABEL_CONFIG: dict[str, dict] = {
 # Routing-only keys that live on `recipe_cached` JSON but are NOT valid
 # TemplateRecipe constructor kwargs. Migration 0010 backfilled `template_kind`
 # onto every existing recipe; future routing/dispatch fields go here.
-_ROUTING_ONLY_RECIPE_KEYS: frozenset[str] = frozenset({"template_kind", "is_face_intro"})
+_ROUTING_ONLY_RECIPE_KEYS: frozenset[str] = frozenset({"template_kind", "has_intro_slot"})
 
 
 # Failure-reason taxonomy. Persisted on Job.failure_reason for any
