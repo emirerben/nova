@@ -1,31 +1,16 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type TemplateListItem, listTemplates } from "@/lib/api";
-
-const TONE_GRADIENTS: Record<string, string> = {
-  casual: "from-orange-500 to-amber-400",
-  energetic: "from-red-500 to-pink-500",
-  calm: "from-blue-500 to-teal-400",
-  formal: "from-gray-600 to-gray-800",
-};
-
-function clipsLabel(t: TemplateListItem): string {
-  const photoSlots = t.slots.filter((s) => s.media_type === "photo").length;
-  const videoSlots = t.slots.length - photoSlots;
-  if (photoSlots > 0 && videoSlots > 0) {
-    return `${videoSlots} video${videoSlots !== 1 ? "s" : ""} + ${photoSlots} photo${photoSlots !== 1 ? "s" : ""}`;
-  }
-  if (t.required_clips_min === t.required_clips_max) {
-    return `${t.required_clips_min} clip${t.required_clips_min !== 1 ? "s" : ""}`;
-  }
-  return `${t.required_clips_min}–${t.required_clips_max} clips`;
-}
+import TemplateTile from "./TemplateTile";
+import TemplatePreviewModal from "./TemplatePreviewModal";
 
 export default function HomePage() {
   const [templates, setTemplates] = useState<TemplateListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [previewTemplate, setPreviewTemplate] = useState<TemplateListItem | null>(null);
+  const lastTriggerRef = useRef<HTMLElement | null>(null);
 
   function load() {
     setError(null);
@@ -50,6 +35,17 @@ export default function HomePage() {
       cancelled = true;
     };
   }, []);
+
+  function openPreview(t: TemplateListItem) {
+    if (typeof document !== "undefined") {
+      lastTriggerRef.current = document.activeElement as HTMLElement | null;
+    }
+    setPreviewTemplate(t);
+  }
+
+  function closePreview() {
+    setPreviewTemplate(null);
+  }
 
   return (
     <main className="min-h-[calc(100vh-3.5rem)] bg-black text-white">
@@ -95,39 +91,22 @@ export default function HomePage() {
 
         {templates !== null && templates.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {templates.map((t) => {
-              const gradient = TONE_GRADIENTS[t.copy_tone] ?? TONE_GRADIENTS.casual;
-              return (
-                <Link
-                  key={t.id}
-                  href={`/template/${t.id}`}
-                  className="group rounded-xl border border-zinc-900 hover:border-zinc-700 overflow-hidden transition-colors"
-                >
-                  {t.thumbnail_url ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
-                      src={t.thumbnail_url}
-                      alt={t.name}
-                      className="aspect-[9/16] object-cover w-full"
-                    />
-                  ) : (
-                    <div
-                      className={`aspect-[9/16] bg-gradient-to-br ${gradient} opacity-90 group-hover:opacity-100 transition-opacity`}
-                    />
-                  )}
-                  <div className="p-4">
-                    <h3 className="font-semibold text-sm mb-1 truncate">{t.name}</h3>
-                    <p className="text-xs text-zinc-400">
-                      {Math.round(t.total_duration_s)}s · {clipsLabel(t)}
-                    </p>
-                    <p className="text-xs text-zinc-500 mt-0.5 capitalize">{t.copy_tone}</p>
-                  </div>
-                </Link>
-              );
-            })}
+            {templates.map((t) => (
+              <TemplateTile
+                key={t.id}
+                template={t}
+                onOpenPreview={openPreview}
+              />
+            ))}
           </div>
         )}
       </div>
+
+      <TemplatePreviewModal
+        template={previewTemplate}
+        returnFocusTo={lastTriggerRef.current}
+        onClose={closePreview}
+      />
     </main>
   );
 }

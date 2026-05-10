@@ -46,6 +46,10 @@ def _mock_template(
         "total_duration_s": 45.0,
         "copy_tone": "energetic",
     }
+    tpl.thumbnail_gcs_path = None
+    tpl.required_clips_min = 5
+    tpl.required_clips_max = 10
+    tpl.required_inputs = []
     return tpl
 
 
@@ -89,6 +93,76 @@ async def test_list_templates_skips_null_recipe(client):
     # Verify the filtering logic directly
     # A template with None recipe should be skipped
     assert tpl.recipe_cached is None
+
+
+def test_sign_poster_url_returns_none_when_path_missing():
+    """No thumbnail_gcs_path → no thumbnail_url (don't try to sign empty)."""
+    from app.routes.templates import _sign_poster_url
+
+    assert _sign_poster_url(None) is None
+    assert _sign_poster_url("") is None
+
+
+def test_sign_poster_url_calls_gcs_signer():
+    """When the path is set, generate_signed_url is called and returned."""
+    from app.routes import templates as routes_templates
+
+    fake_url = "https://storage.googleapis.com/bucket/templates/x/poster.jpg?X-Goog-..."
+    fake_blob = MagicMock()
+    fake_blob.generate_signed_url.return_value = fake_url
+    fake_bucket = MagicMock()
+    fake_bucket.blob.return_value = fake_blob
+    fake_client = MagicMock()
+    fake_client.bucket.return_value = fake_bucket
+
+    with patch("app.storage._get_client", return_value=fake_client):
+        out = routes_templates._sign_poster_url("templates/abc/poster.jpg")
+
+    assert out == fake_url
+    fake_bucket.blob.assert_called_once_with("templates/abc/poster.jpg")
+    fake_blob.generate_signed_url.assert_called_once()
+    kwargs = fake_blob.generate_signed_url.call_args.kwargs
+    assert kwargs["method"] == "GET"
+    assert kwargs["version"] == "v4"
+
+
+def test_sign_poster_url_swallows_signing_errors():
+    """A signing exception must not break the list endpoint — return None
+    so the frontend falls back to the gradient instead of 500-ing."""
+    from app.routes import templates as routes_templates
+
+    with patch("app.storage._get_client", side_effect=RuntimeError("creds gone")):
+        out = routes_templates._sign_poster_url("templates/abc/poster.jpg")
+    assert out is None
+
+
+def test_template_to_list_item_populates_thumbnail_url():
+    """When thumbnail_gcs_path is set, the list-item carries the signed URL."""
+    from app.routes import templates as routes_templates
+
+    tpl = _mock_template()
+    tpl.thumbnail_gcs_path = "templates/tpl-1/poster.jpg"
+
+    with patch.object(
+        routes_templates, "_sign_poster_url", return_value="https://signed/url"
+    ) as sign:
+        item = routes_templates._template_to_list_item(tpl)
+
+    assert item is not None
+    assert item.thumbnail_url == "https://signed/url"
+    sign.assert_called_once_with("templates/tpl-1/poster.jpg")
+
+
+def test_template_to_list_item_thumbnail_none_when_path_missing():
+    """No thumbnail_gcs_path → list-item.thumbnail_url is None."""
+    from app.routes import templates as routes_templates
+
+    tpl = _mock_template()
+    tpl.thumbnail_gcs_path = None
+
+    item = routes_templates._template_to_list_item(tpl)
+    assert item is not None
+    assert item.thumbnail_url is None
 
 
 @pytest.mark.asyncio

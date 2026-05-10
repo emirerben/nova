@@ -56,6 +56,12 @@ from app.pipeline.template_matcher import (
     consolidate_slots,
     match,
 )
+from app.services.template_poster import (
+    PosterExtractionError,
+)
+from app.services.template_poster import (
+    generate_and_upload as generate_poster,
+)
 from app.storage import copy_object_signed_url, download_to_file, upload_public_read
 from app.worker import celery_app
 
@@ -88,7 +94,7 @@ _LABEL_CONFIG: dict[str, dict] = {
 # Routing-only keys that live on `recipe_cached` JSON but are NOT valid
 # TemplateRecipe constructor kwargs. Migration 0010 backfilled `template_kind`
 # onto every existing recipe; future routing/dispatch fields go here.
-_ROUTING_ONLY_RECIPE_KEYS: frozenset[str] = frozenset({"template_kind"})
+_ROUTING_ONLY_RECIPE_KEYS: frozenset[str] = frozenset({"template_kind", "has_intro_slot"})
 
 
 # Failure-reason taxonomy. Persisted on Job.failure_reason for any
@@ -242,6 +248,25 @@ def analyze_template_task(self, template_id: str) -> None:
                 file_ref, analysis_mode="two_pass", black_segments=black_segments,
             )
 
+            # Extract poster JPEG for the homepage gallery (best-effort: a
+            # poster failure must not fail analysis — the gradient fallback
+            # still renders).
+            poster_gcs: str | None = None
+            try:
+                poster_gcs = generate_poster(template_id, local_path)
+            except PosterExtractionError as exc:
+                log.warning(
+                    "template_poster_extraction_failed",
+                    template_id=template_id,
+                    error=str(exc),
+                )
+            except Exception as exc:  # GCS upload, network, etc.
+                log.warning(
+                    "template_poster_upload_failed",
+                    template_id=template_id,
+                    error=str(exc),
+                )
+
             # Extract template audio (idempotent — skip if already stored)
             audio_gcs: str | None = existing_audio_gcs
             audio_local = os.path.join(tmpdir, "audio.m4a")
@@ -306,6 +331,8 @@ def analyze_template_task(self, template_id: str) -> None:
                     template.analysis_status = "ready"
                     if audio_gcs and not template.audio_gcs_path:
                         template.audio_gcs_path = audio_gcs
+                    if poster_gcs:
+                        template.thumbnail_gcs_path = poster_gcs
                     db.commit()
                     log.info("recipe_version_created", template_id=template_id, trigger=trigger)
 
