@@ -256,6 +256,42 @@ class TestCurtainSurvivesConsolidation:
         assert len(consolidated.slots) == len(recipe.slots) == 17
 
 
+class TestEditMusicWired:
+    """The template's slot durations (0.1, 0.99, 0.9, 3.5, 2.73, 0.96, …) were
+    hand-tuned to land on beats in a specific edit track. The seed must declare
+    that track's GCS path on `audio_gcs_path` so the orchestrator's
+    `_mix_template_audio()` replaces source-clip audio with it. Without this
+    wiring, every Dimples job ships with the user's random source audio and
+    loses the beat-synced feel that's the entire point of the template."""
+
+    def test_module_declares_edit_music_path(self):
+        """The seed module must expose a non-empty EDIT_MUSIC_GCS_PATH so
+        re-seeds (and the prod backfill flow) always carry the music path."""
+        assert hasattr(_seed, "EDIT_MUSIC_GCS_PATH"), (
+            "Seed module must export EDIT_MUSIC_GCS_PATH; the row upsert reads it"
+        )
+        assert _seed.EDIT_MUSIC_GCS_PATH, (
+            "EDIT_MUSIC_GCS_PATH is empty — orchestrator will skip "
+            "_mix_template_audio and source-clip audio will play through"
+        )
+
+    def test_edit_music_path_is_audio_extension(self):
+        """Guard against pointing at a video file by accident — the mixer
+        expects an audio-only container."""
+        path = _seed.EDIT_MUSIC_GCS_PATH.lower()
+        assert path.endswith((".m4a", ".mp3", ".aac", ".wav", ".ogg")), (
+            f"EDIT_MUSIC_GCS_PATH={path!r} does not look like an audio file; "
+            f"mixer expects audio-only container, not a video"
+        )
+
+    def test_edit_music_path_lives_under_templates_prefix(self):
+        """All template assets live under the `templates/` GCS prefix. This
+        keeps the bucket layout consistent and makes asset audits easy."""
+        assert _seed.EDIT_MUSIC_GCS_PATH.startswith("templates/"), (
+            f"Expected templates/ prefix, got {_seed.EDIT_MUSIC_GCS_PATH!r}"
+        )
+
+
 class TestSubjectSubstitutionContract:
     """Slot 5's text MUST be an ALL-CAPS placeholder so _resolve_overlay_text
     in template_orchestrate.py substitutes the user's `inputs.location` at

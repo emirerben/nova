@@ -55,6 +55,15 @@ TEMPLATE_DESCRIPTION = (
 # different bucket or path — check before running this seed against prod.
 REFERENCE_GCS_PATH = "templates/dimplespassport-travel-vlog.mp4"
 
+# Beat-synced edit music that the slot durations were tuned for. When
+# template.audio_gcs_path is set, the orchestrator's _mix_template_audio()
+# (template_orchestrate.py:653) replaces the concatenated source-clip audio
+# with this track in the final output. AAC 44.1kHz stereo at 192kbps so it
+# matches BODY_SLOT_AUDIO_OUT_ARGS — no transcode glue at the mix step.
+# Without this set, source-clip audio plays through and the template loses
+# its beat-synced feel (the whole point of the format).
+EDIT_MUSIC_GCS_PATH = "templates/dimplespassport-edit-music.m4a"
+
 # User-facing input that drives the "Welcome to <X>" hook overlay. Key MUST
 # be "location" — _resolve_user_subject() in template_orchestrate.py reads
 # inputs.location to populate the placeholder substitution. max_length 30
@@ -304,12 +313,14 @@ async def seed() -> None:
             row.required_clips_min = 5
             row.required_clips_max = 20
             row.required_inputs = REQUIRED_INPUTS
+            row.audio_gcs_path = EDIT_MUSIC_GCS_PATH
             print(f"Updated existing template: {row.id} ({TEMPLATE_NAME})")
         else:
             template = VideoTemplate(
                 id=TEMPLATE_ID,
                 name=TEMPLATE_NAME,
                 gcs_path=REFERENCE_GCS_PATH,
+                audio_gcs_path=EDIT_MUSIC_GCS_PATH,
                 recipe_cached=recipe,
                 recipe_cached_at=now,
                 analysis_status="ready",
