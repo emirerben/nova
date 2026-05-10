@@ -442,6 +442,12 @@ function TestTab({
   const [testError, setTestError] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<TemplateMetrics | null>(null);
   const [latestJob, setLatestJob] = useState<LatestTestJob | null>(null);
+  // Subject for placeholder substitution (e.g. "PERU" → "Brazil"). The public
+  // template page collects this via required_inputs.location; the admin Test
+  // tab uses the legacy TestJobRequest.subject field so admins can verify
+  // substitution end-to-end without going through the public flow. Empty
+  // string sends no subject and the seed placeholder renders verbatim.
+  const [subject, setSubject] = useState("");
   // Recipe slot summary — drives slot-bound upload for mixed-media templates.
   const [recipeSlots, setRecipeSlots] = useState<Array<{
     position: number;
@@ -591,6 +597,7 @@ function TestTab({
         : upload.successfulPaths;
       const res = await adminCreateTestJob(template.id, {
         clip_gcs_paths: orderedPaths,
+        ...(subject.trim() ? { subject: subject.trim() } : {}),
       });
       setTestJobId(res.job_id);
     } catch (err) {
@@ -771,6 +778,23 @@ function TestTab({
             ))}
           </div>
         )}
+
+        {/* Subject input — local-only substitution check (see useState comment) */}
+        <div className="space-y-1">
+          <label htmlFor="test-subject" className="text-xs text-zinc-400 block">
+            Subject (optional) — substituted for ALL-CAPS placeholders like &quot;PERU&quot;.
+            Public form collects this via the location input.
+          </label>
+          <input
+            id="test-subject"
+            type="text"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            placeholder="e.g. Brazil, Tokyo, Bali"
+            maxLength={30}
+            className="w-full px-3 py-2 text-sm bg-zinc-900 border border-zinc-800 rounded text-white placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+          />
+        </div>
 
         {/* Create test job button */}
         <div className="flex items-center gap-3">
