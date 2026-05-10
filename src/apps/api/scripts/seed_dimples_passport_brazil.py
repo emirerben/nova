@@ -100,6 +100,7 @@ def _hook_overlay(
     text_color: str = "#FFFFFF",
     font_style: str = "sans",
     position_y_frac: float | None = None,
+    font_cycle_accel_at_s: float | None = None,
 ) -> dict:
     return {
         "role": "hook",
@@ -117,7 +118,10 @@ def _hook_overlay(
         "has_narrowing": False,
         "end_s_override": None,
         "start_s_override": None,
-        "font_cycle_accel_at_s": None,
+        # When set, overrides the orchestrator's auto-injected accel point
+        # (slot_end - animate_s). Lower value = more of the slot in fast-cycle
+        # mode. Used here to make slot-5 font-cycle feel snappier on the beat.
+        "font_cycle_accel_at_s": font_cycle_accel_at_s,
     }
 
 
@@ -153,7 +157,11 @@ def build_recipe() -> dict:
                     "Welcome to",
                     effect="fade-in",
                     start_s=0.5,
-                    end_s=2.33,
+                    # Stay visible through slot 4's end so there is no text-less
+                    # gap before slot 5's location title appears. Was 2.33 (text
+                    # disappeared at slot-relative 2.33s, ~1.17s before slot 5
+                    # cuts in — the reveal felt empty).
+                    end_s=3.5,
                     text_size_px=WELCOME_SIZE_PX,
                     text_color=WELCOME_COLOR,
                     font_style="serif",
@@ -166,6 +174,22 @@ def build_recipe() -> dict:
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 1.8,
             "text_overlays": [
+                # "Welcome to" co-renders briefly with the location title at
+                # slot start so the prefix is still on screen the moment the
+                # title appears. Pre-burn (curtain-close slot) draws both texts
+                # onto the slot frames before bars close. Styling matches the
+                # slot-4 prefix exactly so the visual continuation reads as
+                # one seamless reveal across the cut.
+                _hook_overlay(
+                    "Welcome to",
+                    effect="none",
+                    start_s=0.0,
+                    end_s=0.6,
+                    text_size_px=WELCOME_SIZE_PX,
+                    text_color=WELCOME_COLOR,
+                    font_style="serif",
+                    position_y_frac=WELCOME_Y_FRAC,
+                ),
                 _hook_overlay(
                     "PERU",
                     effect="font-cycle",
@@ -179,6 +203,13 @@ def build_recipe() -> dict:
                     # weight, which looks anemic at 265px.
                     font_style="display",
                     position_y_frac=PERU_Y_FRAC,
+                    # Force fast cycling from slot-relative 0.3s onward (vs
+                    # orchestrator's auto-injected 1.092s = slot_end - animate_s).
+                    # This puts ~88% of the slot in fast-cycle mode for a
+                    # snappier reveal during the curtain close. Capped at the
+                    # 60-frame MAX_FONT_CYCLE_FRAMES safety limit by the
+                    # renderer regardless.
+                    font_cycle_accel_at_s=0.3,
                 ),
             ],
         },

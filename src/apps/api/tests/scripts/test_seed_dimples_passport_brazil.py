@@ -37,12 +37,36 @@ def _only_overlay(slot: dict) -> dict:
     return overlays[0]
 
 
+def _subject_overlay(slot: dict) -> dict:
+    """Pick the location-title overlay from a slot that may have a co-rendered
+    prefix. The subject overlay is the font-cycle one (the jumbo location
+    title); the prefix is rendered as a separate static overlay alongside it."""
+    overlays = slot.get("text_overlays") or []
+    subject = [o for o in overlays if o.get("effect") == "font-cycle"]
+    assert len(subject) == 1, (
+        f"slot {slot['position']} expected exactly 1 font-cycle overlay "
+        f"(the location title), got {len(subject)}"
+    )
+    return subject[0]
+
+
+def _prefix_overlay(slot: dict) -> dict | None:
+    """Pick the 'Welcome to' prefix overlay from a slot, or None if absent.
+    Identified by white color + non-jumbo size + non-font-cycle effect."""
+    overlays = slot.get("text_overlays") or []
+    candidates = [
+        o for o in overlays
+        if o.get("text") == "Welcome to" and o.get("effect") != "font-cycle"
+    ]
+    return candidates[0] if candidates else None
+
+
 class TestPeruHookSizing:
     """Slot 5 is the PERU font-cycle moment — must be the jumbo yellow heading."""
 
     def test_size_matches_position_tool_default(self):
         recipe = build_recipe()
-        overlay = _only_overlay(_slot(recipe, 5))
+        overlay = _subject_overlay(_slot(recipe, 5))
         assert overlay["text"] == "PERU"
         assert overlay["text_size_px"] == _seed.PERU_SIZE_PX == 265, (
             "PERU dropped from jumbo (265px) — title screen no longer reads as a hook"
@@ -50,12 +74,12 @@ class TestPeruHookSizing:
 
     def test_color_matches_montserrat_yellow(self):
         recipe = build_recipe()
-        overlay = _only_overlay(_slot(recipe, 5))
+        overlay = _subject_overlay(_slot(recipe, 5))
         assert overlay["text_color"].upper() == _seed.PERU_COLOR.upper() == "#F4D03F"
 
     def test_y_position_matches_tool(self):
         recipe = build_recipe()
-        overlay = _only_overlay(_slot(recipe, 5))
+        overlay = _subject_overlay(_slot(recipe, 5))
         assert overlay["position_y_frac"] == pytest.approx(_seed.PERU_Y_FRAC) == pytest.approx(0.45)
 
     def test_uses_display_font_for_bold_serif(self):
@@ -66,7 +90,7 @@ class TestPeruHookSizing:
         At 265px jumbo size the difference is dramatic — Regular looks
         anemic and breaks the template's signature look."""
         recipe = build_recipe()
-        overlay = _only_overlay(_slot(recipe, 5))
+        overlay = _subject_overlay(_slot(recipe, 5))
         assert overlay["font_style"] == "display", (
             f"font_style={overlay['font_style']!r} resolves to a non-Bold "
             f"weight. Use 'display' to get PlayfairDisplay-Bold.ttf — the "
@@ -75,7 +99,7 @@ class TestPeruHookSizing:
 
     def test_effect_is_font_cycle(self):
         recipe = build_recipe()
-        overlay = _only_overlay(_slot(recipe, 5))
+        overlay = _subject_overlay(_slot(recipe, 5))
         assert overlay["effect"] == "font-cycle"
 
 
@@ -102,11 +126,104 @@ class TestWelcomeToHookSizing:
     def test_y_position_below_peru(self):
         recipe = build_recipe()
         welcome = _only_overlay(_slot(recipe, 4))
-        peru = _only_overlay(_slot(recipe, 5))
+        peru = _subject_overlay(_slot(recipe, 5))
         assert welcome["position_y_frac"] == pytest.approx(_seed.WELCOME_Y_FRAC)
         assert welcome["position_y_frac"] > peru["position_y_frac"], (
             "Welcome-to must sit below PERU (larger y_frac) — got the inverse, "
             "title would render with the subtitle on top"
+        )
+
+    def test_stays_visible_through_slot_end(self):
+        """Without this, 'Welcome to' fades at slot-relative 2.33s and slot 4
+        runs another 1.17s with no text before slot 5's location title cuts in.
+        Extending end_s to the slot duration closes that visual dead air."""
+        recipe = build_recipe()
+        slot4 = _slot(recipe, 4)
+        welcome = _only_overlay(slot4)
+        assert welcome["end_s"] == pytest.approx(slot4["target_duration_s"]), (
+            f"'Welcome to' end_s={welcome['end_s']} leaves "
+            f"{slot4['target_duration_s'] - welcome['end_s']:.2f}s of text-less "
+            f"gap before slot 5's location title appears"
+        )
+
+
+class TestSlot5DualOverlay:
+    """Slot 5 carries a short-lived 'Welcome to' prefix alongside the location
+    title for the first ~0.6s so the prefix stays on screen the moment the
+    title appears. Without this co-render, the visual feels like a hard text
+    swap on the slot 4 → 5 cut. With it, the prefix smoothly carries across
+    the cut and then fades while the title font-cycles into the curtain."""
+
+    def test_slot_5_has_exactly_two_overlays(self):
+        recipe = build_recipe()
+        overlays = _slot(recipe, 5).get("text_overlays") or []
+        assert len(overlays) == 2, (
+            f"Slot 5 must declare exactly 2 overlays (Welcome-to prefix + "
+            f"location title), got {len(overlays)}"
+        )
+
+    def test_prefix_renders_briefly_at_slot_start(self):
+        recipe = build_recipe()
+        prefix = _prefix_overlay(_slot(recipe, 5))
+        assert prefix is not None, "slot 5 missing the Welcome-to prefix overlay"
+        assert prefix["start_s"] == 0.0
+        assert 0.3 <= prefix["end_s"] <= 1.0, (
+            f"Prefix end_s={prefix['end_s']} should be brief (~0.3-1.0s) so "
+            f"it fades after the title overlap moment, not lingers through "
+            f"the entire curtain"
+        )
+
+    def test_prefix_styling_matches_slot_4(self):
+        """The slot-5 prefix must look IDENTICAL to slot 4's 'Welcome to' so
+        the cross-cut continuation reads as one continuous reveal."""
+        recipe = build_recipe()
+        slot4_prefix = _only_overlay(_slot(recipe, 4))
+        slot5_prefix = _prefix_overlay(_slot(recipe, 5))
+        assert slot5_prefix["text"] == slot4_prefix["text"] == "Welcome to"
+        assert slot5_prefix["text_size_px"] == slot4_prefix["text_size_px"]
+        assert slot5_prefix["text_color"].upper() == slot4_prefix["text_color"].upper()
+        assert slot5_prefix["font_style"] == slot4_prefix["font_style"]
+        assert slot5_prefix["position_y_frac"] == pytest.approx(slot4_prefix["position_y_frac"])
+
+    def test_prefix_and_title_stack_correctly(self):
+        recipe = build_recipe()
+        prefix = _prefix_overlay(_slot(recipe, 5))
+        title = _subject_overlay(_slot(recipe, 5))
+        assert prefix["position_y_frac"] > title["position_y_frac"], (
+            "Prefix must sit below the title (larger y_frac in the inverted "
+            "coordinate system); otherwise the small white text covers the "
+            "jumbo location title"
+        )
+
+
+class TestFontCycleAccel:
+    """The orchestrator auto-injects font_cycle_accel_at_s at
+    `slot_end - animate_s` for any font-cycle overlay on a curtain-close slot.
+    For Dimples slot 5 (2.73s) with animate_s=1.638, that's accel at 1.092s —
+    only the last 1.638s is fast-cycling. An explicit lower value here forces
+    fast-cycle mode through most of the slot for a snappier reveal."""
+
+    def test_subject_has_explicit_accel_at_s(self):
+        recipe = build_recipe()
+        subject = _subject_overlay(_slot(recipe, 5))
+        assert subject["font_cycle_accel_at_s"] is not None, (
+            "Without an explicit value, the orchestrator's auto-injected accel "
+            "fires too late (1.092s into a 2.73s slot — only 60% of the slot "
+            "in fast-cycle mode)"
+        )
+
+    def test_accel_at_s_keeps_majority_of_slot_in_fast_mode(self):
+        """Pin the >50% threshold so future tweaks don't accidentally regress
+        back to the auto-injected value, which gives a sluggish reveal."""
+        recipe = build_recipe()
+        slot5 = _slot(recipe, 5)
+        subject = _subject_overlay(slot5)
+        accel = subject["font_cycle_accel_at_s"]
+        slot_dur = slot5["target_duration_s"]
+        fast_phase = slot_dur - accel
+        assert fast_phase / slot_dur >= 0.5, (
+            f"font_cycle_accel_at_s={accel} puts only {fast_phase / slot_dur:.0%} "
+            f"of the slot in fast-cycle mode; should be ≥50% for snappy reveal"
         )
 
 
@@ -306,7 +423,7 @@ class TestSubjectSubstitutionContract:
 
     def test_slot_5_text_is_all_caps_placeholder(self):
         recipe = build_recipe()
-        overlay = _only_overlay(_slot(recipe, 5))
+        overlay = _subject_overlay(_slot(recipe, 5))
         text = overlay["text"]
         assert text.isupper(), (
             f"Slot 5 text {text!r} is not ALL-CAPS — _resolve_overlay_text "
