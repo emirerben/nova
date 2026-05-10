@@ -1406,6 +1406,64 @@ class TestAssembleClipsTextOverlays:
         # Pre-burned, so skipped
         assert len(result) == 0
 
+    def test_stacked_overlays_at_same_position_string_survive(self):
+        """Three overlays at position="center" with different position_y_frac
+        values (0.45/0.50/0.56) must ALL survive collection.
+
+        Regression: shipped Rule of Thirds prod render showed only "Thirds" —
+        the same-position-overlap dedup was keying on the position string
+        alone and truncating "The" and "Rule of" to invalid timestamps that
+        got filtered out, leaving only the largest/last overlay visible.
+        """
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=[
+            {"role": "hook", "text": "The", "start_s": 0.4, "end_s": 3.0,
+             "position": "center", "position_y_frac": 0.45,
+             "text_color": "#FFFFFF", "sample_text": "The"},
+            {"role": "hook", "text": "Rule of", "start_s": 0.4, "end_s": 3.0,
+             "position": "center", "position_y_frac": 0.50,
+             "text_color": "#FFFFFF", "sample_text": "Rule of"},
+            {"role": "hook", "text": "Thirds", "start_s": 0.4, "end_s": 3.0,
+             "position": "center", "position_y_frac": 0.56,
+             "text_color": "#FFFFFF", "sample_text": "Thirds"},
+        ])
+        result = _collect_absolute_overlays([step], [3.0], None, "")
+        texts = sorted(o["text"] for o in result)
+        assert texts == ["Rule of", "The", "Thirds"], (
+            f"expected all 3 stacked overlays to survive, got {texts}"
+        )
+        # Each overlay keeps its full time range (no truncation)
+        for o in result:
+            assert o["start_s"] == 0.4 and o["end_s"] == 3.0
+
+    def test_color_change_at_same_screen_slot_does_not_merge(self):
+        """Two overlays with the same text+position+y_frac but different
+        text_color values are an intentional color transition (e.g. white
+        "Thirds" 0.4-1.4s → red "Thirds" 1.4-3.0s on the beat) and must NOT
+        merge into one. Merging would drop the second phase, leaving the
+        first phase's color on screen for the entire range.
+        """
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=[
+            {"role": "hook", "text": "Thirds", "start_s": 0.4, "end_s": 1.4,
+             "position": "center", "position_y_frac": 0.56,
+             "text_color": "#FFFFFF", "sample_text": "Thirds"},
+            {"role": "hook", "text": "Thirds", "start_s": 1.4, "end_s": 3.0,
+             "position": "center", "position_y_frac": 0.56,
+             "text_color": "#E63946", "sample_text": "Thirds"},
+        ])
+        result = _collect_absolute_overlays([step], [3.0], None, "")
+        assert len(result) == 2, (
+            f"expected 2 distinct overlays for the color transition, got {len(result)}"
+        )
+        result.sort(key=lambda o: o["start_s"])
+        assert result[0]["text_color"] == "#FFFFFF"
+        assert result[0]["start_s"] == 0.4 and result[0]["end_s"] == 1.4
+        assert result[1]["text_color"] == "#E63946"
+        assert result[1]["start_s"] == 1.4 and result[1]["end_s"] == 3.0
+
 
 class TestCrossSlotMerge:
     """Tests for cross-slot same-text overlay merging (replaces old drop-duplicate logic)."""
