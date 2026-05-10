@@ -1,5 +1,34 @@
 # Nova — Deferred Work
 
+## Agent evals — Phase 2
+
+### Re-run creative_direction on 10 templates with under-baked descriptions
+**What:** When seeding eval fixtures, the export script's structural validator rejected 10 of 14 templates' `creative_direction` text as below the 50-word floor (some as short as 4 words). These templates either pre-date two-pass mode or the model produced a near-empty output that nobody caught. Re-run two-pass analysis on: `that_one_trip_to`, `morocco`, `just_fine_test2`, `just_fine___sunset_reassurance`, `impressing_myself`, `football_face_hook`, plus 4 others surfaced by `python scripts/export_eval_fixtures.py 2>&1 | grep '\[reject\]'`.
+**Why:** A 4-word creative_direction means Pass 2 (`template_recipe`) was running with no editorial guidance, so the recipe quality on those templates is whatever Gemini produced cold. Real user-facing impact: the templates' `copy_tone`, `pacing_style`, `transition_style` are likely generic or wrong.
+**How:** Trigger reanalysis from the admin UI for each template, OR add a one-off script that calls `analyze_template_task` with `analysis_mode="two_pass"` for each. Verify by re-running `scripts/export_eval_fixtures.py` — rejected count should drop.
+**Effort:** S (human: ~1h / CC: ~10 min)
+**Priority:** P2
+
+### Phase 2 — evals for the remaining 8 agents
+**What:** Extend `tests/evals/` to cover `transcript`, `platform_copy`, `audio_template`, `text_designer`, `transition_picker`, `clip_router`, `shot_ranker`. Each new agent adds: one rubric markdown under `tests/evals/rubrics/`, one structural-check function in `runners/structural.py`, one test entry-point file, one fixture directory. Phase 1 (Big 3) shipped the harness; Phase 2 is repeated application.
+**Why:** Every LLM agent in Nova has a quality dimension that silently regresses on prompt drift. Phase 1 covers the highest-leverage three (TemplateRecipe, ClipMetadata, CreativeDirection). The remaining seven are smaller surface areas but each shapes a real user-facing output.
+**How:** For each agent, mirror the Phase-1 pattern: hand-author 2-3 golden fixtures + (if persisted) export prod snapshots. Add the dispatch entry in `run_structural`. Add the agent class to `_build_agent_class_for` in `eval_runner.py`.
+**Notes:** `clip_metadata` fixtures cannot be exported from prod DB until `JobClip` (or another row) persists `best_moments`. Either add a column, or capture fixtures via a `--record` mode on the agent runtime.
+**Effort:** M (human: ~3d / CC: ~30 min per agent)
+**Priority:** P2
+
+### Cost cap on live-mode eval runs
+**What:** `pytest tests/evals/ --eval-mode=live` has no per-run cost ceiling. Each agent's `cost_per_1k_*_usd` is already in `AgentSpec`. Estimate cost from token counts and refuse to run if `> $20` unless `--allow-cost` is passed.
+**Why:** Avoid an accidental 100-fixture run on Gemini 2.5 Pro burning a credit card.
+**Effort:** XS (human: ~30min / CC: ~10 min)
+**Priority:** P3
+
+### Auto `--shadow` prompt-iteration mode
+**What:** Add `--shadow` to `tests/evals/conftest.py` and wire it through `run_eval` so that one pytest run executes BOTH the prod prompt and a candidate prompt against every fixture, judges both, and reports per-fixture deltas. Reuses `app.agents._runtime.run_with_shadow`.
+**Why:** Today the iteration loop is "stash + run + unstash + run + diff manually." The harness primitive (`run_with_shadow`) already exists; the eval-side wiring is the missing piece.
+**Effort:** S (human: ~3h / CC: ~20 min)
+**Priority:** P2
+
 ## UX Cleanup (template-first)
 
 ### #fallback-removal — Remove subject → inputs.location read-side fallback after 2026-05-16

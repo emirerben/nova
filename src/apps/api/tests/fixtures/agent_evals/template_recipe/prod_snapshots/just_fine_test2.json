@@ -1,0 +1,94 @@
+{
+  "agent": "nova.compose.template_recipe",
+  "prompt_version": "exported",
+  "input": {
+    "file_uri": "templates/bd81f267-5b5c-4eaf-b826-871f74846b14/video.mp4",
+    "file_mime": "video/mp4",
+    "analysis_mode": "single",
+    "creative_direction": "",
+    "black_segments": []
+  },
+  "raw_text": "{\"slots\": [{\"energy\": 10.0, \"position\": 1, \"priority\": 8, \"slot_type\": \"hook\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [{\"role\": \"hook\", \"end_s\": 2.9, \"effect\": \"fade-in\", \"start_s\": 1.3, \"position\": \"center\", \"sample_text\": \"I don't know who needs to hear this\", \"has_darkening\": false, \"has_narrowing\": false, \"font_size_hint\": \"large\"}, {\"role\": \"reaction\", \"end_s\": 4.9, \"effect\": \"fade-in\", \"start_s\": 3.4, \"position\": \"center\", \"sample_text\": \"but, everything works out\", \"has_darkening\": false, \"has_narrowing\": false, \"font_size_hint\": \"large\"}, {\"role\": \"reaction\", \"end_s\": 6.1, \"effect\": \"fade-in\", \"start_s\": 5.4, \"position\": \"center\", \"sample_text\": \"believe me\", \"has_darkening\": false, \"has_narrowing\": false, \"font_size_hint\": \"large\"}, {\"role\": \"reaction\", \"end_s\": 7.8, \"effect\": \"fade-in\", \"start_s\": 6.5, \"position\": \"center\", \"sample_text\": \"you'll be just fine\", \"has_darkening\": false, \"has_narrowing\": false, \"font_size_hint\": \"large\"}], \"transition_in\": \"none\", \"camera_movement\": \"pan-right\", \"target_duration_s\": 9.13}], \"copy_tone\": \"calm, encouraging, reflective\", \"shot_count\": 1, \"sync_style\": \"energy-match\", \"color_grade\": \"warm\", \"pacing_style\": \"slow building shots\", \"caption_style\": \"White sans-serif text, centered, with a subtle dark outline for readability, fading in and out.\", \"interstitials\": [], \"template_kind\": \"multiple_videos\", \"hook_duration_s\": 3.0, \"total_duration_s\": 9.13, \"transition_style\": \"continuous shot with slow pan\", \"beat_timestamps_s\": [8.498503], \"creative_direction\": \"This video template features a serene and reflective editing style, ideal for inspirational\"}",
+  "output": {
+    "slots": [
+      {
+        "energy": 10.0,
+        "position": 1,
+        "priority": 8,
+        "slot_type": "hook",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [
+          {
+            "role": "hook",
+            "end_s": 2.9,
+            "effect": "fade-in",
+            "start_s": 1.3,
+            "position": "center",
+            "sample_text": "I don't know who needs to hear this",
+            "has_darkening": false,
+            "has_narrowing": false,
+            "font_size_hint": "large"
+          },
+          {
+            "role": "reaction",
+            "end_s": 4.9,
+            "effect": "fade-in",
+            "start_s": 3.4,
+            "position": "center",
+            "sample_text": "but, everything works out",
+            "has_darkening": false,
+            "has_narrowing": false,
+            "font_size_hint": "large"
+          },
+          {
+            "role": "reaction",
+            "end_s": 6.1,
+            "effect": "fade-in",
+            "start_s": 5.4,
+            "position": "center",
+            "sample_text": "believe me",
+            "has_darkening": false,
+            "has_narrowing": false,
+            "font_size_hint": "large"
+          },
+          {
+            "role": "reaction",
+            "end_s": 7.8,
+            "effect": "fade-in",
+            "start_s": 6.5,
+            "position": "center",
+            "sample_text": "you'll be just fine",
+            "has_darkening": false,
+            "has_narrowing": false,
+            "font_size_hint": "large"
+          }
+        ],
+        "transition_in": "none",
+        "camera_movement": "pan-right",
+        "target_duration_s": 9.13
+      }
+    ],
+    "copy_tone": "calm, encouraging, reflective",
+    "shot_count": 1,
+    "sync_style": "energy-match",
+    "color_grade": "warm",
+    "pacing_style": "slow building shots",
+    "caption_style": "White sans-serif text, centered, with a subtle dark outline for readability, fading in and out.",
+    "interstitials": [],
+    "template_kind": "multiple_videos",
+    "hook_duration_s": 3.0,
+    "total_duration_s": 9.13,
+    "transition_style": "continuous shot with slow pan",
+    "beat_timestamps_s": [
+      8.498503
+    ],
+    "creative_direction": "This video template features a serene and reflective editing style, ideal for inspirational"
+  },
+  "meta": {
+    "source": "VideoTemplate.recipe_cached",
+    "template_id": "249c66a5-9ce7-4e4b-a0ba-a320da668e98",
+    "template_name": "Just Fine TEST2",
+    "exported_at": "2026-05-10T14:16:43.148551+00:00"
+  }
+}

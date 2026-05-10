@@ -29,9 +29,20 @@ Nova transforms raw real-life videos into viral short-form content (TikTok, Reel
 cp .env.example .env            # fill in values
 ./scripts/dev-auto.sh            # single-command dev env with hot reload
 
-`dev-auto.sh` starts redis + postgres (docker), runs migrations, and launches API (`uvicorn --reload`), Celery worker (`watchfiles` auto-restart on `.py` edits), and Next.js (HMR). Logs go to `.dev/<service>.log`. Do NOT restart servers manually — hot reload handles all code edits. Stop with `./scripts/dev-stop.sh`.
+`dev-auto.sh` starts redis + postgres via `docker-compose up -d redis db` (infra only — not the app), runs migrations, then launches API (`uvicorn --reload`), Celery worker (`watchfiles` auto-restart on `.py` edits), and Next.js (HMR) natively. Logs go to `.dev/<service>.log`. Do NOT restart servers manually — hot reload handles all code edits. Stop with `./scripts/dev-stop.sh`.
 
-Alternative: `docker-compose up` runs everything in containers (no hot reload for worker/api).
+Alternatives:
+- `./scripts/dev-no-docker.sh` — same flow but assumes postgres@16 + redis are already running (e.g. via `brew services`)
+- `docker-compose up` — runs the full stack (web/api/worker) in containers; rarely needed since hot-reload native dev is faster
+
+Production uses repo-root `Dockerfile` (Python 3.11 + FFmpeg/libheif/libmagic) deployed to Fly.io as both `api` and `worker` processes. Note: `src/apps/api/Dockerfile` and `src/apps/web/Dockerfile` are only referenced by docker-compose; production does not build them.
+
+## Quality checks
+- Backend tests: `cd src/apps/api && pytest` (asyncio mode auto; tests live in `src/apps/api/tests/`)
+- Backend lint: `cd src/apps/api && ruff check . && ruff format --check .`
+- Frontend lint: `cd src/apps/web && npm run lint`
+- Frontend typecheck: `cd src/apps/web && npx tsc --noEmit`
+- Frontend tests: `cd src/apps/web && npm test` (Jest)
 
 ## Domain context
 - Target output: 9:16 aspect ratio, sub-60s, H.264/AAC, 1080x1920
@@ -79,6 +90,15 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - OPENAI_API_KEY
 - GEMINI_API_KEY — required for clip analysis (music jobs) and template analysis
 
+## Agent evals
+- Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers `template_recipe`, `clip_metadata`, `creative_direction` (Big 3). Two layers: deterministic structural assertions + Claude-Sonnet LLM-as-judge.
+- Default: `cd src/apps/api && pytest tests/evals/ -v` — structural-only, replay mode, no network. Runs in CI.
+- With judge: `... --with-judge` (needs `ANTHROPIC_API_KEY`).
+- Live Gemini: `NOVA_EVAL_MODE=live ... --eval-mode=live --with-judge` (needs both keys; ~$2-5/run).
+- Manual GH Action: `.github/workflows/agent-evals.yml` (`workflow_dispatch`).
+- **Prompt-change rule:** when editing any file under `src/apps/api/prompts/` or any `render_prompt()`, bump the agent's `prompt_version` in its `AgentSpec` AND run `pytest tests/evals/<agent>_evals.py -v --with-judge --eval-mode=live` against current fixtures before merge. Compare scores against the prior version's run.
+- See `tests/evals/README.md` for the full prompt-iteration loop.
+
 ## Deploy Configuration
 
 ### Architecture: Split Deploy
@@ -90,7 +110,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Production URL: https://nova-video.vercel.app
 - Framework: Next.js (auto-detected)
 - Root directory: `src/apps/web/`
-- Deploy: auto-deploys on push to `main` via GitHub integration. **Do NOT run `vercel --prod` from a feature branch** — it overwrites production with whatever is in your local working tree, including routes/files not in `main`. This shipped a `/template/[id]` page without its backing API endpoint, crashing the global error boundary on every template click. If you need an emergency manual deploy, `git checkout main && git pull` first, then `cd src/apps/web && vercel --prod`.
+- Deploy: auto-deploys on push to `main` via GitHub integration. **Do NOT run `vercel --prod` from a feature branch** — it pushes your local working tree to production, including files not yet in `main`, and can ship a frontend route without its backing API endpoint. For an emergency manual deploy: `git checkout main && git pull`, then `cd src/apps/web && vercel --prod`.
 - Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXT_PUBLIC_GOOGLE_CLIENT_ID, NEXT_PUBLIC_GOOGLE_PICKER_API_KEY, NEXTAUTH_SECRET)
 - Deployment Protection: preview-only (production is public)
 - Preview deploys: full API access via regex CORS (`allow_origin_regex` in `main.py`)
@@ -130,139 +150,3 @@ fly secrets set -a nova-video \
   ALLOWED_ORIGINS='["http://localhost:3000","https://nova-video.vercel.app"]'
 ```
 
-## Paperclip Agent Protocol
-
-If you are running as a Paperclip agent (checked out via `paperclipai checkout`), follow this protocol strictly.
-
-### 1. Identify your role and phase
-
-Check your agent ID to determine your role. Read the issue title prefix to know your phase.
-
-| Agent ID (first 8) | Role | Gstack Skill by Phase |
-|---|---|---|
-| `dab11201` | CEO | `/plan-ceo-review` |
-| `1741ddd3` | CTO | ARCHITECT: `/plan-eng-review` or `/investigate` · REVIEW: `/review` |
-| `b8efd434` | Frontend Eng | IMPLEMENT: code · SHIP: `/ship` |
-| `3f30b797` | Backend Eng | IMPLEMENT: code · SHIP: `/ship` |
-| `4b21e253` | Head of Design | `/plan-design-review` or `/design-consultation` |
-| `35cc54f8` | DevOps Lead | `/land-and-deploy` then `/canary` then stack verification |
-| `e73f2cd9` | QA Engineer | `/qa` then pipeline test with real videos |
-
-### 2. Run your gstack skill
-
-Your gstack skill IS your workflow. Run it — don't do the work ad-hoc.
-
-### 3. Branch isolation
-
-**Always create a feature branch before writing any code:**
-```bash
-git checkout main && git pull
-git checkout -b nov-<issue-number>/<short-description>
-```
-If a prior phase already created a branch (check the issue description), use that branch instead.
-
-### 4. Do ONLY your phase
-
-**You execute YOUR phase only.** Do not investigate, implement, review, test, ship, AND deploy. Just do your one phase.
-
-When done:
-
-1. Mark your issue as `done`:
-   ```bash
-   curl -s -X PATCH "http://127.0.0.1:3100/api/issues/<your-issue-id>" \
-     -H "Content-Type: application/json" -d '{"status": "done"}'
-   ```
-2. Add a completion comment describing what you did
-3. **Advance the chain** — find the next issue and move it from `backlog` to `todo` (see below)
-
-### 5. Pre-created chain — advance, don't create
-
-**All issues in the chain are pre-created.** You do NOT need to create the next issue. It already exists with status `backlog`.
-
-**When you finish your phase, find the next issue and set it to `todo`:**
-
-```bash
-# List backlog issues to find the next one in the chain
-curl -s "http://127.0.0.1:3100/api/companies/585add97-6824-4df2-8b39-5bbc6150829e/issues?status=backlog" \
-  | python3 -c "import sys,json; [print(f'{i[\"identifier\"]}: {i[\"title\"]}') for i in json.load(sys.stdin)]"
-
-# Move the next issue to todo
-curl -s -X PATCH "http://127.0.0.1:3100/api/issues/<next-issue-id>" \
-  -H "Content-Type: application/json" -d '{"status": "todo"}'
-```
-
-**How to identify the next issue:**
-- Issues in the same chain share a `parentId` or have sequential identifiers (NOV-20, NOV-21, NOV-22...)
-- The title prefix tells you the phase: ARCHITECT → IMPLEMENT → REVIEW → QA → SHIP → DEPLOY
-- Find the backlog issue whose phase comes after yours
-
-**If no next issue exists in backlog** (edge case — the chain wasn't pre-created):
-Create it using the phase chain table:
-
-| After your phase... | Next phase | Assign to |
-|---|---|---|
-| PLAN | ARCHITECT | CTO `1741ddd3-174c-42e0-85b4-fde5ba7fec48` |
-| DESIGN | ARCHITECT | CTO `1741ddd3-174c-42e0-85b4-fde5ba7fec48` |
-| ARCHITECT | IMPLEMENT | Backend `3f30b797-86b7-4ce9-8fec-6e42dbbca247` or Frontend `b8efd434-ef92-4f55-99e2-6d85e0a3df8e` |
-| IMPLEMENT | REVIEW | CTO `1741ddd3-174c-42e0-85b4-fde5ba7fec48` |
-| REVIEW | QA | QA `e73f2cd9-6717-4eff-8b05-b339e6223ac1` |
-| QA | SHIP | Backend `3f30b797-86b7-4ce9-8fec-6e42dbbca247` |
-| SHIP | DEPLOY | DevOps `35cc54f8-3ec8-4831-83ac-3b37445e38f4` |
-| DEPLOY | — | Chain complete |
-
-### 6. Pipeline-specific rules
-
-- Read `agents/VIDEO_CONTEXT.md` before any pipeline work
-- Do NOT use MoviePy / VideoFileClip — use subprocess FFmpeg
-- QA Engineer: after `/qa`, also test with real videos from `~/Downloads` (find mp4/mov files, upload, create job, verify output with ffprobe)
-- DevOps Lead: after deploy, run full stack verification (API health, Fly.io processes, DB, Redis, Celery, GCS, Gemini, templates, frontend)
-
-### 7. Full playbook reference
-
-For detailed playbooks per goal type, read:
-`/Users/emirerben/.openclaw/workspace/startups/nova/PAPERCLIP.md`
-
-## gstack
-
-Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude-in-chrome__*` tools.
-
-Install (per developer):
-```
-git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack && cd ~/.claude/skills/gstack && ./setup
-```
-
-Available gstack skills:
-- `/office-hours`
-- `/plan-ceo-review`
-- `/plan-eng-review`
-- `/plan-design-review`
-- `/design-consultation`
-- `/design-shotgun`
-- `/design-html`
-- `/review`
-- `/ship`
-- `/land-and-deploy`
-- `/canary`
-- `/benchmark`
-- `/browse`
-- `/connect-chrome`
-- `/qa`
-- `/qa-only`
-- `/design-review`
-- `/setup-browser-cookies`
-- `/setup-deploy`
-- `/setup-gbrain`
-- `/retro`
-- `/investigate`
-- `/document-release`
-- `/codex`
-- `/cso`
-- `/autoplan`
-- `/plan-devex-review`
-- `/devex-review`
-- `/careful`
-- `/freeze`
-- `/guard`
-- `/unfreeze`
-- `/gstack-upgrade`
-- `/learn`

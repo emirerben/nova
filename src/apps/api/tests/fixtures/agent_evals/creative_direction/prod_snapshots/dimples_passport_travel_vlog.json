@@ -1,0 +1,18 @@
+{
+  "agent": "nova.compose.creative_direction",
+  "prompt_version": "exported",
+  "input": {
+    "file_uri": "templates/dimplespassport-travel-vlog.mp4",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "This template creates a dynamic and energetic travel vlog intro. The pacing is rapid, featuring a quick succession of shots (0.5-1.5 seconds) that are hard-cut precisely on the beat of the driving, percussive soundtrack. The color grade is consistently vintage and slightly desaturated, giving the footage a cinematic, filmic quality. The key creative element is the title sequence, where the destination name is displayed prominently in a jumbo, font-cycling style that animates through various scripts and serifs, creating a sense of energy and diversity. This title effect is combined with a letterbox (cinematic black bars) that appears during a fast-paced montage, further enhancing the cinematic feel. All camera movements are smooth, favouring epic wide shots and drone footage to showcase landscapes and locations. The overall effect is a professional, high-energy, and visually captivating introduction to a travel destination.",
+  "output": {
+    "text": "This template creates a dynamic and energetic travel vlog intro. The pacing is rapid, featuring a quick succession of shots (0.5-1.5 seconds) that are hard-cut precisely on the beat of the driving, percussive soundtrack. The color grade is consistently vintage and slightly desaturated, giving the footage a cinematic, filmic quality. The key creative element is the title sequence, where the destination name is displayed prominently in a jumbo, font-cycling style that animates through various scripts and serifs, creating a sense of energy and diversity. This title effect is combined with a letterbox (cinematic black bars) that appears during a fast-paced montage, further enhancing the cinematic feel. All camera movements are smooth, favouring epic wide shots and drone footage to showcase landscapes and locations. The overall effect is a professional, high-energy, and visually captivating introduction to a travel destination."
+  },
+  "meta": {
+    "source": "VideoTemplate.recipe_cached.creative_direction",
+    "template_id": "7b4a98d5-cf76-4724-a870-e2388d590932",
+    "template_name": "Dimples Passport Travel Vlog",
+    "exported_at": "2026-05-10T14:16:43.147347+00:00"
+  }
+}

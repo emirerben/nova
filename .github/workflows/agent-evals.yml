@@ -1,0 +1,69 @@
+name: Agent evals
+
+# Manual trigger only. Default CI already runs structural-only evals via the
+# main pytest job; this workflow is the live + judge run that costs real money
+# and shouldn't fire on every push.
+on:
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: "Which agent to eval (template_recipe | clip_metadata | creative_direction | all)"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - template_recipe
+          - clip_metadata
+          - creative_direction
+      with_judge:
+        description: "Run Claude-Sonnet judge"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install API dependencies
+        working-directory: src/apps/api
+        run: pip install -e ".[dev]"
+
+      - name: Pick test target
+        id: target
+        run: |
+          case "${{ inputs.agent }}" in
+            template_recipe)
+              echo "path=tests/evals/test_template_recipe_evals.py" >> "$GITHUB_OUTPUT" ;;
+            clip_metadata)
+              echo "path=tests/evals/test_clip_metadata_evals.py" >> "$GITHUB_OUTPUT" ;;
+            creative_direction)
+              echo "path=tests/evals/test_creative_direction_evals.py" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "path=tests/evals/" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Pick judge flag
+        id: judge
+        run: |
+          if [ "${{ inputs.with_judge }}" = "true" ]; then
+            echo "flag=--with-judge" >> "$GITHUB_OUTPUT"
+          else
+            echo "flag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run live agent evals
+        working-directory: src/apps/api
+        env:
+          NOVA_EVAL_MODE: live
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          pytest ${{ steps.target.outputs.path }} -v ${{ steps.judge.outputs.flag }} --eval-mode=live
