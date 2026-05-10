@@ -1,5 +1,6 @@
 """Unit tests for tasks/template_orchestrate.py — all external calls mocked."""
 
+import os
 import subprocess
 import uuid
 from unittest.mock import MagicMock, patch
@@ -285,6 +286,100 @@ class TestPreBurnCurtainSlotText:
         assert cmd[preset_idx + 1] == "ultrafast", (
             f"Expected ultrafast preset for intermediate, got: {cmd[preset_idx + 1]}"
         )
+
+
+class TestConcatDemuxerStreamCopyFallback:
+    """`_concat_demuxer` falls back to a full re-encode when stream-copy
+    succeeds but the muxed duration doesn't match expected.
+
+    This is the load-bearing safety net: if a future change breaks the
+    body-slot audio-layout invariant, stream-copy will silently truncate at
+    the first bad slot. The verify-and-fallback path catches that and ships
+    a re-encoded full-duration output instead. Without this test, a refactor
+    that swallows the verify path could ship broken outputs unnoticed.
+    """
+
+    def test_falls_back_to_reencode_when_stream_copy_truncates(self, tmp_path):
+        from types import SimpleNamespace
+
+        from app.tasks.template_orchestrate import _concat_demuxer
+
+        # Stream-copy "succeeds" (rc=0) but the muxed file's probed duration
+        # is 1.0s versus expected 4.0s — must fall through to re-encode.
+        copy_call = MagicMock(returncode=0, stderr=b"")
+        encode_call = MagicMock(returncode=0, stderr=b"")
+
+        # Two slot files, each "expected" to contribute 2.0s.
+        slots = [str(tmp_path / "slot_a.mp4"), str(tmp_path / "slot_b.mp4")]
+        for s in slots:
+            open(s, "wb").write(b"x")
+
+        # The copy_tmp file needs to exist so the verify branch fires.
+        copy_tmp = str(tmp_path / "out.mp4.copy.mp4")
+
+        def _fake_run(cmd, *args, **kwargs):
+            # First call = stream-copy → write the temp output so size>0,
+            # then probe is called against it.
+            if "-c" in cmd and cmd[cmd.index("-c") + 1] == "copy":
+                open(copy_tmp, "wb").write(b"copied-bytes")
+                return copy_call
+            return encode_call
+
+        run_target = "app.tasks.template_orchestrate.subprocess.run"
+        with patch(run_target, side_effect=_fake_run) as mock_run:
+            with patch("app.pipeline.probe.probe_video") as mock_probe:
+                # Probe returns 1.0s for the muxed output (truncated), so the
+                # tolerance check fails and we fall through. expected_duration_s
+                # is supplied by the caller, so per-input probes are NOT called.
+                mock_probe.return_value = SimpleNamespace(duration_s=1.0)
+                _concat_demuxer(
+                    slots,
+                    str(tmp_path / "out.mp4"),
+                    str(tmp_path),
+                    expected_duration_s=4.0,
+                )
+
+        # Two subprocess.run calls: the failed stream-copy + the re-encode fallback.
+        assert mock_run.call_count == 2
+        last_cmd = mock_run.call_args_list[-1][0][0]
+        # The fallback uses _encoding_args which sets -preset ultrafast.
+        assert "-preset" in last_cmd
+        assert last_cmd[last_cmd.index("-preset") + 1] == "ultrafast"
+        # And the rejected copy_tmp must have been cleaned up before the
+        # fallback wrote its own output_path.
+        assert not os.path.exists(copy_tmp)
+
+    def test_skips_per_input_probe_when_expected_duration_provided(self, tmp_path):
+        """When the caller knows slot durations (it always does — they live
+        on SlotPlan), we MUST NOT spawn an ffprobe per input. That defeats
+        the entire point of stream-copy: an N+1 probe storm on the success
+        path would dwarf the mux time."""
+        from types import SimpleNamespace
+
+        from app.tasks.template_orchestrate import _concat_demuxer
+
+        slots = [str(tmp_path / "a.mp4"), str(tmp_path / "b.mp4"), str(tmp_path / "c.mp4")]
+        for s in slots:
+            open(s, "wb").write(b"x")
+        copy_tmp = str(tmp_path / "out.mp4.copy.mp4")
+
+        def _fake_run(cmd, *args, **kwargs):
+            open(copy_tmp, "wb").write(b"ok")
+            return MagicMock(returncode=0, stderr=b"")
+
+        with patch("app.tasks.template_orchestrate.subprocess.run", side_effect=_fake_run):
+            with patch("app.pipeline.probe.probe_video") as mock_probe:
+                # Probe duration matches expected exactly → fast path.
+                mock_probe.return_value = SimpleNamespace(duration_s=6.0)
+                _concat_demuxer(
+                    slots,
+                    str(tmp_path / "out.mp4"),
+                    str(tmp_path),
+                    expected_duration_s=6.0,
+                )
+
+        # Exactly ONE probe call — the muxed output. No per-input probes.
+        assert mock_probe.call_count == 1
 
 
 class TestConcatDemuxerPreset:
