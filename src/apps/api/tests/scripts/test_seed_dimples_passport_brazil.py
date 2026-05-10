@@ -114,3 +114,33 @@ class TestJoinedCaptionSlot6:
         assert overlay["text_size_px"] == _seed.PERU_SIZE_PX
         assert overlay["text_color"].upper() == _seed.PERU_COLOR.upper()
         assert overlay["position_y_frac"] == pytest.approx(_seed.PERU_Y_FRAC)
+
+
+class TestRequiredInputs:
+    """The seed must declare a `location` input so the template page renders
+    a country/city field. The key name MUST match what
+    _resolve_user_subject() in template_orchestrate.py reads."""
+
+    def test_declares_single_location_input(self):
+        assert len(_seed.REQUIRED_INPUTS) == 1
+        spec = _seed.REQUIRED_INPUTS[0]
+        assert spec["key"] == "location", (
+            "key must be 'location' — _resolve_user_subject reads inputs.location"
+        )
+
+    def test_location_is_required(self):
+        spec = _seed.REQUIRED_INPUTS[0]
+        assert spec["required"] is True, (
+            "Empty location would render the seed default ('PERU') — confusing failure"
+        )
+
+    def test_max_length_fits_long_country_names(self):
+        spec = _seed.REQUIRED_INPUTS[0]
+        # "Democratic Republic of the Congo" = 32 chars; renderer auto-shrinks
+        # for overflow, so 30 is sufficient and keeps the input compact.
+        assert 20 <= spec["max_length"] <= 50
+
+    def test_has_user_facing_label_and_placeholder(self):
+        spec = _seed.REQUIRED_INPUTS[0]
+        assert spec["label"], "label is shown above the input"
+        assert spec["placeholder"], "placeholder gives the user a concrete example"

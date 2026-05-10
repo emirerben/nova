@@ -275,3 +275,114 @@ class TestGetTemplateJobStatus:
     def test_invalid_uuid_returns_404(self, client):
         res = client.get("/template-jobs/not-a-uuid/status")
         assert res.status_code == 404
+
+
+class TestInputsWhitespaceStrip:
+    """Pydantic validator on `inputs` strips outer whitespace so " Tokyo "
+    doesn't render as "  TOKYO  " in the hook overlay. Internal whitespace
+    is preserved (e.g., "São Paulo" stays as-is)."""
+
+    def test_strips_leading_and_trailing_whitespace(self):
+        from app.routes.template_jobs import CreateTemplateJobRequest
+        req = CreateTemplateJobRequest(
+            template_id="t",
+            clip_gcs_paths=["gcs/a.mp4"],
+            inputs={"location": "  Tokyo  "},
+        )
+        assert req.inputs["location"] == "Tokyo"
+
+    def test_preserves_internal_whitespace(self):
+        from app.routes.template_jobs import CreateTemplateJobRequest
+        req = CreateTemplateJobRequest(
+            template_id="t",
+            clip_gcs_paths=["gcs/a.mp4"],
+            inputs={"location": "  São Paulo  "},
+        )
+        assert req.inputs["location"] == "São Paulo"
+
+    def test_strips_tabs_and_newlines(self):
+        from app.routes.template_jobs import CreateTemplateJobRequest
+        req = CreateTemplateJobRequest(
+            template_id="t",
+            clip_gcs_paths=["gcs/a.mp4"],
+            inputs={"location": "\tTokyo\n"},
+        )
+        assert req.inputs["location"] == "Tokyo"
+
+    def test_all_whitespace_strips_to_empty(self):
+        """Edge case: '   ' strips to ''. Downstream _validate_inputs's
+        `value.strip()` check catches this for required fields."""
+        from app.routes.template_jobs import CreateTemplateJobRequest
+        req = CreateTemplateJobRequest(
+            template_id="t",
+            clip_gcs_paths=["gcs/a.mp4"],
+            inputs={"location": "   "},
+        )
+        assert req.inputs["location"] == ""
+
+    def test_empty_inputs_dict_passes(self):
+        from app.routes.template_jobs import CreateTemplateJobRequest
+        req = CreateTemplateJobRequest(
+            template_id="t",
+            clip_gcs_paths=["gcs/a.mp4"],
+            inputs={},
+        )
+        assert req.inputs == {}
+
+
+class TestInputsControlCharScrubbing:
+    """Pydantic validator drops invisible/bidi-override characters at the
+    trust boundary. Without this, a malicious user could submit
+    "Tokyo<RLO>oxoT" — the right-to-left override would visually flip
+    rendering so the hook displays "Tokyo" backwards. Not exploitable for
+    code execution (FFmpeg uses arg arrays), but a real visual-deception
+    vector. Tab and LF are deliberately preserved (sanitize_ass_text
+    handles LF; tab is rare but harmless)."""
+
+    def _build(self, value: str) -> str:
+        from app.routes.template_jobs import CreateTemplateJobRequest
+        req = CreateTemplateJobRequest(
+            template_id="t",
+            clip_gcs_paths=["gcs/a.mp4"],
+            inputs={"location": value},
+        )
+        return req.inputs["location"]
+
+    def test_strips_carriage_return(self):
+        assert self._build("Tok\rio") == "Tokio"
+
+    def test_strips_null_byte(self):
+        assert self._build("Tok\x00yo") == "Tokyo"
+
+    def test_strips_rtl_override(self):
+        """U+202E RIGHT-TO-LEFT OVERRIDE is the bidi-disguise vector."""
+        assert self._build("Tok‮yo") == "Tokyo"
+
+    def test_strips_zero_width_space(self):
+        assert self._build("Tok​yo") == "Tokyo"
+
+    def test_strips_unicode_line_separator(self):
+        assert self._build("Tokyo ") == "Tokyo"
+
+    def test_strips_nel(self):
+        """U+0085 NEXT LINE is in the C1 range."""
+        assert self._build("Tok\x85yo") == "Tokyo"
+
+    def test_preserves_diacritics(self):
+        """Latin-1 supplement and other valid printable Unicode pass through."""
+        assert self._build("São Paulo") == "São Paulo"
+
+    def test_preserves_emoji(self):
+        """Emoji are valid printable Unicode — must survive scrubbing."""
+        assert self._build("Tokyo 🗼") == "Tokyo 🗼"
+
+    def test_preserves_tab(self):
+        """Tab is in C0 but excluded from the strip range — sanitize_ass_text
+        ignores it, and stripping would surprise users who paste from
+        spreadsheets."""
+        assert self._build("Tok\tyo") == "Tok\tyo"
+
+    def test_preserves_newline(self):
+        """LF is preserved here; sanitize_ass_text converts it to ASS \\\\N
+        line break downstream."""
+        assert self._build("Tok\nyo") == "Tok\nyo"
