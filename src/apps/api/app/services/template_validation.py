@@ -79,3 +79,40 @@ def validate_clip_count(template: VideoTemplate, n_clips: int) -> None:
                 f"got {n_clips}."
             ),
         )
+
+
+def validate_clip_total_duration(
+    template: VideoTemplate,
+    clip_durations: list[float] | None,
+) -> None:
+    """Raise 422 if the user's clips can't fill the template's audio length.
+
+    For multi-video templates: sum(clip_durations) must be >= total_duration_s.
+    For single-video templates: the lone clip must be at least as long.
+
+    No-op when clip_durations is None or empty (legacy clients that don't
+    measure duration on upload). The frontend reads durations via the
+    HTML5 video element and sends them with the job; backend trusts that
+    payload to keep job-create latency low.
+    """
+    if not clip_durations:
+        return
+
+    recipe = template.recipe_cached or {}
+    required = float(recipe.get("total_duration_s") or 0.0)
+    if required <= 0.0:
+        return  # template has no duration metadata yet; can't enforce
+
+    total = float(sum(clip_durations))
+    # Tolerate sub-second rounding from browser duration reads.
+    _TOLERANCE_S = 0.25
+    if total + _TOLERANCE_S < required:
+        short_by = required - total
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Your clips total {total:.1f}s but this template needs "
+                f"{required:.1f}s of footage. Add {short_by:.1f}s more "
+                f"(longer clip or another clip)."
+            ),
+        )

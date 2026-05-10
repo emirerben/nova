@@ -13,7 +13,7 @@ from datetime import datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,7 @@ from app.services.template_validation import (
     get_template_or_404,
     require_ready,
     validate_clip_count,
+    validate_clip_total_duration,
 )
 
 log = structlog.get_logger()
@@ -57,6 +58,11 @@ SYNTHETIC_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 class CreateTemplateJobRequest(BaseModel):
     template_id: str
     clip_gcs_paths: list[str]
+    # Per-clip durations in seconds, parallel to clip_gcs_paths. The frontend
+    # reads these via HTMLVideoElement.duration on file select; the backend
+    # uses them to reject submissions whose total footage runs short of the
+    # template's audio length. Optional for backward-compat with older clients.
+    clip_durations: list[float] | None = None
     selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
     # Per-template user inputs (e.g. {"location": "Tokyo"}). Keys are validated
     # against the template's `required_inputs` array.
@@ -70,6 +76,16 @@ class CreateTemplateJobRequest(BaseModel):
         if len(v) > 20:
             raise ValueError("Maximum 20 clips allowed")
         return v
+
+    @model_validator(mode="after")
+    def _check_duration_alignment(self) -> "CreateTemplateJobRequest":
+        if self.clip_durations is not None and len(self.clip_durations) != len(
+            self.clip_gcs_paths
+        ):
+            raise ValueError(
+                "clip_durations length must match clip_gcs_paths length"
+            )
+        return self
 
     @field_validator("selected_platforms")
     @classmethod
@@ -168,6 +184,7 @@ async def create_template_job(
     template = await get_template_or_404(req.template_id, db)
     require_ready(template)
     validate_clip_count(template, len(req.clip_gcs_paths))
+    validate_clip_total_duration(template, req.clip_durations)
     _validate_inputs(req.inputs, template.required_inputs)
 
     job = Job(

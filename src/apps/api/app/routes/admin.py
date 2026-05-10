@@ -32,6 +32,7 @@ from app.services.template_validation import (
     get_template_or_404,
     require_ready,
     validate_clip_count,
+    validate_clip_total_duration,
 )
 
 log = structlog.get_logger()
@@ -211,6 +212,10 @@ class TemplateHealthResponse(BaseModel):
 
 class TestJobRequest(BaseModel):
     clip_gcs_paths: list[str]
+    # Per-clip durations in seconds, parallel to clip_gcs_paths. Used by the
+    # backend to reject jobs whose total footage runs short of the template's
+    # audio length. Optional; admin re-render flow doesn't always have it.
+    clip_durations: list[float] | None = None
     selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
     subject: str = ""
 
@@ -222,6 +227,16 @@ class TestJobRequest(BaseModel):
         if len(v) > 20:
             raise ValueError("Maximum 20 clips allowed")
         return v
+
+    @model_validator(mode="after")
+    def _check_duration_alignment(self) -> "TestJobRequest":
+        if self.clip_durations is not None and len(self.clip_durations) != len(
+            self.clip_gcs_paths
+        ):
+            raise ValueError(
+                "clip_durations length must match clip_gcs_paths length"
+            )
+        return self
 
 
 class TestJobResponse(BaseModel):
@@ -939,6 +954,7 @@ async def create_test_job(
     template = await get_template_or_404(template_id, db)
     require_ready(template)
     validate_clip_count(template, len(req.clip_gcs_paths))
+    validate_clip_total_duration(template, req.clip_durations)
 
     job = Job(
         user_id=SYNTHETIC_USER_ID,
@@ -1759,6 +1775,129 @@ async def text_preview(
     b64 = base64.b64encode(buf.getvalue()).decode()
 
     return {"image_base64": b64, "width": CANVAS_W, "height": CANVAS_H}
+
+
+# ── Overlay preview endpoint (WYSIWYG editor preview) ─────────────────────────
+
+
+# Cap to keep this endpoint cheap; the editor only ships a single slot's overlays.
+_OVERLAY_PREVIEW_MAX_OVERLAYS = 20
+
+
+class OverlayPreviewRequest(BaseModel):
+    """One slot's worth of overlays + the cursor position the editor wants previewed.
+
+    `overlays` is the raw recipe shape (same dicts the pipeline consumes during
+    export) so the preview renders through the exact same code path. The editor
+    is responsible for shipping per-slot overlays only, not the entire recipe.
+    """
+
+    overlays: list[dict]
+    slot_duration_s: float
+    time_in_slot_s: float
+    preview_subject: str | None = None
+
+    @field_validator("overlays")
+    @classmethod
+    def _cap_overlays(cls, v: list[dict]) -> list[dict]:
+        if len(v) > _OVERLAY_PREVIEW_MAX_OVERLAYS:
+            raise ValueError(
+                f"too many overlays (max {_OVERLAY_PREVIEW_MAX_OVERLAYS})",
+            )
+        return v
+
+    @field_validator("slot_duration_s")
+    @classmethod
+    def _validate_slot_duration(cls, v: float) -> float:
+        if v <= 0 or v > 600:
+            raise ValueError("slot_duration_s must be in (0, 600]")
+        return v
+
+    @field_validator("time_in_slot_s")
+    @classmethod
+    def _validate_time(cls, v: float) -> float:
+        if v < 0 or v > 600:
+            raise ValueError("time_in_slot_s must be in [0, 600]")
+        return v
+
+
+def _substitute_subject(overlays: list[dict], subject: str | None) -> list[dict]:
+    """Mirror the frontend's resolveOverlayPreview: swap {{subject}} placeholders.
+
+    Mutates a copy of each overlay so the request payload is never modified.
+    Applies to both top-level `text` and per-span `text` so spans-overlays
+    preview correctly. When `subject` is None or empty, leaves the overlay
+    untouched (the placeholder will render literally — same as the frontend
+    behavior when the user hasn't entered a subject yet).
+    """
+    if not subject:
+        return overlays
+    placeholder = "{{subject}}"
+    out: list[dict] = []
+    for overlay in overlays:
+        copy = dict(overlay)
+        text = copy.get("text")
+        if isinstance(text, str) and placeholder in text:
+            copy["text"] = text.replace(placeholder, subject)
+        spans = copy.get("spans")
+        if isinstance(spans, list):
+            new_spans = []
+            for span in spans:
+                span_copy = dict(span)
+                span_text = span_copy.get("text")
+                if isinstance(span_text, str) and placeholder in span_text:
+                    span_copy["text"] = span_text.replace(placeholder, subject)
+                new_spans.append(span_copy)
+            copy["spans"] = new_spans
+        out.append(copy)
+    return out
+
+
+@router.post(
+    "/overlay-preview",
+    dependencies=[Depends(_require_admin)],
+)
+async def overlay_preview(req: OverlayPreviewRequest):
+    """Render the editor's overlay layer at time T as a transparent PNG.
+
+    Used by OverlayPreview.tsx for WYSIWYG. Reuses the export pipeline's
+    draw helpers so the preview is pixel-identical to the exported video.
+    """
+    import os as _os  # noqa: PLC0415
+    import shutil  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
+    from fastapi.responses import Response  # noqa: PLC0415
+
+    from app.pipeline.text_overlay import render_overlays_at_time  # noqa: PLC0415
+
+    overlays = _substitute_subject(req.overlays, req.preview_subject)
+
+    tmp_dir = tempfile.mkdtemp(prefix="overlay_preview_route_")
+    png_path = _os.path.join(tmp_dir, "preview.png")
+    try:
+        render_overlays_at_time(
+            overlays=overlays,
+            slot_duration_s=req.slot_duration_s,
+            time_in_slot_s=req.time_in_slot_s,
+            output_path=png_path,
+        )
+        with open(png_path, "rb") as f:
+            data = f.read()
+    except Exception as exc:
+        log.warning("overlay_preview_failed", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"overlay preview render failed: {exc}",
+        ) from exc
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return Response(
+        content=data,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=60"},
+    )
 
 
 # ── Presigned upload endpoint ──────────────────────────────────────────────────
