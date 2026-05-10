@@ -596,11 +596,20 @@ def _run_template_job(job_id: str) -> None:
                 f"{exc.code}: {exc.message}",
             ) from exc
 
-        # Build mapping: clip_id → GCS path for re-render
+        # Build mapping: clip_id → GCS path for re-render.
+        # Use clip_metas_ordered (not file_refs) as the source of truth for
+        # clip_id, because file_refs is None for cache-hit clips even though
+        # those clips have valid clip_metas. The matcher consumes
+        # clip_meta.clip_id, so this lookup key matches what the assembly
+        # plan references. Skip clips whose meta is None (terminal failure).
         if mixed_media:
             clip_id_to_gcs = {f"clip_{i}": gcs for i, gcs in enumerate(clip_paths_gcs)}
         else:
-            clip_id_to_gcs = {ref.name: gcs for ref, gcs in zip(file_refs, clip_paths_gcs)}
+            clip_id_to_gcs = {
+                cm.clip_id: gcs
+                for cm, gcs in zip(clip_metas_ordered, clip_paths_gcs)
+                if cm is not None
+            }
 
         # Persist assembly plan
         plan_data = {
@@ -629,8 +638,13 @@ def _run_template_job(job_id: str) -> None:
                 f"clip_{i}": path for i, path in enumerate(local_clip_paths)
             }
         else:
+            # Same convention as clip_id_to_gcs above: key by
+            # clip_metas_ordered[i].clip_id so cache-hit clips (file_refs=None)
+            # are still findable. Matcher's assembly plan uses clip_meta.clip_id.
             clip_id_to_local = {
-                ref.name: path for ref, path in zip(file_refs, local_clip_paths)
+                cm.clip_id: path
+                for cm, path in zip(clip_metas_ordered, local_clip_paths)
+                if cm is not None
             }
         _add_locked_template_source(
             recipe_data, template_gcs_path, tmpdir,
