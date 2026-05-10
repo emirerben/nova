@@ -1163,6 +1163,74 @@ class SlotPlan:
     reframed_path: str  # output path for this slot
     color_transfer: str = ""  # from probe; drives HLG/PQ tonemap decision in reframe
     output_fit: str = "crop"  # "crop" (default) | "letterbox" (preserve full frame + blurred bg)
+    # Rule-of-thirds grid overlay (sourced from the recipe slot dict via _extract_grid_params).
+    has_grid: bool = False
+    grid_color: str = "#FFFFFF"
+    grid_opacity: float = 0.6
+    grid_thickness: int = 3
+    grid_highlight_intersection: str | None = None
+    grid_highlight_color: str = "#E63946"
+    grid_highlight_windows: list[tuple[float, float]] | None = None
+
+
+_GRID_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_GRID_INTERSECTIONS = {"top-left", "top-right", "bottom-left", "bottom-right"}
+
+
+def _extract_grid_params(slot: dict) -> dict:
+    """Re-validate grid params from a recipe slot dict at the FFmpeg boundary.
+
+    RecipeSlotSchema (admin.py) validates writes via the API, but recipes are
+    stored as JSONB and bypass Pydantic at render time. A hand-edited recipe
+    with a bad hex value would otherwise reach ffmpeg as a broken filter graph
+    (silent failure or cryptic error). Fail fast here with a clear message.
+    """
+    if not bool(slot.get("has_grid", False)):
+        return {"has_grid": False}
+
+    pos = slot.get("position")
+    color = slot.get("grid_color", "#FFFFFF")
+    if not _GRID_COLOR_RE.fullmatch(color):
+        raise ValueError(f"slot {pos}: grid_color {color!r} must match ^#[0-9A-Fa-f]{{6}}$")
+    highlight_color = slot.get("grid_highlight_color", "#E63946")
+    if not _GRID_COLOR_RE.fullmatch(highlight_color):
+        raise ValueError(
+            f"slot {pos}: grid_highlight_color {highlight_color!r} must match "
+            "^#[0-9A-Fa-f]{6}$",
+        )
+
+    opacity = max(0.0, min(1.0, float(slot.get("grid_opacity", 0.6))))
+    thickness = max(1, min(20, int(slot.get("grid_thickness", 3))))
+
+    intersection = slot.get("grid_highlight_intersection")
+    if intersection is not None and intersection not in _GRID_INTERSECTIONS:
+        raise ValueError(
+            f"slot {pos}: grid_highlight_intersection {intersection!r} must be one of "
+            f"{sorted(_GRID_INTERSECTIONS)} or null",
+        )
+
+    raw_windows = slot.get("grid_highlight_windows")
+    windows: list[tuple[float, float]] | None = None
+    if raw_windows is not None:
+        windows = []
+        for w in raw_windows:
+            start, end = float(w[0]), float(w[1])
+            if start < 0 or end <= start:
+                raise ValueError(
+                    f"slot {pos}: grid_highlight_windows entry ({start}, {end}) "
+                    "must satisfy 0 <= start < end",
+                )
+            windows.append((start, end))
+
+    return {
+        "has_grid": True,
+        "grid_color": color,
+        "grid_opacity": opacity,
+        "grid_thickness": thickness,
+        "grid_highlight_intersection": intersection,
+        "grid_highlight_color": highlight_color,
+        "grid_highlight_windows": windows,
+    }
 
 
 def _plan_slots(
@@ -1258,6 +1326,8 @@ def _plan_slots(
             speed_factor=speed_factor,
         )
 
+        grid_params = _extract_grid_params(step.slot)
+
         plans.append(SlotPlan(
             slot_idx=i,
             clip_path=local_path,
@@ -1271,6 +1341,7 @@ def _plan_slots(
             reframed_path=os.path.join(tmpdir, f"slot_{i}.mp4"),
             color_transfer=color_transfer,
             output_fit=output_fit,
+            **grid_params,
         ))
 
     return plans, clip_cursors, cumulative_s
@@ -1290,6 +1361,13 @@ def _render_planned_slot(plan: SlotPlan) -> str:
         color_hint=plan.color_hint,
         speed_factor=plan.speed_factor,
         output_fit=plan.output_fit,
+        has_grid=plan.has_grid,
+        grid_color=plan.grid_color,
+        grid_opacity=plan.grid_opacity,
+        grid_thickness=plan.grid_thickness,
+        grid_highlight_intersection=plan.grid_highlight_intersection,
+        grid_highlight_color=plan.grid_highlight_color,
+        grid_highlight_windows=plan.grid_highlight_windows,
     )
     return plan.reframed_path
 
@@ -2190,14 +2268,35 @@ def _find_clip_meta_by_id(clip_id: str, clip_metas: list | None) -> "ClipMeta | 
     return None
 
 
+def _embedded_allcaps_token(sample: str) -> str | None:
+    """Return the single all-caps token embedded in mixed-case text, or None.
+
+    Matches the slot 6 "Welcome to PERU" pattern: one all-caps word (length > 1,
+    alpha) inside a phrase that has at least one lowercase word. Returns None
+    when the text is fully all-caps, fully title-case, has no all-caps token,
+    or has more than one (ambiguous → don't guess).
+    """
+    words = sample.split()
+    if not (2 <= len(words) <= 5):
+        return None
+    if sample.isupper():
+        return None
+    allcaps = [w for w in words if w.isupper() and len(w) > 1 and w.isalpha()]
+    if len(allcaps) != 1:
+        return None
+    return allcaps[0]
+
+
 def _is_subject_placeholder(sample: str) -> bool:
     """Return True if sample_text looks like a variable place/topic name.
 
-    Heuristic: short ALL-CAPS text (e.g. "PERU", "NYC") or a short
-    title-cased phrase where every word is capitalized (e.g. "New York")
-    is likely a template variable that should be replaced with the user's
-    subject.  Fixed phrases like "Welcome to" (has lowercase word) or
-    "discovering a hidden river" (long, lowercase) do NOT match.
+    Heuristic: short ALL-CAPS text (e.g. "PERU", "NYC"), a short
+    title-cased phrase where every word is capitalized (e.g. "New York"),
+    or a mixed-case phrase containing a single all-caps token (e.g.
+    "Welcome to PERU") is likely a template variable that should be
+    replaced with the user's subject. Fixed phrases like "Welcome to"
+    (no all-caps token) or "discovering a hidden river" (long, lowercase)
+    do NOT match.
     """
     if not sample or not sample.strip():
         return False
@@ -2209,7 +2308,72 @@ def _is_subject_placeholder(sample: str) -> bool:
     # Excludes mixed-case phrases like "Welcome to", "Check this"
     if len(words) <= 2 and all(w[0].isupper() for w in words):
         return True
+    # Mixed-case phrase with a single embedded all-caps token: "Welcome to PERU"
+    if _embedded_allcaps_token(sample) is not None:
+        return True
     return False
+
+
+def _substitute_subject(sample: str, subject: str) -> str:
+    """Replace the placeholder portion of sample with the user's subject.
+
+    - "PERU" + "Tokyo"            → "TOKYO"   (whole-text caps)
+    - "Peru" + "Tokyo"            → "Tokyo"   (whole-text title-case, subject as-is)
+    - "Welcome to PERU" + "Tokyo" → "Welcome to TOKYO" (token-only swap)
+
+    Caller must check `_is_subject_placeholder(sample)` first; this function
+    assumes the placeholder rules already matched.
+    """
+    if sample.isupper():
+        return subject.upper()
+    token = _embedded_allcaps_token(sample)
+    if token is not None:
+        return " ".join(subject.upper() if w == token else w for w in sample.split())
+    return subject
+
+
+def _match_casing(text: str, sample: str) -> str:
+    """Cast `text` to mirror the casing pattern of `sample`.
+
+    Used by the `subject_part` branch to keep an aesthetic intact when
+    substituting a user input into a fragment placeholder. If the original
+    placeholder was lowercase ("lon"), we want the substituted value to
+    also be lowercase ("par" for user input "Paris").
+
+    Returns text unchanged when sample carries no signal (empty / no cased
+    chars / mixed case). The heuristic branch uses `_substitute_subject`
+    instead — it handles the embedded-allcaps case this helper cannot.
+    """
+    if not text or not sample:
+        return text
+    if not any(c.isalpha() for c in sample):
+        return text
+    if sample.isupper():
+        return text.upper()
+    if sample.islower():
+        return text.lower()
+    if sample.istitle():
+        return text.title()
+    return text
+
+
+def _split_subject(subject: str, part: str) -> str:
+    """Slice `subject` according to `part` ("first_half"/"second_half"/"full").
+
+    Midpoint with ceil for first half so the first overlay is the larger
+    half on odd lengths (mirrors the original "lon"/"don" 3+3 split).
+    Unknown values fall through to the full subject.
+    """
+    if part == "full":
+        return subject
+    if not subject:
+        return ""
+    n = (len(subject) + 1) // 2  # ceil
+    if part == "first_half":
+        return subject[:n]
+    if part == "second_half":
+        return subject[n:]
+    return subject
 
 
 def _resolve_overlay_text(
@@ -2226,16 +2390,55 @@ def _resolve_overlay_text(
     sample_text looks like a place-name placeholder — this prevents clip
     analysis text (e.g. "YOU", "discovering a hidden river") from overriding
     the user's subject.
+
+    `subject_part` on the overlay (one of "first_half", "second_half", "full")
+    is an explicit opt-in for subject substitution that bypasses the casing
+    heuristic. This lets templates split a single user input across two
+    overlays (e.g. "lon" + "don" → "par" + "is" for subject "Paris") that
+    the lowercase-fragment heuristic would never match.
+
+    `subject_template` on the overlay is a format string with a `{subject}`
+    placeholder, used for typewriter-style sentences that embed the city in a
+    longer phrase (e.g. "that one trip to {subject}"). Optional companion
+    `subject_chars` slices the user input to the first N characters before
+    substitution, so a partial typewriter beat reveals only "Mor" instead of
+    the full "Morocco". Empty subject falls back to the literal text so admin
+    previews still render.
     """
     sample = overlay.get("sample_text", "") or overlay.get("text", "")
 
     if role == "cta":
         return ""  # CTA text generated later by copy_writer
 
+    # Explicit subject_template (typewriter/embedded) beats both subject_part
+    # and the heuristic. Used for slots whose text is a sentence wrapping the
+    # subject (e.g. "that one trip to london").
+    subject_template = overlay.get("subject_template")
+    if isinstance(subject_template, str) and "{subject}" in subject_template:
+        if not subject:
+            return overlay.get("text") or sample
+        chars = overlay.get("subject_chars")
+        try:
+            chars = int(chars) if chars is not None else None
+        except (TypeError, ValueError):
+            chars = None
+        sliced = subject[:chars] if (chars is not None and chars > 0) else subject
+        return subject_template.format(subject=sliced)
+
+    # Explicit subject_part beats the heuristic: the template author has
+    # tagged this overlay as a slot for the user's subject. Empty subject
+    # falls back to sample_text so admin previews and dry runs still
+    # render the placeholder.
+    subject_part = overlay.get("subject_part")
+    if subject_part in ("first_half", "second_half", "full"):
+        if not subject:
+            return sample
+        return _match_casing(_split_subject(subject, subject_part), sample)
+
     # Subject substitution: if the template text looks like a variable
     # place/topic name and we have a subject, substitute it.
     if subject and _is_subject_placeholder(sample):
-        return subject.upper() if sample.isupper() else subject
+        return _substitute_subject(sample, subject)
 
     # If the template already has text for this overlay, USE IT.
     # "Welcome to" means "Welcome to" — not clip hook_text.

@@ -1569,6 +1569,443 @@ class TestResolveOverlayText:
         assert result == ""
 
 
+class TestSubjectSubstitution:
+    """Heuristic substitution of user `subject` into placeholder overlay text.
+
+    Covers slot 5 ("PERU" → "TOKYO") and the Dimples Passport slot 6
+    regression — "Welcome to PERU" must also substitute when the user
+    provides a location, otherwise the joined caption mismatches the hook.
+    """
+
+    def test_whole_text_allcaps_replaced_uppercased(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "hook", None, {"text": "PERU"}, subject="Tokyo",
+        )
+        assert result == "TOKYO"
+
+    def test_title_case_replaced_subject_as_is(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "hook", None, {"text": "Peru"}, subject="Tokyo",
+        )
+        assert result == "Tokyo"
+
+    def test_embedded_allcaps_token_only_token_swapped(self):
+        """REGRESSION: slot 6 'Welcome to PERU' must substitute the PERU token
+        when subject is provided — otherwise hook says TOKYO but the joined
+        caption still says PERU."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "hook", None, {"text": "Welcome to PERU"}, subject="Tokyo",
+        )
+        assert result == "Welcome to TOKYO"
+
+    def test_embedded_allcaps_lowercase_subject_uppercased(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "hook", None, {"text": "Welcome to PERU"}, subject="brazil",
+        )
+        assert result == "Welcome to BRAZIL"
+
+    def test_no_subject_passes_through_unchanged(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "hook", None, {"text": "Welcome to PERU"}, subject="",
+        )
+        assert result == "Welcome to PERU"
+
+    def test_non_ascii_subject_preserved(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "hook", None, {"text": "PERU"}, subject="São Paulo",
+        )
+        assert result == "SÃO PAULO"
+
+    def test_fixed_phrase_no_substitution(self):
+        """'Welcome to' has no all-caps token — must NOT substitute."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "hook", None, {"text": "Welcome to"}, subject="Tokyo",
+        )
+        assert result == "Welcome to"
+
+    def test_lowercase_phrase_no_substitution(self):
+        """'discovering a hidden river' has no placeholder shape — passes through."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "hook", None, {"text": "discovering a hidden river"}, subject="Tokyo",
+        )
+        assert result == "discovering a hidden river"
+
+    def test_two_allcaps_tokens_ambiguous_no_substitution(self):
+        """Two all-caps tokens → ambiguous which to swap; pass through unchanged."""
+        from app.tasks.template_orchestrate import _is_subject_placeholder
+        # Whole-text all-caps still matches the existing rule (≤3 words).
+        # But "BREAKING news from PERU" has TWO embedded all-caps tokens
+        # (4 words, mixed case) — must not match.
+        assert _is_subject_placeholder("BREAKING news from PERU") is False
+
+    def test_is_subject_placeholder_detects_welcome_pattern(self):
+        from app.tasks.template_orchestrate import _is_subject_placeholder
+        assert _is_subject_placeholder("Welcome to PERU") is True
+        assert _is_subject_placeholder("Living in TOKYO") is True
+
+    def test_is_subject_placeholder_rejects_no_allcaps_token(self):
+        from app.tasks.template_orchestrate import _is_subject_placeholder
+        assert _is_subject_placeholder("Welcome to peru") is False
+        assert _is_subject_placeholder("Welcome to") is False
+
+
+class TestEmbeddedAllcapsToken:
+    """Edge cases for the new heuristic helper. Most are reachable indirectly
+    via _is_subject_placeholder/_substitute_subject, but the helper has its
+    own filter rules (length, alpha, word-count window) worth pinning."""
+
+    def test_single_word_returns_none(self):
+        from app.tasks.template_orchestrate import _embedded_allcaps_token
+        assert _embedded_allcaps_token("PERU") is None
+
+    def test_six_or_more_words_returns_none(self):
+        """5-word window is the upper bound; 6 words exit the heuristic."""
+        from app.tasks.template_orchestrate import _embedded_allcaps_token
+        assert _embedded_allcaps_token("a b c d e PERU") is None
+
+    def test_length_one_allcaps_filtered(self):
+        """Single-letter all-caps ('I', 'A') is excluded — too noisy."""
+        from app.tasks.template_orchestrate import _embedded_allcaps_token
+        assert _embedded_allcaps_token("Welcome to A") is None
+
+    def test_non_alpha_token_filtered(self):
+        """Tokens with digits/punctuation are excluded."""
+        from app.tasks.template_orchestrate import _embedded_allcaps_token
+        assert _embedded_allcaps_token("Welcome to PERU2") is None
+        assert _embedded_allcaps_token("Visit U.S.A. tomorrow") is None
+
+    def test_fully_uppercase_returns_none(self):
+        """Whole-text caps is handled by the existing rule, not this helper."""
+        from app.tasks.template_orchestrate import _embedded_allcaps_token
+        assert _embedded_allcaps_token("WELCOME TO PERU") is None
+
+    def test_happy_path_returns_token(self):
+        from app.tasks.template_orchestrate import _embedded_allcaps_token
+        assert _embedded_allcaps_token("Welcome to PERU") == "PERU"
+
+    def test_five_word_with_allcaps_matches(self):
+        """Top of the 2-5 word window."""
+        from app.tasks.template_orchestrate import _is_subject_placeholder
+        assert _is_subject_placeholder("a b c d PERU") is True
+
+    def test_six_word_with_allcaps_rejects(self):
+        """Just past the window — must not match."""
+        from app.tasks.template_orchestrate import _is_subject_placeholder
+        assert _is_subject_placeholder("a b c d e PERU") is False
+
+
+class TestSubstituteSubjectMultiWord:
+    """User-typed subjects often have spaces ('New York', 'São Paulo') or
+    hyphens ('Saint-Tropez'). Verify the substitution doesn't break them."""
+
+    def test_multiword_subject_in_embedded_token_path(self):
+        """'Welcome to PERU' + 'New York' → 'Welcome to NEW YORK'.
+        The token-swap loop replaces only the matched token; subject's
+        internal space is preserved by .upper()."""
+        from app.tasks.template_orchestrate import _substitute_subject
+        assert _substitute_subject("Welcome to PERU", "New York") == "Welcome to NEW YORK"
+
+    def test_hyphenated_subject_in_allcaps_path(self):
+        from app.tasks.template_orchestrate import _substitute_subject
+        assert _substitute_subject("PERU", "Saint-Tropez") == "SAINT-TROPEZ"
+
+    def test_already_uppercase_subject_in_title_case_path(self):
+        """Title-case sample returns subject as-is (no .upper() applied)."""
+        from app.tasks.template_orchestrate import _substitute_subject
+        assert _substitute_subject("Peru", "TOKYO") == "TOKYO"
+
+
+class TestMatchCasing:
+    """_match_casing mirrors the casing pattern of `sample` onto `text`."""
+
+    def test_lowercase_sample_lowers_text(self):
+        from app.tasks.template_orchestrate import _match_casing
+        assert _match_casing("Paris", "lon") == "paris"
+
+    def test_uppercase_sample_uppers_text(self):
+        from app.tasks.template_orchestrate import _match_casing
+        assert _match_casing("paris", "LON") == "PARIS"
+
+    def test_title_sample_titles_text(self):
+        from app.tasks.template_orchestrate import _match_casing
+        assert _match_casing("paris", "Lon") == "Paris"
+
+    def test_empty_sample_preserves_text(self):
+        from app.tasks.template_orchestrate import _match_casing
+        assert _match_casing("paris", "") == "paris"
+
+    def test_no_cased_chars_in_sample_preserves_text(self):
+        from app.tasks.template_orchestrate import _match_casing
+        # Digits and punctuation carry no casing signal.
+        assert _match_casing("Paris", "1234") == "Paris"
+
+    def test_empty_text_returns_empty(self):
+        from app.tasks.template_orchestrate import _match_casing
+        assert _match_casing("", "LON") == ""
+
+    def test_mixed_case_sample_preserves_text(self):
+        from app.tasks.template_orchestrate import _match_casing
+        # "iPhone"-style mixed casing — neither upper/lower/title — leaves text alone.
+        assert _match_casing("paris", "iPhone") == "paris"
+
+
+class TestSplitSubject:
+    """_split_subject slices a subject at midpoint (ceil for first half)."""
+
+    def test_first_half_even_length(self):
+        from app.tasks.template_orchestrate import _split_subject
+        assert _split_subject("london", "first_half") == "lon"
+
+    def test_second_half_even_length(self):
+        from app.tasks.template_orchestrate import _split_subject
+        assert _split_subject("london", "second_half") == "don"
+
+    def test_first_half_odd_length_takes_ceil(self):
+        from app.tasks.template_orchestrate import _split_subject
+        # Paris (5) → first half "Par" (3 chars), second half "is" (2 chars)
+        assert _split_subject("Paris", "first_half") == "Par"
+        assert _split_subject("Paris", "second_half") == "is"
+
+    def test_first_half_long_word(self):
+        from app.tasks.template_orchestrate import _split_subject
+        assert _split_subject("Amsterdam", "first_half") == "Amste"
+        assert _split_subject("Amsterdam", "second_half") == "rdam"
+
+    def test_full_returns_subject_unchanged(self):
+        from app.tasks.template_orchestrate import _split_subject
+        assert _split_subject("Tokyo", "full") == "Tokyo"
+
+    def test_empty_subject_returns_empty(self):
+        from app.tasks.template_orchestrate import _split_subject
+        assert _split_subject("", "first_half") == ""
+        assert _split_subject("", "second_half") == ""
+
+    def test_single_char_subject_first_half_is_char(self):
+        from app.tasks.template_orchestrate import _split_subject
+        assert _split_subject("a", "first_half") == "a"
+        assert _split_subject("a", "second_half") == ""
+
+    def test_unknown_part_returns_full_subject(self):
+        from app.tasks.template_orchestrate import _split_subject
+        assert _split_subject("Tokyo", "third_half") == "Tokyo"
+
+
+class TestResolveOverlayTextSubjectPart:
+    """`subject_part` opt-in lets the renderer slice the user input across overlays."""
+
+    def test_first_half_substitutes_lowercase_fragment(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {"sample_text": "lon", "subject_part": "first_half"}
+        assert _resolve_overlay_text("label", None, ov, subject="Paris") == "par"
+
+    def test_second_half_substitutes_lowercase_fragment(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {"sample_text": "don", "subject_part": "second_half"}
+        assert _resolve_overlay_text("label", None, ov, subject="Paris") == "is"
+
+    def test_first_half_long_subject(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {"sample_text": "lon", "subject_part": "first_half"}
+        assert _resolve_overlay_text("label", None, ov, subject="Amsterdam") == "amste"
+
+    def test_second_half_long_subject(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {"sample_text": "don", "subject_part": "second_half"}
+        assert _resolve_overlay_text("label", None, ov, subject="Amsterdam") == "rdam"
+
+    def test_empty_subject_falls_back_to_sample_text(self):
+        """No user input → render the original placeholder so dry runs still show 'lon'/'don'."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov_first = {"sample_text": "lon", "subject_part": "first_half"}
+        ov_second = {"sample_text": "don", "subject_part": "second_half"}
+        assert _resolve_overlay_text("label", None, ov_first, subject="") == "lon"
+        assert _resolve_overlay_text("label", None, ov_second, subject="") == "don"
+
+    def test_short_subject_second_half_can_be_empty(self):
+        """Single-char subject → first_half holds it, second_half is empty.
+
+        The empty-text guard at template_orchestrate.py:1633 will skip the
+        empty overlay when assembling the video. Documented in the plan as
+        an aesthetic edge case, not a broken state.
+        """
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov_first = {"sample_text": "lon", "subject_part": "first_half"}
+        ov_second = {"sample_text": "don", "subject_part": "second_half"}
+        assert _resolve_overlay_text("label", None, ov_first, subject="a") == "a"
+        assert _resolve_overlay_text("label", None, ov_second, subject="a") == ""
+
+    def test_full_replaces_with_casing_match(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        # Title-cased sample → title-cased substitution.
+        ov_title = {"sample_text": "London", "subject_part": "full"}
+        assert _resolve_overlay_text("label", None, ov_title, subject="tokyo") == "Tokyo"
+        # ALL-CAPS sample → ALL-CAPS substitution.
+        ov_upper = {"sample_text": "LONDON", "subject_part": "full"}
+        assert _resolve_overlay_text("label", None, ov_upper, subject="paris") == "PARIS"
+
+    def test_subject_part_full_with_empty_subject_falls_back(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {"sample_text": "London", "subject_part": "full"}
+        assert _resolve_overlay_text("label", None, ov, subject="") == "London"
+
+    def test_subject_part_overrides_heuristic(self):
+        """Even if sample_text would match _is_subject_placeholder,
+        subject_part="first_half" wins and slices instead of full-substituting."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        # "PERU" would be heuristic-matched as a full subject, but the
+        # explicit subject_part="first_half" forces a slice.
+        ov = {"sample_text": "PERU", "subject_part": "first_half"}
+        assert _resolve_overlay_text("label", None, ov, subject="Paris") == "PAR"
+
+    def test_no_subject_part_preserves_existing_heuristic(self):
+        """Backward compat: overlays without subject_part use the existing heuristic.
+
+        Lowercase fragments stay literal (heuristic doesn't match), and the
+        Dimples-style ALL-CAPS placeholder still gets substituted.
+        """
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        # Lowercase fragment + no opt-in → renders literally.
+        ov_frag = {"sample_text": "lon"}
+        assert _resolve_overlay_text("label", None, ov_frag, subject="Paris") == "lon"
+        # ALL-CAPS placeholder + no opt-in → heuristic substitutes.
+        ov_caps = {"sample_text": "PERU"}
+        assert _resolve_overlay_text("label", None, ov_caps, subject="Brazil") == "BRAZIL"
+        # Fixed text passes through unchanged.
+        ov_fixed = {"sample_text": "Welcome to"}
+        assert _resolve_overlay_text("label", None, ov_fixed, subject="Paris") == "Welcome to"
+
+    def test_unknown_subject_part_value_falls_through(self):
+        """An unrecognized subject_part value should not crash; falls through to heuristic."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {"sample_text": "PERU", "subject_part": "left_third"}
+        # Fall-through hits the heuristic which substitutes PERU → BRAZIL.
+        assert _resolve_overlay_text("label", None, ov, subject="Brazil") == "BRAZIL"
+
+    def test_cta_role_still_returns_empty_even_with_subject_part(self):
+        """CTA short-circuit happens first — subject_part doesn't change that."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {"sample_text": "lon", "subject_part": "first_half"}
+        assert _resolve_overlay_text("cta", None, ov, subject="Paris") == ""
+
+
+class TestResolveOverlayTextSubjectTemplate:
+    """`subject_template` opt-in for typewriter / embedded-subject sentences.
+
+    Covers the slot 5 "that one trip to london" pattern where the city is
+    inline within a longer sentence. The typewriter partial-reveal beat
+    (slot 4: "that one trip to lon") uses subject_chars to slice the input.
+    """
+
+    def test_full_substitution(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "that one trip to london",
+            "subject_template": "that one trip to {subject}",
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="Morocco") == \
+            "that one trip to Morocco"
+
+    def test_partial_reveal_via_subject_chars(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "that one trip to lon",
+            "subject_template": "that one trip to {subject}",
+            "subject_chars": 3,
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="Morocco") == \
+            "that one trip to Mor"
+
+    def test_partial_reveal_short_subject_renders_full(self):
+        """Short city (< subject_chars) renders entirely — no padding."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "that one trip to lon",
+            "subject_template": "that one trip to {subject}",
+            "subject_chars": 3,
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="NY") == \
+            "that one trip to NY"
+
+    def test_empty_subject_falls_back_to_text(self):
+        """No user input → render the literal text so admin previews still show 'london'."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "that one trip to london",
+            "subject_template": "that one trip to {subject}",
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="") == \
+            "that one trip to london"
+
+    def test_empty_subject_with_partial_falls_back(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "that one trip to lon",
+            "subject_template": "that one trip to {subject}",
+            "subject_chars": 3,
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="") == \
+            "that one trip to lon"
+
+    def test_subject_chars_zero_treats_as_full(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "subject_template": "that one trip to {subject}",
+            "subject_chars": 0,
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="Paris") == \
+            "that one trip to Paris"
+
+    def test_subject_chars_invalid_string_ignored(self):
+        """A non-int subject_chars (e.g. from corrupted JSONB) shouldn't crash."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "subject_template": "that one trip to {subject}",
+            "subject_chars": "not-a-number",
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="Paris") == \
+            "that one trip to Paris"
+
+    def test_subject_template_without_placeholder_falls_through(self):
+        """Malformed subject_template (no {subject}) is ignored — falls through to heuristic."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "sample_text": "PERU",
+            "subject_template": "no placeholder here",
+        }
+        # Falls through to heuristic which substitutes PERU → BRAZIL
+        assert _resolve_overlay_text("label", None, ov, subject="Brazil") == "BRAZIL"
+
+    def test_subject_template_beats_subject_part(self):
+        """If both fields set, subject_template wins (more specific)."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "that one trip to london",
+            "subject_template": "that one trip to {subject}",
+            "subject_part": "first_half",
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="Morocco") == \
+            "that one trip to Morocco"
+
+    def test_cta_role_short_circuits_subject_template(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {"subject_template": "that one trip to {subject}"}
+        assert _resolve_overlay_text("cta", None, ov, subject="Morocco") == ""
+
+    def test_subject_with_spaces_preserved(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {"subject_template": "that one trip to {subject}"}
+        assert _resolve_overlay_text("label", None, ov, subject="New York") == \
+            "that one trip to New York"
+
+
 # ── Timeout & error_detail tests ──────────────────────────────────────────────
 
 

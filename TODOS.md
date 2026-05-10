@@ -14,7 +14,21 @@
 **Priority:** P3
 
 ### Typed admin editor for `required_inputs`
-**What:** Build a typed UI under `/admin/templates/[id]` that adds/removes/reorders entries in `video_templates.required_inputs`. v1 admins set this by editing the JSON column directly.
+**What:** Build a typed UI under `/admin/templates/[id]` that adds/removes/reorders entries in `video_templates.required_inputs`. v1 admins set this by editing the JSON column directly. Also: extend `PATCH /admin/templates/{id}` to accept `required_inputs` (currently it does not — see `routes/admin.py:705 update_template`). Today every template that needs inputs is set up either via a seed script (Dimples Passport) or a one-off backfill script (`scripts/backfill_that_one_trip_to.py`).
+**Priority:** P3
+
+### Reanalysis preserves operator overrides
+**What:** When `analyze_template_task` regenerates `recipe_cached` from Gemini (clicking "Reanalyze" in admin UI), it overwrites operator-set fields like `subject_part`, position-tool tunings, and other manual edits. The "That one trip to..." backfill (subject_part tags on "lon"/"don" overlays) would silently regress on next reanalysis.
+**Why:** Manual recipe edits are durable intent, not a transient Gemini hint. They must survive reanalysis or admins lose work invisibly.
+**How:** Either (a) merge a separate `template_overrides` JSONB on top of the regenerated recipe, (b) preserve overlays where `subject_part` or other override fields are set, or (c) prompt with a diff before reanalysis overwrites overrides.
+**Effort:** M (human: ~1d / CC: ~30 min)
+**Priority:** P2
+
+### PropertyPanel UI for `subject_part`
+**What:** Surface the new `subject_part` field (added 2026-05-09 for "That one trip to..." city slicing) in the admin overlay PropertyPanel as a select: "first_half" / "second_half" / "full" / null. Today the field is invisible in the editor — set only via the backfill script — so admins editing the recipe could accidentally drop it.
+**Why:** The TS `RecipeTextOverlay` interface (`recipe-types.ts`) carries the field but no form control writes it.
+**How:** Add a Select control in `PropertyPanel.tsx` near the existing role/effect/position controls. Plumb through the existing `UPDATE_OVERLAY_FIELD` action.
+**Effort:** XS (human: ~1h / CC: ~10 min)
 **Priority:** P3
 
 ### Sign-in / auth on the new header
