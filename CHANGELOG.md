@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.5.0] - 2026-05-10
+
+### Added
+- Per-agent quality eval harness for the Big 3 LLM agents (`template_recipe`, `clip_metadata`, `creative_direction`). Combines deterministic structural assertions (slot durations sum to total ±5s, energy ∈ [0,10], valid enums, overlay-bounds, football-filter compliance, creative-direction topic coverage) with an opt-in Claude Sonnet 4.6 LLM-as-judge that scores outputs against per-agent rubrics. Sits on top of the existing `app/agents/_runtime` primitives (`ModelClient`, `Agent.run`, `run_with_shadow`) — no new agent abstractions added.
+- Replay mode (`pytest tests/evals/`) is the default: 0 cost, no network, runs against recorded `raw_text` cassettes from production templates. Live mode (`--eval-mode=live`) actually re-calls Gemini for prompt-iteration A/B testing. Judge mode (`--with-judge`) adds Claude scoring against the rubric.
+- `scripts/export_eval_fixtures.py` ports `VideoTemplate.recipe_cached` and the `creative_direction` text from the local DB into JSON cassettes under `tests/fixtures/agent_evals/`. Validates each fixture against the structural floor before writing — broken DB rows surface as `[reject]` lines instead of breaking CI.
+- `scripts/inspect_eval_fixtures.py` pretty-prints what each agent returned for every template (slot tables, interstitials, creative_direction body, raw JSON dumps) for fast CLI inspection.
+- `scripts/build_eval_dashboard.py` generates a self-contained HTML dashboard at `.dev/agent-evals-report/dashboard.html` with five tabs (Overview · Agents · Templates · Issues · Tests). The Agents tab shows the full pipeline flow, every agent's spec / prompt files / `render_prompt()` source / Pydantic schemas / per-template returns. `--watch` rebuilds on fixture, prompt, or agent-source change. `--serve` adds an HTTP server with browser auto-reload over a 2s heartbeat.
+- `tests/evals/` ships 67 unit tests (27 structural assertions, 11 judge tests, 15 runner tests, 14 parametrized fixture tests). Default CI path runs the structural-only flavor (no secrets needed, ~30s). The `agent-evals.yml` GitHub Actions workflow is `workflow_dispatch`-only for the live + judge run.
+- Editorial dark/light dashboard theme — Fraunces serif display + Inter body + JetBrains Mono code, oxblood accent, `prefers-color-scheme` aware. Numbered flow rail diagrams the pipeline, agent cards expand into magazine-style detail panels with syntax-highlighted Python source for `render_prompt()`.
+
+### Changed
+- `pyproject.toml` adds `anthropic>=0.40` to dev dependencies for the LLM judge.
+- `CLAUDE.md` documents the agent-eval workflow and the prompt-version bump rule (any change to `prompts/*.txt` or `render_prompt()` must bump the agent's `prompt_version` and re-run evals before merge).
+- `TODOS.md` records Phase 2 follow-ups (the remaining 8 agents, per-run cost cap, automatic `--shadow` mode) and surfaces 10 production templates whose stored `creative_direction` is below the 50-word floor — a real prompt-quality issue the eval caught.
+
 ## [0.4.4.0] - 2026-05-10
 
 ### Added
