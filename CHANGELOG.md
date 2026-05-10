@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1.0] - 2026-05-10
+
+### Added
+- Homepage tiles now show the actual template playing instead of a flat 2-color gradient. Each tile loads a poster JPEG by default, fades in the muted looping video on hover (desktop) or when most-visible in the viewport (mobile), and pauses the previous tile so only one video plays at a time. Click a tile to open a modal preview with native controls and audio, then either close it or jump straight to the upload flow with a "Use this template" button.
+- Backend FFmpeg poster extraction: the template analysis pipeline now generates a 540px-wide JPEG from each template right before `analysis_status` flips to `ready`, uploaded to GCS at `templates/<id>/poster.jpg`. `GET /templates` signs a 7-day URL inline (no per-tile round-trip) and returns it as `thumbnail_url`. Templates without a poster (mid-analysis or extraction failed) still appear in the list — the homepage falls back to the existing gradient.
+- `scripts/backfill_template_posters.py` — idempotent management script that walks templates with `analysis_status='ready' AND thumbnail_gcs_path IS NULL` and generates posters. Race-safe via conditional UPDATE, supports `--dry-run` and `--limit`.
+- New frontend primitives in `src/apps/web/`: `lib/template-playback.ts` (module-level active-tile coordination via `useSyncExternalStore`, signed-URL cache, reduced-motion + save-data helpers, tab-visibility auto-pause), `app/TemplateTile.tsx` (200ms hover debounce, 4s video-load timeout safety net, IntersectionObserver autoplay on touch devices, gradient fallback, mute icon overlay), `app/TemplatePreviewModal.tsx` (focus trap, ESC, click-outside, focus restore, "Use this template" CTA).
+
+### Changed
+- `src/apps/web/src/app/page.tsx` rewired to render `TemplateTile` components and mount the preview modal at the page level. The skeleton loader, error banner, empty state, and grid layout are unchanged.
+
 ## [0.4.0.2] - 2026-05-09
 
 ### Fixed
