@@ -58,12 +58,17 @@ class TestPeruHookSizing:
         overlay = _only_overlay(_slot(recipe, 5))
         assert overlay["position_y_frac"] == pytest.approx(_seed.PERU_Y_FRAC) == pytest.approx(0.45)
 
-    def test_uses_sans_font(self):
-        """position-tool.html renders Montserrat 800 — must map to 'sans'
-        in the font registry, not the serif fallback."""
+    def test_uses_serif_font_per_reference(self):
+        """Reference video renders the location title in a yellow serif
+        (Playfair Display Bold style) — not Montserrat sans. font_style='serif'
+        maps to the bundled Playfair Display in assets/fonts/."""
         recipe = build_recipe()
         overlay = _only_overlay(_slot(recipe, 5))
-        assert overlay["font_style"] == "sans"
+        assert overlay["font_style"] == "serif", (
+            "Slot-5 location title must render in serif (Playfair Display) "
+            "to match the reference video — sans (Montserrat) is the wrong "
+            "weight/glyph family for this template's signature look"
+        )
 
     def test_effect_is_font_cycle(self):
         recipe = build_recipe()

@@ -164,7 +164,7 @@ def build_recipe() -> dict:
                     end_s=2.73,
                     text_size_px=PERU_SIZE_PX,
                     text_color=PERU_COLOR,
-                    font_style="sans",
+                    font_style="serif",
                     position_y_frac=PERU_Y_FRAC,
                 ),
             ],
