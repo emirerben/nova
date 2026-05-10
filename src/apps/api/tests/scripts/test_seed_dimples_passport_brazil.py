@@ -313,6 +313,31 @@ class TestTitlePhaseDurations:
         )
 
 
+class TestSlot1NotBelowOrchestratorFloor:
+    """template_orchestrate.py floors `slot_target_dur` at 0.5s in three
+    places (lines 1420, 1429, 1442) to keep the encoder + AAC frame size
+    happy. Any seed slot below 0.5s silently rounds up at render time,
+    shifting every later slot's start by the rounding delta and producing
+    a "lag-like" feel where cuts arrive ~0.43s later than the recipe says.
+
+    Pin slot 1 ≥ 0.5s so the floor never has to kick in. Anyone re-introducing
+    the pathological 0.1s value will trip this test and read the docstring
+    instead of shipping a broken render."""
+
+    def test_no_slot_below_orchestrator_floor(self):
+        ORCHESTRATOR_FLOOR_S = 0.5
+        recipe = build_recipe()
+        for slot in recipe["slots"]:
+            dur = slot["target_duration_s"]
+            assert dur >= ORCHESTRATOR_FLOOR_S, (
+                f"Slot {slot['position']} target_duration_s={dur} is below "
+                f"the orchestrator's hard floor at {ORCHESTRATOR_FLOOR_S}s "
+                f"(template_orchestrate.py:1420). Render will silently round "
+                f"up and shift every later slot by the delta — visible as a "
+                f"'lag' between recipe-declared and actual cut points."
+            )
+
+
 class TestFontCycleFitsWithinFrameCap:
     """The font-cycle renderer caps PNG output at MAX_FONT_CYCLE_FRAMES to
     prevent runaway generation. When the cap is hit mid-slot, cycling stops

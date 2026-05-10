@@ -134,7 +134,17 @@ def build_recipe() -> dict:
     # Slots 16-17: outro tail.
     slots = [
         {
-            "position": 1, "target_duration_s": 0.1, "priority": 7, "slot_type": "hook",
+            # Slot 1 — short opening "passport stamp" flash. Was 0.1s in the
+            # original prod recipe (3 frames at 30fps) but the orchestrator
+            # floors slot_target_dur at 0.5s in three places
+            # (template_orchestrate.py:1420, 1429, 1442) for AAC/encoder
+            # stability. Anything below 0.5s silently rounds up and shifts
+            # every later slot's start time by the rounding delta — a
+            # 0.43s rendered-vs-recipe drift that surfaces as "lag" when
+            # users watch the slot 3 → 4 cut land late at 2.43s instead
+            # of 1.99s. Setting 0.5 here matches what's actually rendered
+            # and keeps the recipe honest about the pipeline's behavior.
+            "position": 1, "target_duration_s": 0.5, "priority": 7, "slot_type": "hook",
             "transition_in": "none", "color_hint": "none", "speed_factor": 1.0,
             "energy": 0.0, "text_overlays": [],
         },
@@ -152,10 +162,10 @@ def build_recipe() -> dict:
             # Slot 4 — short "Welcome to" intro on a hook clip. Was 3.5s; cut
             # to 1.5s based on careful frame-by-frame analysis of the reference
             # video, which only holds "Welcome to" for ~0.7s before the
-            # location title takes over. The previous 3.5s slot made the intro
-            # feel dragged and pushed the title reveal later than the music
-            # downbeat where it should land.
-            "position": 4, "target_duration_s": 1.5, "priority": 10, "slot_type": "hook",
+            # location title takes over. Trimmed further to 1.1s to compensate
+            # for slot 1's +0.4s growth (0.1 → 0.5 above) so total template
+            # duration stays close to the 21.4s music length.
+            "position": 4, "target_duration_s": 1.1, "priority": 10, "slot_type": "hook",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 2.1,
             "text_overlays": [
@@ -163,7 +173,7 @@ def build_recipe() -> dict:
                     "Welcome to",
                     effect="fade-in",
                     start_s=0.5,
-                    end_s=1.5,                       # matches new slot duration
+                    end_s=1.1,                       # matches new slot duration
                     text_size_px=WELCOME_SIZE_PX,
                     text_color=WELCOME_COLOR,
                     font_style="serif",
