@@ -285,12 +285,21 @@ class TestEncodingArgs:
         assert "scenecut=40" in args[x264_idx + 1]
         assert "keyint=90" in args[x264_idx + 1]
 
-    def test_ultrafast_skips_scenecut(self):
-        """Intermediate encodes (preset=ultrafast) must NOT override scenecut=0.
-        ultrafast already sets scenecut=0 internally; re-enabling it wastes CPU.
-        """
+    def test_ultrafast_enforces_closed_gop_no_bframes(self):
+        """Intermediate encodes (preset=ultrafast) must explicitly disable
+        B-frames and open-GOP so the downstream stream-copy concat doesn't
+        produce 1-frame alpha-blend artifacts at slot boundaries (PR #87
+        introduced -c copy concat; open-GOP B-frames at clip start cause
+        the decoder to interpolate across boundaries → visible crossfade
+        at every hard cut, perceived as 'lag/glitch at scene start')."""
         args = _encoding_args("/tmp/out.mp4", preset="ultrafast")
-        assert "-x264-params" not in args
+        assert "-bf" in args, "ultrafast must explicitly disable B-frames"
+        assert args[args.index("-bf") + 1] == "0"
+        assert "-x264-params" in args, "ultrafast must set x264-params for closed-GOP"
+        params = args[args.index("-x264-params") + 1]
+        assert "open_gop=0" in params, f"expected open_gop=0 in {params!r}"
+        assert "bframes=0" in params, f"expected bframes=0 in {params!r}"
+        assert "scenecut=0" in params, f"ultrafast keeps scenecut=0: {params!r}"
 
 
 class TestReframeAndExport:
