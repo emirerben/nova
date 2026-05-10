@@ -1,7 +1,9 @@
 """Generate a single self-contained HTML dashboard from the agent eval fixtures + test log.
 
 Reads:
-  - tests/fixtures/agent_evals/{template_recipe,creative_direction,clip_metadata}/prod_snapshots/*.json
+  - tests/fixtures/agent_evals/<agent>/{prod_snapshots,golden}/*.json
+    where <agent> ∈ {template_recipe, creative_direction, clip_metadata,
+                     transcript, platform_copy, audio_template}
   - .dev/agent-evals-report/03_pytest_run.log (optional)
 
 Writes:
@@ -33,56 +35,75 @@ DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
 PYTEST_LOG = DASHBOARD_DIR / "03_pytest_run.log"
 DASHBOARD_FILE = DASHBOARD_DIR / "dashboard.html"
 
-AGENTS = ("template_recipe", "creative_direction", "clip_metadata")
+AGENTS = (
+    "template_recipe",
+    "creative_direction",
+    "clip_metadata",
+    "transcript",
+    "platform_copy",
+    "audio_template",
+)
 
 # Per-agent narrative metadata (phase, cardinality, what it does)
 AGENT_NARRATIVE: dict[str, dict[str, str]] = {
     "nova.compose.creative_direction": {
-        "phase": "admin", "cardinality": "once · template onboarding · Pass 1",
+        "phase": "admin",
+        "cardinality": "once · template onboarding · Pass 1",
         "what": "Watches the reference video and writes a freeform paragraph describing its editing style — pacing, transitions, color, beats. Feeds Pass 2.",
     },
     "nova.compose.template_recipe": {
-        "phase": "admin", "cardinality": "once · template onboarding · Pass 2",
+        "phase": "admin",
+        "cardinality": "once · template onboarding · Pass 2",
         "what": "Turns the reference video plus the Pass 1 paragraph into a structured JSON recipe: shot count, slot durations, transitions, overlays, interstitials, color grade.",
     },
     "nova.audio.template_recipe": {
-        "phase": "admin", "cardinality": "once · per music track",
+        "phase": "admin",
+        "cardinality": "once · per music track",
         "what": "Beat-synced version of template_recipe. Reads detected beats from a music track and produces a slot layout where every slot snaps to a beat.",
     },
     "nova.video.clip_metadata": {
-        "phase": "job", "cardinality": "per-clip · in parallel",
+        "phase": "job",
+        "cardinality": "per-clip · in parallel",
         "what": "Scores the user's clip and finds 2-5 best moments with action descriptions. Produces the data the matcher uses to decide which clip goes in which slot.",
     },
     "nova.audio.transcript": {
-        "phase": "job", "cardinality": "per-job · once",
+        "phase": "job",
+        "cardinality": "per-job · once",
         "what": "Transcribes audio to word-level timestamps. Feeds caption rendering and provides hooks for clip_metadata to reason over.",
     },
     "nova.compose.platform_copy": {
-        "phase": "job", "cardinality": "per-clip · post-render",
+        "phase": "job",
+        "cardinality": "per-clip · post-render",
         "what": "Writes platform-specific captions (TikTok, Instagram, YouTube) from the chosen hook + transcript excerpt. Used after rendering finishes.",
     },
     "nova.layout.text_designer": {
-        "phase": "job", "cardinality": "per-slot · per-overlay",
+        "phase": "job",
+        "cardinality": "per-slot · per-overlay",
         "what": "Tunes overlay text per slot — font cycle behavior, accel timing, settle phase. Built inline from the slot's overlay dict.",
     },
     "nova.layout.transition_picker": {
-        "phase": "job", "cardinality": "per-slot",
+        "phase": "job",
+        "cardinality": "per-slot",
         "what": "Picks the transition into each slot from the recipe's vocabulary (whip-pan, dissolve, zoom-in, cut). Built inline.",
     },
     "nova.video.shot_ranker": {
-        "phase": "job", "cardinality": "per-clip · candidate ranking",
+        "phase": "job",
+        "cardinality": "per-clip · candidate ranking",
         "what": "Ranks candidate moments within a clip when multiple pass clip_metadata's filter — sports highlight reels in particular.",
     },
     "nova.video.clip_router": {
-        "phase": "job", "cardinality": "per-clip",
+        "phase": "job",
+        "cardinality": "per-clip",
         "what": "Routes clips to the right downstream agent (e.g., football clips get the action filter). Cheap routing decision.",
     },
     "nova.audio.beat_aligner": {
-        "phase": "job", "cardinality": "rule-based · per-job",
+        "phase": "job",
+        "cardinality": "rule-based · per-job",
         "what": "Snaps cumulative slot timestamps to the nearest beat. Pure Python — no LLM. Used only in music-template mode.",
     },
     "nova.qa.output_validator": {
-        "phase": "job", "cardinality": "rule-based · per-job · post-render",
+        "phase": "job",
+        "cardinality": "rule-based · per-job · post-render",
         "what": "Validates the final assembly plan against structural invariants. Pure Python. Catches anything that would break FFmpeg before render.",
     },
 }
@@ -95,6 +116,9 @@ FIXTURE_AGENT_NAME = {
     "template_recipe": "nova.compose.template_recipe",
     "creative_direction": "nova.compose.creative_direction",
     "clip_metadata": "nova.video.clip_metadata",
+    "transcript": "nova.audio.transcript",
+    "platform_copy": "nova.compose.platform_copy",
+    "audio_template": "nova.audio.template_recipe",
 }
 
 # Map agent_name → prompt files to display (some agents share prompts)
@@ -115,18 +139,33 @@ AGENT_PROMPT_FILES: dict[str, list[str]] = {
 
 
 def _load_fixtures(agent: str) -> list[dict]:
-    base = FIXTURES_ROOT / agent / "prod_snapshots"
-    if not base.exists():
-        return []
+    """Walk both prod_snapshots/ and golden/ subdirs and return all fixtures.
+
+    Source dir is recorded on the fixture dict as `_source` ("prod_snapshots"
+    or "golden") so the renderer can label them. Slugs are namespaced by source
+    to avoid collision when the same name appears in both subdirs.
+    """
     out: list[dict] = []
-    for path in sorted(base.glob("*.json")):
-        try:
-            data = json.loads(path.read_text())
-            data["_path"] = str(path.relative_to(REPO_ROOT))
-            data["_slug"] = path.stem
-            out.append(data)
-        except Exception as exc:
-            out.append({"_path": str(path), "_slug": path.stem, "_error": str(exc)})
+    for source in ("prod_snapshots", "golden"):
+        base = FIXTURES_ROOT / agent / source
+        if not base.exists():
+            continue
+        for path in sorted(base.glob("*.json")):
+            try:
+                data = json.loads(path.read_text())
+                data["_path"] = str(path.relative_to(REPO_ROOT))
+                data["_slug"] = path.stem
+                data["_source"] = source
+                out.append(data)
+            except Exception as exc:
+                out.append(
+                    {
+                        "_path": str(path),
+                        "_slug": path.stem,
+                        "_source": source,
+                        "_error": str(exc),
+                    }
+                )
     return out
 
 
@@ -159,9 +198,7 @@ def _parse_pytest(log: str) -> dict:
         )
         if m:
             fixtures.append((f"{m.group(1)}::{m.group(2)}", m.group(3)))
-    summary = re.search(
-        r"(\d+)\s+passed(?:,\s+(\d+)\s+failed)?(?:,\s+(\d+)\s+skipped)?", log
-    )
+    summary = re.search(r"(\d+)\s+passed(?:,\s+(\d+)\s+failed)?(?:,\s+(\d+)\s+skipped)?", log)
     if summary:
         pass_count = int(summary.group(1) or 0)
         fail_count = int(summary.group(2) or 0)
@@ -179,53 +216,65 @@ def _parse_pytest(log: str) -> dict:
 # ── Issue detection ──────────────────────────────────────────────────────────
 
 
-def _detect_issues(template_recipe_fxs: list[dict], creative_direction_fxs: list[dict]) -> list[dict]:
+def _detect_issues(
+    template_recipe_fxs: list[dict], creative_direction_fxs: list[dict]
+) -> list[dict]:
     issues: list[dict] = []
     cd_slugs = {f["_slug"] for f in creative_direction_fxs}
 
     # Empty niche
-    bad = [f["_slug"] for f in template_recipe_fxs if not (f.get("output", {}).get("subject_niche") or "").strip()]
+    bad = [
+        f["_slug"]
+        for f in template_recipe_fxs
+        if not (f.get("output", {}).get("subject_niche") or "").strip()
+    ]
     if bad:
-        issues.append({
-            "title": "Empty `subject_niche` field",
-            "severity": "med",
-            "count": len(bad),
-            "templates": bad,
-            "what": f"{len(bad)} of {len(template_recipe_fxs)} templates leave `subject_niche` blank. The schema asks for it.",
-            "fix": "Re-run two-pass analysis on these templates so the recipe captures niche.",
-        })
+        issues.append(
+            {
+                "title": "Empty `subject_niche` field",
+                "severity": "med",
+                "count": len(bad),
+                "templates": bad,
+                "what": f"{len(bad)} of {len(template_recipe_fxs)} templates leave `subject_niche` blank. The schema asks for it.",
+                "fix": "Re-run two-pass analysis on these templates so the recipe captures niche.",
+            }
+        )
 
     # has_* None
     bad = [
-        f["_slug"] for f in template_recipe_fxs
+        f["_slug"]
+        for f in template_recipe_fxs
         if f.get("output", {}).get("has_talking_head") is None
         and f.get("output", {}).get("has_voiceover") is None
         and f.get("output", {}).get("has_permanent_letterbox") is None
     ]
     if bad:
-        issues.append({
-            "title": "All `has_*` flags are None (pre-two-pass schema)",
-            "severity": "high",
-            "count": len(bad),
-            "templates": bad,
-            "what": f"{len(bad)} templates have None for all three boolean flags. These were analyzed before two-pass mode shipped.",
-            "fix": "Reanalyze with `analysis_mode='two_pass'` so the agent populates booleans.",
-        })
+        issues.append(
+            {
+                "title": "All `has_*` flags are None (pre-two-pass schema)",
+                "severity": "high",
+                "count": len(bad),
+                "templates": bad,
+                "what": f"{len(bad)} templates have None for all three boolean flags. These were analyzed before two-pass mode shipped.",
+                "fix": "Reanalyze with `analysis_mode='two_pass'` so the agent populates booleans.",
+            }
+        )
 
     # Default copy_tone
     bad = [
-        f["_slug"] for f in template_recipe_fxs
-        if f.get("output", {}).get("copy_tone") == "casual"
+        f["_slug"] for f in template_recipe_fxs if f.get("output", {}).get("copy_tone") == "casual"
     ]
     if bad:
-        issues.append({
-            "title": "Default `copy_tone='casual'` (likely fallback)",
-            "severity": "med",
-            "count": len(bad),
-            "templates": bad,
-            "what": f"{len(bad)} templates returned the schema default 'casual'. Strong signal the agent gave up rather than reasoning.",
-            "fix": "Investigate prompt — the agent should refuse rather than emit defaults silently.",
-        })
+        issues.append(
+            {
+                "title": "Default `copy_tone='casual'` (likely fallback)",
+                "severity": "med",
+                "count": len(bad),
+                "templates": bad,
+                "what": f"{len(bad)} templates returned the schema default 'casual'. Strong signal the agent gave up rather than reasoning.",
+                "fix": "Investigate prompt — the agent should refuse rather than emit defaults silently.",
+            }
+        )
 
     # Sub-0.5s slots
     bad = []
@@ -238,14 +287,16 @@ def _detect_issues(template_recipe_fxs: list[dict], creative_direction_fxs: list
             except Exception:
                 pass
     if bad:
-        issues.append({
-            "title": "Sub-0.5s slot durations (borderline unrenderable)",
-            "severity": "med",
-            "count": len(bad),
-            "templates": bad,
-            "what": "Slots under 0.5s are at the edge of what FFmpeg can render cleanly.",
-            "fix": "Add a structural check + clamp at parse time, or tune the prompt to enforce a floor.",
-        })
+        issues.append(
+            {
+                "title": "Sub-0.5s slot durations (borderline unrenderable)",
+                "severity": "med",
+                "count": len(bad),
+                "templates": bad,
+                "what": "Slots under 0.5s are at the edge of what FFmpeg can render cleanly.",
+                "fix": "Add a structural check + clamp at parse time, or tune the prompt to enforce a floor.",
+            }
+        )
 
     # Energy=0 slots
     bad = []
@@ -258,40 +309,48 @@ def _detect_issues(template_recipe_fxs: list[dict], creative_direction_fxs: list
             except Exception:
                 pass
     if bad:
-        issues.append({
-            "title": "Slots with energy=0 (likely failed scoring)",
-            "severity": "low",
-            "count": len(bad),
-            "templates": bad,
-            "what": "Energy=0 inside an otherwise active recipe usually means the agent failed to score that slot, not that it's literally dead.",
-            "fix": "Default to mid-range or refuse. Tune prompt to require an energy value.",
-        })
+        issues.append(
+            {
+                "title": "Slots with energy=0 (likely failed scoring)",
+                "severity": "low",
+                "count": len(bad),
+                "templates": bad,
+                "what": "Energy=0 inside an otherwise active recipe usually means the agent failed to score that slot, not that it's literally dead.",
+                "fix": "Default to mid-range or refuse. Tune prompt to require an energy value.",
+            }
+        )
 
     # Missing creative_direction fixture
     missing_cd = [f["_slug"] for f in template_recipe_fxs if f["_slug"] not in cd_slugs]
     if missing_cd:
-        issues.append({
-            "title": "No `creative_direction` fixture (under-baked Pass 1)",
-            "severity": "high",
-            "count": len(missing_cd),
-            "templates": missing_cd,
-            "what": "Templates whose stored creative_direction was rejected at export time (text < 50 words). These ran Pass 2 with no editorial guidance.",
-            "fix": "Trigger reanalysis from admin UI — these templates predate the two-pass schema.",
-        })
+        issues.append(
+            {
+                "title": "No `creative_direction` fixture (under-baked Pass 1)",
+                "severity": "high",
+                "count": len(missing_cd),
+                "templates": missing_cd,
+                "what": "Templates whose stored creative_direction was rejected at export time (text < 50 words). These ran Pass 2 with no editorial guidance.",
+                "fix": "Trigger reanalysis from admin UI — these templates predate the two-pass schema.",
+            }
+        )
 
     # Saygimdan v1/v2 byte-identical
     saygimdan = next((f for f in template_recipe_fxs if f["_slug"] == "saygimdan"), None)
-    saygimdan_v2 = next((f for f in template_recipe_fxs if f["_slug"] == "saygimdan_v2__gemini"), None)
+    saygimdan_v2 = next(
+        (f for f in template_recipe_fxs if f["_slug"] == "saygimdan_v2__gemini"), None
+    )
     if saygimdan and saygimdan_v2:
         if saygimdan.get("output") == saygimdan_v2.get("output"):
-            issues.append({
-                "title": "Saygimdan v1/v2 are byte-identical recipes",
-                "severity": "low",
-                "count": 1,
-                "templates": ["saygimdan_v2__gemini"],
-                "what": "v2 is supposed to be an independent re-run, but the JSON matches v1 exactly — likely checkpointed without re-running Gemini.",
-                "fix": "Drop or actually rerun v2 with a real Gemini call.",
-            })
+            issues.append(
+                {
+                    "title": "Saygimdan v1/v2 are byte-identical recipes",
+                    "severity": "low",
+                    "count": 1,
+                    "templates": ["saygimdan_v2__gemini"],
+                    "what": "v2 is supposed to be an independent re-run, but the JSON matches v1 exactly — likely checkpointed without re-running Gemini.",
+                    "fix": "Drop or actually rerun v2 with a real Gemini call.",
+                }
+            )
 
     return issues
 
@@ -337,21 +396,24 @@ def _load_agent_catalog() -> list[dict]:
         }
         try:
             import importlib
+
             mod = importlib.import_module(mod_path)
             cls = getattr(mod, cls_name)
             spec = cls.spec
-            entry.update({
-                "model": spec.model,
-                "prompt_id": spec.prompt_id,
-                "prompt_version": spec.prompt_version,
-                "max_attempts": spec.max_attempts,
-                "cost_in": spec.cost_per_1k_input_usd,
-                "cost_out": spec.cost_per_1k_output_usd,
-                "response_json": getattr(cls, "response_json", True),
-                "max_output_tokens": getattr(cls, "max_output_tokens", None),
-                "input_fields": _pydantic_fields(cls.Input),
-                "output_fields": _pydantic_fields(cls.Output),
-            })
+            entry.update(
+                {
+                    "model": spec.model,
+                    "prompt_id": spec.prompt_id,
+                    "prompt_version": spec.prompt_version,
+                    "max_attempts": spec.max_attempts,
+                    "cost_in": spec.cost_per_1k_input_usd,
+                    "cost_out": spec.cost_per_1k_output_usd,
+                    "response_json": getattr(cls, "response_json", True),
+                    "max_output_tokens": getattr(cls, "max_output_tokens", None),
+                    "input_fields": _pydantic_fields(cls.Input),
+                    "output_fields": _pydantic_fields(cls.Output),
+                }
+            )
         except Exception as exc:
             entry["load_error"] = f"{type(exc).__name__}: {exc}"
         catalog.append(entry)
@@ -375,12 +437,14 @@ def _pydantic_fields(model_cls) -> list[dict]:
                     default_str = "<unrepr>"
                 if hasattr(finfo, "default_factory") and finfo.default_factory is not None:
                     default_str = f"{finfo.default_factory.__name__}()"
-            out.append({
-                "name": fname,
-                "type": type_str,
-                "default": default_str,
-                "required": finfo.is_required(),
-            })
+            out.append(
+                {
+                    "name": fname,
+                    "type": type_str,
+                    "default": default_str,
+                    "required": finfo.is_required(),
+                }
+            )
     except Exception:
         pass
     return out
@@ -434,6 +498,7 @@ def _highlight_python(code: str) -> str:
     # Triple-quoted strings (handles f-strings like f""" too)
     def repl_triple(m):
         return f'<span class="py-str">{m.group(0)}</span>'
+
     code = _re.sub(r'([fFrRbB]?)("""|\'\'\')([\s\S]*?)\2', repl_triple, code)
 
     # Single-line strings
@@ -445,7 +510,7 @@ def _highlight_python(code: str) -> str:
 
     # Comments
     code = _re.sub(
-        r'(?m)(#[^\n]*)$',
+        r"(?m)(#[^\n]*)$",
         lambda m: f'<span class="py-com">{m.group(0)}</span>',
         code,
     )
@@ -456,7 +521,7 @@ def _highlight_python(code: str) -> str:
         "lambda|yield|async|await|global|nonlocal|del|assert"
     )
     code = _re.sub(
-        rf'(?<![\w.])({keywords})(?![\w.])',
+        rf"(?<![\w.])({keywords})(?![\w.])",
         lambda m: f'<span class="py-kw">{m.group(0)}</span>',
         code,
     )
@@ -471,21 +536,21 @@ def _highlight_python(code: str) -> str:
     # Common builtins / types
     builtins = "str|int|float|bool|list|dict|tuple|set|isinstance|len|range|enumerate"
     code = _re.sub(
-        rf'(?<![\w.])({builtins})(?=\()',
+        rf"(?<![\w.])({builtins})(?=\()",
         lambda m: f'<span class="py-bi">{m.group(0)}</span>',
         code,
     )
 
     # self
     code = _re.sub(
-        r'(?<![\w.])(self)(?![\w.])',
+        r"(?<![\w.])(self)(?![\w.])",
         '<span class="py-self">self</span>',
         code,
     )
 
     # decorators
     code = _re.sub(
-        r'(?m)^(\s*)(@[\w.]+)',
+        r"(?m)^(\s*)(@[\w.]+)",
         lambda m: f'{m.group(1)}<span class="py-dec">{m.group(2)}</span>',
         code,
     )
@@ -503,23 +568,23 @@ def _esc(s) -> str:
 def _slot_row(i: int, s: dict) -> str:
     return f"""<tr>
       <td class="num">{i}</td>
-      <td>{_esc(s.get('slot_type', '—'))}</td>
-      <td class="num">{_esc(s.get('target_duration_s', '—'))}s</td>
-      <td class="num">{_esc(s.get('energy', '—'))}</td>
-      <td><code>{_esc(s.get('transition_in', '—'))}</code></td>
-      <td><code>{_esc(s.get('color_hint', '—'))}</code></td>
-      <td class="num">{_esc(s.get('speed_factor', '—'))}</td>
-      <td class="num">{len(s.get('text_overlays', []) or [])}</td>
+      <td>{_esc(s.get("slot_type", "—"))}</td>
+      <td class="num">{_esc(s.get("target_duration_s", "—"))}s</td>
+      <td class="num">{_esc(s.get("energy", "—"))}</td>
+      <td><code>{_esc(s.get("transition_in", "—"))}</code></td>
+      <td><code>{_esc(s.get("color_hint", "—"))}</code></td>
+      <td class="num">{_esc(s.get("speed_factor", "—"))}</td>
+      <td class="num">{len(s.get("text_overlays", []) or [])}</td>
     </tr>"""
 
 
 def _interstitial_row(it: dict) -> str:
     return f"""<tr>
-      <td class="num">{_esc(it.get('after_slot', '—'))}</td>
-      <td><code>{_esc(it.get('type', '—'))}</code></td>
-      <td class="num">{_esc(it.get('animate_s', '—'))}s</td>
-      <td class="num">{_esc(it.get('hold_s', '—'))}s</td>
-      <td><code>{_esc(it.get('hold_color', '—'))}</code></td>
+      <td class="num">{_esc(it.get("after_slot", "—"))}</td>
+      <td><code>{_esc(it.get("type", "—"))}</code></td>
+      <td class="num">{_esc(it.get("animate_s", "—"))}s</td>
+      <td class="num">{_esc(it.get("hold_s", "—"))}s</td>
+      <td><code>{_esc(it.get("hold_color", "—"))}</code></td>
     </tr>"""
 
 
@@ -532,10 +597,7 @@ def _render_template_card(
     slug = tr_fx["_slug"]
     test_key = f"prod_snapshots/{slug}"
     tr_status = fixture_test_status.get(("template_recipe", test_key), "—")
-    cd_status = (
-        fixture_test_status.get(("creative_direction", test_key), "—")
-        if cd_fx else "—"
-    )
+    cd_status = fixture_test_status.get(("creative_direction", test_key), "—") if cd_fx else "—"
 
     # Issue tags for this card
     issue_tags: list[str] = []
@@ -556,7 +618,8 @@ def _render_template_card(
     inters = out.get("interstitials", []) or []
     inters_html = (
         "".join(_interstitial_row(it) for it in inters)
-        if inters else '<tr><td colspan="5" class="dim">no interstitials</td></tr>'
+        if inters
+        else '<tr><td colspan="5" class="dim">no interstitials</td></tr>'
     )
 
     cd_text = cd_fx["output"]["text"] if cd_fx else None
@@ -580,26 +643,26 @@ def _render_template_card(
     <div class="card-meta">
       <span class="slug">{_esc(slug)}</span>
       <span class="status status-{tr_status.lower()}">recipe: {tr_status}</span>
-      {''.join(issue_tags)}
+      {"".join(issue_tags)}
     </div>
   </header>
 
   <div class="kv-grid">
-    <div><dt>shot_count</dt><dd>{_esc(out.get('shot_count'))}</dd></div>
-    <div><dt>total</dt><dd>{_esc(out.get('total_duration_s'))}s</dd></div>
-    <div><dt>hook</dt><dd>{_esc(out.get('hook_duration_s'))}s</dd></div>
-    <div><dt>copy_tone</dt><dd>{_esc(out.get('copy_tone'))}</dd></div>
-    <div><dt>color_grade</dt><dd>{_esc(out.get('color_grade'))}</dd></div>
-    <div><dt>sync_style</dt><dd>{_esc(out.get('sync_style'))}</dd></div>
-    <div><dt>pacing</dt><dd>{_esc(out.get('pacing_style'))}</dd></div>
-    <div><dt>niche</dt><dd>{_esc(out.get('subject_niche')) or '<span class="dim">—</span>'}</dd></div>
-    <div><dt>talking_head</dt><dd>{_esc(out.get('has_talking_head'))}</dd></div>
-    <div><dt>voiceover</dt><dd>{_esc(out.get('has_voiceover'))}</dd></div>
-    <div><dt>letterbox</dt><dd>{_esc(out.get('has_permanent_letterbox'))}</dd></div>
+    <div><dt>shot_count</dt><dd>{_esc(out.get("shot_count"))}</dd></div>
+    <div><dt>total</dt><dd>{_esc(out.get("total_duration_s"))}s</dd></div>
+    <div><dt>hook</dt><dd>{_esc(out.get("hook_duration_s"))}s</dd></div>
+    <div><dt>copy_tone</dt><dd>{_esc(out.get("copy_tone"))}</dd></div>
+    <div><dt>color_grade</dt><dd>{_esc(out.get("color_grade"))}</dd></div>
+    <div><dt>sync_style</dt><dd>{_esc(out.get("sync_style"))}</dd></div>
+    <div><dt>pacing</dt><dd>{_esc(out.get("pacing_style"))}</dd></div>
+    <div><dt>niche</dt><dd>{_esc(out.get("subject_niche")) or '<span class="dim">—</span>'}</dd></div>
+    <div><dt>talking_head</dt><dd>{_esc(out.get("has_talking_head"))}</dd></div>
+    <div><dt>voiceover</dt><dd>{_esc(out.get("has_voiceover"))}</dd></div>
+    <div><dt>letterbox</dt><dd>{_esc(out.get("has_permanent_letterbox"))}</dd></div>
   </div>
 
   <details>
-    <summary>{len(out.get('slots', []) or [])} slot(s)</summary>
+    <summary>{len(out.get("slots", []) or [])} slot(s)</summary>
     <table class="slots">
       <thead><tr><th>#</th><th>type</th><th>dur</th><th>energy</th><th>transition</th><th>color</th><th>speed</th><th>overlays</th></tr></thead>
       <tbody>{slots_html}</tbody>
@@ -628,12 +691,12 @@ def _render_issue(issue: dict) -> str:
     sev = issue["severity"]
     return f"""<div class="issue sev-{sev}">
   <header>
-    <h3>{_esc(issue['title'])}</h3>
+    <h3>{_esc(issue["title"])}</h3>
     <span class="badge sev-{sev}">{sev.upper()}</span>
-    <span class="count">{issue['count']} affected</span>
+    <span class="count">{issue["count"]} affected</span>
   </header>
-  <p class="what">{_esc(issue['what'])}</p>
-  <p class="fix"><b>fix:</b> {_esc(issue['fix'])}</p>
+  <p class="what">{_esc(issue["what"])}</p>
+  <p class="fix"><b>fix:</b> {_esc(issue["fix"])}</p>
   <div class="issue-templates">{tags}</div>
 </div>"""
 
@@ -645,16 +708,16 @@ def _render_agent_card(agent: dict, fixtures_by_agent_name: dict[str, list[dict]
     # Spec table
     spec_html = f"""<div class="kv-grid">
     <div><dt>name</dt><dd>{_esc(name)}</dd></div>
-    <div><dt>model</dt><dd>{_esc(agent['model'])}</dd></div>
-    <div><dt>class</dt><dd>{_esc(agent['class_name'])}</dd></div>
-    <div><dt>prompt_id</dt><dd>{_esc(agent['prompt_id'])}</dd></div>
-    <div><dt>prompt_version</dt><dd>{_esc(agent['prompt_version'])}</dd></div>
-    <div><dt>max_attempts</dt><dd>{_esc(agent['max_attempts'])}</dd></div>
-    <div><dt>response_json</dt><dd>{_esc(agent['response_json'])}</dd></div>
-    <div><dt>max_output_tokens</dt><dd>{_esc(agent['max_output_tokens'])}</dd></div>
-    <div><dt>cost / 1k input</dt><dd>${agent['cost_in']:.6f}</dd></div>
-    <div><dt>cost / 1k output</dt><dd>${agent['cost_out']:.6f}</dd></div>
-    <div><dt>source</dt><dd><code>{_esc(agent['source_file'])}</code></dd></div>
+    <div><dt>model</dt><dd>{_esc(agent["model"])}</dd></div>
+    <div><dt>class</dt><dd>{_esc(agent["class_name"])}</dd></div>
+    <div><dt>prompt_id</dt><dd>{_esc(agent["prompt_id"])}</dd></div>
+    <div><dt>prompt_version</dt><dd>{_esc(agent["prompt_version"])}</dd></div>
+    <div><dt>max_attempts</dt><dd>{_esc(agent["max_attempts"])}</dd></div>
+    <div><dt>response_json</dt><dd>{_esc(agent["response_json"])}</dd></div>
+    <div><dt>max_output_tokens</dt><dd>{_esc(agent["max_output_tokens"])}</dd></div>
+    <div><dt>cost / 1k input</dt><dd>${agent["cost_in"]:.6f}</dd></div>
+    <div><dt>cost / 1k output</dt><dd>${agent["cost_out"]:.6f}</dd></div>
+    <div><dt>source</dt><dd><code>{_esc(agent["source_file"])}</code></dd></div>
   </div>"""
 
     if agent.get("load_error"):
@@ -666,10 +729,10 @@ def _render_agent_card(agent: dict, fixtures_by_agent_name: dict[str, list[dict]
             return '<p class="dim">no fields detected</p>'
         rows = "".join(
             f"""<tr>
-              <td><code>{_esc(f['name'])}</code></td>
-              <td><code>{_esc(f['type'])}</code></td>
-              <td><code>{_esc(f['default'])}</code></td>
-              <td>{'required' if f['required'] else 'optional'}</td>
+              <td><code>{_esc(f["name"])}</code></td>
+              <td><code>{_esc(f["type"])}</code></td>
+              <td><code>{_esc(f["default"])}</code></td>
+              <td>{"required" if f["required"] else "optional"}</td>
             </tr>"""
             for f in fields
         )
@@ -688,6 +751,7 @@ def _render_agent_card(agent: dict, fixtures_by_agent_name: dict[str, list[dict]
     render_src = None
     try:
         import importlib
+
         mod = importlib.import_module(agent["module"])
         cls = getattr(mod, agent["class_name"], None)
         if cls is not None:
@@ -705,16 +769,16 @@ def _render_agent_card(agent: dict, fixtures_by_agent_name: dict[str, list[dict]
                 )
             else:
                 blocks.append(
-                    f'<details open><summary>{_esc(fname)} · {len(text.split())} words</summary><pre><code>{_esc(text)}</code></pre></details>'
+                    f"<details open><summary>{_esc(fname)} · {len(text.split())} words</summary><pre><code>{_esc(text)}</code></pre></details>"
                 )
     else:
         # No external file — explain what that means inline
         if agent["model"] == "rule_based":
             blocks.append(
                 '<div class="prompt-note"><b>Rule-based</b>'
-                'No prompt — this agent runs pure Python logic. No LLM call. '
+                "No prompt — this agent runs pure Python logic. No LLM call. "
                 "See the <code>compute()</code> method in the source file."
-                '</div>'
+                "</div>"
             )
         else:
             blocks.append(
@@ -722,7 +786,7 @@ def _render_agent_card(agent: dict, fixtures_by_agent_name: dict[str, list[dict]
                 "This agent's prompt is constructed at call time from input fields, "
                 "not loaded from a static <code>.txt</code> file. The full construction "
                 "logic lives in <code>render_prompt()</code> below."
-                '</div>'
+                "</div>"
             )
 
     # Always show render_prompt() source — it shows the full prompt-construction story
@@ -730,9 +794,9 @@ def _render_agent_card(agent: dict, fixtures_by_agent_name: dict[str, list[dict]
         short_path = agent["source_file"].split("/")[-1]
         highlighted = _highlight_python(render_src)
         blocks.append(
-            f'<details open><summary>render_prompt() · python · {short_path}</summary>'
+            f"<details open><summary>render_prompt() · python · {short_path}</summary>"
             f'<pre class="py-source" data-source="{_esc(short_path)}"><code>{highlighted}</code></pre>'
-            f'</details>'
+            f"</details>"
         )
 
     prompts_html = "\n".join(blocks)
@@ -740,13 +804,24 @@ def _render_agent_card(agent: dict, fixtures_by_agent_name: dict[str, list[dict]
     # Per-template returns (only for agents with fixtures)
     if has_fixtures:
         fxs = fixtures_by_agent_name[name]
+
+        def _opt_key(fx: dict) -> str:
+            return f"{fx.get('_source', 'fixture')}_{fx['_slug']}"
+
+        def _opt_label(fx: dict) -> str:
+            slug = fx["_slug"]
+            tname = fx.get("meta", {}).get("template_name", slug)
+            source = fx.get("_source", "")
+            tag = " · golden" if source == "golden" else ""
+            return f"{tname}{tag}"
+
         opts = "".join(
-            f'<option value="{_esc(fx["_slug"])}">{_esc(fx.get("meta", {}).get("template_name", fx["_slug"]))}</option>'
-            for fx in fxs
+            f'<option value="{_esc(_opt_key(fx))}">{_esc(_opt_label(fx))}</option>' for fx in fxs
         )
         panels = []
         for fx in fxs:
             slug = fx["_slug"]
+            opt_key = _opt_key(fx)
             tname = fx.get("meta", {}).get("template_name", slug)
             output = fx.get("output", {})
             input_data = fx.get("input", {})
@@ -760,8 +835,13 @@ def _render_agent_card(agent: dict, fixtures_by_agent_name: dict[str, list[dict]
             if "text" in output and len(output) <= 2:
                 text_block = f'<div class="cd-text">{_esc(output["text"])}</div>'
 
-            panels.append(f"""<div class="agent-output-panel" data-slug="{_esc(slug)}" hidden>
-              <h4>{_esc(tname)} <span class="dim">· {_esc(slug)}</span></h4>
+            source_tag = (
+                f' <span class="tag">{_esc(fx.get("_source", ""))}</span>'
+                if fx.get("_source")
+                else ""
+            )
+            panels.append(f"""<div class="agent-output-panel" data-slug="{_esc(opt_key)}" hidden>
+              <h4>{_esc(tname)} <span class="dim">· {_esc(slug)}</span>{source_tag}</h4>
               {text_block}
               <details open>
                 <summary>parsed output</summary>
@@ -773,7 +853,7 @@ def _render_agent_card(agent: dict, fixtures_by_agent_name: dict[str, list[dict]
               </details>
               <details>
                 <summary>raw_text (recorded model response · {len(raw_text)} chars)</summary>
-                <pre><code>{_esc(raw_text[:8000])}{'…' if len(raw_text) > 8000 else ''}</code></pre>
+                <pre><code>{_esc(raw_text[:8000])}{"…" if len(raw_text) > 8000 else ""}</code></pre>
               </details>
             </div>""")
 
@@ -781,7 +861,7 @@ def _render_agent_card(agent: dict, fixtures_by_agent_name: dict[str, list[dict]
           <label>Show output for: <select class="output-select">{opts}</select></label>
           <span class="dim">{len(fxs)} fixture(s) on disk</span>
         </div>
-        {''.join(panels)}"""
+        {"".join(panels)}"""
     else:
         outputs_html = (
             '<p class="dim">No fixtures on disk yet for this agent. '
@@ -789,11 +869,11 @@ def _render_agent_card(agent: dict, fixtures_by_agent_name: dict[str, list[dict]
             "or it's a follow-up agent (Phase 2 evals — see TODOS.md).</p>"
         )
 
-    return f"""<article id="agent-{_esc(name).replace('.', '-')}" class="agent-card">
+    return f"""<article id="agent-{_esc(name).replace(".", "-")}" class="agent-card">
   <header>
     <h2>{_esc(name)}</h2>
-    <span class="model-badge">{_esc(agent['model'])}</span>
-    {'<span class="tag tpl">'+str(len(fixtures_by_agent_name.get(name, [])))+' fixtures</span>' if has_fixtures else '<span class="tag">no fixtures</span>'}
+    <span class="model-badge">{_esc(agent["model"])}</span>
+    {'<span class="tag tpl">' + str(len(fixtures_by_agent_name.get(name, []))) + " fixtures</span>" if has_fixtures else '<span class="tag">no fixtures</span>'}
   </header>
 
   <h3>Spec</h3>
@@ -833,17 +913,17 @@ def _render_agent_tile(idx: int, agent: dict, fixtures_by_agent_name: dict[str, 
         n = len(fixtures_by_agent_name[name])
         badges.append(f'<span class="badge has-fixtures">{n} fixtures</span>')
 
-    return f"""<article class="agent-tile is-{phase}{' is-fxs' if has_fxs else ''}"
-              data-target="agent-{name.replace('.', '-')}"
+    return f"""<article class="agent-tile is-{phase}{" is-fxs" if has_fxs else ""}"
+              data-target="agent-{name.replace(".", "-")}"
               data-name="{_esc(short)}">
   <div class="agent-tile-num">{idx:02d}</div>
-  <div class="agent-badges">{''.join(badges)}</div>
+  <div class="agent-badges">{"".join(badges)}</div>
   <h3 class="agent-name">{_esc(short)}</h3>
-  <div class="agent-cardinality">{_esc(nar['cardinality'])}</div>
-  <p class="agent-what">{_esc(nar['what'])}</p>
+  <div class="agent-cardinality">{_esc(nar["cardinality"])}</div>
+  <p class="agent-what">{_esc(nar["what"])}</p>
   <div class="agent-meta-row">
-    <span><b>model</b> {_esc(agent['model'])}</span>
-    <span><b>v</b> {_esc(agent['prompt_version'])}</span>
+    <span><b>model</b> {_esc(agent["model"])}</span>
+    <span><b>v</b> {_esc(agent["prompt_version"])}</span>
   </div>
 </article>"""
 
@@ -907,7 +987,9 @@ def _render_planned_ai_variant_tile(t: dict) -> str:
         f'<span class="badge phase-{phase}">{"Admin" if phase == "admin" else "Per-job"}</span>'
     )
     badges.append(
-        '<span class="badge llm">LLM · Gemini</span>' if t["llm"] else '<span class="badge py">Python</span>'
+        '<span class="badge llm">LLM · Gemini</span>'
+        if t["llm"]
+        else '<span class="badge py">Python</span>'
     )
     badges.append(
         '<span class="badge" style="background:var(--accent-soft);color:var(--accent);border-color:var(--accent);">PLANNED</span>'
@@ -915,12 +997,12 @@ def _render_planned_ai_variant_tile(t: dict) -> str:
     return f"""<article class="agent-tile is-{phase}"
               style="border-style:dashed;border-color:var(--line-strong);background:transparent;">
   <div class="agent-tile-num" style="color:var(--ink-4);">··</div>
-  <div class="agent-badges">{''.join(badges)}</div>
-  <h3 class="agent-name">{_esc(t['name'])}</h3>
-  <div class="agent-cardinality">{_esc(t['cardinality'])}</div>
-  <p class="agent-what">{_esc(t['what'])}</p>
+  <div class="agent-badges">{"".join(badges)}</div>
+  <h3 class="agent-name">{_esc(t["name"])}</h3>
+  <div class="agent-cardinality">{_esc(t["cardinality"])}</div>
+  <p class="agent-what">{_esc(t["what"])}</p>
   <div class="agent-meta-row">
-    <span><b>writes</b> <code style="font-size:11px;">{_esc(t['writes'])}</code></span>
+    <span><b>writes</b> <code style="font-size:11px;">{_esc(t["writes"])}</code></span>
   </div>
 </article>"""
 
@@ -929,27 +1011,55 @@ def _render_flow_steps(agent_catalog: list[dict]) -> str:
     """A numbered flow with rail showing the actual pipeline stages."""
     catalog_by_name = {a["name"]: a for a in agent_catalog}
     steps = [
-        ("admin", "is-llm", "Reference video → CreativeDirection",
-         "nova.compose.creative_direction",
-         "An admin imports a TikTok template. Pass 1 watches the video and writes a freeform paragraph about its editing style — pacing, transitions, color grading, beat sync."),
-        ("admin", "is-llm", "Pass 1 text → TemplateRecipe",
-         "nova.compose.template_recipe",
-         "Pass 2 receives the Pass 1 paragraph and re-watches the video. Returns a structured JSON: shot count, per-slot durations, transitions, overlays, interstitials, color grade. This is the recipe."),
-        ("admin", "is-store", "Recipe stored in Postgres",
-         "VideoTemplate.recipe_cached",
-         "The recipe is cached on the VideoTemplate row. Reused on every job that targets this template — never re-analyzed unless the admin clicks Reanalyze."),
-        ("job", "is-llm", "User clip → ClipMetadata",
-         "nova.video.clip_metadata",
-         "User submits N clips. Each runs in parallel. Returns hook_text, hook_score (0-10), 2-5 best_moments with action descriptions, transcript, detected_subject."),
-        ("job", "is-py", "Matcher assigns clips to slots",
-         "template_matcher (rule-based)",
-         "Pure Python. Reads the recipe's slot constraints (target duration, energy, color hint) and assigns each user clip's best moment to the most-suited slot. No LLM."),
-        ("job", "is-py", "FFmpeg renders the final video",
-         "render pipeline",
-         "Subprocess FFmpeg stitches the clips, applies overlays, runs interstitials, mixes the template audio. 9:16, sub-60s, H.264/AAC."),
-        ("job", "is-store", "Final video → GCS",
-         "JobClip.video_path",
-         "Stored in object storage. JobClip rows persist hook_text, hook_score, the final timestamp window, and platform_copy if the user requests caption generation."),
+        (
+            "admin",
+            "is-llm",
+            "Reference video → CreativeDirection",
+            "nova.compose.creative_direction",
+            "An admin imports a TikTok template. Pass 1 watches the video and writes a freeform paragraph about its editing style — pacing, transitions, color grading, beat sync.",
+        ),
+        (
+            "admin",
+            "is-llm",
+            "Pass 1 text → TemplateRecipe",
+            "nova.compose.template_recipe",
+            "Pass 2 receives the Pass 1 paragraph and re-watches the video. Returns a structured JSON: shot count, per-slot durations, transitions, overlays, interstitials, color grade. This is the recipe.",
+        ),
+        (
+            "admin",
+            "is-store",
+            "Recipe stored in Postgres",
+            "VideoTemplate.recipe_cached",
+            "The recipe is cached on the VideoTemplate row. Reused on every job that targets this template — never re-analyzed unless the admin clicks Reanalyze.",
+        ),
+        (
+            "job",
+            "is-llm",
+            "User clip → ClipMetadata",
+            "nova.video.clip_metadata",
+            "User submits N clips. Each runs in parallel. Returns hook_text, hook_score (0-10), 2-5 best_moments with action descriptions, transcript, detected_subject.",
+        ),
+        (
+            "job",
+            "is-py",
+            "Matcher assigns clips to slots",
+            "template_matcher (rule-based)",
+            "Pure Python. Reads the recipe's slot constraints (target duration, energy, color hint) and assigns each user clip's best moment to the most-suited slot. No LLM.",
+        ),
+        (
+            "job",
+            "is-py",
+            "FFmpeg renders the final video",
+            "render pipeline",
+            "Subprocess FFmpeg stitches the clips, applies overlays, runs interstitials, mixes the template audio. 9:16, sub-60s, H.264/AAC.",
+        ),
+        (
+            "job",
+            "is-store",
+            "Final video → GCS",
+            "JobClip.video_path",
+            "Stored in object storage. JobClip rows persist hook_text, hook_score, the final timestamp window, and platform_copy if the user requests caption generation.",
+        ),
     ]
     out: list[str] = []
     for i, (phase, cls, title, agent_or_label, desc) in enumerate(steps, start=1):
@@ -1796,18 +1906,20 @@ def render_dashboard() -> str:
 
     issues = _detect_issues(template_recipe_fxs, creative_direction_fxs)
 
-    # Build agents tab data
+    # Build agents tab data — load every fixture-dir we know about.
     agent_catalog = _load_agent_catalog()
     fixtures_by_agent_name: dict[str, list[dict]] = {
         FIXTURE_AGENT_NAME["template_recipe"]: template_recipe_fxs,
         FIXTURE_AGENT_NAME["creative_direction"]: creative_direction_fxs,
-        FIXTURE_AGENT_NAME["clip_metadata"]: _load_fixtures("clip_metadata"),
     }
+    for fixture_dir in ("clip_metadata", "transcript", "platform_copy", "audio_template"):
+        fixtures_by_agent_name[FIXTURE_AGENT_NAME[fixture_dir]] = _load_fixtures(fixture_dir)
 
     # Sort agents: ones with fixtures first, then the rest
     def _sort_key(a: dict) -> tuple[int, str]:
         has_fxs = bool(fixtures_by_agent_name.get(a["name"]))
         return (0 if has_fxs else 1, a["name"])
+
     agent_catalog.sort(key=_sort_key)
 
     agent_tiles_html = []
@@ -1831,7 +1943,10 @@ def render_dashboard() -> str:
     if not cards_html:
         cards_html = '<p class="dim">No template_recipe fixtures yet. Run <code>scripts/export_eval_fixtures.py</code>.</p>'
 
-    issues_html = "\n".join(_render_issue(i) for i in issues) or '<p class="dim">No issues detected — every template passes the structural floor.</p>'
+    issues_html = (
+        "\n".join(_render_issue(i) for i in issues)
+        or '<p class="dim">No issues detected — every template passes the structural floor.</p>'
+    )
 
     pytest_log_html = _render_pytest_log(log)
 
@@ -1930,7 +2045,7 @@ def render_dashboard() -> str:
       <div class="section-head">
         <div class="section-num">§ 02 · The flow</div>
         <h2>Two stages, <em>twelve</em> agents.</h2>
-        <p class="section-lede">Once at template onboarding (Pass 1 → Pass 2 → cached recipe). Then per job (clip analysis → matcher → render). The big three at top have replay fixtures wired up to the eval suite; the rest ship in Phase 2.</p>
+        <p class="section-lede">Once at template onboarding (Pass 1 → Pass 2 → cached recipe). Then per job (clip analysis → matcher → render). Six agents have replay fixtures wired up to the eval suite (Phase 1: template_recipe, creative_direction, clip_metadata; Phase 2: transcript, platform_copy, audio_template). The four below them ship evals when they wire into the pipeline.</p>
       </div>
 
       {flow_steps_html}
@@ -1947,11 +2062,11 @@ def render_dashboard() -> str:
       </div>
 
       <div class="agents">
-        {''.join(agent_tiles_html)}
+        {"".join(agent_tiles_html)}
       </div>
 
       <div id="agent-detail-region">
-        {''.join(agent_detail_html)}
+        {"".join(agent_detail_html)}
       </div>
     </section>
 
@@ -1978,7 +2093,7 @@ def render_dashboard() -> str:
           <div style="font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">This dashboard's tab · Agents</div>
           <div style="font-family:var(--serif);font-size:18px;line-height:1.3;color:var(--ink);margin-bottom:6px;">May-9 agent platform</div>
           <div style="font-size:13.5px;line-height:1.55;color:var(--ink-2);">
-            12 agents · runtime + registry + model-client · 66 passing eval tests.
+            12 agents · runtime + registry + model-client · {n_pass} passing eval tests.
             Lives in <code>app/agents/</code>. <strong>Shipped.</strong> Untouched by the new flow.
           </div>
         </div>
@@ -2004,14 +2119,14 @@ def render_dashboard() -> str:
       </div>
 
       <div class="agents">
-        {''.join(_render_planned_ai_variant_tile(t) for t in _AI_VARIANT_PLANNED_AGENTS)}
+        {"".join(_render_planned_ai_variant_tile(t) for t in _AI_VARIANT_PLANNED_AGENTS)}
       </div>
 
       <div style="margin-top:48px;padding:20px 24px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg-sunken);">
         <div style="font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;">Separation rule</div>
         <ul style="margin:0;padding-left:20px;font-size:13.5px;line-height:1.7;color:var(--ink-2);">
           <li>New agents in <code>app/ai_agents/</code>. New tables: <code>ai_template_cards</code>, <code>ai_jobs</code>, <code>ai_job_variants</code>. New routes: <code>/ai/jobs</code>. New eval scaffolding: <code>tests/ai_evals/</code>.</li>
-          <li>The May-9 platform on the <strong>Agents</strong> tab is not modified, not extended, not imported. Its 66 passing tests stay green.</li>
+          <li>The May-9 platform on the <strong>Agents</strong> tab is not modified, not extended, not imported. Its {n_pass} passing tests stay green.</li>
           <li>Only shared library: FFmpeg rendering primitives extracted to <code>app/lib/render/</code> (the one piece that is genuinely too expensive to duplicate). Both orchestrators call it.</li>
           <li>Three Gemini wrappers in the codebase will be intentional: legacy <code>gemini_analyzer.py</code>, May-9 <code>app/agents/_model_client.py</code>, new <code>app/ai_agents/_model_client.py</code>. The duplication is the price of isolation.</li>
         </ul>
@@ -2118,8 +2233,8 @@ def _watch_loop(interval_s: float = 1.5) -> None:
             now = _collect_mtimes()
             if now != last:
                 changed = sorted(
-                    [p for p in now if last.get(p) != now.get(p)] +
-                    [p for p in last if p not in now]
+                    [p for p in now if last.get(p) != now.get(p)]
+                    + [p for p in last if p not in now]
                 )
                 # If the build script itself changed, re-exec — Python won't
                 # auto-pick up edits to functions defined in the running module.
@@ -2177,7 +2292,9 @@ def main() -> None:
 
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--watch", action="store_true", help="Rebuild on fixture/prompt/agent changes.")
-    p.add_argument("--serve", action="store_true", help="Start an HTTP server + open browser. Implies --watch.")
+    p.add_argument(
+        "--serve", action="store_true", help="Start an HTTP server + open browser. Implies --watch."
+    )
     p.add_argument("--port", type=int, default=8765, help="Port for --serve (default 8765).")
     args = p.parse_args()
 
