@@ -313,6 +313,47 @@ class TestTitlePhaseDurations:
         )
 
 
+class TestFontCycleFitsWithinFrameCap:
+    """The font-cycle renderer caps PNG output at MAX_FONT_CYCLE_FRAMES to
+    prevent runaway generation. When the cap is hit mid-slot, cycling stops
+    and a static gap-fill PNG plays for the remainder — visible as the
+    animation 'freezing' before the curtain finishes.
+
+    Pin the math so future seed tweaks (longer slots, earlier accel) can't
+    silently push the frame count past the cap and re-introduce the freeze.
+    """
+
+    def test_slot_5_fast_cycle_phase_fits_under_cap(self):
+        from app.pipeline.text_overlay import (
+            FONT_CYCLE_FAST_INTERVAL_S,
+            FONT_CYCLE_INTERVAL_S,
+            MAX_FONT_CYCLE_FRAMES,
+        )
+
+        recipe = build_recipe()
+        slot5 = _slot(recipe, 5)
+        overlay = _subject_overlay(slot5)
+        accel_at = overlay["font_cycle_accel_at_s"]
+        slot_dur = slot5["target_duration_s"]
+
+        # Frames generated in the normal (pre-accel) phase
+        normal_frames = max(0, accel_at) / FONT_CYCLE_INTERVAL_S
+        # Frames generated in the fast (post-accel) phase
+        fast_phase_dur = slot_dur - accel_at
+        fast_frames = fast_phase_dur / FONT_CYCLE_FAST_INTERVAL_S
+        total_frames = normal_frames + fast_frames
+
+        assert total_frames <= MAX_FONT_CYCLE_FRAMES, (
+            f"Slot 5 needs {total_frames:.1f} PNG frames "
+            f"(normal: {normal_frames:.1f}, fast: {fast_frames:.1f}) but cap "
+            f"is {MAX_FONT_CYCLE_FRAMES}. Cycling will stop mid-curtain and "
+            f"the text will freeze for "
+            f"{(total_frames - MAX_FONT_CYCLE_FRAMES) * FONT_CYCLE_FAST_INTERVAL_S:.2f}s. "
+            f"Either shrink slot 5 / push accel later, or raise the cap "
+            f"in text_overlay.py."
+        )
+
+
 class TestCurtainCloseAfterSlot5:
     """The reference video shows top+bottom black bars closing in over the
     location title between ~8s-11s, then reopening to b-roll. The recipe must
