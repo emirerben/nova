@@ -82,7 +82,16 @@ REQUIRED_INPUTS = [
 # Tuned values from the standalone tuning UI at
 # src/apps/web/public/position-tool.html. Open that file in a browser to
 # re-tune; the Output Values panel exports the same names below.
-PERU_SIZE_PX = 265              # jumbo, position-tool.html:79 default
+PERU_SIZE_PX = 170              # tuned to frame width via brazil.mp4 frame diff
+                                # (2026-05-10): previous 265 overflowed the 1080px
+                                # frame for every font in the cycle — the "L"
+                                # clipped past the right edge. Reference glyphs
+                                # span 35-55% frame width; 170px reproduces that
+                                # range with the runtime PlayfairDisplay/Permanent
+                                # Marker font set. position-tool.html's preview
+                                # font has different metrics than the renderer,
+                                # so the tool's default of 265 looked correct
+                                # in-browser but rendered ~2x wider on output.
 PERU_Y_FRAC = 0.45              # position-tool.html:114 default
 PERU_COLOR = "#F4D03F"          # position-tool.html:15 (Montserrat 800 yellow)
 WELCOME_SIZE_PX = 48            # small, position-tool.html:105 default
@@ -203,16 +212,23 @@ def build_recipe() -> dict:
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 1.8,
             "text_overlays": [
-                # "Welcome to" co-renders briefly (0.4s) with BRAZIL at slot
-                # start. Reference shows welcome visible underneath BRAZIL for
-                # ~0.3s after BRAZIL appears, then welcome fades out. Cross-
-                # slot merge with slot 4's welcome creates one continuous
-                # welcome span across the slot 4 → 5 cut.
+                # "Welcome to" co-renders with BRAZIL for the first 3.5s of
+                # slot 5. Frame-by-frame of brazil.mp4 (2026-05-10) shows the
+                # small white serif "Welcome to" visible inside/under the
+                # BRAZIL letters from BRAZIL onset (~5.3s) through ~8.5s of
+                # the reference — about 3.2s of co-render. The prior 0.4s
+                # value made welcome disappear almost immediately, leaving
+                # BRAZIL standing alone for the entire title phase. Cross-
+                # slot merge with slot 4's welcome (gap < 2.0s threshold)
+                # produces one continuous welcome span from slot 4 start
+                # (absolute t=2.39s) through slot 5 t=3.5s (absolute
+                # t=6.99s), matching the reference's welcome-under-BRAZIL
+                # window of ~5.3s–8.5s.
                 _hook_overlay(
                     "Welcome to",
                     effect="none",
                     start_s=0.0,
-                    end_s=0.4,
+                    end_s=3.5,
                     text_size_px=WELCOME_SIZE_PX,
                     text_color=WELCOME_COLOR,
                     font_style="serif",

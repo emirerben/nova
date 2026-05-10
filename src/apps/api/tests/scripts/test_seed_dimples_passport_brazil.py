@@ -64,12 +64,28 @@ def _prefix_overlay(slot: dict) -> dict | None:
 class TestPeruHookSizing:
     """Slot 5 is the PERU font-cycle moment — must be the jumbo yellow heading."""
 
-    def test_size_matches_position_tool_default(self):
+    def test_size_matches_seed_constant(self):
         recipe = build_recipe()
         overlay = _subject_overlay(_slot(recipe, 5))
         assert overlay["text"] == "PERU"
-        assert overlay["text_size_px"] == _seed.PERU_SIZE_PX == 265, (
-            "PERU dropped from jumbo (265px) — title screen no longer reads as a hook"
+        assert overlay["text_size_px"] == _seed.PERU_SIZE_PX == 170, (
+            "PERU drifted from the frame-fit size (170px). Reference brazil.mp4 "
+            "shows BRAZIL glyphs at 35-55% frame width across the cycle; 170px "
+            "reproduces that with the runtime font set. Higher values (e.g. the "
+            "old 265) overflow the 1080px frame and clip the 'L'."
+        )
+
+    def test_fits_within_1080px_frame_width(self):
+        """Direct frame-width sanity: with the widest brush font in the cycle
+        (Permanent Marker), the rendered BRAZIL must stay inside 1080px. At
+        265px font size the 'L' clipped off the right edge in every cycle
+        frame of dimples-CONSTANT-CYCLE.mp4 (2026-05-10). 170 keeps it in."""
+        overlay = _subject_overlay(_slot(build_recipe(), 5))
+        assert overlay["text_size_px"] <= 180, (
+            f"text_size_px={overlay['text_size_px']} likely overflows the "
+            f"1080px frame for wide brush fonts (Permanent Marker, Pacifico) "
+            f"in the cycle. Reference glyph widths cap at ~55% frame width "
+            f"— stay at 170-180px."
         )
 
     def test_color_matches_montserrat_yellow(self):
@@ -87,8 +103,8 @@ class TestPeruHookSizing:
         (PlayfairDisplay-Bold.ttf). The font registry maps:
           font_style="display" → PlayfairDisplay-Bold.ttf  (weight 700) ← USE THIS
           font_style="serif"   → PlayfairDisplay-Regular.ttf (weight 400) ← TOO THIN
-        At 265px jumbo size the difference is dramatic — Regular looks
-        anemic and breaks the template's signature look."""
+        At the 170px hook size the difference is still visible — Regular
+        looks anemic and breaks the template's signature look."""
         recipe = build_recipe()
         overlay = _subject_overlay(_slot(recipe, 5))
         assert overlay["font_style"] == "display", (
@@ -193,15 +209,25 @@ class TestSlot5DualOverlay:
             f"location title), got {len(overlays)}"
         )
 
-    def test_prefix_renders_briefly_at_slot_start(self):
+    def test_prefix_co_renders_through_brazil_phase(self):
+        """Frame diff of brazil.mp4 (2026-05-10) shows 'Welcome to' visible
+        inside/under the BRAZIL letters from BRAZIL onset (~5.3s) through
+        ~8.5s — about 3.2s of co-render. Slot 5 must keep welcome alive
+        for at least 3s so the merged welcome span (slot 4 + slot 5 start)
+        covers the reference window."""
         recipe = build_recipe()
         prefix = _prefix_overlay(_slot(recipe, 5))
         assert prefix is not None, "slot 5 missing the Welcome-to prefix overlay"
         assert prefix["start_s"] == 0.0
-        assert 0.3 <= prefix["end_s"] <= 1.0, (
-            f"Prefix end_s={prefix['end_s']} should be brief (~0.3-1.0s) so "
-            f"it fades after the title overlap moment, not lingers through "
-            f"the entire curtain"
+        assert prefix["end_s"] >= 3.0, (
+            f"Prefix end_s={prefix['end_s']} fades before BRAZIL finishes. "
+            f"Reference holds welcome under BRAZIL for ~3.5s — extend end_s "
+            f"to ≥3.0 so the cross-slot-merged welcome span matches."
+        )
+        assert prefix["end_s"] <= 5.5, (
+            f"Prefix end_s={prefix['end_s']} can't exceed slot 5 duration "
+            f"(5.5s); orchestrator silently clamps but the recipe would be "
+            f"dishonest about what renders."
         )
 
     def test_prefix_styling_matches_slot_4(self):
