@@ -94,7 +94,16 @@ PERU_SIZE_PX = 170              # tuned to frame width via brazil.mp4 frame diff
                                 # in-browser but rendered ~2x wider on output.
 PERU_Y_FRAC = 0.45              # position-tool.html:114 default
 PERU_COLOR = "#F4D03F"          # position-tool.html:15 (Montserrat 800 yellow)
-WELCOME_SIZE_PX = 48            # small, position-tool.html:105 default
+WELCOME_SIZE_PX = 36            # tuned to REF welcome height via
+                                # analyze_text_overlays.py (2026-05-10):
+                                # REF welcome bbox height median 26px vs
+                                # OURS 36px at WELCOME_SIZE_PX=48 → REF is
+                                # using ~36px font. position-tool.html's
+                                # default of 48 produces a rendered welcome
+                                # ~35% bigger than the reference's tiny
+                                # serif tag. Cap height ≈ 0.72 × font_size
+                                # for Playfair Regular, so 36 → ~26px bbox
+                                # matches REF exactly.
 WELCOME_Y_FRAC = 0.4779         # position-tool.html:95 default
 WELCOME_COLOR = "#FFFFFF"       # position-tool.html:23 (Playfair Display white)
 

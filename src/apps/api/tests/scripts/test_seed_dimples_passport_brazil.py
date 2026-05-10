@@ -122,11 +122,15 @@ class TestPeruHookSizing:
 class TestWelcomeToHookSizing:
     """Slot 4 is the small serif "Welcome to" sitting just below PERU."""
 
-    def test_size_matches_position_tool_default(self):
+    def test_size_matches_reference_height(self):
         recipe = build_recipe()
         overlay = _only_overlay(_slot(recipe, 4))
         assert overlay["text"] == "Welcome to"
-        assert overlay["text_size_px"] == _seed.WELCOME_SIZE_PX == 48
+        assert overlay["text_size_px"] == _seed.WELCOME_SIZE_PX == 36, (
+            "Welcome to drifted from REF-match size (36px). Reference welcome "
+            "bbox height is 26px; at cap-height ratio ~0.72 that's a 36px font. "
+            "The old 48px default produced welcome ~35% larger than reference."
+        )
 
     def test_color_is_white(self):
         recipe = build_recipe()
