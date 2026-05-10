@@ -55,6 +55,94 @@ class TestOrchestratePipelineHelpers:
         # Result must preserve input order (not completion order)
         assert mock_upload.call_count == 3
 
+    def test_probe_and_upload_concurrent_returns_both(self):
+        """Slice-5 contract: helper runs probe + upload concurrently and
+        returns the same shape as the prior sequential calls."""
+        from app.tasks.template_orchestrate import _probe_and_upload_concurrent
+
+        fake_probe_map = {"/tmp/a.mp4": {"duration_s": 10.0}, "/tmp/b.mp4": {"duration_s": 5.0}}
+        fake_refs = [MagicMock(name="files/ref_0"), MagicMock(name="files/ref_1")]
+
+        with (
+            patch(
+                "app.tasks.template_orchestrate._probe_clips",
+                return_value=fake_probe_map,
+            ),
+            patch(
+                "app.tasks.template_orchestrate._upload_clips_parallel",
+                return_value=fake_refs,
+            ),
+        ):
+            probe_map, file_refs = _probe_and_upload_concurrent(["/tmp/a.mp4", "/tmp/b.mp4"])
+
+        assert probe_map is fake_probe_map
+        assert file_refs is fake_refs
+
+    def test_probe_and_upload_concurrent_actually_overlaps(self):
+        """Wall-clock proof of parallelism: if probe and upload each sleep
+        for 0.2s, total time should be ~0.2s (not ~0.4s if serialized).
+
+        Generous tolerance (0.35s) so the test isn't flaky on slow CI
+        runners — but a serialized implementation would always exceed it.
+        """
+        import time
+
+        from app.tasks.template_orchestrate import _probe_and_upload_concurrent
+
+        def slow_probe(paths):
+            time.sleep(0.2)
+            return {p: {"duration_s": 1.0} for p in paths}
+
+        def slow_upload(paths):
+            time.sleep(0.2)
+            return [MagicMock() for _ in paths]
+
+        with (
+            patch("app.tasks.template_orchestrate._probe_clips", side_effect=slow_probe),
+            patch(
+                "app.tasks.template_orchestrate._upload_clips_parallel",
+                side_effect=slow_upload,
+            ),
+        ):
+            t0 = time.monotonic()
+            _probe_and_upload_concurrent(["/tmp/a.mp4"])
+            elapsed = time.monotonic() - t0
+
+        assert elapsed < 0.35, (
+            f"probe+upload took {elapsed:.3f}s — expected ~0.2s if parallel, "
+            f"~0.4s if serialized. Test threshold is 0.35s."
+        )
+
+    def test_probe_and_upload_concurrent_propagates_probe_error(self):
+        """Probe failure must surface, not be swallowed by the parallel wrapper."""
+        from app.tasks.template_orchestrate import _probe_and_upload_concurrent
+
+        with (
+            patch(
+                "app.tasks.template_orchestrate._probe_clips",
+                side_effect=RuntimeError("probe blew up"),
+            ),
+            patch(
+                "app.tasks.template_orchestrate._upload_clips_parallel",
+                return_value=[],
+            ),
+            pytest.raises(RuntimeError, match="probe blew up"),
+        ):
+            _probe_and_upload_concurrent(["/tmp/a.mp4"])
+
+    def test_probe_and_upload_concurrent_propagates_upload_error(self):
+        from app.tasks.template_orchestrate import _probe_and_upload_concurrent
+
+        with (
+            patch("app.tasks.template_orchestrate._probe_clips", return_value={}),
+            patch(
+                "app.tasks.template_orchestrate._upload_clips_parallel",
+                side_effect=RuntimeError("upload blew up"),
+            ),
+            pytest.raises(RuntimeError, match="upload blew up"),
+        ):
+            _probe_and_upload_concurrent(["/tmp/a.mp4"])
+
     def test_analyze_clips_parallel_counts_failures(self):
         from app.tasks.template_orchestrate import _analyze_clips_parallel
 

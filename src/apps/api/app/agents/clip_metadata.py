@@ -128,6 +128,13 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         # Gemini pricing as of 2026 — input ~$0.075/M, output ~$0.30/M (2.5 Flash).
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
+        # Skip the clarification retry: prod logs showed `attempts=2
+        # latency_ms=233209` (3m 53s) on schema/refusal retries that almost
+        # always failed the same way. Caller (template_orchestrate) has a
+        # Whisper fallback that's faster and good enough for the
+        # transcript+best_moments fields. Saves ~100s on the ~10-15% of
+        # clips where Gemini's first attempt returns malformed JSON.
+        enable_clarification_retries=False,
     )
     Input = ClipMetadataInput
     Output = ClipMetadataOutput
