@@ -1,6 +1,6 @@
 {
   "name": "nova-web",
-  "version": "0.1.0",
+  "version": "0.4.3.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -12,6 +12,7 @@
   "dependencies": {
     "@radix-ui/react-dialog": "^1.0.5",
     "@radix-ui/react-progress": "^1.0.3",
+    "@swc/helpers": "^0.5.21",
     "@xyflow/react": "^12.10.1",
     "clsx": "^2.1.1",
     "next": "14.2.3",

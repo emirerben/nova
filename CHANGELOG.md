@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.3.0] - 2026-05-10
+
+### Added
+- Reject template jobs whose clips can't fill the template's audio length. The upload UI reads each video's duration on file select and shows a live "Footage total: X.Xs / Y.Ys required" readout that turns amber when short. The submit button disables until the user adds enough footage. The backend enforces the same rule on `POST /template-jobs` and `POST /admin/templates/:id/test-job` via a new `validate_clip_total_duration` check, so clients that bypass the FE still get a clear 422.
+- New visual reference doc at `docs/pipeline.html` mapping the full template pipeline (admin-time analysis → job-time render), what Gemini decides versus what hardcoded rules override, and every if/else fork in the path.
+
 ## [0.4.2.0] - 2026-05-10
 
 ### Added
