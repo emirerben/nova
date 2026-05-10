@@ -19,10 +19,9 @@ import html
 import json
 import re
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
-
-import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_ROOT = ROOT / "tests" / "fixtures" / "agent_evals"
@@ -1760,7 +1759,6 @@ def render_dashboard() -> str:
     pytest_log_html = _render_pytest_log(log)
 
     n_templates = len(template_recipe_fxs)
-    n_cd = len(creative_direction_fxs)
     n_pass = test_summary["pass_count"]
     n_fail = test_summary["fail_count"]
     n_skip = test_summary["skip_count"]
@@ -1770,7 +1768,6 @@ def render_dashboard() -> str:
     high_sev = sum(1 for i in issues if i["severity"] == "high")
 
     n_total_tests = n_pass + n_fail + n_skip
-    pass_pct = int(round(100 * n_pass / max(n_total_tests, 1)))
     n_with_fixtures = sum(1 for a in agent_catalog if fixtures_by_agent_name.get(a["name"]))
 
     return f"""<!doctype html>
@@ -2056,7 +2053,7 @@ def main() -> None:
     _build_once()
     print(f"Wrote {DASHBOARD_FILE}")
     print(f"Open: open {DASHBOARD_FILE}")
-    print(f"Or run: cd src/apps/api && .venv/bin/python scripts/build_eval_dashboard.py --serve")
+    print("Or run: cd src/apps/api && .venv/bin/python scripts/build_eval_dashboard.py --serve")
 
 
 if __name__ == "__main__":

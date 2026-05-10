@@ -63,6 +63,7 @@ select = ["E", "F", "I", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 "app/pipeline/captions.py" = ["E501"]  # ASS subtitle format strings must stay on one line
+"scripts/build_eval_dashboard.py" = ["E501"]  # large inline CSS/HTML/JS string literals
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

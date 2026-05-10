@@ -3,11 +3,11 @@
 Reads `tests/fixtures/agent_evals/{template_recipe,creative_direction}/prod_snapshots/*.json`
 and prints a side-by-side per-template summary. No DB / no LLM call.
 
-Usage:
-  cd src/apps/api && .venv/bin/python scripts/inspect_eval_fixtures.py
-  cd src/apps/api && .venv/bin/python scripts/inspect_eval_fixtures.py --template dimples_passport_travel_vlog
-  cd src/apps/api && .venv/bin/python scripts/inspect_eval_fixtures.py --full          # dump full JSON
-  cd src/apps/api && .venv/bin/python scripts/inspect_eval_fixtures.py --agent template_recipe
+Usage (run from src/apps/api/):
+  .venv/bin/python scripts/inspect_eval_fixtures.py
+  .venv/bin/python scripts/inspect_eval_fixtures.py --template dimples_passport
+  .venv/bin/python scripts/inspect_eval_fixtures.py --full
+  .venv/bin/python scripts/inspect_eval_fixtures.py --agent template_recipe
 """
 
 from __future__ import annotations
