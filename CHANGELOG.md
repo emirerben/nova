@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.2.0] - 2026-05-10
+
+### Added
+- Admin templates page now has a "Has intro slot" toggle (Settings tab) that controls whether the upload UI splits into a pinned slot-1 intro asset + action clips for the rest. Replaces the prior name-substring heuristic that gated this behavior on the word "face" appearing in the template name. Renaming a template no longer changes how its upload UI behaves.
+
+### Changed
+- Template-name renames are now fully decoupled from runtime behavior. The flag persists in `recipe_cached.has_intro_slot` and is registered in `_ROUTING_ONLY_RECIPE_KEYS` so it survives Gemini re-analysis.
+- Seed scripts (`seed_how_do_you_enjoy_your_life.py`, `seed_dimples_passport_brazil.py`) look up templates by pinned UUID instead of name. Renaming a seeded template no longer causes the next re-seed to create a duplicate row.
+
 ## [0.4.0.2] - 2026-05-09
 
 ### Fixed
