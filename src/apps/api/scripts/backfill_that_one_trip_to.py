@@ -68,6 +68,19 @@ FRAGMENT_MAP = {
     "london": "full",
 }
 
+# Typewriter sentences: overlays whose `text` ends with " london" or " lon"
+# (case-insensitive) get a subject_template that wraps the user's input. The
+# suffix length determines subject_chars (None for full, 3 for the partial
+# "lon" beat). Used for slots 0-5 of "That one trip to..." which type the
+# sentence out word-by-word: ..., "that one trip to lon", "that one trip to
+# london". Suffix matching is right-anchored so "London" in the middle of a
+# longer sentence won't accidentally get tagged.
+TYPEWRITER_SUFFIXES = [
+    # (lowercase suffix, subject_chars). Order matters — longest first.
+    ("london", None),
+    ("lon", 3),
+]
+
 
 async def find_template(db):
     # Lazy imports: `app.config.settings` validates env on import, so unit
@@ -104,27 +117,67 @@ def _overlay_sample(overlay: dict) -> str:
     return (overlay.get("sample_text") or overlay.get("text") or "").strip()
 
 
-def patch_recipe(recipe: dict) -> tuple[dict, list[tuple[int, int, str, str | None, str]]]:
+def _typewriter_match(sample: str) -> tuple[str, int | None] | None:
+    """If `sample` ends with a typewriter suffix, return (prefix, subject_chars).
+
+    "that one trip to london" → ("that one trip to ", None)
+    "that one trip to lon"    → ("that one trip to ", 3)
+    "london"                  → None  (handled by FRAGMENT_MAP, not typewriter)
+    """
+    lower = sample.lower()
+    for suffix, chars in TYPEWRITER_SUFFIXES:
+        # Must have a non-empty prefix — bare "london" or "lon" hits FRAGMENT_MAP.
+        if lower.endswith(" " + suffix) and len(lower) > len(suffix) + 1:
+            prefix = sample[: len(sample) - len(suffix)]
+            return prefix, chars
+    return None
+
+
+def patch_recipe(recipe: dict) -> tuple[dict, list[tuple]]:
     """Return (patched_recipe, changes).
 
-    `changes` is a list of (slot_index, overlay_index, sample, old_part, new_part)
-    tuples — one per overlay that was tagged or would be tagged. An overlay
-    that already carries the correct subject_part contributes nothing.
+    `changes` is a list of tuples describing every tag that was applied or
+    would be applied. Two shapes:
+
+    - Fragment tag:  ("fragment", slot_idx, ov_idx, sample, old_part, new_part)
+    - Typewriter:    ("typewriter", slot_idx, ov_idx, sample, template, chars)
+
+    An overlay that already carries the correct tags contributes nothing.
     """
     patched = copy.deepcopy(recipe)
-    changes: list[tuple[int, int, str, str | None, str]] = []
+    changes: list[tuple] = []
 
     for slot_idx, slot in enumerate(patched.get("slots", [])):
         for ov_idx, overlay in enumerate(slot.get("text_overlays", [])):
-            sample = _overlay_sample(overlay).lower()
-            target = FRAGMENT_MAP.get(sample)
-            if target is None:
+            sample_raw = _overlay_sample(overlay)
+            sample_lc = sample_raw.lower()
+
+            # Path 1: bare-word fragment ("lon"/"don"/"london") → subject_part.
+            target = FRAGMENT_MAP.get(sample_lc)
+            if target is not None:
+                if overlay.get("subject_part") != target:
+                    changes.append((
+                        "fragment", slot_idx, ov_idx, sample_raw,
+                        overlay.get("subject_part"), target,
+                    ))
+                    overlay["subject_part"] = target
                 continue
-            current = overlay.get("subject_part")
-            if current == target:
-                continue
-            changes.append((slot_idx, ov_idx, _overlay_sample(overlay), current, target))
-            overlay["subject_part"] = target
+
+            # Path 2: typewriter sentence ("that one trip to lon"/"...london")
+            # → subject_template + optional subject_chars.
+            tw = _typewriter_match(sample_raw)
+            if tw is not None:
+                prefix, chars = tw
+                template = prefix + "{subject}"
+                if (
+                    overlay.get("subject_template") != template
+                    or overlay.get("subject_chars") != chars
+                ):
+                    changes.append((
+                        "typewriter", slot_idx, ov_idx, sample_raw, template, chars,
+                    ))
+                    overlay["subject_template"] = template
+                    overlay["subject_chars"] = chars
 
     return patched, changes
 
@@ -137,12 +190,22 @@ def _print_inspection(template, changes: list) -> None:
         print("recipe_cached: no overlay tags need updating (already backfilled).")
         return
     print(f"\nWould tag {len(changes)} overlay(s):")
-    for slot_idx, ov_idx, sample, old, new in changes:
-        old_label = "—" if old is None else old
-        print(
-            f"  slot {slot_idx:>2} overlay {ov_idx:>2} "
-            f"sample={sample!r:<12} subject_part: {old_label} → {new}"
-        )
+    for change in changes:
+        kind = change[0]
+        if kind == "fragment":
+            _, slot_idx, ov_idx, sample, old, new = change
+            old_label = "—" if old is None else old
+            print(
+                f"  slot {slot_idx:>2} overlay {ov_idx:>2} "
+                f"[fragment]   sample={sample!r:<28} subject_part: {old_label} → {new}"
+            )
+        elif kind == "typewriter":
+            _, slot_idx, ov_idx, sample, template_str, chars = change
+            chars_label = "full" if chars is None else f"first_{chars}"
+            print(
+                f"  slot {slot_idx:>2} overlay {ov_idx:>2} "
+                f"[typewriter] sample={sample!r:<28} template={template_str!r} ({chars_label})"
+            )
 
 
 async def run(apply_changes: bool) -> int:

@@ -330,6 +330,12 @@ class RecipeTextOverlaySchema(BaseModel):
     # entirely. Casing is matched to sample_text. Lets one user input drive
     # multiple staggered overlays (e.g. "lon"+"don" → "par"+"is" for "Paris").
     subject_part: Literal["first_half", "second_half", "full"] | None = None
+    # Typewriter/embedded substitution. Format string with `{subject}` slot
+    # (e.g. "that one trip to {subject}"). Renderer substitutes the user's
+    # location into the slot, optionally sliced to the first `subject_chars`
+    # characters for a partial-reveal beat in a typewriter sequence.
+    subject_template: str | None = None
+    subject_chars: int | None = None
     # Player-card overlay fields (consumed when effect == "player-card").
     # Both must be non-empty for the overlay to render.
     jersey_no: str | None = None

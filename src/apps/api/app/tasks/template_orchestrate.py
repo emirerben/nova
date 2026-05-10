@@ -2318,11 +2318,34 @@ def _resolve_overlay_text(
     heuristic. This lets templates split a single user input across two
     overlays (e.g. "lon" + "don" → "par" + "is" for subject "Paris") that
     the lowercase-fragment heuristic would never match.
+
+    `subject_template` on the overlay is a format string with a `{subject}`
+    placeholder, used for typewriter-style sentences that embed the city in a
+    longer phrase (e.g. "that one trip to {subject}"). Optional companion
+    `subject_chars` slices the user input to the first N characters before
+    substitution, so a partial typewriter beat reveals only "Mor" instead of
+    the full "Morocco". Empty subject falls back to the literal text so admin
+    previews still render.
     """
     sample = overlay.get("sample_text", "") or overlay.get("text", "")
 
     if role == "cta":
         return ""  # CTA text generated later by copy_writer
+
+    # Explicit subject_template (typewriter/embedded) beats both subject_part
+    # and the heuristic. Used for slots whose text is a sentence wrapping the
+    # subject (e.g. "that one trip to london").
+    subject_template = overlay.get("subject_template")
+    if isinstance(subject_template, str) and "{subject}" in subject_template:
+        if not subject:
+            return overlay.get("text") or sample
+        chars = overlay.get("subject_chars")
+        try:
+            chars = int(chars) if chars is not None else None
+        except (TypeError, ValueError):
+            chars = None
+        sliced = subject[:chars] if (chars is not None and chars > 0) else subject
+        return subject_template.format(subject=sliced)
 
     # Explicit subject_part beats the heuristic: the template author has
     # tagged this overlay as a slot for the user's subject. Empty subject
