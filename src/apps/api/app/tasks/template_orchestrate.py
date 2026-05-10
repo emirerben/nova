@@ -3696,8 +3696,8 @@ def _run_single_video_job(
 # pipeline is ~5 ffmpeg subprocess calls + 3 GCS round-trips; happy path
 # wall-clock is 30–60s. The 1740s soft timeout on `orchestrate_template_job`
 # is sized for 24-slot Morocco templates with text-burning — applied to a
-# single_video job, it lets a hung run hold the worker for half an hour
-# (compounded by `--concurrency=1` per worker).
+# single_video job, it lets a hung run hold the worker slot for half an hour
+# (each worker has `--concurrency=2` slots — see fly.toml).
 #
 # Tight 240s/300s timeouts here mean a bad job fails fast and frees the
 # queue. Multi-video templates keep their longer budget via the original
