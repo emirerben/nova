@@ -1,0 +1,52 @@
+name: Fly Deploy
+
+# Deploys the API + worker process groups to Fly.io on every push to main.
+# Frontend deploys are handled separately by Vercel's GitHub integration.
+#
+# Setup: requires `FLY_API_TOKEN` repo secret. Generate with:
+#   flyctl auth token
+# Then add via Settings → Secrets and variables → Actions → New repository secret.
+#
+# The release_command in fly.toml runs `alembic upgrade head` automatically,
+# so migrations ship as part of the deploy. No separate step needed here.
+on:
+  push:
+    branches:
+      - main
+    # Skip deploy when the push only touches files that don't reach Fly:
+    # web app, docs, or workflow tweaks unrelated to the runtime image.
+    paths-ignore:
+      - "src/apps/web/**"
+      - "docs/**"
+      - "**/*.md"
+      - ".gitignore"
+      - ".vercelignore"
+  workflow_dispatch: {}
+
+# Cancel in-flight deploys when a newer push arrives so we don't ship a stale
+# image after a fast-follow fix lands. Fly's own state machine handles
+# concurrent deploys safely, but cancelling avoids burning a release machine.
+concurrency:
+  group: fly-deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy to Fly.io
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only
+
+      - name: Verify
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl status --app nova-video
