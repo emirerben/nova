@@ -7,6 +7,7 @@ POST /template-jobs/:id/reroll   — re-run assembly with same clips
 GET  /template-jobs/:id/debug    — admin debug endpoint
 """
 
+import re
 import uuid
 from datetime import datetime
 
@@ -25,6 +26,25 @@ from app.services.template_validation import (
 )
 
 log = structlog.get_logger()
+
+# Control chars (C0 minus tab, C1, DEL) plus Unicode bidi-overrides and
+# line/paragraph separators. Stripping at the trust boundary keeps weird
+# input from reaching the overlay renderer (where bidi-override could
+# visually flip the hook text and zero-width chars could disguise it).
+_INVISIBLE_CHARS_RE = re.compile(
+    "["
+    "\x00-\x08\x0b-\x1f\x7f-\x9f"   # C0 (minus tab/LF) + DEL + C1
+    "\u200b-\u200f"                  # zero-width + LTR/RTL marks
+    "\u202a-\u202e"                  # bidi-overrides (LRE/RLE/PDF/LRO/RLO)
+    "\u2066-\u2069"                  # bidi-isolate controls
+    "\u2028\u2029"                   # line/paragraph separators
+    "]"
+)
+
+
+def _scrub(value: str) -> str:
+    """Strip outer whitespace + drop invisible/bidi-control characters."""
+    return _INVISIBLE_CHARS_RE.sub("", value).strip()
 
 router = APIRouter()
 
@@ -65,10 +85,11 @@ class CreateTemplateJobRequest(BaseModel):
     def validate_inputs_count(cls, v: dict[str, str]) -> dict[str, str]:
         # Defensive cap; per-key declared-key/length checks happen against
         # the template in _validate_inputs below. Strip surrounding whitespace
-        # so " Tokyo " doesn't render as "  TOKYO  " in the hook overlay.
+        # AND invisible control/bidi characters so a malicious "Tokyo<RLO>oxoT"
+        # can't visually flip the rendered hook text.
         if len(v) > 10:
             raise ValueError("Too many input keys (max 10)")
-        return {k: val.strip() for k, val in v.items()}
+        return {k: _scrub(val) for k, val in v.items()}
 
 
 def _validate_inputs(inputs: dict[str, str], required: list | None) -> None:

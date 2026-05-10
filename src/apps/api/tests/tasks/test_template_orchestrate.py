@@ -1657,6 +1657,72 @@ class TestSubjectSubstitution:
         assert _is_subject_placeholder("Welcome to") is False
 
 
+class TestEmbeddedAllcapsToken:
+    """Edge cases for the new heuristic helper. Most are reachable indirectly
+    via _is_subject_placeholder/_substitute_subject, but the helper has its
+    own filter rules (length, alpha, word-count window) worth pinning."""
+
+    def test_single_word_returns_none(self):
+        from app.tasks.template_orchestrate import _embedded_allcaps_token
+        assert _embedded_allcaps_token("PERU") is None
+
+    def test_six_or_more_words_returns_none(self):
+        """5-word window is the upper bound; 6 words exit the heuristic."""
+        from app.tasks.template_orchestrate import _embedded_allcaps_token
+        assert _embedded_allcaps_token("a b c d e PERU") is None
+
+    def test_length_one_allcaps_filtered(self):
+        """Single-letter all-caps ('I', 'A') is excluded — too noisy."""
+        from app.tasks.template_orchestrate import _embedded_allcaps_token
+        assert _embedded_allcaps_token("Welcome to A") is None
+
+    def test_non_alpha_token_filtered(self):
+        """Tokens with digits/punctuation are excluded."""
+        from app.tasks.template_orchestrate import _embedded_allcaps_token
+        assert _embedded_allcaps_token("Welcome to PERU2") is None
+        assert _embedded_allcaps_token("Visit U.S.A. tomorrow") is None
+
+    def test_fully_uppercase_returns_none(self):
+        """Whole-text caps is handled by the existing rule, not this helper."""
+        from app.tasks.template_orchestrate import _embedded_allcaps_token
+        assert _embedded_allcaps_token("WELCOME TO PERU") is None
+
+    def test_happy_path_returns_token(self):
+        from app.tasks.template_orchestrate import _embedded_allcaps_token
+        assert _embedded_allcaps_token("Welcome to PERU") == "PERU"
+
+    def test_five_word_with_allcaps_matches(self):
+        """Top of the 2-5 word window."""
+        from app.tasks.template_orchestrate import _is_subject_placeholder
+        assert _is_subject_placeholder("a b c d PERU") is True
+
+    def test_six_word_with_allcaps_rejects(self):
+        """Just past the window — must not match."""
+        from app.tasks.template_orchestrate import _is_subject_placeholder
+        assert _is_subject_placeholder("a b c d e PERU") is False
+
+
+class TestSubstituteSubjectMultiWord:
+    """User-typed subjects often have spaces ('New York', 'São Paulo') or
+    hyphens ('Saint-Tropez'). Verify the substitution doesn't break them."""
+
+    def test_multiword_subject_in_embedded_token_path(self):
+        """'Welcome to PERU' + 'New York' → 'Welcome to NEW YORK'.
+        The token-swap loop replaces only the matched token; subject's
+        internal space is preserved by .upper()."""
+        from app.tasks.template_orchestrate import _substitute_subject
+        assert _substitute_subject("Welcome to PERU", "New York") == "Welcome to NEW YORK"
+
+    def test_hyphenated_subject_in_allcaps_path(self):
+        from app.tasks.template_orchestrate import _substitute_subject
+        assert _substitute_subject("PERU", "Saint-Tropez") == "SAINT-TROPEZ"
+
+    def test_already_uppercase_subject_in_title_case_path(self):
+        """Title-case sample returns subject as-is (no .upper() applied)."""
+        from app.tasks.template_orchestrate import _substitute_subject
+        assert _substitute_subject("Peru", "TOKYO") == "TOKYO"
+
+
 # ── Timeout & error_detail tests ──────────────────────────────────────────────
 
 
