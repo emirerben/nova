@@ -149,7 +149,13 @@ def build_recipe() -> dict:
             "energy": 0.0, "text_overlays": [],
         },
         {
-            "position": 4, "target_duration_s": 3.5, "priority": 10, "slot_type": "hook",
+            # Slot 4 — short "Welcome to" intro on a hook clip. Was 3.5s; cut
+            # to 1.5s based on careful frame-by-frame analysis of the reference
+            # video, which only holds "Welcome to" for ~0.7s before the
+            # location title takes over. The previous 3.5s slot made the intro
+            # feel dragged and pushed the title reveal later than the music
+            # downbeat where it should land.
+            "position": 4, "target_duration_s": 1.5, "priority": 10, "slot_type": "hook",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 2.1,
             "text_overlays": [
@@ -157,11 +163,7 @@ def build_recipe() -> dict:
                     "Welcome to",
                     effect="fade-in",
                     start_s=0.5,
-                    # Stay visible through slot 4's end so there is no text-less
-                    # gap before slot 5's location title appears. Was 2.33 (text
-                    # disappeared at slot-relative 2.33s, ~1.17s before slot 5
-                    # cuts in — the reveal felt empty).
-                    end_s=3.5,
+                    end_s=1.5,                       # matches new slot duration
                     text_size_px=WELCOME_SIZE_PX,
                     text_color=WELCOME_COLOR,
                     font_style="serif",
@@ -170,7 +172,15 @@ def build_recipe() -> dict:
             ],
         },
         {
-            "position": 5, "target_duration_s": 2.73, "priority": 10, "slot_type": "hook",
+            # Slot 5 — the title reveal moment. Reference holds "BRAZIL" on
+            # screen for ~5.8 seconds with continuous font-cycling, then the
+            # curtain closes over only the last ~1.6 seconds (28% of the title
+            # phase). Previously this slot was 2.73s, of which 60% was curtain
+            # — cycling had no room to read as rhythmic and the whole reveal
+            # felt rushed. Extending to 5.5s gives the cycling 5+ seconds of
+            # uncovered screen time and aligns the curtain-as-fraction with
+            # the reference.
+            "position": 5, "target_duration_s": 5.5, "priority": 10, "slot_type": "hook",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 1.8,
             "text_overlays": [
@@ -194,7 +204,7 @@ def build_recipe() -> dict:
                     "PERU",
                     effect="font-cycle",
                     start_s=0.0,
-                    end_s=2.73,
+                    end_s=5.5,                       # full slot — cycles throughout
                     text_size_px=PERU_SIZE_PX,
                     text_color=PERU_COLOR,
                     # font_style="display" maps to PlayfairDisplay-Bold.ttf
@@ -204,17 +214,21 @@ def build_recipe() -> dict:
                     font_style="display",
                     position_y_frac=PERU_Y_FRAC,
                     # Force fast cycling from slot-relative 0.3s onward (vs
-                    # orchestrator's auto-injected 1.092s = slot_end - animate_s).
-                    # This puts ~88% of the slot in fast-cycle mode for a
-                    # snappier reveal during the curtain close. Capped at the
-                    # 60-frame MAX_FONT_CYCLE_FRAMES safety limit by the
-                    # renderer regardless.
+                    # orchestrator's auto-injected slot_end - animate_s = 3.9s).
+                    # With slot=5.5s and accel=0.3, ~95% of the slot is in
+                    # fast-cycle mode. The 60-frame MAX_FONT_CYCLE_FRAMES cap
+                    # in text_overlay.py caps PNG output at ~4.2s of fast
+                    # cycling (60 * 0.07), which still leaves room for the
+                    # full pre-curtain phase before bars cover the text.
                     font_cycle_accel_at_s=0.3,
                 ),
             ],
         },
         {
-            "position": 6, "target_duration_s": 0.96, "priority": 9, "slot_type": "broll",
+            # Slot 6 was 0.96s; shrunk to 0.5s to keep total template duration
+            # close to the music length (21.4s) after extending slot 5 by 2.77s
+            # and shortening slot 4 by 2.0s.
+            "position": 6, "target_duration_s": 0.5, "priority": 9, "slot_type": "broll",
             # Hard-cut after the curtain: the orchestrator force-overrides any
             # transition that follows an interstitial-bearing slot to "none"
             # (template_orchestrate.py:1677). Declaring "hard-cut" here keeps
@@ -320,7 +334,13 @@ def build_recipe() -> dict:
             {
                 "after_slot": 5,
                 "type": "curtain-close",
-                "animate_s": 1.638,    # = 2.73 * 0.6 (explicit; matches clamp)
+                # Matches the reference's curtain duration exactly. Well within
+                # the orchestrator's slot_dur * _CURTAIN_MAX_RATIO clamp
+                # (5.5 * 0.6 = 3.3s) and well above _MIN_CURTAIN_ANIMATE_S
+                # (4.0s) for consolidate_slots — actually wait, 1.6 < 4.0
+                # would still drop curtain in consolidation, but min_slots=17
+                # below skips consolidation entirely so it's safe.
+                "animate_s": 1.6,
                 "hold_s": 0.0,
                 "hold_color": "#000000",
             },

@@ -258,6 +258,61 @@ class TestSlot6NoOverlay:
         )
 
 
+class TestTitlePhaseDurations:
+    """The title phase (slot 4 + slot 5) was rebalanced after frame-by-frame
+    analysis of the reference video showed a major timing mismatch: the
+    reference holds 'Welcome to' for ~0.7s and BRAZIL for ~5.8s, but the
+    original recipe held Welcome-to for 3s and BRAZIL for only 2.73s. The
+    BRAZIL phase was too short for font-cycling to read as rhythmic and the
+    curtain consumed 60% of it. These tests pin the new balance:
+    short Welcome-to (1.5s slot), long BRAZIL (5.5s slot), curtain ≤ 30% of
+    the BRAZIL phase."""
+
+    def test_welcome_to_slot_is_brief(self):
+        recipe = build_recipe()
+        slot4 = _slot(recipe, 4)
+        assert slot4["target_duration_s"] <= 2.0, (
+            f"Slot 4 (Welcome-to) duration={slot4['target_duration_s']}s — "
+            f"reference holds Welcome-to for ~0.7s, slot 4 should be brief "
+            f"(under 2s) so the title reveal doesn't feel dragged."
+        )
+
+    def test_brazil_slot_has_room_to_breathe(self):
+        recipe = build_recipe()
+        slot5 = _slot(recipe, 5)
+        assert slot5["target_duration_s"] >= 4.5, (
+            f"Slot 5 (BRAZIL/location) duration={slot5['target_duration_s']}s "
+            f"— reference holds BRAZIL for ~5.8s. Anything under 4.5s means "
+            f"the font-cycling has insufficient time to read as rhythmic and "
+            f"the curtain ends up dominating the phase."
+        )
+
+    def test_curtain_is_minority_of_brazil_phase(self):
+        """Reference curtain is ~28% of BRAZIL phase. Above 40% feels rushed."""
+        recipe = build_recipe()
+        slot5 = _slot(recipe, 5)
+        inter = recipe["interstitials"][0]
+        curtain_fraction = inter["animate_s"] / slot5["target_duration_s"]
+        assert curtain_fraction <= 0.40, (
+            f"Curtain is {curtain_fraction:.0%} of slot 5 — should be ≤40% so "
+            f"font-cycling has uncovered screen time before bars close. "
+            f"Reference is 28%."
+        )
+
+    def test_total_duration_close_to_music(self):
+        """Music track is 21.4s. Total slot duration should be within 0.5s
+        of that so neither audio nor video has an awkward dead zone."""
+        recipe = build_recipe()
+        total = sum(s["target_duration_s"] for s in recipe["slots"])
+        # Music duration from the extracted track (templates/dimplespassport-edit-music.m4a)
+        MUSIC_DURATION_S = 21.40
+        assert abs(total - MUSIC_DURATION_S) <= 0.5, (
+            f"Total slot duration {total:.2f}s diverges >0.5s from music "
+            f"length {MUSIC_DURATION_S}s. Either trim a b-roll slot or "
+            f"accept a brief silent/black tail."
+        )
+
+
 class TestCurtainCloseAfterSlot5:
     """The reference video shows top+bottom black bars closing in over the
     location title between ~8s-11s, then reopening to b-roll. The recipe must
