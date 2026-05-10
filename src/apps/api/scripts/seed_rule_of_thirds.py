@@ -102,43 +102,40 @@ def build_recipe() -> dict:
         "grid_highlight_intersection": "top-left",
         "grid_highlight_color": "#E63946",
         "grid_highlight_windows": [[1.4, 1.7], [2.4, 2.7]],
-        # Title sits inside the middle row (between ih/3 and 2*ih/3) so the
-        # 3 lines stack within the central rule-of-thirds cell.
-        # Sizes tuned against the reference TikTok where each line takes ~5%
-        # of frame height (~95px line height ≈ 80px font on 1920px tall video).
-        # "Thirds" gets a small bump for red-emphasis without blowing past the
-        # middle-column width (~360px on 1080 frame).
-        # Y positions stack the 3 lines symmetrically around y=0.50 (middle of
-        # middle row) so the title is visually centered inside the central cell.
+        # The 3 title words appear SEQUENTIALLY in the reference TikTok,
+        # NOT stacked: each word reveals on its own beat then is replaced
+        # by the next. Matched against frames extracted from the reference:
+        #   t=0.5s  → "The"     white at y=0.42 (upper part of middle row)
+        #   t=1.0s  → "Rule of" white at y=0.55 (vertical center)
+        #   t=1.4s  → "Thirds"  red   at y=0.56 (lands on the beat in red,
+        #                                        no white phase preceding it)
+        # The slight y variation gives the reading a small downward sweep
+        # without losing visual centering inside the central rule-of-thirds
+        # cell. Sizes tuned against the reference: ~95px font on 1920px
+        # tall video, "Thirds" same size as the others — the red color is
+        # the emphasis, not bigger type.
         "text_overlays": [
             {
                 **_HOOK_BASE,
                 "text": "The",
-                "text_size_px": 80,
+                "text_size_px": 95,
                 "text_color": "#FFFFFF",
                 "start_s": 0.4,
-                "position_y_frac": 0.45,
+                "end_s": 1.0,
+                "position_y_frac": 0.42,
             },
             {
                 **_HOOK_BASE,
                 "text": "Rule of",
-                "text_size_px": 80,
-                "text_color": "#FFFFFF",
-                "start_s": 0.4,
-                "position_y_frac": 0.50,
-            },
-            # "Thirds" — white phase: appears with the other two, ends at beat.
-            {
-                **_HOOK_BASE,
-                "text": "Thirds",
                 "text_size_px": 95,
                 "text_color": "#FFFFFF",
-                "start_s": 0.4,
+                "start_s": 1.0,
                 "end_s": 1.4,
-                "position_y_frac": 0.56,
+                "position_y_frac": 0.55,
             },
-            # "Thirds" — red phase: takes over at the beat (1.4s) and stays.
-            # Same position so it visually replaces the white one.
+            # "Thirds" lands red on the beat at 1.4s and stays through slot
+            # end — no white phase, the reference shows it red from frame 1
+            # of its appearance.
             {
                 **_HOOK_BASE,
                 "text": "Thirds",
