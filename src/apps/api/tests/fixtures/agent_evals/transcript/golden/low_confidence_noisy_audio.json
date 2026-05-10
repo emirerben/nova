@@ -1,0 +1,24 @@
+{
+  "agent": "nova.audio.transcript",
+  "prompt_version": "2026-05-09",
+  "input": {
+    "file_uri": "files/golden-transcript-noisy",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "{\"words\": [{\"text\": \"crowd\", \"start_s\": 0.1, \"end_s\": 0.5}, {\"text\": \"noise\", \"start_s\": 0.6, \"end_s\": 1.05}, {\"text\": \"makes\", \"start_s\": 1.15, \"end_s\": 1.5}, {\"text\": \"this\", \"start_s\": 1.55, \"end_s\": 1.8}, {\"text\": \"hard\", \"start_s\": 1.85, \"end_s\": 2.2}], \"full_text\": \"crowd noise makes this hard\", \"low_confidence\": true}",
+  "output": {
+    "words": [
+      {"text": "crowd", "start_s": 0.1, "end_s": 0.5, "confidence": 1.0},
+      {"text": "noise", "start_s": 0.6, "end_s": 1.05, "confidence": 1.0},
+      {"text": "makes", "start_s": 1.15, "end_s": 1.5, "confidence": 1.0},
+      {"text": "this", "start_s": 1.55, "end_s": 1.8, "confidence": 1.0},
+      {"text": "hard", "start_s": 1.85, "end_s": 2.2, "confidence": 1.0}
+    ],
+    "full_text": "crowd noise makes this hard",
+    "low_confidence": true
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "low_confidence flag set; words still well-formed and non-overlapping"
+  }
+}

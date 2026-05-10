@@ -1,9 +1,9 @@
-"""Per-fixture eval gate for nova.compose.template_recipe.
+"""Per-fixture eval gate for nova.audio.transcript.
 
 Run modes (see tests/evals/README.md for full guide):
-  pytest tests/evals/test_template_recipe_evals.py -v
-  pytest tests/evals/test_template_recipe_evals.py -v --with-judge
-  pytest tests/evals/test_template_recipe_evals.py -v --eval-mode=live --with-judge
+  pytest tests/evals/test_transcript_evals.py -v
+  pytest tests/evals/test_transcript_evals.py -v --with-judge
+  pytest tests/evals/test_transcript_evals.py -v --eval-mode=live --with-judge
 """
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ import pytest
 
 from .runners.eval_runner import discover_fixtures, load_fixture, run_eval
 
-AGENT_DIR = "template_recipe"
+AGENT_DIR = "transcript"
+AGENT_NAME = "nova.audio.transcript"
 FIXTURE_PATHS = discover_fixtures(AGENT_DIR)
 
 
@@ -26,7 +27,7 @@ FIXTURE_PATHS = discover_fixtures(AGENT_DIR)
     ),
 )
 @pytest.mark.parametrize("fixture_path", FIXTURE_PATHS, ids=lambda p: f"{p.parent.name}/{p.stem}")
-def test_template_recipe_eval(
+def test_transcript_eval(
     fixture_path: Path,
     eval_mode: str,
     with_judge: bool,
@@ -35,8 +36,8 @@ def test_template_recipe_eval(
     shadow_prompts_dir,
 ) -> None:
     fixture = load_fixture(fixture_path)
-    if fixture.agent != "nova.compose.template_recipe":
-        pytest.skip(f"fixture is for {fixture.agent}, not template_recipe")
+    if fixture.agent != AGENT_NAME:
+        pytest.skip(f"fixture is for {fixture.agent}, not {AGENT_NAME}")
 
     judge = judge_for(fixture.agent) if with_judge else None
     client = live_model_client if eval_mode == "live" else None

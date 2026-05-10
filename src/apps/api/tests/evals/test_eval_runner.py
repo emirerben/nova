@@ -214,3 +214,160 @@ def test_discover_fixtures_empty_when_dir_missing(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(er, "EVAL_FIXTURES_ROOT", tmp_path / "nope")
     assert discover_fixtures("template_recipe") == []
+
+
+# ── _shadow_prompts context manager ─────────────────────────────────────────
+
+
+def test_shadow_prompts_overlays_candidate_then_restores(tmp_path: Path):
+    """Inside the CM, candidate-dir files override prod_loader. After exit,
+    prod_loader._get_raw is restored and the cache is cleaned up."""
+    from app.pipeline import prompt_loader
+
+    from .runners.eval_runner import _shadow_prompts
+
+    candidate = tmp_path / "transcribe.txt"
+    candidate.write_text("CANDIDATE PROMPT BODY")
+
+    original_get_raw = prompt_loader._get_raw
+    prompt_loader._cache.clear()
+
+    with _shadow_prompts(tmp_path):
+        # Candidate file present → returns candidate text
+        assert prompt_loader._get_raw("transcribe") == "CANDIDATE PROMPT BODY"
+        # Candidate missing → falls through to prod loader
+        prod_text = prompt_loader._get_raw("analyze_clip")
+        assert prod_text and "CANDIDATE" not in prod_text
+
+    # After exit: original loader restored, candidate not visible
+    assert prompt_loader._get_raw is original_get_raw
+    prompt_loader._cache.clear()
+    # Reading "transcribe" now goes through prod loader; either returns the prod
+    # template (if file exists) or raises — what matters is it's NOT the candidate.
+    try:
+        result = prompt_loader._get_raw("transcribe")
+        assert result != "CANDIDATE PROMPT BODY"
+    except Exception:
+        pass  # prod prompt file may not exist in test env — that's fine
+
+
+def test_shadow_prompts_restores_on_exception(tmp_path: Path):
+    """If the body of the CM raises, _get_raw still restores."""
+    from app.pipeline import prompt_loader
+
+    from .runners.eval_runner import _shadow_prompts
+
+    original_get_raw = prompt_loader._get_raw
+    with pytest.raises(RuntimeError, match="boom"):
+        with _shadow_prompts(tmp_path):
+            raise RuntimeError("boom")
+    assert prompt_loader._get_raw is original_get_raw
+
+
+# ── estimate_live_cost ──────────────────────────────────────────────────────
+
+
+def test_estimate_live_cost_per_agent_breakdown():
+    from .runners.eval_runner import estimate_live_cost
+
+    fixtures = [
+        Fixture(
+            path=Path("/dev/null/a.json"),
+            agent="nova.compose.template_recipe",
+            prompt_version="v1",
+            input={"file_uri": "files/x", "file_mime": "video/mp4"},
+            raw_text="",
+            output={},
+            meta={},
+        ),
+        Fixture(
+            path=Path("/dev/null/b.json"),
+            agent="nova.compose.template_recipe",
+            prompt_version="v1",
+            input={"file_uri": "files/y", "file_mime": "video/mp4"},
+            raw_text="",
+            output={},
+            meta={},
+        ),
+        Fixture(
+            path=Path("/dev/null/c.json"),
+            agent="nova.audio.transcript",
+            prompt_version="v1",
+            input={"file_uri": "files/z", "file_mime": "video/mp4"},
+            raw_text="",
+            output={},
+            meta={},
+        ),
+    ]
+    breakdown, total = estimate_live_cost(fixtures)
+    assert "nova.compose.template_recipe" in breakdown
+    assert breakdown["nova.compose.template_recipe"][1] == 2  # fixture count
+    assert breakdown["nova.audio.transcript"][1] == 1
+    assert total > 0
+    assert total == sum(c for c, _ in breakdown.values())
+
+
+def test_estimate_live_cost_skips_unknown_agents():
+    from .runners.eval_runner import estimate_live_cost
+
+    fixtures = [
+        Fixture(
+            path=Path("/dev/null/x.json"),
+            agent="nova.unknown.agent",
+            prompt_version="v1",
+            input={},
+            raw_text="",
+            output={},
+            meta={},
+        ),
+    ]
+    breakdown, total = estimate_live_cost(fixtures)
+    assert breakdown == {}
+    assert total == 0.0
+
+
+def test_estimate_live_cost_warns_on_zero_cost_spec(capsys, monkeypatch):
+    """If an agent has zero cost spec, the gate prints a warning so it's not
+    silently bypassed."""
+    from app.agents._runtime import AgentSpec
+
+    from .runners import eval_runner as er
+    from .runners.eval_runner import estimate_live_cost
+
+    # Build a fake agent class with zero costs
+    class _ZeroCostAgent:
+        spec = AgentSpec(
+            name="nova.test.zero",
+            prompt_id="_inline",
+            prompt_version="v1",
+            model="test-model",
+            cost_per_1k_input_usd=0,
+            cost_per_1k_output_usd=0,
+        )
+
+    original_dispatch = er._build_agent_class_for
+
+    def patched(name: str):
+        if name == "nova.test.zero":
+            return _ZeroCostAgent
+        return original_dispatch(name)
+
+    monkeypatch.setattr(er, "_build_agent_class_for", patched)
+
+    fixtures = [
+        Fixture(
+            path=Path("/dev/null/z.json"),
+            agent="nova.test.zero",
+            prompt_version="v1",
+            input={},
+            raw_text="",
+            output={},
+            meta={},
+        ),
+    ]
+    breakdown, total = estimate_live_cost(fixtures)
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.out
+    assert "nova.test.zero" in captured.out
+    assert total == 0.0  # zero cost spec → zero total
+    assert breakdown["nova.test.zero"][1] == 1
