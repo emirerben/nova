@@ -166,6 +166,88 @@ def test_schema_error_twice_terminal(
     assert "schema" in str(exc_info.value).lower()
 
 
+# ── enable_clarification_retries=False (skip-retry agents) ───────────────────
+
+
+def _no_retry_agent(mock_client: MockModelClient) -> SampleAgent:
+    """SampleAgent variant with clarification retries disabled.
+
+    Mirrors ClipMetadataAgent's prod config: a SchemaError or RefusalError
+    must raise on the first failure, not burn a second 100-second model
+    call. Caller is expected to fall through to a backup path (Whisper).
+    """
+    import dataclasses  # noqa: PLC0415
+
+    class NoRetryAgent(SampleAgent):
+        spec = dataclasses.replace(
+            SampleAgent.spec,
+            enable_clarification_retries=False,
+        )
+
+    return NoRetryAgent(mock_client)
+
+
+def test_schema_error_no_retry_when_disabled(mock_client: MockModelClient) -> None:
+    """Slice-4 contract: with clarification retries off, the FIRST schema
+    error raises TerminalError without a second model call."""
+    agent = _no_retry_agent(mock_client)
+    mock_client.queue(
+        "gemini-2.5-flash",
+        {"answer": "ok", "score": 999},  # schema error (out of range)
+        {"answer": "ok", "score": 50},   # would be the retry — must NOT be invoked
+    )
+    with pytest.raises(TerminalError) as exc_info:
+        agent.run(SampleInput(topic="x"))
+    assert "schema" in str(exc_info.value).lower()
+    # Critical: only ONE model invocation, not two. The second queued response
+    # is left untouched, proving the retry was skipped.
+    assert len(mock_client.invocations) == 1
+
+
+def test_refusal_no_retry_when_disabled(mock_client: MockModelClient) -> None:
+    """Same contract for refusals: skip the clarification retry."""
+    agent = _no_retry_agent(mock_client)
+    mock_client.queue(
+        "gemini-2.5-flash",
+        {"answer": "partial"},  # missing required `score` → refusal
+        {"answer": "ok", "score": 50},  # would be the retry — must NOT be invoked
+    )
+    with pytest.raises(TerminalError) as exc_info:
+        agent.run(SampleInput(topic="x"))
+    assert "refusal" in str(exc_info.value).lower()
+    assert len(mock_client.invocations) == 1
+
+
+def test_transient_retries_still_work_when_clarification_disabled(
+    mock_client: MockModelClient,
+) -> None:
+    """Slice 4 ONLY skips clarification retries. TransientError retry must
+    still work — those are 5xx/429/timeout, where retrying is correct."""
+    agent = _no_retry_agent(mock_client)
+    mock_client.queue(
+        "gemini-2.5-flash",
+        TransientError("503 service unavailable"),
+        {"answer": "ok", "score": 50},
+    )
+    out = agent.run(SampleInput(topic="x"))
+    assert out.score == 50
+    # Two invocations: one transient failure, one success.
+    assert len(mock_client.invocations) == 2
+
+
+def test_default_spec_keeps_clarification_retries_on(
+    sample_agent: SampleAgent, mock_client: MockModelClient
+) -> None:
+    """Backward-compat sanity: agents that don't set the flag still retry
+    once on schema error (existing behavior, covered by the test above —
+    pin the default value of the new field here too)."""
+    from app.agents._runtime import AgentSpec
+    spec = AgentSpec(name="x", prompt_id="x", prompt_version="0", model="m")
+    assert spec.enable_clarification_retries is True
+    # And SampleAgent (used everywhere in this file) defaults to True too.
+    assert sample_agent.spec.enable_clarification_retries is True
+
+
 # ── Terminal errors ───────────────────────────────────────────────────────────
 
 

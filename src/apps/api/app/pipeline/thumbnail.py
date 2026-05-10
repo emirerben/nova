@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import structlog
@@ -63,12 +64,15 @@ def select_thumbnail(
 def _extract_keyframes(
     video_path: str, start_s: float, end_s: float, output_dir: str
 ) -> list[str]:
-    """Extract KEYFRAME_COUNT evenly-spaced frames as JPEGs. Never shell=True."""
+    """Extract KEYFRAME_COUNT evenly-spaced frames as JPEGs. Never shell=True.
+
+    Each ffmpeg `-vframes 1` is independent — extract them in parallel so a
+    5-frame extraction takes ~1 ffmpeg duration instead of 5.
+    """
     duration = end_s - start_s
     interval = duration / (KEYFRAME_COUNT + 1)
 
-    paths = []
-    for i in range(1, KEYFRAME_COUNT + 1):
+    def _one(i: int) -> str | None:
         t = start_s + i * interval
         out_path = os.path.join(output_dir, f"thumb_candidate_{i}.jpg")
         cmd = [
@@ -82,9 +86,13 @@ def _extract_keyframes(
         ]
         result = subprocess.run(cmd, capture_output=True, timeout=30, check=False)
         if result.returncode == 0 and os.path.exists(out_path):
-            paths.append(out_path)
+            return out_path
+        return None
 
-    return paths
+    with ThreadPoolExecutor(max_workers=KEYFRAME_COUNT) as pool:
+        results = list(pool.map(_one, range(1, KEYFRAME_COUNT + 1)))
+
+    return [p for p in results if p is not None]
 
 
 def _score_frame(

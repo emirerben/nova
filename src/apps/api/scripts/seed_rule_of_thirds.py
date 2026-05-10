@@ -104,16 +104,20 @@ def build_recipe() -> dict:
         "grid_highlight_windows": [[1.4, 1.7], [2.4, 2.7]],
         # The 3 title words appear SEQUENTIALLY in the reference TikTok,
         # NOT stacked: each word reveals on its own beat then is replaced
-        # by the next. Matched against frames extracted from the reference:
-        #   t=0.5s  → "The"     white at y=0.42 (upper part of middle row)
-        #   t=1.0s  → "Rule of" white at y=0.55 (vertical center)
-        #   t=1.4s  → "Thirds"  red   at y=0.56 (lands on the beat in red,
-        #                                        no white phase preceding it)
-        # The slight y variation gives the reading a small downward sweep
-        # without losing visual centering inside the central rule-of-thirds
-        # cell. Sizes tuned against the reference: ~95px font on 1920px
-        # tall video, "Thirds" same size as the others — the red color is
-        # the emphasis, not bigger type.
+        # by the next.
+        #
+        # `position_y_frac` is the VERTICAL CENTER of the rendered text
+        # (text_overlay.py: `block_top = CANVAS_H * y_frac - block_h / 2`).
+        # On a 1920px frame, a delta of 0.01 = ~19px. The earlier values
+        # (0.42 / 0.55 / 0.56) put a ~250px jump between "The" and "Rule of"
+        # which read as a "wide gap" because the eye has to leap down to
+        # find the next word. Tightened to a 0.04 total spread (~77px) so
+        # the words land in a single readable band centered on the middle
+        # rule-of-thirds row, with a subtle downward sweep that mimics the
+        # reference's reading rhythm without the disorienting jump.
+        # Sizes tuned against the reference: ~95px font on 1920px video.
+        # "Thirds" same size as the others — the red color is the emphasis,
+        # not bigger type.
         "text_overlays": [
             {
                 **_HOOK_BASE,
@@ -122,7 +126,7 @@ def build_recipe() -> dict:
                 "text_color": "#FFFFFF",
                 "start_s": 0.4,
                 "end_s": 1.0,
-                "position_y_frac": 0.42,
+                "position_y_frac": 0.50,
             },
             {
                 **_HOOK_BASE,
@@ -131,7 +135,7 @@ def build_recipe() -> dict:
                 "text_color": "#FFFFFF",
                 "start_s": 1.0,
                 "end_s": 1.4,
-                "position_y_frac": 0.55,
+                "position_y_frac": 0.52,
             },
             # "Thirds" lands red on the beat at 1.4s and stays through slot
             # end — no white phase, the reference shows it red from frame 1
@@ -142,7 +146,7 @@ def build_recipe() -> dict:
                 "text_size_px": 95,
                 "text_color": "#E63946",
                 "start_s": 1.4,
-                "position_y_frac": 0.56,
+                "position_y_frac": 0.54,
             },
         ],
     })

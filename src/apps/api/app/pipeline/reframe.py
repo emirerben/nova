@@ -23,12 +23,19 @@ import subprocess
 import structlog
 
 from app.config import settings
+from app.pipeline.audio_layout import (
+    BODY_SLOT_AUDIO_OUT_ARGS,
+    SILENT_AUDIO_INPUT_ARGS,
+)
 from app.pipeline.probe import probe_video
 from app.pipeline.text_overlay import FONTS_DIR
 
 log = structlog.get_logger()
 
 MAX_OUTPUT_BYTES = 500 * 1024 * 1024  # 500MB
+
+# Backward-compat alias — older code referenced the local constant.
+_SILENT_AUDIO_INPUT = SILENT_AUDIO_INPUT_ARGS
 
 
 class ReframeError(Exception):
@@ -82,8 +89,10 @@ def _encoding_args(
         "-maxrate", settings.output_video_bitrate,
         "-bufsize", "8M",
         "-r", str(settings.output_fps),
-        "-c:a", "aac",
-        "-b:a", settings.output_audio_bitrate,
+        # Force identical body-slot audio layout (44.1kHz stereo AAC 192k) so
+        # the downstream concat can stream-copy. See app/pipeline/audio_layout.py
+        # for the contract — drift here re-introduces the silent-truncation bug.
+        *BODY_SLOT_AUDIO_OUT_ARGS,
         "-s", f"{settings.output_width}x{settings.output_height}",
         "-movflags", "+faststart",
         "-y",
@@ -113,6 +122,8 @@ def reframe_and_export(
     grid_highlight_intersection: str | None = None,
     grid_highlight_color: str = "#E63946",
     grid_highlight_windows: list[tuple[float, float]] | None = None,
+    color_trc: str | None = None,
+    has_audio: bool | None = None,
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
 
@@ -128,11 +139,23 @@ def reframe_and_export(
         raise ReframeError(f"Invalid duration: {duration}s")
 
     # Probe color transfer characteristic to select the right HDR→SDR filter.
-    try:
-        clip_probe = probe_video(input_path)
-        color_trc = clip_probe.color_trc
-    except Exception:
-        color_trc = "bt709"
+    # Caller may pre-probe and pass color_trc to skip a redundant ffprobe per
+    # slot (multi-slot templates probe the same source up to N times otherwise).
+    # has_audio is read from the same probe — used to decide whether to inject
+    # a silent AAC track so the reframed slot has the same audio layout as
+    # every other slot (preconditions for stream-copy concat downstream).
+    if color_trc is None or has_audio is None:
+        try:
+            clip_probe = probe_video(input_path)
+            if color_trc is None:
+                color_trc = clip_probe.color_trc
+            if has_audio is None:
+                has_audio = clip_probe.has_audio
+        except Exception:
+            if color_trc is None:
+                color_trc = "bt709"
+            if has_audio is None:
+                has_audio = False
 
     # Build video filter chain
     vf_parts = _build_video_filter(
@@ -172,14 +195,18 @@ def reframe_and_export(
             text_overlay_pngs or [],
             ass_overlay_paths or [],
             output_path,
+            has_audio=has_audio,
         )
     else:
         vf_string = ",".join(vf_parts)
-        cmd = [
-            "ffmpeg",
-            "-ss", str(start_s),
-            "-t", str(duration),
-            "-i", input_path,
+        cmd = ["ffmpeg", "-ss", str(start_s), "-t", str(duration), "-i", input_path]
+        if not has_audio:
+            # Silent-audio input MUST come after -ss/-t so the source seek
+            # doesn't apply to the lavfi source. -shortest then truncates
+            # the silent track to the trimmed video duration.
+            cmd += _SILENT_AUDIO_INPUT
+            cmd += ["-map", "0:v:0", "-map", "1:a:0", "-shortest"]
+        cmd += [
             "-vf", vf_string,
             *_encoding_args(output_path, preset="ultrafast"),
         ]
@@ -221,6 +248,8 @@ def reframe_and_export(
             grid_highlight_intersection=grid_highlight_intersection,
             grid_highlight_color=grid_highlight_color,
             grid_highlight_windows=grid_highlight_windows,
+            color_trc=color_trc,
+            has_audio=has_audio,
         )
 
     if result.returncode != 0:
@@ -262,6 +291,7 @@ def _build_overlay_cmd(
     overlay_pngs: list[dict],
     ass_overlay_paths: list[str],
     output_path: str,
+    has_audio: bool = True,
 ) -> list[str]:
     """Build FFmpeg command with -filter_complex for PNG + ASS overlay compositing.
 
@@ -277,6 +307,15 @@ def _build_overlay_cmd(
     # Add each PNG as an input
     for ov in overlay_pngs:
         cmd.extend(["-i", ov["png_path"]])
+
+    # Silent-audio fallback input — placed AFTER PNGs so the audio map index
+    # is predictable: 1 + len(overlay_pngs) + len(ass_overlay_paths-as-inputs).
+    # ASS overlays go through the subtitles filter (not -i inputs), so the
+    # silent track sits at index 1 + len(overlay_pngs).
+    silent_audio_idx = None
+    if not has_audio:
+        silent_audio_idx = 1 + len(overlay_pngs)
+        cmd.extend(_SILENT_AUDIO_INPUT)
 
     # Build filter_complex string
     # First apply the vf chain to the video input
@@ -312,9 +351,12 @@ def _build_overlay_cmd(
     cmd.extend([
         "-filter_complex", filter_complex,
         "-map", f"[{prev_label}]",
-        "-map", "0:a?",
-        *_encoding_args(output_path, preset="ultrafast"),
     ])
+    if has_audio:
+        cmd.extend(["-map", "0:a?"])
+    else:
+        cmd.extend(["-map", f"{silent_audio_idx}:a:0", "-shortest"])
+    cmd.extend(_encoding_args(output_path, preset="ultrafast"))
 
     return cmd
 
