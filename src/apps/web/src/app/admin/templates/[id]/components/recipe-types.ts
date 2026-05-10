@@ -74,6 +74,11 @@ export interface RecipeTextOverlay {
   font_cycle_accel_at_s: number | null;
   spans?: TextSpan[];     // When set, overrides flat text for rendering
   outline_px?: number | null;  // When set, draws black outline of N pixels around text for legibility
+  // Subject substitution opt-in. The renderer slices the user's `inputs.location`
+  // value into this overlay's text: "first_half"/"second_half" split at midpoint (ceil),
+  // "full" replaces entirely. Casing matches sample_text. Currently invisible in the
+  // editor UI — set via backfill scripts; see backend _resolve_overlay_text for semantics.
+  subject_part?: "first_half" | "second_half" | "full" | null;
 }
 
 export interface RecipeInterstitial {

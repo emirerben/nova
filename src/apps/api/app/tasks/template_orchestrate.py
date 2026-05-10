@@ -2254,6 +2254,50 @@ def _substitute_subject(sample: str, subject: str) -> str:
     return subject
 
 
+def _match_casing(text: str, sample: str) -> str:
+    """Cast `text` to mirror the casing pattern of `sample`.
+
+    Used by the `subject_part` branch to keep an aesthetic intact when
+    substituting a user input into a fragment placeholder. If the original
+    placeholder was lowercase ("lon"), we want the substituted value to
+    also be lowercase ("par" for user input "Paris").
+
+    Returns text unchanged when sample carries no signal (empty / no cased
+    chars / mixed case). The heuristic branch uses `_substitute_subject`
+    instead — it handles the embedded-allcaps case this helper cannot.
+    """
+    if not text or not sample:
+        return text
+    if not any(c.isalpha() for c in sample):
+        return text
+    if sample.isupper():
+        return text.upper()
+    if sample.islower():
+        return text.lower()
+    if sample.istitle():
+        return text.title()
+    return text
+
+
+def _split_subject(subject: str, part: str) -> str:
+    """Slice `subject` according to `part` ("first_half"/"second_half"/"full").
+
+    Midpoint with ceil for first half so the first overlay is the larger
+    half on odd lengths (mirrors the original "lon"/"don" 3+3 split).
+    Unknown values fall through to the full subject.
+    """
+    if part == "full":
+        return subject
+    if not subject:
+        return ""
+    n = (len(subject) + 1) // 2  # ceil
+    if part == "first_half":
+        return subject[:n]
+    if part == "second_half":
+        return subject[n:]
+    return subject
+
+
 def _resolve_overlay_text(
     role: str, clip_meta: "ClipMeta | None", overlay: dict,
     subject: str = "",
@@ -2268,11 +2312,27 @@ def _resolve_overlay_text(
     sample_text looks like a place-name placeholder — this prevents clip
     analysis text (e.g. "YOU", "discovering a hidden river") from overriding
     the user's subject.
+
+    `subject_part` on the overlay (one of "first_half", "second_half", "full")
+    is an explicit opt-in for subject substitution that bypasses the casing
+    heuristic. This lets templates split a single user input across two
+    overlays (e.g. "lon" + "don" → "par" + "is" for subject "Paris") that
+    the lowercase-fragment heuristic would never match.
     """
     sample = overlay.get("sample_text", "") or overlay.get("text", "")
 
     if role == "cta":
         return ""  # CTA text generated later by copy_writer
+
+    # Explicit subject_part beats the heuristic: the template author has
+    # tagged this overlay as a slot for the user's subject. Empty subject
+    # falls back to sample_text so admin previews and dry runs still
+    # render the placeholder.
+    subject_part = overlay.get("subject_part")
+    if subject_part in ("first_half", "second_half", "full"):
+        if not subject:
+            return sample
+        return _match_casing(_split_subject(subject, subject_part), sample)
 
     # Subject substitution: if the template text looks like a variable
     # place/topic name and we have a subject, substitute it.

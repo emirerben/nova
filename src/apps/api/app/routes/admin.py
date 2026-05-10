@@ -324,6 +324,12 @@ class RecipeTextOverlaySchema(BaseModel):
     emoji_prefix: str = ""  # e.g. "🗣️" — Twemoji PNG composited left of first line
     spans: list[TextSpanSchema] | None = None
     outline_px: int | None = None  # Black outline thickness in pixels (for legibility)
+    # Subject substitution opt-in. When set, the renderer replaces this
+    # overlay's text with a slice of the user's `inputs.location` value:
+    # "first_half"/"second_half" split at midpoint (ceil), "full" replaces
+    # entirely. Casing is matched to sample_text. Lets one user input drive
+    # multiple staggered overlays (e.g. "lon"+"don" → "par"+"is" for "Paris").
+    subject_part: Literal["first_half", "second_half", "full"] | None = None
     # Player-card overlay fields (consumed when effect == "player-card").
     # Both must be non-empty for the overlay to render.
     jersey_no: str | None = None
