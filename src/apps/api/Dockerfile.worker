@@ -15,4 +15,4 @@ RUN pip install --no-cache-dir --upgrade pip setuptools && pip install --no-cach
 
 COPY . .
 
-CMD ["celery", "-A", "app.worker", "worker", "--loglevel=info", "--concurrency=1"]
+CMD ["celery", "-A", "app.worker", "worker", "--loglevel=info", "--concurrency=2"]

@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.signals import worker_ready
 
 from app.config import settings
 
@@ -32,3 +33,39 @@ celery_app.conf.update(
     # while a real task is still running.
     broker_transport_options={"visibility_timeout": 1900},
 )
+
+
+@worker_ready.connect
+def _reap_orphans_on_startup(sender, **kwargs):  # pragma: no cover (signal wiring)
+    """Sweep zombie jobs the previous worker generation left in the DB.
+
+    Why on startup: the orphans we saw in prod (97 jobs over multiple days,
+    all with status_template_ready_or_processing AND failure_reason=None)
+    were created by SIGKILL'd workers. The next worker generation is the
+    natural place to clean up — no Celery beat process needed, no admin
+    endpoint, no external scheduler. Just opportunistic sweep on every
+    worker boot (which happens at every deploy — exactly when most orphans
+    get created).
+
+    Safety: cross-checks Celery `inspect()` so a job that's actively
+    running on a sibling worker is NEVER reaped. Threshold is 2× the
+    multi-clip hard time_limit (3600s) so legitimately slow finishers
+    win the race. Inspection failures (broker hiccup, etc.) are no-ops.
+
+    Runs in a background thread to avoid blocking worker startup.
+    """
+    import threading  # noqa: PLC0415
+
+    from app.tasks.reaper import reap_orphans  # noqa: PLC0415
+
+    def _run():
+        try:
+            count = reap_orphans(celery_app)
+            if count:
+                # structlog isn't configured in this signal context;
+                # plain print routes to stdout which Fly captures.
+                print(f"[worker_ready] reaped {count} orphan job(s) at startup")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[worker_ready] orphan reap failed (non-fatal): {exc!r}")
+
+    threading.Thread(target=_run, daemon=True, name="orphan-reaper").start()
