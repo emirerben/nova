@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.4.0] - 2026-05-10
+
+### Added
+- Admin overlay editor now shows a WYSIWYG preview that matches the exported video. The preview panel renders text overlays as a server-rendered transparent PNG produced by the same Pillow code path the export uses, so shadow, font weight axis, line spacing, stroke, span baseline, and auto-shrink all match the final video pixel-for-pixel. New `POST /admin/overlay-preview` endpoint accepts the slot's overlays plus a time cursor and returns the overlay layer at that moment.
+- Editor playback keeps live DOM-rendered text as a fallback so users still see overlays during playback; the server PNG takes over once the cursor settles for ~400ms (debounced, with abort-in-flight + 32-entry blob URL LRU cache).
+- Font-cycle preview picks the active frame at the cursor time using a new `_compute_font_cycle_frame_specs` pure helper, so scrubbing across an accelerating font cycle shows the same fonts the export will render.
+
+### Changed
+- Refactored `_render_font_cycle` in `text_overlay.py` to share its frame-spec math with the new preview path. Production output is unchanged; pinned by regression tests.
+
+### Fixed
+- `reframe.py` no longer crashes local dev jobs on HDR/HLG sources when the local Homebrew ffmpeg lacks libzimg. Detects zscale availability once per process and falls back to a no-tonemap path with a structured warning. Production Docker (which ships with libzimg) uses the proper Mobius tonemap as before.
+
 ## [0.4.3.0] - 2026-05-10
 
 ### Added
