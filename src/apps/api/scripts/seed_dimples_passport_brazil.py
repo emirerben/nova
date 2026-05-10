@@ -152,27 +152,31 @@ def build_recipe() -> dict:
     # Slots 16-17: outro tail.
     slots = [
         {
-            # Slot 1 — short opening "passport stamp" flash. Was 0.1s in the
-            # original prod recipe (3 frames at 30fps) but the orchestrator
-            # floors slot_target_dur at 0.5s in three places
-            # (template_orchestrate.py:1420, 1429, 1442) for AAC/encoder
-            # stability. Anything below 0.5s silently rounds up and shifts
-            # every later slot's start time by the rounding delta — a
-            # 0.43s rendered-vs-recipe drift that surfaces as "lag" when
-            # users watch the slot 3 → 4 cut land late at 2.43s instead
-            # of 1.99s. Setting 0.5 here matches what's actually rendered
-            # and keeps the recipe honest about the pipeline's behavior.
-            "position": 1, "target_duration_s": 0.5, "priority": 7, "slot_type": "hook",
+            # Slots 1-3: tuned to push slot 4 (welcome-alone) start to t=4.0s
+            # and slot 5 (BRAZIL drop) start to t=5.1s, landing the title
+            # within 15ms of beat 8 (5.085s — the music's bass drop before a
+            # 3.4s silence). Beat analysis of templates/dimplespassport-edit-
+            # music.m4a (2026-05-10) showed:
+            #   beat 1: 1.42s  beat 5: 3.76s  beat 8: 5.085s ★ DROP
+            #   beat 2: 1.81s  beat 6: 4.39s  ─── 3.4s silence ───
+            #   beat 3: 2.42s  beat 7: 4.71s  beat 9: 8.50s
+            # Earlier seed had slots 1-3 sum to 2.39s, placing BRAZIL at
+            # 3.49s — between beats 4 (3.14) and 5 (3.76), in dead air. The
+            # title missed the drop entirely, breaking the hook feel. New
+            # values push the cuts to beat 1, beat 3, and beat 5 respectively.
+            "position": 1, "target_duration_s": 1.0, "priority": 7, "slot_type": "hook",
             "transition_in": "none", "color_hint": "none", "speed_factor": 1.0,
             "energy": 0.0, "text_overlays": [],
         },
         {
-            "position": 2, "target_duration_s": 0.99, "priority": 6, "slot_type": "hook",
+            # Cut at t=2.5s lands within 80ms of beat 3 (2.42s).
+            "position": 2, "target_duration_s": 1.5, "priority": 6, "slot_type": "hook",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 0.0, "text_overlays": [],
         },
         {
-            "position": 3, "target_duration_s": 0.9, "priority": 7, "slot_type": "hook",
+            # Cut at t=4.0s falls between beats 5 (3.76) and 6 (4.39).
+            "position": 3, "target_duration_s": 1.5, "priority": 7, "slot_type": "hook",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 0.0, "text_overlays": [],
         },
@@ -291,58 +295,61 @@ def build_recipe() -> dict:
             # to b-roll with no "Welcome to {LOCATION}" follow-up text.
             "text_overlays": [],
         },
+        # Slots 7-17: b-roll trimmed proportionally (×0.864) from the prior
+        # values to absorb the +1.61s budget that slots 1-3 took to land
+        # BRAZIL on beat 8. Total recipe stays within 21.4s music length.
         {
-            "position": 7, "target_duration_s": 1.0, "priority": 8, "slot_type": "broll",
+            "position": 7, "target_duration_s": 0.86, "priority": 8, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 0.0, "text_overlays": [],
         },
         {
-            "position": 8, "target_duration_s": 1.07, "priority": 8, "slot_type": "broll",
+            "position": 8, "target_duration_s": 0.93, "priority": 8, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 4.8, "text_overlays": [],
         },
         {
-            "position": 9, "target_duration_s": 1.03, "priority": 9, "slot_type": "broll",
+            "position": 9, "target_duration_s": 0.89, "priority": 9, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 8.5, "text_overlays": [],
         },
         {
-            "position": 10, "target_duration_s": 1.0, "priority": 8, "slot_type": "broll",
+            "position": 10, "target_duration_s": 0.86, "priority": 8, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 5.3, "text_overlays": [],
         },
         {
-            "position": 11, "target_duration_s": 1.13, "priority": 9, "slot_type": "broll",
+            "position": 11, "target_duration_s": 0.98, "priority": 9, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 0.0, "text_overlays": [],
         },
         {
-            "position": 12, "target_duration_s": 0.9, "priority": 8, "slot_type": "broll",
+            "position": 12, "target_duration_s": 0.78, "priority": 8, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 4.5, "text_overlays": [],
         },
         {
-            "position": 13, "target_duration_s": 1.03, "priority": 9, "slot_type": "broll",
+            "position": 13, "target_duration_s": 0.89, "priority": 9, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 10.0, "text_overlays": [],
         },
         {
-            "position": 14, "target_duration_s": 1.07, "priority": 8, "slot_type": "broll",
+            "position": 14, "target_duration_s": 0.93, "priority": 8, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 0.0, "text_overlays": [],
         },
         {
-            "position": 15, "target_duration_s": 0.96, "priority": 8, "slot_type": "outro",
+            "position": 15, "target_duration_s": 0.83, "priority": 8, "slot_type": "outro",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 3.6, "text_overlays": [],
         },
         {
-            "position": 16, "target_duration_s": 1.33, "priority": 8, "slot_type": "outro",
+            "position": 16, "target_duration_s": 1.15, "priority": 8, "slot_type": "outro",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 0.0, "text_overlays": [],
         },
         {
-            "position": 17, "target_duration_s": 1.33, "priority": 8, "slot_type": "outro",
+            "position": 17, "target_duration_s": 1.15, "priority": 8, "slot_type": "outro",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 0.0, "text_overlays": [],
         },

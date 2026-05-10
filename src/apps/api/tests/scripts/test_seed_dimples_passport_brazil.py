@@ -380,6 +380,26 @@ class TestTitlePhaseDurations:
             f"accept a brief silent/black tail."
         )
 
+    def test_brazil_drops_on_music_beat_8(self):
+        """The edit music's bass drop is at t=5.085s (beat 8, followed by
+        a 3.4s silence where BRAZIL holds and cycles). Slot 5 must start
+        within 100ms of that beat or the title misses the hook moment and
+        falls into dead air between beats. This was the defect in earlier
+        renders: BRAZIL appeared at 3.49s (between beats 4 and 5)."""
+        BEAT_8_S = 5.085
+        TOLERANCE_S = 0.1
+        recipe = build_recipe()
+        slots = sorted(recipe["slots"], key=lambda s: s["position"])
+        slot_5_start = sum(s["target_duration_s"] for s in slots if s["position"] < 5)
+        delta = slot_5_start - BEAT_8_S
+        assert abs(delta) <= TOLERANCE_S, (
+            f"Slot 5 (BRAZIL) starts at {slot_5_start:.3f}s; beat 8 (the "
+            f"music's bass drop) is at {BEAT_8_S}s. Delta {delta:+.3f}s "
+            f"exceeds {TOLERANCE_S}s tolerance — the title will miss the "
+            f"hook moment. Adjust slots 1-3 to push slot 5 start onto the "
+            f"beat."
+        )
+
 
 class TestSlot1NotBelowOrchestratorFloor:
     """template_orchestrate.py floors `slot_target_dur` at 0.5s in three
