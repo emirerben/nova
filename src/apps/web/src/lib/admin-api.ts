@@ -417,3 +417,35 @@ export async function adminListPublishedMusicTracks(): Promise<MusicTrackPickerI
       t.analysis_status === "ready" && t.published_at != null,
   );
 }
+
+// ── Overlay preview (WYSIWYG editor) ───────────────────────────────────────────
+
+export interface OverlayPreviewParams {
+  // Raw recipe overlay dicts — the same shape the export pipeline consumes.
+  // Typed loosely on purpose; the editor mirrors the backend's recipe schema
+  // and shipping a wider type would lock the two to a single point in time.
+  overlays: Array<Record<string, unknown>>;
+  slot_duration_s: number;
+  time_in_slot_s: number;
+  preview_subject?: string;
+}
+
+/**
+ * Fetch a transparent PNG of the overlay layer at one moment in time.
+ *
+ * Renders through the same Pillow code path as the export, so the resulting
+ * PNG is pixel-identical to the exported video's overlay layer. Caller owns
+ * the returned Blob's lifecycle — wrap it with URL.createObjectURL and
+ * remember to URL.revokeObjectURL when done.
+ */
+export async function fetchOverlayPreview(
+  params: OverlayPreviewParams,
+  init?: { signal?: AbortSignal },
+): Promise<Blob> {
+  const res = await adminFetch("/admin/overlay-preview", {
+    method: "POST",
+    body: JSON.stringify(params),
+    signal: init?.signal,
+  });
+  return res.blob();
+}
