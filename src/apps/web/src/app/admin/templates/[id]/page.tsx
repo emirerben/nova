@@ -139,7 +139,17 @@ export default function TemplateDetailPage() {
   }, [id, template]);
 
   const handleReanalyze = useCallback(async () => {
-    if (!confirm("Re-run Gemini analysis? This will take a few minutes.")) return;
+    if (
+      !confirm(
+        "Re-run Gemini analysis?\n\n" +
+          "WARNING: this OVERWRITES the saved recipe with a fresh analysis. " +
+          "Any text-size, position, or other manual edits you've made will be LOST. " +
+          "(The previous version is kept in history but is not used at render time.)\n\n" +
+          "Takes a few minutes. Continue?",
+      )
+    ) {
+      return;
+    }
     setActionLoading(true);
     try {
       const updated = await adminReanalyzeTemplate(id);
