@@ -1,0 +1,340 @@
+{
+  "agent": "nova.compose.template_recipe",
+  "prompt_version": "exported",
+  "input": {
+    "file_uri": "templates/dimplespassport-travel-vlog.mp4",
+    "file_mime": "video/mp4",
+    "analysis_mode": "single",
+    "creative_direction": "",
+    "black_segments": []
+  },
+  "raw_text": "{\"slots\": [{\"energy\": 0.0, \"position\": 1, \"priority\": 8, \"slot_type\": \"hook\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [], \"transition_in\": \"none\", \"camera_movement\": \"static\", \"target_duration_s\": 1.0}, {\"energy\": 4.5, \"position\": 2, \"priority\": 7, \"slot_type\": \"hook\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [], \"transition_in\": \"hard-cut\", \"camera_movement\": \"static\", \"target_duration_s\": 1.0}, {\"energy\": 4.5, \"position\": 3, \"priority\": 9, \"slot_type\": \"hook\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [], \"transition_in\": \"hard-cut\", \"camera_movement\": \"pan-right\", \"target_duration_s\": 1.0}, {\"energy\": 1.7, \"position\": 4, \"priority\": 10, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [{\"role\": \"hook\", \"end_s\": 5.0, \"effect\": \"fade-in\", \"start_s\": 0.2, \"position\": \"center\", \"sample_text\": \"Welcome to\", \"has_darkening\": false, \"has_narrowing\": false, \"font_size_hint\": \"medium\"}, {\"role\": \"hook\", \"end_s\": 5.0, \"effect\": \"font-cycle\", \"start_s\": 1.5, \"position\": \"center\", \"sample_text\": \"PERU\", \"has_darkening\": false, \"has_narrowing\": false, \"font_size_hint\": \"jumbo\"}], \"transition_in\": \"hard-cut\", \"camera_movement\": \"zoom-out\", \"target_duration_s\": 5.2}, {\"energy\": 5.0, \"position\": 5, \"priority\": 8, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [{\"role\": \"label\", \"end_s\": 0.9, \"effect\": \"font-cycle\", \"start_s\": 0.0, \"position\": \"center\", \"sample_text\": \"PERU\", \"has_darkening\": false, \"has_narrowing\": true, \"font_size_hint\": \"jumbo\"}], \"transition_in\": \"hard-cut\", \"camera_movement\": \"pan-left\", \"target_duration_s\": 0.9}, {\"energy\": 4.5, \"position\": 6, \"priority\": 8, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [{\"role\": \"label\", \"end_s\": 1.0, \"effect\": \"font-cycle\", \"start_s\": 0.0, \"position\": \"center\", \"sample_text\": \"PERU\", \"has_darkening\": false, \"has_narrowing\": true, \"font_size_hint\": \"jumbo\"}], \"transition_in\": \"hard-cut\", \"camera_movement\": \"static\", \"target_duration_s\": 1.0}, {\"energy\": 10.0, \"position\": 7, \"priority\": 6, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [{\"role\": \"label\", \"end_s\": 0.45, \"effect\": \"font-cycle\", \"start_s\": 0.0, \"position\": \"center\", \"sample_text\": \"PERU\", \"has_darkening\": false, \"has_narrowing\": true, \"font_size_hint\": \"jumbo\"}], \"transition_in\": \"hard-cut\", \"camera_movement\": \"static\", \"target_duration_s\": 0.45}, {\"energy\": 10.0, \"position\": 8, \"priority\": 6, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [{\"role\": \"label\", \"end_s\": 0.45, \"effect\": \"font-cycle\", \"start_s\": 0.0, \"position\": \"center\", \"sample_text\": \"PERU\", \"has_darkening\": false, \"has_narrowing\": true, \"font_size_hint\": \"jumbo\"}], \"transition_in\": \"hard-cut\", \"camera_movement\": \"static\", \"target_duration_s\": 0.45}, {\"energy\": 4.5, \"position\": 9, \"priority\": 7, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [], \"transition_in\": \"hard-cut\", \"camera_movement\": \"static\", \"target_duration_s\": 1.0}, {\"energy\": 4.5, \"position\": 10, \"priority\": 8, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [], \"transition_in\": \"hard-cut\", \"camera_movement\": \"static\", \"target_duration_s\": 1.0}, {\"energy\": 4.1, \"position\": 11, \"priority\": 7, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [], \"transition_in\": \"hard-cut\", \"camera_movement\": \"tracking\", \"target_duration_s\": 1.1}, {\"energy\": 4.5, \"position\": 12, \"priority\": 9, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [], \"transition_in\": \"hard-cut\", \"camera_movement\": \"tilt-up\", \"target_duration_s\": 1.0}, {\"energy\": 5.6, \"position\": 13, \"priority\": 7, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [], \"transition_in\": \"hard-cut\", \"camera_movement\": \"static\", \"target_duration_s\": 0.8}, {\"energy\": 4.5, \"position\": 14, \"priority\": 9, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [], \"transition_in\": \"hard-cut\", \"camera_movement\": \"pan-right\", \"target_duration_s\": 1.0}, {\"energy\": 4.5, \"position\": 15, \"priority\": 7, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [], \"transition_in\": \"hard-cut\", \"camera_movement\": \"static\", \"target_duration_s\": 1.0}, {\"energy\": 4.5, \"position\": 16, \"priority\": 8, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [], \"transition_in\": \"hard-cut\", \"camera_movement\": \"static\", \"target_duration_s\": 1.0}, {\"energy\": 3.7, \"position\": 17, \"priority\": 8, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [], \"transition_in\": \"hard-cut\", \"camera_movement\": \"static\", \"target_duration_s\": 1.2}, {\"energy\": 5.0, \"position\": 18, \"priority\": 7, \"slot_type\": \"outro\", \"color_hint\": \"none\", \"speed_factor\": 1.0, \"text_overlays\": [], \"transition_in\": \"hard-cut\", \"camera_movement\": \"static\", \"target_duration_s\": 0.9}], \"copy_tone\": \"energetic\", \"shot_count\": 18, \"sync_style\": \"cut-on-beat\", \"color_grade\": \"vintage\", \"pacing_style\": \"fast-paced 0.5-1.5s cuts\", \"caption_style\": \"Dynamic font-cycling text for titles, often accompanied by a temporary letterbox effect.\", \"interstitials\": [], \"hook_duration_s\": 3.0, \"total_duration_s\": 21.0, \"transition_style\": \"hard cuts on every beat\", \"beat_timestamps_s\": [1.0, 2.0, 3.0, 4.208163, 8.2, 9.1, 10.1, 10.55, 11.0, 12.0, 13.0, 14.1, 15.1, 15.9, 16.9, 17.9, 18.9, 20.1], \"creative_direction\": \"This template creates a dynamic and energetic travel vlog intro. The pacing is rapid, featuring a quick succession of shots (0.5-1.5 seconds) that are hard-cut precisely on the beat of the driving, percussive soundtrack. The color grade is consistently vintage and slightly desaturated, giving the footage a cinematic, filmic quality. The key creative element is the title sequence, where the destination name is displayed prominently in a jumbo, font-cycling style that animates through various scripts and serifs, creating a sense of energy and diversity. This title effect is combined with a letterbox (cinematic black bars) that appears during a fast-paced montage, further enhancing the cinematic feel. All camera movements are smooth, favouring epic wide shots and drone footage to showcase landscapes and locations. The overall effect is a professional, high-energy, and visually captivating introduction to a travel destination.\"}",
+  "output": {
+    "slots": [
+      {
+        "energy": 0.0,
+        "position": 1,
+        "priority": 8,
+        "slot_type": "hook",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [],
+        "transition_in": "none",
+        "camera_movement": "static",
+        "target_duration_s": 1.0
+      },
+      {
+        "energy": 4.5,
+        "position": 2,
+        "priority": 7,
+        "slot_type": "hook",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [],
+        "transition_in": "hard-cut",
+        "camera_movement": "static",
+        "target_duration_s": 1.0
+      },
+      {
+        "energy": 4.5,
+        "position": 3,
+        "priority": 9,
+        "slot_type": "hook",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [],
+        "transition_in": "hard-cut",
+        "camera_movement": "pan-right",
+        "target_duration_s": 1.0
+      },
+      {
+        "energy": 1.7,
+        "position": 4,
+        "priority": 10,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [
+          {
+            "role": "hook",
+            "end_s": 5.0,
+            "effect": "fade-in",
+            "start_s": 0.2,
+            "position": "center",
+            "sample_text": "Welcome to",
+            "has_darkening": false,
+            "has_narrowing": false,
+            "font_size_hint": "medium"
+          },
+          {
+            "role": "hook",
+            "end_s": 5.0,
+            "effect": "font-cycle",
+            "start_s": 1.5,
+            "position": "center",
+            "sample_text": "PERU",
+            "has_darkening": false,
+            "has_narrowing": false,
+            "font_size_hint": "jumbo"
+          }
+        ],
+        "transition_in": "hard-cut",
+        "camera_movement": "zoom-out",
+        "target_duration_s": 5.2
+      },
+      {
+        "energy": 5.0,
+        "position": 5,
+        "priority": 8,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [
+          {
+            "role": "label",
+            "end_s": 0.9,
+            "effect": "font-cycle",
+            "start_s": 0.0,
+            "position": "center",
+            "sample_text": "PERU",
+            "has_darkening": false,
+            "has_narrowing": true,
+            "font_size_hint": "jumbo"
+          }
+        ],
+        "transition_in": "hard-cut",
+        "camera_movement": "pan-left",
+        "target_duration_s": 0.9
+      },
+      {
+        "energy": 4.5,
+        "position": 6,
+        "priority": 8,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [
+          {
+            "role": "label",
+            "end_s": 1.0,
+            "effect": "font-cycle",
+            "start_s": 0.0,
+            "position": "center",
+            "sample_text": "PERU",
+            "has_darkening": false,
+            "has_narrowing": true,
+            "font_size_hint": "jumbo"
+          }
+        ],
+        "transition_in": "hard-cut",
+        "camera_movement": "static",
+        "target_duration_s": 1.0
+      },
+      {
+        "energy": 10.0,
+        "position": 7,
+        "priority": 6,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [
+          {
+            "role": "label",
+            "end_s": 0.45,
+            "effect": "font-cycle",
+            "start_s": 0.0,
+            "position": "center",
+            "sample_text": "PERU",
+            "has_darkening": false,
+            "has_narrowing": true,
+            "font_size_hint": "jumbo"
+          }
+        ],
+        "transition_in": "hard-cut",
+        "camera_movement": "static",
+        "target_duration_s": 0.45
+      },
+      {
+        "energy": 10.0,
+        "position": 8,
+        "priority": 6,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [
+          {
+            "role": "label",
+            "end_s": 0.45,
+            "effect": "font-cycle",
+            "start_s": 0.0,
+            "position": "center",
+            "sample_text": "PERU",
+            "has_darkening": false,
+            "has_narrowing": true,
+            "font_size_hint": "jumbo"
+          }
+        ],
+        "transition_in": "hard-cut",
+        "camera_movement": "static",
+        "target_duration_s": 0.45
+      },
+      {
+        "energy": 4.5,
+        "position": 9,
+        "priority": 7,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [],
+        "transition_in": "hard-cut",
+        "camera_movement": "static",
+        "target_duration_s": 1.0
+      },
+      {
+        "energy": 4.5,
+        "position": 10,
+        "priority": 8,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [],
+        "transition_in": "hard-cut",
+        "camera_movement": "static",
+        "target_duration_s": 1.0
+      },
+      {
+        "energy": 4.1,
+        "position": 11,
+        "priority": 7,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [],
+        "transition_in": "hard-cut",
+        "camera_movement": "tracking",
+        "target_duration_s": 1.1
+      },
+      {
+        "energy": 4.5,
+        "position": 12,
+        "priority": 9,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [],
+        "transition_in": "hard-cut",
+        "camera_movement": "tilt-up",
+        "target_duration_s": 1.0
+      },
+      {
+        "energy": 5.6,
+        "position": 13,
+        "priority": 7,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [],
+        "transition_in": "hard-cut",
+        "camera_movement": "static",
+        "target_duration_s": 0.8
+      },
+      {
+        "energy": 4.5,
+        "position": 14,
+        "priority": 9,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [],
+        "transition_in": "hard-cut",
+        "camera_movement": "pan-right",
+        "target_duration_s": 1.0
+      },
+      {
+        "energy": 4.5,
+        "position": 15,
+        "priority": 7,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [],
+        "transition_in": "hard-cut",
+        "camera_movement": "static",
+        "target_duration_s": 1.0
+      },
+      {
+        "energy": 4.5,
+        "position": 16,
+        "priority": 8,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [],
+        "transition_in": "hard-cut",
+        "camera_movement": "static",
+        "target_duration_s": 1.0
+      },
+      {
+        "energy": 3.7,
+        "position": 17,
+        "priority": 8,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [],
+        "transition_in": "hard-cut",
+        "camera_movement": "static",
+        "target_duration_s": 1.2
+      },
+      {
+        "energy": 5.0,
+        "position": 18,
+        "priority": 7,
+        "slot_type": "outro",
+        "color_hint": "none",
+        "speed_factor": 1.0,
+        "text_overlays": [],
+        "transition_in": "hard-cut",
+        "camera_movement": "static",
+        "target_duration_s": 0.9
+      }
+    ],
+    "copy_tone": "energetic",
+    "shot_count": 18,
+    "sync_style": "cut-on-beat",
+    "color_grade": "vintage",
+    "pacing_style": "fast-paced 0.5-1.5s cuts",
+    "caption_style": "Dynamic font-cycling text for titles, often accompanied by a temporary letterbox effect.",
+    "interstitials": [],
+    "hook_duration_s": 3.0,
+    "total_duration_s": 21.0,
+    "transition_style": "hard cuts on every beat",
+    "beat_timestamps_s": [
+      1.0,
+      2.0,
+      3.0,
+      4.208163,
+      8.2,
+      9.1,
+      10.1,
+      10.55,
+      11.0,
+      12.0,
+      13.0,
+      14.1,
+      15.1,
+      15.9,
+      16.9,
+      17.9,
+      18.9,
+      20.1
+    ],
+    "creative_direction": "This template creates a dynamic and energetic travel vlog intro. The pacing is rapid, featuring a quick succession of shots (0.5-1.5 seconds) that are hard-cut precisely on the beat of the driving, percussive soundtrack. The color grade is consistently vintage and slightly desaturated, giving the footage a cinematic, filmic quality. The key creative element is the title sequence, where the destination name is displayed prominently in a jumbo, font-cycling style that animates through various scripts and serifs, creating a sense of energy and diversity. This title effect is combined with a letterbox (cinematic black bars) that appears during a fast-paced montage, further enhancing the cinematic feel. All camera movements are smooth, favouring epic wide shots and drone footage to showcase landscapes and locations. The overall effect is a professional, high-energy, and visually captivating introduction to a travel destination."
+  },
+  "meta": {
+    "source": "VideoTemplate.recipe_cached",
+    "template_id": "7b4a98d5-cf76-4724-a870-e2388d590932",
+    "template_name": "Dimples Passport Travel Vlog",
+    "exported_at": "2026-05-10T14:16:43.147052+00:00"
+  }
+}
