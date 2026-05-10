@@ -62,6 +62,35 @@ class PlaybackUrlResponse(BaseModel):
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 
+def _sign_poster_url(thumbnail_gcs_path: str | None) -> str | None:
+    """Return a 7-day signed GET URL for the poster, or None if not yet generated.
+
+    Signing is a local crypto operation (no GCS round-trip), so calling this
+    once per row in a list response is cheap (~1ms each).
+    """
+    if not thumbnail_gcs_path:
+        return None
+    try:
+        from app.config import settings
+        from app.storage import _get_client
+
+        client = _get_client()
+        bucket = client.bucket(settings.storage_bucket)
+        blob = bucket.blob(thumbnail_gcs_path)
+        return blob.generate_signed_url(
+            version="v4",
+            expiration=datetime.timedelta(days=7),
+            method="GET",
+        )
+    except Exception as exc:
+        log.warning(
+            "template_poster_sign_failed",
+            gcs_path=thumbnail_gcs_path,
+            error=str(exc),
+        )
+        return None
+
+
 def _template_to_list_item(t: VideoTemplate) -> TemplateListItem | None:
     """Project a VideoTemplate row into the public list-item shape.
 
@@ -89,7 +118,7 @@ def _template_to_list_item(t: VideoTemplate) -> TemplateListItem | None:
             slot_count=len(raw_slots),
             total_duration_s=float(recipe.get("total_duration_s", 0)),
             copy_tone=str(recipe.get("copy_tone", "casual")),
-            thumbnail_url=None,  # v1: no thumbnails
+            thumbnail_url=_sign_poster_url(t.thumbnail_gcs_path),
             required_clips_min=t.required_clips_min,
             required_clips_max=t.required_clips_max,
             slots=slot_summaries,
