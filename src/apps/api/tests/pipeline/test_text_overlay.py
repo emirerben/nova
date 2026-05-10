@@ -5,10 +5,17 @@ import tempfile
 
 from app.pipeline.text_overlay import (
     _ASS_OVERLAY_HEADER,
+    CANVAS_H,
+    CANVAS_W,
+    FONT_CYCLE_FAST_INTERVAL_S,
+    FONT_CYCLE_INTERVAL_S,
+    MAX_FONT_CYCLE_FRAMES,
     MAX_OVERLAY_TEXT_LEN,
     OVERLAY_FONT_PATH,
     OVERLAY_FONT_PATH_REGULAR,
     _build_ass_header,
+    _compute_font_cycle_frame_specs,
+    _pick_font_cycle_font_at,
     _reset_cycle_cache,
     _resolve_cycle_fonts,
     _resolve_font_family,
@@ -16,6 +23,7 @@ from app.pipeline.text_overlay import (
     _validate_overlay,
     generate_animated_overlay_ass,
     generate_text_overlay_png,
+    render_overlays_at_time,
 )
 
 
@@ -1043,5 +1051,249 @@ class TestSpanRendering:
         }
         text, start_s, end_s, position = _validate_overlay(overlay, 5.0)
         assert text is not None
-        assert len(text) == 60  # NOT truncated
+        assert len(text) == 60
         assert "\u2026" not in text
+
+
+# -- _compute_font_cycle_frame_specs (pure spec math) ------------------------
+
+
+class TestComputeFontCycleFrameSpecs:
+    """Pinning tests so the production font-cycle math doesn't drift."""
+
+    def test_returns_empty_when_no_fonts(self):
+        specs = _compute_font_cycle_frame_specs(
+            start_s=0.0, end_s=3.0, cycle_fonts=[], accel_at=None,
+        )
+        assert specs == []
+
+    def test_normal_cycle_uses_default_interval(self):
+        fonts = ["A", "B", "C"]  # fonts are opaque tokens here
+        specs = _compute_font_cycle_frame_specs(
+            start_s=0.0, end_s=3.0, cycle_fonts=fonts, accel_at=None,
+        )
+        # Frames in cycle phase honor FONT_CYCLE_INTERVAL_S
+        cycle_frames = [s for s in specs if s[3] == "cycle"]
+        for _font, fs, fe, _kind, _idx in cycle_frames[:-1]:
+            assert abs((fe - fs) - FONT_CYCLE_INTERVAL_S) < 1e-6
+        # Settle phase exists when accel_at is None
+        assert any(s[3] == "settle" for s in specs)
+
+    def test_acceleration_switches_interval(self):
+        fonts = ["A", "B"]
+        specs = _compute_font_cycle_frame_specs(
+            start_s=0.0, end_s=2.0, cycle_fonts=fonts, accel_at=1.0,
+        )
+        # No settle when accel_at is set
+        assert not any(s[3] == "settle" for s in specs)
+        # Frames at or after accel_at use the fast interval
+        post_accel = [
+            s for s in specs if s[3] == "cycle" and s[1] >= 1.0
+        ]
+        assert post_accel, "expected at least one post-acceleration frame"
+        for _font, fs, fe, _kind, _idx in post_accel[:-1]:
+            assert abs((fe - fs) - FONT_CYCLE_FAST_INTERVAL_S) < 1e-6
+
+    def test_specs_cover_entire_range_contiguously(self):
+        fonts = ["A", "B", "C"]
+        specs = _compute_font_cycle_frame_specs(
+            start_s=0.0, end_s=4.0, cycle_fonts=fonts, accel_at=None,
+        )
+        # Every spec abuts the next; first starts at start_s; last ends at end_s.
+        assert specs[0][1] == 0.0
+        assert abs(specs[-1][2] - 4.0) < 1e-6
+        for prev, nxt in zip(specs, specs[1:], strict=False):
+            assert abs(prev[2] - nxt[1]) < 1e-6
+
+    def test_frame_cap_triggers_gapfill(self):
+        # Force frame cap by giving a long duration so cycle would exceed cap.
+        fonts = ["A", "B"]
+        long_end = MAX_FONT_CYCLE_FRAMES * FONT_CYCLE_INTERVAL_S * 5
+        specs = _compute_font_cycle_frame_specs(
+            start_s=0.0, end_s=long_end, cycle_fonts=fonts, accel_at=None,
+        )
+        kinds = [s[3] for s in specs]
+        cycle_count = kinds.count("cycle")
+        assert cycle_count <= MAX_FONT_CYCLE_FRAMES
+        # If cap was hit before cycle_end, expect a gapfill spec
+        assert "gapfill" in kinds or cycle_count < MAX_FONT_CYCLE_FRAMES
+
+
+class TestPickFontCycleFontAt:
+    def test_picks_active_window(self):
+        specs = [
+            ("F1", 0.0, 0.15, "cycle", 0),
+            ("F2", 0.15, 0.30, "cycle", 1),
+            ("F3", 0.30, 1.00, "settle", -1),
+        ]
+        assert _pick_font_cycle_font_at(specs, 0.0) == "F1"
+        assert _pick_font_cycle_font_at(specs, 0.149) == "F1"
+        assert _pick_font_cycle_font_at(specs, 0.15) == "F2"
+        assert _pick_font_cycle_font_at(specs, 0.5) == "F3"
+
+    def test_returns_none_when_out_of_range(self):
+        specs = [("F1", 0.0, 0.5, "cycle", 0)]
+        assert _pick_font_cycle_font_at(specs, 1.0) is None
+
+    def test_snaps_to_last_at_exact_end(self):
+        specs = [("F1", 0.0, 0.5, "settle", -1)]
+        assert _pick_font_cycle_font_at(specs, 0.5) == "F1"
+
+
+# -- render_overlays_at_time (preview entry point) ---------------------------
+
+
+def _png_is_transparent(path: str) -> bool:
+    """True if every pixel in the PNG has alpha=0."""
+    from PIL import Image
+
+    with Image.open(path) as im:
+        im = im.convert("RGBA")
+        alpha = im.getchannel("A")
+        return alpha.getextrema() == (0, 0)
+
+
+def _png_has_content(path: str) -> bool:
+    """True if at least one pixel has alpha > 0."""
+    from PIL import Image
+
+    with Image.open(path) as im:
+        im = im.convert("RGBA")
+        alpha = im.getchannel("A")
+        return alpha.getextrema()[1] > 0
+
+
+def _png_size(path: str) -> tuple[int, int]:
+    from PIL import Image
+
+    with Image.open(path) as im:
+        return im.size
+
+
+class TestRenderOverlaysAtTime:
+    def test_empty_overlays_yields_transparent_canvas(self, tmp_path):
+        out = str(tmp_path / "preview.png")
+        render_overlays_at_time(
+            overlays=[], slot_duration_s=5.0, time_in_slot_s=1.0,
+            output_path=out,
+        )
+        assert os.path.exists(out)
+        assert _png_size(out) == (CANVAS_W, CANVAS_H)
+        assert _png_is_transparent(out)
+
+    def test_overlay_outside_window_is_transparent(self, tmp_path):
+        out = str(tmp_path / "preview.png")
+        overlay = {
+            "text": "Hello",
+            "start_s": 2.0,
+            "end_s": 4.0,
+            "position": "center",
+            "effect": "none",
+        }
+        render_overlays_at_time(
+            overlays=[overlay], slot_duration_s=5.0, time_in_slot_s=1.0,
+            output_path=out,
+        )
+        assert _png_is_transparent(out)
+
+    def test_static_overlay_renders_when_visible(self, tmp_path):
+        out = str(tmp_path / "preview.png")
+        overlay = {
+            "text": "Hello",
+            "start_s": 0.0,
+            "end_s": 4.0,
+            "position": "center",
+            "effect": "none",
+        }
+        render_overlays_at_time(
+            overlays=[overlay], slot_duration_s=5.0, time_in_slot_s=2.0,
+            output_path=out,
+        )
+        assert _png_size(out) == (CANVAS_W, CANVAS_H)
+        assert _png_has_content(out)
+
+    def test_spans_overlay_renders(self, tmp_path):
+        out = str(tmp_path / "preview.png")
+        overlay = {
+            "text": "",
+            "start_s": 0.0,
+            "end_s": 4.0,
+            "position": "center",
+            "effect": "none",
+            "spans": [
+                {"text": "Hello "},
+                {"text": "World", "text_color": "#F4D03F"},
+            ],
+        }
+        render_overlays_at_time(
+            overlays=[overlay], slot_duration_s=5.0, time_in_slot_s=2.0,
+            output_path=out,
+        )
+        assert _png_has_content(out)
+
+    def test_font_cycle_picks_correct_frame(self, tmp_path):
+        # Render twice at different T; if the math is correct, both should
+        # produce content. Frame selection itself is unit-tested separately.
+        _reset_cycle_cache()
+        overlay = {
+            "text": "PERU",
+            "start_s": 0.0,
+            "end_s": 4.0,
+            "position": "center",
+            "effect": "font-cycle",
+            "text_size": "xxlarge",
+        }
+        out1 = str(tmp_path / "t1.png")
+        out2 = str(tmp_path / "t2.png")
+        render_overlays_at_time(
+            [overlay], slot_duration_s=5.0, time_in_slot_s=0.05,
+            output_path=out1,
+        )
+        render_overlays_at_time(
+            [overlay], slot_duration_s=5.0, time_in_slot_s=3.5,
+            output_path=out2,
+        )
+        assert _png_has_content(out1)
+        assert _png_has_content(out2)
+
+    def test_multiple_overlays_composite(self, tmp_path):
+        out = str(tmp_path / "preview.png")
+        overlays = [
+            {
+                "text": "TOP",
+                "start_s": 0.0, "end_s": 4.0,
+                "position": "top", "effect": "none",
+            },
+            {
+                "text": "BOTTOM",
+                "start_s": 0.0, "end_s": 4.0,
+                "position": "bottom", "effect": "none",
+            },
+        ]
+        render_overlays_at_time(
+            overlays=overlays, slot_duration_s=5.0, time_in_slot_s=2.0,
+            output_path=out,
+        )
+        assert _png_has_content(out)
+
+    def test_one_failing_overlay_does_not_break_others(self, tmp_path):
+        # Overlay with unrenderable / malformed spans should be skipped, not crash.
+        out = str(tmp_path / "preview.png")
+        overlays = [
+            {
+                "text": "VALID",
+                "start_s": 0.0, "end_s": 4.0,
+                "position": "center", "effect": "none",
+            },
+            {
+                # Malformed: text=None and no spans -> _validate_overlay rejects.
+                "text": None,
+                "start_s": 0.0, "end_s": 4.0,
+                "position": "center", "effect": "none",
+            },
+        ]
+        render_overlays_at_time(
+            overlays=overlays, slot_duration_s=5.0, time_in_slot_s=1.0,
+            output_path=out,
+        )
+        assert _png_has_content(out)

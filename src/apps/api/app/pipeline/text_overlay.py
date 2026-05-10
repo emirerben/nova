@@ -353,6 +353,192 @@ def generate_animated_overlay_ass(
     return ass_paths if ass_paths else None
 
 
+def render_overlays_at_time(
+    overlays: list[dict],
+    slot_duration_s: float,
+    time_in_slot_s: float,
+    output_path: str,
+) -> None:
+    """Render the overlay layer at one moment in time as a transparent PNG.
+
+    Used by the admin editor to show a WYSIWYG preview of the exported video.
+    Reuses the same draw helpers as the production pipeline so the preview is
+    pixel-identical to the exported overlay layer.
+
+    Behavior:
+      - Filters overlays to those visible at time_in_slot_s (start_s <= t < end_s).
+      - For ``font-cycle`` overlays, picks the active frame at T using
+        _compute_font_cycle_frame_specs and renders only that frame.
+      - For ``player-card`` overlays, walks _render_player_card's PNG list and
+        picks the frame whose window contains T.
+      - For ASS-animated effects (fade-in, typewriter, slide-up), renders the
+        steady-state PNG (the same fallback the export uses if ASS fails);
+        animation phase is not previewed in v1.
+      - For static and span overlays, renders normally.
+    Composites all visible overlay PNGs onto a 1080x1920 transparent canvas
+    and writes to output_path.
+    """
+    import tempfile
+
+    from PIL import Image  # noqa: PLC0415
+
+    base = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+
+    if not overlays:
+        base.save(output_path, "PNG")
+        return
+
+    with tempfile.TemporaryDirectory(prefix="overlay_preview_") as tmp_dir:
+        for i, overlay in enumerate(overlays):
+            try:
+                layer_path = _render_single_overlay_at_time(
+                    overlay, slot_duration_s, time_in_slot_s, tmp_dir, i,
+                )
+            except Exception as exc:
+                log.warning(
+                    "overlay_preview_render_failed",
+                    overlay_index=i,
+                    error=str(exc),
+                )
+                continue
+            if not layer_path or not os.path.exists(layer_path):
+                continue
+            try:
+                with Image.open(layer_path) as layer:
+                    layer = layer.convert("RGBA")
+                    if layer.size != (CANVAS_W, CANVAS_H):
+                        canvas = Image.new(
+                            "RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0),
+                        )
+                        canvas.paste(layer, (0, 0))
+                        layer = canvas
+                    base = Image.alpha_composite(base, layer)
+            except Exception as exc:
+                log.warning(
+                    "overlay_preview_composite_failed",
+                    overlay_index=i,
+                    error=str(exc),
+                )
+
+    base.save(output_path, "PNG")
+
+
+def _render_single_overlay_at_time(
+    overlay: dict,
+    slot_duration_s: float,
+    t: float,
+    output_dir: str,
+    overlay_index: int,
+) -> str | None:
+    """Render a single overlay at time T into output_dir, return PNG path or None."""
+    text, start_s, end_s, position = _validate_overlay(overlay, slot_duration_s)
+    has_spans = bool(overlay.get("spans"))
+    if text is None and not has_spans:
+        return None
+    if text is None and has_spans:
+        start_s = float(overlay.get("start_s", 0.0))
+        end_s = float(overlay.get("end_s", 0.0))
+        if end_s > slot_duration_s:
+            end_s = slot_duration_s
+        if start_s >= end_s:
+            return None
+        position = overlay.get("position", "center")
+
+    if not (start_s <= t < end_s):
+        return None
+
+    effect = overlay.get("effect", "none")
+    spans = overlay.get("spans")
+    png_path = os.path.join(output_dir, f"overlay_{overlay_index}.png")
+
+    if effect == "font-cycle":
+        text_size = overlay.get("text_size", "medium")
+        pixel_size = overlay.get("text_size_px") or _FONT_SIZE_MAP.get(text_size, 72)
+        font_family = overlay.get("font_family")
+        settle_name = font_family or "_default"
+        cycle_fonts = _resolve_cycle_fonts(pixel_size, settle_font_name=settle_name)
+        if len(cycle_fonts) < 2:
+            return _render_static_overlay_layer(overlay, text, position, png_path)
+        accel_at = overlay.get("font_cycle_accel_at_s")
+        specs = _compute_font_cycle_frame_specs(start_s, end_s, cycle_fonts, accel_at)
+        active_font = _pick_font_cycle_font_at(specs, t)
+        if active_font is None:
+            return None
+        text_color = _hex_to_rgba(overlay.get("text_color", "#FFFFFF"))
+        cycling_span_indices: list[int] = []
+        if spans:
+            cycling_span_indices = [
+                idx for idx, s in enumerate(spans) if not s.get("font_family")
+            ]
+        _draw_frame(
+            overlay, spans, text, position, png_path,
+            font=active_font, text_color=text_color,
+            cycling_span_indices=cycling_span_indices,
+            position_y_frac=overlay.get("position_y_frac"),
+        )
+        return png_path
+
+    if effect == "player-card":
+        sub_dir = os.path.join(output_dir, f"player_card_{overlay_index}")
+        os.makedirs(sub_dir, exist_ok=True)
+        configs = _render_player_card(
+            overlay, slot_duration_s, sub_dir, slot_index=0,
+            overlay_index=overlay_index,
+        )
+        if not configs:
+            return None
+        for cfg in configs:
+            if cfg["start_s"] <= t < cfg["end_s"]:
+                return cfg["png_path"]
+        return None
+
+    return _render_static_overlay_layer(overlay, text, position, png_path)
+
+
+def _render_static_overlay_layer(
+    overlay: dict,
+    text: str | None,
+    position: str,
+    png_path: str,
+) -> str:
+    """Static / spans / ASS-animated steady-state PNG render."""
+    spans = overlay.get("spans")
+    if spans:
+        _draw_spans_png(
+            overlay, spans, position, png_path,
+            outline_px=overlay.get("outline_px"),
+        )
+        return png_path
+
+    font_family = overlay.get("font_family")
+    font_style = overlay.get("font_style", "display")
+    text_size = overlay.get("text_size", "medium")
+    text_size_px_val = overlay.get("text_size_px")
+    text_color = _hex_to_rgba(overlay.get("text_color", "#FFFFFF"))
+    _draw_text_png(
+        text, position, png_path,
+        font_family=font_family, font_style=font_style,
+        text_size=text_size, text_size_px=text_size_px_val,
+        text_color=text_color,
+        position_y_frac=overlay.get("position_y_frac"),
+        stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
+        emoji_prefix=overlay.get("emoji_prefix", ""),
+    )
+    return png_path
+
+
+def _pick_font_cycle_font_at(specs: list[tuple], t: float):
+    """Return the font whose [start_s, end_s) window contains t, or None."""
+    for font, frame_start, frame_end, _kind, _idx in specs:
+        if frame_start <= t < frame_end:
+            return font
+    if specs:
+        last = specs[-1]
+        if abs(t - last[2]) < 1e-6:
+            return last[0]
+    return None
+
+
 # -- ASS Animation Rendering --------------------------------------------------
 
 
@@ -704,6 +890,59 @@ def _draw_player_card_master(jersey_no: str, player_name: str):
     return img
 
 
+def _compute_font_cycle_frame_specs(
+    start_s: float,
+    end_s: float,
+    cycle_fonts: list,
+    accel_at: float | None,
+) -> list[tuple]:
+    """Pure computation of font-cycle frame specs.
+
+    Returns (font, frame_start_s, frame_end_s, kind, frame_idx) tuples where
+    kind is "cycle", "gapfill", or "settle". Production path adds output paths
+    and renders all frames; the admin preview path picks the spec whose
+    [frame_start_s, frame_end_s) window contains time T and renders just
+    that one. Sharing this math keeps the preview's font selection identical
+    to the exported video.
+    """
+    if not cycle_fonts:
+        return []
+
+    duration = end_s - start_s
+    if accel_at is not None:
+        settle_start = end_s
+        cycle_end = end_s
+    else:
+        settle_start = start_s + duration * (1.0 - FONT_CYCLE_SETTLE_RATIO)
+        cycle_end = settle_start
+
+    specs: list[tuple] = []
+    frame_idx = 0
+    t = start_s
+    font_idx = 0
+
+    while t < cycle_end and frame_idx < MAX_FONT_CYCLE_FRAMES:
+        interval = FONT_CYCLE_INTERVAL_S
+        if accel_at is not None and t >= accel_at:
+            interval = FONT_CYCLE_FAST_INTERVAL_S
+        frame_end = min(t + interval, cycle_end)
+        font = cycle_fonts[font_idx % len(cycle_fonts)]
+        specs.append((font, t, frame_end, "cycle", frame_idx))
+        t = frame_end
+        frame_idx += 1
+        font_idx += 1
+
+    if t < cycle_end - 0.001:
+        last_font = cycle_fonts[(font_idx - 1) % len(cycle_fonts)]
+        specs.append((last_font, t, cycle_end, "gapfill", frame_idx))
+
+    if settle_start < end_s:
+        primary_font = cycle_fonts[0]
+        specs.append((primary_font, settle_start, end_s, "settle", -1))
+
+    return specs
+
+
 def _render_font_cycle(
     overlay: dict,
     slot_duration_s: float,
@@ -757,21 +996,8 @@ def _render_font_cycle(
         )
         return [{"png_path": png_path, "start_s": start_s, "end_s": end_s}]
 
-    duration = end_s - start_s
-
     # Acceleration: switch to faster interval after this absolute timestamp
     accel_at = overlay.get("font_cycle_accel_at_s")
-
-    # When curtain-close acceleration is active, skip the settle phase
-    # entirely — cycling runs to the end, reinforcing the kinetic energy
-    # of the closing bars. Otherwise, settle on the primary font for the
-    # last FONT_CYCLE_SETTLE_RATIO of the duration.
-    if accel_at is not None:
-        settle_start = end_s
-        cycle_end = end_s
-    else:
-        settle_start = start_s + duration * (1.0 - FONT_CYCLE_SETTLE_RATIO)
-        cycle_end = settle_start  # cycling stops here, settle begins
 
     # Determine which spans participate in cycling (no explicit font_family)
     cycling_span_indices: list[int] = []
@@ -780,50 +1006,30 @@ def _render_font_cycle(
             idx for idx, s in enumerate(spans) if not s.get("font_family")
         ]
 
-    # ── Pre-compute all frame specs (sequential, pure math) ─────────────
+    # Pure spec computation lives in _compute_font_cycle_frame_specs so the
+    # admin preview endpoint can pick the active frame at time T using
+    # exactly the same math.
+    pure_specs = _compute_font_cycle_frame_specs(start_s, end_s, cycle_fonts, accel_at)
     frame_specs: list[tuple] = []  # (png_path, font, start_s, end_s)
-    frame_idx = 0
-    t = start_s
+    for font, frame_start, frame_end, kind, idx in pure_specs:
+        if kind == "settle":
+            png_path = os.path.join(
+                output_dir,
+                f"slot_{slot_index}_fontcycle_{overlay_index}_settle.png",
+            )
+        elif kind == "gapfill":
+            png_path = os.path.join(
+                output_dir,
+                f"slot_{slot_index}_fontcycle_{overlay_index}_{idx}_gapfill.png",
+            )
+        else:
+            png_path = os.path.join(
+                output_dir,
+                f"slot_{slot_index}_fontcycle_{overlay_index}_{idx}.png",
+            )
+        frame_specs.append((png_path, font, frame_start, frame_end))
 
-    # Phase 1: rapid font cycling (with optional acceleration)
-    font_idx = 0
-    while t < cycle_end and frame_idx < MAX_FONT_CYCLE_FRAMES:
-        interval = FONT_CYCLE_INTERVAL_S
-        if accel_at is not None and t >= accel_at:
-            interval = FONT_CYCLE_FAST_INTERVAL_S
-
-        frame_end = min(t + interval, cycle_end)
-        font = cycle_fonts[font_idx % len(cycle_fonts)]
-
-        png_path = os.path.join(
-            output_dir,
-            f"slot_{slot_index}_fontcycle_{overlay_index}_{frame_idx}.png",
-        )
-        frame_specs.append((png_path, font, t, frame_end))
-
-        t = frame_end
-        frame_idx += 1
-        font_idx += 1
-
-    # Gap-fill: if the loop exited early (frame cap hit) with t < cycle_end,
-    # render one more PNG with the last-used font covering (t, cycle_end)
-    if t < cycle_end - 0.001:
-        last_font = cycle_fonts[(font_idx - 1) % len(cycle_fonts)]
-        png_path = os.path.join(
-            output_dir,
-            f"slot_{slot_index}_fontcycle_{overlay_index}_{frame_idx}_gapfill.png",
-        )
-        frame_specs.append((png_path, last_font, t, cycle_end))
-        t = cycle_end
-
-    # Phase 2: settle on the primary font for the remaining duration
-    if settle_start < end_s:
-        primary_font = cycle_fonts[0]  # settle font (font_family or Playfair Display Bold)
-        png_path = os.path.join(
-            output_dir,
-            f"slot_{slot_index}_fontcycle_{overlay_index}_settle.png",
-        )
-        frame_specs.append((png_path, primary_font, settle_start, end_s))
+    duration = end_s - start_s
 
     # ── Render all frames in parallel (Pillow releases GIL) ───────────
     def _render_one(spec: tuple) -> dict:
