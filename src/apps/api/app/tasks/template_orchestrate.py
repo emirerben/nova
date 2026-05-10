@@ -514,27 +514,26 @@ def _run_template_job(job_id: str) -> None:
             clip_metas = _build_positional_clip_metas(
                 local_clip_paths, slots_in_order, probe_map
             )
+            # Mixed-media path is positional 1:1, so the ordered list mirrors
+            # the compact list directly.
+            clip_metas_ordered = list(clip_metas)
             file_refs = []  # not used in this path
         else:
-            # [2b + 3] FFprobe and Gemini upload are independent — fan out
-            # both against the freshly-downloaded clips. ffprobe is a few
-            # seconds of disk + CPU; Gemini upload is 60-180s of network.
-            # Running them serially wastes a worker slot during the probe.
-            log.info(
-                "probe_and_gemini_upload_start",
-                job_id=job_id,
-                count=len(local_clip_paths),
-            )
-            probe_map, file_refs = _probe_and_upload_concurrent(local_clip_paths)
-            log.info("probe_and_gemini_upload_done", job_id=job_id)
-
-            # [4] Analyze all clips in parallel — pass per-template filter_hint so
-            # Gemini biases best_moments toward the desired content (e.g. ball-in-frame).
-            log.info("gemini_analyze_clips_start", job_id=job_id)
-            clip_metas, failed_count = _analyze_clips_parallel(
+            # [2b + 3 + 4] Hash → cache lookup → concurrent (probe + upload)
+            # → analyze, but only for cache misses. Layering:
+            #   - Full cache hit: skip probe and Gemini entirely (~seconds).
+            #   - Partial / cold: probe and Gemini upload run concurrently
+            #     for the misses (carries forward PR #86's overlap optimization
+            #     for the cache-miss path), then analyze.
+            log.info("gemini_clip_pipeline_start", job_id=job_id, count=len(local_clip_paths))
+            (
+                clip_metas,
+                clip_metas_ordered,
                 file_refs,
-                local_clip_paths,
                 probe_map,
+                failed_count,
+            ) = _analyze_clips_with_cache(
+                local_clip_paths,
                 filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
             )
 
@@ -546,7 +545,7 @@ def _run_template_job(job_id: str) -> None:
                     "too many failures to produce quality output"
                 )
             log.info(
-                "gemini_analyze_clips_done",
+                "gemini_clip_pipeline_done",
                 job_id=job_id,
                 success=len(clip_metas),
                 failed=failed_count,
@@ -560,13 +559,26 @@ def _run_template_job(job_id: str) -> None:
         log.info("template_match_start", job_id=job_id)
         pinned_assignments: dict[int, str] = {}
         slot_1 = next((s for s in recipe.slots if s.get("position") == 1), None)
+        # Resolve clip 0's clip_id from the ORDERED list — index 0 is always
+        # local_clip_paths[0]'s meta (or None if its analysis failed).
+        # `file_refs[0]` is None when clip 0 came from a cache hit, so we
+        # can't use it; pinning works off the ClipMeta.clip_id either way.
+        # If the only `mixed_media` branch above didn't run, clip_metas_ordered
+        # is defined here.
+        first_clip_meta = (
+            clip_metas_ordered[0]
+            if clip_metas_ordered and clip_metas_ordered[0] is not None
+            else None
+        )
         if (
             slot_1
             and slot_1.get("slot_type") in ("hook", "face")
-            and file_refs
+            and first_clip_meta is not None
         ):
-            pinned_assignments[1] = file_refs[0].name
-            log.info("matcher_pin", slot=1, clip_id=file_refs[0].name)
+            pinned_assignments[1] = first_clip_meta.clip_id
+            log.info("matcher_pin", slot=1, clip_id=first_clip_meta.clip_id)
+        elif slot_1 and slot_1.get("slot_type") in ("hook", "face"):
+            log.warning("matcher_pin_skipped_no_first_clip", slot=1)
         try:
             if mixed_media:
                 # Positional binding skips consolidate_slots + greedy matcher.
@@ -1061,6 +1073,112 @@ def _upload_clips_parallel(local_paths: list[str]) -> list:
     return [results[i] for i in range(len(local_paths))]
 
 
+def _analyze_clips_with_cache(
+    local_paths: list[str],
+    filter_hint: str = "",
+) -> tuple[list[ClipMeta], list[ClipMeta | None], list, dict, int]:
+    """Hash → cache lookup → concurrent (probe + upload misses) → analyze.
+
+    Returns
+        (clip_metas_compact, clip_metas_ordered, file_refs_ordered,
+         probe_map, failed_count)
+
+    - `clip_metas_compact` is the failure-filtered list — what the matcher
+      consumes. Order within the compact list mirrors successful entries from
+      the ordered list.
+    - `clip_metas_ordered` is parallel to `local_paths`: index i is the meta
+      for local_paths[i], or None if that clip failed analysis. Use this for
+      anything that needs a stable index→clip mapping (e.g. slot-1 pinning).
+    - `file_refs_ordered` is also parallel to `local_paths`; entries for
+      cache hits are None because we skipped the upload.
+    - `probe_map` is keyed by local path; produced here because slot planning
+      needs it whether or not the cache hit, and on partial cache it overlaps
+      with the Gemini upload (per PR #86).
+
+    Why this layout: upload + analyze are the slowest stretch of a multi-clip
+    job (~30-120s/clip). On warm cache hits (returning users iterating on the
+    same source clips against tweaked recipes) the entire stretch collapses
+    to a fingerprint + Redis GET per clip — under a second total. On cold
+    runs probe and upload still run concurrently so probing is off the
+    critical path.
+    """
+    from app.pipeline.clip_cache import (  # noqa: PLC0415
+        get_cached_meta,
+        hash_clips_parallel,
+        set_cached_meta,
+    )
+
+    n = len(local_paths)
+    clip_metas_ordered: list[ClipMeta | None] = [None] * n
+    file_refs_ordered: list[object | None] = [None] * n
+
+    # Hash + cache lookup happens before any Gemini I/O so a full hit short-
+    # circuits the network entirely. A None hash means the file couldn't be
+    # read (deleted between download and analyze, etc.) — treat as a miss and
+    # let the upload step surface the real error.
+    hashes = hash_clips_parallel(local_paths)
+    miss_indices: list[int] = []
+    cache_hits = 0
+    for i, h in enumerate(hashes):
+        cached = get_cached_meta(h, filter_hint) if h else None
+        if cached is not None:
+            cached.clip_path = local_paths[i]
+            clip_metas_ordered[i] = cached
+            cache_hits += 1
+        else:
+            miss_indices.append(i)
+
+    log.info(
+        "clip_cache_lookup_done",
+        total=n,
+        hits=cache_hits,
+        misses=len(miss_indices),
+    )
+
+    if not miss_indices:
+        # Full cache hit: still need probe data for slot planning.
+        probe_map = _probe_clips(local_paths)
+        compact = [m for m in clip_metas_ordered if m is not None]
+        return compact, clip_metas_ordered, file_refs_ordered, probe_map, 0
+
+    # Cache miss path: probe (all clips, needed downstream) and Gemini upload
+    # (misses only) run concurrently — the two operations are independent and
+    # upload is network-bound while probe is disk+CPU. This is PR #86's
+    # optimization, applied after the cache layer instead of replacing it.
+    miss_paths = [local_paths[i] for i in miss_indices]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        probe_future = pool.submit(_probe_clips, local_paths)
+        upload_future = pool.submit(_upload_clips_parallel, miss_paths)
+        probe_map = probe_future.result()
+        miss_refs = upload_future.result()
+    for orig_idx, ref in zip(miss_indices, miss_refs):
+        file_refs_ordered[orig_idx] = ref
+
+    miss_metas, failed_count = _analyze_clips_parallel(
+        miss_refs, miss_paths, probe_map, filter_hint,
+    )
+
+    # Re-align analyzed metas back to their original indices.
+    # _analyze_clips_parallel returns metas in completion order with clip_path
+    # set, so we use the path → original-index map to slot them back.
+    path_to_orig_idx = {miss_paths[k]: orig_i for k, orig_i in enumerate(miss_indices)}
+    path_to_hash = {miss_paths[k]: hashes[orig_i] for k, orig_i in enumerate(miss_indices)}
+    for meta in miss_metas:
+        orig_i = path_to_orig_idx.get(meta.clip_path)
+        if orig_i is None:
+            log.warning("analyzed_meta_path_not_in_misses", clip_path=meta.clip_path)
+            continue
+        clip_metas_ordered[orig_i] = meta
+        # Persist the fresh analysis to the cache when we have a stable
+        # content hash. Degraded entries are filtered inside set_cached_meta.
+        h = path_to_hash.get(meta.clip_path)
+        if h:
+            set_cached_meta(h, filter_hint, meta)
+
+    compact = [m for m in clip_metas_ordered if m is not None]
+    return compact, clip_metas_ordered, file_refs_ordered, probe_map, failed_count
+
+
 def _analyze_clips_parallel(
     file_refs: list,
     local_paths: list[str],
@@ -1172,7 +1290,12 @@ def _fallback_moments(clip_dur: float) -> list[dict]:
 # replaced the old _render_slot function.
 # ──────────────────────────────────────────────────────────────────────────────
 
-_PARALLEL_RENDER_WORKERS = 3  # Fly.io has 2 shared CPUs; 3 overlaps I/O waits
+_PARALLEL_RENDER_WORKERS = 2  # Match worker vCPU count (fly.toml: cpus=2).
+# Each libx264 ultrafast process saturates one core; running more than the
+# vCPU count adds context-switch overhead with no throughput gain. With
+# Celery --concurrency=2 the cluster already runs up to 4 ffmpegs at once,
+# which is past the sweet spot for shared-CPU machines. If fly.toml cpus
+# changes, update this to match.
 
 
 @dataclasses.dataclass
@@ -1190,6 +1313,11 @@ class SlotPlan:
     color_hint: str
     reframed_path: str  # output path for this slot
     color_transfer: str = ""  # from probe; drives HLG/PQ tonemap decision in reframe
+    color_trc: str = "bt709"  # cleaned probe value (with bt2020+bt709 → HLG fixup)
+    # from probe; drives silent-AAC injection in reframe. Safe default is
+    # False — if we can't probe, assume no audio so the silent track gets
+    # injected, keeping concat-copy safe.
+    has_audio: bool = False
     output_fit: str = "crop"  # "crop" (default) | "letterbox" (preserve full frame + blurred bg)
     # Rule-of-thirds grid overlay (sourced from the recipe slot dict via _extract_grid_params).
     has_grid: bool = False
@@ -1342,6 +1470,14 @@ def _plan_slots(
 
         aspect_ratio = probe.aspect_ratio if probe else "16:9"
         color_transfer = probe.color_transfer if probe else ""
+        color_trc = probe.color_trc if probe else "bt709"
+        # Default False on probe failure — pairs with reframe.py's same
+        # default. If we can't probe, we can't trust the source has audio,
+        # so injecting a silent AAC track makes the slot concat-copy safe.
+        # The opposite default (True) would emit `-map 0:a?` against a
+        # possibly audioless input → reframed slot has no audio track →
+        # downstream concat-copy truncates at that slot.
+        has_audio = probe.has_audio if probe else False
         if is_locked:
             aspect_ratio = locked_aspect_override
         slot_color = step.slot.get("color_hint") or global_color_grade or "none"
@@ -1368,6 +1504,8 @@ def _plan_slots(
             color_hint=slot_color,
             reframed_path=os.path.join(tmpdir, f"slot_{i}.mp4"),
             color_transfer=color_transfer,
+            color_trc=color_trc,
+            has_audio=has_audio,
             output_fit=output_fit,
             **grid_params,
         ))
@@ -1396,6 +1534,8 @@ def _render_planned_slot(plan: SlotPlan) -> str:
         grid_highlight_intersection=plan.grid_highlight_intersection,
         grid_highlight_color=plan.grid_highlight_color,
         grid_highlight_windows=plan.grid_highlight_windows,
+        color_trc=plan.color_trc,
+        has_audio=plan.has_audio,
     )
     return plan.reframed_path
 
@@ -1732,7 +1872,7 @@ def _join_or_concat(
             group_files.append(paths[0])
         else:
             gf = os.path.join(tmpdir, f"group_{idx}.mp4")
-            _concat_demuxer(paths, gf, tmpdir)
+            _concat_demuxer(paths, gf, tmpdir, expected_duration_s=sum(durs))
             group_files.append(gf)
         group_durs.append(sum(durs))
 
@@ -1760,16 +1900,35 @@ def _join_or_concat(
         # Last-resort fallback: drop visual transitions, concat all original
         # slot files. Better to ship a hard-cut version than a 3s truncation.
         log.warning("transition_join_failed_falling_back", error=str(exc))
-        _concat_demuxer(reframed_paths, output_path, tmpdir)
+        _concat_demuxer(
+            reframed_paths, output_path, tmpdir,
+            expected_duration_s=sum(slot_durations),
+        )
 
 
 def _concat_demuxer(
     reframed_paths: list[str], output_path: str, tmpdir: str,
+    expected_duration_s: float | None = None,
 ) -> None:
-    """FFmpeg concat demuxer — re-encode to handle mixed audio/no-audio slots.
+    """FFmpeg concat demuxer — stream-copy when slot layouts match, else re-encode.
 
-    Stream copy (-c copy) silently truncates when some slots lack an audio
-    track. Re-encoding ensures all inputs are normalized to the same layout.
+    Stream copy (-c copy) is dramatically faster (mux only, no decode/encode)
+    but silently truncates when slots have mismatched codec params or one slot
+    lacks an audio track. As of 2026-05, every reframed slot is forced to an
+    identical layout in `_encoding_args` (libx264 yuv420p 1080×1920 30fps +
+    AAC stereo 44.1k) and `reframe_and_export` injects a silent AAC track
+    when the source has no audio — so the truncation precondition no longer
+    holds for slots produced by the multi-clip template pipeline.
+
+    Verification strategy:
+      - We write the stream-copy output to a temp path so a failed copy
+        never overwrites a file the fallback re-encode then half-rewrites.
+      - We probe ONLY the output (one ffprobe call), not every input. The
+        caller knows slot durations from `SlotPlan` and passes them via
+        `expected_duration_s`. If unset, we fall back to per-input probes.
+      - Tolerance: 0.05s × N_slots, capped at 0.5s. Tighter than a flat 0.5s
+        on small jobs; large jobs accumulate genuine container-rounding
+        error per slot boundary.
     """
     from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
 
@@ -1778,20 +1937,75 @@ def _concat_demuxer(
         for p in reframed_paths:
             f.write(f"file '{p}'\n")
 
-    cmd = [
+    # Stream-copy attempt → temp path; promote to output_path on verify pass.
+    # Atomicity matters: a partial copy must never linger as the "output"
+    # while the re-encode fallback writes to it.
+    copy_tmp = output_path + ".copy.mp4"
+    copy_cmd = [
+        "ffmpeg",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", concat_list,
+        "-c", "copy",
+        "-movflags", "+faststart",
+        "-y",
+        copy_tmp,
+    ]
+    copy_result = subprocess.run(copy_cmd, capture_output=True, timeout=300, check=False)
+
+    if copy_result.returncode == 0 and os.path.exists(copy_tmp) and os.path.getsize(copy_tmp) > 0:
+        try:
+            from app.pipeline.probe import probe_video  # noqa: PLC0415
+            actual = probe_video(copy_tmp).duration_s
+            if expected_duration_s is None:
+                expected = sum(probe_video(p).duration_s for p in reframed_paths)
+            else:
+                expected = expected_duration_s
+            tolerance = min(0.5, 0.05 * len(reframed_paths))
+            if abs(expected - actual) <= tolerance:
+                os.replace(copy_tmp, output_path)
+                log.info(
+                    "concat_stream_copy_ok",
+                    slots=len(reframed_paths),
+                    expected_s=round(expected, 2),
+                    actual_s=round(actual, 2),
+                    tolerance_s=round(tolerance, 3),
+                )
+                return
+            log.warning(
+                "concat_stream_copy_truncated_falling_back",
+                expected_s=round(expected, 2),
+                actual_s=round(actual, 2),
+                tolerance_s=round(tolerance, 3),
+                slots=len(reframed_paths),
+            )
+        except Exception as exc:
+            log.warning("concat_stream_copy_verify_failed", error=str(exc))
+    else:
+        log.warning(
+            "concat_stream_copy_failed_falling_back",
+            rc=copy_result.returncode,
+            stderr_tail=copy_result.stderr.decode("utf-8", errors="replace")[-500:],
+        )
+
+    # Drop the rejected copy attempt before the fallback writes its own output.
+    if os.path.exists(copy_tmp):
+        try:
+            os.unlink(copy_tmp)
+        except OSError:
+            pass
+
+    # Fallback: full re-encode (the historical path).
+    encode_cmd = [
         "ffmpeg",
         "-f", "concat",
         "-safe", "0",
         "-i", concat_list,
         # ultrafast: shared-CPU workers crawl on preset=fast (24-slot Morocco
-        # was hitting ~9 min for transitions alone). CRF 18 + 4M bitrate cap
-        # still keeps quality in the visually-lossless band; scenecut/keyint
-        # tuning is a non-issue at ultrafast since every macroblock is
-        # I/P-coded conservatively anyway. Trade ~10-20% bigger file for
-        # 3-5x faster wall-clock — wins for iteration speed.
+        # was hitting ~9 min for transitions alone).
         *_encoding_args(output_path, preset="ultrafast"),
     ]
-    result = subprocess.run(cmd, capture_output=True, timeout=1200, check=False)
+    result = subprocess.run(encode_cmd, capture_output=True, timeout=1200, check=False)
     if result.returncode != 0:
         raise ValueError(f"FFmpeg concat failed: {result.stderr.decode()[:300]}")
 

@@ -18,6 +18,11 @@ import tempfile
 
 import structlog
 
+from app.pipeline.audio_layout import (
+    BODY_SLOT_AUDIO_OUT_ARGS,
+    SILENT_AUDIO_INPUT_ARGS,
+)
+
 log = structlog.get_logger()
 
 # Number of frames to sample before a black segment for classification
@@ -74,18 +79,26 @@ def render_color_hold(
     Raises:
         InterstitialError: If FFmpeg fails.
     """
+    # Match body-slot layout (libx264 ultrafast yuv420p + AAC stereo 44.1k)
+    # so the downstream concat can stream-copy across body slots and
+    # interstitials. Audio layout constants live in audio_layout.py.
     cmd = [
         "ffmpeg",
         "-f", "lavfi",
         "-i", f"color=c={color}:s={width}x{height}:d={hold_s}:r={fps}",
+        *SILENT_AUDIO_INPUT_ARGS,
+        "-shortest",
         "-c:v", "libx264",
         "-profile:v", "high",
-        "-preset", "fast",
+        "-preset", "ultrafast",
         "-crf", "18",
         "-pix_fmt", "yuv420p",
+        "-color_primaries", "bt709",
+        "-color_trc", "bt709",
+        "-colorspace", "bt709",
         "-r", str(fps),
         "-t", f"{hold_s:.3f}",
-        "-an",
+        *BODY_SLOT_AUDIO_OUT_ARGS,
         "-movflags", "+faststart",
         "-y",
         output_path,
@@ -180,11 +193,13 @@ def apply_curtain_close_tail(
     concat_list = os.path.join(work_dir, "concat.txt")
 
     try:
-        # Step 1: Copy prefix (before animation) — stream copy, instant
+        # Step 1: Copy prefix (before animation) — stream copy of both video
+        # AND audio so the curtain output matches body-slot layout (precondition
+        # for stream-copy concat downstream in _concat_demuxer).
         prefix_cmd = [
             "ffmpeg", "-i", slot_video_path,
             "-t", f"{anim_start:.3f}",
-            "-c", "copy", "-an",
+            "-c", "copy",
             "-y", prefix_path,
         ]
         r = subprocess.run(prefix_cmd, capture_output=True, timeout=30, check=False)
@@ -193,11 +208,15 @@ def apply_curtain_close_tail(
                 f"prefix split failed: {r.stderr.decode(errors='replace')[:300]}"
             )
 
-        # Step 2: Extract tail segment — re-encode to ensure clean keyframes
+        # Step 2: Extract tail segment — re-encode video to body-slot layout
+        # and re-encode audio so the input-side seek produces clean AAC frames
+        # at PTS=0 (mid-file `-c:a copy` after `-ss` glitches at the boundary).
         tail_cmd = [
             "ffmpeg", "-ss", f"{anim_start:.3f}", "-i", slot_video_path,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-            "-pix_fmt", "yuv420p", "-an",
+            "-c:v", "libx264", "-profile:v", "high",
+            "-preset", "ultrafast", "-crf", "18", "-pix_fmt", "yuv420p",
+            "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
+            *BODY_SLOT_AUDIO_OUT_ARGS,
             "-y", tail_path,
         ]
         r = subprocess.run(tail_cmd, capture_output=True, timeout=30, check=False)
@@ -221,12 +240,15 @@ def apply_curtain_close_tail(
             f"cr='if({in_bar},128,cr(X,Y))'"
         )
 
+        # Audio passes through unchanged (geq is a video-only filter); copy
+        # avoids re-encoding the AAC track that step 2 just produced.
         geq_cmd = [
             "ffmpeg", "-i", tail_path,
             "-vf", geq_filter,
             "-c:v", "libx264", "-profile:v", "high",
-            "-preset", "fast", "-crf", "18",
-            "-pix_fmt", "yuv420p", "-an",
+            "-preset", "ultrafast", "-crf", "18", "-pix_fmt", "yuv420p",
+            "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
+            "-c:a", "copy",
             "-movflags", "+faststart",
             "-y", tail_animated_path,
         ]
@@ -236,15 +258,21 @@ def apply_curtain_close_tail(
                 f"geq curtain-close failed: {r.stderr.decode(errors='replace')[:500]}"
             )
 
-        # Step 4: Concat prefix + animated tail
+        # Step 4: Concat prefix + animated tail.
+        # Video is stream-copied (preserves the geq-encoded tail bytes, no
+        # quality loss). Audio is re-encoded so the AAC frame boundary at
+        # the join lines up with the cut: the prefix's stream-copied audio
+        # ends at the nearest preceding AAC frame (~23ms granularity at
+        # 44.1k), and concat-copy would leave a per-slot gap or overlap
+        # there. Re-encoding audio at the join cost is negligible (audio
+        # bitrate is ~0.5% of video) and produces gapless A/V.
         with open(concat_list, "w") as f:
             f.write(f"file '{prefix_path}'\nfile '{tail_animated_path}'\n")
 
         concat_cmd = [
             "ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_list,
-            "-c:v", "libx264", "-profile:v", "high",
-            "-preset", "fast", "-crf", "18",
-            "-pix_fmt", "yuv420p", "-an",
+            "-c:v", "copy",
+            *BODY_SLOT_AUDIO_OUT_ARGS,
             "-movflags", "+faststart",
             "-y", output_path,
         ]
