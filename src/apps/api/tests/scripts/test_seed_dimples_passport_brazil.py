@@ -102,18 +102,110 @@ class TestWelcomeToHookSizing:
         )
 
 
-class TestJoinedCaptionSlot6:
-    """Slot 6 carries the joined caption shown after the dissolve into b-roll.
-    Styling must match slot 5 so the editor preview reads as one continuous
-    title rather than a sudden font change at the cut."""
+class TestSlot6NoOverlay:
+    """Reference video has no joint caption after the slot-5 curtain — the bars
+    reopen straight onto b-roll. Slot 6 keeps its dissolve transition so the
+    visual handoff is smooth, but it must render zero text overlays."""
 
-    def test_uses_peru_styling(self):
+    def test_no_text_overlays(self):
         recipe = build_recipe()
-        overlay = _only_overlay(_slot(recipe, 6))
-        assert overlay["text"] == "Welcome to PERU"
-        assert overlay["text_size_px"] == _seed.PERU_SIZE_PX
-        assert overlay["text_color"].upper() == _seed.PERU_COLOR.upper()
-        assert overlay["position_y_frac"] == pytest.approx(_seed.PERU_Y_FRAC)
+        slot6 = _slot(recipe, 6)
+        assert slot6.get("text_overlays") == [], (
+            "Slot 6 must not render a joint caption — reference shows direct "
+            "cut from curtain-close to b-roll, no 'Welcome to {LOCATION}' text"
+        )
+
+    def test_dissolve_transition_preserved(self):
+        recipe = build_recipe()
+        slot6 = _slot(recipe, 6)
+        assert slot6["transition_in"] == "dissolve", (
+            "Removing the overlay must not regress the dissolve — it carries "
+            "the visual handoff from the curtain-closed title into b-roll"
+        )
+
+
+class TestCurtainCloseAfterSlot5:
+    """The reference video shows top+bottom black bars closing in over the
+    location title between ~8s-11s, then reopening to b-roll. The recipe must
+    declare an interstitial of type curtain-close after slot 5."""
+
+    def test_interstitials_list_has_one_entry(self):
+        recipe = build_recipe()
+        assert len(recipe["interstitials"]) == 1, (
+            "Recipe should declare exactly one interstitial — the curtain-close "
+            "after slot 5"
+        )
+
+    def test_interstitial_targets_slot_5(self):
+        recipe = build_recipe()
+        inter = recipe["interstitials"][0]
+        assert inter["after_slot"] == 5, (
+            "Curtain must close after slot 5 (the {location} font-cycle reveal); "
+            "after_slot=4 would close over 'Welcome to' and after_slot=6 would "
+            "close over the dissolve into b-roll"
+        )
+
+    def test_interstitial_type_is_curtain_close(self):
+        recipe = build_recipe()
+        inter = recipe["interstitials"][0]
+        assert inter["type"] == "curtain-close", (
+            "Reference shows top+bottom bars closing in — the only interstitial "
+            "type that renders that animation"
+        )
+
+    def test_animate_s_within_orchestrator_clamp(self):
+        """The orchestrator clamps animate_s to slot_duration * _CURTAIN_MAX_RATIO
+        (0.6). Setting it explicitly at the clamp boundary documents intent."""
+        recipe = build_recipe()
+        slot5 = _slot(recipe, 5)
+        inter = recipe["interstitials"][0]
+        max_animate = slot5["target_duration_s"] * 0.6
+        assert inter["animate_s"] <= max_animate + 1e-6, (
+            f"animate_s={inter['animate_s']} exceeds 60% clamp on slot-5 duration "
+            f"({slot5['target_duration_s']}s × 0.6 = {max_animate}s) — orchestrator "
+            f"will silently clamp; set the value explicitly instead"
+        )
+
+    def test_hold_s_zero_for_direct_dissolve(self):
+        """hold_s>0 inserts a black-hold clip after the curtain. Reference goes
+        straight to b-roll, so hold_s=0 — the dissolve into slot 6 fires next."""
+        recipe = build_recipe()
+        inter = recipe["interstitials"][0]
+        assert inter["hold_s"] == 0.0
+
+
+class TestSubjectSubstitutionContract:
+    """Slot 5's text MUST be an ALL-CAPS placeholder so _resolve_overlay_text
+    in template_orchestrate.py substitutes the user's `inputs.location` at
+    render time. If this drifts to a non-ALL-CAPS string, substitution silently
+    no-ops and every job ships with the literal seed string instead of the
+    user's location.
+
+    The substitution heuristic itself is exercised in
+    tests/tasks/test_template_orchestrate.py — this test guards the seed-side
+    contract that makes that substitution possible.
+    """
+
+    def test_slot_5_text_is_all_caps_placeholder(self):
+        recipe = build_recipe()
+        overlay = _only_overlay(_slot(recipe, 5))
+        text = overlay["text"]
+        assert text.isupper(), (
+            f"Slot 5 text {text!r} is not ALL-CAPS — _resolve_overlay_text "
+            f"requires the placeholder to be all-caps to detect it as a "
+            f"location slot. Output videos will display {text!r} literally "
+            f"instead of the user's location."
+        )
+
+    def test_required_input_key_matches_resolver(self):
+        """The resolver in template_orchestrate.py reads inputs['location'].
+        The seed must declare a required_input with key='location' so the
+        upload form collects it and the resolver finds it."""
+        keys = [spec["key"] for spec in _seed.REQUIRED_INPUTS]
+        assert "location" in keys, (
+            "Required-input key 'location' is the contract _resolve_user_subject "
+            "depends on; renaming it breaks substitution silently"
+        )
 
 
 class TestRequiredInputs:

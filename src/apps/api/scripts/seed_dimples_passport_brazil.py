@@ -173,21 +173,10 @@ def build_recipe() -> dict:
             "position": 6, "target_duration_s": 0.96, "priority": 9, "slot_type": "broll",
             "transition_in": "dissolve", "color_hint": "none", "speed_factor": 1.0,
             "energy": 6.34,
-            "text_overlays": [
-                # Slot 6 hosts the joined "Welcome to PERU" caption shown
-                # post-dissolve. Styled like the PERU hook so the visual
-                # transition into b-roll preserves the title's weight/color.
-                _hook_overlay(
-                    "Welcome to PERU",
-                    effect="none",
-                    start_s=0.0,
-                    end_s=1.96,
-                    text_size_px=PERU_SIZE_PX,
-                    text_color=PERU_COLOR,
-                    font_style="sans",
-                    position_y_frac=PERU_Y_FRAC,
-                ),
-            ],
+            # Reference video has no joint caption after the slot-5 curtain — the
+            # bars reopen straight onto b-roll. Slot 6 keeps its dissolve so the
+            # visual handoff stays smooth, but no overlay is rendered.
+            "text_overlays": [],
         },
         {
             "position": 7, "target_duration_s": 1.0, "priority": 8, "slot_type": "broll",
@@ -263,7 +252,22 @@ def build_recipe() -> dict:
         "color_grade": "none",
         "pacing_style": "fast",
         "sync_style": "cut-on-beat",
-        "interstitials": [],
+        "interstitials": [
+            # Top+bottom black bars close over the slot-5 title reveal, framing
+            # the location text before reopening to b-roll. Reference video shows
+            # this animation 8s-11s; we let the orchestrator clamp animate_s to
+            # _CURTAIN_MAX_RATIO (0.6) of slot-5 duration. hold_s=0 skips the
+            # black-hold so the dissolve into slot 6 fires immediately.
+            # Pre-burn keeps the PERU/{location} text visible through the close;
+            # font_cycle_accel_at_s is auto-injected on the slot-5 overlay.
+            {
+                "after_slot": 5,
+                "type": "curtain-close",
+                "animate_s": 1.638,    # = 2.73 * 0.6 (explicit; matches clamp)
+                "hold_s": 0.0,
+                "hold_color": "#000000",
+            },
+        ],
     }
 
 
