@@ -19,6 +19,12 @@ import type {
 } from "./recipe-types";
 import { EMPTY_INTERSTITIAL, EMPTY_OVERLAY } from "./recipe-types";
 import { PropertyPanel } from "./PropertyPanel";
+import {
+  findHookOverlays,
+  applyTuning,
+  readTuning,
+  type EditableSlot,
+} from "./text-tuning-matcher";
 import type { TemplateJobStatusResponse } from "@/lib/api";
 import { getTemplateJobStatus } from "@/lib/api";
 import { useJobPoller } from "@/hooks/useJobPoller";
@@ -781,34 +787,24 @@ function TextTuningPanel({ templateId }: { templateId: string }) {
   const [applying, setApplying] = useState(false);
   const [applied, setApplied] = useState(false);
 
-  // Load current values from recipe on mount
+  // Load current values from recipe on mount. The matcher walks all overlays
+  // across all slots so cross-slot layouts (e.g. Dimples Passport: prefix on
+  // slot 4, subject on slot 5, joint caption on slot 6) work the same as the
+  // single-slot layout this panel was originally written for.
   useEffect(() => {
     adminGetRecipe(templateId)
       .then((r) => {
-        const slots = (r.recipe as { slots?: Array<{ text_overlays?: Array<Record<string, unknown>>; overlays?: Array<Record<string, unknown>> }> }).slots;
-        if (!slots) return;
+        const slots = (r.recipe as { slots?: EditableSlot[] }).slots;
+        const match = findHookOverlays(slots);
+        if (!match) return;
         const sizeMap: Record<string, number> = {
           small: 36, medium: 72, large: 120, xlarge: 150, xxlarge: 250, jumbo: 199,
         };
-        for (const slot of slots) {
-          const overlays = slot.text_overlays || slot.overlays;
-          if (!overlays || overlays.length < 2) continue;
-          const subject = overlays.find(
-            (o) => o.effect === "font-cycle" || (o.text_size as string)?.match(/jumbo|xxlarge|xlarge/),
-          );
-          const prefix = overlays.find(
-            (o) => o !== subject && typeof o.sample_text === "string",
-          );
-          if (subject && prefix) {
-            const sz = (subject.text_size_px as number) || sizeMap[subject.text_size as string];
-            if (sz) setSubjectSize(sz);
-            const psz = (prefix.text_size_px as number) || sizeMap[prefix.text_size as string];
-            if (psz) setPrefixSize(psz);
-            if (typeof subject.position_y_frac === "number") setSubjectY(subject.position_y_frac);
-            if (typeof prefix.position_y_frac === "number") setPrefixY(prefix.position_y_frac);
-            break;
-          }
-        }
+        const tuning = readTuning(match, sizeMap);
+        if (tuning.subjectSize !== undefined) setSubjectSize(tuning.subjectSize);
+        if (tuning.subjectY !== undefined) setSubjectY(tuning.subjectY);
+        if (tuning.prefixSize !== undefined) setPrefixSize(tuning.prefixSize);
+        if (tuning.prefixY !== undefined) setPrefixY(tuning.prefixY);
       })
       .catch(() => {});
   }, [templateId]);
@@ -845,26 +841,16 @@ function TextTuningPanel({ templateId }: { templateId: string }) {
     try {
       const current = await adminGetRecipe(templateId);
       const recipe = current.recipe as Record<string, unknown>;
-      const slots = recipe.slots as Array<{ text_overlays?: Array<Record<string, unknown>>; overlays?: Array<Record<string, unknown>> }> | undefined;
+      const slots = recipe.slots as EditableSlot[] | undefined;
 
-      if (slots) {
-        for (const slot of slots) {
-          const overlays = slot.text_overlays || slot.overlays;
-          if (!overlays || overlays.length < 2) continue;
-          const subject = overlays.find(
-            (o) => o.effect === "font-cycle" || (o.text_size as string)?.match(/jumbo|xxlarge|xlarge/),
-          );
-          const prefix = overlays.find(
-            (o) => o !== subject && typeof o.sample_text === "string",
-          );
-          if (subject && prefix) {
-            subject.text_size_px = subjectSize;
-            subject.position_y_frac = subjectY;
-            prefix.text_size_px = prefixSize;
-            prefix.position_y_frac = prefixY;
-          }
-        }
+      const match = findHookOverlays(slots);
+      if (!match) {
+        alert(
+          "Couldn't find a tunable hook overlay in this template. Text Tuning expects either a font-cycle overlay or one with text_size set to xlarge/xxlarge/jumbo.",
+        );
+        return;
       }
+      applyTuning(match, { subjectSize, subjectY, prefixSize, prefixY });
 
       await adminSaveRecipe(templateId, {
         recipe,
