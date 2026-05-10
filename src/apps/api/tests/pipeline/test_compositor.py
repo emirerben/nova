@@ -95,6 +95,167 @@ class TestBuildVideoFilter:
         assert "colorlevels" in joined
         assert "between(t,0.000,2.000)" in joined
 
+    def test_grid_overlay_disabled_by_default(self):
+        """has_grid=False (default) adds no grid filters."""
+        filters = _build_video_filter("9:16", None)
+        joined = ",".join(filters)
+        assert "iw/3" not in joined  # no inner grid line at 1/3
+        assert "2*iw/3" not in joined  # no inner grid line at 2/3
+
+    def test_grid_overlay_adds_inner_drawbox_lines(self):
+        """has_grid=True adds 4 drawbox calls (2V + 2H) for the inner rule-of-thirds lines.
+
+        Inner-only by design: drawgrid would also draw the outer frame at x=0/iw
+        and y=0/ih which doesn't belong to the rule-of-thirds grid.
+        """
+        filters = _build_video_filter("9:16", None, has_grid=True)
+        joined = ",".join(filters)
+        # 2 vertical inner lines at iw/3 and 2*iw/3, 2 horizontal at ih/3 and 2*ih/3.
+        assert "x=iw/3-" in joined
+        assert "x=2*iw/3-" in joined
+        assert "y=ih/3-" in joined
+        assert "y=2*ih/3-" in joined
+        # Default white color @ 0.6 opacity, thickness 3, fill stroke.
+        assert "color=0xFFFFFF@0.60" in joined
+        assert "w=3:h=ih" in joined  # vertical stroke uses thickness as width
+        assert "h=3" in joined  # horizontal stroke uses thickness as height
+
+    def test_grid_overlay_custom_color_opacity_thickness(self):
+        """Grid respects custom color/opacity/thickness across all 4 inner lines."""
+        filters = _build_video_filter(
+            "9:16", None,
+            has_grid=True,
+            grid_color="#E63946",
+            grid_opacity=0.8,
+            grid_thickness=5,
+        )
+        joined = ",".join(filters)
+        assert "color=0xE63946@0.80" in joined
+        assert "w=5:h=ih" in joined  # vertical stroke width = thickness
+        # 4 grid drawbox calls (excluding any highlight overlays which we didn't request).
+        grid_boxes = [f for f in filters if "drawbox" in f and "0xE63946@0.80" in f]
+        assert len(grid_boxes) == 4
+
+    def test_grid_color_validator_rejects_non_hex(self):
+        """RecipeSlotSchema rejects grid_color values that aren't 6-digit hex."""
+        from pydantic import ValidationError
+
+        from app.routes.admin import RecipeSlotSchema
+
+        for bad in ("#XXXXXX", "#GGGGGG", "FFFFFF", "#FF", "#FFFFFFFF", "red", "#;rm -r"):
+            with pytest.raises(ValidationError):
+                RecipeSlotSchema(
+                    position=1, target_duration_s=2.0, slot_type="b-roll",
+                    has_grid=True, grid_color=bad,
+                )
+
+    def test_grid_color_validator_rejects_rgba(self):
+        """9-char RGBA form is rejected (conflicts with @opacity spec)."""
+        from pydantic import ValidationError
+
+        from app.routes.admin import RecipeSlotSchema
+
+        with pytest.raises(ValidationError):
+            RecipeSlotSchema(
+                position=1, target_duration_s=2.0, slot_type="b-roll",
+                has_grid=True, grid_color="#FFFFFFAA",
+            )
+
+    def test_grid_highlight_adds_two_drawbox_for_v_and_h_lines(self):
+        """grid_highlight_intersection adds ONE vertical + ONE horizontal stroke
+        on top of the 4 base grid drawboxes."""
+        filters = _build_video_filter(
+            "9:16", None,
+            has_grid=True,
+            grid_highlight_intersection="bottom-right",
+            grid_highlight_color="#D9435A",
+            grid_highlight_windows=[(0.0, 0.4), (1.0, 1.3)],
+        )
+        drawboxes = [f for f in filters if f.startswith("drawbox=")]
+        # 4 base grid drawboxes (white) + 2 highlight drawboxes (red).
+        assert len(drawboxes) == 6
+        highlights = [f for f in drawboxes if "0xD9435A" in f]
+        assert len(highlights) == 2
+        # bottom-right -> vertical at 2*iw/3, horizontal at 2*ih/3
+        v_line = next(f for f in highlights if "h=ih" in f)
+        h_line = next(f for f in highlights if "w=iw" in f)
+        assert "x=2*iw/3" in v_line
+        assert "y=2*ih/3" in h_line
+        # Both highlights carry the windowed enable expression.
+        for f in highlights:
+            assert "enable='between(t,0.000,0.400)+between(t,1.000,1.300)'" in f
+
+    def test_grid_highlight_skipped_when_intersection_missing(self):
+        """has_grid alone (no intersection) draws only the 4 white base grid lines."""
+        filters = _build_video_filter(
+            "9:16", None,
+            has_grid=True,
+            grid_highlight_intersection=None,
+            grid_highlight_windows=[(0.0, 0.4)],
+        )
+        drawboxes = [f for f in filters if f.startswith("drawbox=")]
+        # All 4 base grid drawboxes present, none with the highlight color.
+        assert len(drawboxes) == 4
+        assert not any("0xE63946" in f or "0xD9435A" in f for f in drawboxes)
+
+    def test_grid_highlight_sustained_when_windows_none(self):
+        """intersection without windows → highlight on for the whole slot (no enable clause)."""
+        filters = _build_video_filter(
+            "9:16", None,
+            has_grid=True,
+            grid_highlight_intersection="top-left",
+            grid_highlight_windows=None,
+        )
+        drawboxes = [f for f in filters if f.startswith("drawbox=")]
+        # 4 base + 2 highlight (no windows).
+        assert len(drawboxes) == 6
+        highlights = [f for f in drawboxes if "0xE63946" in f]
+        assert len(highlights) == 2
+        for f in highlights:
+            assert "enable=" not in f, "sustained highlight must skip the enable clause"
+
+    def test_grid_highlight_top_left_picks_left_v_and_top_h(self):
+        """top-left intersection -> left-vertical (iw/3) + top-horizontal (ih/3)."""
+        filters = _build_video_filter(
+            "9:16", None,
+            has_grid=True,
+            grid_highlight_intersection="top-left",
+            grid_highlight_windows=[(0.0, 0.4)],
+        )
+        highlights = [
+            f for f in filters
+            if f.startswith("drawbox=") and "0xE63946" in f
+        ]
+        assert len(highlights) == 2
+        v_line = next(f for f in highlights if "h=ih" in f)
+        h_line = next(f for f in highlights if "w=iw" in f)
+        assert "x=iw/3" in v_line and "2*iw/3" not in v_line
+        assert "y=ih/3" in h_line and "2*ih/3" not in h_line
+
+    def test_grid_overlay_before_caption_ass(self):
+        """Grid filter must come before ass subtitle so captions render on top."""
+        import os
+        import tempfile
+        # Create a temp file that exists so ass filter is appended
+        with tempfile.NamedTemporaryFile(suffix=".ass", delete=False) as tmp:
+            tmp.write(b"[Script Info]\n")
+            ass_path = tmp.name
+        try:
+            filters = _build_video_filter(
+                "9:16", ass_path, has_grid=True,
+            )
+            # The 4 base grid drawboxes carry the default white color; the
+            # last one must still come before the ass subtitle filter so
+            # captions render on top of the grid.
+            grid_idx = max(
+                i for i, f in enumerate(filters)
+                if f.startswith("drawbox=") and "0xFFFFFF" in f
+            )
+            ass_idx = next(i for i, f in enumerate(filters) if f.startswith("ass="))
+            assert grid_idx < ass_idx
+        finally:
+            os.unlink(ass_path)
+
     def test_narrowing_window_adds_drawbox(self):
         filters = _build_video_filter(
             "16:9", None, narrowing_windows=[(1.0, 3.0)]

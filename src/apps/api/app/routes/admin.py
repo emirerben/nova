@@ -14,6 +14,7 @@ Auth: X-Admin-Token header (static key from settings.admin_api_key).
 """
 
 import hmac
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
@@ -407,6 +408,23 @@ class RecipeSlotSchema(BaseModel):
     locked: bool = False
     source_start_s: float | None = None
     source_end_s: float | None = None
+    # Rule-of-thirds grid overlay (drawn after scale/crop, before text overlays)
+    has_grid: bool = False
+    grid_color: str = "#FFFFFF"
+    grid_opacity: float = 0.6
+    grid_thickness: int = 3
+    # Per-intersection highlight on top of the base grid. The highlight picks
+    # ONE vertical + ONE horizontal line forming an "L" pointing at the chosen
+    # rule-of-thirds intersection corner where the subject sits, and renders
+    # those two lines in highlight_color during the given windows.
+    # intersection options:
+    #   "top-left"     -> left-vertical + top-horizontal
+    #   "top-right"    -> right-vertical + top-horizontal
+    #   "bottom-left"  -> left-vertical + bottom-horizontal
+    #   "bottom-right" -> right-vertical + bottom-horizontal
+    grid_highlight_intersection: str | None = None
+    grid_highlight_color: str = "#D9435A"
+    grid_highlight_windows: list[tuple[float, float]] | None = None
 
     @field_validator("target_duration_s")
     @classmethod
@@ -434,6 +452,65 @@ class RecipeSlotSchema(BaseModel):
     def validate_energy(cls, v: float) -> float:
         if v < 0 or v > 10:
             raise ValueError("energy must be between 0 and 10")
+        return v
+
+    @field_validator("grid_opacity")
+    @classmethod
+    def validate_grid_opacity(cls, v: float) -> float:
+        if v < 0 or v > 1:
+            raise ValueError("grid_opacity must be between 0 and 1")
+        return v
+
+    @field_validator("grid_thickness")
+    @classmethod
+    def validate_grid_thickness(cls, v: int) -> int:
+        if v < 1 or v > 20:
+            raise ValueError("grid_thickness must be between 1 and 20")
+        return v
+
+    @field_validator("grid_color")
+    @classmethod
+    def validate_grid_color(cls, v: str) -> str:
+        # Strict 6-digit hex only. RGBA (#RRGGBBAA) is rejected because
+        # the rendering code already specifies alpha via @opacity — combining
+        # both produces an invalid FFmpeg filter.
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", v):
+            raise ValueError("grid_color must be a 6-digit hex color like #FFFFFF")
+        return v
+
+    @field_validator("grid_highlight_color")
+    @classmethod
+    def validate_grid_highlight_color(cls, v: str) -> str:
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", v):
+            raise ValueError(
+                "grid_highlight_color must be a 6-digit hex color like #D9435A",
+            )
+        return v
+
+    @field_validator("grid_highlight_intersection")
+    @classmethod
+    def validate_grid_highlight_intersection(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        valid = {"top-left", "top-right", "bottom-left", "bottom-right"}
+        if v not in valid:
+            raise ValueError(
+                f"grid_highlight_intersection must be one of {sorted(valid)}",
+            )
+        return v
+
+    @field_validator("grid_highlight_windows")
+    @classmethod
+    def validate_grid_highlight_windows(
+        cls, v: list[tuple[float, float]] | None,
+    ) -> list[tuple[float, float]] | None:
+        if v is None:
+            return None
+        for start, end in v:
+            if start < 0 or end <= start:
+                raise ValueError(
+                    "grid_highlight_windows entries must be (start, end) with 0 <= start < end",
+                )
         return v
 
 

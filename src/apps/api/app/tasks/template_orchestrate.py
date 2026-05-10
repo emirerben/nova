@@ -1163,6 +1163,74 @@ class SlotPlan:
     reframed_path: str  # output path for this slot
     color_transfer: str = ""  # from probe; drives HLG/PQ tonemap decision in reframe
     output_fit: str = "crop"  # "crop" (default) | "letterbox" (preserve full frame + blurred bg)
+    # Rule-of-thirds grid overlay (sourced from the recipe slot dict via _extract_grid_params).
+    has_grid: bool = False
+    grid_color: str = "#FFFFFF"
+    grid_opacity: float = 0.6
+    grid_thickness: int = 3
+    grid_highlight_intersection: str | None = None
+    grid_highlight_color: str = "#E63946"
+    grid_highlight_windows: list[tuple[float, float]] | None = None
+
+
+_GRID_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_GRID_INTERSECTIONS = {"top-left", "top-right", "bottom-left", "bottom-right"}
+
+
+def _extract_grid_params(slot: dict) -> dict:
+    """Re-validate grid params from a recipe slot dict at the FFmpeg boundary.
+
+    RecipeSlotSchema (admin.py) validates writes via the API, but recipes are
+    stored as JSONB and bypass Pydantic at render time. A hand-edited recipe
+    with a bad hex value would otherwise reach ffmpeg as a broken filter graph
+    (silent failure or cryptic error). Fail fast here with a clear message.
+    """
+    if not bool(slot.get("has_grid", False)):
+        return {"has_grid": False}
+
+    pos = slot.get("position")
+    color = slot.get("grid_color", "#FFFFFF")
+    if not _GRID_COLOR_RE.fullmatch(color):
+        raise ValueError(f"slot {pos}: grid_color {color!r} must match ^#[0-9A-Fa-f]{{6}}$")
+    highlight_color = slot.get("grid_highlight_color", "#E63946")
+    if not _GRID_COLOR_RE.fullmatch(highlight_color):
+        raise ValueError(
+            f"slot {pos}: grid_highlight_color {highlight_color!r} must match "
+            "^#[0-9A-Fa-f]{6}$",
+        )
+
+    opacity = max(0.0, min(1.0, float(slot.get("grid_opacity", 0.6))))
+    thickness = max(1, min(20, int(slot.get("grid_thickness", 3))))
+
+    intersection = slot.get("grid_highlight_intersection")
+    if intersection is not None and intersection not in _GRID_INTERSECTIONS:
+        raise ValueError(
+            f"slot {pos}: grid_highlight_intersection {intersection!r} must be one of "
+            f"{sorted(_GRID_INTERSECTIONS)} or null",
+        )
+
+    raw_windows = slot.get("grid_highlight_windows")
+    windows: list[tuple[float, float]] | None = None
+    if raw_windows is not None:
+        windows = []
+        for w in raw_windows:
+            start, end = float(w[0]), float(w[1])
+            if start < 0 or end <= start:
+                raise ValueError(
+                    f"slot {pos}: grid_highlight_windows entry ({start}, {end}) "
+                    "must satisfy 0 <= start < end",
+                )
+            windows.append((start, end))
+
+    return {
+        "has_grid": True,
+        "grid_color": color,
+        "grid_opacity": opacity,
+        "grid_thickness": thickness,
+        "grid_highlight_intersection": intersection,
+        "grid_highlight_color": highlight_color,
+        "grid_highlight_windows": windows,
+    }
 
 
 def _plan_slots(
@@ -1258,6 +1326,8 @@ def _plan_slots(
             speed_factor=speed_factor,
         )
 
+        grid_params = _extract_grid_params(step.slot)
+
         plans.append(SlotPlan(
             slot_idx=i,
             clip_path=local_path,
@@ -1271,6 +1341,7 @@ def _plan_slots(
             reframed_path=os.path.join(tmpdir, f"slot_{i}.mp4"),
             color_transfer=color_transfer,
             output_fit=output_fit,
+            **grid_params,
         ))
 
     return plans, clip_cursors, cumulative_s
@@ -1290,6 +1361,13 @@ def _render_planned_slot(plan: SlotPlan) -> str:
         color_hint=plan.color_hint,
         speed_factor=plan.speed_factor,
         output_fit=plan.output_fit,
+        has_grid=plan.has_grid,
+        grid_color=plan.grid_color,
+        grid_opacity=plan.grid_opacity,
+        grid_thickness=plan.grid_thickness,
+        grid_highlight_intersection=plan.grid_highlight_intersection,
+        grid_highlight_color=plan.grid_highlight_color,
+        grid_highlight_windows=plan.grid_highlight_windows,
     )
     return plan.reframed_path
 
