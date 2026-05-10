@@ -169,11 +169,20 @@ def build_recipe() -> dict:
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 2.1,
             "text_overlays": [
+                # Welcome appears at slot start (was 0.5s offset) so the
+                # welcome-alone window is the full 1.1s of slot 4. Reference
+                # holds welcome alone for ~1.05s before BRAZIL appears, so
+                # 1.1s here matches almost exactly. effect="none" instead of
+                # "fade-in" because _collect_absolute_overlays cross-slot-
+                # merges this with slot 5's welcome (same text + same y),
+                # and the merged overlay inherits the LATER slot's effect.
+                # Keeping both effect="none" prevents the fade from being
+                # silently stripped at merge time.
                 _hook_overlay(
                     "Welcome to",
-                    effect="fade-in",
-                    start_s=0.5,
-                    end_s=1.1,                       # matches new slot duration
+                    effect="none",
+                    start_s=0.0,
+                    end_s=1.1,
                     text_size_px=WELCOME_SIZE_PX,
                     text_color=WELCOME_COLOR,
                     font_style="serif",
@@ -194,43 +203,49 @@ def build_recipe() -> dict:
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 1.8,
             "text_overlays": [
-                # "Welcome to" co-renders briefly with the location title at
-                # slot start so the prefix is still on screen the moment the
-                # title appears. Pre-burn (curtain-close slot) draws both texts
-                # onto the slot frames before bars close. Styling matches the
-                # slot-4 prefix exactly so the visual continuation reads as
-                # one seamless reveal across the cut.
+                # "Welcome to" co-renders briefly (0.4s) with BRAZIL at slot
+                # start. Reference shows welcome visible underneath BRAZIL for
+                # ~0.3s after BRAZIL appears, then welcome fades out. Cross-
+                # slot merge with slot 4's welcome creates one continuous
+                # welcome span across the slot 4 → 5 cut.
                 _hook_overlay(
                     "Welcome to",
                     effect="none",
                     start_s=0.0,
-                    end_s=0.6,
+                    end_s=0.4,
                     text_size_px=WELCOME_SIZE_PX,
                     text_color=WELCOME_COLOR,
                     font_style="serif",
                     position_y_frac=WELCOME_Y_FRAC,
                 ),
+                # BRAZIL cycles CONTINUOUSLY from frame zero of slot 5
+                # through the curtain close. Frame-by-frame analysis of the
+                # reference's yazıörnek.mp4 zoom clip (2026-05-10) showed
+                # the cycling runs at ~0.07s interval from the moment BRAZIL
+                # first appears, all the way through curtain. There is NO
+                # static phase — splitting the overlay into static-then-cycle
+                # (commit 8c3351a) made the reveal feel frozen for 4 seconds
+                # before the curtain. Reverting to a single full-slot cycling
+                # overlay matches the reference's "frantic, constant-tempo
+                # font shuffle" look. font_cycle_accel_at_s=0.0 eliminates
+                # the normal-speed ramp-up phase — fast tempo from t=0.
+                # Frame budget: 5.5s / FONT_CYCLE_FAST_INTERVAL_S (0.07s)
+                # = 78.5 frames, within the MAX_FONT_CYCLE_FRAMES=100 cap.
+                # font_style="display" maps to PlayfairDisplay-Bold.ttf as
+                # the settle/anchor font; the cycle rotates through 7
+                # contrast fonts (Montserrat, Bodoni Moda, Fraunces,
+                # Instrument Serif, Permanent Marker, Pacifico) — same
+                # variety the reference uses.
                 _hook_overlay(
                     "PERU",
                     effect="font-cycle",
                     start_s=0.0,
-                    end_s=5.5,                       # full slot — cycles throughout
+                    end_s=5.5,
                     text_size_px=PERU_SIZE_PX,
                     text_color=PERU_COLOR,
-                    # font_style="display" maps to PlayfairDisplay-Bold.ttf
-                    # (matches the bold serif in the reference video).
-                    # font_style="serif" silently falls back to the Regular
-                    # weight, which looks anemic at 265px.
                     font_style="display",
                     position_y_frac=PERU_Y_FRAC,
-                    # Force fast cycling from slot-relative 0.3s onward (vs
-                    # orchestrator's auto-injected slot_end - animate_s = 3.9s).
-                    # With slot=5.5s and accel=0.3, ~95% of the slot is in
-                    # fast-cycle mode. The 60-frame MAX_FONT_CYCLE_FRAMES cap
-                    # in text_overlay.py caps PNG output at ~4.2s of fast
-                    # cycling (60 * 0.07), which still leaves room for the
-                    # full pre-curtain phase before bars cover the text.
-                    font_cycle_accel_at_s=0.3,
+                    font_cycle_accel_at_s=0.0,
                 ),
             ],
         },

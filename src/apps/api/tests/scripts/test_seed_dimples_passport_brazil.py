@@ -134,9 +134,9 @@ class TestWelcomeToHookSizing:
         )
 
     def test_stays_visible_through_slot_end(self):
-        """Without this, 'Welcome to' fades at slot-relative 2.33s and slot 4
-        runs another 1.17s with no text before slot 5's location title cuts in.
-        Extending end_s to the slot duration closes that visual dead air."""
+        """Without this, 'Welcome to' fades early and slot 4 runs with no text
+        before slot 5's location title cuts in. Extending end_s to the slot
+        duration closes that visual dead air."""
         recipe = build_recipe()
         slot4 = _slot(recipe, 4)
         welcome = _only_overlay(slot4)
@@ -144,6 +144,37 @@ class TestWelcomeToHookSizing:
             f"'Welcome to' end_s={welcome['end_s']} leaves "
             f"{slot4['target_duration_s'] - welcome['end_s']:.2f}s of text-less "
             f"gap before slot 5's location title appears"
+        )
+
+    def test_starts_at_slot_start_to_match_reference_solo_window(self):
+        """Reference holds 'Welcome to' alone for ~1.05s before BRAZIL appears.
+        With slot 4 at 1.1s, welcome must start at 0.0s to give the full slot
+        duration as the welcome-alone window. Starting later (e.g., 0.5s) only
+        gives ~0.6s of welcome-alone, which is visibly shorter than reference."""
+        recipe = build_recipe()
+        slot4 = _slot(recipe, 4)
+        welcome = _only_overlay(slot4)
+        assert welcome["start_s"] == 0.0, (
+            f"'Welcome to' start_s={welcome['start_s']} delays appearance into "
+            f"the slot. Reference holds welcome alone for ~1.05s before BRAZIL "
+            f"appears — start at 0.0 to use the full slot-4 duration as the "
+            f"welcome-alone window."
+        )
+
+    def test_effect_is_none_for_clean_merge_with_slot_5(self):
+        """`_collect_absolute_overlays` cross-slot-merges this welcome with
+        slot 5's welcome (same text, same y, gap=0). The merged overlay
+        inherits the LATER slot's effect. If slot 4 declares 'fade-in' but
+        slot 5 declares 'none', the merged overlay silently loses the fade.
+        Declare 'none' on both sides to keep the recipe honest about what
+        actually renders."""
+        recipe = build_recipe()
+        slot4 = _slot(recipe, 4)
+        welcome = _only_overlay(slot4)
+        assert welcome["effect"] == "none", (
+            f"slot 4 welcome effect={welcome['effect']!r} will be stripped at "
+            f"cross-slot merge time (slot 5 welcome has effect='none'). Set "
+            f"effect='none' here so the recipe matches the merged render."
         )
 
 
@@ -197,33 +228,39 @@ class TestSlot5DualOverlay:
 
 
 class TestFontCycleAccel:
-    """The orchestrator auto-injects font_cycle_accel_at_s at
-    `slot_end - animate_s` for any font-cycle overlay on a curtain-close slot.
-    For Dimples slot 5 (2.73s) with animate_s=1.638, that's accel at 1.092s —
-    only the last 1.638s is fast-cycling. An explicit lower value here forces
-    fast-cycle mode through most of the slot for a snappier reveal."""
+    """Frame-by-frame analysis of the reference (yazıörnek.mp4, 2026-05-10)
+    showed the BRAZIL title cycles at CONSTANT fast tempo from the moment
+    it first appears, with no slow ramp-up phase. font_cycle_accel_at_s=0.0
+    forces the renderer to skip the normal-speed phase entirely — every
+    frame in the cycle runs at FONT_CYCLE_FAST_INTERVAL_S (0.07s).
+
+    Without this (or with any positive accel value), the cycle starts in
+    "normal" mode (0.15s interval) and only accelerates after accel_at_s.
+    User feedback "tempo aynı olsun" (same tempo throughout) called this
+    out — the slow-then-fast pattern was visible and wrong."""
 
     def test_subject_has_explicit_accel_at_s(self):
         recipe = build_recipe()
         subject = _subject_overlay(_slot(recipe, 5))
         assert subject["font_cycle_accel_at_s"] is not None, (
             "Without an explicit value, the orchestrator's auto-injected accel "
-            "fires too late (1.092s into a 2.73s slot — only 60% of the slot "
-            "in fast-cycle mode)"
+            "fires at slot_end - animate_s, leaving the first ~4s of the slot "
+            "in slow-cycle mode — reference shows constant fast tempo from t=0"
         )
 
-    def test_accel_at_s_keeps_majority_of_slot_in_fast_mode(self):
-        """Pin the >50% threshold so future tweaks don't accidentally regress
-        back to the auto-injected value, which gives a sluggish reveal."""
+    def test_accel_at_s_is_zero_for_constant_fast_tempo(self):
+        """Reference cycles at constant fast tempo from BRAZIL's first frame.
+        Any positive accel_at_s value introduces a slow ramp-up that the user
+        called out as wrong ("başta animasyon daha yavaş perde kapanmaya
+        başladığı an hızlanıyor"). Pin accel_at_s=0.0 explicitly so future
+        tweaks can't reintroduce the slow ramp."""
         recipe = build_recipe()
-        slot5 = _slot(recipe, 5)
-        subject = _subject_overlay(slot5)
+        subject = _subject_overlay(_slot(recipe, 5))
         accel = subject["font_cycle_accel_at_s"]
-        slot_dur = slot5["target_duration_s"]
-        fast_phase = slot_dur - accel
-        assert fast_phase / slot_dur >= 0.5, (
-            f"font_cycle_accel_at_s={accel} puts only {fast_phase / slot_dur:.0%} "
-            f"of the slot in fast-cycle mode; should be ≥50% for snappy reveal"
+        assert accel == 0.0, (
+            f"font_cycle_accel_at_s={accel} introduces a {accel}s slow-cycle "
+            f"phase at the start of BRAZIL. Reference has zero slow phase — "
+            f"set accel_at_s=0.0 for constant fast tempo from frame zero."
         )
 
 
