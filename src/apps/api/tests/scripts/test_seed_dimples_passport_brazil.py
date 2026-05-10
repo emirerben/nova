@@ -58,16 +58,19 @@ class TestPeruHookSizing:
         overlay = _only_overlay(_slot(recipe, 5))
         assert overlay["position_y_frac"] == pytest.approx(_seed.PERU_Y_FRAC) == pytest.approx(0.45)
 
-    def test_uses_serif_font_per_reference(self):
-        """Reference video renders the location title in a yellow serif
-        (Playfair Display Bold style) — not Montserrat sans. font_style='serif'
-        maps to the bundled Playfair Display in assets/fonts/."""
+    def test_uses_display_font_for_bold_serif(self):
+        """Reference renders the location title in a BOLD yellow serif
+        (PlayfairDisplay-Bold.ttf). The font registry maps:
+          font_style="display" → PlayfairDisplay-Bold.ttf  (weight 700) ← USE THIS
+          font_style="serif"   → PlayfairDisplay-Regular.ttf (weight 400) ← TOO THIN
+        At 265px jumbo size the difference is dramatic — Regular looks
+        anemic and breaks the template's signature look."""
         recipe = build_recipe()
         overlay = _only_overlay(_slot(recipe, 5))
-        assert overlay["font_style"] == "serif", (
-            "Slot-5 location title must render in serif (Playfair Display) "
-            "to match the reference video — sans (Montserrat) is the wrong "
-            "weight/glyph family for this template's signature look"
+        assert overlay["font_style"] == "display", (
+            f"font_style={overlay['font_style']!r} resolves to a non-Bold "
+            f"weight. Use 'display' to get PlayfairDisplay-Bold.ttf — the "
+            f"Bold weight the reference video uses at 265px jumbo size."
         )
 
     def test_effect_is_font_cycle(self):
@@ -120,12 +123,21 @@ class TestSlot6NoOverlay:
             "cut from curtain-close to b-roll, no 'Welcome to {LOCATION}' text"
         )
 
-    def test_dissolve_transition_preserved(self):
+    def test_transition_is_hard_cut_after_curtain(self):
+        """The orchestrator force-overrides any post-interstitial transition
+        to "none" (template_orchestrate.py:1677), regardless of what the
+        recipe declares. Declaring "hard-cut" here keeps the recipe honest
+        about what actually renders. Declaring "dissolve" here would lie —
+        the recipe would say one thing while the rendered video does another.
+        Reference video also shows a hard reopen from the curtain to b-roll
+        with no fade."""
         recipe = build_recipe()
         slot6 = _slot(recipe, 6)
-        assert slot6["transition_in"] == "dissolve", (
-            "Removing the overlay must not regress the dissolve — it carries "
-            "the visual handoff from the curtain-closed title into b-roll"
+        assert slot6["transition_in"] == "hard-cut", (
+            f"Slot-6 transition_in={slot6['transition_in']!r} disagrees with "
+            f"what the orchestrator actually renders after a curtain-close "
+            f"interstitial (always 'none'/hard-cut). Declare 'hard-cut' so "
+            f"the recipe matches reality."
         )
 
 
@@ -177,6 +189,71 @@ class TestCurtainCloseAfterSlot5:
         recipe = build_recipe()
         inter = recipe["interstitials"][0]
         assert inter["hold_s"] == 0.0
+
+
+class TestCurtainSurvivesConsolidation:
+    """consolidate_slots in template_matcher.py runs whenever the user
+    uploads fewer unique clips than the recipe declares slots (very common —
+    Dimples requires only 5 clips minimum but has 17 slots). The post-merge
+    curtain validator (template_matcher.py:386) drops any curtain where
+    `slot_dur * _CURTAIN_MAX_RATIO < _MIN_CURTAIN_ANIMATE_S` — for slot 5
+    (2.73s) that's 1.638s < 4.0s, which would silently kill the curtain in
+    almost every production job.
+
+    The recipe must declare `min_slots == shot_count` so consolidation
+    skips entirely (matcher rotates clips across all 17 slots instead).
+    """
+
+    def test_min_slots_equals_shot_count(self):
+        recipe = build_recipe()
+        assert recipe["min_slots"] == recipe["shot_count"], (
+            f"min_slots={recipe['min_slots']} must equal shot_count="
+            f"{recipe['shot_count']} so consolidate_slots preserves all "
+            f"slots and does not drop the curtain-close on slot 5"
+        )
+
+    def test_curtain_survives_when_user_uploads_few_clips(self):
+        """End-to-end consolidation contract: simulate a 5-clip job (the
+        Dimples minimum) and assert the curtain interstitial is not dropped.
+        This would have caught the prior bug where slot 5's animate_s clamp
+        (1.638s) fell below _MIN_CURTAIN_ANIMATE_S (4.0s), silently dropping
+        the curtain during consolidation."""
+        from app.pipeline.agents.gemini_analyzer import ClipMeta, TemplateRecipe
+        from app.pipeline.template_matcher import consolidate_slots
+
+        recipe_dict = build_recipe()
+        # Strip routing-only keys (matches _build_recipe in orchestrator)
+        ROUTING_ONLY = {"template_kind", "has_intro_slot"}
+        kwargs = {k: v for k, v in recipe_dict.items() if k not in ROUTING_ONLY}
+        recipe = TemplateRecipe(**kwargs)
+
+        # Simulate the minimum (5) clips a user can upload — only fields
+        # consolidate_slots reads (clip_id for uniqueness count) need real
+        # values. Other fields are required-positional but unused here.
+        mock_clips = [
+            ClipMeta(
+                clip_id=f"clip-{i}",
+                transcript="",
+                hook_text="",
+                hook_score=0.0,
+                best_moments=[],
+            )
+            for i in range(5)
+        ]
+
+        consolidated = consolidate_slots(recipe, mock_clips)
+
+        curtains = [
+            i for i in consolidated.interstitials if i.get("type") == "curtain-close"
+        ]
+        assert len(curtains) == 1, (
+            f"Curtain-close was dropped during consolidation "
+            f"({len(curtains)} curtains survive, expected 1). Check that "
+            f"min_slots equals shot_count so consolidation is skipped."
+        )
+        assert curtains[0]["after_slot"] == 5
+        # All 17 slots must be preserved (no merging)
+        assert len(consolidated.slots) == len(recipe.slots) == 17
 
 
 class TestSubjectSubstitutionContract:

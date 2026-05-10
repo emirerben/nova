@@ -164,18 +164,26 @@ def build_recipe() -> dict:
                     end_s=2.73,
                     text_size_px=PERU_SIZE_PX,
                     text_color=PERU_COLOR,
-                    font_style="serif",
+                    # font_style="display" maps to PlayfairDisplay-Bold.ttf
+                    # (matches the bold serif in the reference video).
+                    # font_style="serif" silently falls back to the Regular
+                    # weight, which looks anemic at 265px.
+                    font_style="display",
                     position_y_frac=PERU_Y_FRAC,
                 ),
             ],
         },
         {
             "position": 6, "target_duration_s": 0.96, "priority": 9, "slot_type": "broll",
-            "transition_in": "dissolve", "color_hint": "none", "speed_factor": 1.0,
+            # Hard-cut after the curtain: the orchestrator force-overrides any
+            # transition that follows an interstitial-bearing slot to "none"
+            # (template_orchestrate.py:1677). Declaring "hard-cut" here keeps
+            # the recipe honest about what actually renders. Reference video
+            # also shows the bars reopen straight to b-roll with no fade.
+            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 6.34,
-            # Reference video has no joint caption after the slot-5 curtain — the
-            # bars reopen straight onto b-roll. Slot 6 keeps its dissolve so the
-            # visual handoff stays smooth, but no overlay is rendered.
+            # No joint caption after the curtain — the reference goes straight
+            # to b-roll with no "Welcome to {LOCATION}" follow-up text.
             "text_overlays": [],
         },
         {
@@ -240,6 +248,15 @@ def build_recipe() -> dict:
         # routing code don't have to fall back to the default.
         "template_kind": "multi_clip_montage",
         "shot_count": len(slots),
+        # min_slots=17 (== shot_count) tells consolidate_slots to keep all
+        # slots even when the user uploads fewer clips than slots. Without
+        # this, the post-merge curtain validator drops slot 5's curtain-close
+        # whenever consolidation runs (slot 5 dur 2.73s × 0.6 = 1.638s, below
+        # the 4.0s _MIN_CURTAIN_ANIMATE_S floor), producing curtain-less output
+        # for almost every job. The matcher rotates clips across slots instead
+        # of merging — this is the documented behavior for snappy travel
+        # templates (template_matcher.py:200).
+        "min_slots": len(slots),
         "total_duration_s": sum(s["target_duration_s"] for s in slots),
         "hook_duration_s": 8.22,  # slots 1-5
         "slots": slots,
