@@ -459,6 +459,61 @@ class TestSharedValidation:
 
         validate_clip_count(template, 2)  # Exact slot count → ok
 
+    @pytest.mark.anyio
+    async def test_validate_clip_total_duration_passes_when_long_enough(self):
+        from app.services.template_validation import validate_clip_total_duration
+
+        template = _make_template(recipe_cached={"total_duration_s": 8.5})
+        # 4.0 + 5.0 = 9.0s > 8.5s required → ok
+        validate_clip_total_duration(template, [4.0, 5.0])
+
+    @pytest.mark.anyio
+    async def test_validate_clip_total_duration_rejects_short_clips(self):
+        """The Just Fine regression: user has 2 clips totaling < template length."""
+        from app.services.template_validation import validate_clip_total_duration
+
+        template = _make_template(recipe_cached={"total_duration_s": 8.5})
+        with pytest.raises(Exception) as exc_info:
+            validate_clip_total_duration(template, [3.0, 3.0])  # 6.0s < 8.5s
+        assert "422" in str(exc_info.value.status_code)
+        assert "6.0s" in exc_info.value.detail or "6.0" in exc_info.value.detail
+        assert "8.5" in exc_info.value.detail
+
+    @pytest.mark.anyio
+    async def test_validate_clip_total_duration_tolerates_subsecond_rounding(self):
+        """Browser duration reads round to ~0.1s. 8.4 vs 8.5 should pass."""
+        from app.services.template_validation import validate_clip_total_duration
+
+        template = _make_template(recipe_cached={"total_duration_s": 8.5})
+        validate_clip_total_duration(template, [8.4])  # within 0.25s tolerance
+
+    @pytest.mark.anyio
+    async def test_validate_clip_total_duration_skips_when_no_durations(self):
+        """Legacy clients that don't send durations skip the check (no raise)."""
+        from app.services.template_validation import validate_clip_total_duration
+
+        template = _make_template(recipe_cached={"total_duration_s": 8.5})
+        validate_clip_total_duration(template, None)
+        validate_clip_total_duration(template, [])
+
+    @pytest.mark.anyio
+    async def test_validate_clip_total_duration_skips_without_recipe_metadata(self):
+        """Templates without total_duration_s in recipe (e.g. partial analysis) pass."""
+        from app.services.template_validation import validate_clip_total_duration
+
+        template = _make_template(recipe_cached={})  # no total_duration_s
+        validate_clip_total_duration(template, [1.0])
+
+    @pytest.mark.anyio
+    async def test_validate_clip_total_duration_single_video_short_clip(self):
+        """Single-video templates: the lone clip must be at least template length."""
+        from app.services.template_validation import validate_clip_total_duration
+
+        template = _make_template(recipe_cached={"total_duration_s": 30.0})
+        with pytest.raises(Exception) as exc_info:
+            validate_clip_total_duration(template, [10.0])
+        assert "422" in str(exc_info.value.status_code)
+
 
 # ── Reanalyze clears error_detail ────────────────────────────────────────────
 

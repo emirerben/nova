@@ -153,6 +153,10 @@ export interface TemplateJobStatusResponse {
 export async function createTemplateJob(params: {
   template_id: string;
   clip_gcs_paths: string[];
+  // Per-clip durations in seconds (HTMLVideoElement.duration on file select).
+  // Backend uses sum to reject submissions that can't fill the template's
+  // audio length. Optional for backward-compat.
+  clip_durations?: number[];
   selected_platforms: string[];
   inputs?: Record<string, string>;
 }): Promise<TemplateJobCreateResponse> {

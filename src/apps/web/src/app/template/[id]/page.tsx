@@ -44,6 +44,43 @@ interface ClipFile {
   id: string;
   progress: number;
   error: string | null;
+  // Probed via HTMLVideoElement on file select. Null until probe completes
+  // (or if probing fails — e.g., codec the browser can't decode metadata for).
+  // Sent to the backend so the job-create endpoint can reject submissions
+  // whose total footage can't fill the template's audio length.
+  duration_s: number | null;
+}
+
+/** Read a video file's duration via a hidden <video> element. Resolves to
+ *  null if the browser can't decode metadata within 5 seconds. */
+function probeVideoDuration(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    const cleanup = () => {
+      URL.revokeObjectURL(url);
+      video.removeAttribute("src");
+      video.load();
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(null);
+    }, 5000);
+    video.onloadedmetadata = () => {
+      clearTimeout(timer);
+      const d = Number.isFinite(video.duration) ? video.duration : null;
+      cleanup();
+      resolve(d);
+    };
+    video.onerror = () => {
+      clearTimeout(timer);
+      cleanup();
+      resolve(null);
+    };
+    video.src = url;
+  });
 }
 
 let cachedDriveToken: { token: string; expiresAt: number } | null = null;
@@ -213,17 +250,24 @@ export default function TemplateDetailPage() {
     const valid = arr.filter(
       (f) => ALLOWED_MIME.includes(f.type) && f.size <= MAX_BYTES,
     );
-    setClips((prev) =>
-      [
-        ...prev,
-        ...valid.map((f) => ({
-          file: f,
-          id: crypto.randomUUID(),
-          progress: 0,
-          error: null,
-        })),
-      ].slice(0, MAX_CLIPS),
-    );
+    const fresh: ClipFile[] = valid.map((f) => ({
+      file: f,
+      id: crypto.randomUUID(),
+      progress: 0,
+      error: null,
+      duration_s: null,
+    }));
+    setClips((prev) => [...prev, ...fresh].slice(0, MAX_CLIPS));
+    // Probe durations in the background. Each probe updates its own clip
+    // when finished; users can submit immediately and the duration check
+    // re-evaluates as soon as the probes complete.
+    for (const c of fresh) {
+      probeVideoDuration(c.file).then((d) => {
+        setClips((prev) =>
+          prev.map((p) => (p.id === c.id ? { ...p, duration_s: d } : p)),
+        );
+      });
+    }
   }
 
   function removeClip(id: string) {
@@ -261,6 +305,23 @@ export default function TemplateDetailPage() {
       return;
     }
 
+    // Reject when the user's clips can't fill the template's audio length.
+    // Skip if any clip's duration is still being probed (rare — probes run
+    // when files are added; this only matters if submit fires within ~50ms).
+    const allProbed = clips.every((c) => c.duration_s != null);
+    if (allProbed && template.total_duration_s > 0) {
+      const totalSeconds = clips.reduce((sum, c) => sum + (c.duration_s ?? 0), 0);
+      const required = template.total_duration_s;
+      if (totalSeconds + 0.25 < required) {
+        const shortBy = required - totalSeconds;
+        setErrorMsg(
+          `Your clips total ${totalSeconds.toFixed(1)}s but this template needs ` +
+          `${required.toFixed(1)}s of footage. Add ${shortBy.toFixed(1)}s more.`,
+        );
+        return;
+      }
+    }
+
     try {
       setPhase("uploading");
       const fileMeta: BatchPresignedFile[] = clips.map((c, i) => ({
@@ -290,9 +351,16 @@ export default function TemplateDetailPage() {
       );
 
       setPhase("enqueuing");
+      // Send probed durations alongside paths so the backend can enforce
+      // the same total-duration check (defense in depth — a malicious or
+      // legacy client might bypass the FE check above).
+      const clip_durations = clips
+        .map((c) => c.duration_s)
+        .filter((d): d is number => d != null);
       const { job_id } = await createTemplateJob({
         template_id: template.id,
         clip_gcs_paths: gcsPaths,
+        clip_durations: clip_durations.length === clips.length ? clip_durations : undefined,
         selected_platforms: ["tiktok", "instagram", "youtube"],
         inputs,
       });
@@ -412,7 +480,17 @@ export default function TemplateDetailPage() {
     clips.length > 0
       ? Math.round(clips.reduce((sum, c) => sum + c.progress, 0) / clips.length)
       : 0;
-  const canSubmit = clips.length >= minClips && phase === "ready";
+  // Block submit when probed durations sum < template length. Probes are
+  // async; if any clip hasn't been measured yet, allow submit and let the
+  // backend make the call (it has the same rule).
+  const allDurationsKnown = clips.every((c) => c.duration_s != null);
+  const totalDurationS = clips.reduce((s, c) => s + (c.duration_s ?? 0), 0);
+  const durationOk =
+    !allDurationsKnown ||
+    template.total_duration_s <= 0 ||
+    totalDurationS + 0.25 >= template.total_duration_s;
+  const canSubmit =
+    clips.length >= minClips && phase === "ready" && durationOk;
 
   return (
     <main className="min-h-[calc(100vh-3.5rem)] bg-black text-white px-4 py-10">
@@ -576,6 +654,11 @@ export default function TemplateDetailPage() {
                     <span className="truncate text-zinc-300 flex-1 mr-3">
                       {c.file.name}
                     </span>
+                    {c.duration_s != null && (
+                      <span className="text-zinc-500 mr-3 shrink-0 text-xs">
+                        {c.duration_s.toFixed(1)}s
+                      </span>
+                    )}
                     <span className="text-zinc-500 mr-3 shrink-0">
                       {(c.file.size / 1024 / 1024).toFixed(1)} MB
                     </span>
@@ -599,6 +682,36 @@ export default function TemplateDetailPage() {
                 ))}
               </ul>
             )}
+
+            {/* Live total-vs-required readout. Only renders when every clip's
+                duration probe has finished and the template has a known
+                length, so a half-probed state doesn't flash a false warning. */}
+            {clips.length > 0 &&
+              clips.every((c) => c.duration_s != null) &&
+              template.total_duration_s > 0 && (() => {
+                const total = clips.reduce((s, c) => s + (c.duration_s ?? 0), 0);
+                const need = template.total_duration_s;
+                const tooShort = total + 0.25 < need;
+                return (
+                  <div
+                    className={`mt-3 px-3 py-2 rounded-lg text-xs flex justify-between items-center ${
+                      tooShort
+                        ? "bg-amber-900/30 border border-amber-700/60 text-amber-200"
+                        : "bg-zinc-900 border border-zinc-800 text-zinc-400"
+                    }`}
+                  >
+                    <span>
+                      Footage total: <strong className="text-white">{total.toFixed(1)}s</strong>
+                      {" "}/{" "}{need.toFixed(1)}s required
+                    </span>
+                    {tooShort && (
+                      <span className="text-amber-300">
+                        Add {(need - total).toFixed(1)}s more
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
 
             {errorMsg && (
               <div className="mt-4 bg-red-900/40 border border-red-700 rounded-lg px-4 py-3 text-sm text-red-300">

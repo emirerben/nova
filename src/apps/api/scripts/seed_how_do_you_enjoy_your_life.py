@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
@@ -29,6 +28,10 @@ from sqlalchemy import select  # noqa: E402
 from app.database import AsyncSessionLocal  # noqa: E402
 from app.models import VideoTemplate  # noqa: E402
 
+# Pinned id so admin renames don't break re-seeds. The script is the
+# source of truth for this row's identity; `name` is a display label that
+# can drift via the admin UI.
+TEMPLATE_ID = "639fa6b7-8976-42dd-a2c9-5aebd714fc99"
 TEMPLATE_NAME = "How do you enjoy your life?"
 TEMPLATE_DESCRIPTION = (
     "Q/A interrogation intro on black screen with fixed voiceover, then "
@@ -140,7 +143,7 @@ async def seed() -> None:
     recipe = build_recipe()
     async with AsyncSessionLocal() as db:
         existing = await db.execute(
-            select(VideoTemplate).where(VideoTemplate.name == TEMPLATE_NAME)
+            select(VideoTemplate).where(VideoTemplate.id == TEMPLATE_ID)
         )
         row = existing.scalars().first()
         now = datetime.now(UTC)
@@ -156,10 +159,10 @@ async def seed() -> None:
                 row.audio_gcs_path = TEMPLATE_AUDIO_GCS_PATH
             if not row.voiceover_gcs_path:
                 row.voiceover_gcs_path = TEMPLATE_VOICEOVER_GCS_PATH
-            print(f"Updated existing template: {row.id} ({TEMPLATE_NAME})")
+            print(f"Updated existing template: {row.id} ({row.name})")
         else:
             template = VideoTemplate(
-                id=str(uuid.uuid4()),
+                id=TEMPLATE_ID,
                 name=TEMPLATE_NAME,
                 gcs_path=REFERENCE_GCS_PATH,
                 recipe_cached=recipe,

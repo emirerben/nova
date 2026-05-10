@@ -65,6 +65,7 @@ export interface AdminTemplate {
   template_type: string;
   parent_template_id: string | null;
   music_track_id: string | null;
+  has_intro_slot: boolean;
   created_at: string;
 }
 
@@ -143,6 +144,7 @@ export async function adminUpdateTemplate(
     publish?: boolean;
     archive?: boolean;
     template_type?: string;
+    has_intro_slot?: boolean;
   },
 ): Promise<AdminTemplate> {
   const res = await adminFetch(`/admin/templates/${id}`, {
