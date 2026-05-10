@@ -499,9 +499,6 @@ def _run_template_job(job_id: str) -> None:
         # [2] Download all clip files in parallel
         local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
 
-        # [2b] Probe all clips — get aspect_ratio + duration in a single FFprobe pass
-        probe_map = _probe_clips(local_clip_paths)
-
         mixed_media = _is_mixed_media(recipe.slots)
         if mixed_media:
             # Mixed-media template: positional binding (clip[i] → slot[i]).
@@ -511,16 +508,25 @@ def _run_template_job(job_id: str) -> None:
                 job_id=job_id,
                 slot_count=len(recipe.slots),
             )
+            # [2b] Probe is the only pre-render work we need on this path.
+            probe_map = _probe_clips(local_clip_paths)
             slots_in_order = _slots_in_position_order(recipe.slots)
             clip_metas = _build_positional_clip_metas(
                 local_clip_paths, slots_in_order, probe_map
             )
             file_refs = []  # not used in this path
         else:
-            # [3] Upload all clips to Gemini in parallel
-            log.info("gemini_upload_clips_start", job_id=job_id, count=len(local_clip_paths))
-            file_refs = _upload_clips_parallel(local_clip_paths)
-            log.info("gemini_upload_clips_done", job_id=job_id)
+            # [2b + 3] FFprobe and Gemini upload are independent — fan out
+            # both against the freshly-downloaded clips. ffprobe is a few
+            # seconds of disk + CPU; Gemini upload is 60-180s of network.
+            # Running them serially wastes a worker slot during the probe.
+            log.info(
+                "probe_and_gemini_upload_start",
+                job_id=job_id,
+                count=len(local_clip_paths),
+            )
+            probe_map, file_refs = _probe_and_upload_concurrent(local_clip_paths)
+            log.info("probe_and_gemini_upload_done", job_id=job_id)
 
             # [4] Analyze all clips in parallel — pass per-template filter_hint so
             # Gemini biases best_moments toward the desired content (e.g. ball-in-frame).
@@ -1013,6 +1019,28 @@ def _probe_clips(local_paths: list[str]) -> dict:
                 file_size_bytes=0,
             )
     return result
+
+
+def _probe_and_upload_concurrent(
+    local_paths: list[str],
+) -> tuple[dict, list]:
+    """Run ffprobe + Gemini upload concurrently. Returns (probe_map, file_refs).
+
+    The two operations are independent of each other (probe needs only the
+    local file; Gemini upload needs only the local file). Running them in
+    parallel cuts the slowest of the two out of the critical path —
+    typically ffprobe (5-15s) finishes well before Gemini upload (60-180s),
+    so this saves the probe time outright.
+
+    Errors from either side propagate via `.result()` re-raise, preserving
+    the orchestrator's existing fail-fast contract.
+    """
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        probe_future = pool.submit(_probe_clips, local_paths)
+        upload_future = pool.submit(_upload_clips_parallel, local_paths)
+        probe_map = probe_future.result()
+        file_refs = upload_future.result()
+    return probe_map, file_refs
 
 
 def _upload_clips_parallel(local_paths: list[str]) -> list:

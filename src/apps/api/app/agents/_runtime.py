@@ -81,6 +81,12 @@ class AgentSpec:
     timeout_s: float = 30.0
     cost_per_1k_input_usd: float = 0.0
     cost_per_1k_output_usd: float = 0.0
+    # When True (default): on SchemaError/RefusalError, retry once with a
+    # clarification suffix. When False: raise TerminalError immediately so
+    # the caller can fall through to a cheaper backup path. Used for agents
+    # like ClipMetadataAgent where a Whisper fallback is faster than burning
+    # a second 100-second Gemini call that's likely to fail the same way.
+    enable_clarification_retries: bool = True
 
 
 @dataclass(slots=True)
@@ -351,7 +357,11 @@ class Agent(ABC, Generic[InputT, OutputT]):
             try:
                 self._check_refusal(inv)
             except RefusalError:
-                if stats.refusal_retries >= 1:
+                # Skip clarification retry for agents that have a faster
+                # backup path (e.g. ClipMetadataAgent → Whisper fallback).
+                # A second 100-second Gemini call rarely succeeds when the
+                # first one refused.
+                if stats.refusal_retries >= 1 or not self.spec.enable_clarification_retries:
                     raise
                 stats.refusal_retries += 1
                 prompt = self.render_prompt(input) + self.refusal_clarification()
@@ -361,7 +371,10 @@ class Agent(ABC, Generic[InputT, OutputT]):
             try:
                 return self.parse(inv.raw_text, input)
             except (SchemaError, ValidationError, ValueError, KeyError, TypeError) as exc:
-                if stats.schema_retries >= 1:
+                # Same logic as refusal: skip the schema-clarification retry
+                # for agents whose caller can fall through cheaper than a
+                # second Gemini call.
+                if stats.schema_retries >= 1 or not self.spec.enable_clarification_retries:
                     if isinstance(exc, SchemaError):
                         raise
                     raise SchemaError(f"{self.spec.name}: parse failed — {exc}") from exc
