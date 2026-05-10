@@ -139,6 +139,7 @@ class TemplateResponse(BaseModel):
     template_type: str = "standard"
     parent_template_id: str | None = None
     music_track_id: str | None = None
+    has_intro_slot: bool = False
     created_at: datetime
 
 
@@ -151,6 +152,7 @@ class UpdateTemplateRequest(BaseModel):
     publish: bool | None = None   # set True to publish (sets published_at)
     archive: bool | None = None   # set True to archive (sets archived_at)
     template_type: str | None = None  # "standard" | "music_parent"
+    has_intro_slot: bool | None = None
 
     @field_validator("template_type")
     @classmethod
@@ -507,6 +509,9 @@ class SaveRecipeRequest(BaseModel):
 
 
 def _template_response(t: VideoTemplate) -> TemplateResponse:
+    has_intro_slot = False
+    if isinstance(t.recipe_cached, dict):
+        has_intro_slot = bool(t.recipe_cached.get("has_intro_slot", False))
     return TemplateResponse(
         id=t.id,
         name=t.name,
@@ -523,6 +528,7 @@ def _template_response(t: VideoTemplate) -> TemplateResponse:
         template_type=t.template_type,
         parent_template_id=t.parent_template_id,
         music_track_id=t.music_track_id,
+        has_intro_slot=has_intro_slot,
         created_at=t.created_at,
     )
 
@@ -767,6 +773,14 @@ async def update_template(
                 detail="Cannot make a child template into a music_parent",
             )
         template.template_type = req.template_type
+
+    if req.has_intro_slot is not None:
+        # has_intro_slot lives in recipe_cached alongside template_kind.
+        # _ROUTING_ONLY_RECIPE_KEYS preserves it across re-analysis.
+        # Reassign the whole dict so SQLAlchemy detects the JSONB change.
+        current = dict(template.recipe_cached) if isinstance(template.recipe_cached, dict) else {}
+        current["has_intro_slot"] = bool(req.has_intro_slot)
+        template.recipe_cached = current
 
     if req.publish:
         if template.analysis_status != "ready":

@@ -439,10 +439,11 @@ function TestTab({
     media_type: "video" | "photo";
   }>>([]);
 
-  // Face-first templates split the upload into Part 1 (single face/intro
-  // clip pinned to slot 1) and Part 2 (action clips for the rest). Detected
-  // by name containing "face" so future face-style templates auto-pick it up.
-  const isFaceTemplate = template.name.toLowerCase().includes("face");
+  // Templates with an intro slot split the upload into Part 1 (a single
+  // pinned clip or photo for slot 1) and Part 2 (action clips for the rest).
+  // Toggled per template via the Settings tab; persists in
+  // recipe_cached.has_intro_slot.
+  const hasIntroSlot = template.has_intro_slot ?? false;
 
   // Load latest test job on mount so previous results are visible
   useEffect(() => {
@@ -559,13 +560,13 @@ function TestTab({
   }, [template.id]);
 
   const handleCreateTestJob = useCallback(async () => {
-    if (isFaceTemplate && faceUpload.successfulPaths.length === 0) {
+    if (hasIntroSlot && faceUpload.successfulPaths.length === 0) {
       setTestError("Önce Part 1'e yüz/intro klibi yükle");
       return;
     }
     if (upload.successfulPaths.length === 0) {
       setTestError(
-        isFaceTemplate
+        hasIntroSlot
           ? "Part 2'ye aksiyon klipleri yükle"
           : "Upload clips first",
       );
@@ -575,7 +576,7 @@ function TestTab({
     setTestError(null);
     try {
       // Face clip first → matcher's highest-priority hook slot picks it up.
-      const orderedPaths = isFaceTemplate
+      const orderedPaths = hasIntroSlot
         ? [...faceUpload.successfulPaths, ...upload.successfulPaths]
         : upload.successfulPaths;
       const res = await adminCreateTestJob(template.id, {
@@ -587,7 +588,7 @@ function TestTab({
     } finally {
       setCreating(false);
     }
-  }, [template.id, upload.successfulPaths, faceUpload.successfulPaths, isFaceTemplate]);
+  }, [template.id, upload.successfulPaths, faceUpload.successfulPaths, hasIntroSlot]);
 
   return (
     <div className="space-y-6">
@@ -620,11 +621,11 @@ function TestTab({
       {!isSlotBound && (
       <div className="border border-zinc-800 rounded p-4 space-y-4">
         <h3 className="text-sm font-medium text-white">
-          {isFaceTemplate ? "Test Clips (Part 1 + Part 2)" : "Upload Test Clips"}
+          {hasIntroSlot ? "Test Clips (Part 1 + Part 2)" : "Upload Test Clips"}
         </h3>
 
         {/* Part 1 — Face/Intro dropzone (face templates only) */}
-        {isFaceTemplate && (
+        {hasIntroSlot && (
           <div className="space-y-2">
             <p className="text-xs font-semibold text-amber-300 uppercase tracking-wide">
               Part 1 — Yüz / Intro klibi (1 video)
@@ -696,7 +697,7 @@ function TestTab({
         )}
 
         {/* Part 2 (face templates) / sole zone (others) */}
-        {isFaceTemplate && (
+        {hasIntroSlot && (
           <p className="text-xs font-semibold text-zinc-300 uppercase tracking-wide mt-4">
             Part 2 — Aksiyon klipleri
           </p>
@@ -726,7 +727,7 @@ function TestTab({
           >
             {upload.uploading
               ? "Uploading..."
-              : isFaceTemplate
+              : hasIntroSlot
               ? "Aksiyon kliplerini seç (multi-select)"
               : "Click to select clips or drag and drop"}
           </label>
@@ -1098,10 +1099,12 @@ function SettingsTab({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [togglingMusic, setTogglingMusic] = useState(false);
+  const [togglingIntroSlot, setTogglingIntroSlot] = useState(false);
 
   const isMusicParent = (template.template_type ?? "standard") === "music_parent";
   const isMusicChild = (template.template_type ?? "standard") === "music_child";
   const isAudioOnly = (template.template_type ?? "standard") === "audio_only";
+  const hasIntroSlot = template.has_intro_slot ?? false;
 
   const handleSave = async () => {
     setSaving(true);
@@ -1137,6 +1140,20 @@ function SettingsTab({
       alert(err instanceof Error ? err.message : "Toggle failed");
     } finally {
       setTogglingMusic(false);
+    }
+  };
+
+  const handleToggleIntroSlot = async () => {
+    setTogglingIntroSlot(true);
+    try {
+      const updated = await adminUpdateTemplate(template.id, {
+        has_intro_slot: !hasIntroSlot,
+      });
+      onSave(updated);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Toggle failed");
+    } finally {
+      setTogglingIntroSlot(false);
     }
   };
 
@@ -1201,6 +1218,38 @@ function SettingsTab({
         </button>
         {saved && <span className="text-green-400 text-sm">Saved</span>}
       </div>
+
+      {/* Intro-slot toggle — gates the two-part upload (one pinned clip/photo
+          for slot 1 + action clips for the rest) in TestTab and the public
+          template page. Stored in recipe_cached.has_intro_slot; survives
+          re-analysis via _ROUTING_ONLY_RECIPE_KEYS. */}
+      {!isMusicChild && !isAudioOnly && (
+        <div className="border-t border-zinc-800 pt-5 mt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-white font-medium">Has intro slot</p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Reserve slot 1 for a user-uploaded intro clip or photo; remaining slots take action clips
+              </p>
+            </div>
+            <button
+              onClick={handleToggleIntroSlot}
+              disabled={togglingIntroSlot}
+              role="switch"
+              aria-checked={hasIntroSlot}
+              className={`relative w-11 h-6 rounded-full transition-colors ${
+                hasIntroSlot ? "bg-blue-600" : "bg-zinc-700"
+              } ${togglingIntroSlot ? "opacity-50" : ""}`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                  hasIntroSlot ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Music Variants toggle — only for standard/music_parent (not children or audio_only) */}
       {!isMusicChild && !isAudioOnly && (

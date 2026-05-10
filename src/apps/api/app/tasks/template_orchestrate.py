@@ -88,7 +88,7 @@ _LABEL_CONFIG: dict[str, dict] = {
 # Routing-only keys that live on `recipe_cached` JSON but are NOT valid
 # TemplateRecipe constructor kwargs. Migration 0010 backfilled `template_kind`
 # onto every existing recipe; future routing/dispatch fields go here.
-_ROUTING_ONLY_RECIPE_KEYS: frozenset[str] = frozenset({"template_kind"})
+_ROUTING_ONLY_RECIPE_KEYS: frozenset[str] = frozenset({"template_kind", "has_intro_slot"})
 
 
 # Failure-reason taxonomy. Persisted on Job.failure_reason for any
