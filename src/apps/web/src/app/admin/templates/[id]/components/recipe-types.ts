@@ -79,6 +79,12 @@ export interface RecipeTextOverlay {
   // "full" replaces entirely. Casing matches sample_text. Currently invisible in the
   // editor UI — set via backfill scripts; see backend _resolve_overlay_text for semantics.
   subject_part?: "first_half" | "second_half" | "full" | null;
+  // Typewriter/embedded substitution. Format string with `{subject}` slot
+  // (e.g. "that one trip to {subject}"). subject_chars (optional) slices the user
+  // input to the first N characters before substitution — used for partial-reveal
+  // typewriter beats. Set via backfill scripts; no editor UI yet.
+  subject_template?: string | null;
+  subject_chars?: number | null;
 }
 
 export interface RecipeInterstitial {

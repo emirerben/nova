@@ -1896,6 +1896,116 @@ class TestResolveOverlayTextSubjectPart:
         assert _resolve_overlay_text("cta", None, ov, subject="Paris") == ""
 
 
+class TestResolveOverlayTextSubjectTemplate:
+    """`subject_template` opt-in for typewriter / embedded-subject sentences.
+
+    Covers the slot 5 "that one trip to london" pattern where the city is
+    inline within a longer sentence. The typewriter partial-reveal beat
+    (slot 4: "that one trip to lon") uses subject_chars to slice the input.
+    """
+
+    def test_full_substitution(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "that one trip to london",
+            "subject_template": "that one trip to {subject}",
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="Morocco") == \
+            "that one trip to Morocco"
+
+    def test_partial_reveal_via_subject_chars(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "that one trip to lon",
+            "subject_template": "that one trip to {subject}",
+            "subject_chars": 3,
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="Morocco") == \
+            "that one trip to Mor"
+
+    def test_partial_reveal_short_subject_renders_full(self):
+        """Short city (< subject_chars) renders entirely — no padding."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "that one trip to lon",
+            "subject_template": "that one trip to {subject}",
+            "subject_chars": 3,
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="NY") == \
+            "that one trip to NY"
+
+    def test_empty_subject_falls_back_to_text(self):
+        """No user input → render the literal text so admin previews still show 'london'."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "that one trip to london",
+            "subject_template": "that one trip to {subject}",
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="") == \
+            "that one trip to london"
+
+    def test_empty_subject_with_partial_falls_back(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "that one trip to lon",
+            "subject_template": "that one trip to {subject}",
+            "subject_chars": 3,
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="") == \
+            "that one trip to lon"
+
+    def test_subject_chars_zero_treats_as_full(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "subject_template": "that one trip to {subject}",
+            "subject_chars": 0,
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="Paris") == \
+            "that one trip to Paris"
+
+    def test_subject_chars_invalid_string_ignored(self):
+        """A non-int subject_chars (e.g. from corrupted JSONB) shouldn't crash."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "subject_template": "that one trip to {subject}",
+            "subject_chars": "not-a-number",
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="Paris") == \
+            "that one trip to Paris"
+
+    def test_subject_template_without_placeholder_falls_through(self):
+        """Malformed subject_template (no {subject}) is ignored — falls through to heuristic."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "sample_text": "PERU",
+            "subject_template": "no placeholder here",
+        }
+        # Falls through to heuristic which substitutes PERU → BRAZIL
+        assert _resolve_overlay_text("label", None, ov, subject="Brazil") == "BRAZIL"
+
+    def test_subject_template_beats_subject_part(self):
+        """If both fields set, subject_template wins (more specific)."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "that one trip to london",
+            "subject_template": "that one trip to {subject}",
+            "subject_part": "first_half",
+        }
+        assert _resolve_overlay_text("label", None, ov, subject="Morocco") == \
+            "that one trip to Morocco"
+
+    def test_cta_role_short_circuits_subject_template(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {"subject_template": "that one trip to {subject}"}
+        assert _resolve_overlay_text("cta", None, ov, subject="Morocco") == ""
+
+    def test_subject_with_spaces_preserved(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {"subject_template": "that one trip to {subject}"}
+        assert _resolve_overlay_text("label", None, ov, subject="New York") == \
+            "that one trip to New York"
+
+
 # ── Timeout & error_detail tests ──────────────────────────────────────────────
 
 
