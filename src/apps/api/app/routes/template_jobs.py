@@ -64,10 +64,11 @@ class CreateTemplateJobRequest(BaseModel):
     @classmethod
     def validate_inputs_count(cls, v: dict[str, str]) -> dict[str, str]:
         # Defensive cap; per-key declared-key/length checks happen against
-        # the template in _validate_inputs below.
+        # the template in _validate_inputs below. Strip surrounding whitespace
+        # so " Tokyo " doesn't render as "  TOKYO  " in the hook overlay.
         if len(v) > 10:
             raise ValueError("Too many input keys (max 10)")
-        return v
+        return {k: val.strip() for k, val in v.items()}
 
 
 def _validate_inputs(inputs: dict[str, str], required: list | None) -> None:

@@ -52,6 +52,20 @@ TEMPLATE_DESCRIPTION = (
 # different bucket or path — check before running this seed against prod.
 REFERENCE_GCS_PATH = "templates/dimplespassport-travel-vlog.mp4"
 
+# User-facing input that drives the "Welcome to <X>" hook overlay. Key MUST
+# be "location" — _resolve_user_subject() in template_orchestrate.py reads
+# inputs.location to populate the placeholder substitution. max_length 30
+# accommodates long country names ("Democratic Republic of the Congo" wraps).
+REQUIRED_INPUTS = [
+    {
+        "key": "location",
+        "label": "Where did you go?",
+        "placeholder": "e.g. Tokyo, Brazil, Bali",
+        "max_length": 30,
+        "required": True,
+    },
+]
+
 
 # Tuned values from the standalone tuning UI at
 # src/apps/web/public/position-tool.html. Open that file in a browser to
@@ -265,6 +279,7 @@ async def seed() -> None:
             row.description = TEMPLATE_DESCRIPTION
             row.required_clips_min = 5
             row.required_clips_max = 20
+            row.required_inputs = REQUIRED_INPUTS
             print(f"Updated existing template: {row.id} ({TEMPLATE_NAME})")
         else:
             template = VideoTemplate(
@@ -277,6 +292,7 @@ async def seed() -> None:
                 description=TEMPLATE_DESCRIPTION,
                 required_clips_min=5,
                 required_clips_max=20,
+                required_inputs=REQUIRED_INPUTS,
                 published_at=now,
             )
             db.add(template)

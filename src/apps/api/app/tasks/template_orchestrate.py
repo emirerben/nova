@@ -2190,14 +2190,35 @@ def _find_clip_meta_by_id(clip_id: str, clip_metas: list | None) -> "ClipMeta | 
     return None
 
 
+def _embedded_allcaps_token(sample: str) -> str | None:
+    """Return the single all-caps token embedded in mixed-case text, or None.
+
+    Matches the slot 6 "Welcome to PERU" pattern: one all-caps word (length > 1,
+    alpha) inside a phrase that has at least one lowercase word. Returns None
+    when the text is fully all-caps, fully title-case, has no all-caps token,
+    or has more than one (ambiguous → don't guess).
+    """
+    words = sample.split()
+    if not (2 <= len(words) <= 5):
+        return None
+    if sample.isupper():
+        return None
+    allcaps = [w for w in words if w.isupper() and len(w) > 1 and w.isalpha()]
+    if len(allcaps) != 1:
+        return None
+    return allcaps[0]
+
+
 def _is_subject_placeholder(sample: str) -> bool:
     """Return True if sample_text looks like a variable place/topic name.
 
-    Heuristic: short ALL-CAPS text (e.g. "PERU", "NYC") or a short
-    title-cased phrase where every word is capitalized (e.g. "New York")
-    is likely a template variable that should be replaced with the user's
-    subject.  Fixed phrases like "Welcome to" (has lowercase word) or
-    "discovering a hidden river" (long, lowercase) do NOT match.
+    Heuristic: short ALL-CAPS text (e.g. "PERU", "NYC"), a short
+    title-cased phrase where every word is capitalized (e.g. "New York"),
+    or a mixed-case phrase containing a single all-caps token (e.g.
+    "Welcome to PERU") is likely a template variable that should be
+    replaced with the user's subject. Fixed phrases like "Welcome to"
+    (no all-caps token) or "discovering a hidden river" (long, lowercase)
+    do NOT match.
     """
     if not sample or not sample.strip():
         return False
@@ -2209,7 +2230,28 @@ def _is_subject_placeholder(sample: str) -> bool:
     # Excludes mixed-case phrases like "Welcome to", "Check this"
     if len(words) <= 2 and all(w[0].isupper() for w in words):
         return True
+    # Mixed-case phrase with a single embedded all-caps token: "Welcome to PERU"
+    if _embedded_allcaps_token(sample) is not None:
+        return True
     return False
+
+
+def _substitute_subject(sample: str, subject: str) -> str:
+    """Replace the placeholder portion of sample with the user's subject.
+
+    - "PERU" + "Tokyo"            → "TOKYO"   (whole-text caps)
+    - "Peru" + "Tokyo"            → "Tokyo"   (whole-text title-case, subject as-is)
+    - "Welcome to PERU" + "Tokyo" → "Welcome to TOKYO" (token-only swap)
+
+    Caller must check `_is_subject_placeholder(sample)` first; this function
+    assumes the placeholder rules already matched.
+    """
+    if sample.isupper():
+        return subject.upper()
+    token = _embedded_allcaps_token(sample)
+    if token is not None:
+        return " ".join(subject.upper() if w == token else w for w in sample.split())
+    return subject
 
 
 def _resolve_overlay_text(
@@ -2235,7 +2277,7 @@ def _resolve_overlay_text(
     # Subject substitution: if the template text looks like a variable
     # place/topic name and we have a subject, substitute it.
     if subject and _is_subject_placeholder(sample):
-        return subject.upper() if sample.isupper() else subject
+        return _substitute_subject(sample, subject)
 
     # If the template already has text for this overlay, USE IT.
     # "Welcome to" means "Welcome to" — not clip hook_text.
