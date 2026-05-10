@@ -2,16 +2,43 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 export default function Header() {
   const pathname = usePathname() ?? "";
+  const isAdmin = pathname.startsWith("/admin");
+  const [progress, setProgress] = useState(0);
 
-  // Admin pages render their own nav; don't double-stack headers there.
-  if (pathname.startsWith("/admin")) return null;
+  useEffect(() => {
+    if (isAdmin) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      setProgress(Math.min(window.scrollY / 80, 1));
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [isAdmin]);
+
+  if (isAdmin) return null;
 
   return (
-    <header className="sticky top-0 z-40 h-14 border-b border-zinc-900 bg-black/80 backdrop-blur supports-[backdrop-filter]:bg-black/60">
-      <div className="h-full max-w-6xl mx-auto px-4 flex items-center justify-between">
+    <header
+      className="sticky top-0 z-40 h-14"
+      style={{
+        backgroundColor: `rgba(0, 0, 0, ${0.6 * progress})`,
+        backdropFilter: `blur(${12 * progress}px)`,
+        WebkitBackdropFilter: `blur(${12 * progress}px)`,
+      }}
+    >
+      <div className="h-full max-w-6xl mx-auto px-4 flex items-center">
         <Link
           href="/"
           aria-label="Nova — home"
@@ -19,13 +46,6 @@ export default function Header() {
         >
           Nova
         </Link>
-        <button
-          type="button"
-          className="text-xs text-zinc-400 hover:text-white transition-colors"
-          aria-label="Sign in"
-        >
-          Sign in
-        </button>
       </div>
     </header>
   );
