@@ -1974,8 +1974,16 @@ def _collect_absolute_overlays(
     # 2.0s covers the default interstitial hold (1.0s) plus margin for
     # frame-boundary rounding.  A gap > 2.0s likely means a long black
     # hold where the text should legitimately restart.
+    # The "screen slot" key is position + position_y_frac. Two overlays sharing
+    # only `position="center"` but stacked at different y_frac (e.g. "The" at
+    # 0.45, "Rule of" at 0.50, "Thirds" at 0.56) occupy DIFFERENT screen slots
+    # and must not dedup against each other — Dedup 2 below would otherwise
+    # truncate the earlier ones to invalid timestamps and filter them out.
+    def _slot_key(o: dict) -> tuple:
+        return (o["position"], o.get("position_y_frac"))
+
     _MERGE_GAP_THRESHOLD_S = 2.0
-    raw.sort(key=lambda o: (o["text"].lower().strip(), o["position"], o["start_s"]))
+    raw.sort(key=lambda o: (o["text"].lower().strip(), _slot_key(o), o["start_s"]))
     unique: list[dict] = []
     for ov in raw:
         key = ov["text"].lower().strip()
@@ -1985,8 +1993,14 @@ def _collect_absolute_overlays(
             prev_key = prev["text"].lower().strip()
             if (
                 prev_key == key
-                and prev["position"] == ov["position"]
+                and _slot_key(prev) == _slot_key(ov)
                 and prev.get("font_family") == ov.get("font_family")
+                # Different colors at the same text+slot are an intentional
+                # color transition (e.g. white "Thirds" 0.4-1.4s → red "Thirds"
+                # 1.4-3.0s on the beat). Merging them would drop the second
+                # phase entirely — the white overlay's end_s would extend
+                # over the red, and the renderer never gets the red value.
+                and prev.get("text_color") == ov.get("text_color")
                 and not prev.get("spans") and not ov.get("spans")
                 and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
             ):
@@ -2003,13 +2017,16 @@ def _collect_absolute_overlays(
         if not merged:
             unique.append(ov)
 
-    # ── Dedup 2: prevent same-position time overlap ───────────────────────
-    # Sort by position then start time. If two overlays share a position
-    # and overlap in time, truncate the earlier one to end before the
-    # later one starts (with a small gap for visual clarity).
-    unique.sort(key=lambda o: (o["position"], o["start_s"]))
+    # ── Dedup 2: prevent same-screen-slot time overlap ──────────────────
+    # Sort by screen slot (position + y_frac) then start time. If two overlays
+    # share a screen slot and overlap in time, truncate the earlier one to end
+    # before the later one starts (with a small gap for visual clarity).
+    # Stacked overlays sharing only the position string (e.g. center, but at
+    # different y_frac values) are NOT considered the same screen slot and are
+    # never truncated against each other.
+    unique.sort(key=lambda o: (_slot_key(o), o["start_s"]))
     for i in range(len(unique) - 1):
-        if unique[i]["position"] == unique[i + 1]["position"]:
+        if _slot_key(unique[i]) == _slot_key(unique[i + 1]):
             if unique[i]["end_s"] > unique[i + 1]["start_s"]:
                 unique[i]["end_s"] = unique[i + 1]["start_s"] - 0.1
                 # Keep font-cycle accel timestamp within the truncated range
