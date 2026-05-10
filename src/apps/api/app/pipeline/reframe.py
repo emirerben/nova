@@ -345,6 +345,45 @@ _ZSCALE_SDR_PIPELINE = (
 )
 
 
+# Local-dev fallback when ffmpeg lacks libzimg (no zscale filter).
+# The default Homebrew ffmpeg formula does not enable libzimg; production Docker
+# does. Without zscale we can't run the proper HLG→SDR tonemap, so this path
+# strips HDR metadata, forces yuv420p, and tags the output bt709. Colors will
+# look slightly washed out compared to the production tonemapped output, but
+# the pipeline runs end-to-end so editor previews and test jobs work locally.
+_HDR_FALLBACK_PIPELINE = "format=yuv420p"
+
+
+def _zscale_available() -> bool:
+    """Cached check for whether the local ffmpeg has the zscale filter.
+
+    Production always has it (built into the Docker image). Local Homebrew
+    ffmpeg often does not. Run once per process; the binary is unlikely to
+    swap underneath us.
+    """
+    if hasattr(_zscale_available, "_cached"):
+        return _zscale_available._cached  # type: ignore[attr-defined]
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-filters"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        available = "zscale" in (result.stdout or "")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        available = False
+    _zscale_available._cached = available  # type: ignore[attr-defined]
+    if not available:
+        log.warning(
+            "zscale_filter_unavailable",
+            hint=(
+                "Local ffmpeg lacks libzimg; HDR/HLG sources will use a "
+                "best-effort fallback (no proper tonemap). Production Docker "
+                "is unaffected."
+            ),
+        )
+    return available
+
+
 def _build_video_filter(
     aspect_ratio: str,
     ass_path: str | None,
@@ -385,8 +424,13 @@ def _build_video_filter(
     # HLG (arib-std-b67) and HDR10 (smpte2084) require zscale tonemap pipeline —
     # FFmpeg's `colorspace` filter rejects these transfer characteristics.
     # bt709 clips (Android SDR, screen recordings) use colorspace=all=bt709 (no-op for SDR).
+    # When zscale is missing (local Homebrew ffmpeg without libzimg), fall back
+    # to a no-tonemap path so the pipeline still produces output for dev testing.
     if color_trc in (_HLG_TRANSFER, _HDR10_TRANSFER):
-        filters.append(_ZSCALE_SDR_PIPELINE)
+        if _zscale_available():
+            filters.append(_ZSCALE_SDR_PIPELINE)
+        else:
+            filters.append(_HDR_FALLBACK_PIPELINE)
     else:
         filters.append("colorspace=all=bt709")
 
