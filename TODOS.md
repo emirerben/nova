@@ -8,9 +8,10 @@
 **How:** The xfail in `test_subject_fallback_removed.py` flips on the deadline and CI breaks until the fallback is removed.
 **Priority:** P1
 
-### Real template thumbnails
-**What:** Render a per-template 9:16 still or 3-second loop, upload to GCS, and sign URLs in `/templates`. Today the API returns `thumbnail_url: null` and the gallery falls back to a tone-colored gradient.
-**Priority:** P2
+### Smarter poster-frame selection
+**What:** `app/services/template_poster.py` always seeks 1.5s into the template. For a few templates this lands inside a fade-in and produces a near-black thumbnail (e.g. "How do you enjoy your life?" backfilled to 3.8KB). Add a brightness/variance check on the extracted JPEG and retry at later seek offsets (3s, 5s, 10s) if the frame is too dark or low-variance. Optional: an admin override field on `VideoTemplate` to pin a specific seek time.
+**Why:** A few legacy templates ship with fade-ins; the auto-extracted poster looks broken on the homepage. Gradient fallback only kicks in when `thumbnail_gcs_path IS NULL`, not when the poster is technically present but visually empty.
+**Priority:** P3
 
 ### Typed admin editor for `required_inputs`
 **What:** Build a typed UI under `/admin/templates/[id]` that adds/removes/reorders entries in `video_templates.required_inputs`. v1 admins set this by editing the JSON column directly.
