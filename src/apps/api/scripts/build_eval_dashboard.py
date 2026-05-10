@@ -848,6 +848,83 @@ def _render_agent_tile(idx: int, agent: dict, fixtures_by_agent_name: dict[str, 
 </article>"""
 
 
+_AI_VARIANT_PLANNED_AGENTS: list[dict] = [
+    {
+        "name": "TemplateAnalyzer",
+        "phase": "admin",
+        "llm": True,
+        "cardinality": "1 per template, run once on publish/reanalyze",
+        "what": "Reads each template MP4 and writes a TemplateCard (group, capabilities, fit_signals, variant_axes) to ai_template_cards. Separate from the legacy analyze_template_task.",
+        "writes": "ai_template_cards row",
+    },
+    {
+        "name": "ClipUnderstanding",
+        "phase": "job",
+        "llm": True,
+        "cardinality": "N per job (one per uploaded clip), parallel",
+        "what": "Per-clip Gemini call. Returns ClipCard with hook, best moments, visual + audio signals, usability verdict. Own prompt; does not extend analyze_clip.",
+        "writes": "ai_jobs.clip_cards",
+    },
+    {
+        "name": "EditorialDirector",
+        "phase": "job",
+        "llm": True,
+        "cardinality": "1 per job, single call",
+        "what": "The brain. Reads ClipCards + all live TemplateCards, picks templates from the complex + basic_text groups, perturbs variant axes, emits all M VariantBriefs with text rewrites baked in.",
+        "writes": "ai_jobs.variant_briefs",
+    },
+    {
+        "name": "VariantComposer",
+        "phase": "job",
+        "llm": False,
+        "cardinality": "M per job (one per brief), parallel",
+        "what": "Pure Python. Forked copy of template_matcher.match() resolves clip-to-slot. Hard-validates must_use_clip_ids, validates the RenderPlan. No LLM call.",
+        "writes": "ai_job_variants.render_plan",
+    },
+    {
+        "name": "Renderer",
+        "phase": "job",
+        "llm": False,
+        "cardinality": "M per job, parallel (FFmpeg-bound)",
+        "what": "Thin caller into the shared app/lib/render/ library (extracted from today's _assemble_clips). Both this orchestrator and the legacy template orchestrator call the same renderer.",
+        "writes": "ai_job_variants.output_gcs_path",
+    },
+    {
+        "name": "Critic (two-stage)",
+        "phase": "job",
+        "llm": True,
+        "cardinality": "up to 2 per job (brief pruner pre-render + final ranker post-render)",
+        "what": "Stage 1 (chat-token): prunes weak briefs before paying for renders. Stage 2 (video-token): ranks the rendered MP4s and picks the gallery default. Both stages flag-disable-able.",
+        "writes": "ai_jobs.variant_ranking + ai_job_variants.critic_rank",
+    },
+]
+
+
+def _render_planned_ai_variant_tile(t: dict) -> str:
+    phase = t["phase"]
+    badges: list[str] = []
+    badges.append(
+        f'<span class="badge phase-{phase}">{"Admin" if phase == "admin" else "Per-job"}</span>'
+    )
+    badges.append(
+        '<span class="badge llm">LLM · Gemini</span>' if t["llm"] else '<span class="badge py">Python</span>'
+    )
+    badges.append(
+        '<span class="badge" style="background:var(--accent-soft);color:var(--accent);border-color:var(--accent);">PLANNED</span>'
+    )
+    return f"""<article class="agent-tile is-{phase}"
+              style="border-style:dashed;border-color:var(--line-strong);background:transparent;">
+  <div class="agent-tile-num" style="color:var(--ink-4);">··</div>
+  <div class="agent-badges">{''.join(badges)}</div>
+  <h3 class="agent-name">{_esc(t['name'])}</h3>
+  <div class="agent-cardinality">{_esc(t['cardinality'])}</div>
+  <p class="agent-what">{_esc(t['what'])}</p>
+  <div class="agent-meta-row">
+    <span><b>writes</b> <code style="font-size:11px;">{_esc(t['writes'])}</code></span>
+  </div>
+</article>"""
+
+
 def _render_flow_steps(agent_catalog: list[dict]) -> str:
     """A numbered flow with rail showing the actual pipeline stages."""
     catalog_by_name = {a["name"]: a for a in agent_catalog}
@@ -1787,6 +1864,7 @@ def render_dashboard() -> str:
       <nav class="nav">
         <button class="active" data-tab="overview">Overview</button>
         <button data-tab="agents">Agents</button>
+        <button data-tab="ai-variants">AI Variants <span style="display:inline-block;margin-left:4px;padding:1px 6px;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-size:10px;font-weight:600;letter-spacing:.04em;vertical-align:1px;">PLANNED</span></button>
         <button data-tab="templates">Templates</button>
         <button data-tab="issues">Issues</button>
         <button data-tab="tests">Tests</button>
@@ -1874,6 +1952,69 @@ def render_dashboard() -> str:
 
       <div id="agent-detail-region">
         {''.join(agent_detail_html)}
+      </div>
+    </section>
+
+    <section id="ai-variants" class="tab">
+      <div class="section-head">
+        <div class="section-num">§ — Parallel system · planned, not yet built</div>
+        <h2>A second flow lives <em>alongside</em> this one.</h2>
+        <p class="section-lede">
+          The agents on the <strong>Agents</strong> tab replace hardcoded heuristics inside today's
+          template-pick pipeline. Separately, a new product is in design: the user uploads clips and
+          immediately sees a gallery of finished variants — no template-pick step. That flow is its
+          own stack of agents under <code>app/ai_agents/</code> (planned, not yet built). It does not
+          modify, extend, or import from <code>app/agents/</code>. The two systems share infrastructure
+          (Postgres, Redis, Celery worker, GCS) and the FFmpeg renderer; nothing else.
+        </p>
+        <p class="section-lede" style="margin-top:8px;color:var(--ink-3);">
+          Architecture spec: <code>~/.claude/plans/the-app-is-template-deep-octopus.md</code> ·
+          Visualization: <code>~/.gstack/projects/emirerben-nova/designs/ai-variant-architecture-20260510/finalized.html</code>
+        </p>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:24px 0 40px;">
+        <div style="border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;background:var(--bg-elev);">
+          <div style="font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">This dashboard's tab · Agents</div>
+          <div style="font-family:var(--serif);font-size:18px;line-height:1.3;color:var(--ink);margin-bottom:6px;">May-9 agent platform</div>
+          <div style="font-size:13.5px;line-height:1.55;color:var(--ink-2);">
+            12 agents · runtime + registry + model-client · 66 passing eval tests.
+            Lives in <code>app/agents/</code>. <strong>Shipped.</strong> Untouched by the new flow.
+          </div>
+        </div>
+        <div style="border:1.5px dashed var(--accent);border-radius:var(--r);padding:18px 20px;background:var(--accent-soft);">
+          <div style="font-family:var(--mono);font-size:11px;color:var(--accent);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">This tab · AI Variants</div>
+          <div style="font-family:var(--serif);font-size:18px;line-height:1.3;color:var(--ink);margin-bottom:6px;">AI-variant gallery</div>
+          <div style="font-size:13.5px;line-height:1.55;color:var(--ink-2);">
+            6 agents · its own minimal runtime · its own eval scaffolding.
+            Will live in <code>app/ai_agents/</code>. <strong>Planned.</strong> Zero code yet.
+          </div>
+        </div>
+      </div>
+
+      <div class="section-head" style="margin-top: 40px;">
+        <div class="section-num">§ — The new agents</div>
+        <h2>One admin role, four job-time agents, <em>one ranker</em>.</h2>
+        <p class="section-lede">From the architecture plan. Tiles are dashed to mark them as planned, not implemented. Roles, contracts, and rationale are in the plan file linked above.</p>
+      </div>
+
+      <div class="phase-legend">
+        <span><span class="swatch admin"></span>Admin · runs once at template onboarding</span>
+        <span><span class="swatch job"></span>Per-job · runs every gallery generation</span>
+      </div>
+
+      <div class="agents">
+        {''.join(_render_planned_ai_variant_tile(t) for t in _AI_VARIANT_PLANNED_AGENTS)}
+      </div>
+
+      <div style="margin-top:48px;padding:20px 24px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg-sunken);">
+        <div style="font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;">Separation rule</div>
+        <ul style="margin:0;padding-left:20px;font-size:13.5px;line-height:1.7;color:var(--ink-2);">
+          <li>New agents in <code>app/ai_agents/</code>. New tables: <code>ai_template_cards</code>, <code>ai_jobs</code>, <code>ai_job_variants</code>. New routes: <code>/ai/jobs</code>. New eval scaffolding: <code>tests/ai_evals/</code>.</li>
+          <li>The May-9 platform on the <strong>Agents</strong> tab is not modified, not extended, not imported. Its 66 passing tests stay green.</li>
+          <li>Only shared library: FFmpeg rendering primitives extracted to <code>app/lib/render/</code> (the one piece that is genuinely too expensive to duplicate). Both orchestrators call it.</li>
+          <li>Three Gemini wrappers in the codebase will be intentional: legacy <code>gemini_analyzer.py</code>, May-9 <code>app/agents/_model_client.py</code>, new <code>app/ai_agents/_model_client.py</code>. The duplication is the price of isolation.</li>
+        </ul>
       </div>
     </section>
 
