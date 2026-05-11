@@ -42,6 +42,18 @@ MIN_CURTAIN_ANIMATE_S = 4.0
 # 60% leaves at least 40% visible footage before the bars begin.
 _CURTAIN_MAX_RATIO = 0.6
 
+# x264 settings for the curtain-close single-pass re-encode. The earlier
+# split-and-concat approach used preset=ultrafast because it only re-encoded
+# the short tail; the bulk of the slot was stream-copied. After 89dc3aa
+# unified everything into one geq pass, the entire slot is re-encoded — and
+# ultrafast disables mb-tree, psy-rd, B-frames and trellis quant, so smooth
+# dark gradients (e.g. the blue tent canopy under Dimples slot 5's BRAZIL
+# title) develop visible blocking artifacts. preset=medium re-enables those
+# knobs; tune=film tightens deblocking which kills the banding.
+CURTAIN_CLOSE_X264_PRESET = "medium"
+CURTAIN_CLOSE_X264_TUNE = "film"
+CURTAIN_CLOSE_X264_CRF = "18"
+
 
 class InterstitialError(Exception):
     pass
@@ -227,7 +239,10 @@ def apply_curtain_close_tail(
             "ffmpeg", "-i", slot_video_path,
             "-vf", geq_filter,
             "-c:v", "libx264", "-profile:v", "high",
-            "-preset", "ultrafast", "-crf", "18", "-pix_fmt", "yuv420p",
+            "-preset", CURTAIN_CLOSE_X264_PRESET,
+            "-tune", CURTAIN_CLOSE_X264_TUNE,
+            "-crf", CURTAIN_CLOSE_X264_CRF,
+            "-pix_fmt", "yuv420p",
             "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
             *BODY_SLOT_AUDIO_OUT_ARGS,
             "-movflags", "+faststart",
