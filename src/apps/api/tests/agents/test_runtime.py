@@ -356,6 +356,144 @@ def test_outcome_log_emitted(
     assert payload["cost_usd"] > 0  # 10 * 0.001/1k + 20 * 0.002/1k
 
 
+# ── max_attempts=1 fall-through (Loop B prod bug) ─────────────────────────────
+
+
+def _max_attempts_1_agent(mock_client: MockModelClient) -> SampleAgent:
+    """SampleAgent variant with max_attempts=1 and clarification retries ON.
+
+    Mirrors TranscriptAgent / CreativeDirectionAgent / TextDesignerAgent's
+    prod config. The bug: on a refusal/schema error at attempt 1, the
+    clarification-retry path used to `continue` into a dead for-loop and
+    surface as a generic "max_attempts exhausted" TerminalError with no
+    `agent_run` log emitted.
+    """
+    import dataclasses  # noqa: PLC0415
+
+    class MaxOneAgent(SampleAgent):
+        spec = dataclasses.replace(
+            SampleAgent.spec,
+            max_attempts=1,
+            fallback_models=(),
+        )
+
+    return MaxOneAgent(mock_client)
+
+
+def test_refusal_on_final_attempt_raises_with_original_error_at_max_attempts_1(
+    mock_client: MockModelClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With max_attempts=1 + clarification retries ON, a refusal must surface
+    as `terminal_refusal` (NOT "max_attempts exhausted"), and the
+    `agent_run` structlog event must be emitted exactly once."""
+    captured: list[tuple[str, dict]] = []
+    from app.agents import _runtime as runtime_mod
+
+    monkeypatch.setattr(
+        runtime_mod.log, "info", lambda event, **kw: captured.append((event, dict(kw)))
+    )
+    monkeypatch.setattr(runtime_mod.log, "warning", lambda *a, **kw: None)
+
+    agent = _max_attempts_1_agent(mock_client)
+    mock_client.queue("gemini-2.5-flash", {"answer": "partial"})  # missing `score`
+
+    with pytest.raises(TerminalError) as exc_info:
+        agent.run(SampleInput(topic="x"))
+
+    # The original refusal cause must be preserved, NOT "max_attempts exhausted".
+    msg = str(exc_info.value).lower()
+    assert "refusal" in msg
+    assert "max_attempts exhausted" not in msg
+    # Exactly one model invocation — the dead clarification retry must be skipped.
+    assert len(mock_client.invocations) == 1
+    # Outcome must be terminal_refusal (not terminal_unknown).
+    runs = [c for c in captured if c[0] == "agent_run"]
+    assert len(runs) == 1
+    assert runs[0][1]["outcome"] == "terminal_refusal"
+
+
+def test_schema_error_on_final_attempt_raises_with_original_error_at_max_attempts_1(
+    mock_client: MockModelClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same fall-through guard for schema errors at max_attempts=1."""
+    captured: list[tuple[str, dict]] = []
+    from app.agents import _runtime as runtime_mod
+
+    monkeypatch.setattr(
+        runtime_mod.log, "info", lambda event, **kw: captured.append((event, dict(kw)))
+    )
+    monkeypatch.setattr(runtime_mod.log, "warning", lambda *a, **kw: None)
+
+    agent = _max_attempts_1_agent(mock_client)
+    # score=999 fails Pydantic ge/le.
+    mock_client.queue("gemini-2.5-flash", {"answer": "ok", "score": 999})
+
+    with pytest.raises(TerminalError) as exc_info:
+        agent.run(SampleInput(topic="x"))
+
+    msg = str(exc_info.value).lower()
+    assert "schema" in msg
+    assert "max_attempts exhausted" not in msg
+    assert len(mock_client.invocations) == 1
+    runs = [c for c in captured if c[0] == "agent_run"]
+    assert len(runs) == 1
+    assert runs[0][1]["outcome"] == "terminal_schema"
+
+
+def test_terminal_error_from_run_on_model_still_logs_outcome(
+    sample_agent: SampleAgent, mock_client: MockModelClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Belt-and-suspenders: a TerminalError that escapes _run_on_model
+    (e.g. a 4xx surfaced by the client) must still emit an `agent_run`
+    event with outcome=terminal_unknown before re-raising."""
+    captured: list[tuple[str, dict]] = []
+    from app.agents import _runtime as runtime_mod
+
+    monkeypatch.setattr(
+        runtime_mod.log, "info", lambda event, **kw: captured.append((event, dict(kw)))
+    )
+    monkeypatch.setattr(runtime_mod.log, "warning", lambda *a, **kw: None)
+
+    # MockModelClient raises TerminalError directly on a queued TerminalError.
+    mock_client.queue("gemini-2.5-flash", TerminalError("400 bad request"))
+
+    with pytest.raises(TerminalError):
+        sample_agent.run(SampleInput(topic="x"))
+
+    runs = [c for c in captured if c[0] == "agent_run"]
+    assert len(runs) == 1, f"expected exactly one agent_run event, got {len(runs)}"
+    assert runs[0][1]["outcome"] == "terminal_unknown"
+    assert runs[0][1]["agent"] == "test.sample"
+
+
+def test_terminal_unknown_threads_input_dict_for_langfuse(
+    sample_agent: SampleAgent, mock_client: MockModelClient
+) -> None:
+    """The belt-and-suspenders TerminalError catch must thread `input_dict`
+    into `_log_outcome` so the Langfuse trace produced by the observability
+    layer (#93) includes the agent's input. Regression guard for the case
+    where the defensive handler silently dropped the input dump."""
+    from unittest.mock import patch
+
+    mock_client.queue("gemini-2.5-flash", TerminalError("400 bad request"))
+
+    with patch.object(type(sample_agent), "_log_outcome", autospec=True) as mock_log:
+        with pytest.raises(TerminalError):
+            sample_agent.run(SampleInput(topic="x"))
+
+    # Find the terminal_unknown call among any log calls.
+    unknown_calls = [
+        call for call in mock_log.call_args_list if call.kwargs.get("outcome") == "terminal_unknown"
+    ]
+    assert len(unknown_calls) == 1, f"expected one terminal_unknown log, got {len(unknown_calls)}"
+    kwargs = unknown_calls[0].kwargs
+    assert "input_dict" in kwargs, "input_dict must be threaded for Langfuse"
+    assert kwargs["input_dict"] is not None, "input_dict must not be None"
+    assert kwargs["input_dict"].get("topic") == "x", (
+        f"input_dict should mirror SampleInput dump, got {kwargs['input_dict']!r}"
+    )
+
+
 # ── Rule-based bypass ─────────────────────────────────────────────────────────
 
 

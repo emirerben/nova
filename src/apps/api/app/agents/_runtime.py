@@ -307,6 +307,22 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 last_exc = exc
                 # Try the next model in the fallback chain.
                 continue
+            except TerminalError as exc:
+                # Belt-and-suspenders: any TerminalError that escapes
+                # _run_on_model without going through the known outcome paths
+                # (Refusal/Schema/Transient) still emits an `agent_run` event
+                # so the observability layer never silently drops a failure.
+                self._log_outcome(
+                    outcome="terminal_unknown",
+                    model=stats.model_used or model,
+                    stats=stats,
+                    fallback_used=fallback_used,
+                    latency_ms=int((time.monotonic() - start) * 1000),
+                    ctx=ctx,
+                    error=str(exc),
+                    input_dict=input_dump,
+                )
+                raise
 
         # All models exhausted on TransientError.
         self._log_outcome(
@@ -388,6 +404,12 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 # first one refused.
                 if stats.refusal_retries >= 1 or not self.spec.enable_clarification_retries:
                     raise
+                # No more attempts remain — clarification retry has nowhere to
+                # go. Raise so Agent.run()'s RefusalError handler logs
+                # `terminal_refusal` with the original cause instead of letting
+                # us fall through to the generic "max_attempts exhausted" tail.
+                if attempt >= self.spec.max_attempts - 1:
+                    raise
                 stats.refusal_retries += 1
                 prompt = self.render_prompt(input) + self.refusal_clarification()
                 continue
@@ -400,6 +422,13 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 # for agents whose caller can fall through cheaper than a
                 # second Gemini call.
                 if stats.schema_retries >= 1 or not self.spec.enable_clarification_retries:
+                    if isinstance(exc, SchemaError):
+                        raise
+                    raise SchemaError(f"{self.spec.name}: parse failed — {exc}") from exc
+                # No more attempts remain — same fall-through guard as refusal.
+                # Raise so Agent.run()'s SchemaError handler logs
+                # `terminal_schema` with the original cause.
+                if attempt >= self.spec.max_attempts - 1:
                     if isinstance(exc, SchemaError):
                         raise
                     raise SchemaError(f"{self.spec.name}: parse failed — {exc}") from exc
