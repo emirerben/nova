@@ -493,6 +493,23 @@ def _build_video_filter(
     else:
         filters.append("colorspace=all=bt709")
 
+    # 0b. Frame-rate normalization to output fps. Many user-uploaded clips
+    # are not 30fps — iPhone "cinematic" defaults to 23.976fps and some
+    # Android / PAL-region phones record at 25fps. The output container is
+    # 30fps. Without an explicit fps filter, ffmpeg's default vsync=cfr at
+    # the `-r 30` muxer flag (see _encoding_args) duplicates frames at
+    # uniform positions (every 5th frame for 24→30, every 6th for 25→30).
+    # That produces a regular visible stutter (6Hz for 24fps source) that
+    # analyze_scene_glitches.py confirmed on slots 3 and 6 of the Dimples
+    # render. `fps=30` filter run at the start of the chain gives ffmpeg
+    # the same duplication policy but earlier in the pipeline; the real
+    # quality bump comes from using motion-blending via `framerate`, which
+    # produces interpolated frames at the new timestamps instead of pure
+    # duplicates — so consecutive frames always carry SOME motion and no
+    # frame is pixel-identical to its predecessor. For 30fps sources this
+    # filter is essentially a passthrough (zero new frames to synthesize).
+    filters.append(f"framerate=fps={settings.output_fps}")
+
     # 0. Speed ramp -- FIRST filter to normalize PTS for all subsequent timed filters
     if speed_factor != 1.0 and speed_factor > 0:
         filters.append(f"setpts=PTS/{speed_factor}")
