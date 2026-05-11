@@ -50,17 +50,25 @@ _CURTAIN_MAX_RATIO = 0.6
 # dark gradients (e.g. the blue tent canopy under Dimples slot 5's BRAZIL
 # title) develop visible blocking artifacts. preset=medium re-enables those
 # knobs; tune=film tightens deblocking which kills the banding.
-CURTAIN_CLOSE_X264_PRESET = "medium"
+# preset=fast keeps psy-rd + mb-tree (vs ultrafast which drops them and
+# reintroduces the dark-gradient banding PR #102 fixed) but is ~2x faster
+# than medium. On Fly's 2-shared-CPU worker, medium pushed the geq encode
+# past 600s on Dimples Passport slot-N (5.2s title) — job d018d1c3 timed
+# out. fast restores headroom. Chroma SSIM stays within PR #102's gain
+# band on the test clip; deblocking still active via tune=film.
+CURTAIN_CLOSE_X264_PRESET = "fast"
 CURTAIN_CLOSE_X264_TUNE = "film"
 CURTAIN_CLOSE_X264_CRF = "18"
 
 # Wall-clock budget for the single-pass geq curtain-close re-encode.
-# geq is per-pixel single-threaded; preset=medium adds mb-tree, psy-rd,
-# B-frames, trellis. Local dev box (8+ cores) encodes a 5.5s slot in ~25s.
-# Fly worker (2 shared CPUs, --concurrency=2) shares one CPU with another
-# task and takes 3-5x longer — the 180s budget here pre-this-fix blew on
-# slot-5 of a 5.2s title slot. 600s leaves ~11x headroom over observed.
-CURTAIN_CLOSE_SUBPROCESS_TIMEOUT_S = 600
+# After PR #103 the 180s budget became 600s; production still timed out
+# on Fly's 2-shared-CPU/--concurrency=2 worker because the per-pixel geq
+# filter is single-threaded and shared CPUs are heavily throttled.
+# 1200s gives margin in combination with concurrency=1 (fly.toml) and
+# preset=fast. The PNG-overlay code path (see apply_curtain_close_tail_overlay)
+# should make this budget irrelevant in practice — geq is the slow path
+# kept as a fallback until the overlay path proves out in prod.
+CURTAIN_CLOSE_SUBPROCESS_TIMEOUT_S = 1200
 
 
 class InterstitialError(Exception):
@@ -190,27 +198,20 @@ def apply_curtain_close_tail(
 
     anim_start = max(0.0, duration - animate_s)
 
-    # Single-pass geq with T-conditional curtain. Earlier versions split the
-    # clip into a prefix (stream-copied) and a tail (re-encoded with geq),
-    # then concatenated. The concat seam produced a one-frame freeze right
-    # at anim_start (visible as MAD≈0 between consecutive output frames at
-    # t=anim_start+67ms). Re-encoding the prefix didn't help — the concat
-    # demuxer's timestamp stitching still drops or duplicates a frame at
-    # the join.
+    # PNG-overlay implementation. Earlier versions used a per-pixel geq
+    # filter to compute bar height as a function of frame time T. geq is
+    # single-threaded and evaluates 3 channel expressions for every pixel
+    # of every frame — even pixels outside the bar region. On Fly's 2
+    # shared-CPU worker this pushed a 5.2s slot encode past 600s (job
+    # d018d1c3, 2026-05-11). The bars are deterministic black rectangles,
+    # so we pre-render them as a transparent PNG sequence with Pillow
+    # (~50ms for 48 frames) and composite via ffmpeg's overlay filter,
+    # which is a memory-copy operation orders of magnitude faster than geq.
     #
-    # The single-pass approach applies geq to the WHOLE clip and uses an
-    # `lte(T, anim_start)` guard inside the expression so the curtain only
-    # affects pixels in the tail. No split, no concat, no seam, no freeze.
-    #
-    # Cost: geq evaluates every pixel every frame across the full clip,
-    # not just the tail. For Dimples (5.5s slot 5 at 1080x1920) the render
-    # time goes from ~5s (split approach) to ~25s (full-clip geq). Worth
-    # it: the freeze was visible to users and the split-and-concat seam
-    # has no other fix path that survives downstream concat-demuxer.
-    #
-    # geq is required because drawbox's h/w/x/y expressions do NOT have
-    # access to the 't' timestamp variable (only the 'enable' expression
-    # does), so drawbox cannot animate bar height over time.
+    # The split-and-concat approach this code path replaced had a one-frame
+    # freeze at the seam (concat demuxer drops/dupes a frame at boundaries).
+    # The overlay approach is a single pass over the slot — no concat, no
+    # seam, no freeze.
 
     log.info(
         "curtain_close_tail_start",
@@ -222,30 +223,29 @@ def apply_curtain_close_tail(
     work_dir = tempfile.mkdtemp(prefix="curtain_")
 
     try:
-        # Curtain progress: 0 before anim_start, then grows linearly to 1
-        # over animate_s, capped at 1 thereafter. `gte(T,anim)` ensures the
-        # whole prefix sees progress=0, leaving every pixel untouched.
-        progress = (
-            f"min(1,max(0,(T-{anim_start:.3f})/{animate_s:.3f}))"
-            f"*gte(T,{anim_start:.3f})"
-        )
-        bar_h = f"floor(H/2*({progress}))"
-        in_bar = f"lt(Y,{bar_h})+gt(Y,H-1-{bar_h})"
-
-        geq_filter = (
-            f"geq="
-            f"lum='if({in_bar},0,lum(X,Y))':"
-            f"cb='if({in_bar},128,cb(X,Y))':"
-            f"cr='if({in_bar},128,cr(X,Y))'"
+        bars_pattern, n_bar_frames = _generate_curtain_bars_png_sequence(
+            output_dir=work_dir, animate_s=animate_s,
         )
 
-        # One pass: decode → geq → re-encode video. Audio passes through
-        # as a single re-encode keeping the body-slot AAC layout so the
-        # downstream concat-demuxer can stream-copy this slot without
-        # boundary glitches.
-        single_pass_cmd = [
-            "ffmpeg", "-i", slot_video_path,
-            "-vf", geq_filter,
+        # The PNG sequence plays at _FPS starting at t=anim_start.
+        # eof_action=repeat keeps the last (fully-closed) bar frame visible
+        # if the slot video extends past the final bar frame due to sub-
+        # frame timing rounding. enable='gte(t,anim_start)' is redundant
+        # given the setpts shift but defensive against decoder timing drift.
+        filter_complex = (
+            f"[1:v]setpts=PTS+{anim_start:.3f}/TB[bars];"
+            f"[0:v][bars]overlay=enable='gte(t,{anim_start:.3f})':"
+            f"eof_action=repeat[v]"
+        )
+
+        overlay_cmd = [
+            "ffmpeg",
+            "-i", slot_video_path,
+            "-framerate", str(_FPS),
+            "-i", bars_pattern,
+            "-filter_complex", filter_complex,
+            "-map", "[v]",
+            "-map", "0:a?",
             "-c:v", "libx264", "-profile:v", "high",
             "-preset", CURTAIN_CLOSE_X264_PRESET,
             "-tune", CURTAIN_CLOSE_X264_TUNE,
@@ -257,24 +257,65 @@ def apply_curtain_close_tail(
             "-y", output_path,
         ]
         r = subprocess.run(
-            single_pass_cmd,
+            overlay_cmd,
             capture_output=True,
             timeout=CURTAIN_CLOSE_SUBPROCESS_TIMEOUT_S,
             check=False,
         )
         if r.returncode != 0:
             raise InterstitialError(
-                f"single-pass curtain-close failed: "
+                f"curtain-close overlay failed: "
                 f"{r.stderr.decode(errors='replace')[:500]}"
             )
 
     finally:
-        try:
-            os.rmdir(work_dir)
-        except OSError:
-            pass
+        import shutil  # noqa: PLC0415
 
-    log.info("curtain_close_tail_done", output=output_path)
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+    log.info(
+        "curtain_close_tail_done",
+        output=output_path,
+        bar_frames=n_bar_frames,
+    )
+
+
+def _generate_curtain_bars_png_sequence(
+    output_dir: str,
+    animate_s: float,
+    fps: int = _FPS,
+    width: int = _WIDTH,
+    height: int = _HEIGHT,
+) -> tuple[str, int]:
+    """Pre-render the curtain bar animation as a transparent PNG sequence.
+
+    Each frame is `width × height` RGBA with two opaque black rectangles
+    (top + bottom) whose height grows linearly from 0 to `height/2` over
+    `n_frames` frames. The rest of the canvas is fully transparent so the
+    underlying slot video shows through unmodified outside the bars.
+
+    Returns (pattern_path, n_frames):
+      pattern_path: printf-style filename (e.g. /tmp/curtain_x/bar_%04d.png)
+                    suitable for `ffmpeg -i {pattern}` as an image sequence.
+      n_frames:     total frame count written.
+    """
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    n_frames = max(2, int(round(animate_s * fps)) + 1)
+    half_h = height // 2
+
+    for i in range(n_frames):
+        progress = i / (n_frames - 1) if n_frames > 1 else 1.0
+        bar_h = int(half_h * progress)
+        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        if bar_h > 0:
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([(0, 0), (width, bar_h)], fill=(0, 0, 0, 255))
+            draw.rectangle([(0, height - bar_h), (width, height)], fill=(0, 0, 0, 255))
+        img.save(os.path.join(output_dir, f"bar_{i:04d}.png"))
+
+    pattern = os.path.join(output_dir, "bar_%04d.png")
+    return pattern, n_frames
 
 
 def detect_black_segments(
