@@ -355,9 +355,21 @@ def generate_animated_overlay_ass(
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
             else:
-                log.warning("ass_validation_failed", slot=slot_index, overlay=i)
+                # ASS validation failed — same class of silent-drop as raise below.
+                log.error("ass_validation_failed", slot=slot_index, overlay=i)
+                raise RuntimeError(
+                    f"ASS validation failed for animated overlay {i} on slot "
+                    f"{slot_index}; refusing to ship a video missing recipe-defined text"
+                )
         except Exception as exc:
-            log.warning("animated_overlay_failed", slot=slot_index, error=str(exc))
+            # Re-raise: silent skip drops the recipe-defined animated text from
+            # the final video. The slot still renders but the overlay vanishes
+            # with no surface — same class as the curtain-close silent-fallback.
+            log.error("animated_overlay_failed", slot=slot_index, overlay=i, error=str(exc))
+            raise RuntimeError(
+                f"animated text overlay {i} on slot {slot_index} failed; "
+                f"refusing to ship a video missing recipe-defined text: {exc}"
+            ) from exc
 
     return ass_paths if ass_paths else None
 
