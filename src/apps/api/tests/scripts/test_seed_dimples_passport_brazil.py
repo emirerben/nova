@@ -71,8 +71,76 @@ class TestRecipeShape:
 
     def test_total_duration_around_21s(self):
         recipe = build_recipe()
-        # April 15 ref is 21.0s exactly; we allow ±0.5s for tuning headroom.
+        # April 15 ref is 21.0s slot-time; we allow ±0.5s for tuning headroom.
+        # The curtain interstitial adds its own hold_s on top (not counted in
+        # total_duration_s, which sums slot target_duration_s only).
         assert 20.5 <= recipe["total_duration_s"] <= 21.5
+
+
+class TestCurtainCloseAfterTitle:
+    """The title slot ends with a curtain-close interstitial. Dropping this
+    (as the first re-seed did) loses the cinematic title→body punctuation."""
+
+    def _curtain(self, recipe: dict) -> dict | None:
+        for inter in recipe.get("interstitials", []) or []:
+            if inter.get("type") == "curtain-close":
+                return inter
+        return None
+
+    def test_has_curtain_close_interstitial(self):
+        recipe = build_recipe()
+        curtain = self._curtain(recipe)
+        assert curtain is not None, (
+            "title slot must end with a curtain-close — the April 15 "
+            "reference closes the title visually before the body montage"
+        )
+
+    def test_curtain_fires_after_title_slot(self):
+        recipe = build_recipe()
+        curtain = self._curtain(recipe)
+        assert curtain["after_slot"] == 4, (
+            f"curtain must close after the title slot (4), got "
+            f"after_slot={curtain['after_slot']}"
+        )
+
+    def test_curtain_animate_fits_slot(self):
+        """animate_s must be ≤ 60% of slot 4 duration (_CURTAIN_MAX_RATIO);
+        the renderer clamps anyway but a recipe value past the clamp is a
+        signal that something was tuned wrong."""
+        recipe = build_recipe()
+        curtain = self._curtain(recipe)
+        slot_4_dur = _slot(recipe, 4)["target_duration_s"]
+        assert 0.5 <= curtain["animate_s"] <= slot_4_dur * 0.6, (
+            f"animate_s={curtain['animate_s']}s must be in [0.5, "
+            f"{slot_4_dur * 0.6:.2f}] for slot {slot_4_dur}s "
+            "(_CURTAIN_MAX_RATIO=0.6 in template_orchestrate.py)"
+        )
+
+
+class TestBrollDissolveTransition:
+    """The pure body montage starts on slot 9 — the cut here is the "vibe
+    change" from title/letterbox to b-roll. A dissolve carries the rhythm
+    where the first re-seed's hard-cut read as a jarring stop."""
+
+    def test_slot_9_dissolves_in(self):
+        recipe = build_recipe()
+        assert _slot(recipe, 9)["transition_in"] == "dissolve", (
+            "slot 9 (first pure-broll slot after letterbox montage) must "
+            "dissolve in — hard-cut here is the broken vibe-change the "
+            "user flagged"
+        )
+
+    def test_no_other_dissolves(self):
+        """Only slot 9 dissolves; everything else is hard-cut on the beat.
+        Extra dissolves elsewhere would smudge the fast-cut pacing."""
+        recipe = build_recipe()
+        dissolves = [
+            s["position"] for s in recipe["slots"]
+            if s["transition_in"] == "dissolve"
+        ]
+        assert dissolves == [9], (
+            f"expected exactly one dissolve (slot 9), got {dissolves}"
+        )
 
 
 class TestSlot4CombinedTitle:
@@ -111,13 +179,21 @@ class TestSlot4CombinedTitle:
         assert peru["effect"] == "font-cycle"
         assert peru["position_y_frac"] == pytest.approx(_seed.PERU_Y_FRAC) == pytest.approx(0.45)
 
-    def test_peru_starts_after_welcome_fades_in(self):
-        """'Welcome to' should be visible briefly before 'PERU' enters."""
+    def test_welcome_and_peru_start_together(self):
+        """Welcome and PERU appear as a unit, not staggered.
+
+        First re-seed staggered them (Welcome at 0.2s, PERU at 1.5s) and the
+        country read late — viewer saw "Welcome to ..." with a delay before
+        the destination appeared. Both must start within 100ms so the reveal
+        reads as one moment.
+        """
         recipe = build_recipe()
         welcome = _welcome_overlay(_slot(recipe, 4))
         peru = _peru_overlay(_slot(recipe, 4))
-        assert peru["start_s"] > welcome["start_s"], (
-            "PERU must enter after 'Welcome to' — otherwise the subtitle never reads"
+        assert abs(peru["start_s"] - welcome["start_s"]) < 0.1, (
+            f"Welcome (start_s={welcome['start_s']}) and PERU "
+            f"(start_s={peru['start_s']}) must enter together; "
+            "staggering kills the unified title reveal"
         )
 
     def test_slot_4_has_no_narrowing(self):

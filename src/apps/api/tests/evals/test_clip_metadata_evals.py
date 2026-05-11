@@ -26,6 +26,7 @@ def test_clip_metadata_eval(
     with_judge: bool,
     judge_for,
     live_model_client,
+    shadow_prompts_dir,
 ) -> None:
     fixture = load_fixture(fixture_path)
     if fixture.agent != "nova.video.clip_metadata":
@@ -34,7 +35,12 @@ def test_clip_metadata_eval(
     judge = judge_for(fixture.agent) if with_judge else None
     client = live_model_client if eval_mode == "live" else None
 
-    result = run_eval(fixture, model_client=client, judge=judge)
+    result = run_eval(
+        fixture,
+        model_client=client,
+        judge=judge,
+        shadow_prompts_dir=shadow_prompts_dir,
+    )
 
     assert result.passed, (
         f"\n{result.fixture_id}: {result.summary()}\n"
