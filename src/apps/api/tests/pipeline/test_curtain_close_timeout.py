@@ -98,9 +98,15 @@ def test_curtain_close_subprocess_uses_pinned_timeout(tmp_path: Path) -> None:
     captured_timeouts: list[float | None] = []
 
     def capturing_run(cmd, *args, **kwargs):
-        if isinstance(cmd, list) and cmd and cmd[0] == "ffmpeg" and "-vf" in cmd:
-            vf_idx = cmd.index("-vf")
-            if vf_idx + 1 < len(cmd) and cmd[vf_idx + 1].startswith("geq="):
+        # PNG-overlay path: ffmpeg -filter_complex "...overlay=..."
+        if (
+            isinstance(cmd, list)
+            and cmd
+            and cmd[0] == "ffmpeg"
+            and "-filter_complex" in cmd
+        ):
+            fc_idx = cmd.index("-filter_complex")
+            if fc_idx + 1 < len(cmd) and "overlay=" in cmd[fc_idx + 1]:
                 captured_timeouts.append(kwargs.get("timeout"))
         return real_run(cmd, *args, **kwargs)
 
@@ -108,7 +114,8 @@ def test_curtain_close_subprocess_uses_pinned_timeout(tmp_path: Path) -> None:
         apply_curtain_close_tail(str(src), str(out), animate_s=0.5)
 
     assert captured_timeouts, (
-        "no geq ffmpeg call observed — function never reached the re-encode step"
+        "no overlay ffmpeg call observed — function never reached the "
+        "re-encode step (or reverted to a -vf geq path)"
     )
     assert captured_timeouts[0] == interstitials.CURTAIN_CLOSE_SUBPROCESS_TIMEOUT_S, (
         f"timeout drift: ffmpeg called with timeout={captured_timeouts[0]} "
