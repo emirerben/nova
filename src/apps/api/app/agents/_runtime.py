@@ -107,6 +107,12 @@ class ModelInvocation:
     tokens_in: int = 0
     tokens_out: int = 0
     raw_response: Any = None  # SDK-specific; used for finish_reason inspection
+    # `GeminiClient.invoke()` rewrites the requested model to
+    # `settings.gemini_model` for all gemini-* calls. When that happens, the
+    # client SHOULD populate `model_used` so the runtime's logs + Langfuse
+    # trace reflect the model the HTTP call actually hit, not the spec's
+    # declared model. None means "no override; the spec model was used".
+    model_used: str | None = None
 
 
 @dataclass(slots=True)
@@ -118,6 +124,11 @@ class _RunStats:
     schema_retries: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
+    # Effective model name as reported by the client (e.g. when GeminiClient
+    # rewrites gemini-2.5-flash → gemini-2.5-pro via settings.gemini_model).
+    # When set, used for the agent_run log + Langfuse trace instead of the
+    # spec-declared model so observability stops drifting from reality.
+    model_used: str | None = None
 
 
 # ── Model client interface ────────────────────────────────────────────────────
@@ -257,7 +268,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 output = self._run_on_model(model, validated_input, ctx, stats)
                 self._log_outcome(
                     outcome="ok_fallback" if fallback_used else "ok",
-                    model=model,
+                    model=stats.model_used or model,
                     stats=stats,
                     fallback_used=fallback_used,
                     latency_ms=int((time.monotonic() - start) * 1000),
@@ -270,7 +281,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 # Refusing model probably won't yield to a different one — terminate.
                 self._log_outcome(
                     outcome="terminal_refusal",
-                    model=model,
+                    model=stats.model_used or model,
                     stats=stats,
                     fallback_used=fallback_used,
                     latency_ms=int((time.monotonic() - start) * 1000),
@@ -283,7 +294,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 # Schema retries already exhausted — same model can't fix it; fallback won't either.
                 self._log_outcome(
                     outcome="terminal_schema",
-                    model=model,
+                    model=stats.model_used or model,
                     stats=stats,
                     fallback_used=fallback_used,
                     latency_ms=int((time.monotonic() - start) * 1000),
@@ -300,7 +311,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
         # All models exhausted on TransientError.
         self._log_outcome(
             outcome="terminal_transient",
-            model=chosen_model,
+            model=stats.model_used or chosen_model,
             stats=stats,
             fallback_used=len(models_to_try) > 1,
             latency_ms=int((time.monotonic() - start) * 1000),
@@ -364,6 +375,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
 
             stats.tokens_in += inv.tokens_in
             stats.tokens_out += inv.tokens_out
+            if inv.model_used:
+                stats.model_used = inv.model_used
 
             # Refusal check (safety + required fields)
             try:
@@ -417,6 +430,18 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     fin_name = getattr(fin, "name", None) or str(fin)
                     if fin_name == "SAFETY":
                         raise RefusalError("Content policy refusal")
+                    # MAX_TOKENS: Gemini ran out of output budget before
+                    # producing visible response text. On `gemini-2.5-pro` this
+                    # typically means the thinking step consumed the entire
+                    # max_output_tokens budget. SchemaError (terminal, not
+                    # retried by default) tells the agent author exactly which
+                    # knob to turn instead of falling through to the generic
+                    # "empty response" / "Invalid JSON" path.
+                    if fin_name == "MAX_TOKENS":
+                        raise SchemaError(
+                            "model truncated output — finish_reason=MAX_TOKENS. "
+                            "Increase max_output_tokens."
+                        )
 
         required = self.required_fields()
         if not required:
