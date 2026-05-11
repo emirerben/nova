@@ -280,7 +280,6 @@ def _summarize(obs: list[FrameObs], step_s: float, duration: float,
         }
 
     # Find contiguous "title visible" windows
-    fonts_seq = [o.font_name for o in obs]
     visible_indices = [i for i, o in enumerate(obs) if o.font_name is not None]
     first_t = obs[visible_indices[0]].t
     last_t = obs[visible_indices[-1]].t
@@ -288,7 +287,6 @@ def _summarize(obs: list[FrameObs], step_s: float, duration: float,
     # Restrict animation analysis to the longest contiguous visible window
     # (the BRAZIL phase, not stray yellow b-roll). Use the largest run of
     # not-None values.
-    title_seq = [(o.t, o.font_name) for o in obs]
     spans = []
     cur_start = None
     for i, o in enumerate(obs):

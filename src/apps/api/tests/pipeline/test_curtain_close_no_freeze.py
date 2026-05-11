@@ -20,11 +20,9 @@ import subprocess
 from pathlib import Path
 
 import numpy as np
-import pytest
 from PIL import Image
 
 from app.pipeline.interstitials import apply_curtain_close_tail
-
 
 SOURCE_FPS = 30
 SOURCE_W = 1080

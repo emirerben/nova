@@ -44,10 +44,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from statistics import median, stdev
+from statistics import median
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -148,7 +148,7 @@ def _probe_source_fps(slots: list[SlotInfo]) -> None:
             s.source_fps = fps
             s.source_codec = codec
             s.source_probe_ok = True
-        except Exception as exc:
+        except Exception:
             s.source_fps = None
             s.source_codec = None
             s.source_probe_ok = False
@@ -285,13 +285,9 @@ def detect_stutter_clusters(obs: list[FrameMAD],
             # fps_out here; convert via t deltas — average of t-gaps)
             t_gaps = [ts[k + 1] - ts[k] for k in range(len(ts) - 1)]
             period_s = median(t_gaps)
-            implied_fps = (period_frames / period_s) * (period_frames - 1) / period_frames if period_s > 0 else None
-            # Cleaner: source_fps = output_fps * (period_frames - 1) / period_frames
-            # for 30→24: period_frames=5, ratio=4/5=0.8, 30*0.8=24 ✓
-            # for 30→25: period_frames=6, ratio=5/6=0.833, 30*0.833=25 ✓
-            output_fps = 1.0 / (ts[1] - ts[0]) * period_frames if (ts[1] - ts[0]) > 0 else 30.0
-            # Simpler approach: round output_fps to 30 (standard), then
-            # source_fps = 30 * (period-1)/period
+            # source_fps = output_fps * (period - 1) / period:
+            # 30→24: period=5, ratio 4/5=0.8, 30*0.8=24 ✓
+            # 30→25: period=6, ratio 5/6=0.833, 30*0.833=25 ✓
             implied_fps = 30.0 * (period_frames - 1) / period_frames
             clusters.append(StutterCluster(
                 t_start_s=ts[0],
@@ -315,16 +311,11 @@ class AudioGlitch:
 
 
 def detect_audio_glitches(video: Path) -> list[AudioGlitch]:
-    """Use ffmpeg's astats filter to scan per-50ms windows for amplitude
-    cliffs and clipping."""
-    cmd = [
-        "ffmpeg", "-nostdin", "-loglevel", "error",
-        "-i", str(video),
-        "-af", "asetnsamples=n=2205,p=0,astats=metadata=1:reset=1:length=0.05",
-        "-f", "null", "-",
-    ]
-    # Reading astats output is verbose; better: extract raw PCM and
-    # compute RMS per window.
+    """Sweep per-50ms windows for amplitude cliffs and clipping.
+
+    Extracts raw PCM from the video and computes RMS per window — simpler
+    and more reliable than parsing ffmpeg's `astats` filter output.
+    """
     sr = 44100
     win = int(sr * 0.05)  # 50 ms
     raw = subprocess.check_output([
@@ -451,8 +442,12 @@ def write_report(
     # Per-slot table
     lines.append("## Per-slot summary")
     lines.append("")
-    lines.append("| slot | t_range | source_fps | freezes (full) | freezes (bg) | stutter | verdict |")
-    lines.append("|------|---------|------------|----------------|--------------|---------|---------|")
+    lines.append(
+        "| slot | t_range | source_fps | freezes (full) | freezes (bg) | stutter | verdict |"
+    )
+    lines.append(
+        "|------|---------|------------|----------------|--------------|---------|---------|"
+    )
     for s in slots:
         # Find observations inside this slot
         in_slot = [o for o in obs if s.t_start_s <= o.t_s < s.t_end_s]
@@ -639,12 +634,12 @@ def main() -> int:
     # Extract frames
     with tempfile.TemporaryDirectory(prefix="scene_glitch_") as td:
         td_path = Path(td)
-        print(f"extracting frames …", file=sys.stderr)
+        print("extracting frames …", file=sys.stderr)
         n = _extract_frames(video_path, td_path)
         print(f"  {n} frames extracted", file=sys.stderr)
 
         # Per-frame MAD
-        print(f"computing per-frame MAD (full + region-masked) …", file=sys.stderr)
+        print("computing per-frame MAD (full + region-masked) …", file=sys.stderr)
         obs = _scan_frames(td_path, args.fps_out)
         print(f"  {len(obs)} consecutive-frame deltas", file=sys.stderr)
 
@@ -671,7 +666,7 @@ def main() -> int:
         print(f"  {len(boundaries)} slot-boundary issue(s)", file=sys.stderr)
 
         # Audio glitches
-        print(f"sweeping audio for glitches …", file=sys.stderr)
+        print("sweeping audio for glitches …", file=sys.stderr)
         audio = detect_audio_glitches(video_path)
         print(f"  {len(audio)} audio glitch(es) detected", file=sys.stderr)
 

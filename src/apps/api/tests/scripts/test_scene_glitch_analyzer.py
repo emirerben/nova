@@ -9,12 +9,10 @@ Covers two core invariants:
 from __future__ import annotations
 
 import importlib.util
-import os
 import sys
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 _HERE = Path(__file__).parent
 _SCRIPT_PATH = _HERE.parent.parent / "scripts" / "analyze_scene_glitches.py"

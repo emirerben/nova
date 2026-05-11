@@ -279,7 +279,10 @@ def _summarize_overlay(obs: list[tuple[float, dict]], sample_step_s: float, kind
     }
 
     if kind == "yellow":
-        clipped_frames = [t for t, o in obs if o.get("clipped_right_edge") or o.get("clipped_left_edge")]
+        clipped_frames = [
+            t for t, o in obs
+            if o.get("clipped_right_edge") or o.get("clipped_left_edge")
+        ]
         summary["clipped_off_frame"] = {
             "frames": len(clipped_frames),
             "pct_of_visible_frames": len(clipped_frames) / len(obs) * 100,
@@ -381,10 +384,13 @@ def render_single_report(report: dict) -> str:
                         if 'width_buckets_visited' in cycle else f" — {cycle.get('note', '')}"))
         tempo = (cycle.get("tempo_evidence") or {})
         if "transitions" in tempo:
-            lines.append(f"  cycle tempo:        {tempo['transitions']} width-bucket "
-                         f"transitions over visible window "
-                         f"= {_fmt_num(tempo['transitions_per_second'], 2)} per sec "
-                         f"(implied interval {_fmt_num(tempo.get('implied_cycle_interval_s'), 3)}s)")
+            implied = _fmt_num(tempo.get("implied_cycle_interval_s"), 3)
+            lines.append(
+                f"  cycle tempo:        {tempo['transitions']} width-bucket "
+                f"transitions over visible window "
+                f"= {_fmt_num(tempo['transitions_per_second'], 2)} per sec "
+                f"(implied interval {implied}s)"
+            )
     return "\n".join(lines)
 
 
