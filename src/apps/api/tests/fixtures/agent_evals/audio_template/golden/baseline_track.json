@@ -1,0 +1,41 @@
+{
+  "agent": "nova.audio.template_recipe",
+  "prompt_version": "2026-05-09",
+  "input": {
+    "file_uri": "files/golden-music-track",
+    "file_mime": "audio/mp4",
+    "beat_timestamps_s": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0],
+    "best_start_s": 0.0,
+    "best_end_s": 8.0,
+    "duration_s": 8.0
+  },
+  "raw_text": "{\"shot_count\": 4, \"total_duration_s\": 8.0, \"hook_duration_s\": 2.0, \"slots\": [{\"position\": 1, \"target_duration_s\": 2.0, \"slot_type\": \"hook\", \"energy\": 8.0, \"transition_in\": \"hard-cut\", \"color_hint\": \"warm\", \"speed_factor\": 1.0, \"text_overlays\": []}, {\"position\": 2, \"target_duration_s\": 2.0, \"slot_type\": \"broll\", \"energy\": 6.0, \"transition_in\": \"hard-cut\", \"color_hint\": \"warm\", \"speed_factor\": 1.0, \"text_overlays\": []}, {\"position\": 3, \"target_duration_s\": 2.0, \"slot_type\": \"broll\", \"energy\": 7.0, \"transition_in\": \"whip-pan\", \"color_hint\": \"warm\", \"speed_factor\": 1.0, \"text_overlays\": []}, {\"position\": 4, \"target_duration_s\": 2.0, \"slot_type\": \"outro\", \"energy\": 5.0, \"transition_in\": \"dissolve\", \"color_hint\": \"warm\", \"speed_factor\": 1.0, \"text_overlays\": []}], \"copy_tone\": \"upbeat\", \"caption_style\": \"bold sans punchy\", \"creative_direction\": \"Driving four-on-the-floor track with a clear hook in the first two bars. Cuts hit on every beat with whip-pans on the third bar build. Color grade is warm orange-teal throughout.\", \"transition_style\": \"hard cuts on every beat\", \"color_grade\": \"warm\", \"pacing_style\": \"snappy 0.5s cuts on the beat\", \"sync_style\": \"cut-on-beat\", \"interstitials\": [], \"subject_niche\": \"music montage\"}",
+  "output": {
+    "shot_count": 4,
+    "total_duration_s": 8.0,
+    "hook_duration_s": 2.0,
+    "slots": [
+      {"position": 1, "target_duration_s": 2.0, "slot_type": "hook", "energy": 8.0, "transition_in": "hard-cut", "color_hint": "warm", "speed_factor": 1.0, "text_overlays": []},
+      {"position": 2, "target_duration_s": 2.0, "slot_type": "broll", "energy": 6.0, "transition_in": "hard-cut", "color_hint": "warm", "speed_factor": 1.0, "text_overlays": []},
+      {"position": 3, "target_duration_s": 2.0, "slot_type": "broll", "energy": 7.0, "transition_in": "whip-pan", "color_hint": "warm", "speed_factor": 1.0, "text_overlays": []},
+      {"position": 4, "target_duration_s": 2.0, "slot_type": "outro", "energy": 5.0, "transition_in": "dissolve", "color_hint": "warm", "speed_factor": 1.0, "text_overlays": []}
+    ],
+    "copy_tone": "upbeat",
+    "caption_style": "bold sans punchy",
+    "beat_timestamps_s": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0],
+    "creative_direction": "Driving four-on-the-floor track with a clear hook in the first two bars. Cuts hit on every beat with whip-pans on the third bar build. Color grade is warm orange-teal throughout.",
+    "transition_style": "hard cuts on every beat",
+    "color_grade": "warm",
+    "pacing_style": "snappy 0.5s cuts on the beat",
+    "sync_style": "cut-on-beat",
+    "interstitials": [],
+    "subject_niche": "music montage",
+    "has_talking_head": false,
+    "has_voiceover": false,
+    "has_permanent_letterbox": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "4-slot 8s music recipe; beats line up with slot boundaries"
+  }
+}

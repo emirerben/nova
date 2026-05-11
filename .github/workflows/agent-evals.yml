@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       agent:
-        description: "Which agent to eval (template_recipe | clip_metadata | creative_direction | all)"
+        description: "Which agent to eval (all / Big-3 / Phase-2 in-pipeline)"
         required: false
         default: "all"
         type: choice
@@ -16,6 +16,9 @@ on:
           - template_recipe
           - clip_metadata
           - creative_direction
+          - transcript
+          - platform_copy
+          - audio_template
       with_judge:
         description: "Run Claude-Sonnet judge"
         required: false
@@ -46,6 +49,12 @@ jobs:
               echo "path=tests/evals/test_clip_metadata_evals.py" >> "$GITHUB_OUTPUT" ;;
             creative_direction)
               echo "path=tests/evals/test_creative_direction_evals.py" >> "$GITHUB_OUTPUT" ;;
+            transcript)
+              echo "path=tests/evals/test_transcript_evals.py" >> "$GITHUB_OUTPUT" ;;
+            platform_copy)
+              echo "path=tests/evals/test_platform_copy_evals.py" >> "$GITHUB_OUTPUT" ;;
+            audio_template)
+              echo "path=tests/evals/test_audio_template_evals.py" >> "$GITHUB_OUTPUT" ;;
             *)
               echo "path=tests/evals/" >> "$GITHUB_OUTPUT" ;;
           esac
@@ -66,4 +75,4 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          pytest ${{ steps.target.outputs.path }} -v ${{ steps.judge.outputs.flag }} --eval-mode=live
+          pytest ${{ steps.target.outputs.path }} -v ${{ steps.judge.outputs.flag }} --eval-mode=live --allow-cost

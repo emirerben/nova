@@ -1,0 +1,34 @@
+{
+  "agent": "nova.compose.platform_copy",
+  "prompt_version": "2026-05-09",
+  "input": {
+    "hook_text": "Watch this incredible save",
+    "transcript_excerpt": "He came out of nowhere and got the ball at the last second.",
+    "has_transcript": true,
+    "template_tone": "energetic"
+  },
+  "raw_text": "{\"tiktok\": {\"hook\": \"the most insane save you'll see today\", \"caption\": \"keeper came out of nowhere on this one. how did he even get there\", \"hashtags\": [\"#football\", \"#save\", \"#goalkeeper\", \"#fyp\", \"#sports\"]}, \"instagram\": {\"hook\": \"this save shouldn't be possible\", \"caption\": \"keeper read the play perfectly and came across the box at the last second to deny what looked like a sure goal\", \"hashtags\": [\"#football\", \"#goalkeeper\", \"#save\", \"#soccerlife\", \"#footballskills\"]}, \"youtube\": {\"title\": \"INSANE last-second save you have to see #shorts\", \"description\": \"Goalkeeper makes an unbelievable diving save in the final seconds.\", \"tags\": [\"football\", \"goalkeeper\", \"save\", \"shorts\", \"sports\"]}}",
+  "output": {
+    "value": {
+      "tiktok": {
+        "hook": "the most insane save you'll see today",
+        "caption": "keeper came out of nowhere on this one. how did he even get there",
+        "hashtags": ["#football", "#save", "#goalkeeper", "#fyp", "#sports"]
+      },
+      "instagram": {
+        "hook": "this save shouldn't be possible",
+        "caption": "keeper read the play perfectly and came across the box at the last second to deny what looked like a sure goal",
+        "hashtags": ["#football", "#goalkeeper", "#save", "#soccerlife", "#footballskills"]
+      },
+      "youtube": {
+        "title": "INSANE last-second save you have to see #shorts",
+        "description": "Goalkeeper makes an unbelievable diving save in the final seconds.",
+        "tags": ["football", "goalkeeper", "save", "shorts", "sports"]
+      }
+    }
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "all three platforms populated, no placeholder leakage, distinct hooks"
+  }
+}

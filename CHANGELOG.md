@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.6.0] - 2026-05-10
+
+### Added
+- Phase 2 evals: structural checks, rubrics, and per-fixture pytest gates for the three remaining in-pipeline LLM agents — `transcript` (word-level timestamps + `low_confidence` calibration), `platform_copy` (TikTok/IG/YouTube native voice + placeholder leakage + duplicate-hook detection), and `audio_template` (slot-duration arithmetic + monotonic beat list + non-empty style metadata + valid `color_grade`). Each ships with at least one hand-authored golden fixture; `prod_snapshots/` populates from a live DB export.
+- `--shadow-prompts-dir <path>` flag: live-mode-only side-by-side run of prod and a candidate prompt overlay. Per-fixture summary prints `primary_avg=… shadow_avg=… Δ=…`. Implemented via a `prompt_loader._get_raw` overlay context manager so any prompt file not in the candidate dir falls through to prod. Closes the prompt-iteration loop in one pytest run instead of stash-and-diff.
+- `--allow-cost` flag + automatic live-mode preflight: estimates token cost per fixture × `AgentSpec.cost_per_1k_*_usd`, refuses to run if total > $20 unless overridden. Heuristic is deliberately pessimistic (chars/3 input + fixed 1500 output). Replay mode skips the gate entirely. Prints a warning when an agent's spec has zero cost so the gate isn't silently bypassed.
+- `scripts/reanalyze_underbaked_templates.py` one-off: snapshots `recipe_cached` to `/tmp/`, dispatches `analyze_template_task` (two-pass mode), optionally polls until each template reaches `ready` or `failed`. Auto-detects templates whose `creative_direction` has fewer than 50 words.
+- `scripts/export_eval_fixtures.py` extended to walk `Job.transcript`, `JobClip.platform_copy`, and `MusicTrack.recipe_cached` so prod-snapshot fixtures for the new agents can be exported alongside the Phase 1 set.
+- Eval dashboard (`scripts/build_eval_dashboard.py`) now surfaces the three new agents with their fixtures (both `prod_snapshots/` and hand-authored `golden/`) in the Agents tab. Per-agent fixture picker labels `golden` cases distinctly so they don't collide with prod exports.
+- `.github/workflows/agent-evals.yml` exposes `transcript`, `platform_copy`, and `audio_template` as workflow_dispatch agent choices. Workflow now passes `--allow-cost` so the new gate doesn't block CI runs.
+
+### Changed
+- `runners/eval_runner.py`: `_build_agent_class_for` dispatches all six in-pipeline agents. Added a `_RUBRIC_FILENAME_OVERRIDES` map so `nova.audio.template_recipe` (audio_template) and `nova.compose.template_recipe` no longer collide on a shared rubric file.
+- `tests/evals/README.md` rewritten: documents all six in-pipeline agents, both prompt-iteration loops (manual stash and auto `--shadow-prompts-dir`), the cost cap, and the limitations of `prod_snapshots/` fixtures (`raw_text` is a JSON dump of the persisted output, not the original Gemini response).
+
+### Tests
+- 5 new unit tests for the shadow context manager (round-trip + exception-path restore) and `estimate_live_cost` (per-agent breakdown, zero-cost-spec warning, unknown-agent skip). Coverage of new code paths: 8/13 (62%) by count; load-bearing structural checks at 100%.
+
 ## [0.4.5.0] - 2026-05-10
 
 ### Added
