@@ -51,6 +51,12 @@ def safety_response() -> FakeResponse:
     return FakeResponse(candidates=[FakeCandidate(finish_reason=FakeFinishReason("SAFETY"))])
 
 
+def max_tokens_response() -> FakeResponse:
+    """Mimics Gemini's response when the thinking step burns the entire
+    max_output_tokens budget — finish_reason=MAX_TOKENS, no visible content."""
+    return FakeResponse(candidates=[FakeCandidate(finish_reason=FakeFinishReason("MAX_TOKENS"))])
+
+
 # ── Programmable fake client ──────────────────────────────────────────────────
 
 

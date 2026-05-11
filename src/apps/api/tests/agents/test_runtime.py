@@ -24,6 +24,7 @@ from tests.agents.conftest import (
     SampleAgent,
     SampleInput,
     SampleOutput,
+    max_tokens_response,
     safety_response,
 )
 
@@ -91,9 +92,7 @@ def test_transient_exhausts_all_models_terminal(
 # ── Refusal handling ──────────────────────────────────────────────────────────
 
 
-def test_refusal_once_then_success(
-    sample_agent: SampleAgent, mock_client: MockModelClient
-) -> None:
+def test_refusal_once_then_success(sample_agent: SampleAgent, mock_client: MockModelClient) -> None:
     # First call: missing required field "score" → triggers RefusalError → retry
     # Second call: complete output
     mock_client.queue(
@@ -122,9 +121,68 @@ def test_safety_refusal_via_finish_reason(
     assert out.answer == "ok"
 
 
-def test_refusal_twice_terminal(
+def test_max_tokens_finish_reason_terminal_schema(
     sample_agent: SampleAgent, mock_client: MockModelClient
 ) -> None:
+    """Gemini's MAX_TOKENS finish_reason surfaces as a distinct terminal
+    SchemaError with a self-documenting message — not the generic 'empty
+    response' / 'Invalid JSON' fall-through. Discovered when
+    `gemini-2.5-pro`'s thinking step consumed the full 400-token budget on
+    CreativeDirectionAgent in prod, leaving zero tokens for the response."""
+    truncated = ModelInvocation(
+        raw_text="",
+        raw_response=max_tokens_response(),
+        tokens_in=5,
+        tokens_out=0,
+    )
+    mock_client.queue("gemini-2.5-flash", truncated)
+    with pytest.raises(TerminalError) as exc_info:
+        sample_agent.run(SampleInput(topic="x"))
+    msg = str(exc_info.value)
+    assert "schema" in msg.lower()
+    assert "MAX_TOKENS" in msg
+    assert "Increase max_output_tokens" in msg
+    # Terminal on first call — no schema-clarification retry burns another
+    # model call, because raising the budget is the only fix.
+    assert len(mock_client.invocations) == 1
+
+
+def test_max_tokens_outcome_logged_as_terminal_schema(
+    sample_agent: SampleAgent,
+    mock_client: MockModelClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The agent_run log records `outcome=terminal_schema` with the
+    MAX_TOKENS truncation message, so it's distinguishable from generic
+    schema failures in observability dashboards."""
+    captured: list[tuple[str, dict]] = []
+
+    from app.agents import _runtime as runtime_mod
+
+    def fake_info(event: str, **kwargs: object) -> None:
+        captured.append((event, dict(kwargs)))
+
+    monkeypatch.setattr(runtime_mod.log, "info", fake_info)
+    monkeypatch.setattr(runtime_mod.log, "warning", lambda *a, **kw: None)
+
+    truncated = ModelInvocation(
+        raw_text="",
+        raw_response=max_tokens_response(),
+        tokens_in=5,
+        tokens_out=0,
+    )
+    mock_client.queue("gemini-2.5-flash", truncated)
+    with pytest.raises(TerminalError):
+        sample_agent.run(SampleInput(topic="x"))
+
+    runs = [c for c in captured if c[0] == "agent_run"]
+    assert len(runs) == 1
+    payload = runs[0][1]
+    assert payload["outcome"] == "terminal_schema"
+    assert "MAX_TOKENS" in payload["error"]
+
+
+def test_refusal_twice_terminal(sample_agent: SampleAgent, mock_client: MockModelClient) -> None:
     mock_client.queue(
         "gemini-2.5-flash",
         {"answer": "partial"},
@@ -194,7 +252,7 @@ def test_schema_error_no_retry_when_disabled(mock_client: MockModelClient) -> No
     mock_client.queue(
         "gemini-2.5-flash",
         {"answer": "ok", "score": 999},  # schema error (out of range)
-        {"answer": "ok", "score": 50},   # would be the retry — must NOT be invoked
+        {"answer": "ok", "score": 50},  # would be the retry — must NOT be invoked
     )
     with pytest.raises(TerminalError) as exc_info:
         agent.run(SampleInput(topic="x"))
@@ -242,6 +300,7 @@ def test_default_spec_keeps_clarification_retries_on(
     once on schema error (existing behavior, covered by the test above —
     pin the default value of the new field here too)."""
     from app.agents._runtime import AgentSpec
+
     spec = AgentSpec(name="x", prompt_id="x", prompt_version="0", model="m")
     assert spec.enable_clarification_retries is True
     # And SampleAgent (used everywhere in this file) defaults to True too.
@@ -391,3 +450,90 @@ def test_run_context_threaded(sample_agent: SampleAgent, mock_client: MockModelC
     ctx = RunContext(job_id="job-123", segment_idx=4)
     out = sample_agent.run(SampleInput(topic="x"), ctx=ctx)
     assert out.answer == "ok"
+
+
+# ── Effective-model reporting (Fix 3) ─────────────────────────────────────────
+
+
+def test_model_used_overrides_spec_model_in_log(
+    sample_agent: SampleAgent,
+    mock_client: MockModelClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the client populates `ModelInvocation.model_used` (because the
+    Gemini client rewrote gemini-2.5-flash → settings.gemini_model), the
+    agent_run log records the actually-invoked model, not the spec's
+    declared model. Closes the observability gap where logs said
+    `gemini-2.5-flash` while the HTTP call hit `gemini-2.5-pro`."""
+    captured: list[tuple[str, dict]] = []
+
+    from app.agents import _runtime as runtime_mod
+
+    def fake_info(event: str, **kwargs: object) -> None:
+        captured.append((event, dict(kwargs)))
+
+    monkeypatch.setattr(runtime_mod.log, "info", fake_info)
+    monkeypatch.setattr(runtime_mod.log, "warning", lambda *a, **kw: None)
+
+    # Simulate the GeminiClient rewrite: spec asks for gemini-2.5-flash, the
+    # client invoked gemini-2.5-pro and reports that on `model_used`.
+    inv = ModelInvocation(
+        raw_text='{"answer": "ok", "score": 50}',
+        tokens_in=10,
+        tokens_out=20,
+        model_used="gemini-2.5-pro",
+    )
+    mock_client.queue("gemini-2.5-flash", inv)
+    sample_agent.run(SampleInput(topic="x"))
+
+    runs = [c for c in captured if c[0] == "agent_run"]
+    assert len(runs) == 1
+    assert runs[0][1]["model"] == "gemini-2.5-pro"
+
+
+def test_model_used_none_falls_back_to_spec_model(
+    sample_agent: SampleAgent,
+    mock_client: MockModelClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backward-compat: when the client does NOT set model_used (the common
+    case — Whisper, or Gemini when the rewrite was a no-op), the log uses
+    the spec's declared model."""
+    captured: list[tuple[str, dict]] = []
+
+    from app.agents import _runtime as runtime_mod
+
+    def fake_info(event: str, **kwargs: object) -> None:
+        captured.append((event, dict(kwargs)))
+
+    monkeypatch.setattr(runtime_mod.log, "info", fake_info)
+    monkeypatch.setattr(runtime_mod.log, "warning", lambda *a, **kw: None)
+
+    # Default ModelInvocation from `mock_client.queue({...})` does not set
+    # model_used, so the spec model should be logged.
+    mock_client.queue("gemini-2.5-flash", {"answer": "ok", "score": 1})
+    sample_agent.run(SampleInput(topic="x"))
+
+    runs = [c for c in captured if c[0] == "agent_run"]
+    assert runs[0][1]["model"] == "gemini-2.5-flash"
+
+
+def test_model_invocation_dataclass_carries_model_used() -> None:
+    """The new field on ModelInvocation defaults to None and accepts a
+    string — pin both behaviors so future refactors don't silently drop it."""
+    default = ModelInvocation(raw_text="hi")
+    assert default.model_used is None
+    overridden = ModelInvocation(raw_text="hi", model_used="gemini-2.5-pro")
+    assert overridden.model_used == "gemini-2.5-pro"
+
+
+# ── CreativeDirectionAgent budget (Fix 1) ─────────────────────────────────────
+
+
+def test_creative_direction_max_output_tokens_is_2048() -> None:
+    """Pin the budget to 2048: Gemini-2.5-pro's thinking step consumed 397/400
+    in prod, leaving zero for the visible response and breaking every
+    template analysis. 2048 leaves comfortable headroom without being wasteful."""
+    from app.agents.creative_direction import CreativeDirectionAgent
+
+    assert CreativeDirectionAgent.max_output_tokens == 2048

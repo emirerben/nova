@@ -118,9 +118,7 @@ class GeminiClient(ModelClient):
             except genai_errors.APIError as exc:
                 if not _is_genai_transient(exc):
                     raise TerminalError(f"gemini poll failed: {exc}") from exc
-                backoff = self._DEFAULT_BACKOFF[
-                    min(poll_attempt, len(self._DEFAULT_BACKOFF) - 1)
-                ]
+                backoff = self._DEFAULT_BACKOFF[min(poll_attempt, len(self._DEFAULT_BACKOFF) - 1)]
                 log.warning(
                     "gemini_poll_transient_retry",
                     attempt=poll_attempt + 1,
@@ -171,6 +169,7 @@ class GeminiClient(ModelClient):
         # that `patch("app.pipeline.agents.gemini_analyzer.settings")` continue
         # to drive the model selection through the agent path. When a real
         # cross-SKU fallback (Flash → Pro) is needed, add a per-family setting.
+        requested_model = model
         if model.startswith("gemini-"):
             from app.pipeline.agents import gemini_analyzer as _ga  # noqa: PLC0415
 
@@ -211,11 +210,18 @@ class GeminiClient(ModelClient):
         tokens_in = int(getattr(usage, "prompt_token_count", 0) or 0) if usage else 0
         tokens_out = int(getattr(usage, "candidates_token_count", 0) or 0) if usage else 0
 
+        # Report the actually-invoked model (not the spec's declared model) so
+        # the runtime's `agent_run` log + Langfuse trace reflect reality. Only
+        # set when the rewrite kicked in — keeps the contract that
+        # `model_used is None` means "no override happened".
+        model_used = model if model != requested_model else None
+
         return ModelInvocation(
             raw_text=raw_text,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             raw_response=response,
+            model_used=model_used,
         )
 
 

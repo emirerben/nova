@@ -44,7 +44,15 @@ class CreativeDirectionAgent(Agent[CreativeDirectionInput, CreativeDirectionOutp
     Output = CreativeDirectionOutput
 
     response_json: ClassVar[bool] = False
-    max_output_tokens: ClassVar[int | None] = 400
+    # 2048, not 400: GeminiClient.invoke() rewrites every gemini-* model to
+    # `settings.gemini_model`. When that's set to `gemini-2.5-pro` (the prod
+    # default), Gemini's thinking step silently consumes the entire budget
+    # (observed 397/400 tokens spent on `thoughts_token_count`), leaving zero
+    # for the visible response. finish_reason=MAX_TOKENS, candidates_token_count
+    # is None, and the parser raises SchemaError("empty response") on every
+    # call. 2048 leaves comfortable headroom (~1600 tokens after thinking) for
+    # the ~400-token creative-direction summary without being wasteful.
+    max_output_tokens: ClassVar[int | None] = 2048
 
     def media_uri(self, input: CreativeDirectionInput) -> str | None:  # noqa: A002
         return input.file_uri
@@ -55,9 +63,7 @@ class CreativeDirectionAgent(Agent[CreativeDirectionInput, CreativeDirectionOutp
     def render_prompt(self, input: CreativeDirectionInput) -> str:  # noqa: A002, ARG002
         return load_prompt("analyze_template_pass1")
 
-    def parse(
-        self, raw_text: str, input: CreativeDirectionInput
-    ) -> CreativeDirectionOutput:  # noqa: A002, ARG002
+    def parse(self, raw_text: str, input: CreativeDirectionInput) -> CreativeDirectionOutput:  # noqa: A002, ARG002
         text = (raw_text or "").strip()
         if not text:
             raise SchemaError("creative_direction: empty response")
