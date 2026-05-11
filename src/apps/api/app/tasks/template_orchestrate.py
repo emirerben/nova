@@ -2222,7 +2222,15 @@ def _collect_absolute_overlays(
     # and must not dedup against each other — Dedup 2 below would otherwise
     # truncate the earlier ones to invalid timestamps and filter them out.
     def _slot_key(o: dict) -> tuple:
-        return (o["position"], o.get("position_y_frac"))
+        # position_y_frac is optional — overlays without an explicit vertical
+        # anchor (e.g. legacy hooks that rely on the renderer's default y) have
+        # y_frac=None. Mixing None with floats in this tuple crashes Python's
+        # lexicographic sort below (`None < 0.45` is a TypeError), so map None
+        # to a sentinel float that sorts BEFORE any real y_frac value (which
+        # are all in [0.0, 1.0]). Two None-y_frac overlays still share the
+        # same screen slot — the sentinel preserves that equality.
+        y_frac = o.get("position_y_frac")
+        return (o["position"], y_frac if y_frac is not None else -1.0)
 
     _MERGE_GAP_THRESHOLD_S = 2.0
     raw.sort(key=lambda o: (o["text"].lower().strip(), _slot_key(o), o["start_s"]))
