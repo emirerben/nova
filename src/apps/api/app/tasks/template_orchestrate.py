@@ -1695,7 +1695,15 @@ def _assemble_clips(
                 )
                 reframed = tail_output
             except Exception as exc:
-                log.warning("curtain_close_tail_failed", slot=i, error=str(exc))
+                # Re-raise: a swallowed failure here leaves the slot in the
+                # sequence without curtain bars while the post-slot color-hold
+                # interstitial still gets inserted — looks like a hard cut to
+                # black instead of the hero animation. Partial output is worse.
+                log.error("curtain_close_tail_failed", slot=i, error=str(exc))
+                raise RuntimeError(
+                    f"curtain-close failed on slot {i}; refusing to ship a "
+                    f"video with a missing hero animation: {exc}"
+                ) from exc
 
         reframed_paths.append(reframed)
         slot_durations.append(plan.slot_target_dur)

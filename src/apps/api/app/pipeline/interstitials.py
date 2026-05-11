@@ -54,6 +54,14 @@ CURTAIN_CLOSE_X264_PRESET = "medium"
 CURTAIN_CLOSE_X264_TUNE = "film"
 CURTAIN_CLOSE_X264_CRF = "18"
 
+# Wall-clock budget for the single-pass geq curtain-close re-encode.
+# geq is per-pixel single-threaded; preset=medium adds mb-tree, psy-rd,
+# B-frames, trellis. Local dev box (8+ cores) encodes a 5.5s slot in ~25s.
+# Fly worker (2 shared CPUs, --concurrency=2) shares one CPU with another
+# task and takes 3-5x longer — the 180s budget here pre-this-fix blew on
+# slot-5 of a 5.2s title slot. 600s leaves ~11x headroom over observed.
+CURTAIN_CLOSE_SUBPROCESS_TIMEOUT_S = 600
+
 
 class InterstitialError(Exception):
     pass
@@ -248,7 +256,12 @@ def apply_curtain_close_tail(
             "-movflags", "+faststart",
             "-y", output_path,
         ]
-        r = subprocess.run(single_pass_cmd, capture_output=True, timeout=180, check=False)
+        r = subprocess.run(
+            single_pass_cmd,
+            capture_output=True,
+            timeout=CURTAIN_CLOSE_SUBPROCESS_TIMEOUT_S,
+            check=False,
+        )
         if r.returncode != 0:
             raise InterstitialError(
                 f"single-pass curtain-close failed: "
