@@ -109,7 +109,7 @@
       "weight": 400,
       "category": "handwriting",
       "css_family": "'Permanent Marker', cursive",
-      "cycle_role": "decorative"
+      "cycle_role": "contrast"
     },
     "Pacifico": {
       "file": "Pacifico-Regular.ttf",
@@ -117,7 +117,7 @@
       "weight": 400,
       "category": "script",
       "css_family": "'Pacifico', cursive",
-      "cycle_role": "decorative"
+      "cycle_role": "contrast"
     }
   },
   "style_defaults": {
