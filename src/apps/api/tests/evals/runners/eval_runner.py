@@ -29,6 +29,7 @@ from app.agents._runtime import (
     Agent,
     ModelClient,
     ModelInvocation,
+    RunContext,
     TerminalError,
 )
 
@@ -258,9 +259,13 @@ def run_eval(
     agent_cls = _build_agent_class_for(fixture.agent)
     client = model_client or CassetteModelClient(fixture.raw_text)
     agent = agent_cls(client)
+    # Eval runs post their own Langfuse trace (with source:eval) at the end
+    # of run_eval. Suppress the inner per-Agent.run() trace so we don't
+    # double-post replay-mode evals as if they were prod traffic.
+    eval_ctx = RunContext(extra={"skip_langfuse_trace": True})
 
     try:
-        output = agent.run(fixture.input)
+        output = agent.run(fixture.input, ctx=eval_ctx)
     except Exception as exc:
         return EvalResult(
             fixture_id=fixture.fixture_id,
@@ -305,7 +310,7 @@ def run_eval(
         try:
             with _shadow_prompts(shadow_prompts_dir):
                 shadow_agent = agent_cls(model_client)
-                shadow_output = shadow_agent.run(fixture.input)
+                shadow_output = shadow_agent.run(fixture.input, ctx=eval_ctx)
             result.shadow_structural_failures = run_structural(
                 fixture.agent, shadow_output, validated_input
             )
@@ -318,7 +323,78 @@ def run_eval(
         except Exception as exc:  # noqa: BLE001 — shadow must never break the test
             result.shadow_error = str(exc)
 
+    # Optionally post this eval run to Langfuse so scores trend in the UI
+    # alongside prod traces. No-op unless LANGFUSE_PUBLIC_KEY/SECRET_KEY are
+    # set + the langfuse SDK is installed. Fails open.
+    _post_eval_to_langfuse(fixture, result, output)
+
     return result
+
+
+def _post_eval_to_langfuse(
+    fixture: Fixture,
+    result: EvalResult,
+    output: Any,
+) -> None:
+    """Create a Langfuse trace tagged source:eval and attach structural +
+    per-dimension judge scores. Closes the loop between offline evals and
+    prod-traffic traces in the same Langfuse project.
+    """
+    try:
+        from app.agents._langfuse import score_trace, trace_agent_run  # noqa: PLC0415
+    except ImportError:
+        return  # prod code not importable from here for some reason — silent skip
+
+    try:
+        output_dump = output.model_dump() if output is not None else None
+    except Exception:  # noqa: BLE001
+        output_dump = None
+
+    extra_tags = [
+        f"fixture:{fixture.path.parent.name}/{fixture.path.stem}",
+        "structural_pass" if not result.structural_failures else "structural_fail",
+    ]
+    trace_id = trace_agent_run(
+        agent_name=fixture.agent,
+        prompt_version=fixture.prompt_version,
+        model="eval",  # not a real model invocation — replay or live happens inside agent.run
+        outcome="ok" if result.passed else "fail",
+        input_dict=fixture.input,
+        output_dict=output_dump,
+        job_id=None,
+        source="eval",
+        extra_tags=extra_tags,
+        error=result.error,
+    )
+    if not trace_id:
+        return
+
+    score_trace(
+        trace_id,
+        name="structural",
+        value=0.0 if result.structural_failures else 1.0,
+        comment=(
+            f"{len(result.structural_failures)} failures: "
+            f"{', '.join(result.structural_failures[:3])}"
+            if result.structural_failures
+            else "passed"
+        ),
+    )
+    if result.judge is not None:
+        for dim, value in result.judge.scores.items():
+            score_trace(
+                trace_id,
+                name=f"judge_{dim}",
+                value=value,
+                comment=result.judge.reasoning,
+            )
+        score_trace(trace_id, name="judge_avg", value=result.judge.avg)
+        score_trace(
+            trace_id,
+            name="judge_passed",
+            value=1.0 if result.judge.passed else 0.0,
+            comment=f"threshold={result.judge.threshold}",
+        )
 
 
 # Explicit overrides for agent names whose `rsplit('.', 1)[-1]` would collide.

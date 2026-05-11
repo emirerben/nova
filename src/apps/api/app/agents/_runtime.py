@@ -212,6 +212,10 @@ class Agent(ABC, Generic[InputT, OutputT]):
         validated_input = self._validate_input(input)
         start = time.monotonic()
 
+        input_dump = (
+            validated_input.model_dump() if hasattr(validated_input, "model_dump") else None
+        )
+
         # Rule-based bypass: no model client, no retries, no fallbacks
         if self.spec.model == "rule_based":
             try:
@@ -225,6 +229,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     latency_ms=int((time.monotonic() - start) * 1000),
                     ctx=ctx,
                     error=str(exc),
+                    input_dict=input_dump,
                 )
                 raise TerminalError(f"{self.spec.name}: rule_based compute failed — {exc}") from exc
             self._log_outcome(
@@ -234,6 +239,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 fallback_used=False,
                 latency_ms=int((time.monotonic() - start) * 1000),
                 ctx=ctx,
+                input_dict=input_dump,
+                output_dict=output.model_dump() if hasattr(output, "model_dump") else None,
             )
             return output
 
@@ -255,6 +262,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     fallback_used=fallback_used,
                     latency_ms=int((time.monotonic() - start) * 1000),
                     ctx=ctx,
+                    input_dict=input_dump,
+                    output_dict=output.model_dump() if hasattr(output, "model_dump") else None,
                 )
                 return output
             except RefusalError as exc:
@@ -267,6 +276,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     latency_ms=int((time.monotonic() - start) * 1000),
                     ctx=ctx,
                     error=str(exc),
+                    input_dict=input_dump,
                 )
                 raise TerminalError(f"{self.spec.name}: refusal — {exc}") from exc
             except SchemaError as exc:
@@ -279,6 +289,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     latency_ms=int((time.monotonic() - start) * 1000),
                     ctx=ctx,
                     error=str(exc),
+                    input_dict=input_dump,
                 )
                 raise TerminalError(f"{self.spec.name}: schema — {exc}") from exc
             except TransientError as exc:
@@ -295,6 +306,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
             latency_ms=int((time.monotonic() - start) * 1000),
             ctx=ctx,
             error=str(last_exc) if last_exc else "exhausted",
+            input_dict=input_dump,
         )
         raise TerminalError(
             f"{self.spec.name}: exhausted {len(models_to_try)} model(s) "
@@ -430,11 +442,12 @@ class Agent(ABC, Generic[InputT, OutputT]):
         latency_ms: int,
         ctx: RunContext,
         error: str | None = None,
+        input_dict: dict[str, Any] | None = None,
+        output_dict: dict[str, Any] | None = None,
     ) -> None:
-        cost_usd = (
-            (stats.tokens_in / 1000.0) * self.spec.cost_per_1k_input_usd
-            + (stats.tokens_out / 1000.0) * self.spec.cost_per_1k_output_usd
-        )
+        cost_usd = (stats.tokens_in / 1000.0) * self.spec.cost_per_1k_input_usd + (
+            stats.tokens_out / 1000.0
+        ) * self.spec.cost_per_1k_output_usd
         payload = {
             "agent": self.spec.name,
             "prompt_version": self.spec.prompt_version,
@@ -455,6 +468,50 @@ class Agent(ABC, Generic[InputT, OutputT]):
         if error is not None:
             payload["error"] = error
         log.info("agent_run", **payload)
+
+        # Optional Langfuse trace (no-op unless LANGFUSE_PUBLIC_KEY/SECRET_KEY
+        # set + langfuse SDK installed). Fails open: never breaks agent work.
+        # Skipped when the caller is the eval harness (which posts its own
+        # trace with source:eval at the end of run_eval) — see ctx.extra.
+        if ctx.extra.get("skip_langfuse_trace"):
+            return
+
+        from app.agents._langfuse import trace_agent_run  # noqa: PLC0415
+
+        trace_id = trace_agent_run(
+            agent_name=self.spec.name,
+            prompt_version=self.spec.prompt_version,
+            model=model,
+            outcome=outcome,
+            input_dict=input_dict,
+            output_dict=output_dict,
+            tokens_in=stats.tokens_in,
+            tokens_out=stats.tokens_out,
+            cost_usd=round(cost_usd, 6),
+            latency_ms=latency_ms,
+            attempts=stats.attempts,
+            fallback_used=fallback_used,
+            job_id=ctx.job_id,
+            segment_idx=ctx.segment_idx,
+            request_id=ctx.request_id,
+            error=error,
+            source="prod",
+        )
+
+        # Optional online eval: sample a fraction of successful prod traces and
+        # dispatch a Celery task to run the LLM judge against them, posting
+        # scores back to the Langfuse trace. No-op unless trace_id was returned,
+        # outcome was successful, NOVA_ONLINE_EVAL_SAMPLE_RATE > 0, and an
+        # ANTHROPIC_API_KEY is set. Fails open like everything else here.
+        if trace_id and outcome in ("ok", "ok_fallback") and output_dict is not None:
+            from app.agents._online_eval import maybe_schedule_judge  # noqa: PLC0415
+
+            maybe_schedule_judge(
+                trace_id=trace_id,
+                agent_name=self.spec.name,
+                input_dict=input_dict or {},
+                output_dict=output_dict,
+            )
 
 
 # ── Shadow-mode helper ────────────────────────────────────────────────────────
@@ -493,9 +550,7 @@ def run_with_shadow(
         divergence: str | None
         try:
             divergence = (
-                diff(primary_out, shadow_out)
-                if diff
-                else _default_diff(primary_out, shadow_out)
+                diff(primary_out, shadow_out) if diff else _default_diff(primary_out, shadow_out)
             )
         except Exception as exc:  # noqa: BLE001
             divergence = f"diff_failed: {exc}"
