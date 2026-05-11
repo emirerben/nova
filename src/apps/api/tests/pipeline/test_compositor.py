@@ -68,11 +68,18 @@ class TestBuildVideoFilter:
         assert "setpts=PTS/0.5" in joined
 
     def test_setpts_is_after_colorspace(self):
-        """colorspace is first (SDR no-op), then setpts before scale/crop."""
+        """colorspace is first (SDR no-op), then fps normalization, then
+        setpts, then scale/crop. The `framerate` filter (added 2026-05-11
+        to fix the 24/25fps source stutter — see reframe.py:_build_video_filter
+        block 0b) sits between colorspace and setpts: it normalizes mixed-fps
+        sources to the output container fps BEFORE any timed filters operate,
+        so speed-ramps and timed darkening/narrowing windows reason about a
+        single uniform timeline."""
         filters = _build_video_filter("16:9", None, speed_factor=2.0)
         assert filters[0] == "colorspace=all=bt709"
-        assert filters[1] == "setpts=PTS/2.0"
-        assert "scale" in filters[2]
+        assert filters[1].startswith("framerate=fps=")
+        assert filters[2] == "setpts=PTS/2.0"
+        assert "scale" in filters[3]
 
     def test_color_hint_warm(self):
         """Color hint 'warm' adds colorbalance filter."""

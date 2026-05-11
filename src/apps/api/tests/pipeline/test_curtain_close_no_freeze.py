@@ -24,11 +24,17 @@ from PIL import Image
 
 from app.pipeline.interstitials import apply_curtain_close_tail
 
+# Resolution / duration tuned for CI: the curtain-seam freeze bug is
+# resolution-independent (the prefix→tail concat boundary duplicates a
+# frame whether the clip is 540p or 1080p), so we run at a fraction of
+# production size so the whole test + single-pass geq render finishes
+# under pytest's 60s default timeout on slower CI runners. Local prod-
+# size (1080×1920, 5s) takes ~30s; CI hit timeout at 60s.
 SOURCE_FPS = 30
-SOURCE_W = 1080
-SOURCE_H = 1920
-SOURCE_DURATION_S = 5.0
-ANIMATE_S = 1.6
+SOURCE_W = 540
+SOURCE_H = 960
+SOURCE_DURATION_S = 3.0
+ANIMATE_S = 1.0
 FREEZE_MAD_THRESHOLD = 1.0
 
 
