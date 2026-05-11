@@ -1037,31 +1037,29 @@ def _download_clips_parallel(gcs_paths: list[str], tmpdir: str) -> list[str]:
 
 
 def _probe_clips(local_paths: list[str]) -> dict:
-    """Return {local_path: VideoProbe} for each clip. Falls back on error.
+    """Return {local_path: VideoProbe} for each clip. Raises on probe failure.
 
     Replaces _get_clip_duration() — probe_video() returns both aspect_ratio
-    and duration_s in a single FFprobe call.
+    and duration_s in a single FFprobe call. Probe failure is fatal because
+    downstream FFmpeg operations need accurate metadata (trim points, reframe
+    geometry, fps); fabricated defaults silently produce wrong output.
     """
-    from app.pipeline.probe import VideoProbe, probe_video  # noqa: PLC0415
-
-    _FALLBACK_DURATION = 30.0
+    from app.pipeline.probe import probe_video  # noqa: PLC0415
 
     result: dict = {}
     for path in local_paths:
         try:
             result[path] = probe_video(path)
         except Exception as exc:
-            log.warning("clip_probe_failed_using_default", path=path, error=str(exc))
-            result[path] = VideoProbe(
-                duration_s=_FALLBACK_DURATION,
-                fps=30.0,
-                width=1920,
-                height=1080,
-                has_audio=True,
-                codec="h264",
-                aspect_ratio="16:9",
-                file_size_bytes=0,
-            )
+            # Re-raise: silently fabricating 1920×1080/30fps/30s defaults makes
+            # downstream FFmpeg operate on lies (wrong trim points, wrong
+            # reframe geometry). ffprobe is mature; failure here means the file
+            # is corrupted or missing — fail loud, don't ship wrong output.
+            log.error("clip_probe_failed", path=path, error=str(exc))
+            raise RuntimeError(
+                f"probe_video failed for {path}; refusing to render with "
+                f"fabricated probe defaults: {exc}"
+            ) from exc
     return result
 
 
@@ -1818,8 +1816,14 @@ def _insert_interstitial(
             log.warning("unknown_interstitial_type", type=inter_type)
             return
     except InterstitialError as exc:
-        log.warning("interstitial_render_failed", type=inter_type, error=str(exc))
-        return
+        # Re-raise: silent return drops the recipe-defined interstitial (curtain
+        # hold, fade-to-black, flash) from the final video without surfacing
+        # the failure. Same pattern as the slot-N curtain-close bug.
+        log.error("interstitial_render_failed", type=inter_type, error=str(exc))
+        raise RuntimeError(
+            f"interstitial '{inter_type}' failed to render; refusing to ship a "
+            f"video missing a recipe-defined transition: {exc}"
+        ) from exc
 
     # Insert interstitial clip into assembly lists
     reframed_paths.append(inter_path)
