@@ -126,6 +126,31 @@ class _StageError(Exception):
         self.message = message
 
 
+def _clip_id_to_path_map(
+    clip_metas_ordered: list, paths: list[str],
+) -> dict[str, str]:
+    """Build clip_id → path mapping, parallel to local_paths by index.
+
+    Used to wire the assembly_plan's `clip_id` (a Gemini file ref name like
+    "files/abc123") back to the user's GCS path or the local temp path.
+
+    `clip_metas_ordered` is the canonical index→meta map produced by
+    `_analyze_clips_with_cache`. We pull `clip_id` from each meta rather
+    than zipping with `file_refs` because on cache hits (PR #87 / 8e4cc52)
+    the Gemini upload is skipped and `file_refs[i]` is None — meta.clip_id
+    is the surviving identifier and matches what `ref.name` would have been.
+
+    Skips indices where `meta is None` (clip analysis failed). Those clips
+    are excluded from the assembly plan upstream so dropping them here is
+    consistent and prevents a downstream KeyError.
+    """
+    return {
+        meta.clip_id: paths[i]
+        for i, meta in enumerate(clip_metas_ordered)
+        if meta is not None
+    }
+
+
 # REMOVE AFTER 2026-05-16 — see TODOS.md#fallback-removal
 def _resolve_user_subject(all_candidates: dict | None) -> str:
     """Pull the user's subject (location) from the new inputs shape.
@@ -597,19 +622,18 @@ def _run_template_job(job_id: str) -> None:
             ) from exc
 
         # Build mapping: clip_id → GCS path for re-render.
-        # Use clip_metas_ordered (not file_refs) as the source of truth for
-        # clip_id, because file_refs is None for cache-hit clips even though
-        # those clips have valid clip_metas. The matcher consumes
-        # clip_meta.clip_id, so this lookup key matches what the assembly
-        # plan references. Skip clips whose meta is None (terminal failure).
+        # On the non-mixed-media path we used to zip `file_refs` with the
+        # GCS list and read `ref.name`, but PR #87 (8e4cc52) added a Redis
+        # cache that skips the Gemini upload on cache hits — leaving
+        # `file_refs[i]` as None. `clip_metas_ordered` is the safe source
+        # of truth: `meta.clip_id` equals the original `ref.name` for cache
+        # misses and stays valid for hits. None entries are clips whose
+        # analysis failed; they're excluded from the assembly plan, so
+        # dropping them here is correct.
         if mixed_media:
             clip_id_to_gcs = {f"clip_{i}": gcs for i, gcs in enumerate(clip_paths_gcs)}
         else:
-            clip_id_to_gcs = {
-                cm.clip_id: gcs
-                for cm, gcs in zip(clip_metas_ordered, clip_paths_gcs)
-                if cm is not None
-            }
+            clip_id_to_gcs = _clip_id_to_path_map(clip_metas_ordered, clip_paths_gcs)
 
         # Persist assembly plan
         plan_data = {
@@ -638,14 +662,8 @@ def _run_template_job(job_id: str) -> None:
                 f"clip_{i}": path for i, path in enumerate(local_clip_paths)
             }
         else:
-            # Same convention as clip_id_to_gcs above: key by
-            # clip_metas_ordered[i].clip_id so cache-hit clips (file_refs=None)
-            # are still findable. Matcher's assembly plan uses clip_meta.clip_id.
-            clip_id_to_local = {
-                cm.clip_id: path
-                for cm, path in zip(clip_metas_ordered, local_clip_paths)
-                if cm is not None
-            }
+            # Same cache-hit guard as clip_id_to_gcs above.
+            clip_id_to_local = _clip_id_to_path_map(clip_metas_ordered, local_clip_paths)
         _add_locked_template_source(
             recipe_data, template_gcs_path, tmpdir,
             clip_id_to_local, probe_map,
@@ -2236,7 +2254,15 @@ def _collect_absolute_overlays(
     # and must not dedup against each other — Dedup 2 below would otherwise
     # truncate the earlier ones to invalid timestamps and filter them out.
     def _slot_key(o: dict) -> tuple:
-        return (o["position"], o.get("position_y_frac"))
+        # position_y_frac is optional — overlays without an explicit vertical
+        # anchor (e.g. legacy hooks that rely on the renderer's default y) have
+        # y_frac=None. Mixing None with floats in this tuple crashes Python's
+        # lexicographic sort below (`None < 0.45` is a TypeError), so map None
+        # to a sentinel float that sorts BEFORE any real y_frac value (which
+        # are all in [0.0, 1.0]). Two None-y_frac overlays still share the
+        # same screen slot — the sentinel preserves that equality.
+        y_frac = o.get("position_y_frac")
+        return (o["position"], y_frac if y_frac is not None else -1.0)
 
     _MERGE_GAP_THRESHOLD_S = 2.0
     raw.sort(key=lambda o: (o["text"].lower().strip(), _slot_key(o), o["start_s"]))

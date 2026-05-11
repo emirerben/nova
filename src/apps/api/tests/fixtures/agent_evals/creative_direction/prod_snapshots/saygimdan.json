@@ -1,0 +1,18 @@
+{
+  "agent": "nova.compose.creative_direction",
+  "prompt_version": "exported",
+  "input": {
+    "file_uri": "templates/a70732f3-9367-4a90-861a-374b311c2427/reference.mp4",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "This video template emphasizes a warm, inviting, and slightly melancholic aesthetic, perfectly harmonizing with the traditional Turkish folk music. Pacing starts gentle, building gradually with the music's intensity. Transitions are a thoughtful mix: hard cuts align with prominent rhythmic beats for crispness, dissolves are used for more lyrical or emotional shifts in the melody, and subtle whip-pans add dynamism during rapid ingredient movements. Text overlays are clean and simple, appearing at key instructional moments like ingredient introductions or major steps, utilizing soft fade-in or subtle pop-in effects. The overall color grading is warm and slightly vintage, evoking a sense of heritage and comfort, with occasional high-contrast hints to highlight texture or flavor. Speed ramping is strategically applied; quick actions like chopping or mixing are sped up (0.5x speed factor), while dramatic reveals like steam rising or a final dish presentation are slowed down (1.5x-2.0x speed factor) to build anticipation and emotion. The audio-visual sync is precise, ensuring every cut aligns with a musical beat, creating a deeply immersive and emotionally resonant cooking experience.",
+  "output": {
+    "text": "This video template emphasizes a warm, inviting, and slightly melancholic aesthetic, perfectly harmonizing with the traditional Turkish folk music. Pacing starts gentle, building gradually with the music's intensity. Transitions are a thoughtful mix: hard cuts align with prominent rhythmic beats for crispness, dissolves are used for more lyrical or emotional shifts in the melody, and subtle whip-pans add dynamism during rapid ingredient movements. Text overlays are clean and simple, appearing at key instructional moments like ingredient introductions or major steps, utilizing soft fade-in or subtle pop-in effects. The overall color grading is warm and slightly vintage, evoking a sense of heritage and comfort, with occasional high-contrast hints to highlight texture or flavor. Speed ramping is strategically applied; quick actions like chopping or mixing are sped up (0.5x speed factor), while dramatic reveals like steam rising or a final dish presentation are slowed down (1.5x-2.0x speed factor) to build anticipation and emotion. The audio-visual sync is precise, ensuring every cut aligns with a musical beat, creating a deeply immersive and emotionally resonant cooking experience."
+  },
+  "meta": {
+    "source": "VideoTemplate.recipe_cached.creative_direction",
+    "template_id": "a70732f3-9367-4a90-861a-374b311c2427",
+    "template_name": "Saygimdan",
+    "exported_at": "2026-05-10T14:16:43.144779+00:00"
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "agent": "nova.compose.template_recipe",
+  "prompt_version": "exported",
+  "input": {
+    "file_uri": "templates/082ea2b2-dbaa-4590-a458-e78b9d5d03cf/video.mp4",
+    "file_mime": "video/mp4",
+    "analysis_mode": "single",
+    "creative_direction": "",
+    "black_segments": []
+  },
+  "raw_text": "{\"slots\": [{\"energy\": 10.0, \"position\": 1, \"priority\": 9, \"slot_type\": \"hook\", \"color_hint\": \"none\", \"media_type\": \"video\", \"speed_factor\": 1.0, \"text_overlays\": [{\"role\": \"hook\", \"text\": \"\", \"end_s\": 3.5, \"spans\": null, \"effect\": \"pop-in\", \"start_s\": 0.5, \"position\": \"center\", \"text_size\": \"medium\", \"font_style\": \"sans\", \"text_color\": \"#FFFFFF\", \"font_family\": \"Inter Tight\", \"sample_text\": \"\\u201cWho are you trying to impress with all those travel stories?\\u201d\", \"emoji_prefix\": \"\\ud83d\\udde3\\ufe0f\", \"stroke_width\": 3, \"text_size_px\": 55, \"has_darkening\": false, \"has_narrowing\": false, \"end_s_override\": null, \"position_y_frac\": 0.62, \"start_s_override\": null, \"font_cycle_accel_at_s\": null}], \"transition_in\": \"hard-cut\", \"target_duration_s\": 3.5}, {\"energy\": 10.0, \"position\": 2, \"priority\": 8, \"slot_type\": \"broll\", \"color_hint\": \"none\", \"media_type\": \"photo\", \"speed_factor\": 1.0, \"text_overlays\": [{\"role\": \"reaction\", \"text\": \"\", \"end_s\": 3.5, \"spans\": null, \"effect\": \"pop-in\", \"start_s\": 0.0, \"position\": \"center\", \"text_size\": \"medium\", \"font_style\": \"sans\", \"text_color\": \"#FFFFFF\", \"font_family\": \"Inter Tight\", \"sample_text\": \"Myself, watching them on repeat\", \"emoji_prefix\": \"\", \"stroke_width\": 3, \"text_size_px\": 55, \"has_darkening\": false, \"has_narrowing\": false, \"end_s_override\": null, \"position_y_frac\": 0.42, \"start_s_override\": null, \"font_cycle_accel_at_s\": null}], \"transition_in\": \"hard-cut\", \"target_duration_s\": 3.5}], \"copy_tone\": \"casual\", \"shot_count\": 2, \"sync_style\": \"energy-match\", \"color_grade\": \"none\", \"pacing_style\": \"slow building shots\", \"caption_style\": \"Large white sans-serif text with a subtle dark outline/background for readability, centered on screen, appearing with an instant pop-in effect.\", \"interstitials\": [], \"template_kind\": \"multiple_videos\", \"hook_duration_s\": 3.5, \"total_duration_s\": 7.0, \"transition_style\": \"hard cuts\", \"beat_timestamps_s\": [0.0, 4.5], \"creative_direction\": \"This video template features a direct and impactful editing style, primarily relying on sudden\"}",
+  "output": {
+    "slots": [
+      {
+        "energy": 10.0,
+        "position": 1,
+        "priority": 9,
+        "slot_type": "hook",
+        "color_hint": "none",
+        "media_type": "video",
+        "speed_factor": 1.0,
+        "text_overlays": [
+          {
+            "role": "hook",
+            "text": "",
+            "end_s": 3.5,
+            "spans": null,
+            "effect": "pop-in",
+            "start_s": 0.5,
+            "position": "center",
+            "text_size": "medium",
+            "font_style": "sans",
+            "text_color": "#FFFFFF",
+            "font_family": "Inter Tight",
+            "sample_text": "\u201cWho are you trying to impress with all those travel stories?\u201d",
+            "emoji_prefix": "\ud83d\udde3\ufe0f",
+            "stroke_width": 3,
+            "text_size_px": 55,
+            "has_darkening": false,
+            "has_narrowing": false,
+            "end_s_override": null,
+            "position_y_frac": 0.62,
+            "start_s_override": null,
+            "font_cycle_accel_at_s": null
+          }
+        ],
+        "transition_in": "hard-cut",
+        "target_duration_s": 3.5
+      },
+      {
+        "energy": 10.0,
+        "position": 2,
+        "priority": 8,
+        "slot_type": "broll",
+        "color_hint": "none",
+        "media_type": "photo",
+        "speed_factor": 1.0,
+        "text_overlays": [
+          {
+            "role": "reaction",
+            "text": "",
+            "end_s": 3.5,
+            "spans": null,
+            "effect": "pop-in",
+            "start_s": 0.0,
+            "position": "center",
+            "text_size": "medium",
+            "font_style": "sans",
+            "text_color": "#FFFFFF",
+            "font_family": "Inter Tight",
+            "sample_text": "Myself, watching them on repeat",
+            "emoji_prefix": "",
+            "stroke_width": 3,
+            "text_size_px": 55,
+            "has_darkening": false,
+            "has_narrowing": false,
+            "end_s_override": null,
+            "position_y_frac": 0.42,
+            "start_s_override": null,
+            "font_cycle_accel_at_s": null
+          }
+        ],
+        "transition_in": "hard-cut",
+        "target_duration_s": 3.5
+      }
+    ],
+    "copy_tone": "casual",
+    "shot_count": 2,
+    "sync_style": "energy-match",
+    "color_grade": "none",
+    "pacing_style": "slow building shots",
+    "caption_style": "Large white sans-serif text with a subtle dark outline/background for readability, centered on screen, appearing with an instant pop-in effect.",
+    "interstitials": [],
+    "template_kind": "multiple_videos",
+    "hook_duration_s": 3.5,
+    "total_duration_s": 7.0,
+    "transition_style": "hard cuts",
+    "beat_timestamps_s": [
+      0.0,
+      4.5
+    ],
+    "creative_direction": "This video template features a direct and impactful editing style, primarily relying on sudden"
+  },
+  "meta": {
+    "source": "VideoTemplate.recipe_cached",
+    "template_id": "936e9558-248f-49be-b857-2b9a193522c6",
+    "template_name": "Impressing Myself",
+    "exported_at": "2026-05-10T14:16:43.146308+00:00"
+  }
+}

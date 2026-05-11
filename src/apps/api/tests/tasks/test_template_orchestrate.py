@@ -40,6 +40,93 @@ def _make_recipe() -> TemplateRecipe:
     )
 
 
+class TestClipIdToPathMap:
+    """Regression: _clip_id_to_path_map must not crash on cache hits.
+
+    Production crash on dimples_passport job 52480f3d-ff4a-4cf4-b1fb-edfd280927b4:
+
+      File "template_orchestrate.py", line 603, in <dictcomp>
+        clip_id_to_gcs = {ref.name: gcs for ref, gcs in zip(file_refs, clip_paths_gcs)}
+      AttributeError: 'NoneType' object has no attribute 'name'
+
+    The Redis clip-analysis cache added in PR #87 leaves `file_refs[i] = None`
+    when a clip's fingerprint hits the cache (the Gemini upload is skipped).
+    The original dict comprehension called `ref.name` on every entry, crashing
+    on the None placeholders. The helper now reads `meta.clip_id` from
+    `clip_metas_ordered`, which stays valid on cache hits and matches what
+    `ref.name` would have been on misses.
+    """
+
+    def _meta(self, clip_id: str):
+        m = MagicMock()
+        m.clip_id = clip_id
+        return m
+
+    def test_all_misses_uses_meta_clip_id(self):
+        from app.tasks.template_orchestrate import _clip_id_to_path_map
+
+        metas = [self._meta("files/aaa"), self._meta("files/bbb")]
+        paths = ["gs://bucket/a.mp4", "gs://bucket/b.mp4"]
+
+        result = _clip_id_to_path_map(metas, paths)
+
+        assert result == {
+            "files/aaa": "gs://bucket/a.mp4",
+            "files/bbb": "gs://bucket/b.mp4",
+        }
+
+    def test_all_cache_hits_does_not_crash(self):
+        """Cache hits don't change clip_metas_ordered (cache restores meta.clip_id);
+        only file_refs go to None. The helper avoids file_refs entirely."""
+        from app.tasks.template_orchestrate import _clip_id_to_path_map
+
+        # All three clips were cache hits. clip_metas_ordered is fully populated
+        # from the Redis cache; the old code's `file_refs` would be [None, None, None].
+        metas = [self._meta("files/x"), self._meta("files/y"), self._meta("files/z")]
+        paths = ["gs://b/x.mp4", "gs://b/y.mp4", "gs://b/z.mp4"]
+
+        result = _clip_id_to_path_map(metas, paths)
+
+        assert len(result) == 3
+        assert result["files/x"] == "gs://b/x.mp4"
+        assert result["files/y"] == "gs://b/y.mp4"
+        assert result["files/z"] == "gs://b/z.mp4"
+
+    def test_partial_cache_hits_handled(self):
+        """Mixed cache hits/misses — both produce meta entries; the helper
+        treats them identically."""
+        from app.tasks.template_orchestrate import _clip_id_to_path_map
+
+        metas = [self._meta("files/hit"), self._meta("files/miss")]
+        paths = ["gs://b/hit.mp4", "gs://b/miss.mp4"]
+
+        result = _clip_id_to_path_map(metas, paths)
+
+        assert result == {
+            "files/hit": "gs://b/hit.mp4",
+            "files/miss": "gs://b/miss.mp4",
+        }
+
+    def test_failed_analysis_entries_skipped(self):
+        """clip_metas_ordered[i] = None means analysis failed for that clip;
+        the helper skips that index (those clips are also excluded from the
+        assembly plan upstream, so the map never needs them)."""
+        from app.tasks.template_orchestrate import _clip_id_to_path_map
+
+        # Clip at index 1 failed analysis → meta is None.
+        metas = [self._meta("files/ok1"), None, self._meta("files/ok2")]
+        paths = ["gs://b/a.mp4", "gs://b/failed.mp4", "gs://b/c.mp4"]
+
+        result = _clip_id_to_path_map(metas, paths)
+
+        assert result == {
+            "files/ok1": "gs://b/a.mp4",
+            "files/ok2": "gs://b/c.mp4",
+        }
+        # Failed clip's GCS path is correctly dropped.
+        assert "gs://b/failed.mp4" not in result.values()
+
+
 class TestOrchestratePipelineHelpers:
     """Test the parallel helper functions directly."""
 
@@ -1548,6 +1635,62 @@ class TestAssembleClipsTextOverlays:
         assert len(result) == 1
         # Subject label gets accel_at=8.0 from config (no curtain to override)
         assert result[0].get("font_cycle_accel_at_s") == 8.0
+
+    def test_mixed_none_and_float_position_y_frac_sorts_cleanly(self):
+        """Sort key tuple must not crash when overlays share `position` string
+        but mix None / float `position_y_frac`.
+
+        Production crash:
+          File "template_orchestrate.py", line 2269, in _collect_absolute_overlays
+            unique.sort(key=lambda o: (_slot_key(o), o["start_s"]))
+          TypeError: '<' not supported between instances of 'NoneType' and 'float'
+
+        Repro: slot 4 has "Welcome to" overlay with position_y_frac=None
+        (legacy default); slot 5 has "PERU" overlay with position_y_frac=0.45
+        (position-tool tuning). Both have position="center". The sort
+        compares ("center", None) vs ("center", 0.45) → crash.
+        """
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step1 = self._make_step_with_overlays(
+            clip_id="clip_a",
+            overlays=[{
+                "role": "hook",
+                "text": "Welcome to",
+                "start_s": 0.5,
+                "end_s": 2.3,
+                "position": "center",
+                "effect": "fade-in",
+                "sample_text": "Welcome to",
+                # position_y_frac intentionally absent — legacy default
+            }],
+        )
+        step1.slot["position"] = 1
+        step2 = self._make_step_with_overlays(
+            clip_id="clip_b",
+            overlays=[{
+                "role": "hook",
+                "text": "PERU",
+                "start_s": 0.0,
+                "end_s": 2.7,
+                "position": "center",
+                "effect": "font-cycle",
+                "sample_text": "PERU",
+                "position_y_frac": 0.45,
+                "text_size_px": 265,
+            }],
+        )
+        step2.slot["position"] = 2
+
+        # Must not raise.
+        result = _collect_absolute_overlays(
+            [step1, step2], [3.0, 3.0], None, "Peru",
+        )
+
+        texts = [o["text"] for o in result]
+        assert "Welcome to" in texts
+        # Subject substitution: "PERU" -> "PERU" (subject="Peru" → "PERU")
+        assert "PERU" in texts
 
     def test_no_accel_for_prefix_without_curtain(self):
         """Non-subject font-cycle labels without curtain don't get accel timestamp."""

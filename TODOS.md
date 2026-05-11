@@ -1,5 +1,45 @@
 # Nova — Deferred Work
 
+## Agent evals — Phase 2
+
+**Completed in v0.4.6.0 (2026-05-10):**
+- ~~Phase 2 evals for the 3 in-pipeline agents (transcript, platform_copy, audio_template)~~ — structural checks + rubrics + test entry points + golden fixtures wired
+- ~~Cost cap on live-mode eval runs~~ — `--allow-cost` flag + preflight estimator with $20 cap, replay-skipped, zero-cost-spec warning
+- ~~Auto `--shadow` prompt-iteration mode~~ — `--shadow-prompts-dir` flag overlays candidate prompts on prod, side-by-side run + Δ scoring, live-only
+
+### Re-run creative_direction on 10 templates with under-baked descriptions
+**What:** When seeding eval fixtures, the export script's structural validator rejected 10 of 14 templates' `creative_direction` text as below the 50-word floor (some as short as 4 words). These templates either pre-date two-pass mode or the model produced a near-empty output that nobody caught. Re-run two-pass analysis on: `that_one_trip_to`, `morocco`, `just_fine_test2`, `just_fine___sunset_reassurance`, `impressing_myself`, `football_face_hook`, plus 4 others surfaced by `python scripts/export_eval_fixtures.py 2>&1 | grep '\[reject\]'`.
+**Why:** A 4-word creative_direction means Pass 2 (`template_recipe`) was running with no editorial guidance, so the recipe quality on those templates is whatever Gemini produced cold. Real user-facing impact: the templates' `copy_tone`, `pacing_style`, `transition_style` are likely generic or wrong.
+**How:** Trigger reanalysis from the admin UI for each template, OR add a one-off script that calls `analyze_template_task` with `analysis_mode="two_pass"` for each. Verify by re-running `scripts/export_eval_fixtures.py` — rejected count should drop.
+**Effort:** S (human: ~1h / CC: ~10 min)
+**Priority:** P2
+
+### Phase 2.5 — evals for the unwired-four agents
+**What:** Extend `tests/evals/` to cover `text_designer`, `transition_picker`, `clip_router`, `shot_ranker`. The 3 in-pipeline agents (`transcript`, `platform_copy`, `audio_template`) shipped in v0.4.6.0; these four agent classes exist in `app/agents/` but nothing in production calls them yet, so their evals should land alongside the PR that wires each one into the pipeline.
+**Why:** Bumping `prompt_version` on a prompt that nothing executes is signal-free. Once these agents are actually invoked, prompt drift starts to matter — and at that point, the eval harness should already cover them.
+**How:** Mirror the Phase 1 / Phase 2 pattern: rubric markdown, structural-check function, test entry-point file, hand-authored golden fixtures (no prod-snapshot path until DB persistence is added).
+**Effort:** M (human: ~2d / CC: ~20 min per agent, when each lands)
+**Priority:** P2
+**Depends on:** each agent being wired into the pipeline first
+
+### Run reanalyze script + re-export `creative_direction/prod_snapshots/`
+**What:** Operator-side follow-up to the script that landed in v0.4.6.0. Run `cd src/apps/api && .venv/bin/python scripts/reanalyze_underbaked_templates.py --auto-detect --watch` against prod DB. Then re-run `scripts/export_eval_fixtures.py` so the freshly-baked `creative_direction` text replaces the rejected fixtures.
+**Why:** v0.4.6.0 only landed the script. The actual reanalysis requires live DB + Celery worker + Gemini API, so it can't run from a CI-style /ship.
+**Effort:** XS (operator-run, ~10 min once Gemini quota is available)
+**Priority:** P2
+
+### `--record` mode on agent runtime
+**What:** A capture path that writes Gemini's actual JSON response (not a JSON dump of the parsed output) into a fixture file in one shot. Unblocks `clip_metadata/prod_snapshots/` (best_moments aren't persisted in DB) and gives `replay` mode a higher-fidelity canary against `live` mode.
+**Why:** Today `scripts/export_eval_fixtures.py` writes `json.dumps(parsed_output)` as `raw_text`. If `parse()` does post-processing the dump skips, replay diverges from live silently. A real captured response closes that gap.
+**Effort:** S (human: ~4h / CC: ~30 min)
+**Priority:** P3
+
+### Per-PR auto-eval on prompt changes
+**What:** Detect when a PR touches files under `src/apps/api/prompts/` and auto-trigger structural-only evals for the affected agents on the PR. Today `agent-evals.yml` is `workflow_dispatch`-only.
+**Why:** Catch prompt regressions before merge instead of after.
+**Effort:** S (human: ~3h / CC: ~20 min)
+**Priority:** P3
+
 ## UX Cleanup (template-first)
 
 ### #fallback-removal — Remove subject → inputs.location read-side fallback after 2026-05-16

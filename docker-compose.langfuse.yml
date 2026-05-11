@@ -1,0 +1,56 @@
+# Self-hosted Langfuse for local LLM observability.
+#
+# Uses Langfuse v2 (single-container) to stay lightweight for local dev.
+# Port 3030 chosen to avoid collision with the Next.js dev server on 3000.
+#
+# Quick start:
+#   docker compose -f docker-compose.langfuse.yml up -d
+#   open http://localhost:3030
+#
+# Then sign up (local-only, no email verification), create a project,
+# copy the public/secret keys into your .env, and restart the dev server.
+#
+# Stop:
+#   docker compose -f docker-compose.langfuse.yml down
+#
+# Wipe state (drops the local Postgres volume):
+#   docker compose -f docker-compose.langfuse.yml down -v
+
+services:
+  langfuse-db:
+    image: postgres:16-alpine
+    container_name: nova-langfuse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: nova-langfuse
+    restart: unless-stopped
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    ports:
+      - "3030:3000"
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3030
+      NEXTAUTH_SECRET: local-dev-secret-change-me
+      SALT: local-dev-salt-change-me
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+      # Allow account creation in local self-hosted mode.
+      AUTH_DISABLE_SIGNUP: "false"
+
+volumes:
+  langfuse_pgdata:

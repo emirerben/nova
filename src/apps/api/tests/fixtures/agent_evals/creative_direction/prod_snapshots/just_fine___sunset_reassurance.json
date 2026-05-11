@@ -1,0 +1,18 @@
+{
+  "agent": "nova.compose.creative_direction",
+  "prompt_version": "exported",
+  "input": {
+    "file_uri": "templates/fb30073f-1ed7-4509-aa63-774a71ffaf41/video.mp4",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "The editing style is minimalistic and cinematic, relying on a single, slow, and steady rightward pan across a beautiful Venetian canal at sunset. The pacing is deliberately slow and contemplative, allowing the viewer to absorb the scenery. There are no transitions as it is a one-shot video. The color grading is warm and saturated, emphasizing the pink, orange, and purple hues of the sunset sky to create a serene and hopeful mood. Text overlays are simple, white, and centered, fading in and out smoothly to synchronize with the calm female voiceover. The overall effect is gentle and reassuring, with the audio and visuals working together to deliver a positive message.",
+  "output": {
+    "text": "The editing style is minimalistic and cinematic, relying on a single, slow, and steady rightward pan across a beautiful Venetian canal at sunset. The pacing is deliberately slow and contemplative, allowing the viewer to absorb the scenery. There are no transitions as it is a one-shot video. The color grading is warm and saturated, emphasizing the pink, orange, and purple hues of the sunset sky to create a serene and hopeful mood. Text overlays are simple, white, and centered, fading in and out smoothly to synchronize with the calm female voiceover. The overall effect is gentle and reassuring, with the audio and visuals working together to deliver a positive message."
+  },
+  "meta": {
+    "source": "VideoTemplate.recipe_cached.creative_direction",
+    "template_id": "010403eb-6c6d-408b-af4d-e68500e3353c",
+    "template_name": "Just Fine \u2014 Sunset Reassurance",
+    "exported_at": "2026-05-10T14:16:43.147697+00:00"
+  }
+}

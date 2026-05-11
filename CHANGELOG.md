@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.6.0] - 2026-05-10
+
+### Added
+- Phase 2 evals: structural checks, rubrics, and per-fixture pytest gates for the three remaining in-pipeline LLM agents — `transcript` (word-level timestamps + `low_confidence` calibration), `platform_copy` (TikTok/IG/YouTube native voice + placeholder leakage + duplicate-hook detection), and `audio_template` (slot-duration arithmetic + monotonic beat list + non-empty style metadata + valid `color_grade`). Each ships with at least one hand-authored golden fixture; `prod_snapshots/` populates from a live DB export.
+- `--shadow-prompts-dir <path>` flag: live-mode-only side-by-side run of prod and a candidate prompt overlay. Per-fixture summary prints `primary_avg=… shadow_avg=… Δ=…`. Implemented via a `prompt_loader._get_raw` overlay context manager so any prompt file not in the candidate dir falls through to prod. Closes the prompt-iteration loop in one pytest run instead of stash-and-diff.
+- `--allow-cost` flag + automatic live-mode preflight: estimates token cost per fixture × `AgentSpec.cost_per_1k_*_usd`, refuses to run if total > $20 unless overridden. Heuristic is deliberately pessimistic (chars/3 input + fixed 1500 output). Replay mode skips the gate entirely. Prints a warning when an agent's spec has zero cost so the gate isn't silently bypassed.
+- `scripts/reanalyze_underbaked_templates.py` one-off: snapshots `recipe_cached` to `/tmp/`, dispatches `analyze_template_task` (two-pass mode), optionally polls until each template reaches `ready` or `failed`. Auto-detects templates whose `creative_direction` has fewer than 50 words.
+- `scripts/export_eval_fixtures.py` extended to walk `Job.transcript`, `JobClip.platform_copy`, and `MusicTrack.recipe_cached` so prod-snapshot fixtures for the new agents can be exported alongside the Phase 1 set.
+- Eval dashboard (`scripts/build_eval_dashboard.py`) now surfaces the three new agents with their fixtures (both `prod_snapshots/` and hand-authored `golden/`) in the Agents tab. Per-agent fixture picker labels `golden` cases distinctly so they don't collide with prod exports.
+- `.github/workflows/agent-evals.yml` exposes `transcript`, `platform_copy`, and `audio_template` as workflow_dispatch agent choices. Workflow now passes `--allow-cost` so the new gate doesn't block CI runs.
+
+### Changed
+- `runners/eval_runner.py`: `_build_agent_class_for` dispatches all six in-pipeline agents. Added a `_RUBRIC_FILENAME_OVERRIDES` map so `nova.audio.template_recipe` (audio_template) and `nova.compose.template_recipe` no longer collide on a shared rubric file.
+- `tests/evals/README.md` rewritten: documents all six in-pipeline agents, both prompt-iteration loops (manual stash and auto `--shadow-prompts-dir`), the cost cap, and the limitations of `prod_snapshots/` fixtures (`raw_text` is a JSON dump of the persisted output, not the original Gemini response).
+
+### Tests
+- 5 new unit tests for the shadow context manager (round-trip + exception-path restore) and `estimate_live_cost` (per-agent breakdown, zero-cost-spec warning, unknown-agent skip). Coverage of new code paths: 8/13 (62%) by count; load-bearing structural checks at 100%.
+
+## [0.4.5.0] - 2026-05-10
+
+### Added
+- Per-agent quality eval harness for the Big 3 LLM agents (`template_recipe`, `clip_metadata`, `creative_direction`). Combines deterministic structural assertions (slot durations sum to total ±5s, energy ∈ [0,10], valid enums, overlay-bounds, football-filter compliance, creative-direction topic coverage) with an opt-in Claude Sonnet 4.6 LLM-as-judge that scores outputs against per-agent rubrics. Sits on top of the existing `app/agents/_runtime` primitives (`ModelClient`, `Agent.run`, `run_with_shadow`) — no new agent abstractions added.
+- Replay mode (`pytest tests/evals/`) is the default: 0 cost, no network, runs against recorded `raw_text` cassettes from production templates. Live mode (`--eval-mode=live`) actually re-calls Gemini for prompt-iteration A/B testing. Judge mode (`--with-judge`) adds Claude scoring against the rubric.
+- `scripts/export_eval_fixtures.py` ports `VideoTemplate.recipe_cached` and the `creative_direction` text from the local DB into JSON cassettes under `tests/fixtures/agent_evals/`. Validates each fixture against the structural floor before writing — broken DB rows surface as `[reject]` lines instead of breaking CI.
+- `scripts/inspect_eval_fixtures.py` pretty-prints what each agent returned for every template (slot tables, interstitials, creative_direction body, raw JSON dumps) for fast CLI inspection.
+- `scripts/build_eval_dashboard.py` generates a self-contained HTML dashboard at `.dev/agent-evals-report/dashboard.html` with five tabs (Overview · Agents · Templates · Issues · Tests). The Agents tab shows the full pipeline flow, every agent's spec / prompt files / `render_prompt()` source / Pydantic schemas / per-template returns. `--watch` rebuilds on fixture, prompt, or agent-source change. `--serve` adds an HTTP server with browser auto-reload over a 2s heartbeat.
+- `tests/evals/` ships 67 unit tests (27 structural assertions, 11 judge tests, 15 runner tests, 14 parametrized fixture tests). Default CI path runs the structural-only flavor (no secrets needed, ~30s). The `agent-evals.yml` GitHub Actions workflow is `workflow_dispatch`-only for the live + judge run.
+- Editorial dark/light dashboard theme — Fraunces serif display + Inter body + JetBrains Mono code, oxblood accent, `prefers-color-scheme` aware. Numbered flow rail diagrams the pipeline, agent cards expand into magazine-style detail panels with syntax-highlighted Python source for `render_prompt()`.
+
+### Changed
+- `pyproject.toml` adds `anthropic>=0.40` to dev dependencies for the LLM judge.
+- `CLAUDE.md` documents the agent-eval workflow and the prompt-version bump rule (any change to `prompts/*.txt` or `render_prompt()` must bump the agent's `prompt_version` and re-run evals before merge).
+- `TODOS.md` records Phase 2 follow-ups (the remaining 8 agents, per-run cost cap, automatic `--shadow` mode) and surfaces 10 production templates whose stored `creative_direction` is below the 50-word floor — a real prompt-quality issue the eval caught.
+
 ## [0.4.4.0] - 2026-05-10
 
 ### Added

@@ -1,0 +1,25 @@
+{
+  "agent": "nova.audio.transcript",
+  "prompt_version": "2026-05-09",
+  "input": {
+    "file_uri": "files/golden-transcript-clean",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "{\"words\": [{\"text\": \"This\", \"start_s\": 0.0, \"end_s\": 0.25}, {\"text\": \"is\", \"start_s\": 0.28, \"end_s\": 0.42}, {\"text\": \"a\", \"start_s\": 0.45, \"end_s\": 0.5}, {\"text\": \"clean\", \"start_s\": 0.55, \"end_s\": 0.85}, {\"text\": \"speech\", \"start_s\": 0.9, \"end_s\": 1.25}, {\"text\": \"sample\", \"start_s\": 1.3, \"end_s\": 1.8}], \"full_text\": \"This is a clean speech sample\", \"low_confidence\": false}",
+  "output": {
+    "words": [
+      {"text": "This", "start_s": 0.0, "end_s": 0.25, "confidence": 1.0},
+      {"text": "is", "start_s": 0.28, "end_s": 0.42, "confidence": 1.0},
+      {"text": "a", "start_s": 0.45, "end_s": 0.5, "confidence": 1.0},
+      {"text": "clean", "start_s": 0.55, "end_s": 0.85, "confidence": 1.0},
+      {"text": "speech", "start_s": 0.9, "end_s": 1.25, "confidence": 1.0},
+      {"text": "sample", "start_s": 1.3, "end_s": 1.8, "confidence": 1.0}
+    ],
+    "full_text": "This is a clean speech sample",
+    "low_confidence": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "clean speech, no overlaps, full_text reconstructable from words"
+  }
+}
