@@ -37,6 +37,12 @@ dependencies = [
 local-whisper = [
     "faster-whisper>=1.0",
 ]
+observability = [
+    # Langfuse traces every Agent.run() when LANGFUSE_PUBLIC_KEY +
+    # LANGFUSE_SECRET_KEY are set. Optional — runtime fails open without it.
+    # See app/agents/_langfuse.py + OBSERVABILITY.md.
+    "langfuse>=2.0",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
