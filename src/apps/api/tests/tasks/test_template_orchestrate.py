@@ -40,6 +40,93 @@ def _make_recipe() -> TemplateRecipe:
     )
 
 
+class TestClipIdToPathMap:
+    """Regression: _clip_id_to_path_map must not crash on cache hits.
+
+    Production crash on dimples_passport job 52480f3d-ff4a-4cf4-b1fb-edfd280927b4:
+
+      File "template_orchestrate.py", line 603, in <dictcomp>
+        clip_id_to_gcs = {ref.name: gcs for ref, gcs in zip(file_refs, clip_paths_gcs)}
+      AttributeError: 'NoneType' object has no attribute 'name'
+
+    The Redis clip-analysis cache added in PR #87 leaves `file_refs[i] = None`
+    when a clip's fingerprint hits the cache (the Gemini upload is skipped).
+    The original dict comprehension called `ref.name` on every entry, crashing
+    on the None placeholders. The helper now reads `meta.clip_id` from
+    `clip_metas_ordered`, which stays valid on cache hits and matches what
+    `ref.name` would have been on misses.
+    """
+
+    def _meta(self, clip_id: str):
+        m = MagicMock()
+        m.clip_id = clip_id
+        return m
+
+    def test_all_misses_uses_meta_clip_id(self):
+        from app.tasks.template_orchestrate import _clip_id_to_path_map
+
+        metas = [self._meta("files/aaa"), self._meta("files/bbb")]
+        paths = ["gs://bucket/a.mp4", "gs://bucket/b.mp4"]
+
+        result = _clip_id_to_path_map(metas, paths)
+
+        assert result == {
+            "files/aaa": "gs://bucket/a.mp4",
+            "files/bbb": "gs://bucket/b.mp4",
+        }
+
+    def test_all_cache_hits_does_not_crash(self):
+        """Cache hits don't change clip_metas_ordered (cache restores meta.clip_id);
+        only file_refs go to None. The helper avoids file_refs entirely."""
+        from app.tasks.template_orchestrate import _clip_id_to_path_map
+
+        # All three clips were cache hits. clip_metas_ordered is fully populated
+        # from the Redis cache; the old code's `file_refs` would be [None, None, None].
+        metas = [self._meta("files/x"), self._meta("files/y"), self._meta("files/z")]
+        paths = ["gs://b/x.mp4", "gs://b/y.mp4", "gs://b/z.mp4"]
+
+        result = _clip_id_to_path_map(metas, paths)
+
+        assert len(result) == 3
+        assert result["files/x"] == "gs://b/x.mp4"
+        assert result["files/y"] == "gs://b/y.mp4"
+        assert result["files/z"] == "gs://b/z.mp4"
+
+    def test_partial_cache_hits_handled(self):
+        """Mixed cache hits/misses — both produce meta entries; the helper
+        treats them identically."""
+        from app.tasks.template_orchestrate import _clip_id_to_path_map
+
+        metas = [self._meta("files/hit"), self._meta("files/miss")]
+        paths = ["gs://b/hit.mp4", "gs://b/miss.mp4"]
+
+        result = _clip_id_to_path_map(metas, paths)
+
+        assert result == {
+            "files/hit": "gs://b/hit.mp4",
+            "files/miss": "gs://b/miss.mp4",
+        }
+
+    def test_failed_analysis_entries_skipped(self):
+        """clip_metas_ordered[i] = None means analysis failed for that clip;
+        the helper skips that index (those clips are also excluded from the
+        assembly plan upstream, so the map never needs them)."""
+        from app.tasks.template_orchestrate import _clip_id_to_path_map
+
+        # Clip at index 1 failed analysis → meta is None.
+        metas = [self._meta("files/ok1"), None, self._meta("files/ok2")]
+        paths = ["gs://b/a.mp4", "gs://b/failed.mp4", "gs://b/c.mp4"]
+
+        result = _clip_id_to_path_map(metas, paths)
+
+        assert result == {
+            "files/ok1": "gs://b/a.mp4",
+            "files/ok2": "gs://b/c.mp4",
+        }
+        # Failed clip's GCS path is correctly dropped.
+        assert "gs://b/failed.mp4" not in result.values()
+
+
 class TestOrchestratePipelineHelpers:
     """Test the parallel helper functions directly."""
 

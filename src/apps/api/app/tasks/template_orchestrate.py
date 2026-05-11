@@ -126,6 +126,31 @@ class _StageError(Exception):
         self.message = message
 
 
+def _clip_id_to_path_map(
+    clip_metas_ordered: list, paths: list[str],
+) -> dict[str, str]:
+    """Build clip_id → path mapping, parallel to local_paths by index.
+
+    Used to wire the assembly_plan's `clip_id` (a Gemini file ref name like
+    "files/abc123") back to the user's GCS path or the local temp path.
+
+    `clip_metas_ordered` is the canonical index→meta map produced by
+    `_analyze_clips_with_cache`. We pull `clip_id` from each meta rather
+    than zipping with `file_refs` because on cache hits (PR #87 / 8e4cc52)
+    the Gemini upload is skipped and `file_refs[i]` is None — meta.clip_id
+    is the surviving identifier and matches what `ref.name` would have been.
+
+    Skips indices where `meta is None` (clip analysis failed). Those clips
+    are excluded from the assembly plan upstream so dropping them here is
+    consistent and prevents a downstream KeyError.
+    """
+    return {
+        meta.clip_id: paths[i]
+        for i, meta in enumerate(clip_metas_ordered)
+        if meta is not None
+    }
+
+
 # REMOVE AFTER 2026-05-16 — see TODOS.md#fallback-removal
 def _resolve_user_subject(all_candidates: dict | None) -> str:
     """Pull the user's subject (location) from the new inputs shape.
@@ -596,11 +621,19 @@ def _run_template_job(job_id: str) -> None:
                 f"{exc.code}: {exc.message}",
             ) from exc
 
-        # Build mapping: clip_id → GCS path for re-render
+        # Build mapping: clip_id → GCS path for re-render.
+        # On the non-mixed-media path we used to zip `file_refs` with the
+        # GCS list and read `ref.name`, but PR #87 (8e4cc52) added a Redis
+        # cache that skips the Gemini upload on cache hits — leaving
+        # `file_refs[i]` as None. `clip_metas_ordered` is the safe source
+        # of truth: `meta.clip_id` equals the original `ref.name` for cache
+        # misses and stays valid for hits. None entries are clips whose
+        # analysis failed; they're excluded from the assembly plan, so
+        # dropping them here is correct.
         if mixed_media:
             clip_id_to_gcs = {f"clip_{i}": gcs for i, gcs in enumerate(clip_paths_gcs)}
         else:
-            clip_id_to_gcs = {ref.name: gcs for ref, gcs in zip(file_refs, clip_paths_gcs)}
+            clip_id_to_gcs = _clip_id_to_path_map(clip_metas_ordered, clip_paths_gcs)
 
         # Persist assembly plan
         plan_data = {
@@ -629,9 +662,8 @@ def _run_template_job(job_id: str) -> None:
                 f"clip_{i}": path for i, path in enumerate(local_clip_paths)
             }
         else:
-            clip_id_to_local = {
-                ref.name: path for ref, path in zip(file_refs, local_clip_paths)
-            }
+            # Same cache-hit guard as clip_id_to_gcs above.
+            clip_id_to_local = _clip_id_to_path_map(clip_metas_ordered, local_clip_paths)
         _add_locked_template_source(
             recipe_data, template_gcs_path, tmpdir,
             clip_id_to_local, probe_map,
