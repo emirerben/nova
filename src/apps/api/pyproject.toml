@@ -42,6 +42,10 @@ observability = [
     # LANGFUSE_SECRET_KEY are set. Optional — runtime fails open without it.
     # See app/agents/_langfuse.py + OBSERVABILITY.md.
     "langfuse>=2.0",
+    # Anthropic SDK powers the online-eval LLM judge (Claude Sonnet). Only
+    # invoked when NOVA_ONLINE_EVAL_SAMPLE_RATE > 0 + ANTHROPIC_API_KEY set.
+    # Sampled fraction of prod traces gets scored against tests/evals/rubrics/.
+    "anthropic>=0.40",
 ]
 dev = [
     "pytest>=8",

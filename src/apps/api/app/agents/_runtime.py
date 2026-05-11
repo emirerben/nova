@@ -471,9 +471,14 @@ class Agent(ABC, Generic[InputT, OutputT]):
 
         # Optional Langfuse trace (no-op unless LANGFUSE_PUBLIC_KEY/SECRET_KEY
         # set + langfuse SDK installed). Fails open: never breaks agent work.
+        # Skipped when the caller is the eval harness (which posts its own
+        # trace with source:eval at the end of run_eval) — see ctx.extra.
+        if ctx.extra.get("skip_langfuse_trace"):
+            return
+
         from app.agents._langfuse import trace_agent_run  # noqa: PLC0415
 
-        trace_agent_run(
+        trace_id = trace_agent_run(
             agent_name=self.spec.name,
             prompt_version=self.spec.prompt_version,
             model=model,
@@ -490,7 +495,23 @@ class Agent(ABC, Generic[InputT, OutputT]):
             segment_idx=ctx.segment_idx,
             request_id=ctx.request_id,
             error=error,
+            source="prod",
         )
+
+        # Optional online eval: sample a fraction of successful prod traces and
+        # dispatch a Celery task to run the LLM judge against them, posting
+        # scores back to the Langfuse trace. No-op unless trace_id was returned,
+        # outcome was successful, NOVA_ONLINE_EVAL_SAMPLE_RATE > 0, and an
+        # ANTHROPIC_API_KEY is set. Fails open like everything else here.
+        if trace_id and outcome in ("ok", "ok_fallback") and output_dict is not None:
+            from app.agents._online_eval import maybe_schedule_judge  # noqa: PLC0415
+
+            maybe_schedule_judge(
+                trace_id=trace_id,
+                agent_name=self.spec.name,
+                input_dict=input_dict or {},
+                output_dict=output_dict,
+            )
 
 
 # ── Shadow-mode helper ────────────────────────────────────────────────────────

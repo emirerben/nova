@@ -214,3 +214,109 @@ def test_discover_fixtures_empty_when_dir_missing(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(er, "EVAL_FIXTURES_ROOT", tmp_path / "nope")
     assert discover_fixtures("template_recipe") == []
+
+
+# ── Langfuse integration: post eval results as trace + scores ───────────────
+
+
+def test_run_eval_posts_to_langfuse_with_judge_scores(tmp_path: Path, monkeypatch):
+    """End-to-end: a passing eval run with a judge result posts a trace tagged
+    source:eval and attaches per-dimension scores via score_trace()."""
+    import sys
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+    sys.modules.pop("app.agents._langfuse", None)
+
+    fake_lf = MagicMock()
+    fake_client = MagicMock()
+    fake_trace = MagicMock()
+    fake_trace.id = "t-eval-abc"
+    fake_client.trace.return_value = fake_trace
+    fake_lf.Langfuse.return_value = fake_client
+    monkeypatch.setitem(sys.modules, "langfuse", fake_lf)
+
+    fixture = _creative_direction_fixture(tmp_path, _GOOD_CD_TEXT)
+
+    class _StubJudge:
+        def score(self, **kwargs: Any) -> JudgeResult:
+            return JudgeResult(
+                scores={"specificity": 4.0, "actionability": 5.0},
+                avg=4.5,
+                passed=True,
+                threshold=3.5,
+                reasoning="solid",
+            )
+
+    result = run_eval(fixture, judge=_StubJudge())  # type: ignore[arg-type]
+    assert result.passed
+
+    fake_client.trace.assert_called_once()
+    trace_kwargs = fake_client.trace.call_args.kwargs
+    assert trace_kwargs["name"] == "nova.compose.creative_direction"
+    assert "source:eval" in trace_kwargs["tags"]
+    assert "structural_pass" in trace_kwargs["tags"]
+    assert any(t.startswith("fixture:") for t in trace_kwargs["tags"])
+    assert trace_kwargs["session_id"] is None  # eval runs have no Job
+
+    assert fake_client.score.call_count == 5
+    posted_names = sorted(c.kwargs["name"] for c in fake_client.score.call_args_list)
+    assert posted_names == [
+        "judge_actionability",
+        "judge_avg",
+        "judge_passed",
+        "judge_specificity",
+        "structural",
+    ]
+    avg_call = next(c for c in fake_client.score.call_args_list if c.kwargs["name"] == "judge_avg")
+    assert avg_call.kwargs["value"] == 4.5
+
+
+def test_run_eval_posts_structural_failure_with_score_zero(tmp_path: Path, monkeypatch):
+    """A failing structural run still posts a trace, with structural=0.0 and
+    no judge scores (judge is skipped on structural failure)."""
+    import sys
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+    sys.modules.pop("app.agents._langfuse", None)
+
+    fake_lf = MagicMock()
+    fake_client = MagicMock()
+    fake_trace = MagicMock()
+    fake_trace.id = "t-eval-fail"
+    fake_client.trace.return_value = fake_trace
+    fake_lf.Langfuse.return_value = fake_client
+    monkeypatch.setitem(sys.modules, "langfuse", fake_lf)
+
+    fixture = _creative_direction_fixture(tmp_path, "Too short.")
+    result = run_eval(fixture)
+    assert not result.passed
+
+    fake_client.trace.assert_called_once()
+    assert "structural_fail" in fake_client.trace.call_args.kwargs["tags"]
+    fake_client.score.assert_called_once()
+    score_kwargs = fake_client.score.call_args.kwargs
+    assert score_kwargs["name"] == "structural"
+    assert score_kwargs["value"] == 0.0
+
+
+def test_run_eval_noop_when_langfuse_not_configured(tmp_path: Path, monkeypatch):
+    """No LANGFUSE_* env vars → no trace, no score, no errors. Eval still runs."""
+    import sys
+    from unittest.mock import MagicMock
+
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    sys.modules.pop("app.agents._langfuse", None)
+
+    fake_lf = MagicMock()
+    monkeypatch.setitem(sys.modules, "langfuse", fake_lf)
+
+    fixture = _creative_direction_fixture(tmp_path, _GOOD_CD_TEXT)
+    result = run_eval(fixture)
+    assert result.passed
+
+    fake_lf.Langfuse.assert_not_called()

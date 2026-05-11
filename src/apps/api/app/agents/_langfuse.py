@@ -68,15 +68,24 @@ def trace_agent_run(
     segment_idx: int | None = None,
     request_id: str | None = None,
     error: str | None = None,
-) -> None:
+    source: str = "prod",
+    extra_tags: list[str] | None = None,
+) -> str | None:
     """Post a Langfuse trace for one Agent.run() invocation.
+
+    Returns the trace_id if a trace was posted, else None. The trace_id can be
+    used by `score_trace()` to attach evaluation scores asynchronously (e.g.
+    from an online-eval Celery task).
 
     Fails open: any exception is swallowed and logged. Never blocks Agent.run().
     """
     client = _get_client()
     if client is None:
-        return
+        return None
     try:
+        tags = [outcome, agent_name, f"source:{source}"]
+        if extra_tags:
+            tags.extend(extra_tags)
         trace = client.trace(
             name=agent_name,
             input=input_dict,
@@ -88,8 +97,9 @@ def trace_agent_run(
                 "request_id": request_id,
                 "attempts": attempts,
                 "fallback_used": fallback_used,
+                "source": source,
             },
-            tags=[outcome, agent_name],
+            tags=tags,
             session_id=job_id,
         )
         trace.generation(
@@ -106,6 +116,37 @@ def trace_agent_run(
             level="ERROR" if error else "DEFAULT",
             status_message=error,
         )
+        return getattr(trace, "id", None)
     except Exception as exc:  # noqa: BLE001
         # Tracing must never break agent work. Log + move on.
         log.debug("langfuse_trace_failed", agent=agent_name, error=str(exc))
+        return None
+
+
+def score_trace(
+    trace_id: str,
+    *,
+    name: str,
+    value: float,
+    comment: str | None = None,
+    data_type: str = "NUMERIC",
+) -> None:
+    """Attach a score to an existing Langfuse trace.
+
+    Used by the eval harness (post structural + judge scores) and by the
+    online-eval Celery task (post judge scores against sampled prod traces).
+    Fails open: bad trace_ids, network errors, missing client → swallowed.
+    """
+    client = _get_client()
+    if client is None or not trace_id:
+        return
+    try:
+        client.score(
+            trace_id=trace_id,
+            name=name,
+            value=value,
+            comment=comment,
+            data_type=data_type,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.debug("langfuse_score_failed", trace_id=trace_id, name=name, error=str(exc))
