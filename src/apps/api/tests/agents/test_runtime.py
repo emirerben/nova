@@ -466,6 +466,34 @@ def test_terminal_error_from_run_on_model_still_logs_outcome(
     assert runs[0][1]["agent"] == "test.sample"
 
 
+def test_terminal_unknown_threads_input_dict_for_langfuse(
+    sample_agent: SampleAgent, mock_client: MockModelClient
+) -> None:
+    """The belt-and-suspenders TerminalError catch must thread `input_dict`
+    into `_log_outcome` so the Langfuse trace produced by the observability
+    layer (#93) includes the agent's input. Regression guard for the case
+    where the defensive handler silently dropped the input dump."""
+    from unittest.mock import patch
+
+    mock_client.queue("gemini-2.5-flash", TerminalError("400 bad request"))
+
+    with patch.object(type(sample_agent), "_log_outcome", autospec=True) as mock_log:
+        with pytest.raises(TerminalError):
+            sample_agent.run(SampleInput(topic="x"))
+
+    # Find the terminal_unknown call among any log calls.
+    unknown_calls = [
+        call for call in mock_log.call_args_list if call.kwargs.get("outcome") == "terminal_unknown"
+    ]
+    assert len(unknown_calls) == 1, f"expected one terminal_unknown log, got {len(unknown_calls)}"
+    kwargs = unknown_calls[0].kwargs
+    assert "input_dict" in kwargs, "input_dict must be threaded for Langfuse"
+    assert kwargs["input_dict"] is not None, "input_dict must not be None"
+    assert kwargs["input_dict"].get("topic") == "x", (
+        f"input_dict should mirror SampleInput dump, got {kwargs['input_dict']!r}"
+    )
+
+
 # ── Rule-based bypass ─────────────────────────────────────────────────────────
 
 
