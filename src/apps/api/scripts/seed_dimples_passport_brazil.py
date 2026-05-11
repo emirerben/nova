@@ -132,25 +132,29 @@ def _peru_label(*, end_s: float, has_narrowing: bool = True) -> dict:
 
 
 def build_recipe() -> dict:
-    """Build the Dimples Passport Travel Vlog recipe (18 slots, ~21.0s total).
+    """Build the Dimples Passport Travel Vlog recipe (18 slots, ~21.3s total).
 
-    Slot structure matches Gemini's analysis of the reference video
-    (tests/fixtures/agent_evals/template_recipe/prod_snapshots/dimples_passport_travel_vlog.json):
+    Slot structure mirrors Gemini's analysis of the reference video
+    (tests/fixtures/agent_evals/template_recipe/prod_snapshots/dimples_passport_travel_vlog.json)
+    with three corrections applied after the first re-seed shipped:
 
       - Slots 1-3: ultra-short opening hooks (1.0s each), no overlays.
-      - Slot 4: combined title slot (5.2s) — "Welcome to" fade-in subtitle +
-        "PERU" font-cycle title overlap on the same shot, no narrowing.
+      - Slot 4: combined title slot (5.2s). "Welcome to" subtitle + "PERU"
+        jumbo title both start at 0.5s — they appear AS A UNIT. The first
+        re-seed staggered them (PERU at 1.5s) and the country read late.
+      - Curtain-close interstitial closes the title slot. The font-cycle
+        on PERU auto-accelerates during the curtain animation
+        (see font_cycle_accel_at_s sync in template_orchestrate.py).
       - Slots 5-8: PERU font-cycle labels with `has_narrowing=true` — the
-        cinematic letterbox montage the user identified as the signature look
-        of the April 15 reference render.
-      - Slots 9-17: fast-cut b-roll, no overlays.
+        cinematic letterbox montage.
+      - Slot 9: DISSOLVE in — this is the "vibe change" point where the
+        title/letterbox gives way to the body. The first re-seed hard-cut
+        here, which read as a jarring stop instead of a transition.
+      - Slots 10-17: fast-cut b-roll, no overlays.
       - Slot 18: outro tail.
 
-    The May 9 simplification (17 slots, hook on slots 5-6 only, no narrowing)
-    silently dropped the multi-slot PERU repetition and the letterbox effect.
-    This shape restores the April 15 reference. The PERU/Welcome-to position
-    + size + color come from the position-tool tuning (see PERU_* / WELCOME_*
-    constants above).
+    The PERU/Welcome-to position + size + color come from the position-tool
+    tuning (see PERU_* / WELCOME_* constants above).
     """
     slots = [
         {
@@ -170,8 +174,13 @@ def build_recipe() -> dict:
         },
         {
             # Combined title slot: "Welcome to" subtitle + "PERU" jumbo title
-            # animate on the same long shot. No narrowing here — the full
-            # frame stays visible while the title is introduced.
+            # animate on the same long shot, BOTH starting together at 0.5s
+            # so the subtitle and the country reveal as a unit instead of
+            # the country trailing. The shot ends with a curtain-close
+            # interstitial (see `interstitials` below) — the font-cycle
+            # accelerates automatically when the curtain animates over
+            # the last 1.5s (see `font_cycle_accel_at_s` syncing in
+            # template_orchestrate.py).
             "position": 4, "target_duration_s": 5.2, "priority": 10, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 1.7,
@@ -179,7 +188,7 @@ def build_recipe() -> dict:
                 _hook_overlay(
                     "Welcome to",
                     effect="fade-in",
-                    start_s=0.2,
+                    start_s=0.5,
                     end_s=5.0,
                     text_size_px=WELCOME_SIZE_PX,
                     text_color=WELCOME_COLOR,
@@ -189,7 +198,9 @@ def build_recipe() -> dict:
                 _hook_overlay(
                     "PERU",
                     effect="font-cycle",
-                    start_s=1.5,
+                    # Same start as "Welcome to" — the two overlays appear
+                    # together so the reveal reads as one moment.
+                    start_s=0.5,
                     end_s=5.0,
                     text_size_px=PERU_SIZE_PX,
                     text_color=PERU_COLOR,
@@ -225,9 +236,13 @@ def build_recipe() -> dict:
             "text_overlays": [_peru_label(end_s=0.45)],
         },
         # Slots 9-17: fast-cut b-roll body, no overlays.
+        # Slot 9 dissolves in — this is the "vibe change" moment where the
+        # title/letterbox montage gives way to the body content. Hard-cut
+        # here was jarring; a short dissolve carries the rhythm without
+        # bleeding the cut on the beat.
         {
             "position": 9, "target_duration_s": 1.0, "priority": 7, "slot_type": "broll",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
+            "transition_in": "dissolve", "color_hint": "none", "speed_factor": 1.0,
             "energy": 4.5, "text_overlays": [],
         },
         {
@@ -294,14 +309,30 @@ def build_recipe() -> dict:
             "fast-cut travel vlog with passport-stamp intro and Welcome-to-X reveal; "
             "title repeats over a letterbox montage in the body"
         ),
-        "transition_style": "hard cuts on every beat",
+        "transition_style": (
+            "hard cuts on every beat, with a curtain-close ending the title "
+            "and one dissolve into the body montage"
+        ),
         # color_grade left as "none" intentionally — restoring the vintage
         # grade is a separate decision (the April 15 reference had it; user
         # chose to keep current natural color when restoring slot structure).
         "color_grade": "none",
         "pacing_style": "fast-paced 0.5-1.5s cuts",
         "sync_style": "cut-on-beat",
-        "interstitials": [],
+        # Curtain-close fires at the end of the title slot. animate_s=1.5
+        # is well below the 60% slot-duration clamp (slot 4 is 5.2s, clamp =
+        # 3.12s) so it lands cleanly. The font-cycle on the PERU overlay
+        # auto-accelerates during the curtain animation. hold_s gives a
+        # brief black beat before the letterbox montage starts on slot 5.
+        "interstitials": [
+            {
+                "type": "curtain-close",
+                "after_slot": 4,
+                "animate_s": 1.5,
+                "hold_s": 0.3,
+                "hold_color": "#000000",
+            },
+        ],
     }
 
 
