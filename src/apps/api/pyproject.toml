@@ -41,7 +41,12 @@ observability = [
     # Langfuse traces every Agent.run() when LANGFUSE_PUBLIC_KEY +
     # LANGFUSE_SECRET_KEY are set. Optional — runtime fails open without it.
     # See app/agents/_langfuse.py + OBSERVABILITY.md.
-    "langfuse>=2.0",
+    # Pinned to v2 because the self-hosted Langfuse server in
+    # docker-compose.langfuse.yml is v2 — and the v4 SDK is incompatible
+    # (OpenTelemetry-based, talks to endpoints the v2 server doesn't have).
+    # When upgrading the server to v3+, bump this to "langfuse>=3,<5" and
+    # rewrite app/agents/_langfuse.py to the new context-manager API.
+    "langfuse>=2,<3",
     # Anthropic SDK powers the online-eval LLM judge (Claude Sonnet). Only
     # invoked when NOVA_ONLINE_EVAL_SAMPLE_RATE > 0 + ANTHROPIC_API_KEY set.
     # Sampled fraction of prod traces gets scored against tests/evals/rubrics/.
