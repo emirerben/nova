@@ -270,7 +270,10 @@ def analyze_template_task(self, template_id: str) -> None:
 
             file_ref = gemini_upload_and_wait(local_path)
             recipe = analyze_template(
-                file_ref, analysis_mode="two_pass", black_segments=black_segments,
+                file_ref,
+                analysis_mode="two_pass",
+                black_segments=black_segments,
+                job_id=f"template:{template_id}",
             )
 
             # Extract poster JPEG for the homepage gallery (best-effort: a
@@ -537,7 +540,7 @@ def _run_template_job(job_id: str) -> None:
             probe_map = _probe_clips(local_clip_paths)
             slots_in_order = _slots_in_position_order(recipe.slots)
             clip_metas = _build_positional_clip_metas(
-                local_clip_paths, slots_in_order, probe_map
+                local_clip_paths, slots_in_order, probe_map, job_id=job_id,
             )
             # Mixed-media path is positional 1:1, so the ordered list mirrors
             # the compact list directly.
@@ -560,6 +563,7 @@ def _run_template_job(job_id: str) -> None:
             ) = _analyze_clips_with_cache(
                 local_clip_paths,
                 filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
+                job_id=job_id,
             )
 
             # Threshold check: >50% failure → fatal
@@ -703,6 +707,7 @@ def _run_template_job(job_id: str) -> None:
             platforms=selected_platforms,
             has_transcript=bool(transcript_excerpt),
             template_tone=recipe.copy_tone,
+            job_id=job_id,
         )
 
         # [8] Upload assembled video + base video to GCS
@@ -843,6 +848,7 @@ def _run_rerender(job_id: str, job: Job) -> None:
             platforms=selected_platforms,
             has_transcript=False,
             template_tone=recipe.copy_tone,
+            job_id=job_id,
         )
 
         # Upload
@@ -887,6 +893,8 @@ def _build_positional_clip_metas(
     local_paths: list[str],
     slots_in_order: list[dict],
     probe_map: dict,
+    *,
+    job_id: str | None = None,
 ) -> list[ClipMeta]:
     """Build one ClipMeta per slot with positional binding (clip[i] → slot[i]).
 
@@ -911,7 +919,7 @@ def _build_positional_clip_metas(
         def _process(idx: int) -> tuple[int, ClipMeta]:
             path = local_paths[idx]
             ref = gemini_upload_and_wait(path)
-            meta = analyze_clip(ref)
+            meta = analyze_clip(ref, job_id=job_id)
             meta.clip_id = f"clip_{idx}"
             meta.clip_path = path
             return idx, meta
@@ -1106,6 +1114,8 @@ def _upload_clips_parallel(local_paths: list[str]) -> list:
 def _analyze_clips_with_cache(
     local_paths: list[str],
     filter_hint: str = "",
+    *,
+    job_id: str | None = None,
 ) -> tuple[list[ClipMeta], list[ClipMeta | None], list, dict, int]:
     """Hash → cache lookup → concurrent (probe + upload misses) → analyze.
 
@@ -1185,7 +1195,7 @@ def _analyze_clips_with_cache(
         file_refs_ordered[orig_idx] = ref
 
     miss_metas, failed_count = _analyze_clips_parallel(
-        miss_refs, miss_paths, probe_map, filter_hint,
+        miss_refs, miss_paths, probe_map, filter_hint, job_id=job_id,
     )
 
     # Re-align analyzed metas back to their original indices.
@@ -1214,6 +1224,8 @@ def _analyze_clips_parallel(
     local_paths: list[str],
     probe_map: dict | None = None,
     filter_hint: str = "",
+    *,
+    job_id: str | None = None,
 ) -> tuple[list[ClipMeta], int]:
     """Analyze all clips with Gemini in parallel.
 
@@ -1230,7 +1242,7 @@ def _analyze_clips_parallel(
     def _analyze_one(args: tuple[int, object, str]) -> tuple[ClipMeta | None, str | None]:
         idx, ref, path = args
         try:
-            meta = analyze_clip(ref, filter_hint=filter_hint)
+            meta = analyze_clip(ref, filter_hint=filter_hint, job_id=job_id)
             # Defense-in-depth: empty `best_moments` from a "successful" analysis
             # is unusable downstream (matcher has nothing to match). Treat it the
             # same as an analysis failure so the Whisper fallback engages and the
@@ -3972,6 +3984,7 @@ def _run_single_video_job(
                 platforms=selected_platforms,
                 has_transcript=False,
                 template_tone="provocative",
+                job_id=job_id,
             )
 
         # [9] Persist

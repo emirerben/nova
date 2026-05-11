@@ -45,12 +45,20 @@ class TranscribeError(Exception):
     pass
 
 
-def transcribe(video_path: str, file_ref: object | None = None) -> Transcript:
+def transcribe(
+    video_path: str,
+    file_ref: object | None = None,
+    *,
+    job_id: str | None = None,
+) -> Transcript:
     """Transcribe audio from video_path. Returns Transcript (may be low_confidence).
 
     If file_ref (a Gemini File API reference) is provided AND transcriber_backend
     is 'gemini', attempts Gemini transcription first with Whisper as fallback.
     Otherwise uses Whisper directly.
+
+    `job_id` is threaded into the Gemini agent's `RunContext` for Langfuse
+    session clustering. Defaults to None for back-compat.
     """
     if file_ref is not None and settings.transcriber_backend == "gemini":
         try:
@@ -59,7 +67,7 @@ def transcribe(video_path: str, file_ref: object | None = None) -> Transcript:
             )
             # Attach local path for Whisper fallback inside gemini_analyzer
             file_ref._local_path = video_path  # type: ignore[attr-defined]
-            result = gemini_transcribe(file_ref)
+            result = gemini_transcribe(file_ref, job_id=job_id)
             if not result.low_confidence:
                 log.info("gemini_transcribe_success", path=video_path)
                 return result

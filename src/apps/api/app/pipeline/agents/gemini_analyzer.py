@@ -249,6 +249,8 @@ def analyze_clip(
     start_s: float | None = None,
     end_s: float | None = None,
     filter_hint: str = "",
+    *,
+    job_id: str | None = None,
 ) -> ClipMeta:
     """Analyze a video clip / time range — returns ClipMeta.
 
@@ -257,9 +259,13 @@ def analyze_clip(
     function survives only to preserve the legacy return type (`ClipMeta`)
     and exception classes (`GeminiAnalysisError` / `GeminiRefusalError`) for
     callers that haven't migrated yet.
+
+    `job_id` is threaded into the agent's `RunContext` so Langfuse traces
+    cluster under one session per Job. Defaults to None for back-compat;
+    omitted calls still work but won't cluster.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents._runtime import TerminalError  # noqa: PLC0415
+    from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
     from app.agents.clip_metadata import (  # noqa: PLC0415
         ClipMetadataAgent,
         ClipMetadataInput,
@@ -279,7 +285,7 @@ def analyze_clip(
     )
     agent = ClipMetadataAgent(default_client())
     try:
-        out = agent.run(inp)
+        out = agent.run(inp, ctx=RunContext(job_id=job_id))
     except TerminalError as exc:
         # Translate runtime taxonomy back to legacy exception classes.
         from app.agents._runtime import RefusalError, SchemaError  # noqa: PLC0415
@@ -384,6 +390,8 @@ def analyze_template(
     file_ref: Any,
     analysis_mode: str = "single",
     black_segments: list[dict] | None = None,
+    *,
+    job_id: str | None = None,
 ) -> TemplateRecipe:
     """Extract a structural 'recipe' from a template video — returns TemplateRecipe.
 
@@ -392,9 +400,19 @@ def analyze_template(
     the existing `_extract_creative_direction` helper, then handed into the
     agent for Pass 2). Pass 1 will move to its own agent (`creative_direction`)
     in a follow-up; this shim keeps callers unchanged in the meantime.
+
+    `job_id` is threaded into the agent's `RunContext` so Langfuse traces
+    cluster under one session. For template analysis this is typically
+    `f"template:{template_id}"` to separate analyze-runs from job-runs.
+    Defaults to None for back-compat.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents._runtime import RefusalError, SchemaError, TerminalError  # noqa: PLC0415
+    from app.agents._runtime import (  # noqa: PLC0415
+        RefusalError,
+        RunContext,
+        SchemaError,
+        TerminalError,
+    )
     from app.agents.template_recipe import (  # noqa: PLC0415
         BlackSegment,
         TemplateRecipeAgent,
@@ -406,7 +424,9 @@ def analyze_template(
     if analysis_mode == "two_pass":
         from google.genai import types as genai_types  # type: ignore[import]
         client = _get_client()
-        creative_direction = _extract_creative_direction(client, file_ref, genai_types)
+        creative_direction = _extract_creative_direction(
+            client, file_ref, genai_types, job_id=job_id,
+        )
 
     # ── Pass 2 / single-pass via agent ───────────────────────────
     bsegs = [
@@ -438,7 +458,7 @@ def analyze_template(
 
     agent = TemplateRecipeAgent(default_client())
     try:
-        out = agent.run(inp)
+        out = agent.run(inp, ctx=RunContext(job_id=job_id))
     except TerminalError as exc:
         cause = exc.__cause__
         msg = str(exc)
@@ -494,15 +514,24 @@ _VALID_COLOR_HINTS = {"warm", "cool", "high-contrast", "desaturated", "vintage",
 _VALID_SYNC_STYLES = {"cut-on-beat", "transition-on-beat", "energy-match", "freeform"}
 
 
-def _extract_creative_direction(client: Any, file_ref: Any, genai_types: Any) -> str:  # noqa: ARG001
+def _extract_creative_direction(
+    client: Any,  # noqa: ARG001
+    file_ref: Any,
+    genai_types: Any,  # noqa: ARG001
+    *,
+    job_id: str | None = None,
+) -> str:
     """Pass 1 shim — delegates to `CreativeDirectionAgent`.
 
     Returns empty string on any failure (graceful degradation, legacy contract).
     The `client` and `genai_types` args are ignored; kept for signature parity
     with internal callers that hand-pass them.
+
+    `job_id` threads through to the agent's `RunContext` for Langfuse session
+    clustering with the parent template-analysis run.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents._runtime import TerminalError  # noqa: PLC0415
+    from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
     from app.agents.creative_direction import (  # noqa: PLC0415
         CreativeDirectionAgent,
         CreativeDirectionInput,
@@ -513,7 +542,9 @@ def _extract_creative_direction(client: Any, file_ref: Any, genai_types: Any) ->
         file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
     )
     try:
-        out = CreativeDirectionAgent(default_client()).run(inp)
+        out = CreativeDirectionAgent(default_client()).run(
+            inp, ctx=RunContext(job_id=job_id),
+        )
     except TerminalError as exc:
         log.warning("template_creative_direction_failed", error=str(exc))
         return ""
@@ -665,7 +696,7 @@ def _validate_interstitials(raw: list, shot_count: int) -> list[dict]:
 # ── Transcription ─────────────────────────────────────────────────────────────
 
 
-def transcribe(file_ref: Any) -> "Transcript":  # noqa: F821
+def transcribe(file_ref: Any, *, job_id: str | None = None) -> "Transcript":  # noqa: F821
     """Transcribe audio from a Gemini file reference — returns Transcript.
 
     SHIM (v0.2): delegates to `app.agents.transcript.TranscriptAgent` for the
@@ -673,9 +704,12 @@ def transcribe(file_ref: Any) -> "Transcript":  # noqa: F821
     `transcribe_whisper(local_path)` if `file_ref._local_path` is attached
     (set by callers in `app.pipeline.transcribe.transcribe()`). If both fail,
     returns a degraded Transcript with `low_confidence=True`.
+
+    `job_id` is threaded into the agent's `RunContext` for Langfuse session
+    clustering. Defaults to None for back-compat.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents._runtime import TerminalError  # noqa: PLC0415
+    from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
     from app.agents.transcript import TranscriptAgent, TranscriptInput  # noqa: PLC0415
     from app.pipeline.transcribe import Transcript, Word, transcribe_whisper  # noqa: PLC0415
 
@@ -684,7 +718,7 @@ def transcribe(file_ref: Any) -> "Transcript":  # noqa: F821
         file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
     )
     try:
-        out = TranscriptAgent(default_client()).run(inp)
+        out = TranscriptAgent(default_client()).run(inp, ctx=RunContext(job_id=job_id))
         return Transcript(
             words=[
                 Word(text=w.text, start_s=w.start_s, end_s=w.end_s, confidence=w.confidence)
@@ -714,6 +748,8 @@ def analyze_audio_template(
     beat_timestamps_s: list[float],
     track_config: dict,
     duration_s: float,
+    *,
+    job_id: str | None = None,
 ) -> dict:
     """Analyze an audio file with Gemini to produce a visual recipe — returns dict.
 
@@ -721,9 +757,18 @@ def analyze_audio_template(
     Output dict shape preserved for backward compatibility with existing callers
     (music_orchestrate). Failures raise the legacy `GeminiAnalysisError` /
     `GeminiRefusalError` types.
+
+    `job_id` is threaded into the agent's `RunContext` for Langfuse session
+    clustering. For track-level analysis use `f"track:{track_id}"`; for
+    per-job re-analysis use the Job id. Defaults to None for back-compat.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents._runtime import RefusalError, SchemaError, TerminalError  # noqa: PLC0415
+    from app.agents._runtime import (  # noqa: PLC0415
+        RefusalError,
+        RunContext,
+        SchemaError,
+        TerminalError,
+    )
     from app.agents.audio_template import (  # noqa: PLC0415
         AudioTemplateAgent,
         AudioTemplateInput,
@@ -742,7 +787,7 @@ def analyze_audio_template(
     )
 
     try:
-        out = AudioTemplateAgent(default_client()).run(inp)
+        out = AudioTemplateAgent(default_client()).run(inp, ctx=RunContext(job_id=job_id))
     except TerminalError as exc:
         cause = exc.__cause__
         msg = str(exc)

@@ -94,7 +94,9 @@ def orchestrate_job(self, job_id: str) -> None:
                 db.commit()
 
             # [2] Transcribe (Gemini primary when source_ref available, else Whisper)
-            transcript = transcribe_mod.transcribe(raw_local, file_ref=source_ref)
+            transcript = transcribe_mod.transcribe(
+                raw_local, file_ref=source_ref, job_id=job_id,
+            )
             with _sync_session() as db:
                 job = db.get(Job, uuid.UUID(job_id))
                 job.transcript = {
@@ -116,7 +118,9 @@ def orchestrate_job(self, job_id: str) -> None:
                 db.commit()
 
             # [4] Score candidates (Gemini analyzes each segment via source_ref)
-            candidates = select_candidates(video_probe, transcript, cuts, source_ref=source_ref)
+            candidates = select_candidates(
+                video_probe, transcript, cuts, source_ref=source_ref, job_id=job_id,
+            )
             top3 = candidates[:TOP_N]
             held = candidates[TOP_N:]
 
@@ -259,6 +263,7 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
                     transcript_excerpt=transcript_excerpt,
                     platforms=selected_platforms,
                     has_transcript=has_transcript,
+                    job_id=job_id,
                 )
                 thumb_future = pool.submit(
                     select_thumbnail,
