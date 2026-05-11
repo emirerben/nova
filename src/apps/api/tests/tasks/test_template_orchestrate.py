@@ -1549,6 +1549,62 @@ class TestAssembleClipsTextOverlays:
         # Subject label gets accel_at=8.0 from config (no curtain to override)
         assert result[0].get("font_cycle_accel_at_s") == 8.0
 
+    def test_mixed_none_and_float_position_y_frac_sorts_cleanly(self):
+        """Sort key tuple must not crash when overlays share `position` string
+        but mix None / float `position_y_frac`.
+
+        Production crash:
+          File "template_orchestrate.py", line 2269, in _collect_absolute_overlays
+            unique.sort(key=lambda o: (_slot_key(o), o["start_s"]))
+          TypeError: '<' not supported between instances of 'NoneType' and 'float'
+
+        Repro: slot 4 has "Welcome to" overlay with position_y_frac=None
+        (legacy default); slot 5 has "PERU" overlay with position_y_frac=0.45
+        (position-tool tuning). Both have position="center". The sort
+        compares ("center", None) vs ("center", 0.45) → crash.
+        """
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step1 = self._make_step_with_overlays(
+            clip_id="clip_a",
+            overlays=[{
+                "role": "hook",
+                "text": "Welcome to",
+                "start_s": 0.5,
+                "end_s": 2.3,
+                "position": "center",
+                "effect": "fade-in",
+                "sample_text": "Welcome to",
+                # position_y_frac intentionally absent — legacy default
+            }],
+        )
+        step1.slot["position"] = 1
+        step2 = self._make_step_with_overlays(
+            clip_id="clip_b",
+            overlays=[{
+                "role": "hook",
+                "text": "PERU",
+                "start_s": 0.0,
+                "end_s": 2.7,
+                "position": "center",
+                "effect": "font-cycle",
+                "sample_text": "PERU",
+                "position_y_frac": 0.45,
+                "text_size_px": 265,
+            }],
+        )
+        step2.slot["position"] = 2
+
+        # Must not raise.
+        result = _collect_absolute_overlays(
+            [step1, step2], [3.0, 3.0], None, "Peru",
+        )
+
+        texts = [o["text"] for o in result]
+        assert "Welcome to" in texts
+        # Subject substitution: "PERU" -> "PERU" (subject="Peru" → "PERU")
+        assert "PERU" in texts
+
     def test_no_accel_for_prefix_without_curtain(self):
         """Non-subject font-cycle labels without curtain don't get accel timestamp."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
