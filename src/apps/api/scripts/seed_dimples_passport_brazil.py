@@ -91,9 +91,11 @@ def _hook_overlay(
     text_color: str = "#FFFFFF",
     font_style: str = "sans",
     position_y_frac: float | None = None,
+    role: str = "hook",
+    has_narrowing: bool = False,
 ) -> dict:
     return {
-        "role": "hook",
+        "role": role,
         "text": text,
         "start_s": start_s,
         "end_s": end_s,
@@ -105,63 +107,90 @@ def _hook_overlay(
         "text_color": text_color,
         "position_y_frac": position_y_frac,
         "has_darkening": False,
-        "has_narrowing": False,
+        "has_narrowing": has_narrowing,
         "end_s_override": None,
         "start_s_override": None,
         "font_cycle_accel_at_s": None,
     }
 
 
+def _peru_label(*, end_s: float, has_narrowing: bool = True) -> dict:
+    """Build a font-cycling PERU label for slots 5–8. has_narrowing renders
+    the title behind cinematic letterbox bars, matching the April 15 reference."""
+    return _hook_overlay(
+        "PERU",
+        role="label",
+        effect="font-cycle",
+        start_s=0.0,
+        end_s=end_s,
+        text_size_px=PERU_SIZE_PX,
+        text_color=PERU_COLOR,
+        font_style="sans",
+        position_y_frac=PERU_Y_FRAC,
+        has_narrowing=has_narrowing,
+    )
+
+
 def build_recipe() -> dict:
-    """Build the Dimples Passport Travel Vlog recipe (17 slots, ~20.72s total)."""
-    # Slots 1-3: ultra-short opening hooks (0.1, 0.99, 0.9s).
-    # Slots 4-5: title hooks with "Welcome to" / "PERU" overlays.
-    # Slot 6: dissolve into broll, opens with the joined "Welcome to PERU" caption.
-    # Slots 7-15: fast-cut broll.
-    # Slots 16-17: outro tail.
+    """Build the Dimples Passport Travel Vlog recipe (18 slots, ~21.0s total).
+
+    Slot structure matches Gemini's analysis of the reference video
+    (tests/fixtures/agent_evals/template_recipe/prod_snapshots/dimples_passport_travel_vlog.json):
+
+      - Slots 1-3: ultra-short opening hooks (1.0s each), no overlays.
+      - Slot 4: combined title slot (5.2s) — "Welcome to" fade-in subtitle +
+        "PERU" font-cycle title overlap on the same shot, no narrowing.
+      - Slots 5-8: PERU font-cycle labels with `has_narrowing=true` — the
+        cinematic letterbox montage the user identified as the signature look
+        of the April 15 reference render.
+      - Slots 9-17: fast-cut b-roll, no overlays.
+      - Slot 18: outro tail.
+
+    The May 9 simplification (17 slots, hook on slots 5-6 only, no narrowing)
+    silently dropped the multi-slot PERU repetition and the letterbox effect.
+    This shape restores the April 15 reference. The PERU/Welcome-to position
+    + size + color come from the position-tool tuning (see PERU_* / WELCOME_*
+    constants above).
+    """
     slots = [
         {
-            "position": 1, "target_duration_s": 0.1, "priority": 7, "slot_type": "hook",
+            "position": 1, "target_duration_s": 1.0, "priority": 8, "slot_type": "hook",
             "transition_in": "none", "color_hint": "none", "speed_factor": 1.0,
             "energy": 0.0, "text_overlays": [],
         },
         {
-            "position": 2, "target_duration_s": 0.99, "priority": 6, "slot_type": "hook",
+            "position": 2, "target_duration_s": 1.0, "priority": 7, "slot_type": "hook",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "energy": 4.5, "text_overlays": [],
         },
         {
-            "position": 3, "target_duration_s": 0.9, "priority": 7, "slot_type": "hook",
+            "position": 3, "target_duration_s": 1.0, "priority": 9, "slot_type": "hook",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "energy": 4.5, "text_overlays": [],
         },
         {
-            "position": 4, "target_duration_s": 3.5, "priority": 10, "slot_type": "hook",
+            # Combined title slot: "Welcome to" subtitle + "PERU" jumbo title
+            # animate on the same long shot. No narrowing here — the full
+            # frame stays visible while the title is introduced.
+            "position": 4, "target_duration_s": 5.2, "priority": 10, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 2.1,
+            "energy": 1.7,
             "text_overlays": [
                 _hook_overlay(
                     "Welcome to",
                     effect="fade-in",
-                    start_s=0.5,
-                    end_s=2.33,
+                    start_s=0.2,
+                    end_s=5.0,
                     text_size_px=WELCOME_SIZE_PX,
                     text_color=WELCOME_COLOR,
                     font_style="serif",
                     position_y_frac=WELCOME_Y_FRAC,
                 ),
-            ],
-        },
-        {
-            "position": 5, "target_duration_s": 2.73, "priority": 10, "slot_type": "hook",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 1.8,
-            "text_overlays": [
                 _hook_overlay(
                     "PERU",
                     effect="font-cycle",
-                    start_s=0.0,
-                    end_s=2.73,
+                    start_s=1.5,
+                    end_s=5.0,
                     text_size_px=PERU_SIZE_PX,
                     text_color=PERU_COLOR,
                     font_style="sans",
@@ -169,80 +198,82 @@ def build_recipe() -> dict:
                 ),
             ],
         },
+        # Slots 5-8: cinematic letterbox montage with PERU label cycling on
+        # each beat. has_narrowing=true renders the black bars top/bottom.
         {
-            "position": 6, "target_duration_s": 0.96, "priority": 9, "slot_type": "broll",
-            "transition_in": "dissolve", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 6.34,
-            "text_overlays": [
-                # Slot 6 hosts the joined "Welcome to PERU" caption shown
-                # post-dissolve. Styled like the PERU hook so the visual
-                # transition into b-roll preserves the title's weight/color.
-                _hook_overlay(
-                    "Welcome to PERU",
-                    effect="none",
-                    start_s=0.0,
-                    end_s=1.96,
-                    text_size_px=PERU_SIZE_PX,
-                    text_color=PERU_COLOR,
-                    font_style="sans",
-                    position_y_frac=PERU_Y_FRAC,
-                ),
-            ],
-        },
-        {
-            "position": 7, "target_duration_s": 1.0, "priority": 8, "slot_type": "broll",
+            "position": 5, "target_duration_s": 0.9, "priority": 8, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "energy": 5.0,
+            "text_overlays": [_peru_label(end_s=0.9)],
         },
         {
-            "position": 8, "target_duration_s": 1.07, "priority": 8, "slot_type": "broll",
+            "position": 6, "target_duration_s": 1.0, "priority": 8, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 4.8, "text_overlays": [],
+            "energy": 4.5,
+            "text_overlays": [_peru_label(end_s=1.0)],
         },
         {
-            "position": 9, "target_duration_s": 1.03, "priority": 9, "slot_type": "broll",
+            "position": 7, "target_duration_s": 0.45, "priority": 6, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 8.5, "text_overlays": [],
+            "energy": 10.0,
+            "text_overlays": [_peru_label(end_s=0.45)],
         },
         {
-            "position": 10, "target_duration_s": 1.0, "priority": 8, "slot_type": "broll",
+            "position": 8, "target_duration_s": 0.45, "priority": 6, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 5.3, "text_overlays": [],
+            "energy": 10.0,
+            "text_overlays": [_peru_label(end_s=0.45)],
         },
+        # Slots 9-17: fast-cut b-roll body, no overlays.
         {
-            "position": 11, "target_duration_s": 1.13, "priority": 9, "slot_type": "broll",
-            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
-        },
-        {
-            "position": 12, "target_duration_s": 0.9, "priority": 8, "slot_type": "broll",
+            "position": 9, "target_duration_s": 1.0, "priority": 7, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
             "energy": 4.5, "text_overlays": [],
         },
         {
-            "position": 13, "target_duration_s": 1.03, "priority": 9, "slot_type": "broll",
+            "position": 10, "target_duration_s": 1.0, "priority": 8, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 10.0, "text_overlays": [],
+            "energy": 4.5, "text_overlays": [],
         },
         {
-            "position": 14, "target_duration_s": 1.07, "priority": 8, "slot_type": "broll",
+            "position": 11, "target_duration_s": 1.1, "priority": 7, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "energy": 4.1, "text_overlays": [],
         },
         {
-            "position": 15, "target_duration_s": 0.96, "priority": 8, "slot_type": "outro",
+            "position": 12, "target_duration_s": 1.0, "priority": 9, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 3.6, "text_overlays": [],
+            "energy": 4.5, "text_overlays": [],
         },
         {
-            "position": 16, "target_duration_s": 1.33, "priority": 8, "slot_type": "outro",
+            "position": 13, "target_duration_s": 0.8, "priority": 7, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "energy": 5.6, "text_overlays": [],
         },
         {
-            "position": 17, "target_duration_s": 1.33, "priority": 8, "slot_type": "outro",
+            "position": 14, "target_duration_s": 1.0, "priority": 9, "slot_type": "broll",
             "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
-            "energy": 0.0, "text_overlays": [],
+            "energy": 4.5, "text_overlays": [],
+        },
+        {
+            "position": 15, "target_duration_s": 1.0, "priority": 7, "slot_type": "broll",
+            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
+            "energy": 4.5, "text_overlays": [],
+        },
+        {
+            "position": 16, "target_duration_s": 1.0, "priority": 8, "slot_type": "broll",
+            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
+            "energy": 4.5, "text_overlays": [],
+        },
+        {
+            "position": 17, "target_duration_s": 1.2, "priority": 8, "slot_type": "broll",
+            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
+            "energy": 3.7, "text_overlays": [],
+        },
+        {
+            "position": 18, "target_duration_s": 0.9, "priority": 7, "slot_type": "outro",
+            "transition_in": "hard-cut", "color_hint": "none", "speed_factor": 1.0,
+            "energy": 5.0, "text_overlays": [],
         },
     ]
 
@@ -252,16 +283,23 @@ def build_recipe() -> dict:
         "template_kind": "multi_clip_montage",
         "shot_count": len(slots),
         "total_duration_s": sum(s["target_duration_s"] for s in slots),
-        "hook_duration_s": 8.22,  # slots 1-5
+        "hook_duration_s": 3.0,  # slots 1-3 (title sequence starts on slot 4)
         "slots": slots,
         "copy_tone": "energetic",
-        "caption_style": "none",
-        "creative_direction": (
-            "fast-cut travel vlog with passport-stamp intro and Welcome-to-X reveal"
+        "caption_style": (
+            "Dynamic font-cycling text for titles, often accompanied by a "
+            "temporary letterbox effect."
         ),
-        "transition_style": "hard cuts with one dissolve into the body",
+        "creative_direction": (
+            "fast-cut travel vlog with passport-stamp intro and Welcome-to-X reveal; "
+            "title repeats over a letterbox montage in the body"
+        ),
+        "transition_style": "hard cuts on every beat",
+        # color_grade left as "none" intentionally — restoring the vintage
+        # grade is a separate decision (the April 15 reference had it; user
+        # chose to keep current natural color when restoring slot structure).
         "color_grade": "none",
-        "pacing_style": "fast",
+        "pacing_style": "fast-paced 0.5-1.5s cuts",
         "sync_style": "cut-on-beat",
         "interstitials": [],
     }
