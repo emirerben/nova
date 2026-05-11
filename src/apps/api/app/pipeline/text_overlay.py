@@ -214,7 +214,16 @@ _ASS_OVERLAY_HEADER = _build_ass_header("Playfair Display")
 FONT_CYCLE_INTERVAL_S = 0.15
 FONT_CYCLE_FAST_INTERVAL_S = 0.07
 FONT_CYCLE_SETTLE_RATIO = 0.30
-MAX_FONT_CYCLE_FRAMES = 60
+# Safety cap on PNG frames generated for a single font-cycle overlay. The cap
+# exists to prevent runaway PNG generation if a slot duration / interval pair
+# requests thousands of frames. Raised from 60 to 100 on 2026-05-10 so the
+# Dimples Passport Travel Vlog template's 5.5s title slot (which needs ~76
+# frames of fast-cycle PNGs to animate through the full curtain-close phase)
+# no longer hits the cap mid-curtain and freezes to a gap-fill static frame.
+# Other templates' font-cycle slots are all short enough (<4.2s of fast
+# cycling) that they never reach 60 frames — they'll continue to use far
+# fewer than 100 and see zero behavior change.
+MAX_FONT_CYCLE_FRAMES = 100
 OVERLAY_FONT_SIZE = 90
 
 

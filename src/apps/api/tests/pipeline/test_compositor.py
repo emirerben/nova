@@ -68,11 +68,18 @@ class TestBuildVideoFilter:
         assert "setpts=PTS/0.5" in joined
 
     def test_setpts_is_after_colorspace(self):
-        """colorspace is first (SDR no-op), then setpts before scale/crop."""
+        """colorspace is first (SDR no-op), then fps normalization, then
+        setpts, then scale/crop. The `framerate` filter (added 2026-05-11
+        to fix the 24/25fps source stutter — see reframe.py:_build_video_filter
+        block 0b) sits between colorspace and setpts: it normalizes mixed-fps
+        sources to the output container fps BEFORE any timed filters operate,
+        so speed-ramps and timed darkening/narrowing windows reason about a
+        single uniform timeline."""
         filters = _build_video_filter("16:9", None, speed_factor=2.0)
         assert filters[0] == "colorspace=all=bt709"
-        assert filters[1] == "setpts=PTS/2.0"
-        assert "scale" in filters[2]
+        assert filters[1].startswith("framerate=fps=")
+        assert filters[2] == "setpts=PTS/2.0"
+        assert "scale" in filters[3]
 
     def test_color_hint_warm(self):
         """Color hint 'warm' adds colorbalance filter."""
@@ -285,12 +292,21 @@ class TestEncodingArgs:
         assert "scenecut=40" in args[x264_idx + 1]
         assert "keyint=90" in args[x264_idx + 1]
 
-    def test_ultrafast_skips_scenecut(self):
-        """Intermediate encodes (preset=ultrafast) must NOT override scenecut=0.
-        ultrafast already sets scenecut=0 internally; re-enabling it wastes CPU.
-        """
+    def test_ultrafast_enforces_closed_gop_no_bframes(self):
+        """Intermediate encodes (preset=ultrafast) must explicitly disable
+        B-frames and open-GOP so the downstream stream-copy concat doesn't
+        produce 1-frame alpha-blend artifacts at slot boundaries (PR #87
+        introduced -c copy concat; open-GOP B-frames at clip start cause
+        the decoder to interpolate across boundaries → visible crossfade
+        at every hard cut, perceived as 'lag/glitch at scene start')."""
         args = _encoding_args("/tmp/out.mp4", preset="ultrafast")
-        assert "-x264-params" not in args
+        assert "-bf" in args, "ultrafast must explicitly disable B-frames"
+        assert args[args.index("-bf") + 1] == "0"
+        assert "-x264-params" in args, "ultrafast must set x264-params for closed-GOP"
+        params = args[args.index("-x264-params") + 1]
+        assert "open_gop=0" in params, f"expected open_gop=0 in {params!r}"
+        assert "bframes=0" in params, f"expected bframes=0 in {params!r}"
+        assert "scenecut=0" in params, f"ultrafast keeps scenecut=0: {params!r}"
 
 
 class TestReframeAndExport:

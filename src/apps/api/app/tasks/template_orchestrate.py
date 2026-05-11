@@ -2386,6 +2386,14 @@ def _pre_burn_curtain_slot_text(
             "text_size_px": ov.get("text_size_px"),
             "text_color": ov.get("text_color", "#FFFFFF"),
             "position_y_frac": ov.get("position_y_frac"),
+            # Carry recipe-side font_cycle_accel_at_s through to the renderer.
+            # Without this, `_compute_font_cycle_frame_specs` falls back to its
+            # default "cycle for first 70%, settle to STATIC for last 30%"
+            # behavior — which on curtain-close slots means the cycling FREEZES
+            # right when the curtain starts closing (settle phase overlaps
+            # with curtain duration). Worker log proved the symptom:
+            # `font_cycle_rendered accelerated=False` despite recipe setting it.
+            "font_cycle_accel_at_s": ov.get("font_cycle_accel_at_s"),
         }
 
         role = ov.get("role", "")

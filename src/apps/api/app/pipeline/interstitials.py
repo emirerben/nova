@@ -170,14 +170,27 @@ def apply_curtain_close_tail(
 
     anim_start = max(0.0, duration - animate_s)
 
-    # Optimization: geq evaluates every pixel every frame, so processing the
-    # full clip is expensive (~5s per second of video at 1080x1920). Instead,
-    # split the clip into a prefix (stream-copied, instant) and a tail segment
-    # (geq-processed, only animate_s long). Then concat.
+    # Single-pass geq with T-conditional curtain. Earlier versions split the
+    # clip into a prefix (stream-copied) and a tail (re-encoded with geq),
+    # then concatenated. The concat seam produced a one-frame freeze right
+    # at anim_start (visible as MAD≈0 between consecutive output frames at
+    # t=anim_start+67ms). Re-encoding the prefix didn't help — the concat
+    # demuxer's timestamp stitching still drops or duplicates a frame at
+    # the join.
     #
-    # geq is required because drawbox's h/w/x/y expressions do NOT have access
-    # to the 't' timestamp variable (only the 'enable' expression does), so
-    # drawbox cannot animate bar height over time.
+    # The single-pass approach applies geq to the WHOLE clip and uses an
+    # `lte(T, anim_start)` guard inside the expression so the curtain only
+    # affects pixels in the tail. No split, no concat, no seam, no freeze.
+    #
+    # Cost: geq evaluates every pixel every frame across the full clip,
+    # not just the tail. For Dimples (5.5s slot 5 at 1080x1920) the render
+    # time goes from ~5s (split approach) to ~25s (full-clip geq). Worth
+    # it: the freeze was visible to users and the split-and-concat seam
+    # has no other fix path that survives downstream concat-demuxer.
+    #
+    # geq is required because drawbox's h/w/x/y expressions do NOT have
+    # access to the 't' timestamp variable (only the 'enable' expression
+    # does), so drawbox cannot animate bar height over time.
 
     log.info(
         "curtain_close_tail_start",
@@ -187,50 +200,16 @@ def apply_curtain_close_tail(
     )
 
     work_dir = tempfile.mkdtemp(prefix="curtain_")
-    prefix_path = os.path.join(work_dir, "prefix.mp4")
-    tail_path = os.path.join(work_dir, "tail_raw.mp4")
-    tail_animated_path = os.path.join(work_dir, "tail_anim.mp4")
-    concat_list = os.path.join(work_dir, "concat.txt")
 
     try:
-        # Step 1: Copy prefix (before animation) — stream copy of both video
-        # AND audio so the curtain output matches body-slot layout (precondition
-        # for stream-copy concat downstream in _concat_demuxer).
-        prefix_cmd = [
-            "ffmpeg", "-i", slot_video_path,
-            "-t", f"{anim_start:.3f}",
-            "-c", "copy",
-            "-y", prefix_path,
-        ]
-        r = subprocess.run(prefix_cmd, capture_output=True, timeout=30, check=False)
-        if r.returncode != 0:
-            raise InterstitialError(
-                f"prefix split failed: {r.stderr.decode(errors='replace')[:300]}"
-            )
-
-        # Step 2: Extract tail segment — re-encode video to body-slot layout
-        # and re-encode audio so the input-side seek produces clean AAC frames
-        # at PTS=0 (mid-file `-c:a copy` after `-ss` glitches at the boundary).
-        tail_cmd = [
-            "ffmpeg", "-ss", f"{anim_start:.3f}", "-i", slot_video_path,
-            "-c:v", "libx264", "-profile:v", "high",
-            "-preset", "ultrafast", "-crf", "18", "-pix_fmt", "yuv420p",
-            "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
-            *BODY_SLOT_AUDIO_OUT_ARGS,
-            "-y", tail_path,
-        ]
-        r = subprocess.run(tail_cmd, capture_output=True, timeout=30, check=False)
-        if r.returncode != 0:
-            raise InterstitialError(
-                f"tail split failed: {r.stderr.decode(errors='replace')[:300]}"
-            )
-
-        # Step 3: Apply geq to tail only — T starts from 0 in this segment
-        # progress grows from 0 to 1 over the full tail duration.
-        # Two bars close from top AND bottom, meeting at center —
-        # text gets squeezed between them (Dimples Passport style).
-        progress = f"min(1,max(0,T/{animate_s:.3f}))"
-        bar_h = f"floor(H/2*{progress})"
+        # Curtain progress: 0 before anim_start, then grows linearly to 1
+        # over animate_s, capped at 1 thereafter. `gte(T,anim)` ensures the
+        # whole prefix sees progress=0, leaving every pixel untouched.
+        progress = (
+            f"min(1,max(0,(T-{anim_start:.3f})/{animate_s:.3f}))"
+            f"*gte(T,{anim_start:.3f})"
+        )
+        bar_h = f"floor(H/2*({progress}))"
         in_bar = f"lt(Y,{bar_h})+gt(Y,H-1-{bar_h})"
 
         geq_filter = (
@@ -240,55 +219,28 @@ def apply_curtain_close_tail(
             f"cr='if({in_bar},128,cr(X,Y))'"
         )
 
-        # Audio passes through unchanged (geq is a video-only filter); copy
-        # avoids re-encoding the AAC track that step 2 just produced.
-        geq_cmd = [
-            "ffmpeg", "-i", tail_path,
+        # One pass: decode → geq → re-encode video. Audio passes through
+        # as a single re-encode keeping the body-slot AAC layout so the
+        # downstream concat-demuxer can stream-copy this slot without
+        # boundary glitches.
+        single_pass_cmd = [
+            "ffmpeg", "-i", slot_video_path,
             "-vf", geq_filter,
             "-c:v", "libx264", "-profile:v", "high",
             "-preset", "ultrafast", "-crf", "18", "-pix_fmt", "yuv420p",
             "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
-            "-c:a", "copy",
-            "-movflags", "+faststart",
-            "-y", tail_animated_path,
-        ]
-        r = subprocess.run(geq_cmd, capture_output=True, timeout=120, check=False)
-        if r.returncode != 0:
-            raise InterstitialError(
-                f"geq curtain-close failed: {r.stderr.decode(errors='replace')[:500]}"
-            )
-
-        # Step 4: Concat prefix + animated tail.
-        # Video is stream-copied (preserves the geq-encoded tail bytes, no
-        # quality loss). Audio is re-encoded so the AAC frame boundary at
-        # the join lines up with the cut: the prefix's stream-copied audio
-        # ends at the nearest preceding AAC frame (~23ms granularity at
-        # 44.1k), and concat-copy would leave a per-slot gap or overlap
-        # there. Re-encoding audio at the join cost is negligible (audio
-        # bitrate is ~0.5% of video) and produces gapless A/V.
-        with open(concat_list, "w") as f:
-            f.write(f"file '{prefix_path}'\nfile '{tail_animated_path}'\n")
-
-        concat_cmd = [
-            "ffmpeg", "-f", "concat", "-safe", "0", "-i", concat_list,
-            "-c:v", "copy",
             *BODY_SLOT_AUDIO_OUT_ARGS,
             "-movflags", "+faststart",
             "-y", output_path,
         ]
-        r = subprocess.run(concat_cmd, capture_output=True, timeout=60, check=False)
+        r = subprocess.run(single_pass_cmd, capture_output=True, timeout=180, check=False)
         if r.returncode != 0:
             raise InterstitialError(
-                f"curtain concat failed: {r.stderr.decode(errors='replace')[:300]}"
+                f"single-pass curtain-close failed: "
+                f"{r.stderr.decode(errors='replace')[:500]}"
             )
 
     finally:
-        # Clean up temp files
-        for p in (prefix_path, tail_path, tail_animated_path, concat_list):
-            try:
-                os.remove(p)
-            except OSError:
-                pass
         try:
             os.rmdir(work_dir)
         except OSError:
