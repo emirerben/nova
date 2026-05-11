@@ -85,15 +85,21 @@ def generate_copy(
     platforms: list[str],  # noqa: ARG001 — kept for backwards-compatible signature
     has_transcript: bool = True,
     template_tone: str = "",
+    *,
+    job_id: str | None = None,
 ) -> tuple[PlatformCopy, str]:
     """Generate platform-native copy for a clip — returns (PlatformCopy, status).
 
     SHIM (v0.2): delegates to `app.agents.platform_copy.PlatformCopyAgent`.
     On agent failure, falls back to a hardcoded template via `_template_copy()`,
     preserving the legacy `'generated_fallback'` status code.
+
+    `job_id` is threaded into the agent's `RunContext` so Langfuse traces
+    cluster under one session per Job. Defaults to None for back-compat;
+    omitted calls still work but won't cluster.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents._runtime import TerminalError  # noqa: PLC0415
+    from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
     from app.agents.platform_copy import (  # noqa: PLC0415
         PlatformCopyAgent,
         PlatformCopyInput,
@@ -106,7 +112,7 @@ def generate_copy(
         template_tone=template_tone,
     )
     try:
-        out = PlatformCopyAgent(default_client()).run(inp)
+        out = PlatformCopyAgent(default_client()).run(inp, ctx=RunContext(job_id=job_id))
         log.info("copy_generated", hook=hook_text[:50])
         return out.value, "generated"
     except TerminalError as exc:
