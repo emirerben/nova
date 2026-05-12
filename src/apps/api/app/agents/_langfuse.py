@@ -70,6 +70,7 @@ def trace_agent_run(
     error: str | None = None,
     source: str = "prod",
     extra_tags: list[str] | None = None,
+    raw_text: str | None = None,
 ) -> str | None:
     """Post a Langfuse trace for one Agent.run() invocation.
 
@@ -86,19 +87,26 @@ def trace_agent_run(
         tags = [outcome, agent_name, f"source:{source}"]
         if extra_tags:
             tags.extend(extra_tags)
+        metadata: dict[str, Any] = {
+            "prompt_version": prompt_version,
+            "outcome": outcome,
+            "segment_idx": segment_idx,
+            "request_id": request_id,
+            "attempts": attempts,
+            "fallback_used": fallback_used,
+            "source": source,
+        }
+        # Surface the model's last raw response (truncated upstream to 500 chars)
+        # on refusal / schema failures where `output_dict` is None. Without
+        # this, traces for these outcomes show no signal at all and we can't
+        # tell what Gemini actually returned.
+        if raw_text is not None:
+            metadata["raw_text_preview"] = raw_text
         trace = client.trace(
             name=agent_name,
             input=input_dict,
             output=output_dict,
-            metadata={
-                "prompt_version": prompt_version,
-                "outcome": outcome,
-                "segment_idx": segment_idx,
-                "request_id": request_id,
-                "attempts": attempts,
-                "fallback_used": fallback_used,
-                "source": source,
-            },
+            metadata=metadata,
             tags=tags,
             session_id=job_id,
         )
