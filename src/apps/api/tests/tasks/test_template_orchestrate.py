@@ -2464,6 +2464,61 @@ class TestResolveOverlayTextSubjectTemplate:
             "that one trip to New York"
 
 
+class TestWakaWakaSubjectTemplate:
+    """Covers the shukran-Africa outro substitution backfilled by
+    scripts/backfill_waka_waka_location.py.
+
+    Shape mirrors what the backfill writes onto the prod outro overlay:
+        sample_text = "shukran Africa!"
+        subject_template = "shukran {subject}!"
+    Blank-input fallback resolves to sample_text (= "shukran Africa!"),
+    not the literal "Morocco" the template was originally built around.
+    """
+
+    def test_substitutes_user_location(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="Bali") == \
+            "shukran Bali!"
+
+    def test_empty_subject_falls_back_to_africa(self):
+        """Blank Location input → renders 'shukran Africa!' (per product spec)."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="") == \
+            "shukran Africa!"
+
+    def test_preserves_input_casing(self):
+        """Subject 'new york' → 'shukran new york!' — the subject_template
+        branch never auto-uppercases, unlike the heuristic AFRICA→BALI path."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="new york") == \
+            "shukran new york!"
+
+    def test_multi_word_location_preserved(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="New York") == \
+            "shukran New York!"
+
+
 # ── Timeout & error_detail tests ──────────────────────────────────────────────
 
 
