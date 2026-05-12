@@ -614,13 +614,20 @@ def _run_template_job(job_id: str) -> None:
             if clip_metas_ordered and clip_metas_ordered[0] is not None
             else None
         )
+        # Locked slots replay the original template source — no user clip goes
+        # there, so pinning is impossible (matcher would raise
+        # TEMPLATE_PIN_INVALID_SLOT since it only resolves pins against
+        # unlocked slots).
         if (
             slot_1
             and slot_1.get("slot_type") in ("hook", "face")
+            and not slot_1.get("locked", False)
             and first_clip_meta is not None
         ):
             pinned_assignments[1] = first_clip_meta.clip_id
             log.info("matcher_pin", slot=1, clip_id=first_clip_meta.clip_id)
+        elif slot_1 and slot_1.get("slot_type") in ("hook", "face") and slot_1.get("locked", False):
+            log.info("matcher_pin_skipped_locked_slot", slot=1)
         elif slot_1 and slot_1.get("slot_type") in ("hook", "face"):
             log.warning("matcher_pin_skipped_no_first_clip", slot=1)
         try:
