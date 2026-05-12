@@ -1223,6 +1223,44 @@ class TestOrchestrateTemplateJobErrors:
             # Must not raise
             orchestrate_template_job("12345678-1234-5678-1234-567812345678")
 
+    def test_gemini_refusal_error_classifies_as_gemini_analysis_failed(self):
+        """A GeminiRefusalError reaching the outer handler must be classified
+        as gemini_analysis_failed, NOT unknown. GeminiRefusalError does not
+        subclass GeminiAnalysisError (both extend Exception directly), so
+        before this fix it fell into the generic `except Exception` and
+        showed up on the user's job page as `failure_reason=unknown` —
+        empirically verified on 2026-05-12 with an Impressing Myself job
+        whose error_detail was `nova.video.clip_metadata: refusal —
+        Missing required field: hook_text`.
+        """
+        from app.pipeline.agents.gemini_analyzer import GeminiRefusalError
+        from app.tasks.template_orchestrate import orchestrate_template_job
+
+        mock_job = MagicMock()
+        mock_job.status = "queued"
+        mock_job.error_detail = None
+        mock_job.failure_reason = None
+
+        def _mock_ctx():
+            ctx = MagicMock()
+            ctx.__enter__ = MagicMock(return_value=_mock_session)
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        _mock_session = MagicMock()
+        _mock_session.get.return_value = mock_job
+
+        with patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx), \
+             patch("app.tasks.template_orchestrate._run_template_job") as mock_run:
+            mock_run.side_effect = GeminiRefusalError(
+                "nova.video.clip_metadata: refusal — Missing required field: hook_text",
+            )
+            orchestrate_template_job("12345678-1234-5678-1234-567812345678")
+
+        assert mock_job.status == "processing_failed"
+        assert mock_job.failure_reason == "gemini_analysis_failed"
+        assert "hook_text" in mock_job.error_detail
+
 
 # ── Beat detection tests ─────────────────────────────────────────────────────
 

@@ -11,7 +11,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.pipeline.agents.gemini_analyzer import ClipMeta, TemplateRecipe
+from app.pipeline.agents.gemini_analyzer import (
+    ClipMeta,
+    GeminiAnalysisError,
+    GeminiRefusalError,
+    TemplateRecipe,
+)
 from app.pipeline.template_matcher import TemplateMismatchError
 from app.tasks.template_orchestrate import (
     _build_positional_clip_metas,
@@ -148,6 +153,85 @@ class TestBuildPositionalClipMetas:
                 _slots("video", "photo"),
                 {},
             )
+
+    def test_gemini_refusal_on_video_slot_falls_back_instead_of_killing_job(self):
+        """Empirically: prod Impressing Myself jobs died with
+        failure_reason=unknown / error_detail=`clip_metadata: refusal —
+        Missing required field: hook_text`. Positional binding pins
+        clip[i] to slot[i] before analysis runs, so hook_text isn't needed
+        to *route* the clip. Falling back keeps the job alive when Gemini
+        won't return a hook_text (e.g. for a quiet establishing shot).
+        """
+        slots = _slots("video", "photo")
+        local_paths = ["/tmp/v.mp4", "/tmp/p.mp4"]
+        probe_map = {
+            "/tmp/v.mp4": _probe(8.0),
+            "/tmp/p.mp4": _probe(4.0),
+        }
+
+        with (
+            patch(
+                "app.tasks.template_orchestrate.gemini_upload_and_wait",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.tasks.template_orchestrate.analyze_clip",
+                side_effect=GeminiRefusalError(
+                    "nova.video.clip_metadata: refusal — Missing required field: hook_text"
+                ),
+            ),
+        ):
+            metas = _build_positional_clip_metas(local_paths, slots, probe_map)
+
+        # Both slots resolved — no exception raised. Video slot fell back.
+        assert [m.clip_id for m in metas] == ["clip_0", "clip_1"]
+        assert metas[0].clip_path == "/tmp/v.mp4"
+        assert metas[0].analysis_degraded is True
+        assert metas[0].hook_text == ""
+        assert metas[0].best_moments[0]["end_s"] == 8.0
+        assert "fallback" in metas[0].best_moments[0]["description"]
+        # Photo slot is unchanged.
+        assert metas[1].analysis_degraded is False
+        assert metas[1].best_moments[0]["description"] == "static photo"
+
+    def test_gemini_analysis_error_on_video_slot_also_falls_back(self):
+        """Same fallback for GeminiAnalysisError (non-refusal failures —
+        e.g. invalid JSON, retries exhausted).
+        """
+        slots = _slots("video")
+        local_paths = ["/tmp/v.mp4"]
+        probe_map = {"/tmp/v.mp4": _probe(10.0)}
+
+        with (
+            patch(
+                "app.tasks.template_orchestrate.gemini_upload_and_wait",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.tasks.template_orchestrate.analyze_clip",
+                side_effect=GeminiAnalysisError("invalid json"),
+            ),
+        ):
+            metas = _build_positional_clip_metas(local_paths, slots, probe_map)
+
+        assert metas[0].analysis_degraded is True
+        assert metas[0].best_moments[0]["end_s"] == 10.0
+
+    def test_non_gemini_exceptions_still_kill_the_job(self):
+        """Filesystem / network errors are NOT analysis problems — let them
+        surface so the user sees the real error (e.g. GCS auth failure)
+        instead of a silent fallback.
+        """
+        slots = _slots("video")
+        local_paths = ["/tmp/v.mp4"]
+        probe_map = {"/tmp/v.mp4": _probe(10.0)}
+
+        with patch(
+            "app.tasks.template_orchestrate.gemini_upload_and_wait",
+            side_effect=RuntimeError("network unreachable"),
+        ):
+            with pytest.raises(RuntimeError, match="network unreachable"):
+                _build_positional_clip_metas(local_paths, slots, probe_map)
 
 
 class TestMatchPositional:

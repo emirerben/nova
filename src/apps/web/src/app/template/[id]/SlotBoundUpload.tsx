@@ -22,6 +22,41 @@ const PHOTO_MIME = [
 const VIDEO_MAX_BYTES = 4 * 1024 * 1024 * 1024;
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024;
 
+// Build a "the {other type} goes in slot {N}" hint when the template has
+// at least one slot of the opposite media_type. Empty string for templates
+// where every slot expects the same media_type — there's no other slot to
+// direct the user to.
+function oppositeSlotHint(slot: SlotSummary, allSlots: SlotSummary[]): {
+  inline: string;
+  sentence: string;
+} {
+  const opposite = allSlots.find((s) => s.media_type !== slot.media_type);
+  if (!opposite) return { inline: "", sentence: "" };
+  const otherWord = opposite.media_type === "photo" ? "photo" : "video";
+  return {
+    inline: `the ${otherWord} goes in slot ${opposite.position}`,
+    sentence: `${otherWord.charAt(0).toUpperCase()}${otherWord.slice(1)}s go in slot ${opposite.position}.`,
+  };
+}
+
+export function slotHelperText(slot: SlotSummary, allSlots: SlotSummary[]): string {
+  const isPhoto = slot.media_type === "photo";
+  const { inline } = oppositeSlotHint(slot, allSlots);
+  const base = isPhoto
+    ? "Still image — jpg, png, webp, or heic"
+    : "Moving clip — mp4 or mov";
+  return inline ? `${base} (${inline}).` : `${base}.`;
+}
+
+export function mismatchError(slot: SlotSummary, allSlots: SlotSummary[]): string {
+  const isPhoto = slot.media_type === "photo";
+  const { sentence } = oppositeSlotHint(slot, allSlots);
+  const base = isPhoto
+    ? `Slot ${slot.position} needs a photo (jpg/png/webp/heic).`
+    : `Slot ${slot.position} needs a video (mp4/mov).`;
+  return sentence ? `${base} ${sentence}` : base;
+}
+
 type SlotState = {
   slot: SlotSummary;
   file: File | null;
@@ -67,9 +102,7 @@ export default function SlotBoundUpload({ template, inputs, onJobCreated }: Prop
       patchSlot(idx, {
         file: null,
         gcsPath: null,
-        error: slot.media_type === "photo"
-          ? "Pick a photo (JPEG, PNG, WEBP, HEIC)"
-          : "Pick a video (MP4, MOV)",
+        error: mismatchError(slot, template.slots),
       });
       return;
     }
@@ -166,7 +199,7 @@ export default function SlotBoundUpload({ template, inputs, onJobCreated }: Prop
               key={s.slot.position}
               className="border border-zinc-800 rounded-lg p-4 bg-zinc-900/40"
             >
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between mb-1">
                 <span className="text-sm font-medium">
                   Slot {s.slot.position} · {isPhoto ? "Photo" : "Video"}
                 </span>
@@ -174,6 +207,9 @@ export default function SlotBoundUpload({ template, inputs, onJobCreated }: Prop
                   ~{s.slot.target_duration_s.toFixed(1)}s
                 </span>
               </div>
+              <p className="text-xs text-zinc-500 mb-2">
+                {slotHelperText(s.slot, template.slots)}
+              </p>
 
               <button
                 onClick={() => inputRefs.current[i]?.click()}
