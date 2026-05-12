@@ -491,7 +491,14 @@ def _build_video_filter(
         else:
             filters.append(_HDR_FALLBACK_PIPELINE)
     else:
-        filters.append("colorspace=all=bt709")
+        # iall=bt709: assume bt709 input even when primaries/matrix are tagged
+        # "unknown" in the SPS. libx264's color_primaries/colorspace metadata
+        # doesn't propagate from FFmpeg's muxer flags without -x264-params, so
+        # photo→mp4 (image_to_video.py) and some phone recordings ship with
+        # primaries=unknown. The colorspace filter returns EINVAL on unknown
+        # primaries — empirically observed as rc=234 in prod. Mirrors the
+        # existing color_trc unknown→bt709 fallback at reframe.py:172.
+        filters.append("colorspace=all=bt709:iall=bt709")
 
     # 0b. Frame-rate normalization to output fps. Many user-uploaded clips
     # are not 30fps — iPhone "cinematic" defaults to 23.976fps and some
