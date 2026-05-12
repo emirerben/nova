@@ -1395,6 +1395,22 @@ _PARALLEL_RENDER_WORKERS = 2  # Match worker vCPU count (fly.toml: cpus=2).
 # changes, update this to match.
 
 
+def _phase_done(name: str, t0: float, *, job_id: str | None, **extra: object) -> None:
+    """Emit a structured `assemble_phase_done` log for an `_assemble_clips` sub-phase.
+
+    Pure observability — paired manually with `time.monotonic()` at phase
+    start instead of a `with` context manager so wrapping the 80-line
+    interstitials loop doesn't require re-indenting everything inside it.
+    """
+    log.info(
+        "assemble_phase_done",
+        phase=name,
+        elapsed_ms=int((time.monotonic() - t0) * 1000),
+        job_id=job_id,
+        **extra,
+    )
+
+
 @dataclasses.dataclass
 class SlotPlan:
     """Pre-computed plan for a single slot render (pure arithmetic, no I/O)."""
@@ -1614,6 +1630,7 @@ def _render_planned_slot(plan: SlotPlan) -> str:
     """Phase 2: render a single planned slot via FFmpeg. Thread-safe."""
     from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
 
+    t0 = time.monotonic()
     reframe_and_export(
         input_path=plan.clip_path,
         start_s=plan.start_s,
@@ -1633,6 +1650,12 @@ def _render_planned_slot(plan: SlotPlan) -> str:
         grid_highlight_windows=plan.grid_highlight_windows,
         color_trc=plan.color_trc,
         has_audio=plan.has_audio,
+    )
+    log.info(
+        "slot_render_done",
+        slot_idx=plan.slot_idx,
+        target_duration_s=round(plan.slot_target_dur, 3),
+        elapsed_ms=int((time.monotonic() - t0) * 1000),
     )
     return plan.reframed_path
 
@@ -1687,13 +1710,16 @@ def _assemble_clips(
         interstitial_map[slot_pos] = inter
 
     # ── Phase 1: plan all slots (sequential, pure math) ───────────────────
+    _phase_t0 = time.monotonic()
     plans, _clip_cursors, cumulative_s = _plan_slots(
         steps, clip_id_to_local, clip_probe_map, beats,
         clip_metas, global_color_grade, tmpdir,
         output_fit=output_fit,
     )
+    _phase_done("plan", _phase_t0, job_id=job_id, slots=len(plans))
 
     # ── Phase 2: render all slots in parallel via FFmpeg ──────────────────
+    _phase_t0 = time.monotonic()
     render_errors: list[Exception] = []
     with ThreadPoolExecutor(max_workers=_PARALLEL_RENDER_WORKERS) as pool:
         futures = {pool.submit(_render_planned_slot, p): p for p in plans}
@@ -1712,8 +1738,13 @@ def _assemble_clips(
         raise render_errors[0]
 
     log.info("parallel_render_complete", slots=len(plans))
+    _phase_done(
+        "render_parallel", _phase_t0, job_id=job_id,
+        slots=len(plans), workers=_PARALLEL_RENDER_WORKERS,
+    )
 
     # ── Phase 3: post-render (curtain-close, interstitials, transitions) ──
+    _phase_t0 = time.monotonic()
     reframed_paths: list[str] = []
     slot_durations: list[float] = []
     transition_types: list[str] = []
@@ -1807,7 +1838,14 @@ def _assemble_clips(
     if not reframed_paths:
         raise ValueError("No slots to assemble")
 
+    _phase_done(
+        "curtain_and_interstitials", _phase_t0, job_id=job_id,
+        post_render_clip_count=len(reframed_paths),
+        interstitial_count=len(interstitial_map),
+    )
+
     # Join slots (transitions or concat)
+    _phase_t0 = time.monotonic()
     joined_path = os.path.join(tmpdir, "joined.mp4")
     if len(reframed_paths) == 1:
         shutil.copy2(reframed_paths[0], joined_path)
@@ -1817,6 +1855,7 @@ def _assemble_clips(
             joined_path, tmpdir,
             has_interstitials=bool(interstitial_map),
         )
+    _phase_done("join", _phase_t0, job_id=job_id, clips=len(reframed_paths))
 
     # Debug: probe durations at each stage to trace truncation
     _joined_dur = _probe_duration(joined_path)
@@ -1834,6 +1873,7 @@ def _assemble_clips(
     # ── Post-join text overlays (absolute timestamps, deduplicated) ────
     # Collect overlays across ALL slots, convert to absolute timestamps,
     # and deduplicate so "Welcome to" appears once and persists.
+    _phase_t0 = time.monotonic()
     abs_overlays = _collect_absolute_overlays(
         steps, original_slot_durations, clip_metas, subject,
         interstitial_map=interstitial_map,
@@ -1844,6 +1884,10 @@ def _assemble_clips(
         log.info("debug_post_burn_duration", burned_dur=_burned_dur)
     else:
         shutil.copy2(joined_path, output_path)
+    _phase_done(
+        "text_overlay", _phase_t0, job_id=job_id,
+        overlay_count=len(abs_overlays),
+    )
 
     # Eval harness: upload per-slot files for visual comparison
     if settings.eval_harness_enabled and job_id:
@@ -2671,21 +2715,34 @@ def _burn_text_overlays(
         *_encoding_args(output_path, preset="ultrafast"),
     ])
 
+    # png_count is already a per-frame count: font-cycle overlays append one
+    # cfg per frame (up to MAX_FONT_CYCLE_FRAMES). A high png_count relative
+    # to static_overlay_count means a font-cycle overlay is exploding.
     log.info(
         "burn_text_overlays",
         png_count=len(png_configs),
         ass_count=len(ass_files),
+        static_overlay_count=len(static_overlays),
+        animated_overlay_count=len(animated_overlays),
     )
+    burn_t0 = time.monotonic()
     result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
+    burn_elapsed_ms = int((time.monotonic() - burn_t0) * 1000)
     if result.returncode != 0:
         log.warning(
             "burn_text_failed",
             rc=result.returncode,
+            elapsed_ms=burn_elapsed_ms,
             stderr=result.stderr.decode(errors="replace")[-500:],
         )
         shutil.copy2(input_path, output_path)
     else:
-        log.info("burn_text_done")
+        log.info(
+            "burn_text_done",
+            elapsed_ms=burn_elapsed_ms,
+            png_count=len(png_configs),
+            ass_count=len(ass_files),
+        )
 
 
 def _upload_eval_slots(
