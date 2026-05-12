@@ -295,6 +295,75 @@ class TestAnimatedOverlayASS:
             )
             assert result is None
 
+    def test_position_x_frac_in_ass_overrides_centered_x(self):
+        """ASS \\pos tag uses x = CANVAS_W * position_x_frac when set.
+
+        Waka Waka "This" at x_frac=0.18 \u2192 1080*0.18 = 194. "is" at
+        x_frac=0.82 \u2192 885. Reference shows them at lower-left / lower-right.
+        """
+        import re
+        with tempfile.TemporaryDirectory() as tmpdir:
+            r1 = generate_animated_overlay_ass(
+                [{"text": "This", "start_s": 0.0, "end_s": 1.0,
+                  "position": "bottom", "effect": "fade-in",
+                  "position_x_frac": 0.18, "position_y_frac": 0.85}],
+                5.0, tmpdir, 0,
+            )
+            r2 = generate_animated_overlay_ass(
+                [{"text": "is", "start_s": 0.0, "end_s": 1.0,
+                  "position": "bottom", "effect": "fade-in",
+                  "position_x_frac": 0.82, "position_y_frac": 0.85}],
+                5.0, tmpdir, 1,
+            )
+            assert r1 and r2
+            c1 = open(r1[0]).read()
+            c2 = open(r2[0]).read()
+            m1 = re.search(r"\\pos\((\d+),(\d+)\)", c1)
+            m2 = re.search(r"\\pos\((\d+),(\d+)\)", c2)
+            assert m1 and m2, f"\\pos tag missing in:\n{c1[:300]}\n---\n{c2[:300]}"
+            # 1080 * 0.18 = 194.4 \u2192 int 194; 1080 * 0.82 = 885.6 \u2192 int 885
+            assert int(m1.group(1)) == 194, f"expected x=194, got {m1.group(1)}"
+            assert int(m2.group(1)) == 885, f"expected x=885, got {m2.group(1)}"
+
+    def test_position_x_frac_in_slide_uses_custom_x(self):
+        """slide-up / slide-down \\move tags must respect position_x_frac
+        for both start and end coordinates (otherwise text slides centered
+        even when caller asks for off-center)."""
+        import re
+        with tempfile.TemporaryDirectory() as tmpdir:
+            r = generate_animated_overlay_ass(
+                [{"text": "Drop", "start_s": 0.0, "end_s": 2.0,
+                  "position": "bottom", "effect": "slide-down",
+                  "position_x_frac": 0.25, "position_y_frac": 0.80}],
+                5.0, tmpdir, 0,
+            )
+            assert r
+            content = open(r[0]).read()
+            # \move(x1,y1,x2,y2,t1,t2) \u2014 both x's should equal int(1080*0.25)=270
+            m = re.search(r"\\move\((-?\d+),(-?\d+),(-?\d+),(-?\d+),", content)
+            assert m, f"\\move tag missing: {content[:300]}"
+            assert int(m.group(1)) == 270, f"start x: {m.group(1)}"
+            assert int(m.group(3)) == 270, f"end x: {m.group(3)}"
+
+    def test_position_x_frac_none_keeps_centered(self):
+        """No position_x_frac \u2192 existing centered behavior (x=540 on 1080
+        canvas). Guard against accidentally requiring the new field."""
+        import re
+        with tempfile.TemporaryDirectory() as tmpdir:
+            r = generate_animated_overlay_ass(
+                [{"text": "Center", "start_s": 0.0, "end_s": 1.0,
+                  "position": "center", "effect": "fade-in",
+                  "position_y_frac": 0.5}],
+                5.0, tmpdir, 0,
+            )
+            assert r
+            content = open(r[0]).read()
+            m = re.search(r"\\pos\((\d+),(\d+)\)", content)
+            # When y_frac is set but not x_frac, x defaults to canvas center.
+            assert m and int(m.group(1)) == 540, (
+                f"expected centered x=540, got {m and m.group(1)}"
+            )
+
 
 # -- PNG overlay generation ---------------------------------------------------
 

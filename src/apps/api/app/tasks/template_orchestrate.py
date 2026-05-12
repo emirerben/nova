@@ -2215,6 +2215,7 @@ def _collect_absolute_overlays(
                 "text_size": ov.get("text_size", "medium"),
                 "text_size_px": ov.get("text_size_px"),
                 "text_color": ov.get("text_color", "#FFFFFF"),
+                "position_x_frac": ov.get("position_x_frac"),
                 "position_y_frac": ov.get("position_y_frac"),
                 "stroke_width": int(ov.get("stroke_width", 0)),
                 "emoji_prefix": str(ov.get("emoji_prefix", "")),
@@ -2340,8 +2341,17 @@ def _collect_absolute_overlays(
         # to a sentinel float that sorts BEFORE any real y_frac value (which
         # are all in [0.0, 1.0]). Two None-y_frac overlays still share the
         # same screen slot — the sentinel preserves that equality.
+        # position_x_frac added for Waka Waka where "This" (x_frac=0.18) and
+        # "is" (x_frac=0.82) share position="bottom"+y_frac=0.85 but live in
+        # different screen halves; without including x_frac, dedup 2 below
+        # truncated one and the rendered output only showed one of the two.
         y_frac = o.get("position_y_frac")
-        return (o["position"], y_frac if y_frac is not None else -1.0)
+        x_frac = o.get("position_x_frac")
+        return (
+            o["position"],
+            y_frac if y_frac is not None else -1.0,
+            x_frac if x_frac is not None else -1.0,
+        )
 
     _MERGE_GAP_THRESHOLD_S = 2.0
     raw.sort(key=lambda o: (o["text"].lower().strip(), _slot_key(o), o["start_s"]))
@@ -2464,6 +2474,7 @@ def _pre_burn_curtain_slot_text(
             "text_size": ov.get("text_size", "medium"),
             "text_size_px": ov.get("text_size_px"),
             "text_color": ov.get("text_color", "#FFFFFF"),
+            "position_x_frac": ov.get("position_x_frac"),
             "position_y_frac": ov.get("position_y_frac"),
             # Carry recipe-side font_cycle_accel_at_s through to the renderer.
             # Without this, `_compute_font_cycle_frame_specs` falls back to its
