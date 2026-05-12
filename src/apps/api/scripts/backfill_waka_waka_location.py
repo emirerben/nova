@@ -67,8 +67,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Match anything containing "morocco" or "waka" case-insensitively. The prod
 # template name has historically used both spellings (the song is "Waka Waka",
-# the destination is "Morocco"). ilike + wildcard handles either.
-TEMPLATE_NAME_PATTERN = "%morocco%"
+# the destination is "Morocco"). The original constant was "%morocco%" only,
+# which missed the prod row when it was named with "Waka Waka". Two patterns
+# OR-ed together via SQLAlchemy `or_()` handles either spelling.
+TEMPLATE_NAME_PATTERNS = ("%morocco%", "%waka%")
 
 REQUIRED_INPUTS = [
     {
@@ -105,19 +107,20 @@ UNLOCK_SLOT_TYPES = ("hook", "face")
 
 
 async def find_template(db):
-    from sqlalchemy import select  # noqa: PLC0415
+    from sqlalchemy import or_, select  # noqa: PLC0415
 
     from app.models import VideoTemplate  # noqa: PLC0415
 
     result = await db.execute(
         select(VideoTemplate).where(
-            VideoTemplate.name.ilike(TEMPLATE_NAME_PATTERN)
+            or_(*(VideoTemplate.name.ilike(p) for p in TEMPLATE_NAME_PATTERNS))
         )
     )
     rows = result.scalars().all()
     if not rows:
+        patterns_repr = " OR ".join(f"ILIKE '{p}'" for p in TEMPLATE_NAME_PATTERNS)
         print(
-            f"ERROR: no template matched name ILIKE '{TEMPLATE_NAME_PATTERN}'.",
+            f"ERROR: no template matched name {patterns_repr}.",
             file=sys.stderr,
         )
         sys.exit(2)
