@@ -6,10 +6,10 @@ Two rendering paths:
     burned via FFmpeg subtitles filter
 
 Supports effects:
-  - Static effects (pop-in, scale-up, none): single PNG for the duration
+  - Static effects (scale-up, none): single PNG for the duration
   - font-cycle: rapid font switching -- generates one PNG per font frame, each
     with a different font, swapped via timed FFmpeg overlays (~7 changes/sec)
-  - Animated effects (fade-in, typewriter, slide-up): ASS subtitle files
+  - Animated effects (fade-in, typewriter, slide-up, pop-in, bounce): ASS subtitle files
 
 Fonts loaded from font-registry.json (shared with frontend).
 Fallback: Pillow default if all resolution fails.
@@ -84,7 +84,33 @@ OVERLAY_FONT_PATH_REGULAR = os.path.normpath(
 MONTSERRAT_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "Montserrat-ExtraBold.ttf"))
 
 # Effects that produce animated .ass files instead of static PNGs
-ASS_ANIMATED_EFFECTS = frozenset({"fade-in", "typewriter", "slide-up"})
+ASS_ANIMATED_EFFECTS = frozenset(
+    {"fade-in", "typewriter", "slide-up", "pop-in", "bounce"}
+)
+
+# Animation keyframe timings (ms from overlay start). At runtime, each timestamp
+# is clamped to a fraction of the overlay's actual duration so very short
+# overlays don't get a truncated animation tail (e.g. a 200ms label with a
+# 500ms bounce would otherwise just freeze mid-bounce).
+_POP_IN_KEYFRAMES_MS = (0, 150, 250)        # scale 30 -> 115 -> 100
+_POP_IN_SCALES = (30, 115, 100)
+_BOUNCE_KEYFRAMES_MS = (0, 180, 360, 500)   # scale 100 -> 125 -> 90 -> 100
+_BOUNCE_SCALES = (100, 125, 90, 100)
+
+
+def _clamp_keyframes(keyframes_ms: tuple[int, ...], duration_ms: int) -> tuple[int, ...]:
+    """Compress keyframes proportionally if they overrun the overlay window.
+
+    The last keyframe is the animation end; if it overruns duration_ms, scale
+    every keyframe by duration_ms / last so the animation completes before the
+    overlay disappears. Clamp ratio is capped at 1.0 so short keyframes don't
+    get stretched on long overlays.
+    """
+    last = keyframes_ms[-1]
+    if last <= duration_ms:
+        return keyframes_ms
+    ratio = duration_ms / last
+    return tuple(max(0, int(kf * ratio)) for kf in keyframes_ms)
 
 # Position -> vertical anchor (fraction of canvas height)
 _POSITION_Y = {
@@ -613,6 +639,39 @@ def _write_animated_ass(
         x = CANVAS_W // 2
         dialogue_text = (
             f"{{\\an5\\move({x},{start_y},{x},{target_y},0,500){outline_tag}}}{text}"
+        )
+
+    elif effect == "pop-in":
+        # Snap-scale from 30% to 115% (overshoot) then settle to 100%. The libass
+        # \t(t1,t2,tags) tag linearly interpolates the inner tags between t1 and
+        # t2 (ms relative to dialogue start). Initial \fscx/\fscy sets the t=0
+        # state; each \t() animates to its target.
+        duration_ms = int((end_s - start_s) * 1000)
+        k0, k1, k2 = _clamp_keyframes(_POP_IN_KEYFRAMES_MS, duration_ms)
+        s0, s1, s2 = _POP_IN_SCALES
+        pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
+        dialogue_text = (
+            f"{{{pos_or_align}{outline_tag}"
+            f"\\fscx{s0}\\fscy{s0}"
+            f"\\t({k0},{k1},\\fscx{s1}\\fscy{s1})"
+            f"\\t({k1},{k2},\\fscx{s2}\\fscy{s2})"
+            f"}}{text}"
+        )
+
+    elif effect == "bounce":
+        # Squash-and-stretch: 100 → 125 (stretch) → 90 (squash) → 100 (settle).
+        # Used for hero reactions like the "shukran Morocco!" outro label.
+        duration_ms = int((end_s - start_s) * 1000)
+        k0, k1, k2, k3 = _clamp_keyframes(_BOUNCE_KEYFRAMES_MS, duration_ms)
+        s0, s1, s2, s3 = _BOUNCE_SCALES
+        pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
+        dialogue_text = (
+            f"{{{pos_or_align}{outline_tag}"
+            f"\\fscx{s0}\\fscy{s0}"
+            f"\\t({k0},{k1},\\fscx{s1}\\fscy{s1})"
+            f"\\t({k1},{k2},\\fscx{s2}\\fscy{s2})"
+            f"\\t({k2},{k3},\\fscx{s3}\\fscy{s3})"
+            f"}}{text}"
         )
 
     else:

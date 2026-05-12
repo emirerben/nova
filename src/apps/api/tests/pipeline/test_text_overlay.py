@@ -175,6 +175,100 @@ class TestAnimatedOverlayASS:
             # Text should be truncated to MAX_OVERLAY_TEXT_LEN
             assert "\u2026" in content
 
+    def test_pop_in_emits_scale_keyframes(self):
+        """pop-in renders \\fscx/\\fscy keyframes via libass \\t() interpolation.
+
+        Waka Waka template labels ("This time for Africa") use pop-in. Without
+        these tags the text would hard-cut in flat \u2014 see
+        plans/i-m-testing-waka-waka-joyful-raccoon.md Defect B.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{"text": "Pop", "start_s": 0.0, "end_s": 1.1,
+                  "position": "bottom", "effect": "pop-in"}],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None and len(result) == 1
+            with open(result[0]) as f:
+                content = f.read()
+            # Starts compressed (30%), overshoots (115%), settles (100%)
+            assert "\\fscx30\\fscy30" in content
+            assert "\\fscx115\\fscy115" in content
+            assert "\\fscx100\\fscy100" in content
+            # Two interpolation tags (compress\u2192overshoot, overshoot\u2192settle)
+            assert content.count("\\t(") >= 2
+
+    def test_bounce_emits_three_scale_keyframes(self):
+        """bounce squash-and-stretch: 100 \u2192 125 \u2192 90 \u2192 100 across three \\t() tags.
+
+        Waka Waka outro "shukran Morocco!" uses bounce. Three transitions are
+        the minimum to produce a perceivable bounce instead of a single ramp.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{"text": "Bounce", "start_s": 0.0, "end_s": 2.0,
+                  "position": "center", "effect": "bounce"}],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None and len(result) == 1
+            with open(result[0]) as f:
+                content = f.read()
+            for scale in ("\\fscx100\\fscy100", "\\fscx125\\fscy125",
+                          "\\fscx90\\fscy90"):
+                assert scale in content, f"missing {scale}: {content[:400]}"
+            assert content.count("\\t(") >= 3
+
+    def test_short_duration_clamps_animation_keyframes(self):
+        """A 200ms overlay must not get a 500ms bounce \u2014 keyframes scale down.
+
+        Without clamping, libass would never reach the settle frame and the
+        text would freeze mid-bounce when the overlay disappears.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{"text": "X", "start_s": 0.0, "end_s": 0.2,
+                  "position": "center", "effect": "bounce"}],
+                5.0, tmpdir, 0,
+            )
+            with open(result[0]) as f:
+                content = f.read()
+            # Last keyframe must be within the 200ms overlay window.
+            # The default bounce ends at 500ms; clamped, the last \t() target
+            # should land at \u2264200ms.
+            import re
+            t_endings = [
+                int(m.group(2))
+                for m in re.finditer(r"\\t\((\d+),(\d+),", content)
+            ]
+            assert t_endings, "no \\t() tags emitted"
+            assert max(t_endings) <= 200, (
+                f"clamp failed: keyframe at {max(t_endings)}ms > 200ms window"
+            )
+
+    def test_pop_in_and_bounce_routed_via_ass_not_static(self):
+        """ASS_ANIMATED_EFFECTS must include the two new effects so the
+        animation path runs instead of the static-PNG fallback."""
+        from app.pipeline.text_overlay import ASS_ANIMATED_EFFECTS
+        assert "pop-in" in ASS_ANIMATED_EFFECTS
+        assert "bounce" in ASS_ANIMATED_EFFECTS
+        # Sanity: ensure we didn't accidentally promote scale-up too
+        assert "scale-up" not in ASS_ANIMATED_EFFECTS
+
+    def test_unknown_effect_still_renders_static(self):
+        """scale-up and other untracked effects fall through to static
+        rendering \u2014 generate_animated_overlay_ass returns None for them.
+
+        Prevents the regression where adding pop-in/bounce accidentally
+        broadens the route to every effect name.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{"text": "Static", "start_s": 0.0, "end_s": 3.0,
+                  "position": "center", "effect": "scale-up"}],
+                5.0, tmpdir, 0,
+            )
+            assert result is None
+
 
 # -- PNG overlay generation ---------------------------------------------------
 
