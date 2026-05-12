@@ -427,7 +427,12 @@ def orchestrate_template_job(self, job_id: str) -> None:
             FAILURE_REASON_TIMEOUT,
             "Template job timed out (exceeded 1740s soft limit)",
         )
-    except GeminiAnalysisError as exc:
+    except (GeminiAnalysisError, GeminiRefusalError) as exc:
+        # GeminiRefusalError does NOT subclass GeminiAnalysisError — both
+        # extend Exception directly (pipeline/agents/gemini_analyzer.py).
+        # Without this combined catch, a refusal falls into the generic
+        # `except Exception` below and is misclassified as UNKNOWN, hiding
+        # "Gemini refused this clip" behind a meaningless label.
         log.error("template_job_gemini_failed", job_id=job_id, error=str(exc))
         _mark_failed(job_uuid, FAILURE_REASON_GEMINI_ANALYSIS_FAILED, str(exc))
     except TemplateMismatchError as exc:
@@ -918,8 +923,45 @@ def _build_positional_clip_metas(
     if video_indices:
         def _process(idx: int) -> tuple[int, ClipMeta]:
             path = local_paths[idx]
-            ref = gemini_upload_and_wait(path)
-            meta = analyze_clip(ref, job_id=job_id)
+            slot = slots_in_order[idx]
+            try:
+                ref = gemini_upload_and_wait(path)
+                meta = analyze_clip(ref, job_id=job_id)
+            except (GeminiRefusalError, GeminiAnalysisError) as exc:
+                # Positional binding pins clip[i] → slot[i] before assembly,
+                # so the matcher doesn't need hook_text / best_moments to
+                # *route* this clip — they're only consumed later for text
+                # placement and beat scoring. A refusal (e.g. Gemini returned
+                # empty hook_text for a quiet establishing shot) used to kill
+                # the entire mixed-media job. Fall back to a synthetic
+                # ClipMeta so the user's job still produces output. Mirrors
+                # the non-positional fallback in `_analyze_one`, minus the
+                # Whisper transcript (positional binding doesn't need it).
+                probe = probe_map.get(path)
+                dur = probe.duration_s if probe else float(
+                    slot.get("target_duration_s", 5.0)
+                )
+                log.warning(
+                    "positional_video_analysis_fallback",
+                    idx=idx,
+                    slot_position=slot.get("position"),
+                    error=str(exc),
+                )
+                meta = ClipMeta(
+                    clip_id=f"clip_{idx}",
+                    transcript="",
+                    hook_text="",
+                    hook_score=5.0,
+                    best_moments=[{
+                        "start_s": 0.0,
+                        "end_s": float(dur),
+                        "energy": 5.0,
+                        "description": "fallback (gemini refused)",
+                    }],
+                    analysis_degraded=True,
+                    clip_path=path,
+                )
+                return idx, meta
             meta.clip_id = f"clip_{idx}"
             meta.clip_path = path
             return idx, meta
@@ -927,12 +969,8 @@ def _build_positional_clip_metas(
         with ThreadPoolExecutor(max_workers=min(len(video_indices), 8)) as pool:
             futures = [pool.submit(_process, i) for i in video_indices]
             for future in as_completed(futures):
-                try:
-                    idx, meta = future.result()
-                    video_metas[idx] = meta
-                except (GeminiRefusalError, GeminiAnalysisError, Exception) as exc:
-                    log.error("positional_video_analysis_failed", error=str(exc))
-                    raise
+                idx, meta = future.result()
+                video_metas[idx] = meta
 
     metas: list[ClipMeta] = []
     for i, slot in enumerate(slots_in_order):
