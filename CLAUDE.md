@@ -83,6 +83,11 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Beat-snap: `cumulative_s` in `_assemble_clips()` must account for interstitial hold durations to keep beat-snap calculations accurate
 - Timing: `_burn_text_overlays()` must not reassign font-cycle multi-PNG timestamps with single overlay timestamps (bug fixed in v0.1.1.0)
 
+## Encoder policy (libx264 preset)
+- **Intermediate encodes** (re-encoded downstream by another stage) → `preset="ultrafast"` is fine. Call sites: `reframe_and_export`, `_build_overlay_cmd` in `reframe.py`; `render_color_hold` in `interstitials.py`; `image_clip` rendering; `drive_import` thumbnailing.
+- **Final-output encodes** (bytes that ship to the user) → `preset="fast"` or stricter is REQUIRED. `ultrafast` disables `mb-tree`, `psy-rd`, B-frames and trellis quant, which causes visible 16×16 macroblocking on smooth gradients (sky, dark canopy). CRF does NOT compensate — it controls the rate target, not which encoder features run. Call sites: `_concat_demuxer` fallback, `_pre_burn_curtain_slot_text`, `_burn_text_overlays` in `template_orchestrate.py`; `apply_curtain_close_tail` (`fast` + `tune=film`) in `interstitials.py`; `join_with_transitions` in `transitions.py`.
+- Locked by `tests/test_encoder_policy.py` — adding a new `_encoding_args(...)` call site forces a conscious quality-budget decision via the allow-list. History: PR #102 (curtain-close → medium), PR #105 (curtain-close → fast + `--concurrency=1` + PNG-overlay), Brazil pixelation fix (propagated `fast` to the three `template_orchestrate.py` sites the prior PRs missed).
+
 ## Env vars needed (see .env.example for full list with descriptions)
 - STORAGE_BUCKET, STORAGE_PROVIDER
 - REDIS_URL

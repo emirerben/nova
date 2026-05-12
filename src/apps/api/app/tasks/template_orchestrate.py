@@ -2156,9 +2156,19 @@ def _concat_demuxer(
         "-f", "concat",
         "-safe", "0",
         "-i", concat_list,
-        # ultrafast: shared-CPU workers crawl on preset=fast (24-slot Morocco
-        # was hitting ~9 min for transitions alone).
-        *_encoding_args(output_path, preset="ultrafast"),
+        # preset=fast (not ultrafast): ultrafast disables mb-tree, psy-rd,
+        # B-frames and trellis quant, which produces visible 16×16 macroblocking
+        # on smooth gradients (the BRAZIL/blue-canopy banding bug). PR #102/#105
+        # fixed this for the curtain-close encode (interstitials.py:59) but the
+        # same flip was never propagated to this concat fallback or to the
+        # downstream burn_text_overlays — so multi-encode banding still compounded
+        # into the final output. PR #105's --concurrency=1 (fly.toml) and PNG-
+        # overlay curtain (~10× faster) unlocked the CPU budget that previously
+        # forced ultrafast here. fast keeps psy-rd + mb-tree on shared-CPU workers
+        # without busting the 1200s timeout. Locked by tests/test_encoder_policy.py.
+        # Old comment, kept for archaeology: "ultrafast: shared-CPU workers crawl
+        # on preset=fast (24-slot Morocco was hitting ~9 min for transitions alone)."
+        *_encoding_args(output_path, preset="fast"),
     ]
     result = subprocess.run(encode_cmd, capture_output=True, timeout=1200, check=False)
     if result.returncode != 0:
@@ -2599,7 +2609,16 @@ def _pre_burn_curtain_slot_text(
         "-filter_complex", ";".join(fc_parts),
         "-map", f"[{prev}]",
         "-map", "0:a?",
-        *_encoding_args(burned_path, preset="ultrafast"),
+        # preset=fast (not ultrafast): this slot is about to be re-encoded ONE
+        # MORE TIME by apply_curtain_close_tail_overlay (which already uses
+        # preset=fast + tune=film). If we encode here at ultrafast, the mb-tree/
+        # psy-rd losses are baked in BEFORE curtain-close runs, and the curtain
+        # encoder can't undo them — visible as banding on smooth gradients under
+        # the title text (Dimples slot 5 BRAZIL on the blue canopy). Locked by
+        # tests/test_encoder_policy.py. Per-slot wall-clock cost is small because
+        # the slot is short (typically 2-5s) and the overlay filter chain
+        # dominates encode time anyway.
+        *_encoding_args(burned_path, preset="fast"),
     ])
 
     log.info("pre_burn_curtain_text", slot=slot_idx, overlays=len(png_configs))
@@ -2707,12 +2726,23 @@ def _burn_text_overlays(
         "-filter_complex", ";".join(fc_parts),
         "-map", f"[{prev}]",
         "-map", "0:a?",
-        # ultrafast: matches the speed bump made in _concat_demuxer. The
-        # joined input already has slot-boundary I-frames from the concat
-        # step, and the overlay filter chain dominates burn cost anyway —
-        # CRF 18 keeps quality high. preset=fast was timing out at 600s
-        # on 24-slot recipes; ultrafast finishes in well under a minute.
-        *_encoding_args(output_path, preset="ultrafast"),
+        # preset=fast (not ultrafast): this is the FINAL encode pass —
+        # the bytes that ship to the user. ultrafast disables mb-tree,
+        # psy-rd, B-frames and trellis quant, which is exactly what
+        # protects smooth gradients (sky, dark canopy) from visible
+        # 16×16 macroblocking. The previous comment claimed "CRF 18 keeps
+        # quality high" but CRF only controls the rate target — preset
+        # controls which encoder features run. Without psy-rd + mb-tree,
+        # ultrafast produces blocky output regardless of CRF.
+        # The previous 600s timeout pressure on 24-slot recipes was at
+        # --concurrency=2; PR #105 dropped to --concurrency=1 (fly.toml)
+        # which gives ~2× more CPU per worker. Combined with the PNG-
+        # overlay curtain (10× faster than geq), per-slot encode budget
+        # absorbs preset=fast easily. Locked by tests/test_encoder_policy.py.
+        # Old comment, kept for archaeology: "ultrafast: matches the speed
+        # bump made in _concat_demuxer. preset=fast was timing out at 600s
+        # on 24-slot recipes; ultrafast finishes in well under a minute."
+        *_encoding_args(output_path, preset="fast"),
     ])
 
     # png_count is already a per-frame count: font-cycle overlays append one

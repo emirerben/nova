@@ -59,6 +59,37 @@ def _encoding_args(
     Color handling: HDR/HLG sources (bt2020, arib-std-b67) are converted
     to SDR (bt709) via the colorspace filter in _build_video_filter. This
     function tags the output as bt709 so players render colors correctly.
+
+    Preset policy (locked by tests/test_encoder_policy.py — audit before
+    flipping any of these):
+
+      INTERMEDIATE  (preset="ultrafast" — fine, re-encoded downstream)
+        - reframe_and_export()           reframe.py:228, 376
+        - image_clip rendering           image_clip.py:111, 217
+        - render_color_hold()            interstitials.py:121
+        - drive_import thumbnailing      drive_import.py:74
+
+      FINAL OUTPUT (preset="fast" — banding-sensitive, must NOT regress)
+        - _concat_demuxer fallback       template_orchestrate.py:2117
+        - _pre_burn_curtain_slot_text    template_orchestrate.py:2558
+        - apply_curtain_close_tail       interstitials.py:250 (+ tune=film)
+        - join_with_transitions          transitions.py:110
+        - _burn_text_overlays            template_orchestrate.py:2671
+
+    Why this matters: libx264 preset=ultrafast disables mb-tree, psy-rd,
+    B-frames and trellis quant. On smooth gradients (sky, dark canopy)
+    those losses are visible as 16×16 macroblocking. CRF does NOT save
+    you — CRF controls the rate target; preset controls which encoder
+    features run. ultrafast at CRF 18 still produces blocky output.
+
+    History of the same bug:
+      - PR #102: curtain-close ultrafast → medium      (banding fix)
+      - PR #105: curtain-close medium → fast +         (perf)
+                  --concurrency=1 (fly.toml) +
+                  PNG-overlay (10× faster than geq)
+      - Brazil pixelation PR: propagated preset=fast   (this fix)
+                  to the three template_orchestrate.py
+                  sites that PR #102/#105 missed.
     """
     args = [
         "-c:v", "libx264",
