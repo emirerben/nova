@@ -4,6 +4,7 @@ import pytest
 
 from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep, ClipMeta, TemplateRecipe
 from app.pipeline.template_matcher import (
+    LOCKED_TEMPLATE_CLIP_ID,
     MAX_MERGED_DURATION_S,
     TemplateMismatchError,
     _dedup_adjacent,
@@ -309,6 +310,63 @@ class TestPinnedClipReuse:
 
         assert len(plan.steps) == 3
         assert all(s.clip_id == "clip_0" for s in plan.steps)
+
+
+# ── Locked hook slot regression (Waka Waka / Morocco) ────────────────────────
+
+
+class TestLockedHookSlot:
+    """Regression for TEMPLATE_PIN_INVALID_SLOT on Waka Waka (formerly Morocco).
+
+    The template has slots 1+2 locked (slot_type="hook"); the orchestrator
+    used to blindly pin clip 0 to slot 1 because the type matched, and the
+    matcher then rejected the pin since locked slots are excluded from
+    unlocked_slots. The orchestrator now skips pinning for locked slots, so
+    match() must accept this shape (no pin, locked step emitted directly).
+    """
+
+    def test_locked_hook_slot_1_emits_locked_step_without_pin(self):
+        """Slot 1 locked (hook), slot 2 unlocked. With no pin (orchestrator's
+        new behavior), match emits LOCKED_TEMPLATE_CLIP_ID for slot 1 and
+        fills slot 2 from a user clip."""
+        locked_slot = _slot(1, 1.3, priority=8, slot_type="hook")
+        locked_slot["locked"] = True
+        locked_slot["source_start_s"] = 0.0
+        locked_slot["source_end_s"] = 1.3
+        recipe = _make_recipe([
+            locked_slot,
+            _slot(2, 5.0, priority=5, slot_type="broll"),
+        ])
+        clip = _make_clip("clip_0", [_moment(0.0, 5.0, energy=7.0)])
+
+        plan = match(recipe, [clip])
+
+        assert len(plan.steps) == 2
+        slot1 = next(s for s in plan.steps if s.slot["position"] == 1)
+        slot2 = next(s for s in plan.steps if s.slot["position"] == 2)
+        assert slot1.clip_id == LOCKED_TEMPLATE_CLIP_ID
+        assert slot1.moment["start_s"] == 0.0
+        assert slot1.moment["end_s"] == 1.3
+        assert slot2.clip_id == "clip_0"
+
+    def test_pin_to_locked_slot_still_raises(self):
+        """Matcher contract stays loud: if the orchestrator (or any caller)
+        does try to pin to a locked slot, the matcher must refuse so the
+        programmer error surfaces instead of silently dropping the pin."""
+        locked_slot = _slot(1, 1.3, priority=8, slot_type="hook")
+        locked_slot["locked"] = True
+        locked_slot["source_start_s"] = 0.0
+        locked_slot["source_end_s"] = 1.3
+        recipe = _make_recipe([
+            locked_slot,
+            _slot(2, 5.0, priority=5, slot_type="broll"),
+        ])
+        clip = _make_clip("clip_0", [_moment(0.0, 5.0, energy=7.0)])
+
+        with pytest.raises(TemplateMismatchError) as exc_info:
+            match(recipe, [clip], pinned_assignments={1: "clip_0"})
+
+        assert exc_info.value.code == "TEMPLATE_PIN_INVALID_SLOT"
 
 
 # ── Adjacency dedup tests ────────────────────────────────────────────────────

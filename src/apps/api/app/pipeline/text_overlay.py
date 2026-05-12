@@ -6,10 +6,10 @@ Two rendering paths:
     burned via FFmpeg subtitles filter
 
 Supports effects:
-  - Static effects (pop-in, scale-up, none): single PNG for the duration
+  - Static effects (scale-up, none): single PNG for the duration
   - font-cycle: rapid font switching -- generates one PNG per font frame, each
     with a different font, swapped via timed FFmpeg overlays (~7 changes/sec)
-  - Animated effects (fade-in, typewriter, slide-up): ASS subtitle files
+  - Animated effects (fade-in, typewriter, slide-up, slide-down, pop-in, bounce): ASS subtitle files
 
 Fonts loaded from font-registry.json (shared with frontend).
 Fallback: Pillow default if all resolution fails.
@@ -84,7 +84,33 @@ OVERLAY_FONT_PATH_REGULAR = os.path.normpath(
 MONTSERRAT_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "Montserrat-ExtraBold.ttf"))
 
 # Effects that produce animated .ass files instead of static PNGs
-ASS_ANIMATED_EFFECTS = frozenset({"fade-in", "typewriter", "slide-up"})
+ASS_ANIMATED_EFFECTS = frozenset(
+    {"fade-in", "typewriter", "slide-up", "slide-down", "pop-in", "bounce"}
+)
+
+# Animation keyframe timings (ms from overlay start). At runtime, each timestamp
+# is clamped to a fraction of the overlay's actual duration so very short
+# overlays don't get a truncated animation tail (e.g. a 200ms label with a
+# 500ms bounce would otherwise just freeze mid-bounce).
+_POP_IN_KEYFRAMES_MS = (0, 150, 250)        # scale 30 -> 115 -> 100
+_POP_IN_SCALES = (30, 115, 100)
+_BOUNCE_KEYFRAMES_MS = (0, 180, 360, 500)   # scale 100 -> 125 -> 90 -> 100
+_BOUNCE_SCALES = (100, 125, 90, 100)
+
+
+def _clamp_keyframes(keyframes_ms: tuple[int, ...], duration_ms: int) -> tuple[int, ...]:
+    """Compress keyframes proportionally if they overrun the overlay window.
+
+    The last keyframe is the animation end; if it overruns duration_ms, scale
+    every keyframe by duration_ms / last so the animation completes before the
+    overlay disappears. Clamp ratio is capped at 1.0 so short keyframes don't
+    get stretched on long overlays.
+    """
+    last = keyframes_ms[-1]
+    if last <= duration_ms:
+        return keyframes_ms
+    ratio = duration_ms / last
+    return tuple(max(0, int(kf * ratio)) for kf in keyframes_ms)
 
 # Position -> vertical anchor (fraction of canvas height)
 _POSITION_Y = {
@@ -311,6 +337,7 @@ def generate_text_overlay_png(
                 font_family=font_family, font_style=font_style,
                 text_size=text_size, text_size_px=text_size_px_val,
                 text_color=text_color,
+                position_x_frac=overlay.get("position_x_frac"),
                 position_y_frac=overlay.get("position_y_frac"),
                 stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
                 emoji_prefix=overlay.get("emoji_prefix", ""),
@@ -349,6 +376,7 @@ def generate_animated_overlay_ass(
             _write_animated_ass(
                 text, start_s, end_s, position, effect, ass_path,
                 font_family=font_family,
+                position_x_frac=overlay.get("position_x_frac"),
                 position_y_frac=overlay.get("position_y_frac"),
                 outline_px=overlay.get("outline_px"),
             )
@@ -495,6 +523,7 @@ def _render_single_overlay_at_time(
             overlay, spans, text, position, png_path,
             font=active_font, text_color=text_color,
             cycling_span_indices=cycling_span_indices,
+            position_x_frac=overlay.get("position_x_frac"),
             position_y_frac=overlay.get("position_y_frac"),
         )
         return png_path
@@ -541,6 +570,7 @@ def _render_static_overlay_layer(
         font_family=font_family, font_style=font_style,
         text_size=text_size, text_size_px=text_size_px_val,
         text_color=text_color,
+        position_x_frac=overlay.get("position_x_frac"),
         position_y_frac=overlay.get("position_y_frac"),
         stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
         emoji_prefix=overlay.get("emoji_prefix", ""),
@@ -572,19 +602,40 @@ def _write_animated_ass(
     output_path: str,
     *,
     font_family: str | None = None,
+    position_x_frac: float | None = None,
     position_y_frac: float | None = None,
     outline_px: int | None = None,
 ) -> None:
-    """Write an ASS file with animation tags for the given effect."""
+    """Write an ASS file with animation tags for the given effect.
+
+    `position_x_frac` (0.0=left edge, 0.5=center, 1.0=right edge) and
+    `position_y_frac` (0.0=top, 1.0=bottom) override the position-keyword
+    based default anchor. When either is set, libass renders via `\\pos`
+    or `\\move` tags at the explicit pixel coordinate instead of relying
+    on the `\\an<alignment>` margins. Used by Waka Waka's "This" / "is"
+    overlays which sit at lower-left / lower-right (off-center).
+    """
     alignment, margin_v = _ASS_POSITION.get(position, (5, 0))
     start_str = format_ass_time(start_s)
     end_str = format_ass_time(end_s)
 
-    # Custom Y position override via \pos tag
+    # Resolve horizontal anchor — explicit x_frac wins, otherwise center.
+    if position_x_frac is not None:
+        target_x = int(CANVAS_W * max(0.0, min(1.0, position_x_frac)))
+    else:
+        target_x = CANVAS_W // 2
+
+    # Custom Y position override via \pos tag. When either x_frac or y_frac
+    # is explicit, emit a \pos so libass anchors there. y_frac alone uses the
+    # canvas-center x. x_frac alone resolves y from the position-keyword.
     pos_tag = ""
-    if position_y_frac is not None:
-        target_y = int(CANVAS_H * position_y_frac)
-        pos_tag = f"\\pos({CANVAS_W // 2},{target_y})"
+    if position_y_frac is not None or position_x_frac is not None:
+        y_frac_for_pos = (
+            position_y_frac if position_y_frac is not None
+            else _POSITION_Y.get(position, 0.5)
+        )
+        target_y = int(CANVAS_H * y_frac_for_pos)
+        pos_tag = f"\\pos({target_x},{target_y})"
 
     # Optional black outline override via \bord + \3c (outline colour) tags
     outline_tag = ""
@@ -610,9 +661,52 @@ def _write_animated_ass(
         y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
         target_y = int(CANVAS_H * y_frac)
         start_y = CANVAS_H + 100
-        x = CANVAS_W // 2
         dialogue_text = (
-            f"{{\\an5\\move({x},{start_y},{x},{target_y},0,500){outline_tag}}}{text}"
+            f"{{\\an5\\move({target_x},{start_y},{target_x},{target_y},0,500){outline_tag}}}{text}"
+        )
+
+    elif effect == "slide-down":
+        # Mirror of slide-up: text falls in from above the visible canvas down
+        # to its target y. Used for Waka Waka's "This is" opening title where
+        # the user described it as "yukarıdan aşağı gelen" (coming top-to-bottom).
+        y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
+        target_y = int(CANVAS_H * y_frac)
+        start_y = -200            # 200 px above the top edge of the 1920 canvas
+        dialogue_text = (
+            f"{{\\an5\\move({target_x},{start_y},{target_x},{target_y},0,500){outline_tag}}}{text}"
+        )
+
+    elif effect == "pop-in":
+        # Snap-scale from 30% to 115% (overshoot) then settle to 100%. The libass
+        # \t(t1,t2,tags) tag linearly interpolates the inner tags between t1 and
+        # t2 (ms relative to dialogue start). Initial \fscx/\fscy sets the t=0
+        # state; each \t() animates to its target.
+        duration_ms = int((end_s - start_s) * 1000)
+        k0, k1, k2 = _clamp_keyframes(_POP_IN_KEYFRAMES_MS, duration_ms)
+        s0, s1, s2 = _POP_IN_SCALES
+        pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
+        dialogue_text = (
+            f"{{{pos_or_align}{outline_tag}"
+            f"\\fscx{s0}\\fscy{s0}"
+            f"\\t({k0},{k1},\\fscx{s1}\\fscy{s1})"
+            f"\\t({k1},{k2},\\fscx{s2}\\fscy{s2})"
+            f"}}{text}"
+        )
+
+    elif effect == "bounce":
+        # Squash-and-stretch: 100 → 125 (stretch) → 90 (squash) → 100 (settle).
+        # Used for hero reactions like the "shukran Morocco!" outro label.
+        duration_ms = int((end_s - start_s) * 1000)
+        k0, k1, k2, k3 = _clamp_keyframes(_BOUNCE_KEYFRAMES_MS, duration_ms)
+        s0, s1, s2, s3 = _BOUNCE_SCALES
+        pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
+        dialogue_text = (
+            f"{{{pos_or_align}{outline_tag}"
+            f"\\fscx{s0}\\fscy{s0}"
+            f"\\t({k0},{k1},\\fscx{s1}\\fscy{s1})"
+            f"\\t({k1},{k2},\\fscx{s2}\\fscy{s2})"
+            f"\\t({k2},{k3},\\fscx{s3}\\fscy{s3})"
+            f"}}{text}"
         )
 
     else:
@@ -672,6 +766,7 @@ def _draw_frame(
     font_style: str = "display",
     text_size: str = "medium",
     cycling_span_indices: list[int] | None = None,
+    position_x_frac: float | None = None,
     position_y_frac: float | None = None,
 ) -> None:
     """Dispatch to spans or flat text rendering. Used by font-cycle to avoid repetition."""
@@ -691,6 +786,7 @@ def _draw_frame(
             text, position, png_path,
             font=font, font_family=font_family, font_style=font_style,
             text_size=text_size, text_color=text_color,
+            position_x_frac=position_x_frac,
             position_y_frac=position_y_frac,
             stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
             emoji_prefix=overlay.get("emoji_prefix", ""),
@@ -1001,6 +1097,7 @@ def _render_font_cycle(
     pixel_size = overlay.get("text_size_px") or _FONT_SIZE_MAP.get(text_size, 72)
     font_family = overlay.get("font_family")
     y_override = overlay.get("position_y_frac")
+    x_override = overlay.get("position_x_frac")
 
     # Resolve available cycle fonts at the requested size, keyed by settle font
     settle_name = font_family or "_default"
@@ -1013,6 +1110,7 @@ def _render_font_cycle(
             overlay, spans, text, position, png_path,
             font_family=font_family, font_style=overlay.get("font_style", "display"),
             text_size=text_size, text_color=text_color,
+            position_x_frac=x_override,
             position_y_frac=y_override,
         )
         return [{"png_path": png_path, "start_s": start_s, "end_s": end_s}]
@@ -1059,6 +1157,7 @@ def _render_font_cycle(
             overlay, spans, text, position, png_p,
             font=fnt, text_color=text_color,
             cycling_span_indices=cycling_span_indices,
+            position_x_frac=x_override,
             position_y_frac=y_override,
         )
         return {"png_path": png_p, "start_s": s, "end_s": e}
@@ -1233,6 +1332,7 @@ def _draw_text_png(
     text_size: str = "medium",
     text_size_px: int | None = None,
     text_color: tuple[int, int, int, int] = (255, 255, 255, 255),
+    position_x_frac: float | None = None,
     position_y_frac: float | None = None,
     stroke_width: int = 0,
     stroke_color: tuple[int, int, int, int] = (0, 0, 0, 230),
@@ -1370,14 +1470,22 @@ def _draw_text_png(
                 codepoint=_emoji_codepoint(emoji_prefix),
             )
 
+    # Resolve horizontal anchor: when position_x_frac is set, lines center on
+    # that x pixel instead of canvas-center. Used by Waka Waka "This"/"is"
+    # which sit at lower-left / lower-right (x_frac=0.18 / 0.82).
+    if position_x_frac is not None:
+        anchor_x = int(CANVAS_W * max(0.0, min(1.0, position_x_frac)))
+    else:
+        anchor_x = CANVAS_W // 2
+
     for i, ln in enumerate(lines):
         if i == 0 and emoji_metrics:
-            # Center emoji + line 1 together as a single unit
+            # Center emoji + line 1 together as a single unit, around anchor_x.
             combined_w = emoji_metrics["combined_w"]
-            combined_x = max(0, (CANVAS_W - combined_w) // 2)
+            combined_x = max(0, anchor_x - combined_w // 2)
             x = combined_x + emoji_metrics["size"] + emoji_metrics["gap"]
         else:
-            x = (CANVAS_W - line_widths[i]) // 2
+            x = anchor_x - line_widths[i] // 2
         y = block_top + i * line_step
         # Soft drop shadow (always on — gives depth on busy backgrounds)
         shadow_draw.text((x, y + 6), ln, font=font, fill=(0, 0, 0, 160))
@@ -1400,7 +1508,7 @@ def _draw_text_png(
     if emoji_metrics:
         first_line_h = line_heights[0]
         combined_w = emoji_metrics["combined_w"]
-        combined_x = max(0, (CANVAS_W - combined_w) // 2)
+        combined_x = max(0, anchor_x - combined_w // 2)
         emoji_x = combined_x
         emoji_y = block_top + (first_line_h - emoji_metrics["size"]) // 2
         img.alpha_composite(emoji_metrics["img"], dest=(emoji_x, emoji_y))
