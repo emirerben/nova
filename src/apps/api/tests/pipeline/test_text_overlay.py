@@ -120,6 +120,32 @@ class TestAnimatedOverlayASS:
                 content = f.read()
             assert "\\move(" in content
 
+    def test_slide_down_starts_above_canvas(self):
+        """slide-down moves from y=-200 (above viewport) to the target y.
+
+        Waka Waka's opening "This" / "is" uses slide-down — the user
+        described the original as "yukarıdan aşağı gelen" (top-to-bottom).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{"text": "Drop", "start_s": 0.0, "end_s": 3.0,
+                  "position": "bottom", "effect": "slide-down"}],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None and len(result) == 1
+            with open(result[0]) as f:
+                content = f.read()
+            assert "\\move(" in content
+            # Start y must be negative (above the top edge); end y must be
+            # within canvas. Extract the four-arg \move(x1,y1,x2,y2,t1,t2) tag.
+            import re
+            m = re.search(r"\\move\((\d+),(-?\d+),(\d+),(\d+),", content)
+            assert m, f"could not parse \\move tag: {content[:300]}"
+            start_y = int(m.group(2))
+            end_y = int(m.group(4))
+            assert start_y < 0, f"slide-down must start above canvas, got start_y={start_y}"
+            assert 0 < end_y < 1920, f"slide-down end_y={end_y} outside canvas"
+
     def test_ass_header_validation(self):
         """Generated ASS file has all required sections."""
         with tempfile.TemporaryDirectory() as tmpdir:

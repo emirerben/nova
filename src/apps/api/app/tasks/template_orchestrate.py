@@ -2567,30 +2567,62 @@ def _burn_text_overlays(
     output_path: str,
     tmpdir: str,
 ) -> None:
-    """Burn text overlays onto the joined video using FFmpeg overlay filter.
+    """Burn text overlays onto the joined video.
 
-    Generates styled PNGs for each unique overlay, then composites them
-    onto the video with absolute enable timing.
+    Two-pass overlay model:
+      1. Static + font-cycle overlays → PNG composites via overlay filter.
+      2. ASS-animated overlays (fade-in, typewriter, slide-up, slide-down,
+         pop-in, bounce) → libass-rendered .ass files chained via the
+         subtitles filter.
+
+    Both layers stack on top of the base video. Overlays already carry
+    absolute timestamps from _collect_absolute_overlays; PNG timing flows
+    through enable='between(t,...)' and ASS timing flows through each
+    Dialogue line's Start/End fields written by _write_animated_ass.
+
+    Splitting overlays by effect class prevents the static PNG fallback
+    from masking the ASS animation — without this split, a slide-down
+    overlay produces both a static "This" at its target Y *and* an ASS
+    animation moving the same glyph from off-canvas, and the static layer
+    wins visually.
     """
-    from app.pipeline.text_overlay import generate_text_overlay_png  # noqa: PLC0415
+    from app.pipeline.text_overlay import (  # noqa: PLC0415
+        ASS_ANIMATED_EFFECTS,
+        FONTS_DIR,
+        generate_animated_overlay_ass,
+        generate_text_overlay_png,
+    )
 
-    # Generate PNGs for each overlay. Overlays already carry absolute
-    # timestamps from _collect_absolute_overlays, so the PNGs come back
-    # with correct timing. Font-cycle overlays expand to many PNGs per
-    # overlay, so do NOT reassign timing with a 1:1 overlay index.
-    png_configs = generate_text_overlay_png(overlays, 999.0, tmpdir, slot_index=99)
-    if not png_configs:
+    static_overlays = [
+        o for o in overlays if o.get("effect") not in ASS_ANIMATED_EFFECTS
+    ]
+    animated_overlays = [
+        o for o in overlays if o.get("effect") in ASS_ANIMATED_EFFECTS
+    ]
+
+    png_configs = (
+        generate_text_overlay_png(static_overlays, 999.0, tmpdir, slot_index=99)
+        if static_overlays
+        else None
+    ) or []
+    ass_files = (
+        generate_animated_overlay_ass(
+            animated_overlays, 999.0, tmpdir, slot_index=99,
+        )
+        if animated_overlays
+        else None
+    ) or []
+
+    if not png_configs and not ass_files:
         shutil.copy2(input_path, output_path)
         return
 
     from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
 
-    # Build FFmpeg command with overlay filter
     cmd = ["ffmpeg", "-i", input_path]
     for cfg in png_configs:
         cmd.extend(["-i", cfg["png_path"]])
 
-    # filter_complex: overlay each PNG with absolute enable timing
     fc_parts = ["[0:v]null[base]"]
     prev = "base"
     for i, cfg in enumerate(png_configs):
@@ -2599,6 +2631,20 @@ def _burn_text_overlays(
             f"[{prev}][{i + 1}:v]overlay=0:0"
             f":enable='between(t,{cfg['start_s']:.3f},{cfg['end_s']:.3f})'"
             f"[{out}]"
+        )
+        prev = out
+
+    # Chain subtitles filter for each ASS file. libass uses absolute times
+    # from the Dialogue lines themselves, so no enable= clamp needed. The
+    # subtitles filter requires escaped paths on macOS/Linux for both the
+    # ASS file and fontsdir, matching the _build_fixed_intro_ass pattern.
+    fonts_dir_escaped = FONTS_DIR.replace(":", "\\:").replace("'", "\\'")
+    for ass_path in ass_files:
+        ass_filter_path = ass_path.replace(":", "\\:").replace("'", "\\'")
+        out = f"ass{ass_files.index(ass_path)}"
+        fc_parts.append(
+            f"[{prev}]subtitles='{ass_filter_path}'"
+            f":fontsdir='{fonts_dir_escaped}'[{out}]"
         )
         prev = out
 
@@ -2614,7 +2660,11 @@ def _burn_text_overlays(
         *_encoding_args(output_path, preset="ultrafast"),
     ])
 
-    log.info("burn_text_overlays", count=len(png_configs))
+    log.info(
+        "burn_text_overlays",
+        png_count=len(png_configs),
+        ass_count=len(ass_files),
+    )
     result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
     if result.returncode != 0:
         log.warning(

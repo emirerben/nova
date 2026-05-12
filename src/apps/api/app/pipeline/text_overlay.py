@@ -9,7 +9,7 @@ Supports effects:
   - Static effects (scale-up, none): single PNG for the duration
   - font-cycle: rapid font switching -- generates one PNG per font frame, each
     with a different font, swapped via timed FFmpeg overlays (~7 changes/sec)
-  - Animated effects (fade-in, typewriter, slide-up, pop-in, bounce): ASS subtitle files
+  - Animated effects (fade-in, typewriter, slide-up, slide-down, pop-in, bounce): ASS subtitle files
 
 Fonts loaded from font-registry.json (shared with frontend).
 Fallback: Pillow default if all resolution fails.
@@ -85,7 +85,7 @@ MONTSERRAT_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "Montserrat-Ex
 
 # Effects that produce animated .ass files instead of static PNGs
 ASS_ANIMATED_EFFECTS = frozenset(
-    {"fade-in", "typewriter", "slide-up", "pop-in", "bounce"}
+    {"fade-in", "typewriter", "slide-up", "slide-down", "pop-in", "bounce"}
 )
 
 # Animation keyframe timings (ms from overlay start). At runtime, each timestamp
@@ -636,6 +636,18 @@ def _write_animated_ass(
         y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
         target_y = int(CANVAS_H * y_frac)
         start_y = CANVAS_H + 100
+        x = CANVAS_W // 2
+        dialogue_text = (
+            f"{{\\an5\\move({x},{start_y},{x},{target_y},0,500){outline_tag}}}{text}"
+        )
+
+    elif effect == "slide-down":
+        # Mirror of slide-up: text falls in from above the visible canvas down
+        # to its target y. Used for Waka Waka's "This is" opening title where
+        # the user described it as "yukarıdan aşağı gelen" (coming top-to-bottom).
+        y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
+        target_y = int(CANVAS_H * y_frac)
+        start_y = -200            # 200 px above the top edge of the 1920 canvas
         x = CANVAS_W // 2
         dialogue_text = (
             f"{{\\an5\\move({x},{start_y},{x},{target_y},0,500){outline_tag}}}{text}"
