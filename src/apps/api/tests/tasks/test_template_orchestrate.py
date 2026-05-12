@@ -1261,6 +1261,42 @@ class TestOrchestrateTemplateJobErrors:
         assert mock_job.failure_reason == "gemini_analysis_failed"
         assert "hook_text" in mock_job.error_detail
 
+    def test_reframe_error_classifies_as_ffmpeg_failed(self):
+        """A ReframeError reaching the outer handler must be classified as
+        ffmpeg_failed, NOT unknown. Empirically observed on 2026-05-12 with
+        job 2795fa69 — a photo-converted mp4 with primaries=unknown crashed
+        FFmpeg's colorspace filter (rc=234 / EINVAL) and the resulting
+        ReframeError fell through `except Exception`, showing on the user's
+        job page as `failure_reason=unknown` with no actionable signal.
+        """
+        from app.pipeline.reframe import ReframeError
+        from app.tasks.template_orchestrate import orchestrate_template_job
+
+        mock_job = MagicMock()
+        mock_job.status = "queued"
+        mock_job.error_detail = None
+        mock_job.failure_reason = None
+
+        def _mock_ctx():
+            ctx = MagicMock()
+            ctx.__enter__ = MagicMock(return_value=_mock_session)
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        _mock_session = MagicMock()
+        _mock_session.get.return_value = mock_job
+
+        with patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx), \
+             patch("app.tasks.template_orchestrate._run_template_job") as mock_run:
+            mock_run.side_effect = ReframeError(
+                "FFmpeg failed (rc=234): Unsupported input primaries 2 (unknown)",
+            )
+            orchestrate_template_job("12345678-1234-5678-1234-567812345678")
+
+        assert mock_job.status == "processing_failed"
+        assert mock_job.failure_reason == "ffmpeg_failed"
+        assert "rc=234" in mock_job.error_detail
+
 
 # ── Beat detection tests ─────────────────────────────────────────────────────
 

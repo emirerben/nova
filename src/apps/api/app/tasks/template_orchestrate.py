@@ -51,6 +51,7 @@ from app.pipeline.agents.gemini_analyzer import (
     analyze_template,
     gemini_upload_and_wait,
 )
+from app.pipeline.reframe import ReframeError
 from app.pipeline.template_matcher import (
     TemplateMismatchError,
     consolidate_slots,
@@ -447,6 +448,15 @@ def orchestrate_template_job(self, job_id: str) -> None:
             FAILURE_REASON_USER_CLIP_UNUSABLE,
             f"{exc.code}: {exc.message}",
         )
+    except ReframeError as exc:
+        # FFmpeg failure during slot reframe / encode. Without this clause it
+        # falls into the generic `except Exception` below and gets the useless
+        # FAILURE_REASON_UNKNOWN label — observed in prod on job 2795fa69 where
+        # a photo-converted mp4 with primaries=unknown crashed the colorspace
+        # filter (rc=234 / EINVAL). Surface as FFMPEG_FAILED so on-call sees
+        # the real failure class.
+        log.error("template_job_reframe_failed", job_id=job_id, error=str(exc))
+        _mark_failed(job_uuid, FAILURE_REASON_FFMPEG_FAILED, str(exc))
     except Exception as exc:
         log.exception("template_job_fatal", job_id=job_id, error=str(exc))
         _mark_failed(job_uuid, FAILURE_REASON_UNKNOWN, str(exc))
