@@ -178,7 +178,7 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.video.clip_metadata",
         prompt_id="analyze_clip",
-        prompt_version="2026-05-13",
+        prompt_version="2026-05-14",
         model="gemini-2.5-flash",
         # Gemini pricing as of 2026 — input ~$0.075/M, output ~$0.30/M (2.5 Flash).
         cost_per_1k_input_usd=0.000075,

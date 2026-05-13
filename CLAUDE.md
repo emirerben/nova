@@ -2,6 +2,24 @@
 
 Nova transforms raw real-life videos into viral short-form content (TikTok, Reels, Shorts).
 
+## Session workflow: isolate in a worktree
+
+**Before starting non-trivial work, create a git worktree.** The main checkout (`/Users/emirerben/Projects/nova`) is shared across sessions and uncommitted edits collide. Symptoms seen in the wild: stray `.venv` deletions, duplicate migration files, mixed `git status` spanning unrelated branches.
+
+```bash
+# From repo root, branch off main into a sibling checkout
+git fetch origin main
+git worktree add -b feat/<topic>-$(date +%Y-%m-%d) ../nova-<topic> origin/main
+cd ../nova-<topic>
+```
+
+Rules:
+- Run all edits, tests, and commits from the worktree path — never from `/Users/emirerben/Projects/nova` directly.
+- One worktree per logical change. Don't reuse a worktree for an unrelated feature.
+- When done, `git worktree remove ../nova-<topic>` after the PR merges. List active worktrees with `git worktree list`.
+- `.claude/worktrees/agent-*` are auto-managed by the Agent tool (`isolation: "worktree"`) — leave those alone.
+- Skip the worktree only for read-only investigation or single-line config tweaks confined to one file.
+
 ## Stack
 - Frontend: Next.js (src/apps/web/) — TypeScript, React
 - Backend: Python FastAPI + Celery (src/apps/api/) — video processing pipeline

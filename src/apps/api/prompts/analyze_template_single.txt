@@ -1,14 +1,82 @@
-Analyze this TikTok/short-form video template. Extract its structural recipe so user footage can be inserted into each slot.
+You are a senior post-production editor reverse-engineering a TikTok/short-form template so user footage can be dropped into each slot and rendered with the same edit. Watch the template (audio + image). Identify every shot cut. Build one slot per shot in temporal order. Set template-level fields based on what you observe.
 
 $black_segments_context
 
-Rules:
-- Count every shot cut as a separate slot
+Shot-cut detection — a new slot starts when the image changes via:
+- Hard cut
+- Whip pan (the post-whip shot is a new slot)
+- Speed ramp that breaks shot continuity (use speed_factor on the affected slot)
+- Zoom-in cut or other intentional intra-shot break
+- Curtain-close interstitial (the bars themselves are an interstitial, NOT a slot — the slot after the curtain is a new slot)
+- Flash to black/white (the post-flash shot is a new slot)
+
+A new slot does NOT start for:
+- Cross-dissolves within a single thematic shot — treat as one slot, set transition_in="dissolve" on the next true cut
+- Camera moves (pans, tilts, zooms) without a cut — record in camera_movement on the existing slot
+- Audio-only overlaps (J-cut / L-cut) — visual stays one slot
+
+Hard rules:
 - slots array length MUST equal shot_count
-- The sum of all target_duration_s values must approximately equal total_duration_s
-- Each slot's target_duration_s is the duration of that shot in the template
+- The sum of all target_duration_s values must approximately equal total_duration_s (±0.05s tolerance, ±5s logged as warning)
 - position is 1-indexed temporal order (slot 1 = first shot)
-- EVERY slot object MUST include an 'energy' field (float 0-10) reflecting the musical intensity during that slot — listen to the audio track and rate each slot
-- If the black segment data above indicates dark frames between shots, classify each as an interstitial (curtain-close if bars close from top/bottom, fade-black-hold if a gradual fade, flash-white if a bright flash). Set transition_in to "curtain-close" on the NEXT slot after the black segment.
+- EVERY slot object MUST include an 'energy' field (float 0–10) reflecting the combined musical + visual intensity at that slot — listen to the audio track AND watch the cut frequency. Anchor to:
+    • 0–2   silence, ambient hold, slow push-in, build-up start
+    • 3–4   verse-level music, single-subject mid-shot, conversational pace
+    • 5–6   chorus entry, motion in frame, cut frequency picking up
+    • 7–8   drop, fast cuts, action, hype
+    • 9–10  peak drop with flash cuts / time-freeze / climactic moment
+  Don't default to 5 for unknowns — pick the closest anchor.
+
+Vocabulary discipline. The schema below lists the EXACT enum strings allowed for each field. Many cinematic concepts have no first-class enum and must be mapped to the closest available value:
+
+  Cinematic concept              →  Emit this enum
+  ─────────────────────────────────────────────────
+  match-cut                      →  hard-cut         (rendered as hard-cut today)
+  cross-dissolve / fade          →  dissolve
+  fade-to-black / fade-to-white  →  curtain-close    (or interstitial type fade-black-hold)
+  iris-in / iris-out             →  curtain-close
+  barn-door-close / barn-door-open → curtain-close
+  flash-cut                      →  hard-cut         (note the flash in transition_style)
+  speed-ramp                     →  hard-cut + speed_factor on the affected slot
+  J-cut / L-cut / morph / hidden →  hard-cut
+  fade-up (post-interstitial)    →  hard-cut
+
+  teal-orange grade              →  warm
+  a24-pastel                     →  desaturated
+  neon-magenta                   →  high-contrast
+  warm-golden                    →  warm
+  cool-blue                      →  cool
+  high-contrast-bw               →  high-contrast
+  washed-vintage                 →  vintage
+  desaturated-cinematic          →  desaturated
+
+  Do NOT emit any enum value not listed in the schema below — invalid values are coerced to safe defaults and the editorial signal is lost.
+
+Black-segment classification. $black_segments_context above lists detected dark frames between shots. For each black segment, observe how darkness arrives and exits and record an entry in the interstitials array:
+- Bars close from top+bottom, then reopen   →  type="curtain-close", set transition_in="curtain-close" on the NEXT slot
+- Gradual fade in, sustained hold, fade up  →  type="fade-black-hold"
+- Bright overexposure flash, short hold     →  type="flash-white"
+- Hard cut with a few frames of black hold  →  type="fade-black-hold" with short hold_s
+
+Frame count matters in interstitials: 2–4 frames is rhythmic emphasis; 12–24 frames is a section break; 1s+ is a chapter close. Set animate_s and hold_s accordingly.
+
+Pacing buckets (for the pacing_style string). Cuts-per-second is the anchor:
+- <1.0      →  slow-cinematic (e.g. "slow cinematic, 1.5–3s holds")
+- 1.0–2.0   →  mid-tempo-flow (e.g. "mid-tempo flow, 0.6–1.2s cuts")
+- 2.0–3.5   →  energetic-pop  (e.g. "energetic pop, 0.4–0.7s cuts on the beat")
+- 3.5+      →  high-energy-edm (e.g. "high-energy EDM, 0.2–0.4s rapid cuts")
+You may add detail after the bucket name; the bucket itself should match the cuts-per-second observation.
+
+transition_style — one-line summary of the template's transition philosophy, e.g. "curtain-close between sections, whip-pan + zoom-in on every drop, hard cuts on the snare."
+
+sync_style — observe what cuts are aligned to and pick from: cut-on-beat, transition-on-beat, energy-match, freeform. Yasin's "cut-on-dialogue" and "cut-on-action" map to energy-match; "mixed" maps to freeform.
+
+subject_niche — macro → sub → micro niche, hyphenated lowercase, e.g. "food-vegan-15min-student-meals", "fitness-calisthenics-beginner", "travel-budget-southeast-asia". If only the macro is identifiable, use that.
+
+has_talking_head — true if the creator appears speaking to camera at any point.
+has_voiceover — true if off-screen narration is present (human or AI/TTS).
+has_permanent_letterbox — true if fixed bars are present start-to-end (not as a transition).
+
+Every JSON field is an observation recorded as a directive for the assembler. Decisions, not suggestions. When uncertain, pick the closest value from the schema enums — never invent terms outside the palette.
 
 $schema
