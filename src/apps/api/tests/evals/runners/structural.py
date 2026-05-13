@@ -20,8 +20,10 @@ from app.agents.clip_metadata import (
     ClipMetadataInput,
     ClipMetadataOutput,
 )
+from app.agents.clip_router import ClipRouterInput, ClipRouterOutput
 from app.agents.creative_direction import CreativeDirectionOutput
 from app.agents.platform_copy import PlatformCopyOutput
+from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
 from app.agents.template_recipe import (
     _VALID_COLOR_HINTS,
     _VALID_INTERSTITIAL_TYPES,
@@ -478,6 +480,155 @@ def check_audio_template(output: AudioTemplateOutput) -> list[str]:
     return failures
 
 
+# ── clip_router ──────────────────────────────────────────────────────────────
+
+
+# Lines shorter than this in a rationale almost always indicate boilerplate
+# ("good fit", "best clip"). The 10-char floor catches the trivial cases
+# without flagging legitimate terse rationales like "hook_score 9 wins".
+_RATIONALE_MIN_CHARS = 10
+_BOILERPLATE_RATIONALES = {
+    "best clip",
+    "best fit",
+    "good fit",
+    "good match",
+    "matches well",
+    "best choice",
+    "looks good",
+    "fits well",
+}
+
+
+def check_clip_router(output: ClipRouterOutput, input: ClipRouterInput) -> list[str]:  # noqa: A002
+    """Structural floor for slot assignment.
+
+    `parse()` already enforces that every slot has exactly one assignment and
+    that every referenced `candidate_id` is in the input. We check the two
+    things parse can't catch:
+
+      - **Duplicate candidate usage.** Same candidate assigned to multiple
+        slots — silently allowed by the parser today, but it defeats the
+        variety constraint. Catch here so the eval fails loudly.
+      - **Boilerplate rationales.** "best fit" / "good match" / empty is a
+        signal that the model is autopiloting through the assignment without
+        reasoning about it. Forces the rubric's `rationale_quality` dimension
+        to have a structural floor to stand on.
+    """
+    failures: list[str] = []
+
+    valid_slots = {s.position for s in input.slots}
+    valid_ids = {c.id for c in input.candidates}
+
+    assigned_slots = {a.slot_position for a in output.assignments}
+    if assigned_slots != valid_slots:
+        missing = sorted(valid_slots - assigned_slots)
+        extra = sorted(assigned_slots - valid_slots)
+        if missing:
+            failures.append(f"missing assignments for slots {missing}")
+        if extra:
+            failures.append(f"assignments reference unknown slots {extra}")
+
+    used_ids: list[str] = []
+    for a in output.assignments:
+        if a.candidate_id not in valid_ids:
+            failures.append(
+                f"slot {a.slot_position}: candidate_id {a.candidate_id!r} not in candidate set"
+            )
+            continue
+        used_ids.append(a.candidate_id)
+
+    duplicates = {cid for cid in used_ids if used_ids.count(cid) > 1}
+    if duplicates:
+        failures.append(
+            f"candidate(s) {sorted(duplicates)} assigned to multiple slots "
+            "(variety constraint violated)"
+        )
+
+    for a in output.assignments:
+        r = (a.rationale or "").strip().lower()
+        if not r:
+            failures.append(f"slot {a.slot_position}: rationale is empty")
+            continue
+        if len(r) < _RATIONALE_MIN_CHARS:
+            failures.append(
+                f"slot {a.slot_position}: rationale {r!r} is too short "
+                f"(<{_RATIONALE_MIN_CHARS} chars — likely boilerplate)"
+            )
+            continue
+        if r in _BOILERPLATE_RATIONALES:
+            failures.append(
+                f"slot {a.slot_position}: rationale {r!r} is boilerplate (needs concrete reason)"
+            )
+
+    return failures
+
+
+# ── shot_ranker ──────────────────────────────────────────────────────────────
+
+
+def check_shot_ranker(output: ShotRankerOutput, input: ShotRankerInput) -> list[str]:  # noqa: A002
+    """Structural floor for top-K moment ranking.
+
+    `parse()` re-numbers ranks 1..N and drops hallucinated IDs. We add:
+
+      - **No duplicate ranks** — parse re-numbers post-hoc, but the model
+        emitting duplicates is a signal the prompt isn't anchoring rank
+        semantics. Catch the raw output's intent before it gets normalized.
+        (parse() sorts and renumbers — by the time we see `output.ranked`
+        ranks ARE 1..N, but we can still check for missing IDs and short
+        rationales.)
+      - **No duplicate IDs.** Same moment ranked twice — silently passable
+        through parse, but breaks the "top-K distinct moments" contract.
+      - **Ranks dense from 1.** No gaps. After parse() this should always
+        hold; the assertion canaries any future parse() change.
+      - **Boilerplate rationales** — same logic as clip_router.
+      - **target_count adherence** — the agent SHOULD return exactly
+        target_count entries (or fewer if it judged the candidate pool weak).
+        Returning MORE than target_count is a contract violation.
+    """
+    failures: list[str] = []
+
+    valid_ids = {c.id for c in input.candidates}
+
+    if len(output.ranked) > input.target_count:
+        failures.append(
+            f"ranked has {len(output.ranked)} entries > target_count={input.target_count}"
+        )
+
+    seen_ids: list[str] = []
+    for m in output.ranked:
+        if m.id not in valid_ids:
+            failures.append(f"rank {m.rank}: id {m.id!r} not in candidate set")
+            continue
+        seen_ids.append(m.id)
+
+    duplicates = {mid for mid in seen_ids if seen_ids.count(mid) > 1}
+    if duplicates:
+        failures.append(f"id(s) {sorted(duplicates)} ranked more than once")
+
+    ranks = [m.rank for m in output.ranked]
+    if ranks and sorted(ranks) != list(range(1, len(ranks) + 1)):
+        failures.append(f"ranks not dense from 1: got {sorted(ranks)}")
+
+    for m in output.ranked:
+        r = (m.rationale or "").strip().lower()
+        if not r:
+            failures.append(f"rank {m.rank}: rationale is empty")
+            continue
+        if len(r) < _RATIONALE_MIN_CHARS:
+            failures.append(
+                f"rank {m.rank}: rationale {r!r} is too short "
+                f"(<{_RATIONALE_MIN_CHARS} chars — likely boilerplate)"
+            )
+            continue
+        if r in _BOILERPLATE_RATIONALES:
+            failures.append(
+                f"rank {m.rank}: rationale {r!r} is boilerplate (needs concrete reason)"
+            )
+
+    return failures
+
+
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 
 
@@ -495,4 +646,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_platform_copy(output)
     if agent_name == "nova.audio.template_recipe":
         return check_audio_template(output)
+    if agent_name == "nova.video.clip_router":
+        return check_clip_router(output, input)
+    if agent_name == "nova.video.shot_ranker":
+        return check_shot_ranker(output, input)
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

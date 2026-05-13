@@ -1,0 +1,27 @@
+{
+  "agent": "nova.video.shot_ranker",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "candidates": [
+      {"id": "p1", "start_s": 0.0, "end_s": 2.5, "energy": 9.5, "description": "subject screams and pumps fist after winning race", "hook_score": 9.0},
+      {"id": "p2", "start_s": 5.0, "end_s": 7.5, "energy": 7.0, "description": "subject closes laptop slowly and exhales", "hook_score": 7.5},
+      {"id": "p3", "start_s": 10.0, "end_s": 12.5, "energy": 8.5, "description": "subject jumps over starting block at race start", "hook_score": 8.0},
+      {"id": "p4", "start_s": 15.0, "end_s": 17.5, "energy": 4.0, "description": "subject sits at desk reviewing notes by lamp light", "hook_score": 6.5}
+    ],
+    "target_count": 3,
+    "copy_tone": "calm",
+    "creative_direction": "introspective study-vlog; focus on quiet preparation moments"
+  },
+  "raw_text": "{\"ranked\": [{\"id\": \"p2\", \"rank\": 1, \"rationale\": \"hook_score 7.5 with composed action (closes, exhales); copy_tone=calm + creative_direction=introspective demands a quiet hook over the higher-hook race screams\"}, {\"id\": \"p4\", \"rank\": 2, \"rationale\": \"hook_score 6.5; description (sits at desk reviewing notes) is the strongest fit for the study-vlog brief; energy 4.0 honors the calm tone\"}, {\"id\": \"p3\", \"rank\": 3, \"rationale\": \"hook_score 8.0 with action verb (jumps); included as the one energetic beat the brief allows, ranked below the calm picks because copy_tone=calm rules out chaos peaks at rank 1\"}]}",
+  "output": {
+    "ranked": [
+      {"id": "p2", "rank": 1, "rationale": "hook_score 7.5 with composed action (closes, exhales); copy_tone=calm + creative_direction=introspective demands a quiet hook over the higher-hook race screams"},
+      {"id": "p4", "rank": 2, "rationale": "hook_score 6.5; description (sits at desk reviewing notes) is the strongest fit for the study-vlog brief; energy 4.0 honors the calm tone"},
+      {"id": "p3", "rank": 3, "rationale": "hook_score 8.0 with action verb (jumps); included as the one energetic beat the brief allows, ranked below the calm picks because copy_tone=calm rules out chaos peaks at rank 1"}
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "Thematic fit overrides raw hook_score. p1 (hook 9.0, energy 9.5, race-scream) is the highest-scoring candidate by hook_score but is correctly DROPPED — its 'screams, pumps fist' description contradicts copy_tone=calm + creative_direction=introspective study-vlog. This is the dimension a 'best hook_score wins' heuristic gets wrong; the eval exists to catch that miss."
+  }
+}

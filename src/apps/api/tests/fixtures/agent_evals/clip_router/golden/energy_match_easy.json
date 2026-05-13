@@ -1,0 +1,27 @@
+{
+  "agent": "nova.video.clip_router",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "slots": [
+      {"position": 1, "target_duration_s": 3.0, "slot_type": "hook", "energy": 6.0},
+      {"position": 2, "target_duration_s": 3.0, "slot_type": "content", "energy": 6.0}
+    ],
+    "candidates": [
+      {"id": "a", "duration_s": 4.0, "energy": 6.0, "hook_score": 7.5, "description": "subject reacts to text message with raised eyebrow"},
+      {"id": "b", "duration_s": 4.0, "energy": 6.2, "hook_score": 5.0, "description": "subject types reply on phone screen"}
+    ],
+    "copy_tone": "casual",
+    "creative_direction": "phone-reaction skit"
+  },
+  "raw_text": "{\"assignments\": [{\"slot_position\": 1, \"candidate_id\": \"a\", \"rationale\": \"hook_score 7.5 wins over 5.0 for the hook slot; energy 6.0 matches slot target 6.0 exactly\"}, {\"slot_position\": 2, \"candidate_id\": \"b\", \"rationale\": \"only remaining candidate; energy 6.2 within \\u00b11.5 of target 6.0; description (types reply) is the natural follow-on to the reaction in slot 1\"}]}",
+  "output": {
+    "assignments": [
+      {"slot_position": 1, "candidate_id": "a", "rationale": "hook_score 7.5 wins over 5.0 for the hook slot; energy 6.0 matches slot target 6.0 exactly"},
+      {"slot_position": 2, "candidate_id": "b", "rationale": "only remaining candidate; energy 6.2 within ±1.5 of target 6.0; description (types reply) is the natural follow-on to the reaction in slot 1"}
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "Minimum-viable assignment: 2 slots, 2 candidates, exactly one valid permutation. Tests the rank-1 rule (hook_score 7.5 vs 5.0) on the simplest possible input. Used to canary the dispatch + structural-check path with the least surface area."
+  }
+}

@@ -308,21 +308,11 @@ These TODOs were filed when the first wave of Yasin's prompt rewrites shipped (`
 **Effort:** M (human: ~1d / CC: ~1h)
 **Priority:** P2
 
-### Eval scaffolding for `clip_router` (gates its prompt rewrite)
-**What:** Add `tests/evals/test_clip_router_evals.py` + `tests/evals/rubrics/clip_router.md` + 3–5 hand-authored or prod-snapshot fixtures. Rubric dimensions: slot-type fit, energy match, sequence variety, duration fit. Then re-open the Yasin-style prompt rewrite for `app/agents/clip_router.py` (deferred per /plan-eng-review D2 on 2026-05-14 — editorial-ordering changes need automated regression coverage before they ship).
-**Why:** `clip_router` decides which candidate clip fills each slot. Wrong assignments are invisible to "looks sane" eyeballing — a swap between two roughly-similar candidates can quietly degrade the whole narrative. No automated check exists today.
-**How:** Mirror the `clip_metadata` eval pattern. Fixtures should include the slots block + candidates block + expected assignment, captured from a real prod template run. Yasin's drafted prompt is preserved in the plan file at `~/.claude/plans/let-s-improve-the-prompts-rosy-floyd.md`.
-**Effort:** S (human: ~4h / CC: ~30 min)
-**Priority:** P2
-**Depends on:** none
+### ~~Eval scaffolding for `clip_router`~~ — RESOLVED in v0.4.10.0
+**Resolved:** `tests/evals/test_clip_router_evals.py` + `tests/evals/rubrics/clip_router.md` + 3 hand-authored golden fixtures shipped. Rubric dimensions: slot_type_fit, energy_match, sequence_variety, rationale_quality. Yasin-style prompt rewrite (`prompt_version=2026-05-15`) shipped in the same PR. Live-eval baseline will be established when an operator runs the suite with `--with-judge --eval-mode=live --allow-cost` from an environment with creds.
 
-### Eval scaffolding for `shot_ranker` (gates its prompt rewrite)
-**What:** Add `tests/evals/test_shot_ranker_evals.py` + `tests/evals/rubrics/shot_ranker.md` + 3–5 fixtures. Rubric dimensions: rank-1 hook strength, set variety (description + energy), description quality (concrete actions over vague labels). Then ship Yasin's prompt rewrite for `app/agents/shot_ranker.py`.
-**Why:** `shot_ranker` decides which N moments make the highlight reel. Rank-1 is the hook; getting it wrong wastes the swipe. Same deferral logic as `clip_router`.
-**How:** Same pattern as above. Yasin's drafted prompt is preserved in the plan file.
-**Effort:** S (human: ~4h / CC: ~30 min)
-**Priority:** P2
-**Depends on:** none
+### ~~Eval scaffolding for `shot_ranker`~~ — RESOLVED in v0.4.10.0
+**Resolved:** `tests/evals/test_shot_ranker_evals.py` + `tests/evals/rubrics/shot_ranker.md` + 3 hand-authored golden fixtures shipped. Rubric dimensions: rank_1_hook_strength, set_variety, description_quality, thematic_fit. Yasin-style prompt rewrite (`prompt_version=2026-05-15`) shipped in the same PR. Live-eval baseline will be established when an operator runs the suite with `--with-judge --eval-mode=live --allow-cost` from an environment with creds.
 
 ### Retroactive eval scaffolding for `text_designer`
 **What:** Add `tests/evals/test_text_designer_evals.py` + `tests/evals/rubrics/text_designer.md` + fixtures. Rubric dimensions: hierarchy fit (subject/prefix/other), slot-position awareness (slot 1 = signature treatment, mid-slots lighter), timing accuracy, tone-typography alignment.

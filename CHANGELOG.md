@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.10.0] - 2026-05-13
+
+### Changed
+- **Reworked `clip_router` and `shot_ranker` prompts in Yasin-style calibration-anchored format.** Both agents now have explicit decision-priority tables, anchored vocabulary (hook_score 9-10 = instant curiosity, 7-8 = strong, 5-6 = middle, 3-4 = weak, <3 = drop), a slot-type → candidate-profile mapping table (hook → highest hook_score, punchline → highest energy peak, broll → mid energy + visual variety, reaction → emotional beat, face → talking-head framing, content → narrative support), camera-movement / scene-noun variety rules, and an enforced rationale format that names the dimension that decided each pick. Boilerplate rationales ("best fit", "good match") are explicitly rejected. `prompt_version` bumped from `2026-05-09` → `2026-05-15` on both agents.
+
+### Added
+- **Eval scaffolding for `clip_router` and `shot_ranker`** — the two agents that were deferred from PR #121 because their editorial-ordering impact needs regression coverage before drift can ship safely. Same four-file pattern as the existing eval suites:
+  - `tests/evals/test_clip_router_evals.py` + `tests/evals/rubrics/clip_router.md` — 4 dimensions (slot_type_fit, energy_match, sequence_variety, rationale_quality), threshold ≥3.5.
+  - `tests/evals/test_shot_ranker_evals.py` + `tests/evals/rubrics/shot_ranker.md` — 4 dimensions (rank_1_hook_strength, set_variety, description_quality, thematic_fit), threshold ≥3.5.
+  - `tests/evals/runners/structural.py::check_clip_router` and `check_shot_ranker` — structural floors that catch what `parse()` lets through: duplicate-candidate assignment (variety violation), duplicate IDs in ranked output, boilerplate rationales, missing/extra slot assignments, ranks not dense from 1, target_count overrun.
+  - 6 hand-authored golden fixtures total. clip_router: `hook_alternation` (hook→broll→punchline alternation), `broll_variety` (5-slot scene-noun variety stress test), `energy_match_easy` (2-slot minimum-viable canary). shot_ranker: `hook_first` (rank-1 calibration table direct hit), `variety_check` (near-duplicate handling — same description, same hook_score, must pick one), `thematic_pull` (creative_direction overrides raw hook_score — the highest hook_score candidate is dropped because tone=calm + introspective brief contradicts a scream-pump-fist clip).
+- `_build_agent_class_for` dispatch and conftest preflight expanded to register both new agents.
+
+### Deferred
+- `prompt_version=2026-05-15` baselines on both agents will be established when an operator runs `pytest tests/evals/test_clip_router_evals.py tests/evals/test_shot_ranker_evals.py --with-judge --eval-mode=live --allow-cost` from an environment with GCS creds + `GEMINI_API_KEY` + `ANTHROPIC_API_KEY`. The replay-mode evals (no API call) already pass 6/6 on the new fixtures.
+
 ## [0.4.9.0] - 2026-05-13
 
 ### Fixed
