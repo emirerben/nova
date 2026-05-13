@@ -62,6 +62,11 @@ FINAL_OUTPUT_REQUIRED: set[tuple[str, str]] = {
     ("app/tasks/template_orchestrate.py", "_concat_demuxer"),
     ("app/tasks/template_orchestrate.py", "_pre_burn_curtain_slot_text"),
     ("app/tasks/template_orchestrate.py", "_burn_text_overlays"),
+    # Single-pass collapses the three template_orchestrate sites above into
+    # ONE final encode. Both code paths coexist behind
+    # settings.single_pass_encode_enabled; the multi-pass entries stay live
+    # until the env default flips in a follow-up PR.
+    ("app/pipeline/single_pass.py", "build_single_pass_command"),
 }
 
 # libx264 presets ordered from fastest to slowest. Anything at or stricter
@@ -82,6 +87,7 @@ PRESETS_FAST_OR_STRICTER: set[str] = {
 FILES_TO_AUDIT: list[str] = [
     "app/pipeline/reframe.py",
     "app/tasks/template_orchestrate.py",
+    "app/pipeline/single_pass.py",
 ]
 
 
