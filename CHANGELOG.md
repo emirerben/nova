@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.8.0] - 2026-05-13
+
+### Changed
+- **Reworked the prompts for four Big-3 agents using Yasin's drafts.** `nova.video.clip_metadata`, `nova.compose.template_recipe`, `nova.layout.text_designer`, and `nova.layout.transition_picker` get longer, structured prompts with calibration anchor tables (hook scores 0–10, energy levels 0–10, transition energy-deltas), a shared hook-type vocabulary (Visual / Verbal / Outcome / Gap / Contrast), explicit decision principles, and "decisions, not suggestions" voice. `prompt_version` bumped to `2026-05-14` on all four agents.
+- **`clip_metadata` prompt fuses the new structure with the existing 5 HARD RULES verbatim.** Yasin's draft dropped the span ≥60% / no-overlap-clusters / ≥1s duration / energy variation ≥2.0 / no-generic-labels constraints that were added in v0.4.7.0 to fight the clustered-moments bug. Those rules are preserved exactly; Yasin's hook taxonomy, anchor tables, niche action vocabulary, and "Omit > pad" framing wrap them.
+- **`template_recipe` prompts (`analyze_template_single.txt` + `analyze_template_pass2.txt`) carry an explicit Yasin → code-accepted vocabulary reconciliation table.** Yasin's drafts referenced 16 transitions, 8 compound color grades, and aspirational slot types that the code's Pydantic `Literal` types reject. The new prompts list every cinematic concept Yasin mentioned alongside the actual enum to emit (`match-cut → hard-cut`, `barn-door-close → curtain-close`, `teal-orange → warm`, `a24-pastel → desaturated`, etc.) so Gemini cannot drift into invalid output even when reasoning about richer concepts.
+- **`text_designer` inline prompt grows from ~1.2KB to ~5KB** with hierarchy-by-placeholder-kind, slot-position awareness (slot 1 = signature hook, mid-slots lighter, final returns to bolder), tone → typography mapping for both current schema tones (`casual, formal, energetic, calm`) and aspirational tones (`chill-lofi, dramatic-cinematic, …`), explicit `start_s` timing rules, and three signature calibration patterns. Agent still runs in shadow mode against `_LABEL_CONFIG` with `max_attempts=1` so cost is bounded.
+- **`transition_picker` inline prompt restructured around editor's grammar.** Rule 0 (default fidelity wins when the pair fits), energy-delta as the primary signal (0–1.5 continuation → hard-cut; 1.5–3 step → zoom-in; 3–5 major shift → curtain-close; 5+ chapter break), camera-movement compatibility rules, pacing-style modulation, and a duration envelope table. Vocabulary still strictly limited to the 6 transitions the renderer accepts.
+
+### Deferred
+- `clip_router` and `shot_ranker` prompt rewrites deliberately deferred. Editorial-ordering changes need eval scaffolding before they ship — TODOS.md captures the new evals as P2 gates. Yasin's drafts for both agents are preserved in the plan file at `~/.claude/plans/let-s-improve-the-prompts-rosy-floyd.md`.
+
+### Known issue
+- **Live-eval gate blocked on test fixture URI format.** CLAUDE.md mandates `pytest tests/evals/<agent>_evals.py --with-judge --eval-mode=live` before merging any prompt change, but every fixture's `file_uri` is a bucket-relative path (`templates/<uuid>/reference.mp4`, `clips/<id>.mp4`) and the current Studio Gemini key cannot resolve those. All 17 fixtures fail with `400 INVALID_ARGUMENT: Unsupported file URI type` in <8s — $0 spent, prompts never reach the model. Replay-mode evals (no API call) still pass 17/17. Three possible fixes filed as P1 TODO: backfill fixtures with Files API IDs, switch eval auth to Vertex service account, or auto-upload bucket paths inside `media_uri()` at call time.
+
 ## [0.4.7.0] - 2026-05-13
 
 ### Fixed

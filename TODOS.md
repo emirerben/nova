@@ -293,6 +293,76 @@ Full write-up in `src/apps/api/OBSERVABILITY.md` under "What the first prod quer
 
 ---
 
+## Yasin's prompt rewrite — follow-ups (added 2026-05-14)
+
+These TODOs were filed when the first wave of Yasin's prompt rewrites shipped (`clip_metadata`, `template_recipe`, `text_designer`, `transition_picker`, all prompt_version="2026-05-14"). `clip_router` and `shot_ranker` were deliberately deferred — see the first two items below.
+
+### Live-eval gate broken on fixture file-URI format (P1)
+**What:** CLAUDE.md mandates `pytest tests/evals/<agent>_evals.py --with-judge --eval-mode=live` before merging any prompt change. But every fixture under `src/apps/api/tests/fixtures/agent_evals/*/` stores `file_uri` as a bucket-relative path (`templates/<uuid>/reference.mp4`, `clips/<id>.mp4`). The Studio `GEMINI_API_KEY` cannot resolve those — Gemini's File API needs either a Files API ID (`files/<id>`), a `gs://bucket/path` URI (requires Vertex AI service-account auth, not a Studio key), or an HTTPS URL. All 17 fixtures 400 in <8s with `Unsupported file URI type` and never reach the model. Surfaced during v0.4.8.0 ship — that PR was merged with replay-mode evals only ($0 spent on the gate, prompts never actually validated against Gemini in live mode).
+**Why:** Every prompt change after v0.4.8.0 is now shipping blind against the model — the structural eval suite catches parse errors but cannot detect semantic regression in the prompts. CLAUDE.md's iron rule is being silently bypassed.
+**How:** Three approaches, pick one:
+  1. **Backfill fixtures with current Files API IDs.** Download each fixture video from GCS (needs `gcloud auth application-default login`), upload to Gemini Files API, update each fixture's `file_uri` to `files/<id>`. Files API IDs only live 48hr — fragile, would need a CI job to refresh. Smallest blast radius, most maintenance.
+  2. **Switch eval auth to Vertex AI service account.** Use `GOOGLE_SERVICE_ACCOUNT_JSON` from Fly secrets locally, reconfigure `ModelDispatcher` to use Vertex auth when `gs://` URIs are present, prepend `gs://nova-videos-dev/` to all fixture paths. Permanent fix, also makes the dev env match prod auth. Medium blast radius.
+  3. **Auto-upload bucket paths inside `media_uri()` at call time.** When `media_uri()` returns a bucket-relative path, agent runtime uploads to Files API and substitutes the ID. Cleanest long-term — same path works in tests and prod. Largest blast radius, touches the agent base class.
+**Effort:** Option 1: ~3h (human) / ~30min (CC). Option 2: ~1d (human) / ~1h (CC). Option 3: ~2d (human) / ~1.5h (CC).
+**Priority:** P1 — every prompt PR after v0.4.8.0 ships blind against the model until this is fixed.
+**Depends on:** none — pure infra work.
+
+### Eval scaffolding for `clip_router` (gates its prompt rewrite)
+**What:** Add `tests/evals/test_clip_router_evals.py` + `tests/evals/rubrics/clip_router.md` + 3–5 hand-authored or prod-snapshot fixtures. Rubric dimensions: slot-type fit, energy match, sequence variety, duration fit. Then re-open the Yasin-style prompt rewrite for `app/agents/clip_router.py` (deferred per /plan-eng-review D2 on 2026-05-14 — editorial-ordering changes need automated regression coverage before they ship).
+**Why:** `clip_router` decides which candidate clip fills each slot. Wrong assignments are invisible to "looks sane" eyeballing — a swap between two roughly-similar candidates can quietly degrade the whole narrative. No automated check exists today.
+**How:** Mirror the `clip_metadata` eval pattern. Fixtures should include the slots block + candidates block + expected assignment, captured from a real prod template run. Yasin's drafted prompt is preserved in the plan file at `~/.claude/plans/let-s-improve-the-prompts-rosy-floyd.md`.
+**Effort:** S (human: ~4h / CC: ~30 min)
+**Priority:** P2
+**Depends on:** none
+
+### Eval scaffolding for `shot_ranker` (gates its prompt rewrite)
+**What:** Add `tests/evals/test_shot_ranker_evals.py` + `tests/evals/rubrics/shot_ranker.md` + 3–5 fixtures. Rubric dimensions: rank-1 hook strength, set variety (description + energy), description quality (concrete actions over vague labels). Then ship Yasin's prompt rewrite for `app/agents/shot_ranker.py`.
+**Why:** `shot_ranker` decides which N moments make the highlight reel. Rank-1 is the hook; getting it wrong wastes the swipe. Same deferral logic as `clip_router`.
+**How:** Same pattern as above. Yasin's drafted prompt is preserved in the plan file.
+**Effort:** S (human: ~4h / CC: ~30 min)
+**Priority:** P2
+**Depends on:** none
+
+### Retroactive eval scaffolding for `text_designer`
+**What:** Add `tests/evals/test_text_designer_evals.py` + `tests/evals/rubrics/text_designer.md` + fixtures. Rubric dimensions: hierarchy fit (subject/prefix/other), slot-position awareness (slot 1 = signature treatment, mid-slots lighter), timing accuracy, tone-typography alignment.
+**Why:** Yasin's prompt rewrite shipped on 2026-05-14 without eval coverage (agent is still shadow-mode against `_LABEL_CONFIG`, so blast radius is low). The current shadow-divergence logging catches gross regressions but won't catch quality drift.
+**How:** Capture 5–10 shadow-mode prod runs as fixtures. The legacy `label_config_shadow()` output is the conservative baseline.
+**Effort:** S (human: ~3h / CC: ~20 min)
+**Priority:** P3
+
+### Retroactive eval scaffolding for `transition_picker`
+**What:** Add `tests/evals/test_transition_picker_evals.py` + `tests/evals/rubrics/transition_picker.md` + fixtures. Rubric dimensions: default fidelity (Rule 0), camera-movement compatibility, pacing-style modulation, duration envelope.
+**Why:** Same as `text_designer` — Yasin's prompt rewrite shipped without automated regression coverage. The 6-transition enum is strict (Pydantic Literal), so structural failures are caught, but pick *quality* isn't.
+**How:** Capture 10+ adjacent-clip pairs from prod template runs with the picker's actual output as the baseline.
+**Effort:** S (human: ~3h / CC: ~20 min)
+**Priority:** P3
+
+### Renderer support for `match-cut` as a distinct transition
+**What:** Promote `match-cut` from a "collapse to hard-cut" mapping (today's behavior) to a first-class transition in `app/pipeline/transitions.py`. Update `_VALID_TRANSITION_TYPES` and `_VALID_TRANSITIONS` to include it, add FFmpeg motion-vector continuity hinting (`xfade` with appropriate easing), update the prompts' vocabulary-reconciliation tables to remove the collapse.
+**Why:** Yasin's prompts identify match-cuts as a meaningful editorial signal (action continuity from shot A to shot B). Today we lose that distinction at the prompt boundary — the schema can't represent it. Real impact: templates with deliberate match-cut grammar render as generic hard-cuts.
+**How:** Decide the FFmpeg approach first — `xfade=fadeblack` is too soft, motion-aware blending might need OpenCV. Then visual eval on 3–5 templates known to have match-cuts (TBD which fixtures).
+**Effort:** M (human: ~2d / CC: ~1h)
+**Priority:** P3
+**Depends on:** clear FFmpeg approach for motion-continuity transitions
+
+### Renderer support for `barn-door-open` as a distinct animation
+**What:** Add `barn-door-open` as a first-class interstitial type in `app/pipeline/interstitials.py` and `_VALID_INTERSTITIAL_TYPES`. Today every "bars opening" moment collapses to `curtain-close` (same animation, played in reverse where applicable). A distinct enum lets the prompt and recipe carry the directionality.
+**Why:** Smallest of the three renderer expansions — `curtain-close` already uses `geq` pixel animation; reversing the direction is a parameter flip.
+**How:** Add the reverse-direction code path to `_render_curtain_close()` (or split into `_render_curtain_open()`). Update the prompt vocabulary tables.
+**Effort:** S (human: ~6h / CC: ~30 min)
+**Priority:** P3
+
+### Promote `speed-ramp` to a first-class transition
+**What:** Today `speed_factor` is a per-slot field and `speed-ramp` collapses to `hard-cut + speed_factor` in the prompt vocabulary. A first-class `speed-ramp` transition would carry the *direction* of the ramp (slow-to-fast vs fast-to-slow) and the cut point, which `speed_factor` alone can't.
+**Why:** Speed-ramp is a signature TikTok editing move and one of the biggest editorial losses from the current vocabulary collapse.
+**How:** This is part of "Speed Ramp FFmpeg Implementation" already listed elsewhere in this file — see the existing TODO. The renderer work and the transition-enum work should land together to avoid having a schema field that nothing reads.
+**Effort:** Bundled with the existing "Speed Ramp FFmpeg Implementation" TODO
+**Priority:** P3
+**Depends on:** Speed Ramp FFmpeg Implementation (existing TODO above)
+
+---
+
 ## Vercel Frontend Deploy (added 2026-04-06)
 
 All items completed 2026-04-06:
