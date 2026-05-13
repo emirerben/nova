@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.11.0] - 2026-05-13
+
+### Added
+- **Retroactive eval scaffolding for `text_designer` and `transition_picker`** — closes the regression-coverage gap left when Yasin's prompt rewrites for these two agents shipped in PR #121 (`prompt_version=2026-05-14`) without eval suites. No prompt changes here; the first live eval run will establish the v0.4.8.0 baseline retroactively.
+  - `tests/evals/test_text_designer_evals.py` + `tests/evals/rubrics/text_designer.md` — 4 dimensions (hierarchy_fit, slot_position_awareness, timing_accuracy, tone_typography_alignment), threshold ≥3.5. 4 hand-authored golden fixtures pinning the prompt's documented calibration patterns: `subject_first_slot` (signature hook treatment — xxlarge/sans/gold/font-cycle/accel_at_s 8s), `prefix_label_routing` (quiet lead-in — small/serif/white/no-effect), `mid_slot_subject` (one-size-band drop with family consistency), `casual_tone_match` (tone-only mapping with no creative direction override).
+  - `tests/evals/test_transition_picker_evals.py` + `tests/evals/rubrics/transition_picker.md` — 4 dimensions (default_fidelity, camera_movement_compatibility, pacing_style_modulation, duration_envelope), threshold ≥3.5. 4 hand-authored golden fixtures: `default_hard_cut` (Rule 0 direct hit), `whip_pan_match` (override when both clips share lateral camera movement), `calm_dissolve` (slow-cinematic pacing pulls dissolve to long end of envelope), `energy_chapter_break` (energy delta 6.5 forces curtain-close override of hard-cut default).
+  - `tests/evals/runners/structural.py::check_text_designer` — catches intent-level drift coercion hides: hierarchy inversion (subject coming back at 'small', or prefix at 'xxlarge'), `accel_at_s` set with a non-font-cycle effect, slot-1 subject with font-cycle but no accel_at_s, and `start_s` past 15s (likely confused with absolute clip time).
+  - `tests/evals/runners/structural.py::check_transition_picker` — duration outside the canonical envelope for the picked transition (hard-cut/none = 0.0; whip-pan ∈ [0.20, 0.40]; zoom-in ∈ [0.30, 0.50]; dissolve ∈ [0.40, 0.80]; curtain-close ∈ [0.60, 1.00], ±0.15s tolerance), boilerplate rationales, and the explicit prompt-forbidden case of whip-pan between two static cameras.
+  - `_build_agent_class_for` dispatch + conftest preflight expanded for both agents.
+
+### Fixed
+- **`transition_picker.parse()` silently coerced `duration_s=0.0` to `0.3`.** The expression `float(...) or 0.3` treats Python's falsy 0.0 as missing, so every hard-cut / none transition output (canonically 0.0 per the prompt's duration envelope) was overridden to 0.3 after parse. The bug shipped in v0.4.8.0 with the rest of the picker rewrite; the new `default_hard_cut` golden fixture and `check_transition_picker` duration-envelope check caught it on the first run of the new eval. Fix: explicit `None` check before float coercion.
+
 ## [0.4.10.0] - 2026-05-13
 
 ### Changed
