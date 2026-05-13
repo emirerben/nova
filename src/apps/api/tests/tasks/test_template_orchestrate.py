@@ -1686,6 +1686,40 @@ class TestAssembleClipsTextOverlays:
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert result == []
 
+    def test_cycle_fonts_pass_through_to_renderer(self):
+        """REGRESSION: recipe-level `cycle_fonts` MUST reach the renderer
+        entry dict. Earlier the orchestrator's hand-rolled entry builder
+        didn't copy cycle_fonts, so _resolve_cycle_fonts fell back to the
+        global cycle_role=contrast pool, producing a sans/serif/script
+        flicker that overlay authors specifically opted out of. The Waka
+        Waka AFRICA overlay relies on this pass-through to render its
+        brush-only [Permanent Marker, Caveat Brush] cycle."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=[{
+            "role": "label",
+            "start_s": 0.0,
+            "end_s": 2.4,
+            "position": "center",
+            "effect": "font-cycle",
+            "sample_text": "AFRICA",
+            "font_family": "Permanent Marker",
+            "cycle_fonts": ["Permanent Marker", "Caveat Brush"],
+            "subject_substitute": False,
+            "text_color": "#FFD700",
+            "text_size_px": 250,
+        }])
+        result = _collect_absolute_overlays([step], [2.4], None, "Morocco")
+        assert len(result) == 1
+        entry = result[0]
+        # The cycle_fonts list must survive the orchestrator's field-copy
+        # logic and arrive at the renderer's entry dict intact.
+        assert entry.get("cycle_fonts") == ["Permanent Marker", "Caveat Brush"]
+        # font_family also propagates (separate but related bug class).
+        assert entry.get("font_family") == "Permanent Marker"
+        # Text doesn't get rewritten to "Morocco" because subject_substitute=False.
+        assert entry["text"] == "AFRICA"
+
     def test_curtain_close_slots_skipped_in_collect(self):
         """Curtain-close slot overlays are pre-burned, so skipped in _collect."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays

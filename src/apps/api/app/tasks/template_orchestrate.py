@@ -2375,6 +2375,14 @@ def _collect_absolute_overlays(
             # Pass through font_family from admin recipe (overrides font_style)
             if ov.get("font_family"):
                 entry["font_family"] = ov["font_family"]
+            # Pass through cycle_fonts so per-overlay curated font-cycle lists
+            # (e.g. Waka Waka AFRICA's brush-only [Permanent Marker, Caveat
+            # Brush]) reach _resolve_cycle_fonts. Without this, the renderer's
+            # overlay.get("cycle_fonts") returns None and the cycle falls back
+            # to the global cycle_role=contrast pool, producing a sans/serif/
+            # script flicker the overlay author specifically opted out of.
+            if ov.get("cycle_fonts"):
+                entry["cycle_fonts"] = ov["cycle_fonts"]
             # Pass through spans for rich inline formatting
             if ov.get("spans"):
                 entry["spans"] = ov["spans"]
@@ -2637,6 +2645,15 @@ def _pre_burn_curtain_slot_text(
             # `font_cycle_rendered accelerated=False` despite recipe setting it.
             "font_cycle_accel_at_s": ov.get("font_cycle_accel_at_s"),
         }
+        # Pass through font_family + cycle_fonts so per-overlay curated font
+        # selection reaches the renderer. (Both fields are in _STYLING_KEYS
+        # below so the label-config update doesn't overwrite them — but they
+        # also need to be COPIED here first, since the literal entry dict
+        # above doesn't include them.)
+        if ov.get("font_family"):
+            entry["font_family"] = ov["font_family"]
+        if ov.get("cycle_fonts"):
+            entry["cycle_fonts"] = ov["cycle_fonts"]
 
         role = ov.get("role", "")
         sample_text = ov.get("sample_text", "")

@@ -505,7 +505,15 @@ def _render_single_overlay_at_time(
         pixel_size = overlay.get("text_size_px") or _FONT_SIZE_MAP.get(text_size, 72)
         font_family = overlay.get("font_family")
         settle_name = font_family or "_default"
-        cycle_fonts = _resolve_cycle_fonts(pixel_size, settle_font_name=settle_name)
+        custom_cycle = overlay.get("cycle_fonts")
+        cycle_fonts = _resolve_cycle_fonts(
+            pixel_size,
+            settle_font_name=settle_name,
+            custom_fonts=custom_cycle,
+        )
+        # A 2-font curated cycle (settle + one custom entry) still has just
+        # 2 entries — that's intentional. The <2 guard catches degraded
+        # registry state (e.g. all fonts failed to load), not curated lists.
         if len(cycle_fonts) < 2:
             return _render_static_overlay_layer(overlay, text, position, png_path)
         accel_at = overlay.get("font_cycle_accel_at_s")
@@ -1099,9 +1107,15 @@ def _render_font_cycle(
     y_override = overlay.get("position_y_frac")
     x_override = overlay.get("position_x_frac")
 
-    # Resolve available cycle fonts at the requested size, keyed by settle font
+    # Resolve available cycle fonts at the requested size, keyed by settle
+    # font and any per-overlay custom font list.
     settle_name = font_family or "_default"
-    cycle_fonts = _resolve_cycle_fonts(pixel_size, settle_font_name=settle_name)
+    custom_cycle = overlay.get("cycle_fonts")
+    cycle_fonts = _resolve_cycle_fonts(
+        pixel_size,
+        settle_font_name=settle_name,
+        custom_fonts=custom_cycle,
+    )
     if len(cycle_fonts) < 2:
         # Not enough fonts for cycling -- fall back to static
         log.warning("font_cycle_insufficient_fonts", count=len(cycle_fonts))
@@ -1713,8 +1727,11 @@ def _draw_spans_png(
     img.save(png_path, "PNG")
 
 
-# Cache key is (size, settle_font_name) to avoid cross-overlay pollution
-_cycle_fonts_cache: dict[tuple[int, str], list] = {}
+# Cache key is (size, settle_font_name, custom_fonts_key) to avoid
+# cross-overlay pollution. custom_fonts_key is a tuple of font names (or
+# None) so two overlays with different curated cycle lists don't share
+# entries.
+_cycle_fonts_cache: dict[tuple, list] = {}
 
 
 def _reset_cycle_cache() -> None:
@@ -1726,6 +1743,7 @@ def _reset_cycle_cache() -> None:
 def _resolve_cycle_fonts(
     size: int = OVERLAY_FONT_SIZE,
     settle_font_name: str = "_default",
+    custom_fonts: list[str] | None = None,
 ) -> list:
     """Resolve available fonts for cycling at the given pixel size.
 
@@ -1733,13 +1751,21 @@ def _resolve_cycle_fonts(
     - "_default" -> Playfair Display Bold (classic behavior)
     - Any other value -> looked up in the registry by font_family name
 
-    Remaining fonts are all registry fonts with cycle_role="contrast".
+    If `custom_fonts` is provided, the cycle uses ONLY those font names
+    (looked up in the registry) — the global cycle_role="contrast" set is
+    bypassed entirely. This lets a single overlay opt into a tight cycle
+    (e.g. Waka Waka AFRICA wants Montserrat-only) without affecting other
+    templates that rely on the default cross-category cycle.
 
-    Cached per (size, settle_font_name) so different overlays with different
-    font_family get different cycle font lists.
+    If `custom_fonts` is None, the cycle is settle + every registry font
+    with cycle_role="contrast" (the existing Dimples Passport behavior).
+
+    Cached per (size, settle_font_name, custom_fonts tuple) so different
+    overlays get the right cycle list.
     """
     global _cycle_fonts_cache
-    cache_key = (size, settle_font_name)
+    custom_key = tuple(custom_fonts) if custom_fonts else None
+    cache_key = (size, settle_font_name, custom_key)
     if cache_key in _cycle_fonts_cache:
         return _cycle_fonts_cache[cache_key]
 
@@ -1755,8 +1781,10 @@ def _resolve_cycle_fonts(
         settle = _load_font(OVERLAY_FONT_PATH, size)
         fonts.append(settle)
 
-    # Remaining: contrast fonts from registry (with proper weight axis)
-    for name in _CYCLE_CONTRAST_NAMES:
+    # Cycle bodies: either the curated per-overlay list or the global
+    # cycle_role=contrast set from the registry.
+    cycle_names = custom_fonts if custom_fonts else _CYCLE_CONTRAST_NAMES
+    for name in cycle_names:
         font = _resolve_font_family(name, size)
         if font:
             fonts.append(font)
@@ -1765,5 +1793,11 @@ def _resolve_cycle_fonts(
             fonts.append(_load_font(MONTSERRAT_FONT_PATH, size))
 
     _cycle_fonts_cache[cache_key] = fonts
-    log.info("font_cycle_fonts_resolved", count=len(fonts), size=size, settle=settle_font_name)
+    log.info(
+        "font_cycle_fonts_resolved",
+        count=len(fonts),
+        size=size,
+        settle=settle_font_name,
+        custom=custom_key,
+    )
     return fonts

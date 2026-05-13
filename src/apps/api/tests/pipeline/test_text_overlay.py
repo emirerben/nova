@@ -920,6 +920,63 @@ class TestFontCycleTextSize:
         _reset_cycle_cache()  # clean up
 
 
+class TestResolveCycleFontsCustom:
+    """Per-overlay cycle_fonts opt-in. Lets a single overlay (e.g. Waka
+    Waka AFRICA) define a curated cycle without affecting the global
+    cycle_role=contrast set every other template inherits."""
+
+    def test_custom_fonts_none_uses_global_contrast_set(self):
+        """Default behavior unchanged: passing custom_fonts=None resolves
+        to the full registry contrast set."""
+        _reset_cycle_cache()
+        default = _resolve_cycle_fonts(120, custom_fonts=None)
+        # Should include settle + every contrast font (count > 2 expected).
+        assert len(default) >= 3, (
+            f"default cycle should pull all contrast fonts; got {len(default)}"
+        )
+
+    def test_custom_fonts_single_returns_settle_plus_one(self):
+        """custom_fonts=['Permanent Marker'] yields exactly [settle, PM] — the
+        single-font cycle the AFRICA overlay uses for ink-flicker."""
+        _reset_cycle_cache()
+        fonts = _resolve_cycle_fonts(
+            120,
+            settle_font_name="Permanent Marker",
+            custom_fonts=["Permanent Marker"],
+        )
+        # settle + 1 custom = 2 entries (same family rendered twice).
+        assert len(fonts) == 2, f"expected 2 entries, got {len(fonts)}"
+
+    def test_custom_fonts_multiple_returns_settle_plus_all(self):
+        """custom_fonts=['Outfit', 'DM Sans'] yields exactly [settle, Outfit,
+        DM Sans] — three entries, registry contrast set bypassed."""
+        _reset_cycle_cache()
+        fonts = _resolve_cycle_fonts(
+            120,
+            settle_font_name="Outfit",
+            custom_fonts=["Outfit", "DM Sans"],
+        )
+        assert len(fonts) == 3, f"expected 3 entries, got {len(fonts)}"
+
+    def test_custom_fonts_cache_independent_from_default(self):
+        """Two calls at the same (size, settle) but different custom_fonts
+        must NOT collide in the cache. Otherwise an overlay's curated list
+        would be shadowed by another overlay's default-list lookup."""
+        _reset_cycle_cache()
+        default = _resolve_cycle_fonts(96, settle_font_name="Permanent Marker")
+        custom = _resolve_cycle_fonts(
+            96,
+            settle_font_name="Permanent Marker",
+            custom_fonts=["Permanent Marker"],
+        )
+        # Default pulls all contrast fonts; custom pulls just one. Lengths
+        # must differ — the cache must not hand the same list to both.
+        assert len(default) != len(custom), (
+            f"cache leak: default={len(default)} == custom={len(custom)}"
+        )
+        _reset_cycle_cache()
+
+
 # -- font_family resolution ---------------------------------------------------
 
 
