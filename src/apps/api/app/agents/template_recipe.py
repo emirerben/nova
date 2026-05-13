@@ -34,15 +34,30 @@ log = structlog.get_logger()
 
 _VALID_OVERLAY_ROLES = {"hook", "reaction", "cta", "label"}
 _VALID_OVERLAY_EFFECTS = {
-    "pop-in", "fade-in", "scale-up", "none",
-    "font-cycle", "typewriter", "glitch", "bounce", "slide-in",
-    "slide-up", "static",
+    "pop-in",
+    "fade-in",
+    "scale-up",
+    "none",
+    "font-cycle",
+    "typewriter",
+    "glitch",
+    "bounce",
+    "slide-in",
+    "slide-up",
+    "static",
 }
 _VALID_OVERLAY_POSITIONS = {"center", "top", "bottom"}
 _VALID_OVERLAY_FONT_SIZES = {"small", "medium", "large", "jumbo"}
 _VALID_CAMERA_MOVEMENTS = {
-    "static", "pan-left", "pan-right", "tilt-up", "tilt-down",
-    "zoom-in", "zoom-out", "handheld", "tracking",
+    "static",
+    "pan-left",
+    "pan-right",
+    "tilt-up",
+    "tilt-down",
+    "zoom-in",
+    "zoom-out",
+    "handheld",
+    "tracking",
 }
 _VALID_TRANSITION_TYPES = {"hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none"}
 _VALID_COLOR_HINTS = {"warm", "cool", "high-contrast", "desaturated", "vintage", "none"}
@@ -64,7 +79,7 @@ class TemplateRecipeInput(BaseModel):
     file_uri: str
     file_mime: str = "video/mp4"
     analysis_mode: str = "single"  # "single" | "two_pass_part2"
-    creative_direction: str = ""   # populated by caller in two-pass mode
+    creative_direction: str = ""  # populated by caller in two-pass mode
     black_segments: list[BlackSegment] = Field(default_factory=list)
 
 
@@ -101,7 +116,7 @@ class TemplateRecipeAgent(Agent[TemplateRecipeInput, TemplateRecipeOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.template_recipe",
         prompt_id="analyze_template_single",  # selected dynamically in render_prompt
-        prompt_version="2026-05-09",
+        prompt_version="2026-05-14",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -144,10 +159,7 @@ class TemplateRecipeAgent(Agent[TemplateRecipeInput, TemplateRecipeOutput]):
         lines = ["Black segments detected by frame analysis:"]
         has_classified = False
         for seg in segments:
-            line = (
-                f"  - {seg.start_s:.2f}s to {seg.end_s:.2f}s "
-                f"(duration: {seg.duration_s:.2f}s)"
-            )
+            line = f"  - {seg.start_s:.2f}s to {seg.end_s:.2f}s (duration: {seg.duration_s:.2f}s)"
             if seg.likely_type == "curtain-close":
                 line += " — CURTAIN-CLOSE detected (black bars closing from top/bottom)"
                 has_classified = True
@@ -170,9 +182,7 @@ class TemplateRecipeAgent(Agent[TemplateRecipeInput, TemplateRecipeOutput]):
 
     # ── Parse ─────────────────────────────────────────────────────
 
-    def parse(
-        self, raw_text: str, input: TemplateRecipeInput
-    ) -> TemplateRecipeOutput:  # noqa: A002
+    def parse(self, raw_text: str, input: TemplateRecipeInput) -> TemplateRecipeOutput:  # noqa: A002
         try:
             data = json.loads(raw_text)
         except (ValueError, TypeError) as exc:
@@ -219,9 +229,7 @@ class TemplateRecipeAgent(Agent[TemplateRecipeInput, TemplateRecipeOutput]):
 
         # ── Beats ────────────────────────────────────────────────
         try:
-            beat_timestamps_s = sorted(
-                float(t) for t in (data.get("beat_timestamps_s", []) or [])
-            )
+            beat_timestamps_s = sorted(float(t) for t in (data.get("beat_timestamps_s", []) or []))
         except (TypeError, ValueError):
             beat_timestamps_s = []
 
@@ -324,9 +332,7 @@ def _validate_slots(slots: list[dict[str, Any]], global_color_grade: str) -> Non
                 log.warning("template_overlay_outside_slot", start_s=start, slot_dur=slot_dur)
                 continue
             ov["effect"] = (
-                ov.get("effect", "none")
-                if ov.get("effect") in _VALID_OVERLAY_EFFECTS
-                else "none"
+                ov.get("effect", "none") if ov.get("effect") in _VALID_OVERLAY_EFFECTS else "none"
             )
             ov["position"] = (
                 ov.get("position", "center")
