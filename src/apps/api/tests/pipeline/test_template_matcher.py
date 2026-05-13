@@ -469,6 +469,60 @@ class TestNoReuseWhenSupplySufficient:
         clip_ids_used = sorted(s.clip_id for s in plan.steps)
         assert clip_ids_used == ["clip_a", "clip_b"]
 
+    def test_pinned_clip_with_mismatched_unpinned_durations(self):
+        """Production-realistic combo: hook-pinned slot + supply >= demand +
+        duration mismatch on the unpinned clips. Templates like Just Fine
+        auto-pin clip 0 to slot 1 in template_orchestrate.py:678. If the
+        other uploaded clips have moments outside the duration tolerance,
+        the relaxed_unused branch must STILL exclude the pinned clip (via
+        greedy_metas filter at template_matcher.py:667) and fill the
+        remaining slots from the four unpinned-but-mismatched clips
+        without reusing the pinned one.
+
+        Pre-fix this scenario reused clip_0 (the pinned hook) across
+        slots 2-5 because it was the only clip whose moment fit ±6s,
+        and the unpinned clips' moments got rejected by the duration
+        filter before they could be considered.
+        """
+        recipe = _make_recipe([
+            _slot(1, 4.0, priority=10, slot_type="hook"),
+            _slot(2, 5.0, priority=8, slot_type="broll"),
+            _slot(3, 5.0, priority=7, slot_type="broll"),
+            _slot(4, 5.0, priority=6, slot_type="broll"),
+            _slot(5, 5.0, priority=5, slot_type="outro"),
+        ])
+        # clip_0 (pinned to slot 1): has a 4s moment that fits slot 1
+        # and would also fit slots 2-5 if unpinned. The other four clips
+        # have 15s moments — outside the ±6s tolerance for the 5s slots.
+        clips = [
+            _make_clip("clip_0", [_moment(0.0, 4.0, energy=9.0)]),
+            _make_clip("clip_a", [_moment(0.0, 15.0, energy=7.0)]),
+            _make_clip("clip_b", [_moment(0.0, 15.0, energy=7.0)]),
+            _make_clip("clip_c", [_moment(0.0, 15.0, energy=7.0)]),
+            _make_clip("clip_d", [_moment(0.0, 15.0, energy=7.0)]),
+        ]
+
+        plan = match(recipe, clips, pinned_assignments={1: "clip_0"})
+
+        # Pinned clip stayed in slot 1
+        slot_1 = next(s for s in plan.steps if s.slot["position"] == 1)
+        assert slot_1.clip_id == "clip_0"
+
+        # Slots 2-5 each used a different unpinned clip, no reuse
+        other_slot_clip_ids = sorted(
+            s.clip_id for s in plan.steps if s.slot["position"] != 1
+        )
+        assert other_slot_clip_ids == ["clip_a", "clip_b", "clip_c", "clip_d"], (
+            f"Pinned clip_0 leaked into a non-pinned slot OR the unpinned "
+            f"clips were not all used. Got: {other_slot_clip_ids}"
+        )
+
+        # And clip_0 only appears once total
+        all_clip_ids = [s.clip_id for s in plan.steps]
+        assert all_clip_ids.count("clip_0") == 1, (
+            f"Pinned clip_0 used more than once: {all_clip_ids}"
+        )
+
 
 # ── Locked hook slot regression (Waka Waka / Morocco) ────────────────────────
 
