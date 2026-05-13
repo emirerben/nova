@@ -253,6 +253,46 @@
 
 ---
 
+## clip_metadata: best_moments clustered at clip start (added 2026-05-13)
+
+**What:** `nova.video.clip_metadata` (gemini-2.5-flash) returns 3 best_moments compressed into <0.5 seconds with near-identical energies (range 0.5-1.0) on a meaningful fraction of prod clips.
+**Why:** Surfaced by the first run of `pytest tests/evals/test_clip_metadata_evals.py --with-judge` on 5 prod snapshots pulled from the Redis clip_analysis cache — judge avg 2.5/5 vs 3.5 threshold. 3 of 5 fixtures exhibit the pattern (clip_2c750692, clip_04022f9e, clip_1fd09d23). The matcher downstream effectively has one moment to choose from, defeating the point of best_moments.
+**How:** Likely cause is Gemini interpreting `start_s`/`end_s` in some normalized unit when given a short segment, or a prompt that doesn't enforce timestamp spread. Investigate the `analyze_clip` prompt template — add an explicit instruction to spread moments across the clip duration and require non-trivial energy variation. Bump `prompt_version` in `ClipMetadataAgent.spec` and re-run live eval.
+**Evidence:** `src/apps/api/tests/fixtures/agent_evals/clip_metadata/prod_snapshots/clip_2c750692.json` — all 3 moments span 0.0-0.10s.
+**Effort:** S (human: ~3hr / CC: ~30 min — prompt iteration + re-run live eval against the same 5 fixtures)
+**Priority:** P1 — affects every job
+**Depends on:** none
+
+---
+
+## ~~Langfuse: only 2 of 6 prod agents are tracing~~ — RESOLVED 2026-05-13 (caching, by design)
+
+**Resolution:** Not a tracing bug. All four "missing" agents do go through `Agent.run()` via the shims in `app/pipeline/agents/gemini_analyzer.py` and would trace correctly *if* they were invoked per-job. They aren't: their outputs are persisted to `VideoTemplate.recipe_cached` / `MusicTrack.recipe_cached` at admin upload time, and every prod job reads the cached row from Postgres (`template_orchestrate.py:478-481`, `music_orchestrate.py:286,561`). `TranscriptAgent` is only called from the legacy 3-clip pipeline (`app/tasks/orchestrate.py:97`), which isn't on the template-mode hot path. Only `clip_metadata` and `platform_copy` have per-job inputs, so they invoke `Agent.run()` on every job — matching the observed 12 + 6 / 10 sessions ratio.
+
+Full write-up in `src/apps/api/OBSERVABILITY.md` under "What the first prod query revealed".
+
+**Optional follow-up (P3):** emit a lightweight Langfuse `client.event(name="template_recipe_cache_hit", ...)` from `_run_template_job` and `_run_music_job` so per-job dashboards show which cached recipe each job used (cost/latency visibility for the cached path). Not needed for correctness — the cached recipe is already in Postgres and the prior `agent_run` trace from admin upload time is still queryable in Langfuse.
+
+**Original report below for context.**
+
+**What:** Querying Langfuse for `source:prod` traces over 24h returns only `clip_metadata` and `platform_copy` — the other 4 prod-wired agents (`template_recipe`, `creative_direction`, `transcript`, `audio_template`) are missing entirely. 18 traces, 10 distinct job sessions, 0 traces from the missing 4 agents.
+**Why:** Surfaced via SDK query `client.api.trace.list(tags=["source:prod"], from_timestamp=now-24h)` after Lane A verification on 2026-05-13.
+**Effort (was):** S (human: ~2hr / CC: ~30min)
+**Priority (was):** P1 — downgraded after root-cause analysis showed expected behavior.
+
+---
+
+## Langfuse: online judge (Loop B) is not scoring any prod traces (added 2026-05-13)
+
+**What:** With `NOVA_ONLINE_EVAL_SAMPLE_RATE=0.05` confirmed set on Fly and 18 source:prod traces over 24h, zero traces have `judge_*` scores attached. Statistically should be ~1 judged trace per 24h at current volume.
+**Why:** Surfaced alongside the agent-missing finding above. Loop A scores ARE attaching correctly (verified on the 5 eval traces). So the trace + score_trace machinery works — the gap is specifically in the worker-side dispatch.
+**How:** Check three suspects: (1) `ANTHROPIC_API_KEY` may not be reachable on the worker process group on Fly even though `fly secrets` shows it deployed — secrets propagate per process. `fly ssh console --process-group worker -C printenv ANTHROPIC_API_KEY`. (2) Rubric files must be present in the worker container — verify `tests/evals/rubrics/*.md` is included in the Dockerfile COPY. The Dockerfile copies `app/`, `assets/`, `prompts/`, `alembic.ini` per CLAUDE.md — `tests/` is NOT copied. **This is likely the root cause** — the worker can't find the rubric file because the entire `tests/` directory is excluded from the prod image. (3) Confirm `score_trace_async` is registered as a Celery task and a worker is consuming it.
+**Effort:** S (human: ~1hr / CC: ~30min — likely a 2-line Dockerfile change plus verification)
+**Priority:** P1 — Loop B is what makes online observability actually useful; right now it's posting traces but not scoring them
+**Depends on:** none
+
+---
+
 ## Vercel Frontend Deploy (added 2026-04-06)
 
 All items completed 2026-04-06:

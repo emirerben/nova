@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.7.0] - 2026-05-13
+
+### Fixed
+- **Loop B online judging is now live in prod.** The worker container was missing `tests/evals/rubrics/*.md` because the prod Dockerfile copied `app/`, `assets/`, `prompts/`, `scripts/`, and `alembic.ini` but not `tests/`. `_online_eval.py` resolves the rubric path via `Path(__file__).parent.parent.parent / "tests" / "evals" / "rubrics"`, so the gate `_rubric_path_for(agent_name).exists()` silently returned False on every dice-roll. With `LANGFUSE_*` keys + `ANTHROPIC_API_KEY` + `NOVA_ONLINE_EVAL_SAMPLE_RATE=0.05` already deployed on Fly, this Dockerfile change is the missing piece: ~15 judge calls/day, ~$5/month, scored traces appearing in Langfuse within minutes of deploy.
+- **`clip_metadata` agent no longer returns moments compressed into the first 0.5 seconds with identical energies.** Five captured prod fixtures showed `best_moments` clustered at clip start (e.g. all three moments inside a 0.0–0.10s window at energy 7.0), defeating the downstream matcher. The `analyze_clip.txt` prompt now enforces five hard rules with concrete thresholds — moments must span ≥60% of the analyzed segment, adjacent starts must differ by ≥2.0s, each window must be ≥1.0s long, energy range across moments must be ≥2.0, and "moment 1/2/3" labels are forbidden — plus a self-check instruction before emitting JSON. `prompt_version` bumped from `2026-05-09` → `2026-05-13`.
+
+### Added
+- `tests/fixtures/agent_evals/clip_metadata/` — 5 prod_snapshots captured from the Redis `clip_analysis` cache (the canonical regression archive for the clustered-moments bug, scoring 2.5/5 against the rubric) plus 2 hand-authored golden fixtures demonstrating compliant output (scoring 4.50/5 and 4.75/5). Replay-mode eval has positive controls for the first time; the prod snapshots stay red until the new prompt rolls out and fresh fixtures get captured.
+- `scripts/export_clip_metadata_fixtures.py` — pulls clip_metadata outputs from the Redis cache and emits them as eval fixtures. Necessary because `best_moments` are not persisted in Postgres (only the chosen window per JobClip survives). Bucketed sampling by speech / moment density for diversity. Supports `--stdout-json` for piping out of `fly ssh console`.
+
+### Changed
+- `OBSERVABILITY.md` — added a "Verified loops" section documenting the exact env vars confirmed deployed on Fly (date-stamped), the SDK query that proves Loop A traces land in Langfuse with `source:eval` + `judge_*` scores per dimension, and the cross-loop findings surfaced by the activation work (only 2 of 6 prod agents currently appear in traces — caching is the answer, not a bug).
+- `TODOS.md` — three new P1 entries: (1) clip_metadata clustered-moments bug (now fixed by this PR, kept for traceability), (2) Langfuse trace gap on 4 of 6 prod agents (resolved as docs-only after investigation — caching by design), (3) Loop B worker rubric path (resolved by this PR).
+
 ## [0.4.6.0] - 2026-05-10
 
 ### Added
