@@ -95,6 +95,18 @@ class TestNormalize:
         with pytest.raises(ImageConversionError):
             _normalize_to_9x16(b"not an image")
 
+    def test_truncated_png_raises_clean_error(self):
+        """PIL decodes lazily — Image.open() succeeds on header alone, then
+        exif_transpose/resize raise OSError when they hit the truncated body.
+        Regression for the 'failed to fetch' bug where the OSError bubbled
+        past the route's ImageConversionError catch and produced a 500
+        without CORS headers."""
+        raw = _make_image_bytes(800, 800, "PNG")
+        # Keep the header (~50 bytes) but lose most of the IDAT chunk
+        truncated = raw[:80]
+        with pytest.raises(ImageConversionError):
+            _normalize_to_9x16(truncated)
+
 
 @pytest.mark.skipif(not _HAS_FFMPEG, reason="ffmpeg not installed")
 class TestEndToEnd:
