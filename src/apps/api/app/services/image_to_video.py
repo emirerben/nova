@@ -37,41 +37,48 @@ class ImageConversionError(Exception):
 
 
 def _normalize_to_9x16(raw: bytes) -> bytes:
-    """Decode, EXIF-correct, center-crop/pad to 1080x1920, return PNG bytes."""
+    """Decode, EXIF-correct, center-crop/pad to 1080x1920, return PNG bytes.
+
+    PIL decodes pixel data lazily — Image.open() only reads the header. The
+    actual decode happens later (in exif_transpose, resize, save), which is
+    where truncated or corrupt streams raise OSError. Wrap the whole pipeline
+    so any decode/encode failure surfaces as a clean ImageConversionError
+    (caught by the route as 422), not an uncaught 500.
+    """
     try:
         img = Image.open(io.BytesIO(raw))
-    except Exception as exc:
+
+        # Apply EXIF orientation (iPhones store rotation as a tag, not pixels)
+        img = ImageOps.exif_transpose(img)
+
+        # Convert to RGB (drops alpha; FFmpeg yuv420p needs no alpha anyway)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+
+        # Cover-fit to 9:16: scale so the shorter axis fills, then center-crop
+        src_w, src_h = img.size
+        target_ratio = TARGET_W / TARGET_H  # 0.5625
+        src_ratio = src_w / src_h
+        if src_ratio > target_ratio:
+            # Source wider than 9:16 — scale by height, crop sides
+            new_h = TARGET_H
+            new_w = round(src_w * (TARGET_H / src_h))
+        else:
+            # Source taller (or equal) than 9:16 — scale by width, crop top/bottom
+            new_w = TARGET_W
+            new_h = round(src_h * (TARGET_W / src_w))
+        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+        # Center crop
+        left = (new_w - TARGET_W) // 2
+        top = (new_h - TARGET_H) // 2
+        img = img.crop((left, top, left + TARGET_W, top + TARGET_H))
+
+        out = io.BytesIO()
+        img.save(out, format="PNG", optimize=False)
+        return out.getvalue()
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
         raise ImageConversionError(f"Could not decode image: {exc}") from exc
-
-    # Apply EXIF orientation (iPhones store rotation as a tag, not pixels)
-    img = ImageOps.exif_transpose(img)
-
-    # Convert to RGB (drops alpha; FFmpeg yuv420p needs no alpha anyway)
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-
-    # Cover-fit to 9:16: scale so the shorter axis fills, then center-crop
-    src_w, src_h = img.size
-    target_ratio = TARGET_W / TARGET_H  # 0.5625
-    src_ratio = src_w / src_h
-    if src_ratio > target_ratio:
-        # Source wider than 9:16 — scale by height, crop sides
-        new_h = TARGET_H
-        new_w = round(src_w * (TARGET_H / src_h))
-    else:
-        # Source taller (or equal) than 9:16 — scale by width, crop top/bottom
-        new_w = TARGET_W
-        new_h = round(src_h * (TARGET_W / src_w))
-    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-
-    # Center crop
-    left = (new_w - TARGET_W) // 2
-    top = (new_h - TARGET_H) // 2
-    img = img.crop((left, top, left + TARGET_W, top + TARGET_H))
-
-    out = io.BytesIO()
-    img.save(out, format="PNG", optimize=False)
-    return out.getvalue()
 
 
 def image_bytes_to_mp4(
