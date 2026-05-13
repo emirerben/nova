@@ -1,0 +1,28 @@
+{
+  "agent": "nova.layout.transition_picker",
+  "prompt_version": "2026-05-14",
+  "input": {
+    "outgoing": {
+      "description": "subject sits looking out window at rain",
+      "energy": 3.5,
+      "camera_movement": "static"
+    },
+    "incoming": {
+      "description": "wide drone shot of empty bay at dawn",
+      "energy": 5.2,
+      "camera_movement": "drone-rise"
+    },
+    "template_default": "dissolve",
+    "pacing_style": "slow-cinematic"
+  },
+  "raw_text": "{\"transition\": \"dissolve\", \"duration_s\": 0.7, \"rationale\": \"matched template default \\u2014 reflective pacing + 1.7 energy delta wants breathing room\"}",
+  "output": {
+    "transition": "dissolve",
+    "duration_s": 0.7,
+    "rationale": "matched template default — reflective pacing + 1.7 energy delta wants breathing room"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "Rule 0 + slow-cinematic pacing. Template default is dissolve; energy delta 1.7 is right at the edge of continuation/step; the pacing biases toward dissolve over hard-cut anyway. Duration 0.7s lands at the LONG end of dissolve's [0.40, 0.80] envelope — matches the slow-cinematic pacing rule (long durations). Tests default_fidelity, pacing_style_modulation, and duration_envelope (dissolve at 0.7s is inside range)."
+  }
+}

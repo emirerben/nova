@@ -1,0 +1,24 @@
+{
+  "agent": "nova.layout.text_designer",
+  "prompt_version": "2026-05-14",
+  "input": {
+    "slot_position": 2,
+    "slot_type": "broll",
+    "placeholder_kind": "other",
+    "copy_tone": "casual",
+    "creative_direction": ""
+  },
+  "raw_text": "{\"text_size\": \"medium\", \"font_style\": \"sans\", \"text_color\": \"#FFFFFF\", \"start_s\": 0.8, \"effect\": \"fade-in\", \"accel_at_s\": null}",
+  "output": {
+    "text_size": "medium",
+    "font_style": "sans",
+    "text_color": "#FFFFFF",
+    "start_s": 0.8,
+    "effect": "fade-in",
+    "accel_at_s": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "Tone → typography mapping for 'casual'. Tests tone_typography_alignment without a creative_direction override. casual maps to sans + gold/white + fade-in/pop-in per the prompt's table; this fixture picks the white+fade-in path. Also tests the 'other' placeholder kind — medium size (not large, not small), no font-cycle, accel_at_s null, start_s in the 0.5-1.5s envelope for an other-kind label."
+  }
+}

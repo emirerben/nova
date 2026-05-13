@@ -137,10 +137,18 @@ class TransitionPickerAgent(Agent[TransitionPickerInput, TransitionPickerOutput]
         if transition not in _VALID_TRANSITIONS:
             raise SchemaError(f"transition_picker: invalid transition {transition!r}")
 
-        try:
-            duration_s = float(data.get("duration_s", 0.3) or 0.3)
-        except (TypeError, ValueError):
+        # NB: do not use `... or 0.3` here — Python treats 0.0 as falsy, which
+        # would silently coerce hard-cut/none (canonically duration 0.0 per
+        # the prompt's duration envelope) to 0.3. Caught by
+        # tests/evals/test_transition_picker_evals.py::default_hard_cut.
+        raw_duration = data.get("duration_s", 0.3)
+        if raw_duration is None:
             duration_s = 0.3
+        else:
+            try:
+                duration_s = float(raw_duration)
+            except (TypeError, ValueError):
+                duration_s = 0.3
         duration_s = max(0.0, min(2.0, duration_s))
 
         return TransitionPickerOutput(

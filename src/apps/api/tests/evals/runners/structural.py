@@ -31,7 +31,23 @@ from app.agents.template_recipe import (
     _VALID_TRANSITION_TYPES,
     TemplateRecipeOutput,
 )
+from app.agents.text_designer import (
+    _VALID_EFFECTS as _TEXT_DESIGNER_VALID_EFFECTS,
+)
+from app.agents.text_designer import (
+    _VALID_FONT_STYLES,
+    _VALID_TEXT_SIZES,
+    TextDesignerInput,
+    TextDesignerOutput,
+)
 from app.agents.transcript import TranscriptOutput
+from app.agents.transition_picker import (
+    _VALID_TRANSITIONS as _PICKER_VALID_TRANSITIONS,
+)
+from app.agents.transition_picker import (
+    TransitionPickerInput,
+    TransitionPickerOutput,
+)
 from app.pipeline.agents.copy_writer import (
     INSTAGRAM_CAPTION_MAX,
     TIKTOK_CAPTION_MAX,
@@ -629,6 +645,192 @@ def check_shot_ranker(output: ShotRankerOutput, input: ShotRankerInput) -> list[
     return failures
 
 
+# ── text_designer ────────────────────────────────────────────────────────────
+
+
+# Text-size ordering used to assert hierarchy by placeholder kind. A `subject`
+# placeholder must never be 'small' or 'medium' (it's the visual anchor of the
+# slot — that's the agent's stated job). A `prefix` must never be 'xxlarge'
+# (prefix is the quiet lead-in to the subject — outranking the subject in size
+# inverts the read).
+_TEXT_SIZE_RANK = {size: i for i, size in enumerate(_VALID_TEXT_SIZES)}
+
+
+def check_text_designer(
+    output: TextDesignerOutput,
+    input: TextDesignerInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for per-slot typographic decisions.
+
+    `parse()` coerces invalid enum values to defaults, which means a structural
+    floor can't rely on "invalid value → fail". Instead we catch *intent-level*
+    drift that coercion hides:
+
+      - **Hierarchy inversion.** subject placeholder coming back at 'small' /
+        'medium', or prefix coming back at 'xxlarge'. Coercion can't repair
+        this — the model chose the wrong size band on purpose.
+      - **accel_at_s + effect mismatch.** accel_at_s is only meaningful when
+        effect == 'font-cycle' (renderer ignores it otherwise). Setting it
+        with another effect signals confused output.
+      - **start_s in the legal envelope.** A negative start_s would be coerced
+        to 0.0 by parse(); but a start_s past 10s on a 3s slot is silently
+        accepted. We can't see slot_duration from the agent's perspective, but
+        we can flag values that clearly imply a misread of the slot timing.
+      - **text_color shape.** parse() already coerces to '#FFFFFF' on a bad
+        hex; we re-assert so future parse() changes don't silently break the
+        contract.
+    """
+    failures: list[str] = []
+
+    if output.text_size not in _VALID_TEXT_SIZES:
+        failures.append(
+            f"text_size={output.text_size!r} not in {list(_VALID_TEXT_SIZES)} "
+            "(parse() should have coerced — canary for parser regression)"
+        )
+
+    if output.font_style not in _VALID_FONT_STYLES:
+        failures.append(f"font_style={output.font_style!r} not in {list(_VALID_FONT_STYLES)}")
+
+    if output.effect not in _TEXT_DESIGNER_VALID_EFFECTS:
+        failures.append(f"effect={output.effect!r} not in {list(_TEXT_DESIGNER_VALID_EFFECTS)}")
+
+    color = output.text_color or ""
+    if not (color.startswith("#") and len(color) in (4, 7)):
+        failures.append(f"text_color={color!r} not a valid hex code (#RGB or #RRGGBB)")
+
+    # Hierarchy by placeholder_kind.
+    if input.placeholder_kind == "subject":
+        rank = _TEXT_SIZE_RANK.get(output.text_size, -1)
+        if rank >= 0 and rank < _TEXT_SIZE_RANK["large"]:
+            failures.append(
+                f"subject placeholder got text_size={output.text_size!r} "
+                "(must be at least 'large' — subject is the visual anchor of the slot)"
+            )
+    elif input.placeholder_kind == "prefix":
+        rank = _TEXT_SIZE_RANK.get(output.text_size, -1)
+        if rank >= _TEXT_SIZE_RANK["large"]:
+            failures.append(
+                f"prefix placeholder got text_size={output.text_size!r} "
+                "(must be smaller than 'large' — prefix is the quiet lead-in to the subject)"
+            )
+
+    # accel_at_s is meaningful only with effect='font-cycle'.
+    if output.accel_at_s is not None and output.effect != "font-cycle":
+        failures.append(
+            f"accel_at_s={output.accel_at_s} set with effect={output.effect!r} "
+            "(renderer only honors accel_at_s for font-cycle; signals confused output)"
+        )
+    # Inverse canary: font-cycle on a hook subject slot SHOULD have accel_at_s.
+    # We only fire this when the agent's own calibration pattern explicitly
+    # documents it (subject + slot 1 + font-cycle).
+    if (
+        input.placeholder_kind == "subject"
+        and input.slot_position == 1
+        and output.effect == "font-cycle"
+        and output.accel_at_s is None
+    ):
+        failures.append(
+            "subject on slot 1 with font-cycle effect has accel_at_s=None "
+            "(calibration pattern requires a beat-aligned lock-in time)"
+        )
+
+    if output.start_s < 0:
+        failures.append(f"start_s={output.start_s} is negative")
+    # Hard upper sanity bound — slots in prod rarely exceed 15s; start_s past
+    # that strongly implies the agent confused absolute clip time with slot-
+    # relative time. Not a perfect check, but a useful canary.
+    if output.start_s > 15.0:
+        failures.append(
+            f"start_s={output.start_s} > 15.0 — likely confused with absolute "
+            "clip time; start_s is relative to slot start"
+        )
+
+    return failures
+
+
+# ── transition_picker ────────────────────────────────────────────────────────
+
+# Canonical duration ranges per transition. These mirror the duration_envelope
+# table in the agent's prompt. Used to flag picks whose duration is clearly
+# outside the band for the chosen transition (a hard-cut with duration=0.8 is
+# a contract violation; a dissolve at 0.1s reads as a glitch).
+_TRANSITION_DURATION_RANGES: dict[str, tuple[float, float]] = {
+    "hard-cut": (0.0, 0.0),
+    "none": (0.0, 0.0),
+    "whip-pan": (0.20, 0.40),
+    "zoom-in": (0.30, 0.50),
+    "dissolve": (0.40, 0.80),
+    "curtain-close": (0.60, 1.00),
+}
+# Tolerance band around the canonical envelope — slight drift (e.g. dissolve at
+# 0.35s or whip-pan at 0.45s) is fine; the structural check only fires on clear
+# violations (hard-cut at 0.5s, dissolve at 0.1s).
+_DURATION_TOLERANCE_S = 0.15
+
+
+def check_transition_picker(
+    output: TransitionPickerOutput,
+    input: TransitionPickerInput,  # noqa: A002, ARG001
+) -> list[str]:
+    """Structural floor for the per-pair transition pick.
+
+    `parse()` rejects unknown transition values with a SchemaError (good), but
+    clamps duration_s to [0.0, 2.0] silently. The interesting failure modes are
+    semantic, not parse-time:
+
+      - **Duration outside the canonical envelope** for the picked transition.
+        A hard-cut with duration=0.8 means the agent missed the "instant"
+        contract; a dissolve at 0.1s reads as a glitch. Both pass parse but
+        signal drift.
+      - **Empty / too-short rationale.** Like clip_router / shot_ranker, the
+        rubric's `default_fidelity` and `pacing_style_modulation` dimensions
+        need an auditable reason to score against.
+      - **Sanity bound on whip-pan with static cameras.** The agent's own
+        prompt explicitly forbids whip-pan between two static shots ("reads
+        as a glitch, not a transition"). If both clips report
+        camera_movement='static' and the pick is whip-pan, flag it.
+    """
+    failures: list[str] = []
+
+    if output.transition not in _PICKER_VALID_TRANSITIONS:
+        failures.append(
+            f"transition={output.transition!r} not in {list(_PICKER_VALID_TRANSITIONS)}"
+        )
+        return failures  # downstream range check is meaningless without a valid type
+
+    lo, hi = _TRANSITION_DURATION_RANGES[output.transition]
+    if not (lo - _DURATION_TOLERANCE_S <= output.duration_s <= hi + _DURATION_TOLERANCE_S):
+        failures.append(
+            f"duration_s={output.duration_s} outside canonical envelope "
+            f"[{lo}, {hi}] (±{_DURATION_TOLERANCE_S} tolerance) for transition "
+            f"{output.transition!r}"
+        )
+
+    rationale = (output.rationale or "").strip().lower()
+    if not rationale:
+        failures.append("rationale is empty")
+    elif len(rationale) < _RATIONALE_MIN_CHARS:
+        failures.append(
+            f"rationale {rationale!r} is too short "
+            f"(<{_RATIONALE_MIN_CHARS} chars — likely boilerplate)"
+        )
+    elif rationale in _BOILERPLATE_RATIONALES:
+        failures.append(f"rationale {rationale!r} is boilerplate (needs concrete reason)")
+
+    # Camera-state sanity: whip-pan between two static shots is forbidden by
+    # the prompt itself.
+    if (
+        output.transition == "whip-pan"
+        and input.outgoing.camera_movement == "static"
+        and input.incoming.camera_movement == "static"
+    ):
+        failures.append(
+            "whip-pan picked for static→static pair (prompt forbids — reads as a glitch)"
+        )
+
+    return failures
+
+
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 
 
@@ -650,4 +852,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_clip_router(output, input)
     if agent_name == "nova.video.shot_ranker":
         return check_shot_ranker(output, input)
+    if agent_name == "nova.layout.text_designer":
+        return check_text_designer(output, input)
+    if agent_name == "nova.layout.transition_picker":
+        return check_transition_picker(output, input)
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

@@ -1,0 +1,28 @@
+{
+  "agent": "nova.layout.transition_picker",
+  "prompt_version": "2026-05-14",
+  "input": {
+    "outgoing": {
+      "description": "subject types reply on phone screen",
+      "energy": 5.5,
+      "camera_movement": "static"
+    },
+    "incoming": {
+      "description": "subject reads message with raised eyebrow",
+      "energy": 6.0,
+      "camera_movement": "static"
+    },
+    "template_default": "hard-cut",
+    "pacing_style": "mid-tempo-flow"
+  },
+  "raw_text": "{\"transition\": \"hard-cut\", \"duration_s\": 0.0, \"rationale\": \"matched template default \\u2014 energy delta 0.5 within continuation band\"}",
+  "output": {
+    "transition": "hard-cut",
+    "duration_s": 0.0,
+    "rationale": "matched template default — energy delta 0.5 within continuation band"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "Rule 0 (default fidelity) direct hit. Energy delta is 0.5 — well inside the 0-1.5 continuation band. Camera both static — whip-pan is forbidden anyway. The pick IS the default and the rationale names the dimension (energy delta). Tests default_fidelity, camera_movement_compatibility (static+static → not whip-pan), pacing_style_modulation (mid-tempo → balanced, hard-cut is fine), duration_envelope (hard-cut = 0.0)."
+  }
+}

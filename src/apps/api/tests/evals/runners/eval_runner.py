@@ -211,6 +211,14 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.shot_ranker import ShotRankerAgent
 
         return ShotRankerAgent
+    if agent_name == "nova.layout.text_designer":
+        from app.agents.text_designer import TextDesignerAgent
+
+        return TextDesignerAgent
+    if agent_name == "nova.layout.transition_picker":
+        from app.agents.transition_picker import TransitionPickerAgent
+
+        return TransitionPickerAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 

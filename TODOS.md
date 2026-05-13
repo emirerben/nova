@@ -314,19 +314,11 @@ These TODOs were filed when the first wave of Yasin's prompt rewrites shipped (`
 ### ~~Eval scaffolding for `shot_ranker`~~ — RESOLVED in v0.4.10.0
 **Resolved:** `tests/evals/test_shot_ranker_evals.py` + `tests/evals/rubrics/shot_ranker.md` + 3 hand-authored golden fixtures shipped. Rubric dimensions: rank_1_hook_strength, set_variety, description_quality, thematic_fit. Yasin-style prompt rewrite (`prompt_version=2026-05-15`) shipped in the same PR. Live-eval baseline will be established when an operator runs the suite with `--with-judge --eval-mode=live --allow-cost` from an environment with creds.
 
-### Retroactive eval scaffolding for `text_designer`
-**What:** Add `tests/evals/test_text_designer_evals.py` + `tests/evals/rubrics/text_designer.md` + fixtures. Rubric dimensions: hierarchy fit (subject/prefix/other), slot-position awareness (slot 1 = signature treatment, mid-slots lighter), timing accuracy, tone-typography alignment.
-**Why:** Yasin's prompt rewrite shipped on 2026-05-14 without eval coverage (agent is still shadow-mode against `_LABEL_CONFIG`, so blast radius is low). The current shadow-divergence logging catches gross regressions but won't catch quality drift.
-**How:** Capture 5–10 shadow-mode prod runs as fixtures. The legacy `label_config_shadow()` output is the conservative baseline.
-**Effort:** S (human: ~3h / CC: ~20 min)
-**Priority:** P3
+### ~~Retroactive eval scaffolding for `text_designer`~~ — RESOLVED in v0.4.11.0
+**Resolved:** Full four-file scaffold shipped (test entry point, rubric with 4 dimensions, structural floor in `check_text_designer`, 4 hand-authored golden fixtures pinning the prompt's documented calibration patterns). Live-eval baseline will be established when an operator runs `pytest tests/evals/test_text_designer_evals.py --with-judge --eval-mode=live --allow-cost` with creds.
 
-### Retroactive eval scaffolding for `transition_picker`
-**What:** Add `tests/evals/test_transition_picker_evals.py` + `tests/evals/rubrics/transition_picker.md` + fixtures. Rubric dimensions: default fidelity (Rule 0), camera-movement compatibility, pacing-style modulation, duration envelope.
-**Why:** Same as `text_designer` — Yasin's prompt rewrite shipped without automated regression coverage. The 6-transition enum is strict (Pydantic Literal), so structural failures are caught, but pick *quality* isn't.
-**How:** Capture 10+ adjacent-clip pairs from prod template runs with the picker's actual output as the baseline.
-**Effort:** S (human: ~3h / CC: ~20 min)
-**Priority:** P3
+### ~~Retroactive eval scaffolding for `transition_picker`~~ — RESOLVED in v0.4.11.0
+**Resolved:** Full four-file scaffold shipped. The new structural check also surfaced a latent `parse()` bug — `float(...) or 0.3` silently coerced `duration_s=0.0` to `0.3` (Python treats 0.0 as falsy), overriding every hard-cut/none output the prompt explicitly specified as duration 0.0. Fixed in the same PR.
 
 ### Renderer support for `match-cut` as a distinct transition
 **What:** Promote `match-cut` from a "collapse to hard-cut" mapping (today's behavior) to a first-class transition in `app/pipeline/transitions.py`. Update `_VALID_TRANSITION_TYPES` and `_VALID_TRANSITIONS` to include it, add FFmpeg motion-vector continuity hinting (`xfade` with appropriate easing), update the prompts' vocabulary-reconciliation tables to remove the collapse.
