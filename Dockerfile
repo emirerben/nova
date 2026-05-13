@@ -39,6 +39,10 @@ COPY src/apps/api/assets ./assets
 COPY src/apps/api/prompts ./prompts
 COPY src/apps/api/scripts ./scripts
 COPY src/apps/api/alembic.ini .
+# Eval rubrics — read at runtime by app/agents/_online_eval.py (Loop B online
+# judge). _RUBRICS_ROOT is __file__-relative and resolves to /app/tests/evals/
+# rubrics, so the path here MUST match. Markdown only (~24K), no test code.
+COPY src/apps/api/tests/evals/rubrics ./tests/evals/rubrics
 
 # Own everything under /app by nova
 RUN chown -R nova:nova /app

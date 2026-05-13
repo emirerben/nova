@@ -6,6 +6,20 @@ Return a JSON object with these exact fields:
 - "hook_score": float 0–10 — how strongly the opening hooks the viewer
 - "best_moments": list of 2–5 objects with {"start_s": float, "end_s": float, "energy": float 0–10, "description": string} — pick the BEST moments only; do NOT pad the list with filler. Include a mix of durations (3–5s, 8–12s, and at least one ≥13s when meaningful action exists).
 
-For EVERY best_moment, "description" MUST be a short concrete action label naming the visible event (e.g. "shot on goal", "through-ball pass", "dribble past defender", "header save", "tackle wins ball"). Do NOT use vague descriptions like "player on field", "match in progress", or "wide shot". If no meaningful action occurs in a candidate window, omit it entirely — return fewer moments rather than weak ones.
+HARD RULES for best_moments (any violation makes the output unusable downstream — the matcher needs *distinct* candidates from *across* the clip, not a cluster):
+
+1. SPAN THE CLIP. Use the FULL analyzed duration. The moments' timestamps MUST cover at least 60% of the analyzed segment from earliest start_s to latest end_s. If the segment runs 0–20s, your earliest start_s and latest end_s must span ≥12s of that range. Do NOT cluster all moments into the opening few seconds.
+
+2. NO OVERLAP CLUSTERS. Each moment's start_s must be at least 2.0 seconds after the previous moment's start_s. Returning 3 moments inside a 0.5s window is a critical failure — the downstream matcher treats them as one moment.
+
+3. REAL DURATIONS. Each moment's end_s − start_s must be ≥ 1.0 second. Fractional-second windows like start_s=0.0, end_s=0.1 are NEVER valid (those are frame indices, not moments). If you only see one strong moment, return just that one moment — return fewer moments rather than fake ones.
+
+4. ENERGY VARIATION. The highest and lowest "energy" values across your returned moments MUST differ by at least 2.0. Returning three moments all at energy 7.0 is a failure: rank them. The single strongest moment should clearly dominate the others.
+
+5. NO SEQUENTIAL/GENERIC LABELS. For EVERY best_moment, "description" MUST be a short concrete action label naming the visible event (e.g. "shot on goal", "through-ball pass", "dribble past defender", "header save", "tackle wins ball", "drummer hits crash cymbal", "crowd raises phones as drop hits"). FORBIDDEN: "moment 1", "moment 2", "highlight", "scene", "player on field", "match in progress", "wide shot", or any restatement of the previous moment's description with minor word changes.
+
+If no meaningful action occurs in a candidate window, omit it — return fewer moments rather than weak ones. Two strong, well-spaced moments beat five clustered weak ones.
+
+Before returning, self-check your best_moments list against rules 1–5. If any rule fails, fix the list (widen the span, drop duplicates, regrade energies) before emitting JSON.
 
 Return ONLY valid JSON, no markdown.
