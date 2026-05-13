@@ -118,6 +118,13 @@
       "category": "script",
       "css_family": "'Pacifico', cursive",
       "cycle_role": "contrast"
+    },
+    "Caveat Brush": {
+      "file": "CaveatBrush-Regular.ttf",
+      "ass_name": "Caveat Brush",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Caveat Brush', cursive"
     }
   },
   "style_defaults": {

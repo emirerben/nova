@@ -115,31 +115,86 @@ INTRO_OVERLAYS: list[dict] = [
         "role": "label",
         "text": "",
         "sample_text": "AFRICA",
-        # All-caps sample_text triggers _is_subject_placeholder=True in
-        # _collect_absolute_overlays, which adds font_cycle_accel_at_s=8.0
-        # from _LABEL_CONFIG["subject"]. That gives the font-cycle the same
-        # "accelerate over time" feel the morocco source uses. The
-        # subject_substitute: False flag below blocks the TEXT-substitution
-        # path in _resolve_overlay_text (which would otherwise rewrite
-        # "AFRICA" → "MOROCCO"), while leaving the classification path alone.
+        # Visual styling tuned to the morocco source video (empirical
+        # frame-by-frame measurement across t=1.9-3.4s, plus on-backdrop
+        # color preview):
+        #   - font_family "Permanent Marker": closest registry match to
+        #     the source's hand-drawn brush lettering. Irregular strokes,
+        #     slight italic lean.
+        #   - effect "font-cycle" + cycle_fonts [Permanent Marker, Caveat
+        #     Brush]: two-font BRUSH cycle. Both are hand-style so the
+        #     cycle stays cohesive (no sans/serif/script flicker — the
+        #     original PR #125/#128 bug). The width difference between PM
+        #     (~95% at 280px) and CB (~70%) gives a width-jitter that
+        #     approximates the source's hand-animated ink variation.
+        #     The renderer reads `cycle_fonts` via _resolve_cycle_fonts'
+        #     custom_fonts parameter, which bypasses the global
+        #     cycle_role=contrast registry pool entirely.
+        #   - text_size_px 250: Permanent Marker AFRICA renders at ~86%
+        #     of 1080-wide output (~939px) leaving ~70px margin per side.
+        #     280px overflowed in actual libass-rendered output.
+        #   - text_color "#FFD700": gold. Reads cleaner over dark Moroccan
+        #     interior backdrops than the empirical-source amber #EFC611,
+        #     which appeared orange-ish in renders. User-picked from an
+        #     on-backdrop preview comparison.
+        # All-caps sample_text still triggers _is_subject_placeholder=True
+        # in _collect_absolute_overlays, so the subject classification
+        # path fires for sizing/positioning defaults. The recipe's
+        # font_family / text_color / effect win because they're in
+        # _STYLING_KEYS (orchestrator preserves recipe styling).
+        # subject_substitute: False blocks the TEXT-substitution path
+        # ("AFRICA" → "MOROCCO") independent of styling.
         "subject_substitute": False,
         "effect": "font-cycle",
+        # Two-font brush cycle: PM + Caveat Brush. Both hand-style for
+        # visual cohesion. The width differs between fonts at the same
+        # px (PM ~95%, CB ~70% at 280px) — that width-jitter approximates
+        # the source video's hand-drawn ink variation. NOT a sans/serif/
+        # script mix; the cycle stays brush-only.
+        "cycle_fonts": ["Permanent Marker", "Caveat Brush"],
         "start_s": 0.0,
         "position": "center",
         "position_x_frac": 0.50,
         "position_y_frac": 0.45,
         "text_size": "xxlarge",
+        # 250px: Permanent Marker AFRICA renders at ~86% of 1080 = ~939px
+        # wide, leaving ~70px margin per side. Earlier 280px overflowed
+        # the frame in the actual libass-rendered output (PIL preview did
+        # not show overflow — libass measures differ).
         "text_size_px": 250,
         "font_style": "sans",
-        "font_family": "Montserrat",
-        # Maize/gold — matches _LABEL_CONFIG["subject"] default.
-        "text_color": "#F4D03F",
+        "font_family": "Permanent Marker",
+        # #FFD700 (gold). The empirical source median #EFC611 read as
+        # orange-amber against dark interior backdrops in the rendered
+        # mp4; gold pops more cleanly as yellow. User-picked color from
+        # an on-backdrop preview comparison.
+        "text_color": "#FFD700",
         "stroke_width": 0,
         "has_darkening": False,
     },
 ]
 
 _META_KEYS = {"_slot_index", "_expected_position"}
+
+# Fields whose values must match the spec on every overlay matched by
+# sample_text. When an existing overlay has a different value for any of
+# these fields, `patch_recipe` writes the spec's value back. Add fields
+# here as new bugs are discovered that need correcting on legacy templates.
+#
+# These intro overlays are pipeline-authored (literal text, not operator
+# hand-tuned), so enforcement across all visual fields is safe. The list
+# grows with each empirical mismatch discovered against the source video:
+#   - subject_substitute: stops resolver from rewriting "AFRICA" -> location
+#   - effect, cycle_fonts: control the font-cycle ink-flicker animation
+#   - font_family, text_color, text_size_px: visual match to source
+_ENFORCED_UPGRADE_FIELDS = (
+    "subject_substitute",
+    "effect",
+    "font_family",
+    "text_color",
+    "text_size_px",
+    "cycle_fonts",
+)
 
 
 class PositionMismatchError(Exception):
@@ -191,12 +246,15 @@ def patch_recipe(recipe: dict) -> tuple[dict, list[tuple]]:
 
     Idempotency: an overlay whose `sample_text` already appears in the
     target slot's text_overlays contributes no "add", but is upgraded
-    in-place when it lacks the required `subject_substitute: False` flag.
-    The upgrade-in-place is what fixes templates that were patched by
-    earlier versions of this script (which didn't write the flag) — without
-    it, the resolver's casing heuristic rewrites "This"/"AFRICA" to the
-    user's location and the rendered intro reads "Morocco" / "MOROCCO"
-    instead of "This" / "AFRICA".
+    in-place when any field listed in `_ENFORCED_UPGRADE_FIELDS` drifts
+    from the spec. The upgrade-in-place is what fixes templates that were
+    patched by earlier versions of this script — for example, the original
+    version didn't write `subject_substitute: False` (so the resolver's
+    casing heuristic rewrote "AFRICA" → "MOROCCO"), and a later version
+    used `effect: font-cycle` for AFRICA (which pulled wildly different
+    cycle fonts and produced a flicker the source video doesn't have).
+    Each new enforcement is added to `_ENFORCED_UPGRADE_FIELDS` and the
+    detection picks it up automatically.
 
     Position guard: aborts via PositionMismatchError if slot.position
     doesn't match the spec.
@@ -225,11 +283,18 @@ def patch_recipe(recipe: dict) -> tuple[dict, list[tuple]]:
         existing = slot.get("text_overlays") or []
         match = next((ov for ov in existing if ov.get("sample_text") == sample), None)
         if match is not None:
-            # Upgrade-in-place: existing intro overlay lacks the literal
-            # opt-out flag. Patch it without disturbing other fields the
-            # operator may have hand-tuned (positions, sizes, colors).
-            if match.get("subject_substitute") is not False:
-                match["subject_substitute"] = False
+            # Upgrade-in-place: any field listed in _ENFORCED_UPGRADE_FIELDS
+            # that differs from the spec gets written back. Fields not present
+            # in the spec are skipped (e.g. cycle_fonts only applies to AFRICA;
+            # This/is overlays don't have it).
+            upgraded = False
+            for field in _ENFORCED_UPGRADE_FIELDS:
+                if field not in spec:
+                    continue
+                if match.get(field) != spec[field]:
+                    match[field] = spec[field]
+                    upgraded = True
+            if upgraded:
                 changes.append(("upgrade", idx, actual_pos, sample))
             continue
 
@@ -250,7 +315,7 @@ def _print_inspection(template, changes: list) -> None:
     if not changes:
         print(
             "recipe_cached: already backfilled (intro overlays present "
-            "AND subject_substitute=False set)."
+            f"AND {', '.join(_ENFORCED_UPGRADE_FIELDS)} match spec)."
         )
         return
     adds = sum(1 for c in changes if c[0] == "add")
@@ -259,7 +324,10 @@ def _print_inspection(template, changes: list) -> None:
     if adds:
         parts.append(f"add {adds} new overlay(s)")
     if upgrades:
-        parts.append(f"upgrade {upgrades} existing overlay(s) (set subject_substitute=False)")
+        parts.append(
+            f"upgrade {upgrades} existing overlay(s) "
+            f"(sync {', '.join(_ENFORCED_UPGRADE_FIELDS)} to spec)"
+        )
     print(f"\nWould {' AND '.join(parts)}:")
     for kind, slot_idx, position, sample in changes:
         spec = next(s for s in INTRO_OVERLAYS if s["_slot_index"] == slot_idx)
@@ -355,12 +423,21 @@ async def run(apply_changes: bool) -> int:
                         or []
                     )
                     # Both add and upgrade paths must leave a matching
-                    # overlay with subject_substitute=False on every slot.
+                    # overlay whose enforced fields match the spec.
                     matched = next(
                         (ov for ov in ovs if ov.get("sample_text") == sample),
                         None,
                     )
-                    if matched is None or matched.get("subject_substitute") is not False:
+                    if matched is None:
+                        all_present = False
+                        break
+                    spec = next(
+                        s for s in INTRO_OVERLAYS if s["sample_text"] == sample
+                    )
+                    if any(
+                        f in spec and matched.get(f) != spec[f]
+                        for f in _ENFORCED_UPGRADE_FIELDS
+                    ):
                         all_present = False
                         break
                 if drift or not all_present:

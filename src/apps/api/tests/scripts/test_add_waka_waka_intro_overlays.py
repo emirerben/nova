@@ -51,11 +51,17 @@ class TestPatchRecipe:
         assert ov1["effect"] == "slide-up"
         assert ov1["end_s"] == pytest.approx(1.2)
         assert ov1["subject_substitute"] is False
-        # Slot 2: "AFRICA" font-cycle
+        # Slot 2: "AFRICA" — Permanent Marker + Caveat Brush brush cycle
+        # at 250px in #FFD700 gold. 250px = ~86% of 1080 width with margin;
+        # 280px overflowed in libass-rendered output. Gold reads cleaner
+        # than the empirical-source amber (#EFC611) over dark backdrops.
         ov2 = patched["slots"][2]["text_overlays"][0]
         assert ov2["sample_text"] == "AFRICA"
         assert ov2["effect"] == "font-cycle"
-        assert ov2["text_color"] == "#F4D03F"
+        assert ov2["cycle_fonts"] == ["Permanent Marker", "Caveat Brush"]
+        assert ov2["font_family"] == "Permanent Marker"
+        assert ov2["text_color"] == "#FFD700"
+        assert ov2["text_size_px"] == 250
         assert ov2["end_s"] == pytest.approx(2.4)
         assert ov2["subject_substitute"] is False
 
@@ -70,14 +76,18 @@ class TestPatchRecipe:
         for idx in (0, 1, 2):
             assert len(patched_twice["slots"][idx]["text_overlays"]) == 1
 
-    def test_upgrades_in_place_when_subject_substitute_missing(self):
-        """REGRESSION: templates patched by an earlier version of this script
-        have the intro overlays but lack the `subject_substitute: False` flag,
-        so the resolver heuristic rewrites "This"/"AFRICA" to the user's
-        location. Re-running the script must add the flag in place without
-        duplicating the overlay or disturbing other fields."""
+    def test_upgrades_in_place_when_enforced_fields_drift(self):
+        """REGRESSION: templates patched by earlier versions of this script
+        accumulate field-drift bugs over time:
+          - missing `subject_substitute: False` -> resolver rewrites
+            "This"/"AFRICA" to the user's location
+          - on AFRICA: wrong effect (slide-up or full-registry font-cycle),
+            wrong font (Montserrat), wrong color (#F4D03F amber default),
+            missing cycle_fonts list
+        Re-running must sync every _ENFORCED_UPGRADE_FIELDS value in place
+        without duplicating overlays."""
         recipe = _base_recipe()
-        # Simulate the legacy state: overlays present but missing the flag.
+        # Simulate the legacy state: every bug we've found since v1.
         recipe["slots"][0]["text_overlays"] = [
             {"sample_text": "This", "effect": "slide-up", "text_color": "#FFFFFF"}
         ]
@@ -85,33 +95,105 @@ class TestPatchRecipe:
             {"sample_text": "is", "effect": "slide-up", "text_color": "#FFFFFF"}
         ]
         recipe["slots"][2]["text_overlays"] = [
-            {"sample_text": "AFRICA", "effect": "font-cycle", "text_color": "#F4D03F"}
+            {
+                "sample_text": "AFRICA",
+                "effect": "slide-up",
+                "text_color": "#F4D03F",
+                "font_family": "Montserrat",
+                "text_size_px": 250,
+            }
         ]
         patched, changes = patch_recipe(recipe)
         # All three got upgraded, none added.
         assert len(changes) == 3
         assert all(c[0] == "upgrade" for c in changes)
-        # Each overlay now has the flag — and the existing fields survived.
+        # Each overlay's subject_substitute is now False.
         for idx, sample in [(0, "This"), (1, "is"), (2, "AFRICA")]:
             ovs = patched["slots"][idx]["text_overlays"]
             assert len(ovs) == 1, f"slot {idx} must not be duplicated"
             ov = ovs[0]
             assert ov["sample_text"] == sample
             assert ov["subject_substitute"] is False
-            # The fields the operator hand-set survived the upgrade.
-            assert ov.get("text_color") in ("#FFFFFF", "#F4D03F")
+        # AFRICA-specific: font/color/size/effect/cycle_fonts all sync to spec.
+        africa = patched["slots"][2]["text_overlays"][0]
+        assert africa["effect"] == "font-cycle"
+        assert africa["cycle_fonts"] == ["Permanent Marker", "Caveat Brush"]
+        assert africa["font_family"] == "Permanent Marker"
+        assert africa["text_color"] == "#FFD700"
+        assert africa["text_size_px"] == 250
 
-    def test_upgrade_only_fires_when_flag_is_truthy_or_absent(self):
-        """If the flag is already False, no change is recorded."""
+    def test_upgrades_legacy_africa_styling_fields(self):
+        """Tighter regression for AFRICA-specific drift across each enforced
+        styling field. Each individual field, isolated, must still trigger
+        an upgrade so partial-drift templates get fully synced on next
+        backfill."""
+        for drift_field, drift_value, expected in [
+            ("effect", "slide-up", "font-cycle"),
+            ("font_family", "Montserrat", "Permanent Marker"),
+            ("text_color", "#F4D03F", "#FFD700"),
+            ("text_size_px", 200, 250),
+            ("cycle_fonts", None, ["Permanent Marker", "Caveat Brush"]),
+            ("cycle_fonts", ["Montserrat", "Outfit"], ["Permanent Marker", "Caveat Brush"]),
+        ]:
+            recipe = _base_recipe()
+            base_overlay = {
+                "sample_text": "AFRICA",
+                "effect": "font-cycle",
+                "font_family": "Permanent Marker",
+                "text_color": "#FFD700",
+                "text_size_px": 250,
+                "cycle_fonts": ["Permanent Marker", "Caveat Brush"],
+                "subject_substitute": False,
+            }
+            if drift_value is None:
+                base_overlay.pop(drift_field, None)
+            else:
+                base_overlay[drift_field] = drift_value
+            recipe["slots"][2]["text_overlays"] = [base_overlay]
+            patched, changes = patch_recipe(recipe)
+            africa_upgrades = [c for c in changes if c[0] == "upgrade" and c[3] == "AFRICA"]
+            assert len(africa_upgrades) == 1, (
+                f"drift on {drift_field}={drift_value!r} must trigger upgrade"
+            )
+            assert patched["slots"][2]["text_overlays"][0][drift_field] == expected, (
+                f"{drift_field} should sync to {expected!r}"
+            )
+
+    def test_upgrade_only_fires_when_enforced_fields_drift(self):
+        """If every enforced field already matches the spec, no change is
+        recorded. Tests the full enforced set: subject_substitute, effect,
+        font_family, text_color, text_size_px, cycle_fonts."""
         recipe = _base_recipe()
         recipe["slots"][0]["text_overlays"] = [
-            {"sample_text": "This", "effect": "slide-up", "subject_substitute": False}
+            {
+                "sample_text": "This",
+                "effect": "slide-up",
+                "subject_substitute": False,
+                "font_family": "Montserrat",
+                "text_color": "#FFFFFF",
+                "text_size_px": 140,
+            }
         ]
         recipe["slots"][1]["text_overlays"] = [
-            {"sample_text": "is", "effect": "slide-up", "subject_substitute": False}
+            {
+                "sample_text": "is",
+                "effect": "slide-up",
+                "subject_substitute": False,
+                "font_family": "Montserrat",
+                "text_color": "#FFFFFF",
+                "text_size_px": 140,
+            }
         ]
         recipe["slots"][2]["text_overlays"] = [
-            {"sample_text": "AFRICA", "effect": "font-cycle", "subject_substitute": False}
+            {
+                "sample_text": "AFRICA",
+                "effect": "font-cycle",
+                "cycle_fonts": ["Permanent Marker", "Caveat Brush"],
+                "subject_substitute": False,
+                "font_family": "Permanent Marker",
+                "text_color": "#FFD700",
+                "text_size_px": 250,
+            }
         ]
         _, changes = patch_recipe(recipe)
         assert changes == []
@@ -238,11 +320,25 @@ class TestOverlaySpecs:
     def test_expected_positions_are_1_2_3(self):
         assert [s["_expected_position"] for s in INTRO_OVERLAYS] == [1, 2, 3]
 
-    def test_africa_uses_font_cycle(self):
+    def test_africa_uses_permanent_marker_gold_brush_cycle(self):
+        """AFRICA styling locked to match the morocco source video:
+          - effect=font-cycle with cycle_fonts=[Permanent Marker, Caveat
+            Brush]: two-font brush cycle gives real frame-to-frame
+            variation. cycle_fonts must stay brush-only — adding sans/
+            serif/script fonts produces the jarring flicker the source
+            never had.
+          - font_family="Permanent Marker" (closest registry match to
+            source's hand-drawn lettering)
+          - text_color="#FFD700" (gold; reads cleaner over dark backdrops
+            than the empirical-source amber #EFC611)
+          - text_size_px=250 (~86% of 1080 wide; 280px overflowed in
+            libass-rendered output)"""
         africa = next(s for s in INTRO_OVERLAYS if s["sample_text"] == "AFRICA")
         assert africa["effect"] == "font-cycle"
-        # Maize/gold — must match _LABEL_CONFIG["subject"]'s default.
-        assert africa["text_color"] == "#F4D03F"
+        assert africa["cycle_fonts"] == ["Permanent Marker", "Caveat Brush"]
+        assert africa["font_family"] == "Permanent Marker"
+        assert africa["text_color"] == "#FFD700"
+        assert africa["text_size_px"] == 250
 
     def test_this_and_is_use_slide_up(self):
         for sample in ("This", "is"):
