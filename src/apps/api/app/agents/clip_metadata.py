@@ -60,26 +60,83 @@ class ClipMetadataOutput(BaseModel):
 # ── Domain-specific post-filter (lifted verbatim from gemini_analyzer.py) ────
 
 _BALL_WHITELIST = (
-    "ball", "top", "shot", "şut", "vuruş", "pass", "pas", "asist",
-    "goal", "gol", "dribble", "çalım", "save", "kurtarış", "kurtardı",
-    "tackle", "tekleme", "header", "kafa", "cross", "orta", "ortaladı",
-    "strike", "volley", "voleyle", "korner", "corner", "freekick", "frikik",
-    "penalty", "penaltı", "intercept", "kesme", "control", "kontrol",
-    "attack", "atak", "hücum", "finish", "bitiriş",
+    "ball",
+    "top",
+    "shot",
+    "şut",
+    "vuruş",
+    "pass",
+    "pas",
+    "asist",
+    "goal",
+    "gol",
+    "dribble",
+    "çalım",
+    "save",
+    "kurtarış",
+    "kurtardı",
+    "tackle",
+    "tekleme",
+    "header",
+    "kafa",
+    "cross",
+    "orta",
+    "ortaladı",
+    "strike",
+    "volley",
+    "voleyle",
+    "korner",
+    "corner",
+    "freekick",
+    "frikik",
+    "penalty",
+    "penaltı",
+    "intercept",
+    "kesme",
+    "control",
+    "kontrol",
+    "attack",
+    "atak",
+    "hücum",
+    "finish",
+    "bitiriş",
 )
 _BALL_BLACKLIST = (
-    "celebration", "kutlama", "celebrating",
-    "empty", "boş", "geniş plan", "wide shot",
-    "walking", "yürüyor", "walks",
-    "training", "antrenman", "warmup", "ısınma",
-    "bench", "yedek",
-    "stoppage", "oyun durması", "stopped",
-    "idle", "hareketsiz",
-    "tribün", "stand", "audience", "crowd",
-    "referee", "hakem", "linesman", "yan hakem",
-    "interview", "röportaj",
-    "halftime", "devre arası",
-    "no ball", "topsuz",
+    "celebration",
+    "kutlama",
+    "celebrating",
+    "empty",
+    "boş",
+    "geniş plan",
+    "wide shot",
+    "walking",
+    "yürüyor",
+    "walks",
+    "training",
+    "antrenman",
+    "warmup",
+    "ısınma",
+    "bench",
+    "yedek",
+    "stoppage",
+    "oyun durması",
+    "stopped",
+    "idle",
+    "hareketsiz",
+    "tribün",
+    "stand",
+    "audience",
+    "crowd",
+    "referee",
+    "hakem",
+    "linesman",
+    "yan hakem",
+    "interview",
+    "röportaj",
+    "halftime",
+    "devre arası",
+    "no ball",
+    "topsuz",
 )
 
 
@@ -110,9 +167,7 @@ def _filter_moments_by_action(moments: list[dict[str, Any]], hint: str) -> list[
         kept = whitelist_hits + neutral
 
     if not kept and moments:
-        kept = [
-            max(moments, key=lambda m: m.get("energy", 0) if isinstance(m, dict) else 0)
-        ]
+        kept = [max(moments, key=lambda m: m.get("energy", 0) if isinstance(m, dict) else 0)]
     return kept
 
 
@@ -146,7 +201,13 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         return input.file_mime or "video/mp4"
 
     def required_fields(self) -> list[str]:
-        return ["hook_text", "hook_score", "best_moments"]
+        # `hook_text` intentionally NOT required — silent / ambient clips (music
+        # montage, B-roll, no dialogue) legitimately return "". Treating empty
+        # `hook_text` as a refusal forced a Whisper fallback (~8s extra latency
+        # + wasted Gemini call) for clips that were actually usable downstream.
+        # As long as `best_moments` is populated, the clip carries enough signal
+        # for the matcher.
+        return ["hook_score", "best_moments"]
 
     # ── Prompt ────────────────────────────────────────────────────
 
@@ -187,9 +248,7 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
 
     # ── Parse ─────────────────────────────────────────────────────
 
-    def parse(
-        self, raw_text: str, input: ClipMetadataInput
-    ) -> ClipMetadataOutput:  # noqa: A002
+    def parse(self, raw_text: str, input: ClipMetadataInput) -> ClipMetadataOutput:  # noqa: A002
         try:
             data = json.loads(raw_text)
         except (ValueError, TypeError) as exc:

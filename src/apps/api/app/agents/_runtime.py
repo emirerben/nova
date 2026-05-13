@@ -129,6 +129,14 @@ class _RunStats:
     # When set, used for the agent_run log + Langfuse trace instead of the
     # spec-declared model so observability stops drifting from reality.
     model_used: str | None = None
+    # Truncated preview of the most recent successful invoke's `raw_text`.
+    # Captured on every model invocation so that if `_check_refusal` or
+    # `self.parse` raises afterwards, we still have the bytes Gemini returned
+    # available for the Langfuse trace + `agent_run` log. Without this, refusal
+    # / schema failures show `output=None` and you can't diagnose what the
+    # model actually said. Kept short (500 chars) — enough to see the JSON
+    # shape and any partial fields, not enough to blow up Langfuse payloads.
+    last_raw_text: str | None = None
 
 
 # ── Model client interface ────────────────────────────────────────────────────
@@ -393,6 +401,11 @@ class Agent(ABC, Generic[InputT, OutputT]):
             stats.tokens_out += inv.tokens_out
             if inv.model_used:
                 stats.model_used = inv.model_used
+            # Stash the raw response (truncated) so that if `_check_refusal`
+            # or `self.parse` raises below, `_log_outcome` can thread it into
+            # the Langfuse trace. Without this, refusal traces look like
+            # `output: None` and the diagnostic signal is lost.
+            stats.last_raw_text = (inv.raw_text or "")[:500]
 
             # Refusal check (safety + required fields)
             try:
@@ -521,6 +534,11 @@ class Agent(ABC, Generic[InputT, OutputT]):
         }
         if error is not None:
             payload["error"] = error
+        # On refusal / schema failures the agent's `output_dict` is None;
+        # surface the captured raw-text preview so plain-text logs are
+        # diagnosable without round-tripping through Langfuse.
+        if stats.last_raw_text is not None and outcome not in ("ok", "ok_fallback"):
+            payload["raw_text_preview"] = stats.last_raw_text
         log.info("agent_run", **payload)
 
         # Optional Langfuse trace (no-op unless LANGFUSE_PUBLIC_KEY/SECRET_KEY
@@ -550,6 +568,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
             request_id=ctx.request_id,
             error=error,
             source="prod",
+            raw_text=stats.last_raw_text,
         )
 
         # Optional online eval: sample a fraction of successful prod traces and

@@ -120,6 +120,32 @@ class TestAnimatedOverlayASS:
                 content = f.read()
             assert "\\move(" in content
 
+    def test_slide_down_starts_above_canvas(self):
+        """slide-down moves from y=-200 (above viewport) to the target y.
+
+        Waka Waka's opening "This" / "is" uses slide-down — the user
+        described the original as "yukarıdan aşağı gelen" (top-to-bottom).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{"text": "Drop", "start_s": 0.0, "end_s": 3.0,
+                  "position": "bottom", "effect": "slide-down"}],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None and len(result) == 1
+            with open(result[0]) as f:
+                content = f.read()
+            assert "\\move(" in content
+            # Start y must be negative (above the top edge); end y must be
+            # within canvas. Extract the four-arg \move(x1,y1,x2,y2,t1,t2) tag.
+            import re
+            m = re.search(r"\\move\((\d+),(-?\d+),(\d+),(\d+),", content)
+            assert m, f"could not parse \\move tag: {content[:300]}"
+            start_y = int(m.group(2))
+            end_y = int(m.group(4))
+            assert start_y < 0, f"slide-down must start above canvas, got start_y={start_y}"
+            assert 0 < end_y < 1920, f"slide-down end_y={end_y} outside canvas"
+
     def test_ass_header_validation(self):
         """Generated ASS file has all required sections."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -174,6 +200,169 @@ class TestAnimatedOverlayASS:
                 content = f.read()
             # Text should be truncated to MAX_OVERLAY_TEXT_LEN
             assert "\u2026" in content
+
+    def test_pop_in_emits_scale_keyframes(self):
+        """pop-in renders \\fscx/\\fscy keyframes via libass \\t() interpolation.
+
+        Waka Waka template labels ("This time for Africa") use pop-in. Without
+        these tags the text would hard-cut in flat \u2014 see
+        plans/i-m-testing-waka-waka-joyful-raccoon.md Defect B.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{"text": "Pop", "start_s": 0.0, "end_s": 1.1,
+                  "position": "bottom", "effect": "pop-in"}],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None and len(result) == 1
+            with open(result[0]) as f:
+                content = f.read()
+            # Starts compressed (30%), overshoots (115%), settles (100%)
+            assert "\\fscx30\\fscy30" in content
+            assert "\\fscx115\\fscy115" in content
+            assert "\\fscx100\\fscy100" in content
+            # Two interpolation tags (compress\u2192overshoot, overshoot\u2192settle)
+            assert content.count("\\t(") >= 2
+
+    def test_bounce_emits_three_scale_keyframes(self):
+        """bounce squash-and-stretch: 100 \u2192 125 \u2192 90 \u2192 100 across three \\t() tags.
+
+        Waka Waka outro "shukran Morocco!" uses bounce. Three transitions are
+        the minimum to produce a perceivable bounce instead of a single ramp.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{"text": "Bounce", "start_s": 0.0, "end_s": 2.0,
+                  "position": "center", "effect": "bounce"}],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None and len(result) == 1
+            with open(result[0]) as f:
+                content = f.read()
+            for scale in ("\\fscx100\\fscy100", "\\fscx125\\fscy125",
+                          "\\fscx90\\fscy90"):
+                assert scale in content, f"missing {scale}: {content[:400]}"
+            assert content.count("\\t(") >= 3
+
+    def test_short_duration_clamps_animation_keyframes(self):
+        """A 200ms overlay must not get a 500ms bounce \u2014 keyframes scale down.
+
+        Without clamping, libass would never reach the settle frame and the
+        text would freeze mid-bounce when the overlay disappears.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{"text": "X", "start_s": 0.0, "end_s": 0.2,
+                  "position": "center", "effect": "bounce"}],
+                5.0, tmpdir, 0,
+            )
+            with open(result[0]) as f:
+                content = f.read()
+            # Last keyframe must be within the 200ms overlay window.
+            # The default bounce ends at 500ms; clamped, the last \t() target
+            # should land at \u2264200ms.
+            import re
+            t_endings = [
+                int(m.group(2))
+                for m in re.finditer(r"\\t\((\d+),(\d+),", content)
+            ]
+            assert t_endings, "no \\t() tags emitted"
+            assert max(t_endings) <= 200, (
+                f"clamp failed: keyframe at {max(t_endings)}ms > 200ms window"
+            )
+
+    def test_pop_in_and_bounce_routed_via_ass_not_static(self):
+        """ASS_ANIMATED_EFFECTS must include the two new effects so the
+        animation path runs instead of the static-PNG fallback."""
+        from app.pipeline.text_overlay import ASS_ANIMATED_EFFECTS
+        assert "pop-in" in ASS_ANIMATED_EFFECTS
+        assert "bounce" in ASS_ANIMATED_EFFECTS
+        # Sanity: ensure we didn't accidentally promote scale-up too
+        assert "scale-up" not in ASS_ANIMATED_EFFECTS
+
+    def test_unknown_effect_still_renders_static(self):
+        """scale-up and other untracked effects fall through to static
+        rendering \u2014 generate_animated_overlay_ass returns None for them.
+
+        Prevents the regression where adding pop-in/bounce accidentally
+        broadens the route to every effect name.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{"text": "Static", "start_s": 0.0, "end_s": 3.0,
+                  "position": "center", "effect": "scale-up"}],
+                5.0, tmpdir, 0,
+            )
+            assert result is None
+
+    def test_position_x_frac_in_ass_overrides_centered_x(self):
+        """ASS \\pos tag uses x = CANVAS_W * position_x_frac when set.
+
+        Waka Waka "This" at x_frac=0.18 \u2192 1080*0.18 = 194. "is" at
+        x_frac=0.82 \u2192 885. Reference shows them at lower-left / lower-right.
+        """
+        import re
+        with tempfile.TemporaryDirectory() as tmpdir:
+            r1 = generate_animated_overlay_ass(
+                [{"text": "This", "start_s": 0.0, "end_s": 1.0,
+                  "position": "bottom", "effect": "fade-in",
+                  "position_x_frac": 0.18, "position_y_frac": 0.85}],
+                5.0, tmpdir, 0,
+            )
+            r2 = generate_animated_overlay_ass(
+                [{"text": "is", "start_s": 0.0, "end_s": 1.0,
+                  "position": "bottom", "effect": "fade-in",
+                  "position_x_frac": 0.82, "position_y_frac": 0.85}],
+                5.0, tmpdir, 1,
+            )
+            assert r1 and r2
+            c1 = open(r1[0]).read()
+            c2 = open(r2[0]).read()
+            m1 = re.search(r"\\pos\((\d+),(\d+)\)", c1)
+            m2 = re.search(r"\\pos\((\d+),(\d+)\)", c2)
+            assert m1 and m2, f"\\pos tag missing in:\n{c1[:300]}\n---\n{c2[:300]}"
+            # 1080 * 0.18 = 194.4 \u2192 int 194; 1080 * 0.82 = 885.6 \u2192 int 885
+            assert int(m1.group(1)) == 194, f"expected x=194, got {m1.group(1)}"
+            assert int(m2.group(1)) == 885, f"expected x=885, got {m2.group(1)}"
+
+    def test_position_x_frac_in_slide_uses_custom_x(self):
+        """slide-up / slide-down \\move tags must respect position_x_frac
+        for both start and end coordinates (otherwise text slides centered
+        even when caller asks for off-center)."""
+        import re
+        with tempfile.TemporaryDirectory() as tmpdir:
+            r = generate_animated_overlay_ass(
+                [{"text": "Drop", "start_s": 0.0, "end_s": 2.0,
+                  "position": "bottom", "effect": "slide-down",
+                  "position_x_frac": 0.25, "position_y_frac": 0.80}],
+                5.0, tmpdir, 0,
+            )
+            assert r
+            content = open(r[0]).read()
+            # \move(x1,y1,x2,y2,t1,t2) \u2014 both x's should equal int(1080*0.25)=270
+            m = re.search(r"\\move\((-?\d+),(-?\d+),(-?\d+),(-?\d+),", content)
+            assert m, f"\\move tag missing: {content[:300]}"
+            assert int(m.group(1)) == 270, f"start x: {m.group(1)}"
+            assert int(m.group(3)) == 270, f"end x: {m.group(3)}"
+
+    def test_position_x_frac_none_keeps_centered(self):
+        """No position_x_frac \u2192 existing centered behavior (x=540 on 1080
+        canvas). Guard against accidentally requiring the new field."""
+        import re
+        with tempfile.TemporaryDirectory() as tmpdir:
+            r = generate_animated_overlay_ass(
+                [{"text": "Center", "start_s": 0.0, "end_s": 1.0,
+                  "position": "center", "effect": "fade-in",
+                  "position_y_frac": 0.5}],
+                5.0, tmpdir, 0,
+            )
+            assert r
+            content = open(r[0]).read()
+            m = re.search(r"\\pos\((\d+),(\d+)\)", content)
+            # When y_frac is set but not x_frac, x defaults to canvas center.
+            assert m and int(m.group(1)) == 540, (
+                f"expected centered x=540, got {m and m.group(1)}"
+            )
 
 
 # -- PNG overlay generation ---------------------------------------------------

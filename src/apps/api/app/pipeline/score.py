@@ -46,12 +46,17 @@ def select_candidates(
     transcript: Transcript,
     scene_cuts: list[SceneCut],
     source_ref: Any = None,
+    *,
+    job_id: str | None = None,
 ) -> list[ClipCandidate]:
     """Score CANDIDATE_COUNT clip segments and return all 9 sorted by combined_score.
 
     source_ref: Gemini File API reference for the uploaded source video.
                 If provided, each segment is analyzed with Gemini (parallel calls).
                 Falls back to heuristic hook scoring if source_ref is None.
+
+    `job_id` threads into the Gemini agent's `RunContext` for Langfuse session
+    clustering. Defaults to None for back-compat.
 
     Caller uses [:TOP_N] for rendering and [TOP_N:] for re-roll storage.
     """
@@ -67,7 +72,9 @@ def select_candidates(
 
     # Hook scoring: Gemini video analysis (parallel) or heuristic fallback
     if source_ref is not None:
-        raw_hook_scores, gemini_hook_texts = _score_hooks_gemini(source_ref, segments)
+        raw_hook_scores, gemini_hook_texts = _score_hooks_gemini(
+            source_ref, segments, job_id=job_id
+        )
         # Use Gemini-extracted hook texts where available
         hook_texts = [
             gemini_hook_texts[i] or hook_texts[i]
@@ -124,6 +131,8 @@ def select_candidates(
 def _score_hooks_gemini(
     source_ref: Any,
     segments: list[tuple[float, float]],
+    *,
+    job_id: str | None = None,
 ) -> tuple[list[float], list[str]]:
     """Analyze each segment via Gemini in parallel. Returns (hook_scores, hook_texts).
 
@@ -138,7 +147,7 @@ def _score_hooks_gemini(
     def _analyze_one(idx_segment: tuple[int, tuple[float, float]]) -> tuple[int, float, str]:
         idx, (start_s, end_s) = idx_segment
         try:
-            meta = analyze_clip(source_ref, start_s=start_s, end_s=end_s)
+            meta = analyze_clip(source_ref, start_s=start_s, end_s=end_s, job_id=job_id)
             return idx, meta.hook_score, meta.hook_text
         except (GeminiRefusalError, GeminiAnalysisError, Exception) as exc:
             log.warning("gemini_hook_score_failed", segment_idx=idx, error=str(exc))

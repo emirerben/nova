@@ -108,10 +108,16 @@ def image_bytes_to_mp4(
             "-crf", "20",
             # Tag explicit bt709 color metadata so the downstream reframe
             # pipeline's colorspace handling doesn't see "primaries=unknown"
-            # and reject the clip.
+            # and reject the clip. The muxer-level -color_primaries /
+            # -colorspace flags below set the container hints, but libx264
+            # does not propagate them into the H.264 SPS without an explicit
+            # -x264-params override. Without this, ffprobe reads back
+            # primaries=unknown,matrix=unknown and the reframe colorspace
+            # filter fails with EINVAL (rc=234 in prod, job 2795fa69).
             "-color_primaries", "bt709",
             "-color_trc", "bt709",
             "-colorspace", "bt709",
+            "-x264-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709",
             "-movflags", "+faststart",
             out_path,
         ]

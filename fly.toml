@@ -26,7 +26,13 @@ primary_region = "iad"
 
 [processes]
   api = "uvicorn app.main:app --host 0.0.0.0 --port 8000"
-  worker = "celery -A app.worker worker --loglevel=info --concurrency=2"
+  # concurrency=1: shared-CPU workers shouldn't multiplex video encode tasks.
+  # With concurrency=2 each task fights another for the 2 shared CPUs, so a
+  # 14s local curtain-close encode ballooned to >600s in prod (job d018d1c3
+  # post-PR #103). One task per worker means each task gets the full CPU
+  # allocation. Trade-off: half the parallel throughput, but each render
+  # completes in roughly a quarter of the wall-clock.
+  worker = "celery -A app.worker worker --loglevel=info --concurrency=1"
 
 # ---------------------------------------------------------------------------
 # HTTP service (api process only)

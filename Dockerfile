@@ -22,12 +22,17 @@ WORKDIR /app
 
 # ---------- dependency install (cached layer) ----------
 # Parse deps from pyproject.toml into a requirements file, then install.
+# Includes the [observability] optional-dependencies group (langfuse +
+# anthropic) so Loop A tracing + Loop B online judge are live in prod when
+# LANGFUSE_* / ANTHROPIC_API_KEY env vars are set; otherwise fail-open.
+# [dev] and [local-whisper] extras are intentionally excluded.
 # This layer only busts when pyproject.toml changes, not on source edits.
 COPY src/apps/api/pyproject.toml /tmp/pyproject.toml
 RUN pip install --no-cache-dir --upgrade pip setuptools && \
     python -c "import tomllib; \
       f = open('/tmp/pyproject.toml', 'rb'); \
-      deps = tomllib.load(f)['project']['dependencies']; \
+      data = tomllib.load(f); \
+      deps = data['project']['dependencies'] + data['project']['optional-dependencies']['observability']; \
       print('\n'.join(deps))" > /tmp/requirements.txt && \
     pip install --no-cache-dir -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt /tmp/pyproject.toml

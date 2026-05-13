@@ -317,10 +317,19 @@ class TestOrchestratePipelineHelpers:
 
 
 class TestPreBurnCurtainSlotText:
-    """Test _pre_burn_curtain_slot_text encodes intermediates with ultrafast."""
+    """Test _pre_burn_curtain_slot_text encodes with preset=fast (final-output
+    quality budget — see tests/test_encoder_policy.py and CLAUDE.md "Encoder
+    policy"). Prior policy used preset=ultrafast to fit Fly.io's 600s timeout
+    on 24-slot recipes; PR #105's --concurrency=1 + PNG-overlay curtain freed
+    enough CPU budget that fast fits. ultrafast disables mb-tree + psy-rd,
+    which made smooth blue-canopy gradients (Dimples slot 5 BRAZIL title)
+    show visible macroblocking — fixed by propagating fast here."""
 
-    def test_pre_burn_uses_ultrafast_preset(self):
-        """Intermediate clip must use preset=ultrafast to avoid 600s timeouts on Fly.io."""
+    def test_pre_burn_uses_fast_preset(self):
+        """Pre-curtain text burn must use preset=fast — the slot is about to be
+        re-encoded once more by curtain-close, so ultrafast losses would be
+        baked in before curtain-close can run. See app/pipeline/reframe.py:
+        _encoding_args.__doc__ for the full call-site audit."""
         import tempfile
 
         from app.tasks.template_orchestrate import _pre_burn_curtain_slot_text
@@ -370,8 +379,9 @@ class TestPreBurnCurtainSlotText:
         cmd = mock_run.call_args[0][0]
         assert "-preset" in cmd, f"No -preset flag in cmd: {cmd}"
         preset_idx = cmd.index("-preset")
-        assert cmd[preset_idx + 1] == "ultrafast", (
-            f"Expected ultrafast preset for intermediate, got: {cmd[preset_idx + 1]}"
+        assert cmd[preset_idx + 1] == "fast", (
+            f"Expected preset=fast (final-output quality budget — locked by "
+            f"tests/test_encoder_policy.py), got: {cmd[preset_idx + 1]}"
         )
 
 
@@ -429,9 +439,12 @@ class TestConcatDemuxerStreamCopyFallback:
         # Two subprocess.run calls: the failed stream-copy + the re-encode fallback.
         assert mock_run.call_count == 2
         last_cmd = mock_run.call_args_list[-1][0][0]
-        # The fallback uses _encoding_args which sets -preset ultrafast.
+        # The fallback uses _encoding_args which is locked to preset=fast for
+        # this call site (final-output quality budget). Locked by
+        # tests/test_encoder_policy.py — ultrafast here compounds banding
+        # because the bytes written are the bytes shipped.
         assert "-preset" in last_cmd
-        assert last_cmd[last_cmd.index("-preset") + 1] == "ultrafast"
+        assert last_cmd[last_cmd.index("-preset") + 1] == "fast"
         # And the rejected copy_tmp must have been cleaned up before the
         # fallback wrote its own output_path.
         assert not os.path.exists(copy_tmp)
@@ -470,15 +483,19 @@ class TestConcatDemuxerStreamCopyFallback:
 
 
 class TestConcatDemuxerPreset:
-    """_concat_demuxer uses preset=ultrafast for shared-CPU iteration speed."""
+    """_concat_demuxer fallback re-encode uses preset=fast — this is a
+    final-output path, the bytes get shipped to users. See
+    tests/test_encoder_policy.py for the policy, CLAUDE.md "Encoder policy"
+    for the rule, and app/pipeline/reframe.py:_encoding_args docstring for
+    the full call-site audit. ultrafast was the previous policy and produced
+    visible macroblocking on smooth gradients (the BRAZIL/blue-canopy bug);
+    PR #105 unlocked enough CPU budget that fast fits within the 1200s timeout.
+    """
 
-    def test_concat_uses_ultrafast_preset(self):
-        """Final concat must use preset=ultrafast to fit Fly.io's 600s ffmpeg
-        timeout on 24-slot recipes. CRF 18 and the 4M bitrate cap keep quality
-        in the visually-lossless band; the scenecut/I-frame benefit of
-        preset=fast was costing 9+ minutes per render — not worth it for
-        marginal seam quality.
-        """
+    def test_concat_uses_fast_preset(self):
+        """Concat fallback must use preset=fast so banding doesn't compound
+        through the final output. mb-tree + psy-rd (disabled by ultrafast)
+        are what protect smooth gradients from 16x16 macroblocking."""
         import tempfile
 
         from app.tasks.template_orchestrate import _concat_demuxer
@@ -503,8 +520,9 @@ class TestConcatDemuxerPreset:
         cmd = mock_run.call_args[0][0]
         assert "-preset" in cmd, f"No -preset flag in cmd: {cmd}"
         preset_idx = cmd.index("-preset")
-        assert cmd[preset_idx + 1] == "ultrafast", (
-            f"concat must use preset=ultrafast, got: {cmd[preset_idx + 1]}"
+        assert cmd[preset_idx + 1] == "fast", (
+            f"concat must use preset=fast (final-output quality budget — "
+            f"locked by tests/test_encoder_policy.py), got: {cmd[preset_idx + 1]}"
         )
 
 
@@ -1222,6 +1240,80 @@ class TestOrchestrateTemplateJobErrors:
 
             # Must not raise
             orchestrate_template_job("12345678-1234-5678-1234-567812345678")
+
+    def test_gemini_refusal_error_classifies_as_gemini_analysis_failed(self):
+        """A GeminiRefusalError reaching the outer handler must be classified
+        as gemini_analysis_failed, NOT unknown. GeminiRefusalError does not
+        subclass GeminiAnalysisError (both extend Exception directly), so
+        before this fix it fell into the generic `except Exception` and
+        showed up on the user's job page as `failure_reason=unknown` —
+        empirically verified on 2026-05-12 with an Impressing Myself job
+        whose error_detail was `nova.video.clip_metadata: refusal —
+        Missing required field: hook_text`.
+        """
+        from app.pipeline.agents.gemini_analyzer import GeminiRefusalError
+        from app.tasks.template_orchestrate import orchestrate_template_job
+
+        mock_job = MagicMock()
+        mock_job.status = "queued"
+        mock_job.error_detail = None
+        mock_job.failure_reason = None
+
+        def _mock_ctx():
+            ctx = MagicMock()
+            ctx.__enter__ = MagicMock(return_value=_mock_session)
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        _mock_session = MagicMock()
+        _mock_session.get.return_value = mock_job
+
+        with patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx), \
+             patch("app.tasks.template_orchestrate._run_template_job") as mock_run:
+            mock_run.side_effect = GeminiRefusalError(
+                "nova.video.clip_metadata: refusal — Missing required field: hook_text",
+            )
+            orchestrate_template_job("12345678-1234-5678-1234-567812345678")
+
+        assert mock_job.status == "processing_failed"
+        assert mock_job.failure_reason == "gemini_analysis_failed"
+        assert "hook_text" in mock_job.error_detail
+
+    def test_reframe_error_classifies_as_ffmpeg_failed(self):
+        """A ReframeError reaching the outer handler must be classified as
+        ffmpeg_failed, NOT unknown. Empirically observed on 2026-05-12 with
+        job 2795fa69 — a photo-converted mp4 with primaries=unknown crashed
+        FFmpeg's colorspace filter (rc=234 / EINVAL) and the resulting
+        ReframeError fell through `except Exception`, showing on the user's
+        job page as `failure_reason=unknown` with no actionable signal.
+        """
+        from app.pipeline.reframe import ReframeError
+        from app.tasks.template_orchestrate import orchestrate_template_job
+
+        mock_job = MagicMock()
+        mock_job.status = "queued"
+        mock_job.error_detail = None
+        mock_job.failure_reason = None
+
+        def _mock_ctx():
+            ctx = MagicMock()
+            ctx.__enter__ = MagicMock(return_value=_mock_session)
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        _mock_session = MagicMock()
+        _mock_session.get.return_value = mock_job
+
+        with patch("app.tasks.template_orchestrate._sync_session", side_effect=_mock_ctx), \
+             patch("app.tasks.template_orchestrate._run_template_job") as mock_run:
+            mock_run.side_effect = ReframeError(
+                "FFmpeg failed (rc=234): Unsupported input primaries 2 (unknown)",
+            )
+            orchestrate_template_job("12345678-1234-5678-1234-567812345678")
+
+        assert mock_job.status == "processing_failed"
+        assert mock_job.failure_reason == "ffmpeg_failed"
+        assert "rc=234" in mock_job.error_detail
 
 
 # ── Beat detection tests ─────────────────────────────────────────────────────
@@ -2388,6 +2480,61 @@ class TestResolveOverlayTextSubjectTemplate:
         ov = {"subject_template": "that one trip to {subject}"}
         assert _resolve_overlay_text("label", None, ov, subject="New York") == \
             "that one trip to New York"
+
+
+class TestWakaWakaSubjectTemplate:
+    """Covers the shukran-Africa outro substitution backfilled by
+    scripts/backfill_waka_waka_location.py.
+
+    Shape mirrors what the backfill writes onto the prod outro overlay:
+        sample_text = "shukran Africa!"
+        subject_template = "shukran {subject}!"
+    Blank-input fallback resolves to sample_text (= "shukran Africa!"),
+    not the literal "Morocco" the template was originally built around.
+    """
+
+    def test_substitutes_user_location(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="Bali") == \
+            "shukran Bali!"
+
+    def test_empty_subject_falls_back_to_africa(self):
+        """Blank Location input → renders 'shukran Africa!' (per product spec)."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="") == \
+            "shukran Africa!"
+
+    def test_preserves_input_casing(self):
+        """Subject 'new york' → 'shukran new york!' — the subject_template
+        branch never auto-uppercases, unlike the heuristic AFRICA→BALI path."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="new york") == \
+            "shukran new york!"
+
+    def test_multi_word_location_preserved(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="New York") == \
+            "shukran New York!"
 
 
 # ── Timeout & error_detail tests ──────────────────────────────────────────────

@@ -357,7 +357,9 @@ def _run_music_job(job_id: str) -> None:
         log.info("gemini_upload_clips_done", job_id=job_id)
 
         log.info("gemini_analyze_clips_start", job_id=job_id)
-        clip_metas, failed_count = _analyze_clips_parallel(file_refs, local_clip_paths, probe_map)
+        clip_metas, failed_count = _analyze_clips_parallel(
+            file_refs, local_clip_paths, probe_map, job_id=job_id,
+        )
 
         total = len(clip_metas) + failed_count
         if failed_count > total * 0.5:
@@ -472,6 +474,7 @@ def _run_gemini_audio_analysis(
             beat_timestamps_s=beats,
             track_config=track_config,
             duration_s=duration_s,
+            job_id=f"track:{track_id}",
         )
 
         # Merge: beat timing (exact) + Gemini visuals (creative)

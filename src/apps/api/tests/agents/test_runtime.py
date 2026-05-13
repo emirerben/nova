@@ -675,3 +675,253 @@ def test_creative_direction_max_output_tokens_is_2048() -> None:
     from app.agents.creative_direction import CreativeDirectionAgent
 
     assert CreativeDirectionAgent.max_output_tokens == 2048
+
+
+# ── raw_text capture on refusal / schema failures (Loop B follow-up) ──────────
+
+
+def test_clip_metadata_required_fields_drops_hook_text() -> None:
+    """A silent / ambient clip legitimately returns hook_text="". Pin that
+    `required_fields()` no longer treats this as a refusal — only `hook_score`
+    and `best_moments` are required."""
+    from app.agents._runtime import ModelClient
+    from app.agents.clip_metadata import ClipMetadataAgent
+
+    class _NullClient(ModelClient):
+        def invoke(self, **_: object) -> ModelInvocation:  # type: ignore[override]
+            raise AssertionError("not called")
+
+    agent = ClipMetadataAgent(_NullClient())
+    assert agent.required_fields() == ["hook_score", "best_moments"]
+    assert "hook_text" not in agent.required_fields()
+
+
+def test_clip_metadata_empty_hook_text_does_not_refuse(
+    mock_client: MockModelClient,
+) -> None:
+    """End-to-end: ClipMetadataAgent given a Gemini response with hook_text=""
+    (silent clip) and a valid best_moments list must succeed without raising
+    RefusalError or triggering a clarification retry."""
+    from app.agents.clip_metadata import ClipMetadataAgent
+
+    agent = ClipMetadataAgent(mock_client)
+    mock_client.queue(
+        agent.spec.model,
+        {
+            "hook_text": "",
+            "hook_score": 7.5,
+            "best_moments": [
+                {"start_s": 0.0, "end_s": 3.0, "score": 8.0, "reason": "wide shot"},
+            ],
+        },
+    )
+    out = agent.run({"file_uri": "gs://example/clip.mp4"})
+    assert out.hook_text == ""
+    assert out.hook_score == 7.5
+    assert len(out.best_moments) == 1
+    # Exactly one call — no clarification retry.
+    assert len(mock_client.invocations) == 1
+
+
+def test_run_stats_last_raw_text_captured_on_refusal(
+    sample_agent: SampleAgent, mock_client: MockModelClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When `_check_refusal` raises (missing required field), the prior
+    invoke's `raw_text` must be stashed in `stats.last_raw_text` and surfaced
+    in the `agent_run` structlog event so prod refusals are diagnosable
+    without a Langfuse round-trip."""
+    captured: list[tuple[str, dict]] = []
+    from app.agents import _runtime as runtime_mod
+
+    monkeypatch.setattr(
+        runtime_mod.log, "info", lambda event, **kw: captured.append((event, dict(kw)))
+    )
+    monkeypatch.setattr(runtime_mod.log, "warning", lambda *a, **kw: None)
+
+    # Missing `score` → RefusalError on both attempts → terminal_refusal.
+    mock_client.queue(
+        "gemini-2.5-flash",
+        {"answer": "partial-one"},
+        {"answer": "partial-two"},
+    )
+    with pytest.raises(TerminalError):
+        sample_agent.run(SampleInput(topic="x"))
+
+    runs = [c for c in captured if c[0] == "agent_run"]
+    assert len(runs) == 1
+    payload = runs[0][1]
+    assert payload["outcome"] == "terminal_refusal"
+    # The captured preview is the LAST successful invoke's raw_text — the
+    # second attempt's body (`partial-two`), since stats.last_raw_text is
+    # overwritten on every invoke.
+    assert "raw_text_preview" in payload
+    assert "partial-two" in payload["raw_text_preview"]
+
+
+def test_run_stats_last_raw_text_captured_on_schema_error(
+    sample_agent: SampleAgent, mock_client: MockModelClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schema-error path: `_check_refusal` passes, `self.parse` raises.
+    The prior invoke's raw_text must still be surfaced."""
+    captured: list[tuple[str, dict]] = []
+    from app.agents import _runtime as runtime_mod
+
+    monkeypatch.setattr(
+        runtime_mod.log, "info", lambda event, **kw: captured.append((event, dict(kw)))
+    )
+    monkeypatch.setattr(runtime_mod.log, "warning", lambda *a, **kw: None)
+
+    # `score=999`/`998` pass required_fields (non-empty) but fail the Pydantic
+    # ge=0/le=100 bound → SchemaError. Clarification retry exhausts after 2
+    # attempts (the gate is `schema_retries >= 1`), so SchemaError surfaces
+    # from flash without falling back to pro.
+    mock_client.queue(
+        "gemini-2.5-flash",
+        {"answer": "ok", "score": 999},
+        {"answer": "ok", "score": 998},
+    )
+    with pytest.raises(TerminalError):
+        sample_agent.run(SampleInput(topic="x"))
+
+    runs = [c for c in captured if c[0] == "agent_run"]
+    assert len(runs) == 1
+    payload = runs[0][1]
+    assert payload["outcome"] == "terminal_schema"
+    assert "raw_text_preview" in payload
+    # Last successful invoke before the parse failure was the second flash
+    # call (score=998), so that's what we expect in the preview.
+    assert "998" in payload["raw_text_preview"]
+
+
+def test_run_stats_last_raw_text_truncated_to_500_chars(
+    sample_agent: SampleAgent, mock_client: MockModelClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defensive: a runaway response must not dump 100KB into Langfuse /
+    structlog. Cap at 500 chars."""
+    captured: list[tuple[str, dict]] = []
+    from app.agents import _runtime as runtime_mod
+
+    monkeypatch.setattr(
+        runtime_mod.log, "info", lambda event, **kw: captured.append((event, dict(kw)))
+    )
+    monkeypatch.setattr(runtime_mod.log, "warning", lambda *a, **kw: None)
+
+    huge = "x" * 10_000
+    mock_client.queue(
+        "gemini-2.5-flash",
+        ModelInvocation(raw_text=huge, tokens_in=10, tokens_out=20),
+        ModelInvocation(raw_text=huge, tokens_in=10, tokens_out=20),
+    )
+    with pytest.raises(TerminalError):
+        sample_agent.run(SampleInput(topic="x"))
+
+    runs = [c for c in captured if c[0] == "agent_run"]
+    assert len(runs[0][1]["raw_text_preview"]) == 500
+
+
+def test_log_outcome_threads_raw_text_to_trace_agent_run(
+    sample_agent: SampleAgent, mock_client: MockModelClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_log_outcome` must forward `stats.last_raw_text` as the `raw_text`
+    kwarg of `trace_agent_run`, so Langfuse traces for refusal / schema
+    failures carry the model's actual response."""
+    from app.agents import _langfuse as langfuse_mod
+    from app.agents import _runtime as runtime_mod
+
+    monkeypatch.setattr(runtime_mod.log, "info", lambda *a, **kw: None)
+    monkeypatch.setattr(runtime_mod.log, "warning", lambda *a, **kw: None)
+
+    seen: list[dict] = []
+
+    def fake_trace_agent_run(**kwargs: object) -> str | None:
+        seen.append(kwargs)
+        return None
+
+    monkeypatch.setattr(langfuse_mod, "trace_agent_run", fake_trace_agent_run)
+
+    mock_client.queue(
+        "gemini-2.5-flash",
+        {"answer": "partial-A"},
+        {"answer": "partial-B"},
+    )
+    with pytest.raises(TerminalError):
+        sample_agent.run(SampleInput(topic="x"))
+
+    assert len(seen) == 1
+    assert "raw_text" in seen[0]
+    assert "partial-B" in (seen[0]["raw_text"] or "")
+    assert len(seen[0]["raw_text"]) <= 500
+
+
+def test_log_outcome_passes_raw_text_none_when_no_invoke_succeeded(
+    sample_agent: SampleAgent, mock_client: MockModelClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When every invoke transient-fails before producing raw_text,
+    `stats.last_raw_text` stays None and the trace call must not blow up."""
+    from app.agents import _langfuse as langfuse_mod
+    from app.agents import _runtime as runtime_mod
+
+    monkeypatch.setattr(runtime_mod.log, "info", lambda *a, **kw: None)
+    monkeypatch.setattr(runtime_mod.log, "warning", lambda *a, **kw: None)
+
+    seen: list[dict] = []
+    monkeypatch.setattr(langfuse_mod, "trace_agent_run", lambda **kw: seen.append(kw) or None)
+
+    for _ in range(3):
+        mock_client.queue("gemini-2.5-flash", TransientError("503"))
+    for _ in range(3):
+        mock_client.queue("gemini-2.5-pro", TransientError("503"))
+    with pytest.raises(TerminalError):
+        sample_agent.run(SampleInput(topic="x"))
+
+    assert len(seen) == 1
+    assert seen[0].get("raw_text") is None
+
+
+def test_trace_agent_run_includes_raw_text_preview_in_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`trace_agent_run` itself must place `raw_text` under the
+    `raw_text_preview` metadata key when set, and omit it when None."""
+    from app.agents import _langfuse as langfuse_mod
+
+    captured: list[dict] = []
+
+    class _FakeGeneration:
+        def __init__(self, **_: object) -> None:
+            pass
+
+    class _FakeTrace:
+        id = "trace-xyz"
+
+        def __init__(self, **kwargs: object) -> None:
+            captured.append(kwargs)
+
+        def generation(self, **_: object) -> None:
+            return None
+
+    class _FakeClient:
+        def trace(self, **kwargs: object) -> _FakeTrace:
+            return _FakeTrace(**kwargs)
+
+    monkeypatch.setattr(langfuse_mod, "_get_client", lambda: _FakeClient())
+
+    trace_id = langfuse_mod.trace_agent_run(
+        agent_name="test.agent",
+        prompt_version="v1",
+        model="gemini-2.5-flash",
+        outcome="terminal_refusal",
+        raw_text='{"hook_score": 8.0}',
+    )
+    assert trace_id == "trace-xyz"
+    assert captured[0]["metadata"]["raw_text_preview"] == '{"hook_score": 8.0}'
+
+    # And omitted when not provided.
+    captured.clear()
+    langfuse_mod.trace_agent_run(
+        agent_name="test.agent",
+        prompt_version="v1",
+        model="gemini-2.5-flash",
+        outcome="ok",
+    )
+    assert "raw_text_preview" not in captured[0]["metadata"]

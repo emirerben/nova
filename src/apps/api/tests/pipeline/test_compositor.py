@@ -76,10 +76,25 @@ class TestBuildVideoFilter:
         so speed-ramps and timed darkening/narrowing windows reason about a
         single uniform timeline."""
         filters = _build_video_filter("16:9", None, speed_factor=2.0)
-        assert filters[0] == "colorspace=all=bt709"
+        assert filters[0] == "colorspace=all=bt709:iall=bt709"
         assert filters[1].startswith("framerate=fps=")
         assert filters[2] == "setpts=PTS/2.0"
         assert "scale" in filters[3]
+
+    def test_colorspace_filter_assumes_bt709_input(self):
+        """The colorspace filter MUST carry `iall=bt709` so it tolerates
+        inputs with primaries=unknown / matrix=unknown. libx264 does not
+        propagate FFmpeg-level -color_primaries / -colorspace flags into
+        the H.264 SPS without -x264-params, so photo→mp4 outputs (from
+        image_to_video.py) and some phone recordings ship with unknown
+        primaries. Without iall=bt709 the filter returns EINVAL — observed
+        in prod on 2026-05-12 as rc=234 on job 2795fa69.
+        """
+        filters = _build_video_filter("9:16", None)
+        assert "colorspace=all=bt709:iall=bt709" in filters[0], (
+            f"colorspace filter must include iall=bt709 to tolerate "
+            f"unknown-primaries input; got: {filters[0]!r}"
+        )
 
     def test_color_hint_warm(self):
         """Color hint 'warm' adds colorbalance filter."""

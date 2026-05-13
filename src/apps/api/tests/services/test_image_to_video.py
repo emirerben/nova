@@ -53,6 +53,25 @@ def _ffprobe_resolution(path: str) -> tuple[int, int]:
     return int(w), int(h)
 
 
+def _ffprobe_color_metadata(path: str) -> tuple[str, str, str]:
+    """Return (color_primaries, color_transfer, color_space) as read from
+    the H.264 SPS by ffprobe. Used to verify -x264-params propagation."""
+    out = subprocess.check_output(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=color_primaries,color_transfer,color_space",
+            "-of", "csv=p=0:s=,",
+            path,
+        ],
+        text=True,
+    ).strip()
+    parts = out.split(",")
+    while len(parts) < 3:
+        parts.append("unknown")
+    return parts[0] or "unknown", parts[1] or "unknown", parts[2] or "unknown"
+
+
 class TestNormalize:
     def test_landscape_image_is_cropped_to_9x16(self):
         raw = _make_image_bytes(1920, 1080, "PNG")
@@ -94,3 +113,21 @@ class TestEndToEnd:
         image_bytes_to_mp4(raw, str(out), duration_s=0.1)
         # _normalize clamps to 0.5s minimum
         assert _ffprobe_duration_s(str(out)) >= 0.4
+
+    def test_color_metadata_tagged_bt709(self, tmp_path):
+        """The converted mp4 MUST advertise bt709 primaries/matrix/transfer
+        in its H.264 SPS. Without -x264-params colorprim=bt709:..., libx264
+        ignores FFmpeg-level -color_primaries and the file ships with
+        primaries=unknown — which crashes the downstream reframe colorspace
+        filter (rc=234, EINVAL). Observed in prod on 2026-05-12, job 2795fa69.
+        """
+        out = tmp_path / "out.mp4"
+        raw = _make_image_bytes(1080, 1920, "PNG")
+        image_bytes_to_mp4(raw, str(out), duration_s=2.0)
+        primaries, transfer, space = _ffprobe_color_metadata(str(out))
+        assert primaries == "bt709", (
+            f"color_primaries must be bt709 (was {primaries!r}); "
+            f"missing -x264-params propagation"
+        )
+        assert transfer == "bt709", f"color_transfer must be bt709 (was {transfer!r})"
+        assert space == "bt709", f"color_space must be bt709 (was {space!r})"
