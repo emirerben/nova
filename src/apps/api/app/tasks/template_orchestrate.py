@@ -57,6 +57,20 @@ from app.pipeline.template_matcher import (
     consolidate_slots,
     match,
 )
+from app.services.job_phases import (
+    PHASE_ANALYZE_CLIPS,
+    PHASE_ASSEMBLE,
+    PHASE_DOWNLOAD_CLIPS,
+    PHASE_FINALIZE,
+    PHASE_GENERATE_COPY,
+    PHASE_MATCH_CLIPS,
+    PHASE_MIX_AUDIO,
+    PHASE_UPLOAD,
+    mark_failed_phase,
+    mark_finished,
+    mark_started,
+    record_phase,
+)
 from app.services.template_poster import (
     PosterExtractionError,
 )
@@ -473,6 +487,12 @@ def _run_template_job(job_id: str) -> None:
         job.status = "processing"
         db.commit()
 
+        # Stamp started_at + initial current_phase so the frontend shows motion
+        # the moment the worker picks the job up — distinct from `created_at`
+        # which is the original queue insert time. Inside the session block
+        # because the rest of `_run_template_job` continues here.
+        mark_started(job_id)
+
         # Fast path: locked re-render skips Gemini entirely
         if isinstance(job.assembly_plan, dict) and job.assembly_plan.get("locked"):
             _run_rerender(job_id, job)
@@ -540,9 +560,17 @@ def _run_template_job(job_id: str) -> None:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # [2] Download all clip files in parallel
+        _phase_t0 = time.monotonic()
         local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
+        record_phase(
+            job_id,
+            PHASE_DOWNLOAD_CLIPS,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_ANALYZE_CLIPS,
+        )
 
         mixed_media = _is_mixed_media(recipe.slots)
+        _phase_t0 = time.monotonic()
         if mixed_media:
             # Mixed-media template: positional binding (clip[i] → slot[i]).
             # Photo slots skip Gemini entirely; video slots upload+analyze in parallel.
@@ -594,6 +622,14 @@ def _run_template_job(job_id: str) -> None:
                 success=len(clip_metas),
                 failed=failed_count,
             )
+
+        record_phase(
+            job_id,
+            PHASE_ANALYZE_CLIPS,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_MATCH_CLIPS,
+        )
+        _phase_t0 = time.monotonic()
 
         # [5] Template match.
         # Pin clip 0 to slot 1 when the template's first slot is "hook"-typed —
@@ -679,6 +715,14 @@ def _run_template_job(job_id: str) -> None:
                 job.assembly_plan = plan_data
                 db.commit()
 
+        record_phase(
+            job_id,
+            PHASE_MATCH_CLIPS,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_ASSEMBLE,
+        )
+        _phase_t0 = time.monotonic()
+
         # [6] FFmpeg assemble
         log.info("ffmpeg_assemble_start", job_id=job_id)
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
@@ -707,6 +751,14 @@ def _run_template_job(job_id: str) -> None:
             output_fit=getattr(recipe, "output_fit", None) or "crop",
         )
 
+        record_phase(
+            job_id,
+            PHASE_ASSEMBLE,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_MIX_AUDIO,
+        )
+        _phase_t0 = time.monotonic()
+
         # [6b] Mix template audio if available
         if audio_gcs_path:
             final_path = os.path.join(tmpdir, "final.mp4")
@@ -718,6 +770,14 @@ def _run_template_job(job_id: str) -> None:
             base_path = base_final
         else:
             output_path = assembled_path
+
+        record_phase(
+            job_id,
+            PHASE_MIX_AUDIO,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_GENERATE_COPY,
+        )
+        _phase_t0 = time.monotonic()
 
         # [7] Generate copy (with template tone)
         hook_text = _extract_hook_text(clip_metas, assembly_plan.steps)
@@ -732,11 +792,27 @@ def _run_template_job(job_id: str) -> None:
             job_id=job_id,
         )
 
+        record_phase(
+            job_id,
+            PHASE_GENERATE_COPY,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_UPLOAD,
+        )
+        _phase_t0 = time.monotonic()
+
         # [8] Upload assembled video + base video to GCS
         gcs_output_path = f"jobs/{job_id}/template_output.mp4"
         video_url = upload_public_read(output_path, gcs_output_path)
         gcs_base_path = f"jobs/{job_id}/template_base.mp4"
         base_video_url = upload_public_read(base_path, gcs_base_path)
+
+        record_phase(
+            job_id,
+            PHASE_UPLOAD,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_FINALIZE,
+        )
+        _phase_t0 = time.monotonic()
 
         # [9] Finalize
         with _sync_session() as db:
@@ -751,6 +827,13 @@ def _run_template_job(job_id: str) -> None:
                     "copy_status": copy_status,
                 }
                 db.commit()
+
+        record_phase(
+            job_id,
+            PHASE_FINALIZE,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+        )
+        mark_finished(job_id)
 
         log.info("template_job_done", job_id=job_id, output_url=video_url)
 
@@ -983,7 +1066,9 @@ def _build_positional_clip_metas(
             meta.clip_path = path
             return idx, meta
 
-        with ThreadPoolExecutor(max_workers=min(len(video_indices), 8)) as pool:
+        with ThreadPoolExecutor(
+            max_workers=min(len(video_indices), _GEMINI_PARALLEL_CAP),
+        ) as pool:
             futures = [pool.submit(_process, i) for i in video_indices]
             for future in as_completed(futures):
                 idx, meta = future.result()
@@ -1157,7 +1242,9 @@ def _upload_clips_parallel(local_paths: list[str]) -> list:
         ref = gemini_upload_and_wait(path)
         return idx, ref
 
-    with ThreadPoolExecutor(max_workers=min(len(local_paths), 8)) as pool:
+    with ThreadPoolExecutor(
+        max_workers=min(len(local_paths), _GEMINI_PARALLEL_CAP),
+    ) as pool:
         futures = {pool.submit(_upload_one, (i, p)): i for i, p in enumerate(local_paths)}
         for future in as_completed(futures):
             idx, ref = future.result()
@@ -1338,7 +1425,9 @@ def _analyze_clips_parallel(
                 log.warning("whisper_fallback_failed", clip_idx=idx, error=str(whisper_exc))
                 return None, str(exc)
 
-    with ThreadPoolExecutor(max_workers=min(len(file_refs), 8)) as pool:
+    with ThreadPoolExecutor(
+        max_workers=min(len(file_refs), _GEMINI_PARALLEL_CAP),
+    ) as pool:
         futures = [
             pool.submit(_analyze_one, (i, ref, path))
             for i, (ref, path) in enumerate(zip(file_refs, local_paths))
@@ -1393,6 +1482,15 @@ _PARALLEL_RENDER_WORKERS = 2  # Match worker vCPU count (fly.toml: cpus=2).
 # Celery --concurrency=2 the cluster already runs up to 4 ffmpegs at once,
 # which is past the sweet spot for shared-CPU machines. If fly.toml cpus
 # changes, update this to match.
+
+# Concurrency cap for Gemini-bound work (upload + analyze + mixed-media
+# per-clip analysis). Gemini's documented per-project request concurrency
+# is well above this, so the bottleneck is request RTT, not quota. Raised
+# from 8 → 16 in PR (auto-mode) to halve the wall time of the analyze
+# phase on 10+ clip templates without changing failure shape. If we ever
+# see 429s, drop this back to 8 and add an adaptive backoff in
+# agents/gemini_analyzer.py (deferred to a follow-up PR).
+_GEMINI_PARALLEL_CAP = 16
 
 
 def _phase_done(name: str, t0: float, *, job_id: str | None, **extra: object) -> None:
@@ -4044,6 +4142,7 @@ def _run_single_video_job(
     audio_health: list[str] = []
 
     with tempfile.TemporaryDirectory() as tmpdir:
+        _phase_t0 = time.monotonic()
         # [1] Download template's reference video (intro source).
         ref_video_local = os.path.join(tmpdir, "template_ref.mp4")
         with _stage(
@@ -4061,6 +4160,14 @@ def _run_single_video_job(
             job_id=job_id,
         ):
             download_to_file(clip_paths_gcs[0], user_local)
+
+        record_phase(
+            job_id,
+            PHASE_DOWNLOAD_CLIPS,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_ANALYZE_CLIPS,
+        )
+        _phase_t0 = time.monotonic()
 
         # [3] Pick body window (peak-anchored, variable length). A ValueError
         # here means the user's clip is unusable (too short, no audio, probe
@@ -4087,6 +4194,14 @@ def _run_single_video_job(
                 ) from stage_err
             raise
         body_dur = body_end - body_start
+
+        record_phase(
+            job_id,
+            PHASE_ANALYZE_CLIPS,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_ASSEMBLE,
+        )
+        _phase_t0 = time.monotonic()
 
         # [4] Extract intro from template reference (KEEPS audio).
         intro_path = os.path.join(tmpdir, "intro.mp4")
@@ -4158,6 +4273,14 @@ def _run_single_video_job(
                             [intro_path, body_path], final_path, tmpdir,
                         )
 
+        record_phase(
+            job_id,
+            PHASE_ASSEMBLE,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_UPLOAD,
+        )
+        _phase_t0 = time.monotonic()
+
         # [7] Upload primary + base output. template_output.mp4 and
         # template_base.mp4 are byte-identical for this template family
         # (no slot-level overlays to strip for the editor's "without
@@ -4172,6 +4295,14 @@ def _run_single_video_job(
         ):
             video_url = upload_public_read(final_path, gcs_output_path)
             base_video_url = copy_object_signed_url(gcs_output_path, gcs_base_path)
+
+        record_phase(
+            job_id,
+            PHASE_UPLOAD,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_GENERATE_COPY,
+        )
+        _phase_t0 = time.monotonic()
 
         # [8] Generate copy. Hook text = the template's signature punchline.
         hook_text = "How do you enjoy your life?"
@@ -4189,6 +4320,14 @@ def _run_single_video_job(
                 template_tone="provocative",
                 job_id=job_id,
             )
+
+        record_phase(
+            job_id,
+            PHASE_GENERATE_COPY,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_FINALIZE,
+        )
+        _phase_t0 = time.monotonic()
 
         # [9] Persist
         plan_data = {
@@ -4215,6 +4354,13 @@ def _run_single_video_job(
                         f"audio assets unavailable: {','.join(audio_health)}"
                     )
                 db.commit()
+
+        record_phase(
+            job_id,
+            PHASE_FINALIZE,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+        )
+        mark_finished(job_id)
 
         log.info(
             "fixed_intro_template_done",
@@ -4323,6 +4469,8 @@ def _run_single_video_job_entry(job_id: str) -> None:
             "tiktok", "instagram", "youtube",
         ]
 
+    mark_started(job_id)
+
     if not template_id:
         raise _StageError(
             FAILURE_REASON_TEMPLATE_MISCONFIGURED,
@@ -4366,3 +4514,6 @@ def _mark_failed(job_uuid: uuid.UUID, reason: str, message: str) -> None:
             job.error_detail = message[:1000] if message else None
             job.failure_reason = reason
             db.commit()
+    # Clear current_phase and stamp finished_at so the progress UI shows a
+    # terminal state instead of frozen mid-phase. Best-effort and idempotent.
+    mark_failed_phase(job_uuid)

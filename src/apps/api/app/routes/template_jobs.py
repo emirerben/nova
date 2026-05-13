@@ -3,21 +3,27 @@
 POST /template-jobs              — create a template-mode job
 GET  /template-jobs              — list template jobs (QA dashboard)
 GET  /template-jobs/:id/status   — poll job status + result
+GET  /template-jobs/:id/events   — SSE stream of phase changes (live progress)
 POST /template-jobs/:id/reroll   — re-run assembly with same clips
 GET  /template-jobs/:id/debug    — admin debug endpoint
 """
 
+import asyncio
+import json
 import re
+import time
 import uuid
+from collections.abc import AsyncIterator
 from datetime import datetime
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.database import AsyncSessionLocal, get_db
 from app.models import Job, VideoTemplate
 from app.services.template_validation import (
     get_template_or_404,
@@ -155,6 +161,12 @@ class TemplateJobStatusResponse(BaseModel):
     # Null on success or for legacy failed rows from before this column
     # existed. Frontend prefers this over error_detail for messaging.
     failure_reason: str | None = None
+    # Live pipeline phase + history. Powers the per-phase progress UI on
+    # /template-jobs/[id]. Null/[] for jobs from before migration 0015 ran.
+    current_phase: str | None = None
+    phase_log: list[dict] = Field(default_factory=list)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -509,6 +521,162 @@ async def get_template_job_status(
         assembly_plan=job.assembly_plan,
         error_detail=job.error_detail,
         failure_reason=job.failure_reason,
+        current_phase=job.current_phase,
+        phase_log=list(job.phase_log or []),
+        started_at=job.started_at,
+        finished_at=job.finished_at,
         created_at=job.created_at,
         updated_at=job.updated_at,
+    )
+
+
+# Terminal statuses that close the SSE stream. Mirrors the set the worker
+# writes when finishing a job (template_orchestrate.py + music_orchestrate.py).
+_SSE_TERMINAL_STATUSES = frozenset({
+    "template_ready",
+    "music_ready",
+    "processing_failed",
+    "done",
+})
+
+# Poll interval inside the SSE loop. 750ms balances DB load (1.3 reads/sec)
+# against perceived latency — phase transitions in the worker happen on the
+# order of seconds, so 750ms is well below the granularity of changes.
+_SSE_POLL_INTERVAL_S = 0.75
+
+# Heartbeat keeps proxies (Fly's edge, the browser) from closing an idle
+# connection. SSE comments (`: ...\n\n`) are not delivered to the EventSource
+# listener but reset idle timers.
+_SSE_HEARTBEAT_INTERVAL_S = 15.0
+
+# Hard cap so a forgotten browser tab can't pin a Fly connection forever.
+# Sized comfortably above the 1740s template orchestrate soft-limit.
+_SSE_MAX_DURATION_S = 1900.0
+
+
+def _build_event_payload(job: Job) -> dict:
+    """Snapshot a Job into the dict the frontend EventSource consumes.
+
+    Kept lean — full assembly_plan is fetched via /status when the job
+    completes. The stream is for progress, not for shipping the entire plan
+    JSON down on every tick.
+    """
+    return {
+        "job_id": str(job.id),
+        "status": job.status,
+        "current_phase": job.current_phase,
+        "phase_log": list(job.phase_log or []),
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        "failure_reason": job.failure_reason,
+    }
+
+
+def _format_sse(event: str, data: dict) -> str:
+    """Render a single SSE event. Compact JSON keeps frames small."""
+    return f"event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
+
+
+async def _stream_job_events(
+    job_uuid: uuid.UUID,
+    request: Request,
+) -> AsyncIterator[str]:
+    """Yield SSE frames for one job's phase progression.
+
+    Each tick opens its OWN async session — the FastAPI request-scoped
+    session is closed by the time this generator runs, so we can't reuse it.
+    Cheap: pooled `AsyncSessionLocal` reuses connections and we only do one
+    primary-key lookup per poll.
+    """
+    last_phase: str | None = "__unset__"
+    last_log_len = -1
+    last_status: str | None = None
+    last_heartbeat = time.monotonic()
+    started = time.monotonic()
+
+    while True:
+        if await request.is_disconnected():
+            return
+
+        if time.monotonic() - started > _SSE_MAX_DURATION_S:
+            yield _format_sse("timeout", {"reason": "max_duration_exceeded"})
+            return
+
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(select(Job).where(Job.id == job_uuid))
+                job = result.scalar_one_or_none()
+        except Exception as exc:  # pragma: no cover — transient DB blip
+            log.warning("sse_db_read_failed", job_id=str(job_uuid), error=str(exc))
+            await asyncio.sleep(_SSE_POLL_INTERVAL_S)
+            continue
+
+        if job is None:
+            # Job was deleted mid-stream. Don't keep the connection open.
+            yield _format_sse("error", {"reason": "job_not_found"})
+            return
+
+        log_len = len(job.phase_log or [])
+        if (
+            job.current_phase != last_phase
+            or log_len != last_log_len
+            or job.status != last_status
+        ):
+            last_phase = job.current_phase
+            last_log_len = log_len
+            last_status = job.status
+            yield _format_sse("phase_change", _build_event_payload(job))
+            last_heartbeat = time.monotonic()
+
+        if job.status in _SSE_TERMINAL_STATUSES:
+            yield _format_sse("complete", _build_event_payload(job))
+            return
+
+        if time.monotonic() - last_heartbeat > _SSE_HEARTBEAT_INTERVAL_S:
+            # SSE comment line — keeps proxies from idling out the connection.
+            yield ": heartbeat\n\n"
+            last_heartbeat = time.monotonic()
+
+        await asyncio.sleep(_SSE_POLL_INTERVAL_S)
+
+
+@router.get("/{job_id}/events")
+async def stream_template_job_events(
+    job_id: str,
+    request: Request,
+) -> StreamingResponse:
+    """Server-Sent Events stream of job progress.
+
+    Frontend consumes with `new EventSource(url)`. Emits:
+      - `phase_change` whenever current_phase, phase_log, or status changes
+      - `complete` on terminal status (then closes)
+      - `timeout` if the stream lives past the safety cap (then closes)
+      - `error` if the job vanishes mid-stream (then closes)
+
+    Authentication is intentionally identical to /status (none yet, MVP
+    synthetic user). Add when /status grows auth.
+    """
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    # Verify the job exists before opening the stream so a typo doesn't keep
+    # an SSE connection alive for 30 minutes serving nothing.
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Job).where(Job.id == job_uuid))
+        existing = result.scalar_one_or_none()
+    if existing is None or existing.job_type not in ("template", "music"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    return StreamingResponse(
+        _stream_job_events(job_uuid, request),
+        media_type="text/event-stream",
+        headers={
+            # Disable any intermediate proxy buffering (nginx, Fly edge).
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            # Some clients need this hint to keep the connection open.
+            "Connection": "keep-alive",
+        },
     )

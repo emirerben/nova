@@ -249,6 +249,19 @@ class Job(Base):
     # of a generic "Something went wrong". See FAILURE_REASON in
     # tasks/template_orchestrate.py for the canonical set.
     failure_reason: Mapped[str | None] = mapped_column(Text)
+    # Live pipeline phase name (e.g. "download_clips", "analyze_clips",
+    # "assemble", "upload"). Cleared on success/failure terminal state but
+    # phase_log retains history. Drives the live progress UI on /template-jobs/[id].
+    current_phase: Mapped[str | None] = mapped_column(Text)
+    # Append-only history of completed phases:
+    # [{name, elapsed_ms, t_offset_ms, ts}, ...]. Written by services/job_phases.
+    phase_log: Mapped[list | None] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    # True pipeline-wall-time anchors. Distinct from created_at (queue insert)
+    # and updated_at (any column write).
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now()
     )
