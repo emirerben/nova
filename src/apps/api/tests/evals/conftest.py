@@ -197,3 +197,25 @@ def live_model_client(eval_mode: str):
     from app.agents._model_client import default_client
 
     return default_client()
+
+
+@pytest.fixture(scope="session")
+def live_input_normalizer(eval_mode: str):
+    """Build a fixture-input normalizer for --eval-mode=live, else None.
+
+    The eval suite's fixtures store `input.file_uri` as a bucket-relative
+    GCS path (`clips/<id>.mp4`). The Studio `GEMINI_API_KEY` can't resolve
+    those — production gets around this by calling `gemini_upload_and_wait`
+    in the orchestrator before invoking the agent. This fixture mirrors
+    that step for the live eval path: it downloads from GCS and uploads to
+    Gemini File API, returning a `files/<id>` URI that the model accepts.
+
+    Returns a callable `(input_dict) -> input_dict` (a closure over a
+    session-scoped upload cache), or None when in replay mode.
+    """
+    if eval_mode != "live":
+        return None
+    from ._fixture_uploader import build_default_uploader
+
+    uploader = build_default_uploader()
+    return uploader.normalize_input
