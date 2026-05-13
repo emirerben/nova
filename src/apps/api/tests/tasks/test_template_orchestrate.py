@@ -2057,11 +2057,19 @@ class TestCrossSlotMerge:
 
 
 class TestResolveOverlayText:
-    def test_hook_role_uses_hook_text(self):
+    def test_empty_hook_overlay_does_not_leak_clip_meta_hook_text(self):
+        """REGRESSION: empty hook overlay MUST render empty — never fall
+        back to Gemini's `clip_meta.hook_text`. The earlier fallback
+        leaked Gemini's per-clip description into the rendered video
+        (job a1091488, Rule of Thirds, 2026-05-13)."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
-        meta = _make_clip_meta()
+        meta = _make_clip_meta()  # hook_text="test hook" populated
         result = _resolve_overlay_text("hook", meta, {})
-        assert result == "test hook"
+        assert result == "", (
+            "Gemini hook_text leaked into an empty overlay — the fallback "
+            "branch was reintroduced. See template_orchestrate.py's "
+            "_resolve_overlay_text and the 'pilot in cockpit' incident."
+        )
 
     def test_reaction_role_uses_sample_text(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
@@ -3493,3 +3501,209 @@ class TestTemplateKindStrip:
         recipe = _build_recipe(recipe_data)
         assert recipe.shot_count == 3
         assert len(recipe.slots) == 3
+
+
+class TestRuleOfThirdsHookLiterals:
+    """REGRESSION: Rule of Thirds template — literal hook words must NOT be
+    substituted by the placeholder heuristic.
+
+    Production job a1091488-09f6-4ce0-b92e-b1cc52695c9c (2026-05-13) rendered
+    the hook with "pilot in cockpit" in place of "The" and "Thirds" because
+    those single title-cased words triggered _is_subject_placeholder() and the
+    seed script lacked the subject_substitute=False opt-out that PR #125 added
+    for Waka Waka. These tests pin every overlay in seed_rule_of_thirds.py so
+    a future edit that removes the flag fails CI instead of shipping.
+    """
+
+    @staticmethod
+    def _clip_meta_with_hook():
+        return ClipMeta(
+            clip_id="files/q5p2zfdeepuw",
+            transcript="",
+            hook_text="pilot in cockpit",
+            hook_score=7.0,
+            best_moments=[{"start_s": 0.0, "end_s": 2.0, "energy": 6.0, "description": "pilot adjusts controls"}],
+            clip_path="/tmp/clip.mp4",
+        )
+
+    def test_overlay_the_returns_literal(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        overlay = {
+            "role": "hook",
+            "text": "The",
+            "subject_substitute": False,
+        }
+        result = _resolve_overlay_text(
+            "hook", self._clip_meta_with_hook(), overlay, subject="Vieques",
+        )
+        assert result == "The"
+
+    def test_overlay_rule_of_returns_literal(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        overlay = {
+            "role": "hook",
+            "text": "Rule of",
+            "subject_substitute": False,
+        }
+        result = _resolve_overlay_text(
+            "hook", self._clip_meta_with_hook(), overlay, subject="Vieques",
+        )
+        assert result == "Rule of"
+
+    def test_overlay_thirds_returns_literal(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        overlay = {
+            "role": "hook",
+            "text": "Thirds",
+            "subject_substitute": False,
+        }
+        result = _resolve_overlay_text(
+            "hook", self._clip_meta_with_hook(), overlay, subject="Vieques",
+        )
+        assert result == "Thirds"
+
+    def test_seed_recipe_pins_optout_on_every_literal_overlay(self):
+        """Snapshot: every literal-text overlay produced by build_recipe() in
+        the Rule of Thirds seed script must carry subject_substitute=False —
+        regardless of which slot it lives in. Walking ALL slots (not just
+        slot_type=='hook') prevents a future edit that moves "Thirds" or
+        similar copy into a broll slot from silently bypassing the safety
+        contract.
+        """
+        from app.tasks.template_orchestrate import _is_subject_placeholder
+        from scripts.seed_rule_of_thirds import build_recipe
+        recipe = build_recipe()
+        hook_seen = False
+        for slot in recipe["slots"]:
+            for overlay in slot.get("text_overlays", []) or []:
+                text = overlay.get("text") or overlay.get("sample_text") or ""
+                if not text:
+                    continue
+                if not _is_subject_placeholder(text):
+                    # Heuristic doesn't match → no substitution risk → flag
+                    # not required.
+                    continue
+                if slot.get("slot_type") == "hook":
+                    hook_seen = True
+                assert overlay.get("subject_substitute") is False, (
+                    f"Rule of Thirds overlay {text!r} in slot "
+                    f"{slot.get('position')!r} ({slot.get('slot_type')!r}) is "
+                    "missing subject_substitute=False — see plan "
+                    "~/.claude/plans/the-rule-of-third-floating-thompson.md"
+                )
+        assert hook_seen, (
+            "Rule of Thirds seed produced no placeholder-shaped overlays in "
+            "any hook slot — the recipe shape has drifted from what this "
+            "test was designed to pin. Verify build_recipe() still emits "
+            "'The' / 'Rule of' / 'Thirds' style title text."
+        )
+
+
+class TestNoGeminiTextLeaks:
+    """Architectural invariant: Gemini's per-clip metadata MUST NOT become
+    user-visible rendered text. Subject substitution is fed exclusively by
+    explicit user input (inputs.location / legacy subject field).
+
+    These tests act as sentinels — they fail loudly if either Gemini-leak
+    path (the consensus-subject fallback or the empty-hook hook_text
+    fallback) is reintroduced. Both paths existed before 2026-05-13 and
+    produced "pilot in cockpit" on Rule of Thirds job a1091488.
+    """
+
+    def test_consensus_subject_function_removed(self):
+        """_consensus_subject took a majority vote across clip_meta
+        .detected_subject and fed the result into the substitution path.
+        Removing the function makes accidental reintroduction stand out
+        in a diff. Reintroducing the helper without updating this test
+        is a deliberate review event."""
+        from app.tasks import template_orchestrate
+        assert not hasattr(template_orchestrate, "_consensus_subject"), (
+            "_consensus_subject was reintroduced. This function lets "
+            "Gemini's clip_meta.detected_subject become subject-substitution "
+            "input when user_subject is empty — the exact bug that rendered "
+            "'pilot in cockpit' on Rule of Thirds. If a legitimate need for "
+            "majority-vote subject detection exists, gate it behind an "
+            "explicit per-template opt-in, not a default fallback."
+        )
+
+    def test_assemble_clips_call_site_uses_user_subject_only(self):
+        """Static check: the line in _assemble_clips that selects `subject`
+        must not call _consensus_subject. The fallback path was the
+        production bug; this test pins the code shape so a refactor
+        cannot silently reintroduce it."""
+        import inspect
+
+        from app.tasks import template_orchestrate
+        src = inspect.getsource(template_orchestrate._assemble_clips)
+        assert "_consensus_subject" not in src, (
+            "_assemble_clips references _consensus_subject — the Gemini "
+            "fallback is back. Replace with `subject = user_subject` only."
+        )
+
+    def test_assemble_clips_subject_does_not_consume_clip_metas(self):
+        """AST-based sentinel: walk _assemble_clips and assert that every
+        assignment to `subject` has a right-hand side that does NOT pipe
+        `clip_metas` into any function call.
+
+        The string-grep sibling test only catches the literal name
+        `_consensus_subject`. A refactor that renames the helper
+        (`_majority_subject`, `_subject_from_clips`, `_auto_detect_subject`)
+        would silently pass that test while reintroducing the same
+        Gemini-leak path. This AST check inspects the data flow instead
+        of the symbol name — any call that takes `clip_metas` as an
+        argument while computing `subject` trips the assertion.
+
+        Multi-specialist confirmed: testing + maintainability + security +
+        red-team all flagged the string-grep as evasion-prone.
+        """
+        import ast
+        import inspect
+
+        from app.tasks import template_orchestrate
+        src = inspect.cleandoc(inspect.getsource(template_orchestrate._assemble_clips))
+        tree = ast.parse(src)
+        fn = tree.body[0]
+        offenders: list[str] = []
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Assign):
+                continue
+            if not any(
+                isinstance(t, ast.Name) and t.id == "subject" for t in node.targets
+            ):
+                continue
+            # Walk the RHS; any function call that takes `clip_metas` as
+            # an argument is a Gemini-leak reintroduction.
+            for sub in ast.walk(node.value):
+                if not isinstance(sub, ast.Call):
+                    continue
+                call_args = list(sub.args) + [kw.value for kw in sub.keywords]
+                for arg in call_args:
+                    if isinstance(arg, ast.Name) and arg.id == "clip_metas":
+                        offenders.append(
+                            f"line {sub.lineno}: subject assignment calls "
+                            f"a function with `clip_metas` as an argument"
+                        )
+        assert not offenders, (
+            "_assemble_clips routes clip_metas into subject computation — "
+            "that's the exact Gemini-leak path PR (this commit) closed. "
+            f"Offenders: {offenders}. Subject must come from user_subject "
+            "only; do NOT derive it from clip-level Gemini analysis."
+        )
+
+    def test_resolve_overlay_text_does_not_return_hook_text(self):
+        """Even when role=='hook' and clip_meta.hook_text is rich and
+        sample is empty, the resolver must return empty — not the
+        Gemini-derived hook text. Pins the lack of the fallback branch."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        meta = ClipMeta(
+            clip_id="x",
+            transcript="",
+            hook_text="this is a Gemini description of the clip",
+            hook_score=8.0,
+            best_moments=[],
+        )
+        # Empty overlay, hook role, subject empty → must NOT leak hook_text.
+        assert _resolve_overlay_text("hook", meta, {}, subject="") == ""
+        # Even with a subject set, empty overlay with no placeholder field
+        # to interpolate into must NOT return hook_text.
+        assert _resolve_overlay_text("hook", meta, {}, subject="Tokyo") == ""
