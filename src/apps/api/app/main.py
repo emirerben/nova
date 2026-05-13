@@ -9,6 +9,7 @@ from app.limiter import limiter
 from app.routes import (
     admin,
     admin_music,
+    clips,
     music,
     music_jobs,
     presigned,
@@ -40,6 +41,7 @@ app.include_router(template_jobs.router, prefix="/template-jobs", tags=["templat
 app.include_router(music.router, prefix="/music-tracks", tags=["music"])
 app.include_router(music_jobs.router, prefix="/music-jobs", tags=["music-jobs"])
 app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])
+app.include_router(clips.router, prefix="/clips", tags=["clips"])
 app.include_router(templates.router, prefix="/templates", tags=["templates"])
 app.include_router(waitlist.router, tags=["waitlist"])
 

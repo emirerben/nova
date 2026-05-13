@@ -15,6 +15,7 @@ import {
   getTemplate,
   importBatchFromDrive,
   normaliseMimeType,
+  prefetchClipAnalyze,
   uploadFileToGcs,
 } from "@/lib/api";
 import { trackRecentJob } from "@/hooks/useArchitectureData";
@@ -159,12 +160,24 @@ export default function TemplateDetailPage() {
     const minClips = requiredClipsMin;
     const maxRetries = 3;
     let consecutiveErrors = 0;
+    // Track which GCS paths we've already prefetched. The Drive batch task
+    // appends to `status.gcs_paths` as each file finishes uploading; we
+    // fire prefetch for new entries every poll so analysis starts before
+    // the LAST file even arrives. Saves the most time on slow batches.
+    const prefetched = new Set<string>();
 
     async function pollOnce() {
       try {
         const status = await getDriveImportBatchStatus(batchId);
         consecutiveErrors = 0;
         setDriveImportStatus(status);
+
+        for (const p of status.gcs_paths) {
+          if (!prefetched.has(p)) {
+            prefetched.add(p);
+            prefetchClipAnalyze(p, tplId);
+          }
+        }
 
         if (status.status === "complete") {
           clearBatchStorage();
@@ -340,6 +353,12 @@ export default function TemplateDetailPage() {
             setClips((prev) =>
               prev.map((c) => (c.id === clip.id ? { ...c, progress: 100 } : c)),
             );
+            // Kick off pre-emptive Gemini analysis for THIS clip while the
+            // other clips are still uploading. By the time the user-visible
+            // POST /template-jobs fires below, the orchestrator's Redis
+            // cache lookup hits and skips the Gemini round-trip entirely.
+            // Fire-and-forget — errors are swallowed (see prefetchClipAnalyze).
+            prefetchClipAnalyze(urls[i].gcs_path, template.id);
           } catch (err) {
             const m = err instanceof Error ? err.message : "Upload failed";
             setClips((prev) =>

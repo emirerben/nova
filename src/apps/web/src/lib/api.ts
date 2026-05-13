@@ -204,6 +204,36 @@ export function getTemplateJobEventsUrl(jobId: string): string {
   return `${API_URL}/template-jobs/${jobId}/events`;
 }
 
+/** Fire-and-forget: kick off pre-emptive Gemini analysis for a clip that
+ *  just finished its presigned PUT. The server returns 202 immediately and
+ *  runs the upload+analyse in the background. By the time the user clicks
+ *  Generate, the result is already in Redis and the orchestrator skips
+ *  Gemini entirely for this clip.
+ *
+ *  Errors are swallowed by design — prefetch is an optimisation, not a
+ *  correctness step. If it fails, the orchestrator does the same work
+ *  on the critical path (same behaviour as before this hook existed).
+ */
+export function prefetchClipAnalyze(
+  gcsPath: string,
+  templateId: string,
+): void {
+  void fetch(`${API_URL}/clips/prefetch-analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ gcs_path: gcsPath, template_id: templateId }),
+    // keepalive lets the request survive a tab-close mid-fire so the server
+    // still kicks off the prefetch. The user might Cmd+Tab away the second
+    // their last clip finishes uploading; we still want the analysis warm
+    // when they come back.
+    keepalive: true,
+  }).catch(() => {
+    // Intentionally silent. Logging here would spam the user's console
+    // for failures they can't act on. The backend logs prefetch_* events
+    // for observability.
+  });
+}
+
 // ── Batch presigned + template gallery API ──────────────────────────────────
 
 export interface BatchPresignedFile {
