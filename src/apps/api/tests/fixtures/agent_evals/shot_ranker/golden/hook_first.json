@@ -1,0 +1,29 @@
+{
+  "agent": "nova.video.shot_ranker",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "candidates": [
+      {"id": "m1", "start_s": 0.0, "end_s": 2.5, "energy": 8.0, "description": "subject slams hand on table and stands up", "hook_score": 9.5},
+      {"id": "m2", "start_s": 3.0, "end_s": 5.5, "energy": 5.5, "description": "wide shot of room with subject seated", "hook_score": 4.0},
+      {"id": "m3", "start_s": 6.0, "end_s": 8.5, "energy": 7.5, "description": "subject leans forward and points at screen", "hook_score": 7.8},
+      {"id": "m4", "start_s": 9.0, "end_s": 11.5, "energy": 4.5, "description": "subject pours drink and sits back", "hook_score": 5.2},
+      {"id": "m5", "start_s": 12.0, "end_s": 14.5, "energy": 6.5, "description": "subject shakes head and laughs", "hook_score": 6.8}
+    ],
+    "target_count": 4,
+    "copy_tone": "energetic",
+    "creative_direction": "high-stakes reaction reel"
+  },
+  "raw_text": "{\"ranked\": [{\"id\": \"m1\", \"rank\": 1, \"rationale\": \"hook_score 9.5 — clear winner, action-verb description (slams, stands)\"}, {\"id\": \"m3\", \"rank\": 2, \"rationale\": \"hook_score 7.8 — next strongest; action verb (leans, points) varies from the slam in rank 1\"}, {\"id\": \"m5\", \"rank\": 3, \"rationale\": \"hook_score 6.8; description (shakes head, laughs) introduces emotional beat distinct from the upper ranks\"}, {\"id\": \"m4\", \"rank\": 4, \"rationale\": \"hook_score 5.2 — composed beat (pours, sits back) breaks the action sequence; lowest energy in the ranked set\"}]}",
+  "output": {
+    "ranked": [
+      {"id": "m1", "rank": 1, "rationale": "hook_score 9.5 — clear winner, action-verb description (slams, stands)"},
+      {"id": "m3", "rank": 2, "rationale": "hook_score 7.8 — next strongest; action verb (leans, points) varies from the slam in rank 1"},
+      {"id": "m5", "rank": 3, "rationale": "hook_score 6.8; description (shakes head, laughs) introduces emotional beat distinct from the upper ranks"},
+      {"id": "m4", "rank": 4, "rationale": "hook_score 5.2 — composed beat (pours, sits back) breaks the action sequence; lowest energy in the ranked set"}
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "Tests the rank-1 calibration table directly: m1's 9.5 hook beats everything. m2 (wide shot, hook 4.0, scene-label description) is correctly DROPPED — target_count=4 but the candidate pool only has 4 strong picks. Variety: energy span 5.2-9.5 across the ranked set, distinct action verbs at each rank."
+  }
+}

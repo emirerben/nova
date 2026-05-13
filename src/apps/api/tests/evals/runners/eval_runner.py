@@ -203,6 +203,14 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.audio_template import AudioTemplateAgent
 
         return AudioTemplateAgent
+    if agent_name == "nova.video.clip_router":
+        from app.agents.clip_router import ClipRouterAgent
+
+        return ClipRouterAgent
+    if agent_name == "nova.video.shot_ranker":
+        from app.agents.shot_ranker import ShotRankerAgent
+
+        return ShotRankerAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 

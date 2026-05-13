@@ -132,6 +132,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         "transcript",
         "platform_copy",
         "audio_template",
+        "clip_router",
+        "shot_ranker",
     ):
         fixture_paths.extend(discover_fixtures(agent_dir))
 
