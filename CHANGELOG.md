@@ -17,6 +17,12 @@ All notable changes to this project will be documented in this file.
 ### Known issue
 - **Live-eval gate blocked on test fixture URI format.** CLAUDE.md mandates `pytest tests/evals/<agent>_evals.py --with-judge --eval-mode=live` before merging any prompt change, but every fixture's `file_uri` is a bucket-relative path (`templates/<uuid>/reference.mp4`, `clips/<id>.mp4`) and the current Studio Gemini key cannot resolve those. All 17 fixtures fail with `400 INVALID_ARGUMENT: Unsupported file URI type` in <8s — $0 spent, prompts never reach the model. Replay-mode evals (no API call) still pass 17/17. Three possible fixes filed as P1 TODO: backfill fixtures with Files API IDs, switch eval auth to Vertex service account, or auto-upload bucket paths inside `media_uri()` at call time.
 
+## [0.4.7.2] - 2026-05-13
+
+### Changed
+- New `.github/workflows/docker-build.yml` runs `docker build` against the prod Dockerfile on every PR that touches `Dockerfile`, `.dockerignore`, or `src/apps/api/**`. Catches Dockerfile/`.dockerignore` coupling bugs on the PR instead of at deploy-to-Fly time — the same class of bug that broke the v0.4.7.0 deploy (`f156c19`) and required hotfix #119 (`121a6e9`). Uses `docker/build-push-action@v5` with GitHub Actions cache backend so warm runs stay ~30-60s; no Fly tokens or build minutes consumed.
+- `CLAUDE.md` gains a "Lessons from prod" section documenting the Dockerfile/`.dockerignore` coupling rule and pointing at the new CI check.
+
 ## [0.4.7.0] - 2026-05-13
 
 ### Fixed

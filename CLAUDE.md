@@ -173,3 +173,22 @@ fly secrets set -a nova-video \
   ALLOWED_ORIGINS='["http://localhost:3000","https://nova-video.vercel.app"]'
 ```
 
+## Lessons from prod
+
+### Dockerfile / .dockerignore coupling
+Any new `COPY <src> ...` line added to the prod `Dockerfile` must have its source path
+verified against `.dockerignore` — the two files do not track each other and there is no
+local tool that flags the mismatch. If `.dockerignore` excludes the source path, the
+`COPY` will fail with "not found in build context" at Fly's builder, AFTER the PR has
+already merged to `main`.
+
+Incident (May 2026): PR #118 (`f156c19`, v0.4.7.0) added
+`COPY src/apps/api/tests/evals/rubrics ./tests/evals/rubrics` for the Loop B online
+judge. Local pytest + the `test-api` CI job both passed (they run against the source
+tree, not the image). The deploy then failed on Fly. PR #119 (`121a6e9`) hotfixed
+`.dockerignore` with negation patterns to let the rubrics through.
+
+`.github/workflows/docker-build.yml` runs `docker build` against the prod Dockerfile on
+every PR that touches `Dockerfile`, `.dockerignore`, or `src/apps/api/**` — so this
+class of bug fails on the PR, not on merge-to-main.
+
