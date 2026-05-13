@@ -312,6 +312,164 @@ class TestPinnedClipReuse:
         assert all(s.clip_id == "clip_0" for s in plan.steps)
 
 
+# ── No-reuse-when-supply-sufficient regression ────────────────────────────────
+
+
+class TestNoReuseWhenSupplySufficient:
+    """Regression for the matcher reusing one clip across multiple slots while
+    other uploaded clips sat unused.
+
+    Trigger: a clip whose moment fits the slot's duration tolerance gets used,
+    then for the next slot the only `loose_candidates` entry that fits ±6s of
+    the new slot's target_duration_s is THAT same clip. Other unused clips have
+    moments that fall outside the ±6s tolerance window. Pre-fix the matcher
+    fell back from the use-count-capped pool straight to the duration-loose
+    pool — silently reusing the used clip even though the assembler trims
+    durations downstream and would happily accept an unused clip with a
+    "wrong-duration" moment. Post-fix the matcher inserts a duration-relaxed
+    pass over unused clips before reaching the reuse fallback.
+    """
+
+    def test_no_reuse_when_durations_mismatch_and_unused_clips_exist(self):
+        """The user's exact bug. One clip has a slot-fitting moment; the
+        other four uploaded clips have moments well outside the duration
+        tolerance. Pre-fix slot 2 reused the fitting clip; post-fix it picks
+        an unused clip via the duration-relaxed branch."""
+        recipe = _make_recipe([
+            _slot(1, 4.0, priority=10, slot_type="hook"),
+            _slot(2, 4.0, priority=9, slot_type="broll"),
+            _slot(3, 4.0, priority=8, slot_type="broll"),
+            _slot(4, 4.0, priority=7, slot_type="broll"),
+            _slot(5, 4.0, priority=5, slot_type="outro"),
+        ])
+        # clip_a has a fitting 4s moment; b/c/d/e only have 15s moments
+        # (|15 - 4| = 11s > DURATION_TOLERANCE_FALLBACK_S=6s).
+        clips = [
+            _make_clip("clip_a", [_moment(0.0, 4.0, energy=8.0)]),
+            _make_clip("clip_b", [_moment(0.0, 15.0, energy=7.0)]),
+            _make_clip("clip_c", [_moment(0.0, 15.0, energy=7.0)]),
+            _make_clip("clip_d", [_moment(0.0, 15.0, energy=7.0)]),
+            _make_clip("clip_e", [_moment(0.0, 15.0, energy=7.0)]),
+        ]
+
+        plan = match(recipe, clips)
+
+        assert len(plan.steps) == 5
+        clip_ids_used = [s.clip_id for s in plan.steps]
+        assert sorted(clip_ids_used) == ["clip_a", "clip_b", "clip_c", "clip_d", "clip_e"], (
+            f"Expected each uploaded clip used exactly once when supply "
+            f"equals demand, got {clip_ids_used}"
+        )
+
+    def test_no_reuse_when_supply_exceeds_demand(self):
+        """7 clips, 5 slots. Even when only one clip duration-fits, the
+        remaining 4 slots must pull from the other 6 unused clips. Two clips
+        legitimately stay unused."""
+        recipe = _make_recipe([_slot(p, 4.0, priority=10 - p) for p in range(1, 6)])
+        clips = [
+            _make_clip("clip_a", [_moment(0.0, 4.0, energy=8.0)]),
+        ] + [
+            _make_clip(f"clip_{c}", [_moment(0.0, 15.0, energy=7.0)])
+            for c in ("b", "c", "d", "e", "f", "g")
+        ]
+
+        plan = match(recipe, clips)
+
+        clip_ids_used = [s.clip_id for s in plan.steps]
+        assert len(set(clip_ids_used)) == 5, (
+            f"Expected 5 distinct clips when supply (7) exceeds demand (5), "
+            f"got {len(set(clip_ids_used))} distinct: {clip_ids_used}"
+        )
+
+    def test_reuse_allowed_when_supply_less_than_demand(self):
+        """2 clips, 5 slots. max_uses = ceil(5/2) = 3. Each clip used 2 or 3
+        times; total = 5. Guards against over-correcting the fix."""
+        recipe = _make_recipe([_slot(p, 4.0, priority=10 - p) for p in range(1, 6)])
+        # Each clip has several moments so the matcher has variety to choose
+        # from per-slot without depleting one clip's moments before reuse.
+        clips = [
+            _make_clip("clip_a", [
+                _moment(0.0, 4.0, energy=8.0),
+                _moment(4.0, 8.0, energy=7.0),
+                _moment(8.0, 12.0, energy=6.0),
+            ]),
+            _make_clip("clip_b", [
+                _moment(0.0, 4.0, energy=7.5),
+                _moment(4.0, 8.0, energy=6.5),
+                _moment(8.0, 12.0, energy=5.5),
+            ]),
+        ]
+
+        plan = match(recipe, clips)
+
+        from collections import Counter
+
+        counts = Counter(s.clip_id for s in plan.steps)
+        assert sum(counts.values()) == 5
+        assert set(counts.keys()) == {"clip_a", "clip_b"}
+        # max_uses=3, each clip used 2 or 3 times
+        for clip_id, n in counts.items():
+            assert 2 <= n <= 3, (
+                f"clip {clip_id} used {n} times — expected 2 or 3 with "
+                f"supply=2 demand=5 max_uses=3"
+            )
+
+    def test_variety_relaxation_emits_log_when_fired(self, monkeypatch):
+        """Operators need to see when the matcher reaches for the
+        duration-relaxed unused-clip pool. Frequent firing suggests Gemini
+        moment-extraction is producing weird durations and warrants a
+        separate look. Monkeypatches the module logger because the
+        AsyncBoundLogger created at import time bypasses caplog/capture_logs
+        in the default pytest configuration."""
+        from app.pipeline import template_matcher
+
+        recorded: list[tuple[str, dict]] = []
+
+        class _Recorder:
+            def info(self, event, **kwargs):
+                recorded.append((event, kwargs))
+
+            def debug(self, *args, **kwargs):
+                pass
+
+            def warning(self, *args, **kwargs):
+                pass
+
+        monkeypatch.setattr(template_matcher, "log", _Recorder())
+
+        recipe = _make_recipe([
+            _slot(1, 4.0, priority=10, slot_type="hook"),
+            _slot(2, 4.0, priority=9, slot_type="broll"),
+        ])
+        # Setup forces the variety-relaxed branch on slot 2:
+        # clip_a fits perfectly, clip_b's moment is far outside tolerance.
+        clips = [
+            _make_clip("clip_a", [_moment(0.0, 4.0, energy=8.0)]),
+            _make_clip("clip_b", [_moment(0.0, 15.0, energy=7.0)]),
+        ]
+
+        plan = match(recipe, clips)
+
+        relaxed_events = [
+            (event, kwargs)
+            for event, kwargs in recorded
+            if event == "matcher_relaxed_duration_for_variety"
+        ]
+        assert relaxed_events, (
+            "Expected matcher_relaxed_duration_for_variety log when "
+            "capped_candidates is empty but unused clips exist. Recorded: "
+            f"{[e[0] for e in recorded]}"
+        )
+        # Sanity-check the structured kwargs carry the slot context
+        _, kwargs = relaxed_events[0]
+        assert "slot_position" in kwargs
+        assert "n_unused" in kwargs and kwargs["n_unused"] >= 1
+
+        # And the plan still came out correct — both clips used exactly once
+        clip_ids_used = sorted(s.clip_id for s in plan.steps)
+        assert clip_ids_used == ["clip_a", "clip_b"]
+
+
 # ── Locked hook slot regression (Waka Waka / Morocco) ────────────────────────
 
 
