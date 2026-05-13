@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     # Eval harness — gates per-slot GCS upload for visual comparison
     eval_harness_enabled: bool = False
 
+    # Single-pass FFmpeg encode — collapses stages 1-6 (reframe, pre-burn,
+    # curtain, join, text overlay) into one filter_complex invocation. Default
+    # OFF; flip after empirical SSIM/VMAF parity is proven on REF jobs. Can
+    # also be forced per-job via the `force_single_pass` kwarg on
+    # orchestrate_template_job.
+    single_pass_encode_enabled: bool = False
+
     # Security
     token_encryption_key: str = ""
 
