@@ -139,6 +139,16 @@ export type JobFailureReason =
   | "timeout"
   | "unknown";
 
+/** One completed pipeline phase. Appended to TemplateJobStatusResponse.phase_log
+ *  by the worker. The frontend rolls these into a progress bar so the user
+ *  sees motion during the multi-second render. */
+export interface PhaseLogEntry {
+  name: string;
+  elapsed_ms: number | null;
+  t_offset_ms: number | null;
+  ts: string;
+}
+
 export interface TemplateJobStatusResponse {
   job_id: string;
   status: TemplateJobStatus;
@@ -146,6 +156,12 @@ export interface TemplateJobStatusResponse {
   assembly_plan: AssemblyPlanData | null;
   error_detail: string | null;
   failure_reason: JobFailureReason | null;
+  // Live pipeline phase tracking (migration 0015). Null/[] on legacy rows
+  // and during the brief queued → first-phase window.
+  current_phase?: string | null;
+  phase_log?: PhaseLogEntry[];
+  started_at?: string | null;
+  finished_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -181,6 +197,11 @@ export async function getTemplateJobStatus(jobId: string): Promise<TemplateJobSt
   const res = await fetch(`${API_URL}/template-jobs/${jobId}/status`);
   if (!res.ok) throw new Error(`Status fetch failed: ${res.status}`);
   return res.json();
+}
+
+/** URL for the SSE events stream. Consumed by `useJobStream`. */
+export function getTemplateJobEventsUrl(jobId: string): string {
+  return `${API_URL}/template-jobs/${jobId}/events`;
 }
 
 // ── Batch presigned + template gallery API ──────────────────────────────────

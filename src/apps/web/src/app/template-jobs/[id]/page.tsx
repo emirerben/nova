@@ -3,26 +3,20 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
-  getTemplateJobStatus,
   getTemplatePlaybackUrl,
   rerollTemplateJob,
   type AssemblyPlanData,
   type JobFailureReason,
-  type TemplateJobStatus,
+  type PhaseLogEntry,
   type TemplateJobStatusResponse,
 } from "@/lib/api";
-
-const POLL_INTERVAL_MS = 4000;
-const POLL_TIMEOUT_MS = 10 * 60 * 1000;
-
-const STAGE_LABELS: Record<TemplateJobStatus, string> = {
-  queued: "Waiting in queue...",
-  processing: "AI is analyzing and assembling your clips...",
-  template_ready: "Your video is ready!",
-  processing_failed: "Processing failed",
-};
-
-const TERMINAL = new Set<TemplateJobStatus>(["template_ready", "processing_failed"]);
+import { useJobStream } from "@/hooks/useJobStream";
+import {
+  humanisePhase,
+  phaseProgress,
+  PHASE_LABEL,
+  PHASE_ORDER,
+} from "@/lib/template-job-phases";
 
 // User-facing copy per structured failure reason. Keep these short and
 // actionable — they replace "Something went wrong" for failures the API
@@ -68,37 +62,10 @@ function failureMessage(
 
 export default function TemplateJobPage() {
   const { id } = useParams<{ id: string }>();
-  const [job, setJob] = useState<TemplateJobStatusResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startTimeRef = useRef(Date.now());
-
-  useEffect(() => {
-    async function poll() {
-      if (Date.now() - startTimeRef.current > POLL_TIMEOUT_MS) {
-        setError("Processing is taking unusually long. The worker may be down — check server logs.");
-        clearInterval(intervalRef.current!);
-        return;
-      }
-      try {
-        const data = await getTemplateJobStatus(id);
-        setJob(data);
-        if (TERMINAL.has(data.status)) {
-          clearInterval(intervalRef.current!);
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to fetch status");
-        clearInterval(intervalRef.current!);
-      }
-    }
-
-    poll();
-    intervalRef.current = setInterval(poll, POLL_INTERVAL_MS);
-    return () => clearInterval(intervalRef.current!);
-  }, [id]);
+  const { data: job, error } = useJobStream(id);
 
   if (error) return <ErrorScreen message={error} jobId={id} />;
-  if (!job) return <LoadingScreen message="Loading..." />;
+  if (!job) return <ProgressScreen job={null} />;
   if (job.status === "processing_failed") {
     return (
       <ErrorScreen
@@ -108,22 +75,140 @@ export default function TemplateJobPage() {
     );
   }
   if (job.status !== "template_ready" || !job.assembly_plan?.output_url) {
-    return <LoadingScreen message={STAGE_LABELS[job.status]} />;
+    return <ProgressScreen job={job} />;
   }
 
   return <ResultView job={job} plan={job.assembly_plan} />;
 }
 
-// ── Loading & Error ──────────────────────────────────────────────────────────
+// ── Progress + Error screens ─────────────────────────────────────────────────
 
-function LoadingScreen({ message }: { message: string }) {
+/**
+ * Live progress UI. Shows the current pipeline phase + a percent-style bar
+ * driven off `phaseProgress(current_phase)`. Renders a queued placeholder
+ * until the worker writes the first phase event. The bar fills smoothly
+ * thanks to CSS `transition-all`; SSE delivers updates every ~750ms so the
+ * user sees motion every couple of seconds during a 60s render.
+ */
+function ProgressScreen({ job }: { job: TemplateJobStatusResponse | null }) {
+  const currentPhase = job?.current_phase ?? null;
+  const status = job?.status ?? "queued";
+  // Treat "queued" status as 0% — the worker hasn't picked it up yet.
+  // Once a phase fires we lean on the phase index for the bar position.
+  const progress = status === "queued" ? 0.02 : phaseProgress(currentPhase);
+  const label =
+    status === "queued"
+      ? PHASE_LABEL.queued
+      : humanisePhase(currentPhase);
+
+  const completedPhases = new Set(
+    (job?.phase_log ?? []).map((entry) => entry.name),
+  );
+
   return (
     <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4">
-      <div className="flex flex-col items-center gap-4">
+      <div className="w-full max-w-md flex flex-col items-center gap-6">
         <div className="w-10 h-10 border-2 border-zinc-600 border-t-white rounded-full animate-spin" />
-        <p className="text-zinc-400 text-sm">{message}</p>
+        <p className="text-zinc-200 text-base text-center">{label}</p>
+
+        {/* Bar */}
+        <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-white transition-all duration-700 ease-out"
+            style={{ width: `${Math.round(progress * 100)}%` }}
+          />
+        </div>
+
+        {/* Per-phase chips. Render the phases the user can actually see —
+            queued is implicit, and we hide phases that don't apply to this
+            template kind (single_video skips match_clips/mix_audio). */}
+        <PhaseChips
+          phaseLog={job?.phase_log ?? []}
+          currentPhase={currentPhase}
+          completedPhases={completedPhases}
+        />
+
+        {job?.started_at && (
+          <ElapsedTimer startedAt={job.started_at} />
+        )}
       </div>
     </main>
+  );
+}
+
+function PhaseChips({
+  phaseLog,
+  currentPhase,
+  completedPhases,
+}: {
+  phaseLog: PhaseLogEntry[];
+  currentPhase: string | null;
+  completedPhases: Set<string>;
+}) {
+  // Hide queued + finalize — they're internal book-ends, not user-meaningful
+  // progress markers.
+  const visible = PHASE_ORDER.filter(
+    (p) => p !== "queued" && p !== "finalize",
+  );
+  if (!completedPhases.size && !currentPhase) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1.5 justify-center w-full">
+      {visible.map((phase) => {
+        const isDone = completedPhases.has(phase);
+        const isActive = phase === currentPhase;
+        const entry = phaseLog.find((e) => e.name === phase);
+        return (
+          <span
+            key={phase}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] transition-colors ${
+              isDone
+                ? "bg-zinc-800 text-zinc-400"
+                : isActive
+                  ? "bg-white/10 text-white border border-white/30"
+                  : "bg-zinc-900 text-zinc-600"
+            }`}
+            title={
+              entry?.elapsed_ms != null
+                ? `Took ${(entry.elapsed_ms / 1000).toFixed(1)}s`
+                : undefined
+            }
+          >
+            {isDone && (
+              <span aria-hidden="true" className="text-green-400">✓</span>
+            )}
+            {isActive && (
+              <span
+                aria-hidden="true"
+                className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"
+              />
+            )}
+            {PHASE_LABEL[phase].replace(/…$/, "")}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Ticking elapsed clock since the worker stamped started_at. Light-weight —
+ *  1Hz update, only re-renders this small subtree. */
+function ElapsedTimer({ startedAt }: { startedAt: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const startMs = new Date(startedAt).getTime();
+  if (Number.isNaN(startMs)) return null;
+  const elapsedS = Math.max(0, Math.round((now - startMs) / 1000));
+  const mm = Math.floor(elapsedS / 60);
+  const ss = elapsedS % 60;
+  const formatted = mm > 0
+    ? `${mm}:${ss.toString().padStart(2, "0")}`
+    : `${ss}s`;
+  return (
+    <p className="text-xs text-zinc-600 tabular-nums">{formatted}</p>
   );
 }
 
