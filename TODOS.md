@@ -297,16 +297,16 @@ Full write-up in `src/apps/api/OBSERVABILITY.md` under "What the first prod quer
 
 These TODOs were filed when the first wave of Yasin's prompt rewrites shipped (`clip_metadata`, `template_recipe`, `text_designer`, `transition_picker`, all prompt_version="2026-05-14"). `clip_router` and `shot_ranker` were deliberately deferred — see the first two items below.
 
-### Live-eval gate broken on fixture file-URI format (P1)
-**What:** CLAUDE.md mandates `pytest tests/evals/<agent>_evals.py --with-judge --eval-mode=live` before merging any prompt change. But every fixture under `src/apps/api/tests/fixtures/agent_evals/*/` stores `file_uri` as a bucket-relative path (`templates/<uuid>/reference.mp4`, `clips/<id>.mp4`). The Studio `GEMINI_API_KEY` cannot resolve those — Gemini's File API needs either a Files API ID (`files/<id>`), a `gs://bucket/path` URI (requires Vertex AI service-account auth, not a Studio key), or an HTTPS URL. All 17 fixtures 400 in <8s with `Unsupported file URI type` and never reach the model. Surfaced during v0.4.8.0 ship — that PR was merged with replay-mode evals only ($0 spent on the gate, prompts never actually validated against Gemini in live mode).
-**Why:** Every prompt change after v0.4.8.0 is now shipping blind against the model — the structural eval suite catches parse errors but cannot detect semantic regression in the prompts. CLAUDE.md's iron rule is being silently bypassed.
-**How:** Three approaches, pick one:
-  1. **Backfill fixtures with current Files API IDs.** Download each fixture video from GCS (needs `gcloud auth application-default login`), upload to Gemini Files API, update each fixture's `file_uri` to `files/<id>`. Files API IDs only live 48hr — fragile, would need a CI job to refresh. Smallest blast radius, most maintenance.
-  2. **Switch eval auth to Vertex AI service account.** Use `GOOGLE_SERVICE_ACCOUNT_JSON` from Fly secrets locally, reconfigure `ModelDispatcher` to use Vertex auth when `gs://` URIs are present, prepend `gs://nova-videos-dev/` to all fixture paths. Permanent fix, also makes the dev env match prod auth. Medium blast radius.
-  3. **Auto-upload bucket paths inside `media_uri()` at call time.** When `media_uri()` returns a bucket-relative path, agent runtime uploads to Files API and substitutes the ID. Cleanest long-term — same path works in tests and prod. Largest blast radius, touches the agent base class.
-**Effort:** Option 1: ~3h (human) / ~30min (CC). Option 2: ~1d (human) / ~1h (CC). Option 3: ~2d (human) / ~1.5h (CC).
-**Priority:** P1 — every prompt PR after v0.4.8.0 ships blind against the model until this is fixed.
-**Depends on:** none — pure infra work.
+### ~~Live-eval gate broken on fixture file-URI format~~ — RESOLVED in v0.4.9.0
+**Resolved:** Option 3-equivalent shipped at the eval-harness layer (not the agent base class — surgical scope). New `tests/evals/_fixture_uploader.py` downloads bucket-relative paths from GCS and uploads to Gemini Files API at test time, substituting the `files/<id>` URI into the agent input. Mirrors prod's `gemini_upload_and_wait` flow exactly. Per-session cache keeps the upload cost bounded (~$0.10–0.20 per full live-eval run). 23 unit tests fence each leg of the path.
+
+### Vertex AI service-account auth swap (P2 follow-up to v0.4.9.0)
+**What:** Replace the v0.4.9.0 inline-upload fix with a Vertex AI auth path on `GeminiClient`. Use `GOOGLE_SERVICE_ACCOUNT_JSON` (already in Fly secrets for GCS), prepend `gs://nova-videos-dev/` to all fixture paths, drop the per-test upload step entirely.
+**Why:** v0.4.9.0 works but uploads ~17 fixtures × ~5–50MB each on every live-eval run. Vertex auth removes the cost, unifies dev/prod auth, and enables `gs://` URIs in production too (downstream value: skip the Files API upload step in `template_orchestrate` when the source already lives in GCS).
+**How:** Add Vertex AI auth code path to `app/agents/_model_client.py::GeminiClient` keyed on URI shape (`gs://` → Vertex SA, `files/<id>` → Studio key). Reconcile with the existing `_get_client()` cache. Update fixtures to `gs://...` form. Document the new env var hierarchy.
+**Blast radius:** changes production GeminiClient call path. Needs careful rollout — feature-flag or staged.
+**Effort:** M (human: ~1d / CC: ~1h)
+**Priority:** P2
 
 ### Eval scaffolding for `clip_router` (gates its prompt rewrite)
 **What:** Add `tests/evals/test_clip_router_evals.py` + `tests/evals/rubrics/clip_router.md` + 3–5 hand-authored or prod-snapshot fixtures. Rubric dimensions: slot-type fit, energy match, sequence variety, duration fit. Then re-open the Yasin-style prompt rewrite for `app/agents/clip_router.py` (deferred per /plan-eng-review D2 on 2026-05-14 — editorial-ordering changes need automated regression coverage before they ship).

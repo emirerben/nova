@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.9.0] - 2026-05-13
+
+### Fixed
+- **Live-eval gate unblocked.** The eval harness now uploads bucket-relative fixture paths (`clips/<id>.mp4`, `templates/<uuid>/reference.mp4`) to Gemini File API at test time and substitutes the resulting `files/<id>` URI into the agent input — mirroring exactly what `template_orchestrate` / `orchestrate` already do in production. v0.4.8.0 documented this as a P1 known-issue: all 17 fixtures had been 400-ing in <8s with `Unsupported file URI type`, so every prompt change after v0.4.7.0 was shipping blind against the model. `pytest tests/evals/<agent>_evals.py --with-judge --eval-mode=live --allow-cost` now actually exercises Gemini end-to-end.
+
+### Added
+- `tests/evals/_fixture_uploader.py` — `FixtureUploader` class with bucket-relative path detection (`is_bucket_relative`), per-session upload cache (Files API IDs live ~48hr, plenty for one test run), and `normalize_input()` that returns a fresh dict so the fixture isn't mutated in place. Built from injected `download_fn` + `upload_fn` so the unit tests stay pure.
+- `tests/evals/test_fixture_uploader.py` — 23 unit tests fencing each leg of the path: URI shape detection, cassette pass-through for `files/<id>` / `gs://` / `https://`, upload+caching behavior, download/upload error propagation (the cache MUST NOT poison on failure — a retry has to try again), temp-file cleanup on both success and failure paths, and `normalize_input` purity (caller's dict not mutated). These tests fence exactly the silent-failure mode that broke v0.4.8.0's gate.
+- `tests/evals/conftest.py` — new session-scoped `live_input_normalizer` fixture, None in replay mode, lazy-constructs the prod GCS + Gemini helpers in live mode.
+- `tests/evals/runners/eval_runner.py` — `run_eval` gains an optional `live_input_normalizer` callable that transforms `fixture.input` before `agent.run` when both it and `model_client` are set. Live-only by design; replay mode (cassette) ignores `media_uri` entirely, so the normalizer is a no-op there.
+
+### Deferred
+- **Vertex AI service-account auth swap.** Inline upload at the eval-harness layer is the surgical fix; the longer-term play unifies dev/prod auth and removes the per-eval upload cost. Filed as P2 in TODOS.md.
+
 ## [0.4.8.0] - 2026-05-13
 
 ### Changed

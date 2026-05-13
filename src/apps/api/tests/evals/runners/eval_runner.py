@@ -19,7 +19,7 @@ judge, and returns an EvalResult.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -247,6 +247,7 @@ def run_eval(
     judge: LLMJudge | None = None,
     rubric_dir: Path = RUBRIC_ROOT,
     shadow_prompts_dir: Path | None = None,
+    live_input_normalizer: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> EvalResult:
     """Run one fixture end-to-end.
 
@@ -255,6 +256,10 @@ def run_eval(
     - If `shadow_prompts_dir` is set AND `model_client` is live, runs the agent a
       second time with prompts from the candidate dir overlaid on prod prompts.
       Shadow result is informational; never gates `passed`.
+    - If `live_input_normalizer` is set AND `model_client` is live, transforms
+      `fixture.input` before `agent.run` — used to upload bucket-relative paths
+      to Gemini File API and substitute the resulting `files/<id>` URI. No-op
+      in replay mode (cassette ignores `media_uri`).
     """
     agent_cls = _build_agent_class_for(fixture.agent)
     client = model_client or CassetteModelClient(fixture.raw_text)
@@ -264,8 +269,20 @@ def run_eval(
     # double-post replay-mode evals as if they were prod traffic.
     eval_ctx = RunContext(extra={"skip_langfuse_trace": True})
 
+    effective_input = fixture.input
+    if live_input_normalizer is not None and model_client is not None:
+        try:
+            effective_input = live_input_normalizer(fixture.input)
+        except Exception as exc:  # noqa: BLE001 — surface upload errors per fixture
+            return EvalResult(
+                fixture_id=fixture.fixture_id,
+                agent=fixture.agent,
+                prompt_version=fixture.prompt_version,
+                error=f"fixture URI normalization failed: {exc}",
+            )
+
     try:
-        output = agent.run(fixture.input, ctx=eval_ctx)
+        output = agent.run(effective_input, ctx=eval_ctx)
     except Exception as exc:
         return EvalResult(
             fixture_id=fixture.fixture_id,
@@ -274,7 +291,7 @@ def run_eval(
             error=f"agent.run failed: {exc}",
         )
 
-    validated_input = agent.Input.model_validate(fixture.input)
+    validated_input = agent.Input.model_validate(effective_input)
     structural_failures = run_structural(fixture.agent, output, validated_input)
 
     judge_result: JudgeResult | None = None
@@ -310,7 +327,7 @@ def run_eval(
         try:
             with _shadow_prompts(shadow_prompts_dir):
                 shadow_agent = agent_cls(model_client)
-                shadow_output = shadow_agent.run(fixture.input, ctx=eval_ctx)
+                shadow_output = shadow_agent.run(effective_input, ctx=eval_ctx)
             result.shadow_structural_failures = run_structural(
                 fixture.agent, shadow_output, validated_input
             )
