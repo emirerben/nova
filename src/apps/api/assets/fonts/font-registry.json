@@ -125,6 +125,34 @@
       "weight": 400,
       "category": "handwriting",
       "css_family": "'Caveat Brush', cursive"
+    },
+    "Shadows Into Light": {
+      "file": "ShadowsIntoLight-Regular.ttf",
+      "ass_name": "Shadows Into Light",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Shadows Into Light', cursive"
+    },
+    "Kalam": {
+      "file": "Kalam-Regular.ttf",
+      "ass_name": "Kalam",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Kalam', cursive"
+    },
+    "Indie Flower": {
+      "file": "IndieFlower-Regular.ttf",
+      "ass_name": "Indie Flower",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Indie Flower', cursive"
+    },
+    "Architects Daughter": {
+      "file": "ArchitectsDaughter-Regular.ttf",
+      "ass_name": "Architects Daughter",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Architects Daughter', cursive"
     }
   },
   "style_defaults": {

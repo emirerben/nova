@@ -37,6 +37,7 @@ Against prod (Fly.io):
     fly ssh console -a nova-video
     cd /app && python scripts/add_waka_waka_intro_overlays.py --apply --yes
 """
+
 from __future__ import annotations
 
 import argparse
@@ -122,14 +123,15 @@ INTRO_OVERLAYS: list[dict] = [
         #     the source's hand-drawn brush lettering. Irregular strokes,
         #     slight italic lean.
         #   - effect "font-cycle" + cycle_fonts [Permanent Marker, Caveat
-        #     Brush]: two-font BRUSH cycle. Both are hand-style so the
+        #     Brush, Shadows Into Light, Kalam, Indie Flower, Architects
+        #     Daughter]: six-font BRUSH/HAND cycle. All hand-drawn so the
         #     cycle stays cohesive (no sans/serif/script flicker — the
-        #     original PR #125/#128 bug). The width difference between PM
-        #     (~95% at 280px) and CB (~70%) gives a width-jitter that
-        #     approximates the source's hand-animated ink variation.
-        #     The renderer reads `cycle_fonts` via _resolve_cycle_fonts'
-        #     custom_fonts parameter, which bypasses the global
-        #     cycle_role=contrast registry pool entirely.
+        #     original PR #125/#128 bug). The width and stroke variation
+        #     across six hand-drawn faces approximates the source video's
+        #     hand-animated ink flicker far more closely than a two-font
+        #     alternation. The renderer reads `cycle_fonts` via
+        #     _resolve_cycle_fonts' custom_fonts parameter, which bypasses
+        #     the global cycle_role=contrast registry pool entirely.
         #   - text_size_px 250: Permanent Marker AFRICA renders at ~86%
         #     of 1080-wide output (~939px) leaving ~70px margin per side.
         #     280px overflowed in actual libass-rendered output.
@@ -146,12 +148,22 @@ INTRO_OVERLAYS: list[dict] = [
         # ("AFRICA" → "MOROCCO") independent of styling.
         "subject_substitute": False,
         "effect": "font-cycle",
-        # Two-font brush cycle: PM + Caveat Brush. Both hand-style for
-        # visual cohesion. The width differs between fonts at the same
-        # px (PM ~95%, CB ~70% at 280px) — that width-jitter approximates
-        # the source video's hand-drawn ink variation. NOT a sans/serif/
-        # script mix; the cycle stays brush-only.
-        "cycle_fonts": ["Permanent Marker", "Caveat Brush"],
+        # Six-font hand-drawn cycle. All faces are brush/marker/hand-style
+        # (handwriting category in font-registry.json) for visual cohesion.
+        # The stroke and width variation across six distinct hands gives a
+        # source-video-like ink flicker; the earlier two-font version
+        # (PM + Caveat Brush only) felt mechanical because it could only
+        # alternate. NOT a sans/serif/script mix; the cycle stays in the
+        # hand-drawn lane. Permanent Marker stays at index 0 so it remains
+        # the settle font and the dominant face.
+        "cycle_fonts": [
+            "Permanent Marker",
+            "Caveat Brush",
+            "Shadows Into Light",
+            "Kalam",
+            "Indie Flower",
+            "Architects Daughter",
+        ],
         "start_s": 0.0,
         "position": "center",
         "position_x_frac": 0.50,
@@ -418,10 +430,7 @@ async def run(apply_changes: bool) -> int:
                 )
                 all_present = True
                 for _kind, slot_idx, _pos, sample in changes:
-                    ovs = (
-                        fresh.recipe_cached["slots"][slot_idx].get("text_overlays")
-                        or []
-                    )
+                    ovs = fresh.recipe_cached["slots"][slot_idx].get("text_overlays") or []
                     # Both add and upgrade paths must leave a matching
                     # overlay whose enforced fields match the spec.
                     matched = next(
@@ -431,12 +440,9 @@ async def run(apply_changes: bool) -> int:
                     if matched is None:
                         all_present = False
                         break
-                    spec = next(
-                        s for s in INTRO_OVERLAYS if s["sample_text"] == sample
-                    )
+                    spec = next(s for s in INTRO_OVERLAYS if s["sample_text"] == sample)
                     if any(
-                        f in spec and matched.get(f) != spec[f]
-                        for f in _ENFORCED_UPGRADE_FIELDS
+                        f in spec and matched.get(f) != spec[f] for f in _ENFORCED_UPGRADE_FIELDS
                     ):
                         all_present = False
                         break
