@@ -3,6 +3,7 @@
 Pure-function coverage only — DB interaction is exercised manually via
 `--apply` against a dev DB, same pattern as test_backfill_waka_waka_location.py.
 """
+
 from __future__ import annotations
 
 import copy
@@ -14,6 +15,19 @@ from scripts.add_waka_waka_intro_overlays import (
     PositionMismatchError,
     patch_recipe,
 )
+
+# Mirror the AFRICA cycle_fonts roster from the script. Updating both this
+# constant and `cycle_fonts` in scripts/add_waka_waka_intro_overlays.py
+# together is the contract — drift between the two is what the
+# test_africa_uses_permanent_marker_gold_brush_cycle test guards against.
+EXPECTED_AFRICA_CYCLE_FONTS = [
+    "Permanent Marker",
+    "Caveat Brush",
+    "Shadows Into Light",
+    "Kalam",
+    "Indie Flower",
+    "Architects Daughter",
+]
 
 
 def _base_recipe(*, slot_count: int = 4) -> dict:
@@ -51,14 +65,14 @@ class TestPatchRecipe:
         assert ov1["effect"] == "slide-up"
         assert ov1["end_s"] == pytest.approx(1.2)
         assert ov1["subject_substitute"] is False
-        # Slot 2: "AFRICA" — Permanent Marker + Caveat Brush brush cycle
-        # at 250px in #FFD700 gold. 250px = ~86% of 1080 width with margin;
-        # 280px overflowed in libass-rendered output. Gold reads cleaner
-        # than the empirical-source amber (#EFC611) over dark backdrops.
+        # Slot 2: "AFRICA" — six-font hand-drawn cycle at 250px in #FFD700
+        # gold. 250px = ~86% of 1080 width with margin; 280px overflowed in
+        # libass-rendered output. Gold reads cleaner than the empirical-
+        # source amber (#EFC611) over dark backdrops.
         ov2 = patched["slots"][2]["text_overlays"][0]
         assert ov2["sample_text"] == "AFRICA"
         assert ov2["effect"] == "font-cycle"
-        assert ov2["cycle_fonts"] == ["Permanent Marker", "Caveat Brush"]
+        assert ov2["cycle_fonts"] == EXPECTED_AFRICA_CYCLE_FONTS
         assert ov2["font_family"] == "Permanent Marker"
         assert ov2["text_color"] == "#FFD700"
         assert ov2["text_size_px"] == 250
@@ -117,7 +131,7 @@ class TestPatchRecipe:
         # AFRICA-specific: font/color/size/effect/cycle_fonts all sync to spec.
         africa = patched["slots"][2]["text_overlays"][0]
         assert africa["effect"] == "font-cycle"
-        assert africa["cycle_fonts"] == ["Permanent Marker", "Caveat Brush"]
+        assert africa["cycle_fonts"] == EXPECTED_AFRICA_CYCLE_FONTS
         assert africa["font_family"] == "Permanent Marker"
         assert africa["text_color"] == "#FFD700"
         assert africa["text_size_px"] == 250
@@ -132,8 +146,8 @@ class TestPatchRecipe:
             ("font_family", "Montserrat", "Permanent Marker"),
             ("text_color", "#F4D03F", "#FFD700"),
             ("text_size_px", 200, 250),
-            ("cycle_fonts", None, ["Permanent Marker", "Caveat Brush"]),
-            ("cycle_fonts", ["Montserrat", "Outfit"], ["Permanent Marker", "Caveat Brush"]),
+            ("cycle_fonts", None, EXPECTED_AFRICA_CYCLE_FONTS),
+            ("cycle_fonts", ["Montserrat", "Outfit"], EXPECTED_AFRICA_CYCLE_FONTS),
         ]:
             recipe = _base_recipe()
             base_overlay = {
@@ -142,7 +156,7 @@ class TestPatchRecipe:
                 "font_family": "Permanent Marker",
                 "text_color": "#FFD700",
                 "text_size_px": 250,
-                "cycle_fonts": ["Permanent Marker", "Caveat Brush"],
+                "cycle_fonts": list(EXPECTED_AFRICA_CYCLE_FONTS),
                 "subject_substitute": False,
             }
             if drift_value is None:
@@ -188,7 +202,7 @@ class TestPatchRecipe:
             {
                 "sample_text": "AFRICA",
                 "effect": "font-cycle",
-                "cycle_fonts": ["Permanent Marker", "Caveat Brush"],
+                "cycle_fonts": list(EXPECTED_AFRICA_CYCLE_FONTS),
                 "subject_substitute": False,
                 "font_family": "Permanent Marker",
                 "text_color": "#FFD700",
@@ -202,9 +216,7 @@ class TestPatchRecipe:
         """A misconfigured overlay with subject_substitute=True still gets
         downgraded to False — we never want intro overlays substituted."""
         recipe = _base_recipe()
-        recipe["slots"][0]["text_overlays"] = [
-            {"sample_text": "This", "subject_substitute": True}
-        ]
+        recipe["slots"][0]["text_overlays"] = [{"sample_text": "This", "subject_substitute": True}]
         patched, changes = patch_recipe(recipe)
         upgrades = [c for c in changes if c[0] == "upgrade"]
         assert len(upgrades) == 1
@@ -216,9 +228,7 @@ class TestPatchRecipe:
         legacy 'This' gets upgraded in place (no duplicate) AND the missing
         intros get added."""
         recipe = _base_recipe()
-        recipe["slots"][0]["text_overlays"] = [
-            {"sample_text": "This", "effect": "slide-up"}
-        ]
+        recipe["slots"][0]["text_overlays"] = [{"sample_text": "This", "effect": "slide-up"}]
         patched, changes = patch_recipe(recipe)
         # 1 upgrade (slot 0 "This" gets subject_substitute=False) + 2 adds.
         assert len(changes) == 3
@@ -237,9 +247,7 @@ class TestPatchRecipe:
         """If a slot already has an unrelated overlay (e.g. admin-added),
         append rather than skip — author's overlay survives, ours joins it."""
         recipe = _base_recipe()
-        recipe["slots"][0]["text_overlays"] = [
-            {"sample_text": "Welcome to", "effect": "fade-in"}
-        ]
+        recipe["slots"][0]["text_overlays"] = [{"sample_text": "Welcome to", "effect": "fade-in"}]
         patched, changes = patch_recipe(recipe)
         assert len(changes) == 3
         # Slot 0 now has both the welcome overlay AND "This".
@@ -322,20 +330,21 @@ class TestOverlaySpecs:
 
     def test_africa_uses_permanent_marker_gold_brush_cycle(self):
         """AFRICA styling locked to match the morocco source video:
-          - effect=font-cycle with cycle_fonts=[Permanent Marker, Caveat
-            Brush]: two-font brush cycle gives real frame-to-frame
-            variation. cycle_fonts must stay brush-only — adding sans/
-            serif/script fonts produces the jarring flicker the source
-            never had.
-          - font_family="Permanent Marker" (closest registry match to
-            source's hand-drawn lettering)
-          - text_color="#FFD700" (gold; reads cleaner over dark backdrops
-            than the empirical-source amber #EFC611)
-          - text_size_px=250 (~86% of 1080 wide; 280px overflowed in
-            libass-rendered output)"""
+        - effect=font-cycle with a six-font hand-drawn cycle
+          (Permanent Marker + Caveat Brush + Shadows Into Light + Kalam
+          + Indie Flower + Architects Daughter). Six distinct hand faces
+          give real frame-to-frame ink-flicker variation. cycle_fonts
+          must stay in the hand-drawn lane — adding sans/serif/script
+          fonts produces the jarring flicker the source never had.
+        - font_family="Permanent Marker" (settle font; closest registry
+          match to the source's hand-drawn lettering)
+        - text_color="#FFD700" (gold; reads cleaner over dark backdrops
+          than the empirical-source amber #EFC611)
+        - text_size_px=250 (~86% of 1080 wide; 280px overflowed in
+          libass-rendered output)"""
         africa = next(s for s in INTRO_OVERLAYS if s["sample_text"] == "AFRICA")
         assert africa["effect"] == "font-cycle"
-        assert africa["cycle_fonts"] == ["Permanent Marker", "Caveat Brush"]
+        assert africa["cycle_fonts"] == EXPECTED_AFRICA_CYCLE_FONTS
         assert africa["font_family"] == "Permanent Marker"
         assert africa["text_color"] == "#FFD700"
         assert africa["text_size_px"] == 250

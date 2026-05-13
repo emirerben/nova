@@ -1693,9 +1693,18 @@ class TestAssembleClipsTextOverlays:
         global cycle_role=contrast pool, producing a sans/serif/script
         flicker that overlay authors specifically opted out of. The Waka
         Waka AFRICA overlay relies on this pass-through to render its
-        brush-only [Permanent Marker, Caveat Brush] cycle."""
+        hand-drawn cycle (Permanent Marker, Caveat Brush, Shadows Into
+        Light, Kalam, Indie Flower, Architects Daughter)."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
 
+        africa_cycle = [
+            "Permanent Marker",
+            "Caveat Brush",
+            "Shadows Into Light",
+            "Kalam",
+            "Indie Flower",
+            "Architects Daughter",
+        ]
         step = self._make_step_with_overlays(overlays=[{
             "role": "label",
             "start_s": 0.0,
@@ -1704,7 +1713,7 @@ class TestAssembleClipsTextOverlays:
             "effect": "font-cycle",
             "sample_text": "AFRICA",
             "font_family": "Permanent Marker",
-            "cycle_fonts": ["Permanent Marker", "Caveat Brush"],
+            "cycle_fonts": list(africa_cycle),
             "subject_substitute": False,
             "text_color": "#FFD700",
             "text_size_px": 250,
@@ -1714,7 +1723,7 @@ class TestAssembleClipsTextOverlays:
         entry = result[0]
         # The cycle_fonts list must survive the orchestrator's field-copy
         # logic and arrive at the renderer's entry dict intact.
-        assert entry.get("cycle_fonts") == ["Permanent Marker", "Caveat Brush"]
+        assert entry.get("cycle_fonts") == africa_cycle
         # font_family also propagates (separate but related bug class).
         assert entry.get("font_family") == "Permanent Marker"
         # Text doesn't get rewritten to "Morocco" because subject_substitute=False.
