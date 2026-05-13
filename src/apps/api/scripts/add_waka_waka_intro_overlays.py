@@ -58,6 +58,13 @@ TEMPLATE_NAME_PATTERNS = ("%morocco%", "%waka%")
 # size, and placement come from a frame-by-frame analysis of morocco.mp4 —
 # "This" sits in the upper-left, "is" in the upper-right staggered slightly
 # lower, and "AFRICA" fills the center in maize/gold with font-cycle.
+# Every intro overlay sets `subject_substitute: False` so the resolver in
+# template_orchestrate._resolve_overlay_text returns the literal sample_text
+# instead of substituting the user's location input. Without this flag,
+# "This" gets rewritten to "Morocco" (title-case heuristic) and "AFRICA"
+# gets rewritten to "MOROCCO" (all-caps heuristic). The styling path in
+# _collect_absolute_overlays still classifies AFRICA as a "subject" label
+# (font-cycle/accel@8s/maize) — the opt-out is text-only, not classification.
 INTRO_OVERLAYS: list[dict] = [
     {
         "_slot_index": 0,
@@ -65,6 +72,7 @@ INTRO_OVERLAYS: list[dict] = [
         "role": "label",
         "text": "",
         "sample_text": "This",
+        "subject_substitute": False,
         "effect": "slide-up",
         "start_s": 0.0,
         # end_s set at write time from slot.target_duration_s.
@@ -85,6 +93,9 @@ INTRO_OVERLAYS: list[dict] = [
         "role": "label",
         "text": "",
         "sample_text": "is",
+        # Lowercase "is" does NOT match the placeholder heuristic, but we
+        # set the flag for consistency and as a future-proofing assertion.
+        "subject_substitute": False,
         "effect": "slide-up",
         "start_s": 0.0,
         "position": "top",
@@ -107,7 +118,11 @@ INTRO_OVERLAYS: list[dict] = [
         # All-caps sample_text triggers _is_subject_placeholder=True in
         # _collect_absolute_overlays, which adds font_cycle_accel_at_s=8.0
         # from _LABEL_CONFIG["subject"]. That gives the font-cycle the same
-        # "accelerate over time" feel the morocco source uses.
+        # "accelerate over time" feel the morocco source uses. The
+        # subject_substitute: False flag below blocks the TEXT-substitution
+        # path in _resolve_overlay_text (which would otherwise rewrite
+        # "AFRICA" → "MOROCCO"), while leaving the classification path alone.
+        "subject_substitute": False,
         "effect": "font-cycle",
         "start_s": 0.0,
         "position": "center",
@@ -172,11 +187,19 @@ def _overlay_to_write(spec: dict, slot_duration_s: float) -> dict:
 def patch_recipe(recipe: dict) -> tuple[dict, list[tuple]]:
     """Return (patched_recipe, changes).
 
-    `changes` is a list of tuples: ("add", slot_idx, position, sample_text).
+    `changes` is a list of tuples: ("add" | "upgrade", slot_idx, position, sample_text).
 
     Idempotency: an overlay whose `sample_text` already appears in the
-    target slot's text_overlays contributes nothing. Position guard: aborts
-    via PositionMismatchError if slot.position doesn't match the spec.
+    target slot's text_overlays contributes no "add", but is upgraded
+    in-place when it lacks the required `subject_substitute: False` flag.
+    The upgrade-in-place is what fixes templates that were patched by
+    earlier versions of this script (which didn't write the flag) — without
+    it, the resolver's casing heuristic rewrites "This"/"AFRICA" to the
+    user's location and the rendered intro reads "Morocco" / "MOROCCO"
+    instead of "This" / "AFRICA".
+
+    Position guard: aborts via PositionMismatchError if slot.position
+    doesn't match the spec.
     """
     patched = copy.deepcopy(recipe)
     changes: list[tuple] = []
@@ -200,8 +223,15 @@ def patch_recipe(recipe: dict) -> tuple[dict, list[tuple]]:
             )
 
         existing = slot.get("text_overlays") or []
-        if any(ov.get("sample_text") == sample for ov in existing):
-            continue  # already added — idempotent
+        match = next((ov for ov in existing if ov.get("sample_text") == sample), None)
+        if match is not None:
+            # Upgrade-in-place: existing intro overlay lacks the literal
+            # opt-out flag. Patch it without disturbing other fields the
+            # operator may have hand-tuned (positions, sizes, colors).
+            if match.get("subject_substitute") is not False:
+                match["subject_substitute"] = False
+                changes.append(("upgrade", idx, actual_pos, sample))
+            continue
 
         slot_duration = float(slot.get("target_duration_s", 1.0))
         overlay = _overlay_to_write(spec, slot_duration)
@@ -218,13 +248,23 @@ def _print_inspection(template, changes: list) -> None:
     print(f"Template: {template.id}  ({template.name})")
     print(f"analysis_status: {template.analysis_status}")
     if not changes:
-        print("recipe_cached: already backfilled (intro overlays present).")
+        print(
+            "recipe_cached: already backfilled (intro overlays present "
+            "AND subject_substitute=False set)."
+        )
         return
-    print(f"\nWould add {len(changes)} intro overlay(s):")
-    for _kind, slot_idx, position, sample in changes:
+    adds = sum(1 for c in changes if c[0] == "add")
+    upgrades = sum(1 for c in changes if c[0] == "upgrade")
+    parts = []
+    if adds:
+        parts.append(f"add {adds} new overlay(s)")
+    if upgrades:
+        parts.append(f"upgrade {upgrades} existing overlay(s) (set subject_substitute=False)")
+    print(f"\nWould {' AND '.join(parts)}:")
+    for kind, slot_idx, position, sample in changes:
         spec = next(s for s in INTRO_OVERLAYS if s["_slot_index"] == slot_idx)
         print(
-            f"  slot {slot_idx:>2} (position {position}): "
+            f"  [{kind:>7}] slot {slot_idx:>2} (position {position}): "
             f"{sample!r}  effect={spec['effect']!r}  "
             f"x={spec['position_x_frac']}  y={spec['position_y_frac']}  "
             f"color={spec['text_color']}"
@@ -314,7 +354,13 @@ async def run(apply_changes: bool) -> int:
                         fresh.recipe_cached["slots"][slot_idx].get("text_overlays")
                         or []
                     )
-                    if not any(ov.get("sample_text") == sample for ov in ovs):
+                    # Both add and upgrade paths must leave a matching
+                    # overlay with subject_substitute=False on every slot.
+                    matched = next(
+                        (ov for ov in ovs if ov.get("sample_text") == sample),
+                        None,
+                    )
+                    if matched is None or matched.get("subject_substitute") is not False:
                         all_present = False
                         break
                 if drift or not all_present:

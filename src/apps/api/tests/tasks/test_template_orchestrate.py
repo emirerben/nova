@@ -2133,6 +2133,108 @@ class TestSubjectSubstitution:
         assert _is_subject_placeholder("Welcome to") is False
 
 
+class TestSubjectSubstituteOptOut:
+    """`subject_substitute: False` pins an overlay to its literal sample_text.
+
+    REGRESSION coverage for the Waka Waka "Morocco appears instead of This"
+    bug. Without the opt-out, "This" (single title-cased word) and "AFRICA"
+    (all-caps) match `_is_subject_placeholder` and get rewritten to the
+    user's location. The opt-out is the explicit "this is literal text" flag
+    that templates with title-cased / all-caps intros must set.
+    """
+
+    def test_optout_beats_casing_heuristic_title_case(self):
+        """REGRESSION: 'This' is title-case and would otherwise match the
+        heuristic; opt-out must return the literal text."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {"sample_text": "This", "subject_substitute": False},
+            subject="Morocco",
+        )
+        assert result == "This"
+
+    def test_optout_beats_casing_heuristic_all_caps(self):
+        """REGRESSION: 'AFRICA' is all-caps and would otherwise be replaced
+        with 'MOROCCO'; opt-out must return the literal text."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {"sample_text": "AFRICA", "subject_substitute": False},
+            subject="Morocco",
+        )
+        assert result == "AFRICA"
+
+    def test_optout_beats_subject_template(self):
+        """`subject_template` would normally interpolate; opt-out wins."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {
+                "sample_text": "that one trip to AFRICA",
+                "subject_template": "that one trip to {subject}",
+                "subject_substitute": False,
+            },
+            subject="Morocco",
+        )
+        assert result == "that one trip to AFRICA"
+
+    def test_optout_beats_subject_part(self):
+        """`subject_part` would normally slice and substitute; opt-out wins."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {
+                "sample_text": "lon",
+                "subject_part": "first_half",
+                "subject_substitute": False,
+            },
+            subject="Paris",
+        )
+        assert result == "lon"
+
+    def test_optout_preserves_empty_subject_fallback(self):
+        """Opt-out returns the literal text regardless of subject value."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {"sample_text": "This", "subject_substitute": False},
+            subject="",
+        )
+        assert result == "This"
+
+    def test_missing_field_keeps_heuristic_behavior(self):
+        """REGRESSION GUARD: absence of subject_substitute means default
+        (substitute via heuristic) behavior is preserved — Dimples Passport
+        and similar templates still work."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None, {"sample_text": "PERU"}, subject="Tokyo",
+        )
+        assert result == "TOKYO"
+
+    def test_true_flag_keeps_heuristic_behavior(self):
+        """Explicit subject_substitute=True is functionally equivalent to
+        the field being absent — heuristic still applies."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {"sample_text": "PERU", "subject_substitute": True},
+            subject="Tokyo",
+        )
+        assert result == "TOKYO"
+
+    def test_optout_does_not_break_cta_role(self):
+        """CTA always returns empty regardless of overlay fields."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "cta", None,
+            {"sample_text": "click me", "subject_substitute": False},
+            subject="Tokyo",
+        )
+        assert result == ""
+
+
 class TestEmbeddedAllcapsToken:
     """Edge cases for the new heuristic helper. Most are reachable indirectly
     via _is_subject_placeholder/_substitute_subject, but the helper has its

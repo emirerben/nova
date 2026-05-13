@@ -64,6 +64,13 @@ dev = [
     "mypy>=1.10",
     "anthropic>=0.40",
 ]
+analysis = [
+    # Offline analyzer scripts under scripts/overlay_forensics/ and
+    # scripts/analyze_waka_waka_diff.py. Tesseract binary is the runtime
+    # requirement (brew install tesseract / apt-get install tesseract-ocr).
+    # NOT shipped to prod — analyzer is dev-only.
+    "pytesseract>=0.3.10",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -2938,11 +2938,25 @@ def _resolve_overlay_text(
     substitution, so a partial typewriter beat reveals only "Mor" instead of
     the full "Morocco". Empty subject falls back to the literal text so admin
     previews still render.
+
+    `subject_substitute: False` on the overlay is an explicit opt-OUT that
+    pins the overlay to its literal `sample_text` and bypasses every
+    substitution path (subject_template, subject_part, AND the casing
+    heuristic). Used for templates with literal title-cased or all-caps
+    intros — e.g. Waka Waka's "This" / "is" / "AFRICA" — that the casing
+    heuristic would otherwise rewrite to the user's subject. Default
+    (None / missing / True) preserves existing behavior.
     """
     sample = overlay.get("sample_text", "") or overlay.get("text", "")
 
     if role == "cta":
         return ""  # CTA text generated later by copy_writer
+
+    # Explicit literal opt-out beats every substitution path. Used by
+    # templates whose intro words are literal title-cased / all-caps text
+    # that the casing heuristic would otherwise misread as placeholders.
+    if overlay.get("subject_substitute") is False:
+        return sample
 
     # Explicit subject_template (typewriter/embedded) beats both subject_part
     # and the heuristic. Used for slots whose text is a sentence wrapping the
