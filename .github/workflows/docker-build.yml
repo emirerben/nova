@@ -1,0 +1,60 @@
+name: Docker Build Check
+
+# Verifies the production Dockerfile actually builds with the current
+# .dockerignore. Catches Dockerfile/.dockerignore coupling bugs on the PR
+# instead of at deploy-to-Fly time.
+#
+# Incident motivating this check (May 2026):
+#   - PR #118 (v0.4.7.0, merged at f156c19) added
+#     `COPY src/apps/api/tests/evals/rubrics ./tests/evals/rubrics`
+#     to the prod Dockerfile.
+#   - Local pytest + the existing test-api CI job both passed because they
+#     run against the Python source tree directly — they never build the
+#     Docker image.
+#   - The merge-to-main deploy then failed on Fly's builder because
+#     `.dockerignore` excludes `tests/` entirely, so the COPY source did
+#     not exist in the build context.
+#   - PR #119 (121a6e9) hotfixed `.dockerignore` with negation patterns.
+#
+# Approach: Option A — local `docker buildx` against the prod Dockerfile.
+# We picked this over Option B (`fly deploy --build-only --remote-only`)
+# because (1) it doesn't need FLY_API_TOKEN exposed to PR runs from forks,
+# (2) it doesn't burn Fly build minutes on every PR, and (3) BuildKit's
+# layer cache via GHA cache backend makes warm runs ~30-60s. The build
+# context (.dockerignore-filtered repo root) is identical to what Fly's
+# builder sees, so any COPY/.dockerignore mismatch surfaces here.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "src/apps/api/**"
+
+# Cancel superseded runs on the same PR.
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-build:
+    name: Build prod image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build prod image (validates Dockerfile + .dockerignore)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: false
+          tags: nova-build-test:ci
+          cache-from: type=gha,scope=docker-build-check
+          cache-to: type=gha,scope=docker-build-check,mode=max
