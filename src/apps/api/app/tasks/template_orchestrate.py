@@ -182,7 +182,12 @@ def _resolve_user_subject(all_candidates: dict | None) -> str:
     issue.
     """
     ac = all_candidates or {}
-    return (ac.get("inputs") or {}).get("location") or ac.get("subject", "") or ""
+    raw = (ac.get("inputs") or {}).get("location") or ac.get("subject", "") or ""
+    # Strip whitespace at the boundary so a user submitting "  " (single space,
+    # Unicode whitespace, etc.) doesn't pass the `if subject` truthiness check
+    # downstream — that would route a blank string into `_substitute_subject`
+    # and render an empty overlay where the literal placeholder belongs.
+    return raw.strip()
 
 
 @contextmanager
@@ -1930,10 +1935,16 @@ def _assemble_clips(
 
     beats = beat_timestamps_s or []
 
-    # User-provided subject takes priority over auto-detected
-    subject = user_subject or _consensus_subject(clip_metas)
+    # Subject comes ONLY from explicit user input — never from Gemini's
+    # clip-level metadata. Letting `clip_meta.detected_subject` become the
+    # substitution input via a majority-vote fallback caused job
+    # a1091488-09f6-4ce0-b92e-b1cc52695c9c (Rule of Thirds, 2026-05-13) to
+    # render "pilot in cockpit" in place of literal "The"/"Thirds". Templates
+    # that need a user subject must surface it through `inputs.location`
+    # (see _resolve_user_subject); templates with literal text render literal.
+    subject = user_subject
     if subject:
-        log.info("subject_resolved", subject=subject, source="user" if user_subject else "auto")
+        log.info("subject_resolved", subject=subject, source="user")
 
     # Build lookup of interstitials by after_slot position
     interstitial_map: dict[int, dict] = {}
@@ -3289,6 +3300,18 @@ def _resolve_overlay_text(
     intros — e.g. Waka Waka's "This" / "is" / "AFRICA" — that the casing
     heuristic would otherwise rewrite to the user's subject. Default
     (None / missing / True) preserves existing behavior.
+
+    ⚠️  DO NOT READ FROM `clip_meta` IN THIS FUNCTION ⚠️
+    `clip_meta` is kept in the signature only because the two call sites
+    (`_collect_absolute_overlays`, `_pre_burn_curtain_slot_text`) thread it
+    through for legacy reasons. The earlier `clip_meta.hook_text` fallback
+    was removed after job a1091488 (Rule of Thirds, 2026-05-13) leaked
+    Gemini's per-clip description into rendered hook text. Reading ANY
+    field off `clip_meta` here re-opens that bug. `TestNoGeminiTextLeaks`
+    in tests/tasks/test_template_orchestrate.py pins this contract; if you
+    need a Gemini-derived field downstream, add an explicit per-overlay
+    opt-in (like `subject_template` / `subject_part`) so the leak surface
+    is declared in the recipe, not inferred from clip metadata.
     """
     sample = overlay.get("sample_text", "") or overlay.get("text", "")
 
@@ -3331,45 +3354,23 @@ def _resolve_overlay_text(
     if subject and _is_subject_placeholder(sample):
         return _substitute_subject(sample, subject)
 
-    # If the template already has text for this overlay, USE IT.
-    # "Welcome to" means "Welcome to" — not clip hook_text.
-    if sample:
-        return sample
-
-    # Empty sample_text with hook role: use clip analysis hook text.
-    if role == "hook" and clip_meta and clip_meta.hook_text:
-        return clip_meta.hook_text
-
+    # The template defines the rendered text. Period. There is no fallback to
+    # `clip_meta.hook_text` for empty hook overlays — that path leaked Gemini's
+    # per-clip description into the rendered video (e.g. "pilot in cockpit"
+    # over Rule of Thirds). A template author that wants the clip's hook
+    # description as text must opt in via subject_template/subject_part, the
+    # same explicit-intent surface Brazil uses for user-provided locations.
     return sample
 
 
-def _consensus_subject(clip_metas: list | None) -> str:
-    """Determine the consensus detected_subject across all analyzed clips.
-
-    Uses majority vote — the most common non-empty subject wins.
-    Returns empty string if no clips have a detected subject.
-    """
-    if not clip_metas:
-        return ""
-
-    subjects: dict[str, int] = {}
-    for meta in clip_metas:
-        s = (meta.detected_subject or "").strip()
-        if s:
-            # Normalize: lowercase for counting, keep original casing of first occurrence
-            key = s.lower()
-            subjects[key] = subjects.get(key, 0) + 1
-
-    if not subjects:
-        return ""
-
-    # Return the most common subject (original casing from first clip)
-    best_key = max(subjects, key=subjects.get)
-    for meta in clip_metas:
-        s = (meta.detected_subject or "").strip()
-        if s.lower() == best_key:
-            return s
-    return ""
+# Removed: _consensus_subject(clip_metas).
+# Took a majority vote across clips' Gemini `detected_subject` fields and
+# fed the result to the placeholder-substitution path when the user didn't
+# provide a subject. That fallback turned Gemini's per-clip analysis into
+# user-visible rendered text — caught when job a1091488 rendered "pilot in
+# cockpit" in place of "The"/"Thirds" on Rule of Thirds. Subject is now
+# user-input-only at every call site. Do NOT reintroduce; see the sentinel
+# test in tests/tasks/test_template_orchestrate.py.
 
 
 # ── Beat detection helpers ─────────────────────────────────────────────────────

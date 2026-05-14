@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.13.0] - 2026-05-14
+
+### Fixed
+- **Rule of Thirds template no longer renders Gemini's clip description in place of "The"/"Thirds"** — production job `a1091488-09f6-4ce0-b92e-b1cc52695c9c` shipped with "pilot in cockpit" (from Gemini's `detected_subject` on the cockpit clip) burned into the hook overlay where the title words belong. Empirically verified the regression by diffing rendered frames at 0.7s / 1.2s / 2.0s / 2.9s against the reference clip; "Rule of" survived (it doesn't match the placeholder heuristic), "The" and "Thirds" were replaced and the recipe's red `#E63946` color was lost when the substituted overlay was reclassified as a generic subject label.
+  - `scripts/seed_rule_of_thirds.py` — adds `"subject_substitute": False` to the shared `_HOOK_BASE` dict so all three hook overlays opt out of placeholder substitution at the per-template layer.
+  - `app/migrations/versions/0017_rot_subject_substitute_flag.py` — backfills the flag into `VideoTemplate.recipe_cached` for the Rule of Thirds template in any environment that has already seeded it. Idempotent, reversible. Chains after PR #135's `0016_template_is_agentic.py`.
+
+### Changed
+- **Gemini per-clip metadata can no longer leak into rendered video overlay text** (architectural invariant). Two fallback paths in `app/tasks/template_orchestrate.py` that fed Gemini output into the substitution pipeline are removed:
+  - `_consensus_subject(clip_metas)` (majority-voted `detected_subject` across clips) was the fallback when `user_subject` was empty. Replaced with `subject = user_subject` only. Dead function deleted.
+  - `clip_meta.hook_text` fallback inside `_resolve_overlay_text` for empty hook overlays. Empty hook overlays now render empty rather than borrowing Gemini's per-clip description.
+  - The overlay text substitution surface is now exclusively user-input-driven (`inputs.location` via `_resolve_user_subject`).  Caption text (`copy_writer`) is NOT covered by this invariant and remains a separate trust surface, called out explicitly in `CLAUDE.md`.
+  - Defense-in-depth: `_resolve_user_subject` strips leading/trailing whitespace so a `" "` submission can't bypass the empty-subject branch.
+- `CLAUDE.md` template pipeline section documents the invariant + per-template flag, and flags the caption surface as a separate trust boundary.
+
+### Added
+- **Test coverage layered against the regression** — three sentinels and one parametrized audit:
+  - `TestRuleOfThirdsHookLiterals` (4 tests): asserts every literal hook overlay survives `_resolve_overlay_text` even when a subject is provided and `clip_meta.hook_text` is rich. Includes a snapshot test that walks all slots (not just `slot_type=='hook'`) and gates on `_is_subject_placeholder` so future copy moves are caught.
+  - `TestNoGeminiTextLeaks` (3 tests): hasattr sentinel for the deleted `_consensus_subject` function, AST-based sentinel that walks `_assemble_clips` and asserts no call on the `subject` assignment's RHS takes `clip_metas` as an argument (rename-proof), and a behavioral assertion that empty hook overlays return empty regardless of clip metadata.
+  - `tests/scripts/test_seed_overlays_literal.py`: parametrized audit across every `seed_*.py` and `add_*_intro_overlays.py` script. Any literal text matching `_is_subject_placeholder` without an explicit substitution decision fails the audit. Brazil's `PERU` overlay is the only grandfathered entry, with a comment explaining the intentional implicit-substitution reliance.
+
 ## [0.4.12.0] - 2026-05-14
 
 ### Added

@@ -72,6 +72,11 @@ def build_recipe() -> dict:
     # times: the swap creates the beat-synced color change without needing ASS
     # \t() time animation. The white overlay's end matches the red overlay's
     # start (1.4s) which also matches grid_highlight_windows[0][0] in slot 1.
+    # subject_substitute=False opts the literal title words out of the
+    # placeholder-casing heuristic in template_orchestrate._is_subject_placeholder
+    # (PR #125). Without it, "The" and "Thirds" (single title-cased words) get
+    # re-classified as variable subject tokens and replaced with clip_meta.hook_text
+    # ("pilot in cockpit"), losing the recipe's color in the process.
     _HOOK_BASE = {
         "role": "hook",
         "position": "center",
@@ -79,6 +84,7 @@ def build_recipe() -> dict:
         "font_family": "Playfair Display",
         "font_style": "serif",
         "end_s": 3.0,
+        "subject_substitute": False,
     }
     slots.append({
         "position": 1,
