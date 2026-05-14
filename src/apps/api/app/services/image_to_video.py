@@ -37,7 +37,15 @@ class ImageConversionError(Exception):
 
 
 def _normalize_to_9x16(raw: bytes) -> bytes:
-    """Decode, EXIF-correct, center-crop/pad to 1080x1920, return PNG bytes.
+    """Decode, EXIF-correct, center-crop/pad to 1080x1920, return PPM bytes.
+
+    Output is PPM (uncompressed P6 binary), not PNG. PPM has no compression,
+    no ancillary chunks, no CRC, and no color profile — ffmpeg's PPM decoder
+    is single-pass and cannot fail on chunk-parsing the way libpng can on
+    certain PIL-emitted PNGs. The downstream `ffmpeg -loop 1 -i src.ppm`
+    re-reads the same file each loop iteration; any libpng quirk that
+    intermittently fails mid-decode (e.g. iCCP/sBIT chunk handling in
+    older libpng versions) cannot occur with PPM.
 
     PIL decodes pixel data lazily — Image.open() only reads the header. The
     actual decode happens later (in exif_transpose, resize, save), which is
@@ -75,7 +83,13 @@ def _normalize_to_9x16(raw: bytes) -> bytes:
         img = img.crop((left, top, left + TARGET_W, top + TARGET_H))
 
         out = io.BytesIO()
-        img.save(out, format="PNG", optimize=False)
+        # PPM (P6) binary — uncompressed, no chunks. Eliminates the libpng
+        # decode step from the downstream `ffmpeg -loop 1 -i` pipeline,
+        # which has been observed to fail intermittently in prod with the
+        # symptom "frame=2 size=0KiB time=00:00:00.00" (2026-05-14, Fly api
+        # VM, Impressing Myself template). PPM is byte-identical to PNG
+        # in pixel data; only the container changes.
+        img.save(out, format="PPM")
         return out.getvalue()
     except (OSError, ValueError, Image.DecompressionBombError) as exc:
         raise ImageConversionError(f"Could not decode image: {exc}") from exc
@@ -97,11 +111,11 @@ def image_bytes_to_mp4(
         )
 
     duration_s = max(0.5, float(duration_s))
-    png_bytes = _normalize_to_9x16(raw)
+    image_bytes = _normalize_to_9x16(raw)
 
     with tempfile.TemporaryDirectory(prefix="nova_img2vid_") as tmp:
-        png_path = Path(tmp) / "src.png"
-        png_path.write_bytes(png_bytes)
+        src_path = Path(tmp) / "src.ppm"
+        src_path.write_bytes(image_bytes)
 
         cmd = [
             "ffmpeg", "-y",
@@ -114,7 +128,7 @@ def image_bytes_to_mp4(
             "-nostats",
             "-loop", "1",
             "-framerate", str(FPS),
-            "-i", str(png_path),
+            "-i", str(src_path),
             "-t", f"{duration_s:.3f}",
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
@@ -145,7 +159,7 @@ def image_bytes_to_mp4(
                 stdout=proc.stdout.strip(),
                 out_path=out_path,
                 duration_s=duration_s,
-                png_bytes=len(png_bytes),
+                src_bytes=len(image_bytes),
             )
             tail = stderr.splitlines()[-1] if stderr else f"ffmpeg exited {proc.returncode}"
             raise ImageConversionError(f"Could not encode image: {tail}")
