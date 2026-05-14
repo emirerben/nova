@@ -195,6 +195,13 @@ export async function adminReanalyzeTemplate(id: string): Promise<AdminTemplate>
   return res.json();
 }
 
+export async function adminReanalyzeAgentic(id: string): Promise<AdminTemplate> {
+  const res = await adminFetch(`/admin/templates/${id}/reanalyze-agentic`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
 export async function adminGetMetrics(id: string): Promise<TemplateMetrics> {
   const res = await adminFetch(`/admin/templates/${id}/metrics`);
   return res.json();

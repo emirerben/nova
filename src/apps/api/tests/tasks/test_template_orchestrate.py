@@ -1022,6 +1022,7 @@ class TestTemplateAudio:
 
         mock_template = MagicMock()
         mock_template.analysis_status = "ready"
+        mock_template.is_agentic = False
         mock_template.recipe_cached = {
             "shot_count": 1,
             "total_duration_s": 5.0,
