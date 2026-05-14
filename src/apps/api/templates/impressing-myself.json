@@ -48,7 +48,8 @@
             "end_s_override": null,
             "position_y_frac": 0.62,
             "start_s_override": null,
-            "font_cycle_accel_at_s": null
+            "font_cycle_accel_at_s": null,
+            "freeze_layout": true
           }
         ],
         "transition_in": "hard-cut",
@@ -84,7 +85,8 @@
             "end_s_override": null,
             "position_y_frac": 0.42,
             "start_s_override": null,
-            "font_cycle_accel_at_s": null
+            "font_cycle_accel_at_s": null,
+            "freeze_layout": true
           }
         ],
         "transition_in": "hard-cut",

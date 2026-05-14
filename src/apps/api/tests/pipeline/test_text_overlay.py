@@ -280,13 +280,14 @@ class TestAnimatedOverlayASS:
         # Sanity: ensure we didn't accidentally promote scale-up too
         assert "scale-up" not in ASS_ANIMATED_EFFECTS
 
-    def test_pop_in_prewraps_long_text_into_fixed_lines(self):
-        """pop-in must emit `\\N` + `\\q2` for text that would wrap at full scale.
+    def test_pop_in_with_freeze_layout_prewraps_long_text(self):
+        """pop-in emits `\\N` + `\\q2` ONLY when `freeze_layout: true` is set.
 
-        Repro: production job bb89ea56 with text "Who are you trying to impress
-        with all those travel stories?" rendered as pop-in at Inter Tight 90 px.
-        Without pre-wrap, libass shows 1 line at \\fscx30 and 2 lines at
-        \\fscx100 — the rewrap reads as text jitter at the entrance.
+        Repro: production job bb89ea56 (Impressing Myself) with text "Who are
+        you trying to impress with all those travel stories?" rendered as pop-in
+        at Inter Tight 90 px. Without `freeze_layout`, libass shows 1 line at
+        \\fscx30 and 2 lines at \\fscx100 — the rewrap reads as text jitter.
+        The opt-in flag scopes this behavior to the Impressing Myself recipe.
         """
         long_text = (
             '"Who are you trying to impress with all those travel stories?"'
@@ -298,12 +299,12 @@ class TestAnimatedOverlayASS:
                     "position": "center", "effect": "pop-in",
                     "font_family": "Inter Tight",
                     "position_y_frac": 0.62, "outline_px": 3,
+                    "freeze_layout": True,
                 }],
                 5.0, tmpdir, 0,
             )
             assert result is not None and len(result) == 1
             content = open(result[0]).read()
-            # Locate the Dialogue line so we only assert on the rendered text.
             dialogue = next(
                 ln for ln in content.splitlines() if ln.startswith("Dialogue:")
             )
@@ -316,19 +317,25 @@ class TestAnimatedOverlayASS:
             assert "\\fscx115" in dialogue
             assert "\\fscx100" in dialogue
 
-    def test_pop_in_short_text_skips_wrap(self):
-        """Short text that fits on one line must not get a stray `\\N`.
+    def test_pop_in_without_freeze_layout_is_byte_identical_to_pre_fix(self):
+        """pop-in without `freeze_layout` must NOT emit `\\q2` or `\\N`.
 
-        Adding a needless line break would shift the vertical centroid and the
-        existing test_position_x_frac_in_ass_overrides_centered_x style of
-        layout assertion would silently break.
+        This is the contract for every template OTHER than the Impressing
+        Myself bug target: pop-in's dialogue line is byte-for-byte the same
+        as it was before PR #138. Waka Waka pop-in labels, "That one trip
+        to..." pop-in slots, and anything else that uses pop-in without
+        opting in must keep libass's auto-wrap default.
         """
+        long_text = (
+            "This time for Africa with extra words to test scale-up paths"
+        )
         with tempfile.TemporaryDirectory() as tmpdir:
             result = generate_animated_overlay_ass(
                 [{
-                    "text": "Pop", "start_s": 0.0, "end_s": 1.1,
-                    "position": "center", "effect": "pop-in",
-                    "font_family": "Inter Tight",
+                    "text": long_text, "start_s": 0.0, "end_s": 1.1,
+                    "position": "bottom", "effect": "pop-in",
+                    "font_family": "Inter",
+                    # No freeze_layout — defaults to False
                 }],
                 5.0, tmpdir, 0,
             )
@@ -337,14 +344,25 @@ class TestAnimatedOverlayASS:
                 ln for ln in open(result[0]).read().splitlines()
                 if ln.startswith("Dialogue:")
             )
-            assert "\\N" not in dialogue, dialogue
-            assert "\\q2" in dialogue  # \q2 emitted unconditionally for pop-in
+            assert "\\q2" not in dialogue, (
+                f"\\q2 leaked into a pop-in overlay without freeze_layout — "
+                f"this would change layout for non-target templates: {dialogue}"
+            )
+            assert "\\N" not in dialogue, (
+                f"\\N leaked into a pop-in overlay without freeze_layout: "
+                f"{dialogue}"
+            )
+            # Scale animation unchanged.
+            assert "\\fscx30" in dialogue
+            assert "\\fscx115" in dialogue
+            assert "\\fscx100" in dialogue
 
-    def test_bounce_prewraps_long_text_into_fixed_lines(self):
-        """bounce shares the scale-driven rewrap risk with pop-in.
+    def test_bounce_with_freeze_layout_prewraps_long_text(self):
+        """bounce shares the scale-driven rewrap risk; opt-in via `freeze_layout`.
 
         100→125→90→100 crosses the same wrap threshold as pop-in's
-        30→115→100, so the same `\\N` + `\\q2` treatment must apply.
+        30→115→100, so the same `\\N` + `\\q2` treatment applies when the
+        recipe opts in.
         """
         long_text = (
             "This is a long bouncing reaction line that will not fit"
@@ -355,6 +373,7 @@ class TestAnimatedOverlayASS:
                     "text": long_text, "start_s": 0.0, "end_s": 2.0,
                     "position": "center", "effect": "bounce",
                     "font_family": "Inter Tight",
+                    "freeze_layout": True,
                 }],
                 5.0, tmpdir, 0,
             )
@@ -365,6 +384,29 @@ class TestAnimatedOverlayASS:
             )
             assert "\\q2" in dialogue
             assert "\\N" in dialogue
+
+    def test_bounce_without_freeze_layout_is_byte_identical_to_pre_fix(self):
+        """bounce default path matches pre-fix exactly — guards Waka Waka.
+
+        Waka Waka's "shukran Morocco!" bounce overlay does NOT set
+        `freeze_layout`, so its dialogue must not gain `\\q2` or `\\N`.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{
+                    "text": "shukran Morocco!", "start_s": 0.0, "end_s": 2.0,
+                    "position": "center", "effect": "bounce",
+                    "font_family": "Inter",
+                }],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None
+            dialogue = next(
+                ln for ln in open(result[0]).read().splitlines()
+                if ln.startswith("Dialogue:")
+            )
+            assert "\\q2" not in dialogue, dialogue
+            assert "\\N" not in dialogue, dialogue
 
     def test_fade_in_not_affected_by_prewrap(self):
         """fade-in (no scale animation) must keep its existing dialogue shape.
