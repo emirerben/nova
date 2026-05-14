@@ -316,10 +316,15 @@ export async function uploadTemplatePhoto(params: {
   fd.append("slot_position", String(params.slotPosition));
   fd.append("file", params.file);
 
-  const res = await fetch(`${API_URL}/uploads/template-photo`, {
-    method: "POST",
-    body: fd,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/uploads/template-photo`, {
+      method: "POST",
+      body: fd,
+    });
+  } catch {
+    throw new Error("Cannot reach the server. Check your connection and try again.");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Photo upload failed: ${res.status}`);

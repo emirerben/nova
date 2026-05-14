@@ -105,6 +105,17 @@ def image_bytes_to_mp4(
 
         cmd = [
             "ffmpeg", "-y",
+            # -loglevel warning + -nostats: drop the per-frame progress stream
+            # from stderr so that `proc.stderr` on a non-zero exit contains
+            # the actual error line(s), not `frame=N fps=… size=…` noise.
+            # Without this, the tail-slice we surface to the user was always
+            # progress and the real error was truncated off the front.
+            # `warning` (rather than `error`) keeps libx264 deprecation /
+            # pixel-format / SAR-mismatch warnings visible — useful for
+            # diagnosing the next class of failure without waiting for
+            # ffmpeg to exit non-zero.
+            "-loglevel", "warning",
+            "-nostats",
             "-loop", "1",
             "-framerate", str(FPS),
             "-i", str(png_path),
@@ -130,10 +141,24 @@ def image_bytes_to_mp4(
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:
-            log.error("ffmpeg_image_to_mp4_failed", stderr=proc.stderr[-500:])
-            raise ImageConversionError(
-                f"FFmpeg failed converting image to mp4: {proc.stderr[-200:]}"
+            stderr = proc.stderr.strip()
+            log.error(
+                "ffmpeg_image_to_mp4_failed",
+                returncode=proc.returncode,
+                stderr=stderr,
+                stdout=proc.stdout.strip(),
+                out_path=out_path,
+                duration_s=duration_s,
+                png_bytes=len(png_bytes),
             )
+            # Surface the last 3 non-empty stderr lines, not just the final
+            # one. ffmpeg/libx264 typically emits the diagnostic message
+            # FIRST (e.g. "[libx264 @ 0x55] Error initializing output…")
+            # then a generic "Conversion failed!" trailer. Taking only the
+            # last line drops the actual cause.
+            non_empty = [ln for ln in stderr.splitlines() if ln.strip()]
+            tail = " | ".join(non_empty[-3:]) if non_empty else f"ffmpeg exited {proc.returncode}"
+            raise ImageConversionError(f"Could not encode image: {tail}")
 
     log.info(
         "image_to_mp4_done",
