@@ -2917,6 +2917,125 @@ def _collect_absolute_overlays(
     return result
 
 
+def _concat_escape(path: str) -> str:
+    """Escape a path for inclusion inside single-quoted `file '...'` directives
+    in the ffmpeg concat demuxer list. Per the concat-demuxer spec, a literal
+    single quote inside the quoted value is escaped by closing the quote,
+    emitting an escaped single quote, then reopening (`'\\''`). This is the
+    same trick POSIX shell quoting uses. Hardens us against any future tmpdir
+    or asset path that happens to contain an apostrophe — the legacy per-`-i`
+    path didn't have this risk because paths went straight through argv."""
+    return path.replace("'", "'\\''")
+
+
+def _build_preburn_inputs_and_graph(
+    clip_path: str,
+    png_configs: list[dict],
+    burned_path: str,
+    tmpdir: str,
+) -> tuple[list[str], list[str], str]:
+    """Build the input list and filter_complex parts for the pre-burn ffmpeg cmd.
+
+    Returns ``(ffmpeg_inputs, filter_parts, last_label)``. The caller composes
+    the final argv by prepending ``ffmpeg`` and appending ``-filter_complex
+    <joined> -map [last_label] -map 0:a? <_encoding_args(...)>``. _encoding_args
+    stays at the call site so the encoder-policy lock in
+    tests/test_encoder_policy.py keeps finding a single authoritative
+    invocation for `_pre_burn_curtain_slot_text`.
+
+    Two PNG-feeding strategies, selected per-call:
+
+    1. Font-cycle frames (filenames containing "fontcycle"): when there are
+       2+ of them, they stream through the **concat demuxer** as a single -i
+       input. Per-frame durations are copied verbatim from each config's
+       ``end_s - start_s``, which carries the slow-then-fast cadence from
+       ``_compute_font_cycle_frame_specs`` (recipe ``accel_at_s`` → slow
+       0.15 s/frame → fast 0.07 s/frame transition) into ffmpeg without
+       interpretation.
+
+       Why concat demuxer instead of one -i per frame: a 5.5 s curtain-close
+       slot with font-cycle emits ~57 PNGs at 170 px. Feeding all 57 as
+       separate -i inputs plus a 57-link overlay chain peaks at ~487 MB of
+       RGBA working set, which the 2 GB Fly worker SIGKILLs (verified on
+       machine 4d89590eb44587 with the production image: rc=-9 before, rc=0
+       after). The concat demuxer streams one frame at a time, so the working
+       set stays constant regardless of frame count. Job b6540038 (Dimples
+       Passport, location=Morocco) shipped without the MOROCCO font-cycle
+       because the previous all-inputs path OOMed and the silent fallback
+       below swallowed the failure.
+
+    2. Static overlays (single-frame PNGs from generate_text_overlay_png's
+       non-cycle branch) AND any single-frame "cycle" fallback (which happens
+       when ``_resolve_cycle_fonts`` returned <2 fonts): one -i per PNG with
+       its own ``enable='between(t,…)'`` clamp. Byte-identical to the pre-fix
+       path. Templates that never trigger the cycle branch see no change in
+       their ffmpeg invocation.
+    """
+    cycle = sorted(
+        (c for c in png_configs if "fontcycle" in os.path.basename(c["png_path"])),
+        key=lambda c: c["start_s"],
+    )
+    static = [c for c in png_configs if "fontcycle" not in os.path.basename(c["png_path"])]
+
+    ffmpeg_inputs: list[str] = ["-i", clip_path]
+    fc_parts: list[str] = ["[0:v]null[base]"]
+    prev = "base"
+    next_input_idx = 1  # ffmpeg input index for the next -i we add
+
+    # The concat demuxer requires 2+ entries to avoid the "single-frame
+    # duration collapses to 0" footgun documented at:
+    # https://trac.ffmpeg.org/wiki/Slideshow#Concatdemuxer
+    # If _render_font_cycle fell back to a single static PNG (insufficient
+    # fonts), it lands in the per-PNG branch below.
+    if len(cycle) >= 2:
+        concat_list_path = os.path.join(
+            tmpdir,
+            os.path.basename(burned_path) + ".cycle_concat.txt",
+        )
+        with open(concat_list_path, "w") as fh:
+            for c in cycle:
+                # Guard against zero/negative durations from a malformed spec
+                # — concat requires strictly positive durations.
+                dur = max(0.001, c["end_s"] - c["start_s"])
+                fh.write(f"file '{_concat_escape(c['png_path'])}'\n")
+                fh.write(f"duration {dur:.6f}\n")
+            # ffmpeg concat-demuxer quirk: the duration of the LAST listed
+            # file is ignored unless that file is re-listed immediately after.
+            # Without the re-listing the final cycle frame collapses to 0 ms
+            # and the cycle ends one quantum early (e.g. MOROCCO settles
+            # 0.07 s before the curtain meets the text).
+            fh.write(f"file '{_concat_escape(cycle[-1]['png_path'])}'\n")
+
+        cycle_start = cycle[0]["start_s"]
+        cycle_end = cycle[-1]["end_s"]
+        ffmpeg_inputs.extend(["-f", "concat", "-safe", "0", "-i", concat_list_path])
+        out_lbl = "fc"
+        fc_parts.append(
+            f"[{prev}][{next_input_idx}:v]overlay=0:0"
+            f":enable='between(t,{cycle_start:.3f},{cycle_end:.3f})'[{out_lbl}]"
+        )
+        prev = out_lbl
+        next_input_idx += 1
+        per_png_inputs = static
+    else:
+        # Legacy path. Byte-identical to the pre-fix code: one -i per PNG, one
+        # overlay link per PNG. Behavior unchanged for templates that don't
+        # produce cycle frames on their curtain-close slot.
+        per_png_inputs = png_configs
+
+    for j, c in enumerate(per_png_inputs):
+        ffmpeg_inputs.extend(["-i", c["png_path"]])
+        out_lbl = f"txt{j}"
+        fc_parts.append(
+            f"[{prev}][{next_input_idx}:v]overlay=0:0"
+            f":enable='between(t,{c['start_s']:.3f},{c['end_s']:.3f})'[{out_lbl}]"
+        )
+        prev = out_lbl
+        next_input_idx += 1
+
+    return ffmpeg_inputs, fc_parts, prev
+
+
 def _pre_burn_curtain_slot_text(
     clip_path: str,
     step,
@@ -3058,54 +3177,61 @@ def _pre_burn_curtain_slot_text(
     if not png_configs:
         return clip_path
 
-    # Burn PNGs onto clip
+    # Burn PNGs onto clip. The input list and filter graph are built by a
+    # dedicated helper so font-cycle frames take the concat-demuxer path
+    # (constant-RAM, survives the 2 GB Fly worker) while statics keep the
+    # per-PNG path (byte-identical to the pre-fix code for templates that
+    # don't trigger cycle frames). See `_build_preburn_inputs_and_graph` for
+    # the OOM history and why the split is by filename.
     burned_path = os.path.join(tmpdir, f"slot_{slot_idx}_textburned.mp4")
-    cmd = ["ffmpeg", "-i", clip_path]
-    for cfg in png_configs:
-        cmd.extend(["-i", cfg["png_path"]])
-
-    fc_parts = ["[0:v]null[base]"]
-    prev = "base"
-    for j, cfg in enumerate(png_configs):
-        out = f"txt{j}"
-        fc_parts.append(
-            f"[{prev}][{j + 1}:v]overlay=0:0"
-            f":enable='between(t,{cfg['start_s']:.3f},{cfg['end_s']:.3f})'"
-            f"[{out}]"
-        )
-        prev = out
-
-    cmd.extend(
-        [
-            "-filter_complex",
-            ";".join(fc_parts),
-            "-map",
-            f"[{prev}]",
-            "-map",
-            "0:a?",
-            # preset=fast (not ultrafast): this slot is about to be re-encoded ONE
-            # MORE TIME by apply_curtain_close_tail_overlay (which already uses
-            # preset=fast + tune=film). If we encode here at ultrafast, the mb-tree/
-            # psy-rd losses are baked in BEFORE curtain-close runs, and the curtain
-            # encoder can't undo them — visible as banding on smooth gradients under
-            # the title text (Dimples slot 5 BRAZIL on the blue canopy). Locked by
-            # tests/test_encoder_policy.py. Per-slot wall-clock cost is small because
-            # the slot is short (typically 2-5s) and the overlay filter chain
-            # dominates encode time anyway.
-            *_encoding_args(burned_path, preset="fast"),
-        ]
+    ffmpeg_inputs, fc_parts, last_label = _build_preburn_inputs_and_graph(
+        clip_path,
+        png_configs,
+        burned_path,
+        tmpdir,
     )
+    cmd = [
+        "ffmpeg",
+        *ffmpeg_inputs,
+        "-filter_complex",
+        ";".join(fc_parts),
+        "-map",
+        f"[{last_label}]",
+        "-map",
+        "0:a?",
+        # preset=fast (not ultrafast): this slot is about to be re-encoded ONE
+        # MORE TIME by apply_curtain_close_tail_overlay (which already uses
+        # preset=fast + tune=film). If we encode here at ultrafast, the mb-tree/
+        # psy-rd losses are baked in BEFORE curtain-close runs, and the curtain
+        # encoder can't undo them — visible as banding on smooth gradients under
+        # the title text (Dimples slot 5 BRAZIL on the blue canopy). Locked by
+        # tests/test_encoder_policy.py. Per-slot wall-clock cost is small because
+        # the slot is short (typically 2-5s) and the overlay filter chain
+        # dominates encode time anyway.
+        *_encoding_args(burned_path, preset="fast"),
+    ]
 
     log.info("pre_burn_curtain_text", slot=slot_idx, overlays=len(png_configs))
     result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
     if result.returncode != 0:
-        log.warning(
+        # Hard fail. Mirrors curtain_close_tail_failed (above) and
+        # animated_overlay_failed (text_overlay.py) — recipe-defined hero
+        # overlays are not a "best effort" surface. Job b6540038 (Dimples
+        # Passport, location=Morocco) shipped without the MOROCCO font-cycle
+        # because the previous silent fallback returned `clip_path` here,
+        # then apply_curtain_close_tail ran on a textless slot. A failed job
+        # with `failure_reason=ffmpeg_failed` is strictly better than a
+        # "successful" job that lost the slot's hero word.
+        log.error(
             "pre_burn_curtain_text_failed",
             slot=slot_idx,
             rc=result.returncode,
-            stderr=result.stderr[-500:] if result.stderr else b"",
+            stderr=(result.stderr.decode(errors="replace")[-1500:] if result.stderr else ""),
         )
-        return clip_path  # fallback: no text, curtain still applied
+        raise RuntimeError(
+            f"pre-burn curtain text failed on slot {slot_idx} (rc={result.returncode}); "
+            f"refusing to ship a video with a missing recipe-defined hero overlay"
+        )
 
     return burned_path
 
