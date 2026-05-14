@@ -122,6 +122,16 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - **Prompt-change rule:** when editing any file under `src/apps/api/prompts/` or any `render_prompt()`, bump the agent's `prompt_version` in its `AgentSpec` AND run `pytest tests/evals/<agent>_evals.py -v --with-judge --eval-mode=live` against current fixtures before merge. Compare scores against the prior version's run.
 - See `tests/evals/README.md` for the full prompt-iteration loop.
 
+## Agentic templates (is_agentic=true)
+- `VideoTemplate.is_agentic` (added in PR #135) routes a template through the agent stack end-to-end instead of the human-edited path. Manual templates (`is_agentic=false`, the default for every existing row) are untouched — same code path, byte-identical output.
+- **Agentic stack** (the agents that drive agentic templates today): `creative_direction`, `template_recipe`, `text_designer` (build-time), `clip_router` (job-time). `shot_ranker` and `transition_picker` are codified but not yet wired in.
+- **Build-time:** `tasks.agentic_template_build_task` runs Big 3 + per-slot `text_designer` and bakes typography into each label-like overlay's dict. Triggered by `POST /admin/templates` (and `from-url`) when `is_agentic=true`, or by `POST /admin/templates/{id}/reanalyze-agentic`.
+- **Job-time:** when `is_agentic=true`, `template_orchestrate` skips the static `_LABEL_CONFIG` override (overlays already have baked styling) and calls `pipeline.agentic_matcher.agentic_match_or_fallback()` instead of the greedy matcher.
+- **End-to-end eval:** `tests/evals/test_agentic_template_e2e.py` judges the assembled recipe (metadata-only, not rendered frames). Structural assertions run on every PR; LLM judge via `--with-judge`.
+- **Auto-trigger CI:** the `agent-evals.yml` workflow now fires on PRs that touch any agentic-stack prompt file (`src/apps/api/prompts/analyze_template_*.txt`, `src/apps/api/prompts/analyze_clip.txt`), any agentic-stack agent's source (text_designer, clip_router, template_recipe, creative_direction), the orchestrator (`agentic_template_build.py`), or the eval suite itself. It runs the e2e eval in live mode with the judge — catches prompt regressions on the PR that introduces them.
+- **Agentic prompt-change rule:** the standard prompt-change rule applies (bump `prompt_version`, run the per-agent eval). Additionally, the e2e eval at `tests/evals/test_agentic_template_e2e.py` must pass in live mode before merge. The auto-trigger handles this for any PR that touches an agentic-stack file.
+- Manual edits to an agentic template's recipe are blocked at the API layer (`PUT /admin/templates/{id}/recipe` returns 409 when `is_agentic=true`). To change an agentic template, edit the agent prompts and re-run agents — that's the whole point.
+
 ## Deploy Configuration
 
 ### Architecture: Split Deploy

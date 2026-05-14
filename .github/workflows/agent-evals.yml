@@ -1,13 +1,18 @@
 name: Agent evals
 
-# Manual trigger only. Default CI already runs structural-only evals via the
-# main pytest job; this workflow is the live + judge run that costs real money
-# and shouldn't fire on every push.
+# Manual trigger: full live + judge run across all agents. Costs real money,
+# so it's opt-in. Default CI also runs structural-only evals via the main
+# pytest job (no API keys needed).
+#
+# Auto-trigger: pull_request that touches a prompt file or an inline-prompt
+# agent in the AGENTIC STACK (the agents that drive agentic templates) runs
+# the e2e suite in live mode against the cassette set. Catches prompt
+# regressions on the PR that introduces them, not after merge.
 on:
   workflow_dispatch:
     inputs:
       agent:
-        description: "Which agent to eval (all / Big-3 / Phase-2 in-pipeline)"
+        description: "Which agent to eval (all / Big-3 / Phase-2 in-pipeline / agentic_e2e)"
         required: false
         default: "all"
         type: choice
@@ -19,11 +24,33 @@ on:
           - transcript
           - platform_copy
           - audio_template
+          - agentic_e2e
       with_judge:
         description: "Run Claude-Sonnet judge"
         required: false
         default: true
         type: boolean
+  pull_request:
+    paths:
+      # Prompt files for the agentic stack (creative_direction, template_recipe,
+      # text_designer, clip_router are the agents that drive agentic templates
+      # today).
+      - "src/apps/api/prompts/analyze_template_*.txt"
+      - "src/apps/api/prompts/analyze_clip.txt"
+      # Inline-prompt agents: text_designer + clip_router render their prompt
+      # in code, so the .py file is the prompt for them.
+      - "src/apps/api/app/agents/text_designer.py"
+      - "src/apps/api/app/agents/clip_router.py"
+      - "src/apps/api/app/agents/template_recipe.py"
+      - "src/apps/api/app/agents/creative_direction.py"
+      # The orchestrator itself — changes to how agents are chained or how
+      # text_designer output is baked into overlays should re-run the e2e.
+      - "src/apps/api/app/tasks/agentic_template_build.py"
+      # The e2e suite or its rubric/fixtures — changes here should validate
+      # themselves against the current fixture set.
+      - "src/apps/api/tests/evals/test_agentic_template_e2e.py"
+      - "src/apps/api/tests/evals/rubrics/agentic_template_e2e.md"
+      - "src/apps/api/tests/fixtures/agentic_e2e/**"
 
 jobs:
   eval:
@@ -42,6 +69,13 @@ jobs:
       - name: Pick test target
         id: target
         run: |
+          # On pull_request auto-trigger, always run the agentic e2e suite —
+          # the prompt-paths filter that fired this workflow is meaningless
+          # for any other suite.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "path=tests/evals/test_agentic_template_e2e.py" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           case "${{ inputs.agent }}" in
             template_recipe)
               echo "path=tests/evals/test_template_recipe_evals.py" >> "$GITHUB_OUTPUT" ;;
@@ -55,6 +89,8 @@ jobs:
               echo "path=tests/evals/test_platform_copy_evals.py" >> "$GITHUB_OUTPUT" ;;
             audio_template)
               echo "path=tests/evals/test_audio_template_evals.py" >> "$GITHUB_OUTPUT" ;;
+            agentic_e2e)
+              echo "path=tests/evals/test_agentic_template_e2e.py" >> "$GITHUB_OUTPUT" ;;
             *)
               echo "path=tests/evals/" >> "$GITHUB_OUTPUT" ;;
           esac
@@ -62,7 +98,10 @@ jobs:
       - name: Pick judge flag
         id: judge
         run: |
-          if [ "${{ inputs.with_judge }}" = "true" ]; then
+          # pull_request auto-trigger always runs with judge; manual respects input.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "flag=--with-judge" >> "$GITHUB_OUTPUT"
+          elif [ "${{ inputs.with_judge }}" = "true" ]; then
             echo "flag=--with-judge" >> "$GITHUB_OUTPUT"
           else
             echo "flag=" >> "$GITHUB_OUTPUT"
