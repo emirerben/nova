@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.12.0] - 2026-05-14
+
+### Added
+- **Three new first-class transition / interstitial values.** PR #121's prompts forced these cinematic concepts to collapse onto existing enum values (`match-cut → hard-cut`, `barn-door-open → curtain-close`, `speed-ramp → hard-cut + speed_factor`). They now have their own enum entries and the prompts reflect that.
+  - **`match-cut`** — first-class transition. Renders identically to `hard-cut` at the pixel level (same `_GEMINI_TO_INTERNAL` → `"none"` mapping), but the recipe metadata now carries the editorial distinction. transition_picker's rubric can score "match-cut discrimination" (was this picked over hard-cut because the rationale named visual continuity?). Downstream tooling (editorial QA, eval rubrics) can reason about action-match / eye-line-match / shape-match continuity without losing the intent at the prompt boundary.
+  - **`barn-door-open`** — first-class interstitial type. Bars start fully closed (covering the frame from top and bottom edges, meeting at center) and animate OPEN, retracting to the edges. Lives at the HEAD of slot N+1 (the slot following the interstitial's black hold), where curtain-close lives at the TAIL of slot N. New `apply_barn_door_open_head()` + `_generate_barn_door_bars_png_sequence()` in `app/pipeline/interstitials.py` mirror the curtain-close call surface — same PNG-overlay strategy, same encoder budget (preset=fast + tune=film + CRF=18 + 1200s subprocess timeout), same 60% max-ratio cap on uncovered footage. The orchestrator's post-render phase detects when the previous slot's interstitial was `barn-door-open` and dispatches the head animation BEFORE the next slot lands in the assembly. A re-raise on failure mirrors the curtain-close treatment — a missing hero animation paired with the existing black hold reads as a hard cut to black, which is worse than a hard failure.
+  - **`speed-ramp`** — first-class transition. The cut itself is instant (maps to `"none"` in `_GEMINI_TO_INTERNAL`); the visible mechanic lives on the destination slot's `speed_factor` field (already plumbed through `reframe._build_video_filter` as `setpts=PTS/factor`). transition_picker's prompt now explicitly documents the speed-ramp ↔ speed_factor pairing — the agent emits `speed-ramp` and downstream tooling pairs it with `speed_factor > 1` on the slot whose playback is sped up.
+- `transition_picker.py` Literal extended from 6 → 9 transitions. `template_recipe.py::_VALID_TRANSITION_TYPES` extended in lockstep. `_VALID_INTERSTITIAL_TYPES` adds `barn-door-open`. Structural duration envelope (`tests/evals/runners/structural.py::_TRANSITION_DURATION_RANGES`) adds `match-cut` and `speed-ramp` as 0.0/0.0 (same as hard-cut).
+- `tests/pipeline/test_barn_door_open.py` (11 tests) — PNG generation correctness (frame 0 fully closed, last frame fully open, monotonic bar shrinkage, frame count scales with duration, minimum 2 frames), inverse-of-curtain-close mirror property (barn-door bar at frame i ≈ curtain-close bar at frame N-1-i, allowing ±1 for int truncation), and orchestrator-wiring canaries (the helper is importable, the orchestrator references both `apply_barn_door_open_head` and the `prev_inter_type == "barn-door-open"` conditional, the interstitial dispatch accepts `"barn-door-open"` as a hold-rendering type).
+
+### Changed
+- **`analyze_template_single.txt` + `analyze_template_pass2.txt` vocabulary reconciliation tables updated.** match-cut, barn-door-open, and speed-ramp now emit their own enum values rather than collapsing to existing ones. barn-door-CLOSE still maps to curtain-close (no separate renderer for the close half of the door pair).
+- **`transition_picker` prompt** gains decision principles for match-cut (pick only when the rationale can name the continuity element — motion, eye-line, or shape), speed-ramp (pair with `speed_factor > 1` on the dest slot), and the updated duration envelope table (match-cut/speed-ramp both at 0.0). `prompt_version` bumped `2026-05-14` → `2026-05-14b`.
+
 ## [0.4.11.0] - 2026-05-13
 
 ### Added

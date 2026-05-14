@@ -17,8 +17,26 @@ from pydantic import BaseModel, Field
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 
-_VALID_TRANSITIONS = ("hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none")
-TransitionType = Literal["hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none"]
+_VALID_TRANSITIONS = (
+    "hard-cut",
+    "match-cut",
+    "whip-pan",
+    "zoom-in",
+    "dissolve",
+    "curtain-close",
+    "speed-ramp",
+    "none",
+)
+TransitionType = Literal[
+    "hard-cut",
+    "match-cut",
+    "whip-pan",
+    "zoom-in",
+    "dissolve",
+    "curtain-close",
+    "speed-ramp",
+    "none",
+]
 
 
 class ClipMetaSnapshot(BaseModel):
@@ -44,7 +62,7 @@ class TransitionPickerAgent(Agent[TransitionPickerInput, TransitionPickerOutput]
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.layout.transition_picker",
         prompt_id="_inline",
-        prompt_version="2026-05-14",
+        prompt_version="2026-05-14b",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -92,18 +110,33 @@ class TransitionPickerAgent(Agent[TransitionPickerInput, TransitionPickerOutput]
             "  - dissolve: camera-agnostic but needs breathing room. Never under 0.4s, "
             "never on high-energy pacing.\n"
             "  - hard-cut: works for any camera state. The neutral default.\n"
+            "  - match-cut: a hard cut justified by visual continuity — action match "
+            "(running figure exits left, running figure enters left), eye-line match, "
+            "or shape match. Renders identically to hard-cut at the pixel level; the "
+            "distinction is editorial intent and downstream rubric scoring. Pick this "
+            "ONLY when the rationale can name the specific continuity element (motion, "
+            "eye-line, shape). Defaults to hard-cut otherwise.\n"
             "  - curtain-close: independent of camera movement; it's a section break, "
             "not a continuity move.\n"
+            "  - speed-ramp: temporal acceleration of the incoming clip — the cut is "
+            "instant, the slot that follows plays back faster. Pair with `speed_factor` "
+            ">1 on the destination slot (the matcher/recipe pipeline reads both — the "
+            "transition value carries editorial intent, the speed_factor field carries "
+            "the actual playback rate). Pick when the incoming clip is meant to compress "
+            "time (montage, time-passage, energy build).\n"
             "  - none: semantically 'no transition between scenes' (vs. hard-cut's "
             "'the transition is a hard cut'). Use for narrative scene splits.\n\n"
             "Pacing-style modulation (when pacing_style is set):\n"
-            "  - high-energy-edm / energetic-pop → prefer hard-cut, whip-pan, zoom-in. "
-            "Dissolves only at section breaks. Durations toward the SHORT end of each range.\n"
+            "  - high-energy-edm / energetic-pop → prefer hard-cut, match-cut, whip-pan, "
+            "zoom-in, speed-ramp. Dissolves only at section breaks. Durations toward the "
+            "SHORT end of each range.\n"
             "  - mid-tempo-flow → balanced. All transitions in play; durations in their middle.\n"
             "  - slow-cinematic → prefer dissolve and curtain-close over hard-cut. "
             "Durations toward the LONG end of each range.\n\n"
             "Duration envelope:\n"
             "  hard-cut       0.00 (instant)   default; energetic content; beat-aligned cuts\n"
+            "  match-cut      0.00 (instant)   hard cut justified by visual continuity\n"
+            "  speed-ramp     0.00 (instant)   instant cut; mechanic is dest slot speed_factor\n"
             "  none           0.00 (instant)   scene split with no explicit transition\n"
             "  whip-pan       0.20–0.40s       both clips have compatible lateral movement\n"
             "  zoom-in        0.30–0.50s       emphasis on incoming subject\n"
