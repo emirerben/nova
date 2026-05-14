@@ -94,7 +94,7 @@ def _make_recipe(**overrides):
     return base
 
 
-def _mock_template(recipe_cached=None, analysis_status="ready"):
+def _mock_template(recipe_cached=None, analysis_status="ready", is_agentic=False):
     """Create a mock VideoTemplate."""
     t = MagicMock()
     t.id = "tmpl-123"
@@ -102,6 +102,7 @@ def _mock_template(recipe_cached=None, analysis_status="ready"):
     t.analysis_status = analysis_status
     t.recipe_cached = recipe_cached
     t.recipe_cached_at = datetime.now(UTC) if recipe_cached else None
+    t.is_agentic = is_agentic
     return t
 
 
@@ -267,6 +268,34 @@ class TestSaveRecipe:
         data = res.json()
         assert data["recipe"]["copy_tone"] == "exciting"
         assert data["version_number"] == 3
+
+    def test_rejects_agentic_template(self, client):
+        """Agentic templates are regen-only — PUT /recipe must return 409."""
+        recipe = _make_recipe()
+        template = _mock_template(recipe_cached=recipe, is_agentic=True)
+
+        mock_db = AsyncMock()
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+        mock_db.execute.side_effect = [template_result]
+
+        def _override_db():
+            yield mock_db
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.put(
+                    "/admin/templates/tmpl-123/recipe",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                    json={"recipe": recipe, "base_version_id": None},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 409
+        assert "agent-built" in res.json()["detail"].lower()
 
     def test_rejects_invalid_transition(self, client):
         """Invalid enum values should be rejected by Pydantic."""

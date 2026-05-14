@@ -191,6 +191,48 @@ interface EditorTabProps {
 }
 
 export function EditorTab({ template, latestTestJob, onTestJobComplete }: EditorTabProps) {
+  if (template.is_agentic) {
+    return <AgenticEditorLock />;
+  }
+  return (
+    <EditorTabInner
+      template={template}
+      latestTestJob={latestTestJob}
+      onTestJobComplete={onTestJobComplete}
+    />
+  );
+}
+
+function AgenticEditorLock() {
+  return (
+    <div className="max-w-2xl mx-auto mt-12 border border-emerald-900/40 bg-emerald-950/20 rounded-lg p-6">
+      <div className="flex items-start gap-3">
+        <div className="text-emerald-400 text-2xl leading-none mt-0.5">●</div>
+        <div>
+          <h2 className="text-base font-semibold text-emerald-200">
+            Agent-built template — editor locked
+          </h2>
+          <p className="text-sm text-zinc-400 mt-2 leading-relaxed">
+            This template&apos;s recipe is generated end-to-end by the agent stack.
+            Manual edits are disabled by design so quality changes flow through
+            agent + prompt iteration (measured by evals), not one-off hand edits
+            that drift from the rest of the agentic templates.
+          </p>
+          <p className="text-sm text-zinc-400 mt-3 leading-relaxed">
+            To change this template, edit the agent prompts and re-run the
+            agents. The current recipe is still viewable on the Recipe tab.
+          </p>
+          <p className="text-xs text-zinc-600 mt-4">
+            If you need a hand-tunable copy of this template, create a new
+            non-agentic template from the same source video.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditorTabInner({ template, latestTestJob, onTestJobComplete }: EditorTabProps) {
   const [state, dispatch] = useReducer(editorReducer, initialState);
   const [saving, setSaving] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);

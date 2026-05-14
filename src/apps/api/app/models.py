@@ -7,6 +7,7 @@ from sqlalchemy import (
     ARRAY,
     TIMESTAMP,
     BigInteger,
+    Boolean,
     CheckConstraint,
     Float,
     ForeignKey,
@@ -43,14 +44,10 @@ class WaitlistSignup(Base):
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     name: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     jobs: Mapped[list["Job"]] = relationship(back_populates="user")
     oauth_tokens: Mapped[list["OAuthToken"]] = relationship(back_populates="user")
@@ -59,9 +56,7 @@ class User(Base):
 class OAuthToken(Base):
     __tablename__ = "oauth_tokens"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
@@ -70,9 +65,7 @@ class OAuthToken(Base):
     refresh_token: Mapped[bytes | None] = mapped_column(BYTEA)
     expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="active")
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
     )
@@ -109,9 +102,7 @@ class VideoTemplate(Base):
     required_clips_max: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     # User inputs the upload UI collects per-template (e.g. location).
     # Shape: list[{key, label, placeholder, max_length, required}].
-    required_inputs: Mapped[list] = mapped_column(
-        JSONB, nullable=False, server_default="[]"
-    )
+    required_inputs: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # Admin lifecycle columns (nullable for backward compat)
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
@@ -119,19 +110,20 @@ class VideoTemplate(Base):
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     thumbnail_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Music variant columns
-    template_type: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="standard"
-    )
+    template_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="standard")
     parent_template_id: Mapped[str | None] = mapped_column(
         Text, ForeignKey("video_templates.id"), nullable=True
     )
     music_track_id: Mapped[str | None] = mapped_column(
         Text, ForeignKey("music_tracks.id"), nullable=True
     )
+    # True = recipe is generated end-to-end by agents (no manual editor edits).
+    # False = manually built/edited template (the historical path).
+    # Immutable after row creation; the two paths read/write recipe_cached
+    # differently and flipping mid-life would orphan a hand-tuned recipe.
+    is_agentic: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
 
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     recipe_versions: Mapped[list["TemplateRecipeVersion"]] = relationship(
         back_populates="template", cascade="all, delete-orphan"
@@ -155,18 +147,14 @@ class TemplateRecipeVersion(Base):
 
     __tablename__ = "template_recipe_versions"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     template_id: Mapped[str] = mapped_column(
         Text, ForeignKey("video_templates.id", ondelete="CASCADE"), nullable=False
     )
     recipe: Mapped[dict] = mapped_column(JSONB, nullable=False)
     # initial_analysis | reanalysis | manual_edit | remerge
     trigger: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     template: Mapped["VideoTemplate"] = relationship(back_populates="recipe_versions")
 
@@ -203,9 +191,7 @@ class MusicTrack(Base):
     # Gemini audio analysis → cached recipe for audio-only template creation
     recipe_cached: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     recipe_cached_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     __table_args__ = (
         Index("idx_music_tracks_status", "analysis_status"),
@@ -216,9 +202,7 @@ class MusicTrack(Base):
 class Job(Base):
     __tablename__ = "jobs"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
@@ -255,16 +239,12 @@ class Job(Base):
     current_phase: Mapped[str | None] = mapped_column(Text)
     # Append-only history of completed phases:
     # [{name, elapsed_ms, t_offset_ms, ts}, ...]. Written by services/job_phases.
-    phase_log: Mapped[list | None] = mapped_column(
-        JSONB, nullable=False, server_default="[]"
-    )
+    phase_log: Mapped[list | None] = mapped_column(JSONB, nullable=False, server_default="[]")
     # True pipeline-wall-time anchors. Distinct from created_at (queue insert)
     # and updated_at (any column write).
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
     )
@@ -284,9 +264,7 @@ class Job(Base):
 class JobClip(Base):
     __tablename__ = "job_clips"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=False
     )
@@ -311,9 +289,7 @@ class JobClip(Base):
     download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     storage_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
     error_detail: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     job: Mapped["Job"] = relationship(back_populates="clips")
 
