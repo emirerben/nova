@@ -601,6 +601,37 @@ def _pick_font_cycle_font_at(specs: list[tuple], t: float):
 # -- ASS Animation Rendering --------------------------------------------------
 
 
+def _pre_wrap_for_scale_animation(text: str, font_family: str | None) -> str:
+    """Insert ASS line breaks (`\\N`) so libass doesn't re-wrap during scale.
+
+    libass decides line breaks against the *scaled* glyph widths. For effects
+    that animate `\\fscx`/`\\fscy` (pop-in, bounce), the wrap point shifts as
+    the scale crosses the canvas-width threshold — long text appears on one
+    line at \\fscx30 and rewraps to two lines at \\fscx100, which reads as a
+    jitter at the entrance. Pre-wrapping at the final (100 %) Style size and
+    setting WrapStyle 2 via the inline `\\q2` tag freezes the layout so only
+    glyph size animates.
+
+    Wrap budget mirrors the PNG path's `_TEXT_MAX_LINE_W * CANVAS_W` so the
+    final, settled frame matches what `generate_text_overlay_png` would
+    produce. If the font cannot be resolved (missing entry, registry load
+    failure), returns the original text — animation still plays correctly,
+    only the wrap stays at libass's auto-wrap default.
+    """
+    if not text or not font_family:
+        return text
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    font = _resolve_font_family(font_family, OVERLAY_FONT_SIZE)
+    if font is None:
+        return text
+    max_width = int(CANVAS_W * _TEXT_MAX_LINE_W)
+    dummy = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(dummy)
+    lines = _wrap_text_to_lines(text, font, max_width, draw)
+    return "\\N".join(lines)
+
+
 def _write_animated_ass(
     text: str,
     start_s: float,
@@ -689,32 +720,40 @@ def _write_animated_ass(
         # \t(t1,t2,tags) tag linearly interpolates the inner tags between t1 and
         # t2 (ms relative to dialogue start). Initial \fscx/\fscy sets the t=0
         # state; each \t() animates to its target.
+        # Pre-wrap with \N + \q2: libass re-lays out lines per frame based on the
+        # scaled glyph widths, so without a fixed line structure the text jumps
+        # from 1 line at \fscx30 to 2 lines once \fscx crosses the wrap threshold.
+        # See test_pop_in_prewraps_long_text_into_fixed_lines for the regression.
+        wrapped = _pre_wrap_for_scale_animation(text, font_family)
         duration_ms = int((end_s - start_s) * 1000)
         k0, k1, k2 = _clamp_keyframes(_POP_IN_KEYFRAMES_MS, duration_ms)
         s0, s1, s2 = _POP_IN_SCALES
         pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
         dialogue_text = (
-            f"{{{pos_or_align}{outline_tag}"
+            f"{{{pos_or_align}\\q2{outline_tag}"
             f"\\fscx{s0}\\fscy{s0}"
             f"\\t({k0},{k1},\\fscx{s1}\\fscy{s1})"
             f"\\t({k1},{k2},\\fscx{s2}\\fscy{s2})"
-            f"}}{text}"
+            f"}}{wrapped}"
         )
 
     elif effect == "bounce":
         # Squash-and-stretch: 100 → 125 (stretch) → 90 (squash) → 100 (settle).
         # Used for hero reactions like the "shukran Morocco!" outro label.
+        # Pre-wrap with \N + \q2: same rationale as pop-in — fixed line layout
+        # so the squash/stretch doesn't drag libass through a wrap threshold.
+        wrapped = _pre_wrap_for_scale_animation(text, font_family)
         duration_ms = int((end_s - start_s) * 1000)
         k0, k1, k2, k3 = _clamp_keyframes(_BOUNCE_KEYFRAMES_MS, duration_ms)
         s0, s1, s2, s3 = _BOUNCE_SCALES
         pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
         dialogue_text = (
-            f"{{{pos_or_align}{outline_tag}"
+            f"{{{pos_or_align}\\q2{outline_tag}"
             f"\\fscx{s0}\\fscy{s0}"
             f"\\t({k0},{k1},\\fscx{s1}\\fscy{s1})"
             f"\\t({k1},{k2},\\fscx{s2}\\fscy{s2})"
             f"\\t({k2},{k3},\\fscx{s3}\\fscy{s3})"
-            f"}}{text}"
+            f"}}{wrapped}"
         )
 
     else:
