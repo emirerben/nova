@@ -14,6 +14,7 @@ import {
   adminGetRecipe,
   adminGetRecipeHistory,
   adminGetTemplate,
+  adminReanalyzeAgentic,
   adminReanalyzeTemplate,
   adminSaveRecipe,
   adminUpdateTemplate,
@@ -161,6 +162,29 @@ export default function TemplateDetailPage() {
     }
   }, [id]);
 
+  const handleReanalyzeAgentic = useCallback(async () => {
+    if (
+      !confirm(
+        "Re-run the full agent stack?\n\n" +
+          "This regenerates the recipe end-to-end (creative direction → " +
+          "template recipe → per-slot text_designer). The previous recipe " +
+          "is preserved in history.\n\n" +
+          "Takes a few minutes. Continue?",
+      )
+    ) {
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const updated = await adminReanalyzeAgentic(id);
+      setTemplate(updated);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Agentic rebuild failed");
+    } finally {
+      setActionLoading(false);
+    }
+  }, [id]);
+
   // ── Render ───────────────────────────────────────────────────────────────
 
   if (loading) return <PageSkeleton />;
@@ -282,13 +306,24 @@ export default function TemplateDetailPage() {
 
       {/* Sticky action bar */}
       <div className="sticky bottom-0 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur px-6 py-3 flex items-center gap-3">
-        <button
-          onClick={handleReanalyze}
-          disabled={actionLoading || template.analysis_status === "analyzing"}
-          className="px-4 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 text-white rounded disabled:opacity-50"
-        >
-          {template.analysis_status === "analyzing" ? "Analyzing..." : "Reanalyze"}
-        </button>
+        {template.is_agentic ? (
+          <button
+            onClick={handleReanalyzeAgentic}
+            disabled={actionLoading || template.analysis_status === "analyzing"}
+            className="px-4 py-2 text-sm bg-emerald-800 hover:bg-emerald-700 text-white rounded disabled:opacity-50"
+            title="Re-run creative_direction + template_recipe + text_designer"
+          >
+            {template.analysis_status === "analyzing" ? "Building..." : "Re-run agents"}
+          </button>
+        ) : (
+          <button
+            onClick={handleReanalyze}
+            disabled={actionLoading || template.analysis_status === "analyzing"}
+            className="px-4 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 text-white rounded disabled:opacity-50"
+          >
+            {template.analysis_status === "analyzing" ? "Analyzing..." : "Reanalyze"}
+          </button>
+        )}
         {!template.published_at || template.archived_at ? (
           <button
             onClick={handlePublish}

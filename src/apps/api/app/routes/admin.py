@@ -747,9 +747,18 @@ async def create_template(
     await db.commit()
     await db.refresh(template)
 
-    from app.tasks.template_orchestrate import analyze_template_task  # noqa: PLC0415
+    if req.is_agentic:
+        from app.tasks.agentic_template_build import (  # noqa: PLC0415
+            agentic_template_build_task,
+        )
 
-    analyze_template_task.delay(template_id)
+        agentic_template_build_task.delay(template_id)
+    else:
+        from app.tasks.template_orchestrate import (  # noqa: PLC0415
+            analyze_template_task,
+        )
+
+        analyze_template_task.delay(template_id)
 
     log.info(
         "template_created",
@@ -797,9 +806,18 @@ async def create_template_from_url(
     await db.commit()
     await db.refresh(template)
 
-    from app.tasks.template_orchestrate import analyze_template_task  # noqa: PLC0415
+    if req.is_agentic:
+        from app.tasks.agentic_template_build import (  # noqa: PLC0415
+            agentic_template_build_task,
+        )
 
-    analyze_template_task.delay(template_id)
+        agentic_template_build_task.delay(template_id)
+    else:
+        from app.tasks.template_orchestrate import (  # noqa: PLC0415
+            analyze_template_task,
+        )
+
+        analyze_template_task.delay(template_id)
 
     log.info(
         "template_created_from_url",
@@ -931,8 +949,20 @@ async def reanalyze_template(
     template_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> TemplateResponse:
-    """Re-run Gemini analysis on an existing template."""
+    """Re-run Gemini analysis on an existing manual template."""
     template = await get_template_or_404(template_id, db)
+
+    # Agentic templates have their own build pipeline; routing one through
+    # the manual reanalyze path would produce a single-pass recipe with no
+    # text_designer styling and silently drift from the agentic contract.
+    if template.is_agentic:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This template is agent-built. Use "
+                "POST /admin/templates/{id}/reanalyze-agentic instead."
+            ),
+        )
 
     template.analysis_status = "analyzing"
     template.error_detail = None  # clear stale error
@@ -951,6 +981,47 @@ async def reanalyze_template(
     analyze_template_task.delay(template_id)
 
     log.info("template_reanalyzed", template_id=template_id)
+    return _template_response(template)
+
+
+@router.post(
+    "/templates/{template_id}/reanalyze-agentic",
+    response_model=TemplateResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def reanalyze_template_agentic(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateResponse:
+    """Re-run the full agent stack on an agentic template."""
+    template = await get_template_or_404(template_id, db)
+
+    if not template.is_agentic:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This template is manually built. Use POST /admin/templates/{id}/reanalyze instead."
+            ),
+        )
+
+    template.analysis_status = "analyzing"
+    template.error_detail = None
+    await db.commit()
+    await db.refresh(template)
+
+    import redis as redis_lib  # noqa: PLC0415
+
+    _redis = redis_lib.from_url(settings.redis_url)
+    _redis.delete(f"analyze_attempts:{template_id}")
+    _redis.close()
+
+    from app.tasks.agentic_template_build import (  # noqa: PLC0415
+        agentic_template_build_task,
+    )
+
+    agentic_template_build_task.delay(template_id)
+
+    log.info("template_reanalyzed_agentic", template_id=template_id)
     return _template_response(template)
 
 
