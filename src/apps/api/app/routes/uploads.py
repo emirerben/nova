@@ -9,6 +9,7 @@ import uuid
 import structlog
 from cryptography.fernet import Fernet
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -507,7 +508,16 @@ async def upload_template_photo(
     with tempfile.TemporaryDirectory(prefix="nova_photo_") as tmpdir:
         out_path = os.path.join(tmpdir, "out.mp4")
         try:
-            image_bytes_to_mp4(raw, out_path, duration_s=mp4_duration_s)
+            # run_in_threadpool: keep the FastAPI event loop responsive during
+            # the multi-second ffmpeg + GCS upload. Without this, /health and
+            # other concurrent requests time out while this route holds the
+            # event loop on synchronous subprocess + blocking GCS I/O, and
+            # Fly's load balancer returns 503 to in-flight callers. Empirically
+            # verified 2026-05-14: /health probe TCP-timed-out (5s, HTTP 000)
+            # while this route was processing a 982 KB normalized PNG.
+            await run_in_threadpool(
+                image_bytes_to_mp4, raw, out_path, duration_s=mp4_duration_s
+            )
         except ImageConversionError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -516,7 +526,9 @@ async def upload_template_photo(
 
         bucket = storage._get_client().bucket(settings.storage_bucket)
         blob = bucket.blob(gcs_path)
-        blob.upload_from_filename(out_path, content_type="video/mp4")
+        await run_in_threadpool(
+            blob.upload_from_filename, out_path, content_type="video/mp4"
+        )
 
     log.info(
         "template_photo_uploaded",
