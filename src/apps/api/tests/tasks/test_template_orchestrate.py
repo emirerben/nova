@@ -3522,7 +3522,12 @@ class TestRuleOfThirdsHookLiterals:
             transcript="",
             hook_text="pilot in cockpit",
             hook_score=7.0,
-            best_moments=[{"start_s": 0.0, "end_s": 2.0, "energy": 6.0, "description": "pilot adjusts controls"}],
+            best_moments=[{
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "energy": 6.0,
+                "description": "pilot adjusts controls",
+            }],
             clip_path="/tmp/clip.mp4",
         )
 
