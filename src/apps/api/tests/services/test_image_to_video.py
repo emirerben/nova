@@ -129,10 +129,12 @@ class TestEndToEnd:
         assert _ffprobe_duration_s(str(out)) >= 0.4
 
     def test_ffmpeg_command_uses_quiet_logging(self, tmp_path):
-        """ffmpeg must be invoked with -loglevel error -nostats so stderr
+        """ffmpeg must be invoked with -loglevel warning -nostats so stderr
         contains only real warnings/errors. Without this, the per-frame
         progress stream dominates stderr and our error tail surfaces
-        progress noise instead of the actual failure reason."""
+        progress noise instead of the actual failure reason. `warning`
+        (not `error`) keeps libx264 deprecation/SAR/pixel-format warnings
+        visible for the next class of failure."""
         captured_argv: list[list[str]] = []
 
         real_run = subprocess.run
@@ -150,27 +152,34 @@ class TestEndToEnd:
         argv = captured_argv[0]
         assert argv[0] == "ffmpeg"
         assert "-loglevel" in argv, f"missing -loglevel in {argv!r}"
-        assert argv[argv.index("-loglevel") + 1] == "error"
+        assert argv[argv.index("-loglevel") + 1] == "warning"
         assert "-nostats" in argv, f"missing -nostats in {argv!r}"
 
     def test_ffmpeg_failure_surfaces_real_error_not_progress(self, tmp_path):
         """When ffmpeg exits non-zero, the user-facing ImageConversionError
-        message must contain the actual error line — not the trailing
+        message must contain the actual error line(s) — not the trailing
         progress chatter that previously dominated proc.stderr[-200:].
+
+        Also verifies the multi-line case: ffmpeg/libx264 typically emits
+        the diagnostic FIRST and a generic 'Conversion failed!' trailer.
+        Taking only the last line would drop the actual cause.
 
         Regression for: 'FFmpeg failed converting image to mp4: ate=N/A
         speed=N/A frame= 2 fps=2.0 q=26.0 size= 0KiB time=00:00:00.00 …'
         (May 2026, Impressing Myself template).
         """
-        real_error = (
+        # Realistic multi-line ffmpeg failure: diagnostic first, generic last
+        stderr = (
             "[libx264 @ 0x55] Error initializing output stream 0:0 -- "
-            "Error while opening encoder for output stream #0:0"
+            "Error while opening encoder for output stream #0:0\n"
+            "Error initializing filters\n"
+            "Conversion failed!\n"
         )
         fake_completed = subprocess.CompletedProcess(
             args=["ffmpeg"],
             returncode=1,
             stdout="",
-            stderr=real_error + "\n",
+            stderr=stderr,
         )
 
         out = tmp_path / "out.mp4"
@@ -180,10 +189,11 @@ class TestEndToEnd:
                 image_bytes_to_mp4(raw, str(out), duration_s=1.0)
 
         msg = str(excinfo.value)
+        # The actual diagnostic must reach the user, not just the trailer
         assert "Error initializing output stream" in msg, (
-            f"expected real ffmpeg error in message, got {msg!r}"
+            f"expected real ffmpeg diagnostic in message, got {msg!r}"
         )
-        # Must NOT contain the kind of progress-noise the old behavior surfaced
+        # Must NOT contain progress noise the old behavior surfaced
         assert "frame=" not in msg
         assert "fps=" not in msg
         assert "size=" not in msg
