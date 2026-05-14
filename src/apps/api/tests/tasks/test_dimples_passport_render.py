@@ -319,97 +319,94 @@ class TestDimplesPassportSlot5Render:
         "manual docker repro instead.",
     )
     def test_no_oom_on_5_5s_cycle(self, tmp_path):
-        """Test 9: render slot 5 inside a Python subprocess with RLIMIT_AS
-        capped at 1.8 GB (matches the headroom the worker has after Python
-        + libx264 base usage on the 2 GB Fly worker). Assert ffmpeg returns
-        rc=0 — the regression assertion.
+        """Test 9: render slot 5 with `ffmpeg` itself capped at 1.5 GB of
+        virtual address space via RLIMIT_AS. The Python parent runs without
+        a cap and pre-generates the PNGs; the cap applies ONLY to the
+        ffmpeg child process via `preexec_fn`. That's the exact bug surface:
+        before the fix, ffmpeg with 58 separate -i PNG inputs blew past
+        the worker's RAM ceiling and was SIGKILLed. After the fix, the
+        concat demuxer streams frames so ffmpeg's working set stays
+        roughly constant and well under 1.5 GB.
 
-        Pre-fix: ffmpeg with 58 -i PNG inputs hit ~487 MB RGBA + libx264
-        state = SIGKILL by the kernel (rc=-9 in the actual b6540038 trace).
-        Post-fix: concat-demuxer streams frames one at a time, RAM stays
-        constant, rc=0.
+        Pre-fix expectation: rc=-9 (SIGKILL) — the actual b6540038 trace.
+        Post-fix expectation: rc=0.
 
         Linux-only via skipif because macOS doesn't enforce RLIMIT_AS the
         same way — the test would falsely pass on Mac even if a regression
-        came back. Per the D3 decision in the plan: Linux CI is the
-        authoritative regression gate."""
+        came back. CI runs Linux; Mac iteration uses the manual docker
+        repro from the plan (`docker run --memory=2g ...`).
+
+        Capping ffmpeg directly (not the Python parent) is intentional —
+        the bug never lived in Python. Capping Python too would let
+        Pillow/structlog/SQLAlchemy startup eat the budget before ffmpeg
+        even runs, masking the actual fix being tested."""
         import resource  # noqa: PLC0415 — Linux-only import
 
-        import app  # noqa: PLC0415 — used only for its __file__ to resolve src root
+        from app.pipeline.reframe import _encoding_args
+        from app.pipeline.text_overlay import generate_text_overlay_png
+        from app.tasks.template_orchestrate import _build_preburn_inputs_and_graph
 
         src = str(tmp_path / "src.mp4")
         _build_synthetic_slot(src, duration_s=5.5)
 
-        # Resolve the src/apps/api/ root from the live `app` package — this
-        # is the one path that's GUARANTEED correct at test time regardless
-        # of pytest cwd, tmp_path depth, or CI working directory. The helper
-        # script subprocess needs this root on sys.path to import `app.*`.
-        app_root = os.path.dirname(os.path.dirname(os.path.abspath(app.__file__)))
-        assert os.path.isdir(os.path.join(app_root, "app")), (
-            f"resolved app_root does not contain 'app' package: {app_root}"
+        # Pre-generate the PNGs in the parent process. The PNG generation
+        # path is NOT under test here — it's the existing math from
+        # `_render_font_cycle`. The test exercises ffmpeg's memory profile.
+        png_configs = generate_text_overlay_png(
+            DIMPLES_SLOT_5_OVERLAYS,
+            5.5,
+            str(tmp_path),
+            slot_index=4,
+        )
+        assert png_configs and len(png_configs) >= 50, (
+            f"expected ~58 PNG configs from a 5.5s font-cycle render, "
+            f"got {len(png_configs) if png_configs else 0}"
         )
 
-        helper_script = tmp_path / "render_under_cap.py"
-        helper_script.write_text(
-            _RENDER_UNDER_CAP_SCRIPT.format(
-                app_root=app_root,
-                tmpdir=str(tmp_path),
-                src=src,
-            )
+        burned = str(tmp_path / "rlimit_burned.mp4")
+        ffmpeg_inputs, fc_parts, last_label = _build_preburn_inputs_and_graph(
+            src,
+            png_configs,
+            burned,
+            str(tmp_path),
         )
+        cmd = [
+            "ffmpeg",
+            "-y",
+            *ffmpeg_inputs,
+            "-filter_complex",
+            ";".join(fc_parts),
+            "-map",
+            f"[{last_label}]",
+            "-map",
+            "0:a?",
+            *_encoding_args(burned, preset="fast"),
+        ]
 
-        # Run with a 1.8 GB cap. Use preexec_fn to set the limit in the
-        # child before exec.
-        rlimit_bytes = 1_800 * 1024 * 1024
+        # 1.5 GB cap on ffmpeg's virtual address space. The pre-fix code
+        # path peaked > 2 GB on this exact slot input on the production
+        # 2 GB Fly worker. 1.5 GB is well above the post-fix peak
+        # (measured ~510 MB on docker, ~330 MB resident) and well below
+        # the pre-fix demand, so it's a discriminating threshold.
+        rlimit_bytes = 1_500 * 1024 * 1024
 
         def _set_limit():
             resource.setrlimit(resource.RLIMIT_AS, (rlimit_bytes, rlimit_bytes))
 
         result = subprocess.run(
-            [sys.executable, str(helper_script)],
+            cmd,
             capture_output=True,
-            timeout=120,
+            timeout=180,
             preexec_fn=_set_limit,
         )
         assert result.returncode == 0, (
-            f"Render under 1.8 GB memory cap failed (rc={result.returncode}). "
+            f"ffmpeg under 1.5 GB RLIMIT_AS failed (rc={result.returncode}). "
             f"This is the b6540038 OOM regression coming back.\n"
-            f"stdout: {result.stdout.decode(errors='replace')[-2000:]}\n"
-            f"stderr: {result.stderr.decode(errors='replace')[-2000:]}"
+            f"argv_len: {len(cmd)}\n"
+            f"filter_complex_len: {len(';'.join(fc_parts))}\n"
+            f"png_count: {len(png_configs)}\n"
+            f"stderr_tail: {result.stderr.decode(errors='replace')[-2000:]}"
         )
-
-
-# Helper script executed inside the memory-capped subprocess for test 9.
-# Kept here as a string template so the test file is single-file portable
-# (no fixture data files to maintain). The {app_root} placeholder is filled
-# at test-write time from the live `app` package's __file__ — this is the
-# one path that's guaranteed correct regardless of pytest cwd or tmp_path
-# depth.
-_RENDER_UNDER_CAP_SCRIPT = """\
-import os, sys, subprocess
-
-sys.path.insert(0, "{app_root}")
-
-from app.pipeline.text_overlay import generate_text_overlay_png
-from app.tasks.template_orchestrate import _build_preburn_inputs_and_graph
-from app.pipeline.reframe import _encoding_args
-
-overlays = [
-    {{"text":"Welcome to","start_s":0.0,"end_s":3.5,"position":"center","effect":"none",
-     "font_style":"serif","text_size":"medium","text_size_px":36,"text_color":"#FFFFFF",
-     "position_x_frac":None,"position_y_frac":0.4779,"font_cycle_accel_at_s":None}},
-    {{"text":"MOROCCO","start_s":0.0,"end_s":5.5,"position":"center","effect":"font-cycle",
-     "font_style":"display","text_size":"medium","text_size_px":170,"text_color":"#F4D03F",
-     "position_x_frac":None,"position_y_frac":0.45,"font_cycle_accel_at_s":2.8}},
-]
-tmp = "{tmpdir}"
-src = "{src}"
-png = generate_text_overlay_png(overlays, 5.5, tmp, slot_index=4)
-burned = os.path.join(tmp, "rlimit_burned.mp4")
-inputs, fc, last = _build_preburn_inputs_and_graph(src, png, burned, tmp)
-cmd = ["ffmpeg", *inputs, "-filter_complex", ";".join(fc),
-       "-map", f"[{{last}}]", "-map", "0:a?",
-       *_encoding_args(burned, preset="fast")]
-r = subprocess.run(cmd, capture_output=True, timeout=90)
-sys.exit(0 if r.returncode == 0 else 1)
-"""
+        assert os.path.exists(burned) and os.path.getsize(burned) > 0, (
+            "burned mp4 missing or empty after successful return"
+        )
