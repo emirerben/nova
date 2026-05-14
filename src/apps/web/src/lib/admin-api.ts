@@ -66,6 +66,7 @@ export interface AdminTemplate {
   parent_template_id: string | null;
   music_track_id: string | null;
   has_intro_slot: boolean;
+  is_agentic: boolean;
   created_at: string;
 }
 
@@ -77,6 +78,8 @@ export interface AdminTemplateListItem {
   archived_at: string | null;
   description: string | null;
   thumbnail_gcs_path: string | null;
+  template_type?: string;
+  is_agentic: boolean;
   job_count: number;
   created_at: string;
 }
@@ -161,6 +164,7 @@ export async function adminCreateTemplate(data: {
   required_clips_max?: number;
   description?: string;
   source_url?: string;
+  is_agentic?: boolean;
 }): Promise<AdminTemplate> {
   const res = await adminFetch("/admin/templates", {
     method: "POST",
@@ -175,6 +179,7 @@ export async function adminCreateTemplateFromUrl(data: {
   required_clips_min?: number;
   required_clips_max?: number;
   description?: string;
+  is_agentic?: boolean;
 }): Promise<AdminTemplate> {
   const res = await adminFetch("/admin/templates/from-url", {
     method: "POST",

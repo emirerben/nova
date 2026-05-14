@@ -26,6 +26,7 @@ export default function NewTemplatePage() {
   const [sourceUrl, setSourceUrl] = useState("");
   const [clipsMin, setClipsMin] = useState(5);
   const [clipsMax, setClipsMax] = useState(10);
+  const [isAgentic, setIsAgentic] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,6 +77,7 @@ export default function NewTemplatePage() {
             required_clips_min: clipsMin,
             required_clips_max: clipsMax,
             description: description.trim() || undefined,
+            is_agentic: isAgentic,
           });
         } else {
           template = await adminCreateTemplate({
@@ -85,6 +87,7 @@ export default function NewTemplatePage() {
             required_clips_max: clipsMax,
             description: description.trim() || undefined,
             source_url: sourceUrl.trim() || undefined,
+            is_agentic: isAgentic,
           });
         }
         router.push(`/admin/templates/${template.id}?tab=recipe`);
@@ -93,7 +96,7 @@ export default function NewTemplatePage() {
         setSubmitting(false);
       }
     },
-    [upload.successfulPaths, name, description, sourceUrl, clipsMin, clipsMax, mode, router],
+    [upload.successfulPaths, name, description, sourceUrl, clipsMin, clipsMax, isAgentic, mode, router],
   );
 
   const uploadedFile = upload.files[0];
@@ -257,6 +260,26 @@ export default function NewTemplatePage() {
               className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-zinc-500"
             />
           </div>
+        </div>
+
+        {/* Agentic flag */}
+        <div className="border border-zinc-800 rounded p-3">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isAgentic}
+              onChange={(e) => setIsAgentic(e.target.checked)}
+              className="mt-0.5"
+            />
+            <div>
+              <div className="text-sm text-zinc-200">Agentic template</div>
+              <div className="text-xs text-zinc-500 mt-0.5">
+                Recipe is generated end-to-end by agents. The visual overlay editor is locked
+                for this template — improvements happen by re-running agents, not by editing.
+                Cannot be changed after creation.
+              </div>
+            </div>
+          </label>
         </div>
 
         {error && <p className="text-red-400 text-sm">{error}</p>}

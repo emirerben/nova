@@ -69,6 +69,7 @@ class CreateTemplateRequest(BaseModel):
     required_clips_max: int = 10
     description: str | None = None
     source_url: str | None = None
+    is_agentic: bool = False
 
     @field_validator("gcs_path")
     @classmethod
@@ -98,6 +99,7 @@ class CreateTemplateFromUrlRequest(BaseModel):
     required_clips_min: int = 5
     required_clips_max: int = 10
     description: str | None = None
+    is_agentic: bool = False
 
     @field_validator("url")
     @classmethod
@@ -105,9 +107,7 @@ class CreateTemplateFromUrlRequest(BaseModel):
         from app.services.url_download import is_supported_url  # noqa: PLC0415
 
         if not is_supported_url(v):
-            raise ValueError(
-                "URL must be a TikTok, Instagram, or YouTube link"
-            )
+            raise ValueError("URL must be a TikTok, Instagram, or YouTube link")
         return v.strip()
 
     @field_validator("required_clips_min")
@@ -142,6 +142,7 @@ class TemplateResponse(BaseModel):
     parent_template_id: str | None = None
     music_track_id: str | None = None
     has_intro_slot: bool = False
+    is_agentic: bool = False
     created_at: datetime
 
 
@@ -151,8 +152,8 @@ class UpdateTemplateRequest(BaseModel):
     source_url: str | None = None
     required_clips_min: int | None = None
     required_clips_max: int | None = None
-    publish: bool | None = None   # set True to publish (sets published_at)
-    archive: bool | None = None   # set True to archive (sets archived_at)
+    publish: bool | None = None  # set True to publish (sets published_at)
+    archive: bool | None = None  # set True to archive (sets archived_at)
     template_type: str | None = None  # "standard" | "music_parent"
     has_intro_slot: bool | None = None
 
@@ -174,6 +175,7 @@ class TemplateListItem(BaseModel):
     thumbnail_gcs_path: str | None
     error_detail: str | None = None
     template_type: str = "standard"
+    is_agentic: bool = False
     job_count: int
     created_at: datetime
 
@@ -230,12 +232,8 @@ class TestJobRequest(BaseModel):
 
     @model_validator(mode="after")
     def _check_duration_alignment(self) -> "TestJobRequest":
-        if self.clip_durations is not None and len(self.clip_durations) != len(
-            self.clip_gcs_paths
-        ):
-            raise ValueError(
-                "clip_durations length must match clip_gcs_paths length"
-            )
+        if self.clip_durations is not None and len(self.clip_durations) != len(self.clip_gcs_paths):
+            raise ValueError("clip_durations length must match clip_gcs_paths length")
         return self
 
 
@@ -278,26 +276,29 @@ class RecipeHistoryResponse(BaseModel):
 
 # ── Recipe editor schemas (strict validation) ────────────────────────────────
 
-TransitionIn = Literal[
-    "hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none"
-]
-ColorHint = Literal[
-    "warm", "cool", "high-contrast", "desaturated", "vintage", "none"
-]
+TransitionIn = Literal["hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none"]
+ColorHint = Literal["warm", "cool", "high-contrast", "desaturated", "vintage", "none"]
 SlotType = Literal["hook", "broll", "outro"]
 MediaType = Literal["video", "photo"]
 OverlayEffect = Literal[
-    "pop-in", "fade-in", "scale-up", "font-cycle", "typewriter",
-    "glitch", "bounce", "slide-in", "slide-up", "static", "none",
+    "pop-in",
+    "fade-in",
+    "scale-up",
+    "font-cycle",
+    "typewriter",
+    "glitch",
+    "bounce",
+    "slide-in",
+    "slide-up",
+    "static",
+    "none",
     "player-card",  # giant kit number + italic red name overlay
 ]
 OverlayPosition = Literal["top", "center", "center-above", "center-label", "center-below", "bottom"]
 FontStyle = Literal["display", "sans", "serif", "serif_italic", "script"]
 TextSize = Literal["small", "medium", "large", "xlarge", "xxlarge", "jumbo"]
 OverlayRole = Literal["hook", "reaction", "cta", "label"]
-SyncStyle = Literal[
-    "cut-on-beat", "transition-on-beat", "energy-match", "freeform"
-]
+SyncStyle = Literal["cut-on-beat", "transition-on-beat", "energy-match", "freeform"]
 InterstitialType = Literal["curtain-close", "fade-black-hold", "flash-white"]
 
 
@@ -371,9 +372,7 @@ class RecipeTextOverlaySchema(BaseModel):
     @model_validator(mode="after")
     def validate_timing(self) -> "RecipeTextOverlaySchema":
         if self.end_s <= self.start_s:
-            raise ValueError(
-                f"Overlay end_s ({self.end_s}) must be > start_s ({self.start_s})"
-            )
+            raise ValueError(f"Overlay end_s ({self.end_s}) must be > start_s ({self.start_s})")
         return self
 
 
@@ -525,7 +524,8 @@ class RecipeSlotSchema(BaseModel):
     @field_validator("grid_highlight_windows")
     @classmethod
     def validate_grid_highlight_windows(
-        cls, v: list[tuple[float, float]] | None,
+        cls,
+        v: list[tuple[float, float]] | None,
     ) -> list[tuple[float, float]] | None:
         if v is None:
             return None
@@ -539,6 +539,7 @@ class RecipeSlotSchema(BaseModel):
 
 class RecipeSchema(BaseModel):
     """Full recipe structure — used for PUT validation."""
+
     shot_count: int
     total_duration_s: float
     hook_duration_s: float = 0.0
@@ -559,7 +560,7 @@ class RecipeSchema(BaseModel):
     #   "letterbox" / "letterbox_blur" (preserve full frame, blurred bg),
     #   "letterbox_black" (preserve full frame, black bars).
     output_fit: Literal["crop", "letterbox", "letterbox_blur", "letterbox_black"] = "crop"
-    clip_filter_hint: str = ""          # natural-language Gemini bias for best_moments
+    clip_filter_hint: str = ""  # natural-language Gemini bias for best_moments
 
     @field_validator("slots")
     @classmethod
@@ -633,6 +634,7 @@ def _template_response(t: VideoTemplate) -> TemplateResponse:
         parent_template_id=t.parent_template_id,
         music_track_id=t.music_track_id,
         has_intro_slot=has_intro_slot,
+        is_agentic=t.is_agentic,
         created_at=t.created_at,
     )
 
@@ -700,6 +702,7 @@ async def list_templates(
                 thumbnail_gcs_path=t.thumbnail_gcs_path,
                 error_detail=t.error_detail,
                 template_type=t.template_type,
+                is_agentic=t.is_agentic,
                 job_count=job_count,
                 created_at=t.created_at,
             )
@@ -738,15 +741,22 @@ async def create_template(
         required_clips_max=req.required_clips_max,
         description=req.description,
         source_url=req.source_url,
+        is_agentic=req.is_agentic,
     )
     db.add(template)
     await db.commit()
     await db.refresh(template)
 
     from app.tasks.template_orchestrate import analyze_template_task  # noqa: PLC0415
+
     analyze_template_task.delay(template_id)
 
-    log.info("template_created", template_id=template_id, name=req.name)
+    log.info(
+        "template_created",
+        template_id=template_id,
+        name=req.name,
+        is_agentic=req.is_agentic,
+    )
     return _template_response(template)
 
 
@@ -781,15 +791,22 @@ async def create_template_from_url(
         required_clips_max=req.required_clips_max,
         description=req.description,
         source_url=req.url,
+        is_agentic=req.is_agentic,
     )
     db.add(template)
     await db.commit()
     await db.refresh(template)
 
     from app.tasks.template_orchestrate import analyze_template_task  # noqa: PLC0415
+
     analyze_template_task.delay(template_id)
 
-    log.info("template_created_from_url", template_id=template_id, url=req.url)
+    log.info(
+        "template_created_from_url",
+        template_id=template_id,
+        url=req.url,
+        is_agentic=req.is_agentic,
+    )
     return _template_response(template)
 
 
@@ -930,6 +947,7 @@ async def reanalyze_template(
     _redis.close()
 
     from app.tasks.template_orchestrate import analyze_template_task  # noqa: PLC0415
+
     analyze_template_task.delay(template_id)
 
     log.info("template_reanalyzed", template_id=template_id)
@@ -972,6 +990,7 @@ async def create_test_job(
     job_id = str(job.id)
 
     from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
+
     orchestrate_template_job.delay(job_id)
 
     log.info("test_job_created", job_id=job_id, template_id=template_id)
@@ -1069,10 +1088,15 @@ async def create_rerender_job(
     job_id = str(job.id)
 
     from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
+
     orchestrate_template_job.delay(job_id)
 
-    log.info("rerender_job_created", job_id=job_id, template_id=template_id,
-             source_job_id=req.source_job_id)
+    log.info(
+        "rerender_job_created",
+        job_id=job_id,
+        template_id=template_id,
+        source_job_id=req.source_job_id,
+    )
     return TestJobResponse(job_id=job_id, status="queued", template_id=template_id)
 
 
@@ -1162,9 +1186,7 @@ async def get_template_health(
             # No path means the template doesn't reference an asset of this
             # role. That's only a problem for required assets — currently
             # only `reference_video` is required for every template kind.
-            assets.append(
-                TemplateAssetHealth(role=role, gcs_path=None, exists=False)
-            )
+            assets.append(TemplateAssetHealth(role=role, gcs_path=None, exists=False))
             if role == "reference_video":
                 healthy = False
             continue
@@ -1228,28 +1250,20 @@ async def get_latest_test_job(
         )
 
     output_url = (
-        job.assembly_plan.get("output_url")
-        if isinstance(job.assembly_plan, dict)
-        else None
+        job.assembly_plan.get("output_url") if isinstance(job.assembly_plan, dict) else None
     )
     clip_paths = (
-        job.all_candidates.get("clip_paths", [])
-        if isinstance(job.all_candidates, dict)
-        else []
+        job.all_candidates.get("clip_paths", []) if isinstance(job.all_candidates, dict) else []
     )
 
     # Check if assembly plan has clip_gcs_path in all steps (needed for re-render)
     has_rerender = False
     if isinstance(job.assembly_plan, dict):
         steps = job.assembly_plan.get("steps", [])
-        has_rerender = bool(steps) and all(
-            s.get("clip_gcs_path") for s in steps
-        )
+        has_rerender = bool(steps) and all(s.get("clip_gcs_path") for s in steps)
 
     base_output_url = (
-        job.assembly_plan.get("base_output_url")
-        if isinstance(job.assembly_plan, dict)
-        else None
+        job.assembly_plan.get("base_output_url") if isinstance(job.assembly_plan, dict) else None
     )
 
     return LatestTestJobResponse(
@@ -1279,19 +1293,13 @@ async def get_recipe_history(
     """Paginated list of recipe versions for a template."""
     await get_template_or_404(template_id, db)
 
-    base = select(TemplateRecipeVersion).where(
-        TemplateRecipeVersion.template_id == template_id
-    )
+    base = select(TemplateRecipeVersion).where(TemplateRecipeVersion.template_id == template_id)
 
-    count_result = await db.execute(
-        select(func.count()).select_from(base.subquery())
-    )
+    count_result = await db.execute(select(func.count()).select_from(base.subquery()))
     total = count_result.scalar() or 0
 
     result = await db.execute(
-        base.order_by(TemplateRecipeVersion.created_at.desc())
-        .offset(offset)
-        .limit(limit)
+        base.order_by(TemplateRecipeVersion.created_at.desc()).offset(offset).limit(limit)
     )
     versions = result.scalars().all()
 
@@ -1301,13 +1309,9 @@ async def get_recipe_history(
                 id=str(v.id),
                 trigger=v.trigger,
                 created_at=v.created_at,
-                slot_count=(
-                    len(v.recipe.get("slots", []))
-                    if isinstance(v.recipe, dict) else 0
-                ),
+                slot_count=(len(v.recipe.get("slots", [])) if isinstance(v.recipe, dict) else 0),
                 total_duration_s=(
-                    float(v.recipe.get("total_duration_s", 0))
-                    if isinstance(v.recipe, dict) else 0
+                    float(v.recipe.get("total_duration_s", 0)) if isinstance(v.recipe, dict) else 0
                 ),
             )
             for v in versions
@@ -1377,6 +1381,17 @@ async def save_recipe(
     """Save a manually edited recipe, creating a new version."""
     template = await get_template_or_404(template_id, db)
     require_ready(template)
+
+    # Agentic templates are regen-only — manual recipe writes are rejected so a
+    # stale browser tab can't silently overwrite an agent-built recipe.
+    if template.is_agentic:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This template is agent-built. Recipe edits are disabled. "
+                "Use 'Re-run agents' to regenerate."
+            ),
+        )
 
     # Optimistic lock: reject if a newer version exists
     if req.base_version_id:
@@ -1500,9 +1515,7 @@ async def create_child_template(
         )
 
     # Load music track
-    result = await db.execute(
-        select(MusicTrack).where(MusicTrack.id == req.music_track_id)
-    )
+    result = await db.execute(select(MusicTrack).where(MusicTrack.id == req.music_track_id))
     track = result.scalar_one_or_none()
     if track is None:
         raise HTTPException(
@@ -1703,6 +1716,7 @@ async def remerge_children(
 
 class TextPreviewRequest(BaseModel):
     """Parameters for rendering a text overlay preview image."""
+
     subject_text: str = "PERU"
     subject_size_px: int = 199
     subject_y_frac: float = 0.45
