@@ -359,6 +359,12 @@ class RecipeTextOverlaySchema(BaseModel):
     # Both must be non-empty for the overlay to render.
     jersey_no: str | None = None
     player_name: str | None = None
+    # Opt-in: freeze line layout during scale-animated effects (pop-in / bounce)
+    # by pre-wrapping text with \N and emitting \q2 so libass cannot re-wrap as
+    # \fscx crosses the canvas-width threshold. Default off — only set on
+    # recipes where long pop-in/bounce text was producing visible rewrap jitter
+    # (currently: Impressing Myself slot 1 + slot 2).
+    freeze_layout: bool = False
 
     @field_validator("text_color")
     @classmethod
