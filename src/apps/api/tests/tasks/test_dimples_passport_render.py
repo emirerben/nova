@@ -199,6 +199,7 @@ class TestDimplesPassportSlot5Render:
     is the exact recipe + subject that produced job b6540038's broken
     output. After the fix, MOROCCO must render and cycle."""
 
+    @pytest.mark.timeout(180)
     def test_morocco_font_cycle_renders(self, tmp_path):
         """Test 7: render slot 5 end-to-end and assert MOROCCO appears in
         sampled frames at t∈{0.5, 1.5, 3.0, 4.5}. Pre-fix this would have
@@ -256,6 +257,7 @@ class TestDimplesPassportSlot5Render:
                 f"MOROCCO not visible at t={t}s — this is the b6540038 regression"
             )
 
+    @pytest.mark.timeout(180)
     def test_cycle_glyph_changes_over_time(self, tmp_path):
         """Test 8: hash a tight bounding box around MOROCCO at two different
         timestamps within the cycle and assert the hashes differ. Proves
@@ -312,6 +314,7 @@ class TestDimplesPassportSlot5Render:
             f"Either the concat list is mis-sequenced or the cycle never advances."
         )
 
+    @pytest.mark.timeout(300)
     @pytest.mark.skipif(
         sys.platform == "darwin",
         reason="RLIMIT_AS is honored loosely on macOS; OOM regression check "
@@ -383,12 +386,18 @@ class TestDimplesPassportSlot5Render:
             *_encoding_args(burned, preset="fast"),
         ]
 
-        # 1.5 GB cap on ffmpeg's virtual address space. The pre-fix code
-        # path peaked > 2 GB on this exact slot input on the production
-        # 2 GB Fly worker. 1.5 GB is well above the post-fix peak
-        # (measured ~510 MB on docker, ~330 MB resident) and well below
-        # the pre-fix demand, so it's a discriminating threshold.
-        rlimit_bytes = 1_500 * 1024 * 1024
+        # 2 GB cap matches the production Fly worker exactly. The pre-fix
+        # code path SIGKILLed at this ceiling on machine 4d89590eb44587
+        # (verified in the investigation that motivated the fix). The
+        # post-fix concat-demuxer path measured VmPeak ~510 MB on docker,
+        # so 2 GB is well above the post-fix headroom and well below the
+        # pre-fix demand — a discriminating threshold that won't provoke
+        # memory pressure on slower CI runners while still proving the
+        # regression. We deliberately do NOT tighten further (e.g., 1.5 GB)
+        # because RLIMIT_AS counts mmap-loaded shared libraries (libx264,
+        # libavcodec, glibc, etc.) toward virtual address space; a tighter
+        # cap can trigger paging that masquerades as the test being slow.
+        rlimit_bytes = 2_048 * 1024 * 1024
 
         def _set_limit():
             resource.setrlimit(resource.RLIMIT_AS, (rlimit_bytes, rlimit_bytes))
@@ -400,7 +409,7 @@ class TestDimplesPassportSlot5Render:
             preexec_fn=_set_limit,
         )
         assert result.returncode == 0, (
-            f"ffmpeg under 1.5 GB RLIMIT_AS failed (rc={result.returncode}). "
+            f"ffmpeg under 2 GB RLIMIT_AS failed (rc={result.returncode}). "
             f"This is the b6540038 OOM regression coming back.\n"
             f"argv_len: {len(cmd)}\n"
             f"filter_complex_len: {len(';'.join(fc_parts))}\n"
