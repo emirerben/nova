@@ -105,6 +105,13 @@ def image_bytes_to_mp4(
 
         cmd = [
             "ffmpeg", "-y",
+            # -loglevel error + -nostats: drop the per-frame progress stream
+            # from stderr so that `proc.stderr` on a non-zero exit contains
+            # the actual error line(s), not `frame=N fps=… size=…` noise.
+            # Without this, the tail-slice we surface to the user was always
+            # progress and the real error was truncated off the front.
+            "-loglevel", "error",
+            "-nostats",
             "-loop", "1",
             "-framerate", str(FPS),
             "-i", str(png_path),
@@ -130,10 +137,18 @@ def image_bytes_to_mp4(
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:
-            log.error("ffmpeg_image_to_mp4_failed", stderr=proc.stderr[-500:])
-            raise ImageConversionError(
-                f"FFmpeg failed converting image to mp4: {proc.stderr[-200:]}"
+            stderr = proc.stderr.strip()
+            log.error(
+                "ffmpeg_image_to_mp4_failed",
+                returncode=proc.returncode,
+                stderr=stderr,
+                stdout=proc.stdout.strip(),
+                out_path=out_path,
+                duration_s=duration_s,
+                png_bytes=len(png_bytes),
             )
+            tail = stderr.splitlines()[-1] if stderr else f"ffmpeg exited {proc.returncode}"
+            raise ImageConversionError(f"Could not encode image: {tail}")
 
     log.info(
         "image_to_mp4_done",

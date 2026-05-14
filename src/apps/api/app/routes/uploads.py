@@ -496,6 +496,14 @@ async def upload_template_photo(
     job_id = str(uuid.uuid4())
     gcs_path = f"{user_id}/{job_id}/raw.mp4"
 
+    log.info(
+        "template_photo_upload_started",
+        template_id=template_id,
+        slot_position=slot_position,
+        content_type=file.content_type,
+        raw_bytes=len(raw),
+    )
+
     with tempfile.TemporaryDirectory(prefix="nova_photo_") as tmpdir:
         out_path = os.path.join(tmpdir, "out.mp4")
         try:

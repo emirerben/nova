@@ -5,10 +5,12 @@ from __future__ import annotations
 import io
 import shutil
 import subprocess
+from unittest.mock import patch
 
 import pytest
 from PIL import Image
 
+from app.services import image_to_video
 from app.services.image_to_video import (
     ImageConversionError,
     _normalize_to_9x16,
@@ -125,6 +127,66 @@ class TestEndToEnd:
         image_bytes_to_mp4(raw, str(out), duration_s=0.1)
         # _normalize clamps to 0.5s minimum
         assert _ffprobe_duration_s(str(out)) >= 0.4
+
+    def test_ffmpeg_command_uses_quiet_logging(self, tmp_path):
+        """ffmpeg must be invoked with -loglevel error -nostats so stderr
+        contains only real warnings/errors. Without this, the per-frame
+        progress stream dominates stderr and our error tail surfaces
+        progress noise instead of the actual failure reason."""
+        captured_argv: list[list[str]] = []
+
+        real_run = subprocess.run
+
+        def spy_run(cmd, *args, **kwargs):
+            captured_argv.append(list(cmd))
+            return real_run(cmd, *args, **kwargs)
+
+        out = tmp_path / "out.mp4"
+        raw = _make_image_bytes(1080, 1920, "PNG")
+        with patch.object(image_to_video.subprocess, "run", side_effect=spy_run):
+            image_bytes_to_mp4(raw, str(out), duration_s=1.0)
+
+        assert captured_argv, "expected subprocess.run to be called"
+        argv = captured_argv[0]
+        assert argv[0] == "ffmpeg"
+        assert "-loglevel" in argv, f"missing -loglevel in {argv!r}"
+        assert argv[argv.index("-loglevel") + 1] == "error"
+        assert "-nostats" in argv, f"missing -nostats in {argv!r}"
+
+    def test_ffmpeg_failure_surfaces_real_error_not_progress(self, tmp_path):
+        """When ffmpeg exits non-zero, the user-facing ImageConversionError
+        message must contain the actual error line — not the trailing
+        progress chatter that previously dominated proc.stderr[-200:].
+
+        Regression for: 'FFmpeg failed converting image to mp4: ate=N/A
+        speed=N/A frame= 2 fps=2.0 q=26.0 size= 0KiB time=00:00:00.00 …'
+        (May 2026, Impressing Myself template).
+        """
+        real_error = (
+            "[libx264 @ 0x55] Error initializing output stream 0:0 -- "
+            "Error while opening encoder for output stream #0:0"
+        )
+        fake_completed = subprocess.CompletedProcess(
+            args=["ffmpeg"],
+            returncode=1,
+            stdout="",
+            stderr=real_error + "\n",
+        )
+
+        out = tmp_path / "out.mp4"
+        raw = _make_image_bytes(1080, 1920, "PNG")
+        with patch.object(image_to_video.subprocess, "run", return_value=fake_completed):
+            with pytest.raises(ImageConversionError) as excinfo:
+                image_bytes_to_mp4(raw, str(out), duration_s=1.0)
+
+        msg = str(excinfo.value)
+        assert "Error initializing output stream" in msg, (
+            f"expected real ffmpeg error in message, got {msg!r}"
+        )
+        # Must NOT contain the kind of progress-noise the old behavior surfaced
+        assert "frame=" not in msg
+        assert "fps=" not in msg
+        assert "size=" not in msg
 
     def test_color_metadata_tagged_bt709(self, tmp_path):
         """The converted mp4 MUST advertise bt709 primaries/matrix/transfer
