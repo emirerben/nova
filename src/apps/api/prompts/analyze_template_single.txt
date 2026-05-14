@@ -31,13 +31,14 @@ Vocabulary discipline. The schema below lists the EXACT enum strings allowed for
 
   Cinematic concept              →  Emit this enum
   ─────────────────────────────────────────────────
-  match-cut                      →  hard-cut         (rendered as hard-cut today)
+  match-cut                      →  match-cut        (first-class as of v0.4.12.0; renders identically to hard-cut but carries the editorial intent)
   cross-dissolve / fade          →  dissolve
   fade-to-black / fade-to-white  →  curtain-close    (or interstitial type fade-black-hold)
   iris-in / iris-out             →  curtain-close
-  barn-door-close / barn-door-open → curtain-close
+  barn-door-close                →  curtain-close
+  barn-door-open                 →  barn-door-open   (first-class interstitial as of v0.4.12.0; bars start closed and animate open at slot N+1's head)
   flash-cut                      →  hard-cut         (note the flash in transition_style)
-  speed-ramp                     →  hard-cut + speed_factor on the affected slot
+  speed-ramp                     →  speed-ramp       (first-class as of v0.4.12.0; pair with speed_factor > 1 on the slot whose playback is sped up)
   J-cut / L-cut / morph / hidden →  hard-cut
   fade-up (post-interstitial)    →  hard-cut
 

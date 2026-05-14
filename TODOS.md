@@ -320,28 +320,21 @@ These TODOs were filed when the first wave of Yasin's prompt rewrites shipped (`
 ### ~~Retroactive eval scaffolding for `transition_picker`~~ — RESOLVED in v0.4.11.0
 **Resolved:** Full four-file scaffold shipped. The new structural check also surfaced a latent `parse()` bug — `float(...) or 0.3` silently coerced `duration_s=0.0` to `0.3` (Python treats 0.0 as falsy), overriding every hard-cut/none output the prompt explicitly specified as duration 0.0. Fixed in the same PR.
 
-### Renderer support for `match-cut` as a distinct transition
-**What:** Promote `match-cut` from a "collapse to hard-cut" mapping (today's behavior) to a first-class transition in `app/pipeline/transitions.py`. Update `_VALID_TRANSITION_TYPES` and `_VALID_TRANSITIONS` to include it, add FFmpeg motion-vector continuity hinting (`xfade` with appropriate easing), update the prompts' vocabulary-reconciliation tables to remove the collapse.
-**Why:** Yasin's prompts identify match-cuts as a meaningful editorial signal (action continuity from shot A to shot B). Today we lose that distinction at the prompt boundary — the schema can't represent it. Real impact: templates with deliberate match-cut grammar render as generic hard-cuts.
-**How:** Decide the FFmpeg approach first — `xfade=fadeblack` is too soft, motion-aware blending might need OpenCV. Then visual eval on 3–5 templates known to have match-cuts (TBD which fixtures).
-**Effort:** M (human: ~2d / CC: ~1h)
-**Priority:** P3
-**Depends on:** clear FFmpeg approach for motion-continuity transitions
+### ~~Renderer support for `match-cut` as a distinct transition~~ — RESOLVED in v0.4.12.0
+**Resolved:** `match-cut` is now a first-class transition. Renders identically to `hard-cut` at the pixel level (mapped to `"none"` in `_GEMINI_TO_INTERNAL`), but the recipe metadata now carries the editorial distinction so transition_picker's rubric can score match-cut discrimination separately. The motion-vector / OpenCV blending approach mentioned in the original TODO is filed as a P4 follow-up — the current "hard-cut at the pixel layer, editorial intent at the metadata layer" implementation is the right scope for the agent loop today.
 
-### Renderer support for `barn-door-open` as a distinct animation
-**What:** Add `barn-door-open` as a first-class interstitial type in `app/pipeline/interstitials.py` and `_VALID_INTERSTITIAL_TYPES`. Today every "bars opening" moment collapses to `curtain-close` (same animation, played in reverse where applicable). A distinct enum lets the prompt and recipe carry the directionality.
-**Why:** Smallest of the three renderer expansions — `curtain-close` already uses `geq` pixel animation; reversing the direction is a parameter flip.
-**How:** Add the reverse-direction code path to `_render_curtain_close()` (or split into `_render_curtain_open()`). Update the prompt vocabulary tables.
-**Effort:** S (human: ~6h / CC: ~30 min)
-**Priority:** P3
+### ~~Renderer support for `barn-door-open` as a distinct animation~~ — RESOLVED in v0.4.12.0
+**Resolved:** New `apply_barn_door_open_head()` + `_generate_barn_door_bars_png_sequence()` in `app/pipeline/interstitials.py`. Same PNG-overlay strategy as curtain-close (post-PR #105), inverse bar trajectory (`bar_h: half_h → 0`), animation lives at the HEAD of slot N+1 rather than the tail of slot N. Orchestrator post-render phase dispatches to the new helper when `prev_inter_type == "barn-door-open"`. 11 unit tests cover PNG generation correctness + the inverse-of-curtain mirror property.
 
-### Promote `speed-ramp` to a first-class transition
-**What:** Today `speed_factor` is a per-slot field and `speed-ramp` collapses to `hard-cut + speed_factor` in the prompt vocabulary. A first-class `speed-ramp` transition would carry the *direction* of the ramp (slow-to-fast vs fast-to-slow) and the cut point, which `speed_factor` alone can't.
-**Why:** Speed-ramp is a signature TikTok editing move and one of the biggest editorial losses from the current vocabulary collapse.
-**How:** This is part of "Speed Ramp FFmpeg Implementation" already listed elsewhere in this file — see the existing TODO. The renderer work and the transition-enum work should land together to avoid having a schema field that nothing reads.
-**Effort:** Bundled with the existing "Speed Ramp FFmpeg Implementation" TODO
+### ~~Promote `speed-ramp` to a first-class transition~~ — RESOLVED in v0.4.12.0
+**Resolved:** `speed-ramp` is now a first-class transition value. The cut is instant (mapped to `"none"` in `_GEMINI_TO_INTERNAL`); the visible mechanic lives on the destination slot's existing `speed_factor` field (already plumbed through `reframe._build_video_filter` as `setpts=PTS/factor`). transition_picker's prompt explicitly documents the `speed-ramp` ↔ `speed_factor > 1` pairing. The schema field retirement that the original plan called for is deferred — production recipes still use `speed_factor` directly, and removing it would require a coordinated migration. Filed as a follow-up below if/when that becomes a priority.
+
+### Deprecate `speed_factor` schema field in favor of `speed-ramp` transition (follow-up to v0.4.12.0)
+**What:** Once the agents settle on emitting `transition_in: speed-ramp` consistently, retire the standalone `speed_factor` field on the slot schema. The transition value alone should carry the intent; the renderer should derive the actual playback rate from a fixed mapping (e.g., `speed-ramp → speed_factor=1.5`) or from a separate `ramp_intensity` field.
+**Why:** Two fields encoding the same effect is a foot-gun. Recipes can drift into inconsistent states (`transition_in=speed-ramp, speed_factor=1.0`) that the renderer silently treats as "no ramp."
+**How:** One-off audit script over `video_templates.recipe_cached` to count how many recipes use `speed_factor != 1.0` in slots whose `transition_in` is NOT `speed-ramp`. If the count is small (<10), migrate them and remove the field. If large, coordinate a deprecation window.
+**Effort:** M (human: ~1d / CC: ~30 min)
 **Priority:** P3
-**Depends on:** Speed Ramp FFmpeg Implementation (existing TODO above)
 
 ---
 

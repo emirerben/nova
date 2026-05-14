@@ -756,6 +756,8 @@ def check_text_designer(
 # a contract violation; a dissolve at 0.1s reads as a glitch).
 _TRANSITION_DURATION_RANGES: dict[str, tuple[float, float]] = {
     "hard-cut": (0.0, 0.0),
+    "match-cut": (0.0, 0.0),  # renders identically to hard-cut; instant cut
+    "speed-ramp": (0.0, 0.0),  # cut is instant; mechanic is on dest slot's speed_factor
     "none": (0.0, 0.0),
     "whip-pan": (0.20, 0.40),
     "zoom-in": (0.30, 0.50),

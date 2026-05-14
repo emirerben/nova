@@ -318,6 +318,185 @@ def _generate_curtain_bars_png_sequence(
     return pattern, n_frames
 
 
+# ── barn-door-open ────────────────────────────────────────────────────────────
+#
+# barn-door-open is the temporal and visual inverse of curtain-close: bars
+# start fully closed (covering the entire frame from top and bottom edges,
+# meeting at center) and animate OPEN, retracting to the edges and revealing
+# the slot's footage. The animation lives at the HEAD of a slot, not the tail.
+#
+# Same PNG-overlay strategy as curtain-close (post-PR #105) — pre-render
+# transparent RGBA bars in Pillow, composite via FFmpeg's `overlay` filter.
+# The geq alternative is intolerable on Fly's shared-CPU worker (see the
+# CURTAIN_CLOSE_X264_PRESET comment above).
+#
+# Reuses the same encoder knobs as curtain-close (preset=fast, tune=film,
+# CRF=18). These call sites do NOT route through `reframe._encoding_args`,
+# so the encoder-policy test allow-list does not need an entry here.
+
+# Minimum barn-door-open animation — matches MIN_CURTAIN_ANIMATE_S for visual
+# parity. Faster than 4s reads as a flicker, not a transition.
+MIN_BARN_DOOR_ANIMATE_S = 4.0
+
+# Maximum fraction of slot duration the barn-door animation may consume,
+# leaving the rest as uncovered footage before the slot's content lands.
+_BARN_DOOR_MAX_RATIO = 0.6
+
+
+def apply_barn_door_open_head(
+    slot_video_path: str,
+    output_path: str,
+    animate_s: float = 1.0,
+) -> None:
+    """Apply barn-door-open animation to the HEAD of a rendered slot clip.
+
+    Two black rectangles start covering the top and bottom halves of the frame
+    (meeting at center) and retract toward the edges over `animate_s` seconds,
+    revealing the underlying footage. This is curtain-close in reverse, applied
+    at the START of the slot rather than the tail.
+
+    Args:
+        slot_video_path: Input slot .mp4 (already rendered by _render_slot).
+        output_path: Where to write the modified slot.
+        animate_s: Duration of the opening animation at the head.
+
+    Raises:
+        InterstitialError: If FFmpeg fails.
+    """
+    probe_cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        slot_video_path,
+    ]
+    probe_result = subprocess.run(probe_cmd, capture_output=True, timeout=10, check=False)
+    if probe_result.returncode != 0:
+        raise InterstitialError(f"ffprobe failed: {probe_result.stderr.decode()[:200]}")
+
+    try:
+        duration = float(probe_result.stdout.decode().strip())
+    except (ValueError, TypeError) as exc:
+        raise InterstitialError(
+            f"ffprobe returned non-numeric duration: "
+            f"{probe_result.stdout.decode()[:100]}"
+        ) from exc
+
+    # Same 60% cap as curtain-close — leave at least 40% of the slot as
+    # uncovered footage AFTER the doors finish opening.
+    if animate_s > duration * _BARN_DOOR_MAX_RATIO:
+        log.warning(
+            "barn_door_open_clamped",
+            duration=round(duration, 3),
+            requested_animate_s=animate_s,
+            clamped_animate_s=round(duration * _BARN_DOOR_MAX_RATIO, 3),
+        )
+        animate_s = duration * _BARN_DOOR_MAX_RATIO
+        if animate_s < 0.05:
+            raise InterstitialError(
+                f"clip too short for barn-door-open ({duration:.2f}s)"
+            )
+
+    log.info(
+        "barn_door_open_head_start",
+        input=slot_video_path,
+        animate_s=animate_s,
+    )
+
+    work_dir = tempfile.mkdtemp(prefix="barn_door_")
+
+    try:
+        bars_pattern, n_bar_frames = _generate_barn_door_bars_png_sequence(
+            output_dir=work_dir, animate_s=animate_s,
+        )
+
+        # PNG sequence starts at t=0 and ends at t=animate_s, then holds the
+        # final (fully-open / transparent) frame for the rest of the slot via
+        # eof_action=repeat. Underlying footage shows through outside the bars.
+        # No setpts offset — the animation starts at the slot's first frame.
+        filter_complex = (
+            f"[0:v][1:v]overlay=enable='lte(t,{animate_s:.3f})':"
+            f"eof_action=repeat[v]"
+        )
+
+        overlay_cmd = [
+            "ffmpeg",
+            "-i", slot_video_path,
+            "-framerate", str(_FPS),
+            "-i", bars_pattern,
+            "-filter_complex", filter_complex,
+            "-map", "[v]",
+            "-map", "0:a?",
+            "-c:v", "libx264", "-profile:v", "high",
+            "-preset", CURTAIN_CLOSE_X264_PRESET,
+            "-tune", CURTAIN_CLOSE_X264_TUNE,
+            "-crf", CURTAIN_CLOSE_X264_CRF,
+            "-pix_fmt", "yuv420p",
+            "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
+            *BODY_SLOT_AUDIO_OUT_ARGS,
+            "-movflags", "+faststart",
+            "-y", output_path,
+        ]
+        r = subprocess.run(
+            overlay_cmd,
+            capture_output=True,
+            timeout=CURTAIN_CLOSE_SUBPROCESS_TIMEOUT_S,
+            check=False,
+        )
+        if r.returncode != 0:
+            raise InterstitialError(
+                f"barn-door-open overlay failed: "
+                f"{r.stderr.decode(errors='replace')[:500]}"
+            )
+
+    finally:
+        import shutil  # noqa: PLC0415
+
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+    log.info(
+        "barn_door_open_head_done",
+        output=output_path,
+        bar_frames=n_bar_frames,
+    )
+
+
+def _generate_barn_door_bars_png_sequence(
+    output_dir: str,
+    animate_s: float,
+    fps: int = _FPS,
+    width: int = _WIDTH,
+    height: int = _HEIGHT,
+) -> tuple[str, int]:
+    """Pre-render the barn-door bar animation as a transparent PNG sequence.
+
+    Each frame is `width × height` RGBA with two opaque black rectangles
+    (top + bottom) whose height shrinks linearly from `height/2` to `0` over
+    `n_frames` frames. Frame 0 is fully closed; frame N-1 is fully open
+    (entirely transparent). Mirrors `_generate_curtain_bars_png_sequence` —
+    same coordinate system, inverse progress.
+
+    Returns (pattern_path, n_frames).
+    """
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    n_frames = max(2, int(round(animate_s * fps)) + 1)
+    half_h = height // 2
+
+    for i in range(n_frames):
+        progress = i / (n_frames - 1) if n_frames > 1 else 1.0
+        # Inverse of curtain-close: start at half_h (closed), end at 0 (open).
+        bar_h = int(half_h * (1.0 - progress))
+        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        if bar_h > 0:
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([(0, 0), (width, bar_h)], fill=(0, 0, 0, 255))
+            draw.rectangle([(0, height - bar_h), (width, height)], fill=(0, 0, 0, 255))
+        img.save(os.path.join(output_dir, f"bar_{i:04d}.png"))
+
+    pattern = os.path.join(output_dir, "bar_%04d.png")
+    return pattern, n_frames
+
+
 def detect_black_segments(
     video_path: str,
     black_min_duration: float = 0.15,

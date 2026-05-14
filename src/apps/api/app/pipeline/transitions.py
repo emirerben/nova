@@ -24,12 +24,23 @@ _XFADE_MAP: dict[str, str] = {
 # Gemini vocabulary → internal transition type.
 # Gemini uses video-editor-friendly names; this maps them to _XFADE_MAP keys
 # or special values handled by the pipeline (e.g. "curtain-close" → interstitial).
+#
+# match-cut and speed-ramp render with NO xfade filter at the boundary itself
+# — they're semantic transitions, not animated ones. match-cut is a hard cut on
+# visual continuity (action match, eye-line match), so the on-screen result is
+# identical to "hard-cut"; the distinction lives in the recipe metadata for
+# downstream tooling and editorial QA. speed-ramp's mechanic is on the
+# *destination slot* (its `speed_factor` is > 1) — the cut between clips is a
+# hard cut. Keeping these separate enum values lets the agent and the rubric
+# reason about editorial intent without an animated effect.
 _GEMINI_TO_INTERNAL: dict[str, str] = {
     "hard-cut": "none",
+    "match-cut": "none",  # identical to hard-cut visually; distinction is editorial
     "whip-pan": "wipe_left",
     "zoom-in": "crossfade",
     "dissolve": "crossfade",
     "curtain-close": "none",  # handled as interstitial, not xfade
+    "speed-ramp": "none",  # mechanic lives on dest slot's speed_factor, not the cut
     "none": "none",
 }
 
