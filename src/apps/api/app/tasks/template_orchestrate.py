@@ -2040,6 +2040,12 @@ def _assemble_clips(
     # transition INTO this slot must be hard-cut (the interstitial IS the
     # transition effect — adding an xfade from a solid color looks broken).
     prev_had_interstitial = False
+    # When the previous slot had a barn-door-open interstitial after it, the
+    # current slot's HEAD gets the opening animation. Tracked separately from
+    # the generic `prev_had_interstitial` because the head animation is a
+    # type-specific effect, not a shared interstitial concern.
+    prev_inter_type: str | None = None
+    prev_inter: dict | None = None
 
     for plan, step in zip(plans, steps):
         i = plan.slot_idx
@@ -2048,6 +2054,39 @@ def _assemble_clips(
         # Check if this slot has an interstitial AFTER it (curtain-close tail effect)
         slot_position = int(step.slot.get("position", i + 1))
         inter = interstitial_map.get(slot_position)
+
+        # If the PREVIOUS slot's interstitial was barn-door-open, apply the
+        # opening animation to the HEAD of this slot before it lands in the
+        # assembly. The matching black hold has already been inserted by
+        # `_insert_interstitial` in the prior loop iteration; this is the
+        # reveal that follows. Same encoder budget as curtain-close — the
+        # bars are a 4s PNG overlay on top of the slot's intro footage.
+        if prev_inter_type == "barn-door-open":
+            from app.pipeline.interstitials import (  # noqa: PLC0415
+                MIN_BARN_DOOR_ANIMATE_S,
+                apply_barn_door_open_head,
+            )
+            head_output = os.path.join(tmpdir, f"slot_{i}_barn_door.mp4")
+            try:
+                recipe_animate = (prev_inter or {}).get("animate_s")
+                door_anim = (
+                    recipe_animate if recipe_animate is not None
+                    else MIN_BARN_DOOR_ANIMATE_S
+                )
+                apply_barn_door_open_head(
+                    reframed, head_output,
+                    animate_s=door_anim,
+                )
+                reframed = head_output
+            except Exception as exc:
+                # Same re-raise rationale as curtain-close: a missing hero
+                # animation paired with the black hold reads as a hard cut
+                # to black, which is worse than a hard failure.
+                log.error("barn_door_open_head_failed", slot=i, error=str(exc))
+                raise RuntimeError(
+                    f"barn-door-open failed on slot {i}; refusing to ship a "
+                    f"video with a missing hero animation: {exc}"
+                ) from exc
         if inter and inter["type"] == "curtain-close":
             # ── PRE-BURN text onto slot BEFORE curtain ─────────────────
             # Tiki-style: text appears on video, curtain closes OVER both.
@@ -2107,6 +2146,8 @@ def _assemble_clips(
         # above) IS the full transition — skip the colour-hold clip so
         # nothing sits between the two slots and beat+scene align perfectly.
         prev_had_interstitial = bool(inter)
+        prev_inter_type = inter["type"] if inter else None
+        prev_inter = inter
         if inter:
             inter_hold = float(inter.get("hold_s", 1.0))
             if inter_hold > 0:
@@ -2207,7 +2248,17 @@ def _insert_interstitial(
     inter_path = os.path.join(tmpdir, f"interstitial_{slot_idx}_{inter_type}.mp4")
 
     try:
-        if inter_type in ("curtain-close", "fade-black-hold", "flash-white"):
+        # barn-door-open and curtain-close both insert a black hold here.
+        # The actual barn-door animation lives at the HEAD of slot N+1; the
+        # hold is the pause between the closed-doors moment (end of slot N)
+        # and the open-reveal (start of slot N+1). See the call site in
+        # _post_render_phase for the head-animation dispatch.
+        if inter_type in (
+            "curtain-close",
+            "barn-door-open",
+            "fade-black-hold",
+            "flash-white",
+        ):
             render_color_hold(inter_path, hold_s=hold_s, color=ffmpeg_color)
         else:
             log.warning("unknown_interstitial_type", type=inter_type)

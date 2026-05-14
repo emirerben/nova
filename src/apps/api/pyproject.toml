@@ -12,6 +12,13 @@ dependencies = [
     "celery[redis]>=5.3",
     "redis>=5.0",
     "sqlalchemy>=2.0",
+    # SQLAlchemy's async runtime needs greenlet. Without it, anything that
+    # routes through AsyncSession (alembic env.py async runner, app routes,
+    # workers) crashes with "the greenlet library is required to use this
+    # function". Pip pulls greenlet transitively when wheels are installed on
+    # platforms it ships them for, but the dep is not declared anywhere — fresh
+    # venvs on macOS arm64 have hit this exact failure twice. Pin it explicitly.
+    "greenlet>=3.0",
     "alembic>=1.13",
     "asyncpg>=0.29",
     "psycopg2-binary>=2.9",

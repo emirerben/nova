@@ -59,10 +59,19 @@ _VALID_CAMERA_MOVEMENTS = {
     "handheld",
     "tracking",
 }
-_VALID_TRANSITION_TYPES = {"hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none"}
+_VALID_TRANSITION_TYPES = {
+    "hard-cut",
+    "match-cut",
+    "whip-pan",
+    "zoom-in",
+    "dissolve",
+    "curtain-close",
+    "speed-ramp",
+    "none",
+}
 _VALID_COLOR_HINTS = {"warm", "cool", "high-contrast", "desaturated", "vintage", "none"}
 _VALID_SYNC_STYLES = {"cut-on-beat", "transition-on-beat", "energy-match", "freeform"}
-_VALID_INTERSTITIAL_TYPES = {"curtain-close", "fade-black-hold", "flash-white"}
+_VALID_INTERSTITIAL_TYPES = {"curtain-close", "barn-door-open", "fade-black-hold", "flash-white"}
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
