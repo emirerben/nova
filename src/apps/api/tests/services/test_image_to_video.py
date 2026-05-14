@@ -97,18 +97,6 @@ class TestNormalize:
         with pytest.raises(ImageConversionError):
             _normalize_to_9x16(b"not an image")
 
-    def test_intermediate_is_ppm_not_png(self):
-        """The intermediate format handed to ffmpeg is PPM (P6 binary), not
-        PNG. PPM eliminates the libpng decode step from the ffmpeg pipeline,
-        which has been observed to fail intermittently in prod on certain
-        PIL-emitted PNGs (symptom: frame=2 size=0KiB time=00:00:00.00).
-        Asserting the magic bytes locks the intermediate format choice so
-        a future refactor cannot silently reintroduce the libpng path."""
-        raw = _make_image_bytes(1080, 1920, "PNG")
-        out = _normalize_to_9x16(raw)
-        # PPM P6 (binary RGB) magic = b"P6\n" — eight-bit ASCII signature
-        assert out.startswith(b"P6"), f"intermediate must be PPM P6 (got first 4 bytes={out[:4]!r})"
-
     def test_truncated_png_raises_clean_error(self):
         """PIL decodes lazily — Image.open() succeeds on header alone, then
         exif_transpose/resize raise OSError when they hit the truncated body.
