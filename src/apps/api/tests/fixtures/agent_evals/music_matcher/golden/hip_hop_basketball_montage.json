@@ -1,0 +1,197 @@
+{
+  "agent": "nova.audio.music_matcher",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "clip_summaries": [
+      {
+        "clip_id": "clip_001",
+        "media_type": "video",
+        "duration_s": 3.5,
+        "subject": "player dribbling between defenders on outdoor court",
+        "hook_text": "they couldn't guard him",
+        "hook_score": 8.0,
+        "energy": 8.5,
+        "description": "tracking shot, saturated street tones, fast crossover"
+      },
+      {
+        "clip_id": "clip_002",
+        "media_type": "video",
+        "duration_s": 3.0,
+        "subject": "step-back jumper releasing at peak",
+        "hook_text": "",
+        "hook_score": 8.0,
+        "energy": 8.0,
+        "description": "low-angle medium, freeze on release, motion blur"
+      },
+      {
+        "clip_id": "clip_003",
+        "media_type": "video",
+        "duration_s": 2.8,
+        "subject": "ball swishing through net",
+        "hook_text": "",
+        "hook_score": 7.5,
+        "energy": 8.0,
+        "description": "close-up on rim, slow-mo on net snap"
+      },
+      {
+        "clip_id": "clip_004",
+        "media_type": "video",
+        "duration_s": 3.5,
+        "subject": "player celebrating with arms out toward crowd",
+        "hook_text": "",
+        "hook_score": 8.5,
+        "energy": 9.0,
+        "description": "wide shot, candid crowd reaction"
+      }
+    ],
+    "available_tracks": [
+      {
+        "track_id": "track_hiphop_court",
+        "title": "Park Bounce",
+        "duration_s": 82.0,
+        "slot_count": 11,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "hip_hop",
+          "vibe_tags": ["swagger", "punchy", "anthemic"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "outdoor-court swagger",
+          "ideal_content_profile": "Outdoor-court basketball highlights, crossover dribbles, celebrations, fast-cut sport b-roll.",
+          "copy_tone": "punchy",
+          "transition_style": "hard_cut",
+          "color_grade": "saturated street"
+        }
+      },
+      {
+        "track_id": "track_hiphop_trap_heavy",
+        "title": "Net Pressure",
+        "duration_s": 78.0,
+        "slot_count": 10,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "hip_hop",
+          "vibe_tags": ["heavy", "swagger", "moody"],
+          "energy": "peaks_high",
+          "pacing": "fast",
+          "mood": "fourth-quarter intensity",
+          "ideal_content_profile": "Sport-highlight reels, slow-mo jumpers, game-winner celebrations.",
+          "copy_tone": "punchy",
+          "transition_style": "hard_cut",
+          "color_grade": "high-contrast neon"
+        }
+      },
+      {
+        "track_id": "track_electronic_drive",
+        "title": "Court Pulse",
+        "duration_s": 90.0,
+        "slot_count": 12,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "electronic",
+          "vibe_tags": ["driving", "pulsing", "uplifting"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "training-montage momentum",
+          "ideal_content_profile": "Sport-training montages, beat-locked moves, rhythmic motion.",
+          "copy_tone": "high_energy",
+          "transition_style": "beat_pulse",
+          "color_grade": "cool magenta"
+        }
+      },
+      {
+        "track_id": "track_pop_anthem_sport",
+        "title": "Big Game",
+        "duration_s": 92.0,
+        "slot_count": 10,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "pop",
+          "vibe_tags": ["anthemic", "glossy", "celebratory"],
+          "energy": "peaks_high",
+          "pacing": "fast",
+          "mood": "stadium-anthem peak",
+          "ideal_content_profile": "Stadium highlight reels, celebrations, anthemic crowd reactions.",
+          "copy_tone": "high_energy",
+          "transition_style": "whip_pan",
+          "color_grade": "high-contrast neon"
+        }
+      },
+      {
+        "track_id": "track_acoustic_calm",
+        "title": "Porch Light",
+        "duration_s": 98.0,
+        "slot_count": 7,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "acoustic",
+          "vibe_tags": ["intimate", "wistful", "patient"],
+          "energy": "low",
+          "pacing": "slow",
+          "mood": "morning calm",
+          "ideal_content_profile": "Quiet intimate moments, slow handheld b-roll.",
+          "copy_tone": "sentimental",
+          "transition_style": "dissolve",
+          "color_grade": "warm tungsten"
+        }
+      }
+    ],
+    "n_variants": 3
+  },
+  "raw_text": "{\"ranked\": [{\"track_id\": \"track_hiphop_court\", \"score\": 9.2, \"rationale\": \"Outdoor-court swagger hip-hop names this exact content — crossover, jumper, swish, celebration; saturated street grade matches the playground footage one-to-one.\", \"predicted_strengths\": [\"saturated street grade matches the outdoor court tones\", \"hard-cut transitions land the swish moment\", \"swagger vibe reads against 'couldn't guard him' hook\"]}, {\"track_id\": \"track_hiphop_trap_heavy\", \"score\": 8.5, \"rationale\": \"Fourth-quarter trap variant gives the same highlights a heavier, more intense reading; works especially for the slow-mo net snap.\", \"predicted_strengths\": [\"peaks_high energy elevates the celebration clip\", \"slow-mo net snap lives inside this profile\", \"distinct mood from top pick — adds variety within hip-hop\"]}, {\"track_id\": \"track_pop_anthem_sport\", \"score\": 8.0, \"rationale\": \"Stadium-anthem pop frames the highlights as a stadium-grade moment; distinct genre from the hip-hop picks completes a real top-K.\", \"predicted_strengths\": [\"distinct genre from top two — adds top-K variety\", \"anthemic celebratory mood serves the arms-out celebration\", \"whip_pan transitions fit the dribble tracking shot\"]}, {\"track_id\": \"track_electronic_drive\", \"score\": 7.2, \"rationale\": \"Training-montage electronic works for rhythmic basketball motion but the cool-magenta grade fights the outdoor saturated street footage.\", \"predicted_strengths\": [\"beat_pulse transitions sync to crossover rhythm\", \"driving energy supports the fast pacing\"]}, {\"track_id\": \"track_acoustic_calm\", \"score\": 1.5, \"rationale\": \"Slow intimate acoustic on a basketball highlight reel is the wrong energy band entirely — drains the celebration moment.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "output": {
+    "ranked": [
+      {
+        "track_id": "track_hiphop_court",
+        "score": 9.2,
+        "rationale": "Outdoor-court swagger hip-hop names this exact content — crossover, jumper, swish, celebration; saturated street grade matches the playground footage one-to-one.",
+        "predicted_strengths": [
+          "saturated street grade matches the outdoor court tones",
+          "hard-cut transitions land the swish moment",
+          "swagger vibe reads against 'couldn't guard him' hook"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_trap_heavy",
+        "score": 8.5,
+        "rationale": "Fourth-quarter trap variant gives the same highlights a heavier, more intense reading; works especially for the slow-mo net snap.",
+        "predicted_strengths": [
+          "peaks_high energy elevates the celebration clip",
+          "slow-mo net snap lives inside this profile",
+          "distinct mood from top pick — adds variety within hip-hop"
+        ]
+      },
+      {
+        "track_id": "track_pop_anthem_sport",
+        "score": 8.0,
+        "rationale": "Stadium-anthem pop frames the highlights as a stadium-grade moment; distinct genre from the hip-hop picks completes a real top-K.",
+        "predicted_strengths": [
+          "distinct genre from top two — adds top-K variety",
+          "anthemic celebratory mood serves the arms-out celebration",
+          "whip_pan transitions fit the dribble tracking shot"
+        ]
+      },
+      {
+        "track_id": "track_electronic_drive",
+        "score": 7.2,
+        "rationale": "Training-montage electronic works for rhythmic basketball motion but the cool-magenta grade fights the outdoor saturated street footage.",
+        "predicted_strengths": [
+          "beat_pulse transitions sync to crossover rhythm",
+          "driving energy supports the fast pacing"
+        ]
+      },
+      {
+        "track_id": "track_acoustic_calm",
+        "score": 1.5,
+        "rationale": "Slow intimate acoustic on a basketball highlight reel is the wrong energy band entirely — drains the celebration moment.",
+        "predicted_strengths": [
+          "no real fit"
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "hip-hop basketball highlight reel — second hip-hop case"
+  }
+}
