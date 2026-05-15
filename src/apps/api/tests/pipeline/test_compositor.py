@@ -96,23 +96,26 @@ class TestBuildVideoFilter:
             f"unknown-primaries input; got: {filters[0]!r}"
         )
 
-    def test_hdr_hlg_pipeline_scales_before_tonemap(self):
-        """HDR/HLG pipeline must scale in linear-light BEFORE the tonemap pass.
+    def test_hdr_hlg_pipeline_scales_before_float_upconvert(self):
+        """HDR/HLG pipeline must scale BEFORE `format=gbrpf32le`, the heavy
+        10-bit-YUV → 32-bit-float upconvert that dominates wall-clock on 4K HDR.
 
-        Why this is locked: PR2's first prod test job (4551074a... on template
+        Two prod test jobs in a row (4551074a then 343af2dc, both on template
         77151144..., 2026-05-15) ran reframe_and_export on a 24s iPhone 4K HLG
-        clip (2160×3840) and hit the FFmpeg subprocess's 600s timeout because
-        tonemap was running at full 8.3M pixels per frame on shared-cpu-2x Fly
-        workers; the downstream scale/crop then discarded 75% of that work.
-        Inserting a `scale=...:force_original_aspect_ratio=decrease` step
-        between `zscale=t=linear` (linear-light entry) and the gamut map +
-        tonemap drops the per-frame pixel count by ~4× for 4K sources. It also
-        produces a more physically accurate downscale: averaging linear-light
-        luminance is correct; averaging gamma-encoded HDR luminance is biased
-        toward bright values.
+        clip (2160×3840) and hit the ffmpeg subprocess timeout. PR #152 put
+        scale BETWEEN format=gbrpf32le and tonemap, which kept the float
+        upconvert running at native 4K (95MB/frame of bandwidth) — still
+        timed out at 10m43s. This PR moves scale ABOVE format=gbrpf32le, so
+        the upconvert only runs on already-downscaled 1080p frames
+        (24MB/frame, ~4× faster). `scale` operates correctly on 10-bit YUV;
+        only `tonemap` requires float input.
+
+        Scaling in linear-light (after zscale=t=linear) is also the
+        physically correct HDR-aware order: averaging linear luminance is
+        accurate; averaging gamma-encoded HDR luminance biases bright values.
 
         This test pins the filter ORDER so a future refactor cannot quietly
-        move the scale back behind the tonemap.
+        push scale back behind format=gbrpf32le.
         """
         from app.config import settings
         from app.pipeline.reframe import _HLG_TRANSFER, _ZSCALE_SDR_PIPELINE
@@ -120,36 +123,71 @@ class TestBuildVideoFilter:
         pipeline = _ZSCALE_SDR_PIPELINE
         # Linear-light conversion must come first.
         assert pipeline.startswith("zscale=t=linear:npl=400"), pipeline
-        # The pre-downscale must appear BEFORE the bt709 gamut map and BEFORE
-        # the tonemap. Indexes anchor the order; any reordering shifts them.
+        # Scale must sit BETWEEN linear-light entry and the float upconvert,
+        # AND before the gamut map and tonemap.
         linear_idx = pipeline.index("zscale=t=linear")
         scale_idx = pipeline.index("scale=")
+        float_idx = pipeline.index("format=gbrpf32le")
         gamut_idx = pipeline.index("zscale=p=bt709")
         tonemap_idx = pipeline.index("tonemap=")
-        assert linear_idx < scale_idx < gamut_idx < tonemap_idx, (
+        assert linear_idx < scale_idx < float_idx < gamut_idx < tonemap_idx, (
             f"HDR filter order regressed: linear@{linear_idx}, scale@{scale_idx}, "
-            f"gamut-map@{gamut_idx}, tonemap@{tonemap_idx}. Scale MUST sit "
-            f"between linear-light entry and the gamut map / tonemap."
+            f"format=gbrpf32le@{float_idx}, gamut@{gamut_idx}, tonemap@{tonemap_idx}. "
+            f"Scale MUST sit between linear-light entry and format=gbrpf32le."
         )
-        # The pre-downscale must be a strict downscale (never upscale a 720p
-        # HDR source up to 1080p inside the linear-light pass) and use lanczos
-        # to preserve highlight detail.
+        # Pre-downscale must be a strict downscale (never upscale a 720p HDR
+        # source up to 1080p) and use lanczos to preserve highlight detail.
         assert "force_original_aspect_ratio=decrease" in pipeline, pipeline
         assert "flags=lanczos" in pipeline, pipeline
-        # The scale target is the output height as a bounding box on either
-        # dimension; for the canonical 9:16 1080×1920 output that caps the
-        # long edge at 1920 in either orientation.
+        # Scale target is output_height as a box on either dimension; for the
+        # canonical 9:16 1080×1920 output that caps the long edge at 1920.
         expected_box = f"scale={settings.output_height}:{settings.output_height}"
         assert expected_box in pipeline, (
             f"Pre-downscale must cap at output_height² box; expected "
             f"{expected_box!r} in {pipeline!r}"
         )
-        # Sanity: tonemap algorithm pinning. mobius was empirically tuned
-        # against iPhone HLG; bumping to hable/reinhard changes visual output
-        # and should be a deliberate code change, not an unnoticed rewrite.
+        # tonemap algorithm pinning — mobius was empirically tuned against
+        # iPhone HLG samples; bumping to hable/reinhard changes visual output.
         assert "tonemap=tonemap=mobius" in pipeline, pipeline
-        # The HLG transfer-tag check stays the entry gate.
+        # HLG transfer-tag check stays the entry gate.
         assert _HLG_TRANSFER == "arib-std-b67"
+
+    def test_reframe_subprocess_timeout_matches_celery_soft_limit(self):
+        """`reframe_and_export`'s ffmpeg subprocess timeout must fit within
+        `orchestrate_template_job`'s soft_time_limit and leave headroom for
+        4K HDR HLG sources.
+
+        Sized at 1500s = soft_time_limit (1740s) − 240s of orchestration
+        overhead (Gemini, beat detection, audio mix, final encodes). Locked
+        here so a future "let's lower this back to 600s" patch trips
+        immediately rather than re-hitting the 4K HDR cliff. PR #152's first
+        two attempts on a 24s iPhone 4K HLG source (jobs 4551074a + 343af2dc,
+        2026-05-15) both blew through the prior 600s cap; 1500s gives generous
+        head-room even on multi-pass templates with overlays.
+        """
+        import re
+
+        from app.pipeline import reframe as reframe_module
+
+        with open(reframe_module.__file__) as fh:
+            body = fh.read()
+        # Match the ffmpeg subprocess call inside reframe_and_export. The
+        # log.info("reframe_start", ...) call is the anchor; the very next
+        # subprocess.run is the one we care about. Re-using ffprobe / other
+        # subprocess.run sites in the same module use shorter timeouts.
+        match = re.search(
+            r'reframe_start[^)]*\)[^"]*?subprocess\.run\([^)]*timeout=(\d+)',
+            body,
+            re.DOTALL,
+        )
+        assert match, "could not locate the reframe_and_export ffmpeg call"
+        timeout_s = int(match.group(1))
+        assert timeout_s == 1500, (
+            f"reframe_and_export ffmpeg timeout drifted to {timeout_s}s. "
+            f"Expected 1500s — see comment in reframe.py for rationale "
+            f"(must fit under orchestrate_template_job's 1740s soft_time_limit "
+            f"and leave headroom for 4K HDR HLG sources)."
+        )
 
     def test_color_hint_warm(self):
         """Color hint 'warm' adds colorbalance filter."""

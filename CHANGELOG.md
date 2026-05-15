@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.15.3] - 2026-05-15
+
+### Fixed
+- **HDR/HLG tonemap: scale moved ABOVE `format=gbrpf32le`, not below it.** PR #152 (v0.4.15.2) inserted the pre-downscale between `format=gbrpf32le` (the heavy 10-bit-YUV → 32-bit-float upconvert) and `tonemap`. That fixed nothing in practice — the second prod test job after deploy (job `343af2dc-56ca-4fbb-bf3a-17e270d79acd` on template `77151144-62f5-477b-b8e6-15d111165222`, 2026-05-15) hit the 600s subprocess timeout again at 10m43s on a 24s 4K HLG clip. The actual bottleneck was the float upconvert running on full 4K frames (~95MB/frame of bandwidth, 6.4× memory expansion vs 10-bit YUV) before any downscale could relieve it. Moving `scale` ABOVE `format=gbrpf32le` so the upconvert only operates on already-downscaled 1080p frames (~24MB/frame) cuts that step's CPU/bandwidth by ~4×. `scale` operates correctly on 10-bit YUV; only `tonemap` requires float input. New chain order: `zscale=t=linear → scale → format=gbrpf32le → zscale=p=bt709 → tonemap → zscale=t=bt709 → format=yuv420p`. Expected wall-clock for a 24s 4K HLG clip on shared-cpu-2x: HEVC decode ~60s + zscale=t=linear ~30s + scale ~20s + format=gbrpf32le ~75s + gamut/tonemap/transfer ~50s + libx264 ultrafast ~30s ≈ 4-5 min total. Test pin updated: `tests/pipeline/test_compositor.py::test_hdr_hlg_pipeline_scales_before_float_upconvert` now anchors order as `linear < scale < format=gbrpf32le < gamut < tonemap`.
+- **`reframe_and_export` ffmpeg subprocess timeout raised 600s → 1500s.** Even with the correct filter order, 4K HDR HLG on shared-cpu-2x has narrow head-room — the prior 600s cap left no margin for longer clips, 60fps HDR, or multi-overlay slots. 1500s fits cleanly under `orchestrate_template_job`'s 1740s soft_time_limit while leaving ~240s for orchestration overhead (Gemini calls, beat detection, audio mix, final encodes). Locked by `tests/pipeline/test_compositor.py::test_reframe_subprocess_timeout_matches_celery_soft_limit` so a future "let's lower this back" patch trips immediately. SDR sources continue to land in seconds — this affects only the rare cliff cases.
+
 ## [0.4.15.2] - 2026-05-15
 
 ### Fixed

@@ -266,7 +266,16 @@ def reframe_and_export(
         ass_overlays=len(ass_overlay_paths or []),
     )
 
-    result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
+    # 1500s caps a single-slot ffmpeg invocation just below the parent Celery
+    # soft time limit (1740s on orchestrate_template_job — see template_orchestrate.py).
+    # Prior cap was 600s, which fired twice in a row on 4K iPhone HDR sources
+    # (jobs 4551074a + 343af2dc, template 77151144, 2026-05-15) while
+    # format=gbrpf32le was burning bandwidth at native 4K. With PR2's filter
+    # reorder a 24s 4K HLG clip lands in ~4-5 min; this raised cap is a safety
+    # net for older HDR fixtures (longer clips, 60fps HDR, multi-overlay slots)
+    # where the prior 600s had no head-room and the parent orchestrator was
+    # silently swallowing TimeoutExpired and marking the whole job failed.
+    result = subprocess.run(cmd, capture_output=True, timeout=1500, check=False)
 
     if result.returncode != 0 and ass_overlay_paths:
         # ASS overlays may fail if FFmpeg lacks libass -- retry with PNGs only
@@ -426,25 +435,32 @@ _HDR10_TRANSFER = "smpte2084"
 #   preserves midtone contrast better than reinhard, less aggressive than
 #   hable. Specular highlights compressed gracefully instead of clipped.
 #
-# Pre-downscale in linear-light space (between zscale=t=linear and zscale=p=bt709)
-# caps the resolution that tonemap+gamut-map operate on at the output frame box
-# (default 1920 max dim). Without it, an iPhone 4K HDR clip (2160×3840) runs
-# the tonemap at 8.3M pixels/frame and the downstream scale/crop discards 75% of
-# the work — wall clock on shared-cpu-2x Fly workers hit the 600s subprocess
-# timeout in `reframe_and_export` (job 4551074a... on template 77151144...,
-# 2026-05-15). Scaling in linear-light is also the correct HDR-aware order:
+# Pre-downscale BEFORE format=gbrpf32le, in linear-light 10-bit YUV space. The
+# `format=gbrpf32le` step is a 6.4× memory expansion (10-bit YUV → 32-bit float
+# planar) — for a 4K iPhone HDR source that's ~95MB/frame of bandwidth. PR #152
+# put the scale AFTER format=gbrpf32le, which still left the heavy float upconvert
+# running on 4K frames; reframe_and_export hit the 600s subprocess timeout again
+# on job 343af2dc... (template 77151144..., 2026-05-15, 10m43s elapsed) even
+# with the new scale in place. Moving scale ABOVE format=gbrpf32le means the
+# float upconvert only runs on already-downscaled 1080p frames (~24MB/frame,
+# 4× less bandwidth, 4× less CPU). `scale` operates fine on 10-bit YUV — only
+# `tonemap` requires float input, and `tonemap` still sits AFTER format=gbrpf32le.
+#
+# Scaling in linear-light is also the physically correct HDR-aware order:
 # averaging gamma-encoded HDR luminance biases bright values; averaging linear
-# light is physically accurate. `force_original_aspect_ratio=decrease` makes this
-# a strict downscale — a 1080×1920 HDR source passes through unchanged.
-# flags=lanczos preserves highlight detail across the downscale (bilinear, the
-# scale default, blurs specular highlights). Performance: 4× less pixel work per
-# tonemap frame for 4K sources; expected wall-clock drop from ~10min to ~2-3min
-# for a 24s 4K HLG clip.
+# light averages physical luminance. `force_original_aspect_ratio=decrease`
+# makes this a strict downscale — a 1080×1920 HDR source passes through
+# unchanged. lanczos preserves highlight detail across the downscale (bilinear,
+# the scale default, blurs specular highlights). Expected wall-clock breakdown
+# for a 24s 4K HLG clip on shared-cpu-2x: HEVC decode ~60s, zscale=t=linear at
+# 4K ~30s, scale 4K→1080p YUV ~20s, format=gbrpf32le at 1080p ~75s, gamut +
+# tonemap + transfer at 1080p ~50s, libx264 ultrafast encode at 1080p ~30s =
+# ~4-5 min total, well under the 600s subprocess cap.
 _ZSCALE_SDR_PIPELINE = (
     "zscale=t=linear:npl=400"
-    ",format=gbrpf32le"
     f",scale={settings.output_height}:{settings.output_height}"
     ":force_original_aspect_ratio=decrease:flags=lanczos"
+    ",format=gbrpf32le"
     ",zscale=p=bt709"
     ",tonemap=tonemap=mobius"
     ",zscale=t=bt709:m=bt709:r=tv"
