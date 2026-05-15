@@ -107,20 +107,36 @@ def shadow_prompts_dir(request: pytest.FixtureRequest, eval_mode: str) -> Path |
     return path
 
 
+_LIVE_TIMEOUT_S = 300
+"""Per-test timeout in live mode. Gemini latency for the template_recipe agent
+is typically 30-65s/fixture on real reference videos; the global 30s default
+in pyproject.toml is for unit tests and would falsely fail every live call.
+300s gives generous headroom (still catches infinite loops) without forcing
+callers to remember `--timeout=600`."""
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Pre-flight cost check for live-mode runs.
+    """Live-mode pre-flight: lift per-test timeout, then cost-cap check.
 
     Walks each collected eval fixture, looks up its agent's `AgentSpec`
     cost-per-1k fields, applies a deliberately conservative token heuristic
     (chars/3 for input, fixed 1500 for output), and refuses to run if the sum
     exceeds LIVE_COST_CAP_USD unless --allow-cost is passed.
 
-    Replay mode is free, so the check no-ops there.
+    Replay mode is free AND fast, so both checks no-op there.
     """
     cli_mode = config.getoption("--eval-mode")
     eval_mode_resolved = cli_mode or os.environ.get("NOVA_EVAL_MODE", "replay")
     if eval_mode_resolved != "live":
         return
+
+    # Bump per-test timeout for every live-eval item. Items already carrying
+    # an explicit @pytest.mark.timeout(...) override are left alone.
+    timeout_mark = pytest.mark.timeout(_LIVE_TIMEOUT_S)
+    for item in items:
+        if not item.get_closest_marker("timeout"):
+            item.add_marker(timeout_mark)
+
     if config.getoption("--allow-cost"):
         return
 
