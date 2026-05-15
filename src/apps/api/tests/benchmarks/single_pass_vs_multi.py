@@ -44,7 +44,6 @@ from __future__ import annotations
 import json
 import os
 import statistics
-import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
@@ -136,7 +135,9 @@ def _build_steps_and_probes(fixture: dict, clips: list[Path]):
     return steps, clip_id_to_local, clip_probe_map
 
 
-def _render_once(fixture: dict, clips: list[Path], tmp_path: Path, force_single_pass: bool) -> tuple[Path, float]:
+def _render_once(
+    fixture: dict, clips: list[Path], tmp_path: Path, force_single_pass: bool,
+) -> tuple[Path, float]:
     from app.tasks.template_orchestrate import _assemble_clips
 
     suffix = "single" if force_single_pass else "multi"

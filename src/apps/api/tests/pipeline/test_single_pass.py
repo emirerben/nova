@@ -653,7 +653,7 @@ class TestGatePoint:
     @pytest.mark.parametrize(
         "force,env,template,expected",
         [
-            # (force_single_pass, settings.single_pass_encode_enabled, template.single_pass_enabled, expected)
+            # (force, settings.single_pass_encode_enabled, template.single_pass_enabled, expected)
             (False, False, False, False),  # default state — multi-pass
             (False, True, False, False),   # env flipped alone — no-op (template not allow-listed)
             (False, False, True, False),   # template flipped alone — no-op (env off)

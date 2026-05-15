@@ -42,8 +42,9 @@ import json
 import statistics
 import sys
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import IO, Iterable
+from typing import IO
 
 PHASE_EVENTS = {"fixed_intro_stage_done", "assemble_phase_done"}
 

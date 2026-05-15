@@ -238,7 +238,9 @@ def _build_steps_and_probes(fixture: dict, clips: list[Path]):
     return steps, clip_id_to_local, clip_probe_map
 
 
-def _render(fixture: dict, clips: list[Path], tmp_path: Path, force_single_pass: bool) -> tuple[Path, float]:
+def _render(
+    fixture: dict, clips: list[Path], tmp_path: Path, force_single_pass: bool,
+) -> tuple[Path, float]:
     """Run _assemble_clips once. Returns (output_path, elapsed_seconds)."""
     from app.tasks.template_orchestrate import _assemble_clips
 
