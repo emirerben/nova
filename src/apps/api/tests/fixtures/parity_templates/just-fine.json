@@ -1,5 +1,6 @@
 {
   "name": "just-fine",
+  "kind": "simple",
   "slots": [
     {
       "position": 1,

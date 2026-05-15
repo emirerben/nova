@@ -304,8 +304,20 @@ def test_single_pass_parity_with_multi_pass(template_name: str, tmp_path: Path) 
         reasons.append(f"codec mismatch: multi={multi_meta.codec} single={single_meta.codec}")
     if multi_meta.pix_fmt != single_meta.pix_fmt:
         reasons.append(f"pix_fmt mismatch: multi={multi_meta.pix_fmt} single={single_meta.pix_fmt}")
-    if multi_meta.fps != single_meta.fps:
+    # FPS via r_frame_rate fractions can drift by a hair after division
+    # (e.g. 30000/1001 → 29.97002997...). Match within 0.01 fps.
+    if abs(multi_meta.fps - single_meta.fps) > 0.01:
         reasons.append(f"fps mismatch: multi={multi_meta.fps} single={single_meta.fps}")
+    # Bitrate gate: single-pass tends slightly higher (one libx264 pass on
+    # the full timeline vs concat of pre-encoded slots). 15% is the loose
+    # bound; tighten once we see real data.
+    if multi_meta.bitrate > 0:
+        bitrate_delta = abs(single_meta.bitrate - multi_meta.bitrate) / multi_meta.bitrate
+        if bitrate_delta > BITRATE_TOLERANCE_PCT:
+            reasons.append(
+                f"bitrate delta {bitrate_delta:.1%} > {BITRATE_TOLERANCE_PCT:.0%} "
+                f"(multi={multi_meta.bitrate} single={single_meta.bitrate})"
+            )
 
     result = ParityResult(
         template=template_name,

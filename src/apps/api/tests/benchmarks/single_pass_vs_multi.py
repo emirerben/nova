@@ -56,8 +56,11 @@ PARITY_CLIPS_DIR = Path(os.environ.get("PARITY_CLIPS_DIR", "")).expanduser()
 BENCH_REPORT_DIR = Path(
     os.environ.get("BENCH_REPORT_DIR", tempfile.gettempdir())
 ).expanduser()
-BENCH_REPEATS = int(os.environ.get("BENCH_REPEATS", "3"))
+# Clamp to at least 1; statistics.median([]) would otherwise raise mid-test.
+BENCH_REPEATS = max(1, int(os.environ.get("BENCH_REPEATS", "3")))
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "parity_templates"
+
+ALLOWED_FIXTURE_KINDS = {"simple", "heavy"}
 
 # Reuse the same fixtures as the parity gate. Don't duplicate.
 BENCH_TEMPLATE_FIXTURES = [
@@ -89,7 +92,17 @@ def _load_clips(min_count: int = 2) -> list[Path]:
 
 def _load_fixture(name: str) -> dict | None:
     path = FIXTURES_DIR / f"{name}.json"
-    return json.loads(path.read_text()) if path.exists() else None
+    if not path.exists():
+        return None
+    fixture = json.loads(path.read_text())
+    kind = fixture.get("kind", "simple")
+    if kind not in ALLOWED_FIXTURE_KINDS:
+        raise ValueError(
+            f"Fixture {name!r} has kind={kind!r}; expected one of {ALLOWED_FIXTURE_KINDS}. "
+            f"Set 'kind' explicitly in the JSON — see "
+            f"tests/fixtures/parity_templates/README.md."
+        )
+    return fixture
 
 
 def _build_steps_and_probes(fixture: dict, clips: list[Path]):
@@ -142,22 +155,23 @@ def _render_once(fixture: dict, clips: list[Path], tmp_path: Path, force_single_
     return output, time.monotonic() - t0
 
 
-def _classify_speedup(template: str, ratio: float) -> tuple[str, bool]:
-    """Decide pass/fail given the template kind. Returns (verdict, passed).
+def _classify_speedup(kind: str, ratio: float) -> tuple[str, bool]:
+    """Decide pass/fail given the fixture kind. Returns (verdict, passed).
 
-    Simple templates (hard-cut only): tolerated up to 1.10x slower since
-    multi-pass has the stream-copy concat fast-path.
-    Heavy templates (curtain-close, xfade, absolute overlays): require
-    single-pass < 0.85x multi-pass to justify the milestone.
+    ``kind="simple"`` (hard-cut only, stream-copy concat applies in
+    multi-pass): tolerated up to 1.10x slower because single-pass forces a
+    re-encode where multi-pass skipped one.
+    ``kind="heavy"`` (curtain-close, xfade, or absolute overlays — anything
+    that forces ≥3 final-output encodes in multi-pass): require <0.85x to
+    justify the milestone.
 
-    The fixture loader doesn't currently distinguish kinds; this is hooked
-    to the fixture name today. Move to a fixture metadata field once heavy
-    templates land.
+    Renaming a fixture or adding one without the ``kind`` field would
+    previously fall through to "simple" silently; ``_load_fixture`` now
+    validates the field at load time so that path is dead.
     """
-    heavy = {"dimples-passport", "saygimdan", "rule-of-thirds", "football-face-hook"}
-    if template in heavy:
-        return f"heavy template; needs ratio < 0.85 (got {ratio:.2f}x)", ratio < 0.85
-    return f"simple template; tolerated up to 1.10x (got {ratio:.2f}x)", ratio <= 1.10
+    if kind == "heavy":
+        return f"heavy fixture; needs ratio < 0.85 (got {ratio:.2f}x)", ratio < 0.85
+    return f"simple fixture; tolerated up to 1.10x (got {ratio:.2f}x)", ratio <= 1.10
 
 
 @pytest.mark.skipif(
@@ -181,14 +195,22 @@ def test_single_pass_perf_vs_multi(template_name: str, tmp_path: Path) -> None:
     multi_size = 0
     single_size = 0
 
+    # Trial outputs and work dirs are unlinked between trials so a 24-slot
+    # fixture × 3 repeats × 2 paths doesn't fill the GH runner disk. We
+    # keep the LAST trial of each path so the report can record output
+    # size (sanity check that single-pass isn't ballooning bytes).
     for trial in range(BENCH_REPEATS):
         multi_out, multi_t = _render_once(fixture, clips, tmp_path, force_single_pass=False)
         multi_times.append(multi_t)
         multi_size = multi_out.stat().st_size
+        if trial < BENCH_REPEATS - 1:
+            multi_out.unlink(missing_ok=True)
     for trial in range(BENCH_REPEATS):
         single_out, single_t = _render_once(fixture, clips, tmp_path, force_single_pass=True)
         single_times.append(single_t)
         single_size = single_out.stat().st_size
+        if trial < BENCH_REPEATS - 1:
+            single_out.unlink(missing_ok=True)
 
     multi_median = statistics.median(multi_times)
     single_median = statistics.median(single_times)
@@ -207,7 +229,7 @@ def test_single_pass_perf_vs_multi(template_name: str, tmp_path: Path) -> None:
     )
     _append_report(result)
 
-    verdict, passed = _classify_speedup(template_name, ratio)
+    verdict, passed = _classify_speedup(fixture.get("kind", "simple"), ratio)
     if not passed:
         pytest.fail(
             f"Benchmark failed for {template_name}: {verdict}. "

@@ -1,5 +1,6 @@
 {
   "name": "morocco",
+  "kind": "simple",
   "_note": "M2-compatible stress fixture — 6 slots hard-cut, no overlays. Not a faithful Morocco production recipe; that one is 24 slots with pop-in text and runs >2 minutes per parity trial.",
   "slots": [
     {"position": 1, "target_duration_s": 2.0, "transition_in": "none", "text_overlays": []},

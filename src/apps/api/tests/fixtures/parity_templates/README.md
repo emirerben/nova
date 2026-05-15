@@ -19,6 +19,7 @@ absolute overlays). Each fixture corresponds to a single-pass milestone:
 ```json
 {
   "name": "string",
+  "kind": "simple" | "heavy",
   "slots": [
     {
       "position": 1,
@@ -30,6 +31,16 @@ absolute overlays). Each fixture corresponds to a single-pass milestone:
   "interstitials": []
 }
 ```
+
+Required top-level fields: `name`, `kind`, `slots`.
+
+`kind` drives the benchmark gate:
+- `"simple"` — hard-cut only, no overlays, no curtain. Multi-pass uses
+  stream-copy concat (zero final encodes), so single-pass is tolerated up
+  to 1.10× wall-clock.
+- `"heavy"` — uses curtain-close, xfade transitions, absolute overlays, or
+  pre-burn PNGs. Multi-pass runs 3+ final-output encodes, so single-pass
+  must come in under 0.85× to justify the milestone PR.
 
 Required slot fields: `position` (1-indexed), `target_duration_s`,
 `transition_in` ("none" for M2). Optional: `text_overlays`.

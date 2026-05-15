@@ -128,15 +128,20 @@ def aggregate(events: Iterable[dict], group_by: str | None = None) -> dict:
         lambda: defaultdict(PhaseStats)
     )
     for evt in events:
-        elapsed = evt.get("elapsed_ms")
-        if not isinstance(elapsed, (int, float)):
+        elapsed_raw = evt.get("elapsed_ms")
+        if elapsed_raw is None:
+            continue
+        # Some log emitters stringify numbers; accept str if it parses.
+        try:
+            elapsed = float(elapsed_raw)
+        except (TypeError, ValueError):
             continue
         if evt.get("event") == "fixed_intro_stage_done":
             phase_name = f"stage:{evt.get('stage', 'unknown')}"
         else:
             phase_name = f"assemble:{evt.get('phase', 'unknown')}"
         key = str(evt.get(group_by) or "<missing>") if group_by else "__all__"
-        buckets[key][phase_name].add(float(elapsed))
+        buckets[key][phase_name].add(elapsed)
     return buckets
 
 
