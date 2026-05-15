@@ -67,6 +67,7 @@ export interface AdminTemplate {
   music_track_id: string | null;
   has_intro_slot: boolean;
   is_agentic: boolean;
+  error_detail: string | null;
   created_at: string;
 }
 

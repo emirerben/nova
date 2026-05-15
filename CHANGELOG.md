@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.20.1] - 2026-05-15
+
+### Fixed
+- **Admin "Re-run agents" button no longer feels broken on agentic templates.** Clicking it correctly POSTs `/reanalyze-agentic`, but the page never polled the template's `analysis_status` afterward — so the button froze in "Building..." forever and follow-up clicks were silently swallowed by the `disabled` DOM attribute. To the user it looked like "nothing happens when I click." Fix: the template detail page now polls `adminGetTemplate(id)` every 4s while `analysis_status === "analyzing"` and stops on terminal state, so completion is visible without a manual refresh. The button is replaced by a new `ReanalyzeButton` component that shows a spinner, elapsed-time counter, and a separate amber **"Force retry"** affordance that only appears after the 25-min worker soft-limit window — that's the SIGKILL/OOM recovery path. Disabling the main button while `analyzing` is preserved so a stuck row can't get re-enqueued 10 times on rapid clicks (each click would otherwise reset the redis attempt counter and queue another parallel agentic build). Failed runs now also render `error_detail` in red below the button, so admins see what broke before re-clicking. Backend behaviour and DB schema unchanged.
+
 ## [0.4.20.0] - 2026-05-15
 
 ### Added
