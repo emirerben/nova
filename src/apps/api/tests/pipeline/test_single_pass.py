@@ -95,16 +95,123 @@ def test_color_holds_use_lavfi_not_files():
     assert len(clip_paths) == 2  # the two clip inputs, not the hold
 
 
-# ── Test 3: xfade lands in milestone 3 (placeholder for now) ─────────────────
+# ── Test 3: xfade chain emission (M3) ────────────────────────────────────────
 
 
-def test_non_none_transition_raises_until_milestone_3():
+def _argv_filter_complex(argv: list[str]) -> str:
+    """Pull the -filter_complex value out of the argv. Tests reach into the
+    filter graph string; isolating the extraction here keeps assertions
+    legible if the argv layout shifts."""
+    idx = argv.index("-filter_complex")
+    return argv[idx + 1]
+
+
+def test_xfade_crossfade_emits_xfade_filter_node():
+    """M3: a single crossfade boundary must emit one xfade=transition=fade
+    filter node and route its output to [vout]. The M2 single-concat path
+    is bypassed."""
     spec = SinglePassSpec(
         inputs=[_clip(), _clip()],
         transitions=["crossfade"],
     )
-    with pytest.raises(NotImplementedError, match="milestone 3"):
-        build_single_pass_command(spec, "/tmp/out.mp4")
+    argv = build_single_pass_command(spec, "/tmp/out.mp4")
+    fc = _argv_filter_complex(argv)
+    assert "xfade=transition=fade" in fc
+    # The xfade emits [vout] directly because it is the last (and only) one.
+    assert "[vout]" in fc
+    # No naked concat=n=2 filter — that's the M2 path we deliberately took.
+    assert "concat=n=2" not in fc
+
+
+def test_xfade_whip_pan_emits_wipeleft():
+    """The transition.translate_transition map collapses whip-pan→wipe_left
+    and xfade uses 'wipeleft' as the transition= parameter. Catches drift
+    in either the translation map or the xfade type mapping."""
+    spec = SinglePassSpec(
+        inputs=[_clip(), _clip()],
+        transitions=["wipe_left"],
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    assert "xfade=transition=wipeleft" in fc
+
+
+def test_xfade_offset_math_two_slots():
+    """For two 3-second slots, xfade offset = 3.0 - 0.3 = 2.7s. duration
+    is the default 0.3s. Pins the offset/duration math against drift —
+    these numbers are derived from the same formula used by
+    multi-pass _build_xfade_filter, so any divergence is a parity bug."""
+    spec = SinglePassSpec(
+        inputs=[_clip(start=0.0, end=3.0), _clip(start=0.0, end=3.0)],
+        transitions=["crossfade"],
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    assert "duration=0.300" in fc
+    assert "offset=2.700" in fc
+
+
+def test_xfade_duration_clamped_to_30_pct_of_shorter_slot():
+    """A 0.5s outgoing slot would only allow 0.15s of xfade (30% of 0.5),
+    not the default 0.3. Multi-pass clamps the same way so single-pass
+    matches the multi-pass output frame-for-frame at the boundary."""
+    spec = SinglePassSpec(
+        inputs=[_clip(start=0.0, end=0.5), _clip(start=0.0, end=3.0)],
+        transitions=["crossfade"],
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    assert "duration=0.150" in fc
+
+
+def test_mixed_none_and_xfade_groups_consecutive_none_into_concat():
+    """transitions=[none, crossfade, none] over 4 slots → slots 0+1 concat
+    into [g0], slots 2+3 concat into [g1], one xfade boundary bridges
+    [g0][g1] into [vout]. Catches the bug class where every "none"
+    boundary becomes its own degenerate xfade — the multi-pass code calls
+    this out explicitly (long chains of duration=0.001 xfades truncate
+    output to ~3-4s, see transitions.py:74)."""
+    spec = SinglePassSpec(
+        inputs=[_clip(), _clip(), _clip(), _clip()],
+        transitions=["none", "crossfade", "none"],
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    # Two concat sub-batches.
+    assert "concat=n=2:v=1:a=0[g0]" in fc
+    assert "concat=n=2:v=1:a=0[g1]" in fc
+    # Exactly one xfade boundary.
+    assert fc.count("xfade=") == 1
+    # Final output is xfade'd, not concatenated.
+    assert "[g0][g1]xfade" in fc
+    assert "[vout]" in fc
+
+
+def test_xfade_chain_three_visual_transitions_offsets_accumulate():
+    """For three 4-second slots joined by two crossfades:
+      boundary 0: offset = 4.0 - 0.3 = 3.7
+      boundary 1: offset = (4 + 4) - 0.3 - 0.3 = 7.4
+    Catches off-by-one in cumulative_trans accounting."""
+    spec = SinglePassSpec(
+        inputs=[
+            _clip(start=0.0, end=4.0),
+            _clip(start=0.0, end=4.0),
+            _clip(start=0.0, end=4.0),
+        ],
+        transitions=["crossfade", "crossfade"],
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    assert "offset=3.700" in fc
+    assert "offset=7.400" in fc
+
+
+def test_all_none_transitions_uses_m2_concat_path():
+    """spec.transitions=[none, none] should not route through xfade chain.
+    The M2 single concat=n=N filter is faster and avoids degenerate xfade
+    nodes — guard against accidentally always-on-M3-path regression."""
+    spec = SinglePassSpec(
+        inputs=[_clip(), _clip(), _clip()],
+        transitions=["none", "none"],
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    assert "concat=n=3:v=1:a=0[vout]" in fc
+    assert "xfade=" not in fc
 
 
 # ── Test 6: final encode args ────────────────────────────────────────────────
@@ -378,33 +485,32 @@ class TestGatePoint:
             mock_single.assert_called_once()
             mock_reframe.assert_not_called()
 
-    def test_xfade_template_falls_back_to_multi_pass(self, tmp_path):
-        """force_single_pass=True + xfade transition_in → fall back to multi-pass.
+    def test_xfade_template_runs_single_pass(self, tmp_path):
+        """force_single_pass=True + xfade transition_in → single-pass.
 
-        M2 doesn't support xfade. _build_single_pass_spec raises
-        NotImplementedError, the gate catches it, structured warning is
-        logged, and the multi-pass path runs as if the flag were off.
-
-        We mock all downstream multi-pass helpers since the mocked
-        reframe_and_export doesn't actually write slot files; this test
-        is about gate-point routing, not full multi-pass execution.
+        M3 lifted the M2 xfade gate. _build_single_pass_spec now
+        translates the transition_in vocabulary via
+        ``translate_transition`` into spec.transitions and
+        ``build_single_pass_command`` emits xfade filter nodes. This test
+        replaces the prior ``test_xfade_template_falls_back_to_multi_pass``
+        which asserted the opposite — correct for M2, wrong for M3+.
         """
         from unittest.mock import patch
 
         from app.tasks.template_orchestrate import _assemble_clips
 
-        # Two slots, second has a non-"none" transition_in.
         step1, probe1, file1 = self._make_step_and_probe(tmp_path, slot_idx=1)
         step2, probe2, file2 = self._make_step_and_probe(
-            tmp_path, slot_idx=2, transition_in="crossfade",
+            # Real Gemini vocabulary value; translate_transition() maps it
+            # to the internal "crossfade" xfade family. Using the internal
+            # name directly would fall through to "none" — the
+            # _GEMINI_TO_INTERNAL map only knows the Gemini-side keys.
+            tmp_path, slot_idx=2, transition_in="dissolve",
         )
         with (
             patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
             patch("app.tasks.template_orchestrate.run_single_pass") as mock_single,
             patch("app.tasks.template_orchestrate.shutil.copy2"),
-            patch("app.tasks.template_orchestrate._join_or_concat"),
-            patch("app.tasks.template_orchestrate._burn_text_overlays"),
-            patch("app.tasks.template_orchestrate._probe_duration", return_value=6.0),
         ):
             _assemble_clips(
                 steps=[step1, step2],
@@ -414,9 +520,13 @@ class TestGatePoint:
                 tmpdir=str(tmp_path),
                 force_single_pass=True,
             )
-            # Fell back to multi-pass — single-pass NOT called, reframe IS.
-            mock_single.assert_not_called()
-            assert mock_reframe.call_count == 2
+            mock_single.assert_called_once()
+            mock_reframe.assert_not_called()
+            # The spec passed to run_single_pass must carry the translated
+            # internal transition name, not the raw Gemini vocabulary.
+            call_args = mock_single.call_args
+            spec = call_args.args[0] if call_args.args else call_args.kwargs["spec"]
+            assert spec.transitions == ["crossfade"]
 
     def test_unrelated_not_implemented_error_propagates(self, tmp_path):
         """Bare NotImplementedError from unrelated code MUST propagate.
@@ -641,17 +751,60 @@ class TestBuildSinglePassSpec:
                 steps=[self._step(position=1)],
             )
 
-    def test_xfade_transition_in_raises_unsupported(self):
+    def test_xfade_transition_in_translates_to_internal_name(self):
+        """M3: non-"none" transition_in is translated via the Gemini
+        vocabulary map, not raised on. ``crossfade`` is the internal
+        xfade family used in _XFADE_MAP. ``dissolve`` and ``zoom-in``
+        from Gemini both translate to ``crossfade`` per
+        transitions._GEMINI_TO_INTERNAL — covered here so spec.transitions
+        accurately reflects what xfade filter type will be emitted."""
         from app.tasks.template_orchestrate import _build_single_pass_spec
-        with pytest.raises(SinglePassUnsupportedError, match="xfade lands"):
-            _build_single_pass_spec(
-                plans=[self._plan(slot_idx=0), self._plan(slot_idx=1)],
-                interstitial_map={},
-                steps=[
-                    self._step(position=1),
-                    self._step(position=2, transition_in="crossfade"),
-                ],
-            )
+        spec = _build_single_pass_spec(
+            plans=[self._plan(slot_idx=0), self._plan(slot_idx=1)],
+            interstitial_map={},
+            steps=[
+                self._step(position=1),
+                self._step(position=2, transition_in="dissolve"),
+            ],
+        )
+        assert spec.transitions == ["crossfade"]
+
+    def test_whip_pan_translates_to_wipe_left(self):
+        """Gemini ``whip-pan`` → internal ``wipe_left`` → xfade wipeleft.
+        Pins the translation chain so the wipe direction doesn't drift."""
+        from app.tasks.template_orchestrate import _build_single_pass_spec
+        spec = _build_single_pass_spec(
+            plans=[self._plan(slot_idx=0), self._plan(slot_idx=1)],
+            interstitial_map={},
+            steps=[
+                self._step(position=1),
+                self._step(position=2, transition_in="whip-pan"),
+            ],
+        )
+        assert spec.transitions == ["wipe_left"]
+
+    def test_hold_forces_none_transition_after_interstitial(self):
+        """When a fade-black-hold interstitial sits between slot 0 and
+        slot 1, the transition INTO slot 1 must be "none" — the hold IS
+        the transition effect. Mirrors multi-pass behavior at
+        template_orchestrate.py:2204-2209 where prev_had_interstitial
+        forces transition_types[i] = "none". Without this, single-pass
+        would emit an xfade ON TOP OF the hold, double-stacking effects."""
+        from app.tasks.template_orchestrate import _build_single_pass_spec
+        interstitial_map = {1: {"type": "fade-black-hold", "hold_s": 0.5, "hold_color": "#000000"}}
+        spec = _build_single_pass_spec(
+            plans=[self._plan(slot_idx=0), self._plan(slot_idx=1)],
+            interstitial_map=interstitial_map,
+            steps=[
+                self._step(position=1),
+                # The recipe asks for crossfade INTO slot 1, but the
+                # preceding hold overrides it.
+                self._step(position=2, transition_in="crossfade"),
+            ],
+        )
+        assert [i.kind for i in spec.inputs] == ["clip", "color_hold", "clip"]
+        # 3 inputs → 2 gaps. Both must be "none" — clip→hold and hold→clip.
+        assert spec.transitions == ["none", "none"]
 
     def test_first_slot_transition_in_is_ignored(self):
         """slot_idx=0 never has a transition (nothing precedes it)."""

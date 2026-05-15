@@ -1855,31 +1855,52 @@ def _build_single_pass_spec(
 ) -> SinglePassSpec:
     """Convert orchestrator plans + interstitials → SinglePassSpec.
 
-    Milestone 2 scope — supports only:
+    Milestones 2-3 scope — supports:
       - clip slots (with all SlotPlan features: speed, color, aspect, grid)
       - non-curtain color-hold interstitials between slots
-      - hard-cut transitions
+      - hard-cut transitions (M2)
+      - xfade transitions: crossfade, fade_black, wipe_left, wipe_right (M3)
 
     Raises SinglePassUnsupportedError if the template needs:
       - curtain-close interstitials (M4 — PNG-bar overlay on slot tail)
-      - non-"none" transitions between slots (M3 — xfade)
+      - barn-door-open interstitials (M4 — PNG-bar overlay on slot head)
       - absolute-timestamp text overlays (M6 — post-concat layer)
       - pre-burn PNGs (M5 — slot-relative overlay before bars)
 
     The caller catches SinglePassUnsupportedError (a NotImplementedError
     subclass) and falls through to multi-pass with a structured warning.
+
+    Transition translation: ``step.slot.transition_in`` is the raw Gemini
+    vocabulary (whip-pan, zoom-in, dissolve, hard-cut, etc.). The
+    :func:`translate_transition` map collapses it to the internal xfade
+    family ({"none", "crossfade", "fade_black", "wipe_left", "wipe_right"}).
+    Unknown vocabulary falls back to "none" — silent degrade to hard-cut
+    is the right failure mode here (matches multi-pass behavior).
     """
+    from app.pipeline.transitions import translate_transition  # noqa: PLC0415
+
     inputs: list[SinglePassInput] = []
+    # ``transitions`` is appended alongside ``inputs`` so the invariant
+    # ``len(transitions) == len(inputs) - 1`` holds without a post-pass.
+    # Two gap shapes contribute "none":
+    #   - clip → color_hold (hard cut into the hold animation)
+    #   - color_hold → next clip (hard cut out; matches multi-pass
+    #     behavior at template_orchestrate.py:2204-2209 where
+    #     prev_had_interstitial forces transition_types[i] = "none")
+    transitions: list[str] = []
 
     for plan, step in zip(plans, steps):
-        # Per-slot transition check (M3 will lift this — for now hard-cut only).
-        if plan.slot_idx > 0:
-            raw_transition = str(step.slot.get("transition_in", "none"))
-            if raw_transition != "none":
-                raise SinglePassUnsupportedError(
-                    f"slot {plan.slot_idx} transition_in={raw_transition!r}; "
-                    f"xfade lands in milestone 3"
-                )
+        # Decide the transition INTO this clip. For slot 0 there's nothing
+        # before it. If the previous input was a color hold (an
+        # interstitial was appended at the end of the prior iteration), the
+        # hold IS the transition effect — hard-cut out. Otherwise apply
+        # the recipe's transition_in for this slot.
+        if inputs:
+            if inputs[-1].kind == "color_hold":
+                transitions.append("none")
+            else:
+                raw_transition = str(step.slot.get("transition_in", "none"))
+                transitions.append(translate_transition(raw_transition))
 
         # Append the clip itself.
         inputs.append(
@@ -1937,6 +1958,9 @@ def _build_single_pass_spec(
         # Other types (fade-black-hold, flash-white) → color hold input.
         hold_color_hex = inter.get("hold_color", "#000000")
         ffmpeg_color = "white" if hold_color_hex == "#FFFFFF" else "black"
+        # clip → hold transition is always hard cut; the hold animation
+        # itself is the effect.
+        transitions.append("none")
         inputs.append(
             SinglePassInput(
                 kind="color_hold",
@@ -1945,7 +1969,10 @@ def _build_single_pass_spec(
             )
         )
 
-    # Compute total output duration for parity script bridging.
+    # Compute total output duration for parity script bridging. xfade
+    # transitions shorten this by their overlap duration, but the M2
+    # callsite only uses output_duration_s as a sanity check, not for
+    # bridging math (the FFmpeg filter graph computes its own timeline).
     total_dur = 0.0
     for inp in inputs:
         if inp.kind == "clip":
@@ -1955,7 +1982,7 @@ def _build_single_pass_spec(
 
     return SinglePassSpec(
         inputs=inputs,
-        transitions=[],  # M2 = hard cuts only
+        transitions=transitions,
         abs_pngs=[],  # M6 will populate
         abs_ass_paths=[],  # M6 will populate
         fonts_dir="",  # M6 will populate

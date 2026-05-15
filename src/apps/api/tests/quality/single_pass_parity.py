@@ -196,7 +196,11 @@ def _load_fixture(name: str) -> dict | None:
 PARITY_TEMPLATE_FIXTURES = [
     "impressing-myself",
     "just-fine",
-    # Heavier; uncomment once short templates are green.
+    # M3: xfade single-pass exercised by the dissolve transitions in this
+    # fixture. Heavier than the M2 set (~30s per encode pair); uncomment
+    # for full parity runs once the M2 set is green against real clips.
+    "dimples-passport",
+    # 6-slot stress fixture; ~60-90s per encode pair.
     # "morocco",
 ]
 

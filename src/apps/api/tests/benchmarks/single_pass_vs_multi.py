@@ -66,7 +66,10 @@ ALLOWED_FIXTURE_KINDS = {"simple", "heavy"}
 BENCH_TEMPLATE_FIXTURES = [
     "impressing-myself",
     "just-fine",
-    # "morocco",  # 24 slots; expensive
+    # M3 heavy fixture — exercises the xfade single-pass path. The "heavy"
+    # gate (<0.85x multi-pass) is what justifies the milestone.
+    "dimples-passport",
+    # "morocco",  # 6 slots; expensive even at hard-cut
 ]
 
 

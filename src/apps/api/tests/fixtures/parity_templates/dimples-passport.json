@@ -1,0 +1,12 @@
+{
+  "name": "dimples-passport",
+  "kind": "heavy",
+  "_note": "M3 fixture — exercises the xfade single-pass path. Production Dimples Passport uses dissolve transitions on a 17-slot recipe; this fixture trims to 4 slots with two dissolve boundaries to keep parity trials fast (~30s wall-clock per pair) while still hitting the concat-then-xfade graph shape.",
+  "slots": [
+    {"position": 1, "target_duration_s": 3.0, "transition_in": "none", "text_overlays": []},
+    {"position": 2, "target_duration_s": 3.0, "transition_in": "dissolve", "text_overlays": []},
+    {"position": 3, "target_duration_s": 3.0, "transition_in": "none", "text_overlays": []},
+    {"position": 4, "target_duration_s": 3.0, "transition_in": "dissolve", "text_overlays": []}
+  ],
+  "interstitials": []
+}

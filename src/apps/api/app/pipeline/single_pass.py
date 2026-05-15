@@ -46,6 +46,10 @@ import structlog
 from app.config import settings
 from app.pipeline.audio_layout import SILENT_AUDIO_INPUT_ARGS
 from app.pipeline.reframe import _build_video_filter, _encoding_args
+from app.pipeline.transitions import (
+    DEFAULT_TRANSITION_DURATION_S,
+    _XFADE_MAP,
+)
 
 log = structlog.get_logger()
 
@@ -207,6 +211,130 @@ def _per_hold_filter_chain(input_idx: int, output_label: str) -> str:
     return f"[{input_idx}:v]format=yuv420p[{output_label}]"
 
 
+def _compute_output_durations(spec: SinglePassSpec) -> list[float]:
+    """Per-input output duration after speed factor / hold time.
+
+    For xfade offset math we need the OUTPUT timeline duration of each
+    segment, not the source duration. Clips at speed_factor=2.0 occupy
+    half their source duration in the output; color holds occupy their
+    hold_s verbatim.
+    """
+    durations: list[float] = []
+    for inp in spec.inputs:
+        if inp.kind == "clip":
+            assert inp.start_s is not None and inp.end_s is not None  # noqa: S101
+            durations.append((inp.end_s - inp.start_s) / inp.speed_factor)
+        else:
+            durations.append(inp.hold_s)
+    return durations
+
+
+def _group_by_concat_runs(transitions: list[str]) -> list[list[int]]:
+    """Group adjacent slot indices into concat sub-batches.
+
+    Each group is a maximal run of slots joined by ``"none"`` transitions
+    (hard-cut). Groups are separated by visual transitions, which become
+    xfade boundaries between the groups in :func:`_build_xfade_chain`.
+
+    Example: ``transitions=["none", "crossfade", "none"]`` (4 slots) →
+    ``[[0, 1], [2, 3]]`` — slots 0+1 concat into the first group, slots 2+3
+    concat into the second, and the crossfade boundary bridges them.
+
+    Why mirror the multi-pass grouping: ``transitions.py:join_with_transitions``
+    rejects ``"none"`` precisely because chaining many low-duration xfade
+    filters caused FFmpeg to drop frames and truncate long outputs to 3-4s
+    on the 17-slot Dimples Passport recipe. Concat-then-xfade keeps the
+    xfade-filter count bounded by the number of *visual* transitions,
+    independent of slot count.
+    """
+    groups: list[list[int]] = [[0]]
+    for i, trans in enumerate(transitions):
+        if trans == "none":
+            groups[-1].append(i + 1)
+        else:
+            groups.append([i + 1])
+    return groups
+
+
+def _build_xfade_chain(
+    slot_labels: list[str],
+    durations: list[float],
+    transitions: list[str],
+) -> tuple[list[str], str]:
+    """Build the concat-then-xfade filter graph fragments.
+
+    Returns ``(fragments, final_output_label)``. The fragments are joined
+    by ``;`` and appended to ``filter_complex``. ``final_output_label`` is
+    always ``"vout"`` so the caller's ``-map [vout]`` works without
+    branching on the chain shape.
+
+    Algorithm mirrors ``transitions._build_xfade_filter`` but operates on
+    per-group durations (each group is a concat of consecutive ``"none"``
+    boundaries) rather than raw per-slot durations.
+    """
+    groups = _group_by_concat_runs(transitions)
+    fragments: list[str] = []
+    group_labels: list[str] = []
+    group_durations: list[float] = []
+
+    # Phase 1: concat each group → labelled stream.
+    for gi, group in enumerate(groups):
+        if len(group) == 1:
+            # No concat needed; reuse the slot label directly.
+            group_labels.append(slot_labels[group[0]])
+            group_durations.append(durations[group[0]])
+        else:
+            inputs_str = "".join(f"[{slot_labels[idx]}]" for idx in group)
+            out_lbl = f"g{gi}"
+            fragments.append(
+                f"{inputs_str}concat=n={len(group)}:v=1:a=0[{out_lbl}]"
+            )
+            group_labels.append(out_lbl)
+            group_durations.append(sum(durations[idx] for idx in group))
+
+    # Phase 2: xfade between groups. The non-"none" transitions in the
+    # caller's list are exactly the visual boundaries between groups; their
+    # order in `transitions` matches the order of the gaps between
+    # consecutive groups in `groups`.
+    visual_transitions = [t for t in transitions if t != "none"]
+    if not visual_transitions:
+        # Pure-"none" inputs route through the M2 concat path; this helper
+        # should not have been called. Raise rather than silently emit a
+        # degenerate filter that callers can't map.
+        raise ValueError(
+            "_build_xfade_chain called with all-'none' transitions; "
+            "use the M2 concat path instead"
+        )
+
+    cumulative_dur = group_durations[0]
+    cumulative_trans = 0.0
+    current_label = group_labels[0]
+
+    for i, trans in enumerate(visual_transitions):
+        # xfade overlap duration is bounded by 30% of the shorter adjacent
+        # group; clip to the default 0.3s. Mirrors
+        # transitions._build_xfade_filter so visual results match multi-pass.
+        max_dur = min(group_durations[i], group_durations[i + 1]) * 0.3
+        trans_dur = min(DEFAULT_TRANSITION_DURATION_S, max_dur)
+        offset = max(0.0, cumulative_dur - cumulative_trans - trans_dur)
+
+        xfade_type = _XFADE_MAP.get(trans, "fade")
+        next_label = group_labels[i + 1]
+        out_lbl = "vout" if i == len(visual_transitions) - 1 else f"xf{i}"
+        fragments.append(
+            f"[{current_label}][{next_label}]"
+            f"xfade=transition={xfade_type}"
+            f":duration={trans_dur:.3f}:offset={offset:.3f}"
+            f"[{out_lbl}]"
+        )
+
+        current_label = out_lbl
+        cumulative_dur += group_durations[i + 1]
+        cumulative_trans += trans_dur
+
+    return fragments, "vout"
+
+
 def build_single_pass_command(
     spec: SinglePassSpec,
     output_path: str,
@@ -257,17 +385,29 @@ def build_single_pass_command(
         else:
             raise ValueError(f"unknown SinglePassInput kind: {inp.kind!r}")
 
-    # ── Concat all slots (hard-cut only — milestone 3 adds xfade) ──────────
-    for trans in spec.transitions:
-        if trans != "none":
-            raise SinglePassUnsupportedError(
-                f"xfade transition {trans!r} lands in milestone 3 — "
-                f"only 'none' (hard-cut) is supported in milestone 2"
-            )
-    concat_inputs = "".join(f"[{lbl}]" for lbl in slot_labels)
-    filter_chains.append(
-        f"{concat_inputs}concat=n={len(slot_labels)}:v=1:a=0[vout]"
-    )
+    # ── Join all slots ─────────────────────────────────────────────────────
+    # Two paths based on transition mix:
+    #   M2 path  (all "none")        → single concat=n=N filter
+    #   M3 path  (any non-"none")    → concat-then-xfade chain
+    #
+    # The M3 path groups consecutive "none" runs into concat sub-batches so
+    # the xfade-filter count is bounded by the number of visual transitions
+    # (not slot count). Chaining many duration=0.001 xfade filters truncated
+    # the 17-slot Dimples Passport output to ~3-4s in multi-pass, which is
+    # why join_with_transitions rejects "none" entirely. We avoid that same
+    # bug class by following the same grouping rule.
+    has_visual_transition = any(t != "none" for t in spec.transitions)
+    if has_visual_transition:
+        durations = _compute_output_durations(spec)
+        xfade_fragments, _ = _build_xfade_chain(
+            slot_labels, durations, spec.transitions
+        )
+        filter_chains.extend(xfade_fragments)
+    else:
+        concat_inputs = "".join(f"[{lbl}]" for lbl in slot_labels)
+        filter_chains.append(
+            f"{concat_inputs}concat=n={len(slot_labels)}:v=1:a=0[vout]"
+        )
 
     # ── Silent audio input (post-video so -ss on clips doesn't apply) ──────
     # _mix_template_audio (stage 7) stream-copies the video and re-mixes audio
