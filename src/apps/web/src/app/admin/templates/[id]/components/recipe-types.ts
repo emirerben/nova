@@ -55,6 +55,20 @@ export interface TextSpan {
   text_size?: TextSize;    // Override overlay-level size
 }
 
+// Normalized bounding box of the burned-in text glyphs in the reference video.
+// Emitted by the template_recipe agent only when sample_text is actually visible
+// on screen. Consumed by the downstream font-identification pipeline (PR2) to
+// crop, embed, and rank registry alternatives. Coordinates are [0,1]; (x,y) is
+// the bbox CENTER, (w,h) is its size. sample_frame_t is seconds relative to the
+// slot start and must fall within [overlay.start_s, overlay.end_s].
+export interface TextBbox {
+  x_norm: number;
+  y_norm: number;
+  w_norm: number;
+  h_norm: number;
+  sample_frame_t: number;
+}
+
 export interface RecipeTextOverlay {
   role: OverlayRole;
   text: string;
@@ -85,6 +99,10 @@ export interface RecipeTextOverlay {
   // typewriter beats. Set via backfill scripts; no editor UI yet.
   subject_template?: string | null;
   subject_chars?: number | null;
+  // Optional bounding box of the burned-in text in the reference video. Present
+  // only when the agent observed visible glyphs (not when sample_text was
+  // inferred from voiceover/vibe). Used by PR2's font-identification step.
+  text_bbox?: TextBbox | null;
 }
 
 export interface RecipeInterstitial {
