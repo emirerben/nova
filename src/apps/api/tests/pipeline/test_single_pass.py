@@ -251,6 +251,118 @@ def test_all_none_transitions_uses_m2_concat_path():
     assert "xfade=" not in fc
 
 
+# ── M6: absolute-timestamp overlays ──────────────────────────────────────────
+
+
+def test_abs_png_overlay_chains_after_concat():
+    """A spec with one abs_png produces: concat → [base], then overlay
+    → [vout]. The base label is the bridge — without it the concat would
+    emit [vout] and the overlay chain would have nowhere to attach."""
+    spec = SinglePassSpec(
+        inputs=[_clip(), _clip()],
+        abs_pngs=[
+            {"png_path": "/tmp/over.png", "start_s": 1.0, "end_s": 2.0},
+        ],
+    )
+    argv = build_single_pass_command(spec, "/tmp/out.mp4")
+    fc = _argv_filter_complex(argv)
+    assert "concat=n=2:v=1:a=0[base]" in fc
+    # Overlay node: previous label is [base], png input idx is 2
+    # (two clip inputs), enable carries the absolute timestamps.
+    assert "[base][2:v]overlay=0:0:enable='between(t,1.000,2.000)'[vout]" in fc
+    # PNG path is a discrete -i input.
+    assert "-i" in argv and "/tmp/over.png" in argv
+
+
+def test_abs_png_input_args_inserted_between_clips_and_silent_audio():
+    """For 2 clips + 1 abs_png: argv has -i clip0, -i clip1, -i png,
+    then the lavfi anullsrc inputs for silent audio. Silent audio is
+    mapped at len(clips) + len(pngs) = 3."""
+    spec = SinglePassSpec(
+        inputs=[_clip(path="/tmp/a.mp4"), _clip(path="/tmp/b.mp4")],
+        abs_pngs=[{"png_path": "/tmp/over.png", "start_s": 0.5, "end_s": 1.5}],
+    )
+    argv = build_single_pass_command(spec, "/tmp/out.mp4")
+    # Silent audio input is the lavfi anullsrc — map argument is 3:a:0
+    map_idx = argv.index("-map", argv.index("-map") + 1) + 1  # second -map
+    assert argv[map_idx] == "3:a:0"
+
+
+def test_abs_ass_overlay_uses_subtitles_filter():
+    """ASS files chain via the subtitles=path:fontsdir=dir filter rather
+    than overlay=, because libass renders the .ass timeline natively.
+    Mirrors _burn_text_overlays at template_orchestrate.py:3236."""
+    spec = SinglePassSpec(
+        inputs=[_clip()],
+        abs_ass_paths=["/tmp/anim.ass"],
+        fonts_dir="/opt/fonts",
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    assert "subtitles='/tmp/anim.ass'" in fc
+    assert "fontsdir='/opt/fonts'" in fc
+    assert "[vout]" in fc
+
+
+def test_abs_png_then_ass_chain_order():
+    """PNGs paint first, ASS files paint on top. Same layering as
+    _burn_text_overlays (PNG loop → ASS loop). Pins the order so libass-
+    animated text doesn't get covered by a later PNG layer."""
+    spec = SinglePassSpec(
+        inputs=[_clip()],
+        abs_pngs=[{"png_path": "/tmp/p.png", "start_s": 0.0, "end_s": 1.0}],
+        abs_ass_paths=["/tmp/a.ass"],
+        fonts_dir="/opt/fonts",
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    png_pos = fc.find("overlay=0:0")
+    ass_pos = fc.find("subtitles=")
+    assert 0 <= png_pos < ass_pos
+
+
+def test_no_overlays_emits_vout_directly_from_concat():
+    """spec without overlays must skip the [base] bridge. Regression
+    guard — if M6 left [base] in place when overlays are empty, the
+    -map [vout] in argv would have no source."""
+    spec = SinglePassSpec(inputs=[_clip(), _clip()])
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    assert "[vout]" in fc
+    assert "[base]" not in fc
+
+
+def test_xfade_plus_overlay_routes_via_base_label():
+    """Combined M3 + M6: xfade chain emits [base] (not [vout]), and the
+    overlay layer consumes [base] to emit [vout]. Catches the integration
+    bug where the final_label kwarg on _build_xfade_chain wasn't
+    threaded through and overlays got applied to nothing."""
+    spec = SinglePassSpec(
+        inputs=[_clip(start=0.0, end=3.0), _clip(start=0.0, end=3.0)],
+        transitions=["crossfade"],
+        abs_pngs=[{"png_path": "/tmp/p.png", "start_s": 1.0, "end_s": 2.0}],
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    # xfade emits [base], not [vout].
+    assert "xfade=transition=fade" in fc
+    assert "[base]" in fc
+    # Overlay chain consumes [base] and emits [vout].
+    assert "[base][2:v]overlay=" in fc
+    assert "[vout]" in fc
+
+
+def test_special_chars_in_ass_path_escaped():
+    """The subtitles filter parses : and ' as option separators on
+    macOS/Linux. Escape them so a path like /private/var/foo:bar/x.ass
+    doesn't truncate the filter and fail with a cryptic libass error."""
+    spec = SinglePassSpec(
+        inputs=[_clip()],
+        abs_ass_paths=["/path:with:colons/file.ass"],
+        fonts_dir="/fonts:dir",
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    # Each ":" inside path/fontsdir must be backslash-escaped.
+    assert "subtitles='/path\\:with\\:colons/file.ass'" in fc
+    assert "fontsdir='/fonts\\:dir'" in fc
+
+
 # ── Test 6: final encode args ────────────────────────────────────────────────
 
 

@@ -69,6 +69,8 @@ BENCH_TEMPLATE_FIXTURES = [
     # M3 heavy fixture — exercises the xfade single-pass path. The "heavy"
     # gate (<0.85x multi-pass) is what justifies the milestone.
     "dimples-passport",
+    # M6 heavy fixture — exercises the absolute-overlay path.
+    "rule-of-thirds",
     # "morocco",  # 6 slots; expensive even at hard-cut
 ]
 

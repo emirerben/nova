@@ -260,13 +260,15 @@ def _build_xfade_chain(
     slot_labels: list[str],
     durations: list[float],
     transitions: list[str],
+    final_label: str = "vout",
 ) -> tuple[list[str], str]:
     """Build the concat-then-xfade filter graph fragments.
 
     Returns ``(fragments, final_output_label)``. The fragments are joined
     by ``;`` and appended to ``filter_complex``. ``final_output_label`` is
-    always ``"vout"`` so the caller's ``-map [vout]`` works without
-    branching on the chain shape.
+    the value passed in ``final_label`` (default ``"vout"``) — M6 callers
+    pass ``"base"`` so the absolute-overlay chain can consume the joined
+    video and produce the actual ``[vout]``.
 
     Algorithm mirrors ``transitions._build_xfade_filter`` but operates on
     per-group durations (each group is a concat of consecutive ``"none"``
@@ -332,6 +334,81 @@ def _build_xfade_chain(
         cumulative_dur += group_durations[i + 1]
         cumulative_trans += trans_dur
 
+    return fragments, final_label
+
+
+def _build_abs_overlay_chain(
+    abs_pngs: list[dict],
+    abs_ass_paths: list[str],
+    fonts_dir: str,
+    base_label: str,
+    png_input_start_idx: int,
+) -> tuple[list[str], str]:
+    """Chain absolute-timestamp PNG overlays + ASS subtitle layers.
+
+    Mirrors ``_burn_text_overlays`` in template_orchestrate.py:3155 so the
+    pixels at every overlay timestamp match multi-pass byte-for-byte (same
+    overlay filter, same ``enable='between(t,...)'`` clamps, same
+    ``subtitles=`` + ``fontsdir=`` for libass).
+
+    Returns ``(fragments, final_label)``. ``final_label`` is the label
+    consumed by the ``-map`` in the caller — ``"vout"`` if any overlays
+    exist, otherwise the unchanged ``base_label`` (caller short-circuits
+    on the empty case so it can route ``[base_label]`` straight to map).
+
+    Args:
+        abs_pngs: list of dicts with ``png_path``, ``start_s``, ``end_s``.
+            Order is preserved; later PNGs paint OVER earlier ones (FFmpeg
+            ``overlay`` filter is destructive on the previous label).
+        abs_ass_paths: ASS file paths applied AFTER the PNG layer. libass
+            absolute timings live inside each Dialogue line; no enable=
+            clamp needed on the filter.
+        fonts_dir: directory containing the font bundle for ``fontsdir=``.
+        base_label: filter graph label flowing into the chain.
+        png_input_start_idx: ffmpeg input index of the first PNG ``-i``
+            argument. PNGs are appended to argv AFTER the clip/hold inputs
+            and BEFORE the silent audio, so the caller computes this as
+            ``len(spec.inputs)`` and the silent audio shifts to
+            ``len(spec.inputs) + len(spec.abs_pngs)``.
+
+    Filter graph shape (2 PNGs + 1 ASS):
+        [base_label][N:v]overlay=0:0:enable=...[png0];
+        [png0][N+1:v]overlay=0:0:enable=...[png1];
+        [png1]subtitles='...':fontsdir='...'[vout]
+
+    The escape on ``:`` and ``'`` mirrors _burn_text_overlays
+    (template_orchestrate.py:3231-3236) — required on macOS/Linux because
+    the subtitles filter parses these as option separators.
+    """
+    if not abs_pngs and not abs_ass_paths:
+        return [], base_label
+
+    total_nodes = len(abs_pngs) + len(abs_ass_paths)
+    fragments: list[str] = []
+    prev = base_label
+    node_count = 0
+
+    for i, cfg in enumerate(abs_pngs):
+        node_count += 1
+        out_lbl = "vout" if node_count == total_nodes else f"png{i}"
+        input_idx = png_input_start_idx + i
+        fragments.append(
+            f"[{prev}][{input_idx}:v]overlay=0:0"
+            f":enable='between(t,{cfg['start_s']:.3f},{cfg['end_s']:.3f})'"
+            f"[{out_lbl}]"
+        )
+        prev = out_lbl
+
+    fonts_escaped = fonts_dir.replace(":", "\\:").replace("'", "\\'")
+    for i, ass_path in enumerate(abs_ass_paths):
+        node_count += 1
+        out_lbl = "vout" if node_count == total_nodes else f"ass{i}"
+        ass_filter_path = ass_path.replace(":", "\\:").replace("'", "\\'")
+        fragments.append(
+            f"[{prev}]subtitles='{ass_filter_path}':fontsdir='{fonts_escaped}'[{out_lbl}]"
+        )
+        prev = out_lbl
+
     return fragments, "vout"
 
 
@@ -386,35 +463,56 @@ def build_single_pass_command(
             raise ValueError(f"unknown SinglePassInput kind: {inp.kind!r}")
 
     # ── Join all slots ─────────────────────────────────────────────────────
-    # Two paths based on transition mix:
-    #   M2 path  (all "none")        → single concat=n=N filter
-    #   M3 path  (any non-"none")    → concat-then-xfade chain
+    # Three paths now:
+    #   M2 path  (all "none", no overlays)    → single concat=n=N → [vout]
+    #   M3 path  (any non-"none" transition)  → concat-then-xfade chain
+    #   M6 path  (absolute overlays exist)    → join emits [base], then
+    #                                           overlay chain produces [vout]
     #
-    # The M3 path groups consecutive "none" runs into concat sub-batches so
-    # the xfade-filter count is bounded by the number of visual transitions
-    # (not slot count). Chaining many duration=0.001 xfade filters truncated
-    # the 17-slot Dimples Passport output to ~3-4s in multi-pass, which is
-    # why join_with_transitions rejects "none" entirely. We avoid that same
-    # bug class by following the same grouping rule.
+    # The concat-grouping rule (consecutive "none" → concat sub-batch)
+    # protects against the multi-pass bug class where long chains of
+    # duration=0.001 xfade filters truncate output (transitions.py:74
+    # spells out the 17-slot Dimples Passport case).
     has_visual_transition = any(t != "none" for t in spec.transitions)
+    has_overlays = bool(spec.abs_pngs or spec.abs_ass_paths)
+    join_out_label = "base" if has_overlays else "vout"
+
     if has_visual_transition:
         durations = _compute_output_durations(spec)
         xfade_fragments, _ = _build_xfade_chain(
-            slot_labels, durations, spec.transitions
+            slot_labels, durations, spec.transitions, final_label=join_out_label
         )
         filter_chains.extend(xfade_fragments)
     else:
         concat_inputs = "".join(f"[{lbl}]" for lbl in slot_labels)
         filter_chains.append(
-            f"{concat_inputs}concat=n={len(slot_labels)}:v=1:a=0[vout]"
+            f"{concat_inputs}concat=n={len(slot_labels)}:v=1:a=0[{join_out_label}]"
         )
+
+    # ── Absolute overlays (M6) ─────────────────────────────────────────────
+    # PNG inputs are appended to argv between the video inputs and the
+    # silent audio so the silent audio index shifts by len(abs_pngs). The
+    # filter graph consumes PNG inputs starting at index len(spec.inputs).
+    png_input_start_idx = len(spec.inputs)
+    for cfg in spec.abs_pngs:
+        input_args += ["-i", cfg["png_path"]]
+
+    if has_overlays:
+        overlay_fragments, _ = _build_abs_overlay_chain(
+            spec.abs_pngs,
+            spec.abs_ass_paths,
+            spec.fonts_dir,
+            base_label=join_out_label,
+            png_input_start_idx=png_input_start_idx,
+        )
+        filter_chains.extend(overlay_fragments)
 
     # ── Silent audio input (post-video so -ss on clips doesn't apply) ──────
     # _mix_template_audio (stage 7) stream-copies the video and re-mixes audio
     # from the template's music track; the silent body track satisfies the
     # AAC/44.1k/stereo contract in audio_layout.BODY_SLOT_AUDIO_OUT_ARGS so
     # the stream-copy is safe.
-    silent_audio_idx = len(spec.inputs)
+    silent_audio_idx = len(spec.inputs) + len(spec.abs_pngs)
     input_args += SILENT_AUDIO_INPUT_ARGS
 
     # ── Final command ──────────────────────────────────────────────────────

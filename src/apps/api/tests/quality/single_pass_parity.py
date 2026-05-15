@@ -200,6 +200,9 @@ PARITY_TEMPLATE_FIXTURES = [
     # fixture. Heavier than the M2 set (~30s per encode pair); uncomment
     # for full parity runs once the M2 set is green against real clips.
     "dimples-passport",
+    # M6: absolute-timestamp text overlays exercised by the fade-in
+    # text_overlays. The PNG and ASS code paths both fire.
+    "rule-of-thirds",
     # 6-slot stress fixture; ~60-90s per encode pair.
     # "morocco",
 ]

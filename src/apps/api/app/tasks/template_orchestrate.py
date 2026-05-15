@@ -1848,10 +1848,81 @@ def _resolve_render_path(force_single_pass: bool) -> str:
     return "single" if (force_single_pass or settings.single_pass_encode_enabled) else "multi"
 
 
+def _generate_single_pass_overlays(
+    *,
+    steps: list,
+    plans: list[SlotPlan],
+    interstitial_map: dict[int, dict],
+    clip_metas: list | None,
+    subject: str,
+    tmpdir: str,
+    is_agentic: bool = False,
+) -> tuple[list[dict], list[str], str]:
+    """Build absolute-overlay PNG configs + ASS paths for single-pass M6.
+
+    Wraps the same _collect_absolute_overlays + generate_text_overlay_png +
+    generate_animated_overlay_ass calls that multi-pass _burn_text_overlays
+    makes, but produces the bare file paths instead of running ffmpeg.
+
+    Returns ``(abs_pngs, abs_ass_paths, fonts_dir)``. ``abs_pngs`` is the
+    list of ``{"png_path", "start_s", "end_s"}`` dicts the filter graph
+    consumes. ``abs_ass_paths`` is the parallel list of generated .ass
+    files for libass-rendered animations. ``fonts_dir`` is the
+    ``fontsdir=`` argument the subtitles filter expects.
+
+    Lives in the orchestrator (not single_pass.py) so the spec stays
+    filesystem-free for unit tests — mocking PIL / libass at the spec
+    boundary is much more expensive than letting the unit tests pass
+    pre-built overlay dicts directly.
+    """
+    from app.pipeline.text_overlay import (  # noqa: PLC0415
+        ASS_ANIMATED_EFFECTS,
+        FONTS_DIR,
+        generate_animated_overlay_ass,
+        generate_text_overlay_png,
+    )
+
+    slot_durations = [p.slot_target_dur for p in plans]
+    overlays = _collect_absolute_overlays(
+        steps,
+        slot_durations,
+        clip_metas,
+        subject,
+        interstitial_map=interstitial_map,
+        is_agentic=is_agentic,
+    )
+    if not overlays:
+        return [], [], ""
+
+    static_overlays = [o for o in overlays if o.get("effect") not in ASS_ANIMATED_EFFECTS]
+    animated_overlays = [o for o in overlays if o.get("effect") in ASS_ANIMATED_EFFECTS]
+
+    # 999.0 + slot_index=99 mirror _burn_text_overlays at line 3191/3201 —
+    # they're sentinel values telling the generators "this is the post-join
+    # absolute pass, not a per-slot pre-burn." Keeping them in sync with
+    # the multi-pass call site is the only way to get byte-identical
+    # PNG/ASS outputs.
+    abs_pngs = (
+        generate_text_overlay_png(static_overlays, 999.0, tmpdir, slot_index=99)
+        if static_overlays
+        else []
+    ) or []
+    abs_ass_paths = (
+        generate_animated_overlay_ass(animated_overlays, 999.0, tmpdir, slot_index=99)
+        if animated_overlays
+        else []
+    ) or []
+    return abs_pngs, abs_ass_paths, FONTS_DIR
+
+
 def _build_single_pass_spec(
     plans: list[SlotPlan],
     interstitial_map: dict[int, dict],
     steps: list,
+    *,
+    abs_pngs: list[dict] | None = None,
+    abs_ass_paths: list[str] | None = None,
+    fonts_dir: str = "",
 ) -> SinglePassSpec:
     """Convert orchestrator plans + interstitials → SinglePassSpec.
 
@@ -1983,9 +2054,9 @@ def _build_single_pass_spec(
     return SinglePassSpec(
         inputs=inputs,
         transitions=transitions,
-        abs_pngs=[],  # M6 will populate
-        abs_ass_paths=[],  # M6 will populate
-        fonts_dir="",  # M6 will populate
+        abs_pngs=abs_pngs or [],
+        abs_ass_paths=abs_ass_paths or [],
+        fonts_dir=fonts_dir,
         output_duration_s=total_dur,
     )
 
@@ -2065,26 +2136,60 @@ def _assemble_clips(
     # If the env flag is set OR force_single_pass=True was passed in, attempt
     # to render the whole template in ONE filter_complex invocation instead of
     # the multi-pass loop below. The single-pass module raises
-    # NotImplementedError for features it doesn't yet support (xfade, curtain-
-    # close, pre-burn PNGs, absolute overlays); on that exception we fall
-    # through to the multi-pass path with a structured warning so engineers
-    # opting in via force_single_pass don't get cryptic failures on complex
-    # templates.
+    # SinglePassUnsupportedError for features it doesn't yet support (curtain-
+    # close, barn-door-open, pre-burn PNGs); on that exception we fall through
+    # to the multi-pass path with a structured warning so engineers opting in
+    # via force_single_pass don't get cryptic failures on complex templates.
     if force_single_pass or settings.single_pass_encode_enabled:
         try:
             _phase_t0_sp = time.monotonic()
-            spec = _build_single_pass_spec(plans, interstitial_map, steps)
+            # M6: collect absolute-timestamp overlays and pre-generate the
+            # PNGs / ASS files BEFORE building the spec, so the spec carries
+            # ready-to-consume file paths and the filter graph can reference
+            # them by absolute timestamps. This mirrors how multi-pass calls
+            # _burn_text_overlays at the post-join stage; single-pass folds
+            # the same overlay set into the one filter_complex invocation.
+            #
+            # The orchestrator-side generation keeps _build_single_pass_spec
+            # filesystem-free, so unit tests don't need to mock PIL / libass.
+            abs_pngs, abs_ass_paths, fonts_dir = _generate_single_pass_overlays(
+                steps=steps,
+                plans=plans,
+                interstitial_map=interstitial_map,
+                clip_metas=clip_metas,
+                subject=subject,
+                tmpdir=tmpdir,
+                is_agentic=is_agentic,
+            )
+            spec = _build_single_pass_spec(
+                plans,
+                interstitial_map,
+                steps,
+                abs_pngs=abs_pngs,
+                abs_ass_paths=abs_ass_paths,
+                fonts_dir=fonts_dir,
+            )
             run_single_pass(spec, output_path)
             if base_output_path:
-                # M2: no abs overlays in single-pass, so base == output. M6
-                # will diverge these when the absolute-overlay layer lands.
-                shutil.copy2(output_path, base_output_path)
+                # M6: base output is the joined video WITHOUT absolute
+                # overlays. When overlays exist, render a second pass with
+                # an overlay-stripped spec so re-rendering with edited
+                # overlays doesn't have to redo the heavy concat/xfade.
+                if abs_pngs or abs_ass_paths:
+                    base_spec = _build_single_pass_spec(
+                        plans, interstitial_map, steps,
+                        abs_pngs=[], abs_ass_paths=[], fonts_dir="",
+                    )
+                    run_single_pass(base_spec, base_output_path)
+                else:
+                    shutil.copy2(output_path, base_output_path)
             _phase_done(
                 "single_pass",
                 _phase_t0_sp,
                 job_id=job_id,
                 slots=len(plans),
                 inputs=len(spec.inputs),
+                abs_overlays=len(abs_pngs) + len(abs_ass_paths),
             )
             return
         except SinglePassUnsupportedError as exc:
