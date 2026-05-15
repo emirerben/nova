@@ -307,7 +307,10 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
 
             file_size = os.path.getsize(output_path)
             duration_s = end_s - start_s
-            expires_at = datetime.now(UTC) + timedelta(days=30)
+            # Matches the GCS lifecycle rule in infra/gcs-lifecycle.json (age=1 day
+            # on dev-user/*). The column is informational today (no sweeper reads
+            # it); keeping it truthful so a future sweeper isn't surprised.
+            expires_at = datetime.now(UTC) + timedelta(days=1)
 
             with _sync_session() as db:
                 clip = db.get(JobClip, uuid.UUID(clip_db_id))

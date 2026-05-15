@@ -71,6 +71,13 @@ Production uses repo-root `Dockerfile` (Python 3.11 + FFmpeg/libheif/libmagic) d
 - Read agents/VIDEO_CONTEXT.md for full video domain context and FFmpeg patterns
 - Read agents/DECISIONS.md for why key choices were made
 
+## Storage retention
+- Per-job GCS objects (`dev-user/*`, `music-jobs/*`) are deleted by a bucket lifecycle rule 24h after upload. Config lives at `infra/gcs-lifecycle.json`; apply once with `gsutil lifecycle set infra/gcs-lifecycle.json gs://$STORAGE_BUCKET` (not part of CI deploy).
+- Curated assets (`music/*` track library, `templates/*` poster/audio) are NOT matched by the rule and persist forever.
+- Signed-URL TTL in `storage.py` is 1 day to match the object lifetime — a 7-day URL pointing at a 1-day object is a lie. Template poster URLs in `routes/templates.py` keep their 7-day TTL because the underlying `templates/*` blobs persist.
+- `JobClip.storage_expires_at` is informational only — no sweeper reads it. Kept truthful (1 day) so a future sweeper isn't surprised.
+- **When auth/login lands:** revisit `infra/gcs-lifecycle.json`. Put authenticated-user content under a new prefix (e.g. `users/{user_id}/`) that the delete rule does NOT match, and grow retention to match whatever the gallery UX promises.
+
 ## ⚠️ Anti-pattern: do NOT use MoviePy / VideoFileClip
 VideoFileClip(path) buffers the entire video into RAM. On a 2GB source file this crashes.
 Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
