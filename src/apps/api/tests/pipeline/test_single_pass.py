@@ -201,6 +201,43 @@ def test_xfade_chain_three_visual_transitions_offsets_accumulate():
     assert "offset=7.400" in fc
 
 
+def test_mixed_xfade_types_in_one_spec():
+    """Saygimdan-shape: same template uses dissolve + whip-pan boundaries.
+    Each gets the correct xfade= type. Catches drift where a global
+    transition type leaks across boundaries instead of being per-pair."""
+    spec = SinglePassSpec(
+        inputs=[
+            _clip(start=0.0, end=3.0),
+            _clip(start=0.0, end=3.0),
+            _clip(start=0.0, end=3.0),
+        ],
+        transitions=["crossfade", "wipe_left"],
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    assert "xfade=transition=fade" in fc
+    assert "xfade=transition=wipeleft" in fc
+
+
+def test_xfade_offset_accounts_for_speed_factor():
+    """A 6-second source clip at speed_factor=2.0 occupies 3.0s of output
+    timeline; xfade offset must use the OUTPUT duration, not the source.
+    For [slot0 speed=2.0 0-6s][slot1 1.0x 0-3s] with crossfade between:
+        output_dur(slot0) = (6-0)/2 = 3.0s
+        offset = 3.0 - 0.3 = 2.700s
+    If the offset math used source duration it would emit 5.700, the
+    xfade would never trigger inside the timeline, and the second clip
+    would hard-cut on top of the first."""
+    spec = SinglePassSpec(
+        inputs=[
+            _clip(start=0.0, end=6.0, speed_factor=2.0),
+            _clip(start=0.0, end=3.0),
+        ],
+        transitions=["crossfade"],
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    assert "offset=2.700" in fc
+
+
 def test_all_none_transitions_uses_m2_concat_path():
     """spec.transitions=[none, none] should not route through xfade chain.
     The M2 single concat=n=N filter is faster and avoids degenerate xfade
