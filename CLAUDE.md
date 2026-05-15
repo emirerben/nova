@@ -92,6 +92,8 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Admin proxy: Next.js `/api/admin/[...path]` route proxies to Fly.io API, keeping the admin token server-side only (never exposed to browser)
 - Clip count: `slot_count` returned by `/music-tracks` tells the frontend exactly how many clips to collect; `POST /music-jobs` validates clip count matches before enqueuing
 - Beat-sync guard: tracks with 0 detected beats are marked `failed` at analysis time; `POST /music-jobs` rejects non-ready or non-published tracks
+- Auto-music classification: after `_run_gemini_audio_analysis` succeeds, `analyze_music_track_task` reuses the same Gemini `file_ref` to run `song_classifier` (`nova.audio.song_classifier`) and persists a locked-schema `MusicLabels` blob on `MusicTrack.ai_labels` + `label_version` (schema: `app/agents/_schemas/music_labels.py`, `CURRENT_LABEL_VERSION = 2026-05-15`). Classifier failure is non-fatal — recipe still saves, the track just won't be visible to `music_matcher` until backfill (`scripts/backfill_song_classifier.py`)
+- Auto-music matching: `music_matcher` (`nova.audio.music_matcher`, Gemini Flash, text-only) ranks the full published-track library against a clip set using each track's Phase-1 `MusicLabels` — orchestrator (Phase 3, not yet shipped) will take the top-K as variants
 
 ## Template pipeline
 - Interstitials: `app/pipeline/interstitials.py` detects curtain-close vs fade-to-black via FFmpeg luminance band analysis, renders color holds and `geq` pixel-expression curtain-close animations (drawbox cannot animate bar height over time)
@@ -123,7 +125,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - GEMINI_API_KEY — required for clip analysis (music jobs) and template analysis
 
 ## Agent evals
-- Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers `template_recipe`, `clip_metadata`, `creative_direction` (Big 3). Two layers: deterministic structural assertions + Claude-Sonnet LLM-as-judge.
+- Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, and `audio_template` agents. Two layers: deterministic structural assertions + Claude-Sonnet LLM-as-judge.
 - Default: `cd src/apps/api && pytest tests/evals/ -v` — structural-only, replay mode, no network. Runs in CI.
 - With judge: `... --with-judge` (needs `ANTHROPIC_API_KEY`).
 - Live Gemini: `NOVA_EVAL_MODE=live ... --eval-mode=live --with-judge` (needs both keys; ~$2-5/run).

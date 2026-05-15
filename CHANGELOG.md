@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.20.2] - 2026-05-15
+
+### Changed
+- **Docs refresh — Big 3 → Big 5 after auto-music Phase 0/1/2.** v0.4.16.0 (`MusicLabels` schema), v0.4.17.0 (`song_classifier`), and v0.4.19.0 (`music_matcher`) added two new eval-covered agents but left the docs naming the agent set stale. `CLAUDE.md` `## Agent evals` now names the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) and the in-pipeline trio (`transcript`, `platform_copy`, `audio_template`) instead of the old "Big 3"; `## Music beat-sync pipeline` gains two bullets describing the `song_classifier` step inside `analyze_music_track_task` (writes `MusicTrack.ai_labels` + `label_version`, non-fatal, has a backfill script) and the not-yet-orchestrated `music_matcher` ranking step. `src/apps/api/tests/evals/README.md` updates the lead paragraph to note the auto-music additions, adds `nova.audio.song_classifier` and `nova.audio.music_matcher` rows to the Agents-covered table, and corrects the "six agents under test" footnote to the eight that are now actually under test. Docs-only PR.
+
 ## [0.4.20.1] - 2026-05-15
 
 ### Fixed

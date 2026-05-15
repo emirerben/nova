@@ -1,6 +1,6 @@
 # Agent evals
 
-Per-agent quality eval harness. Phase 1 covers the Big 3 (`template_recipe`, `clip_metadata`, `creative_direction`); Phase 2 extends to the three additional in-pipeline agents (`transcript`, `platform_copy`, `audio_template`).
+Per-agent quality eval harness. Phase 1 covers the original Big 3 (`template_recipe`, `clip_metadata`, `creative_direction`); Phase 2 extends to the three additional in-pipeline agents (`transcript`, `platform_copy`, `audio_template`); the auto-music work then adds `song_classifier` (Phase 1 of auto-music) and `music_matcher` (Phase 2 of auto-music), taking the eval-covered Big set to 5.
 
 The other Phase 2 agent classes that exist in `app/agents/` (`text_designer`, `transition_picker`, `clip_router`, `shot_ranker`) are not yet wired into the pipeline — their evals will land alongside the PR that wires each into the runtime.
 
@@ -42,6 +42,8 @@ pytest tests/evals/test_audio_template_evals.py -v --with-judge
 | `nova.audio.transcript` | ✓ | `rubrics/transcript.md` | exported | `Job.transcript` |
 | `nova.compose.platform_copy` | ✓ | `rubrics/platform_copy.md` | exported | `JobClip.platform_copy` |
 | `nova.audio.template_recipe` (audio_template) | ✓ | `rubrics/audio_template.md` | exported | `MusicTrack.recipe_cached` |
+| `nova.audio.song_classifier` | ✓ | `rubrics/song_classifier.md` | exported + hand-authored golden | `MusicTrack.ai_labels` |
+| `nova.audio.music_matcher` | ✓ | `rubrics/music_matcher.md` | hand-authored golden only (not persisted) | — |
 
 ## Adding fixtures
 
@@ -144,6 +146,6 @@ The estimate is intentionally pessimistic: input tokens ≈ chars/3 of (input pa
 
 - `tests/quality/eval_scoring.py` — the original recall@3 launch gate for hook scoring.
 - `app/agents/_runtime.py` — runtime that this harness relies on (`ModelClient`, `Agent`, `run_with_shadow`).
-- `app/agents/{template_recipe,clip_metadata,creative_direction,transcript,platform_copy,audio_template}.py` — the six agents under test.
+- `app/agents/{template_recipe,clip_metadata,creative_direction,transcript,platform_copy,audio_template,song_classifier,music_matcher}.py` — the eight agents under test.
 - `scripts/export_eval_fixtures.py` — DB → fixture exporter.
 - `scripts/reanalyze_underbaked_templates.py` — one-off to re-run two-pass analysis on templates with under-baked `creative_direction`.
