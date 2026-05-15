@@ -388,6 +388,102 @@ def test_no_dual_output_when_base_path_set_but_no_overlays():
     assert "/tmp/base.mp4" not in argv
 
 
+def test_dual_output_filter_graph_forks_base_via_split():
+    """Regression: a named filter pad can be consumed exactly once. The
+    dual-output path must fork [base_pre] via a `split` filter so that
+    `-map [base]` and the overlay chain can both source from it. Without
+    the split, ffmpeg fails with: "Output with label 'base' does not exist
+    in any defined filter graph, or was already used elsewhere." This test
+    pins the split into argv structurally — no future refactor can drop it
+    silently."""
+    spec = SinglePassSpec(
+        inputs=[_clip(), _clip()],
+        abs_pngs=[{"png_path": "/tmp/p.png", "start_s": 0.0, "end_s": 1.0}],
+    )
+    fc = _argv_filter_complex(build_single_pass_command(
+        spec, "/tmp/out.mp4", base_output_path="/tmp/base.mp4",
+    ))
+    # Join goes to [base_pre], split forks into [base] and [base_for_overlay].
+    assert "[base_pre]" in fc
+    assert "[base_pre]split=2[base][base_for_overlay]" in fc
+    # Overlay chain consumes the forked pad, not [base] (which is the
+    # final-map pad — consuming it here would re-trigger the bug).
+    assert "[base_for_overlay][2:v]overlay=" in fc
+    assert "[base][2:v]overlay=" not in fc
+
+
+def test_dual_output_filter_graph_forks_via_split_with_xfade():
+    """Symmetry test: the split must apply on both join paths — the
+    plain concat path AND the xfade chain path. Forgetting xfade was the
+    original M3+M6 integration bug class (final_label not threaded)."""
+    spec = SinglePassSpec(
+        inputs=[_clip(start=0.0, end=3.0), _clip(start=0.0, end=3.0)],
+        transitions=["crossfade"],
+        abs_pngs=[{"png_path": "/tmp/p.png", "start_s": 1.0, "end_s": 2.0}],
+    )
+    fc = _argv_filter_complex(build_single_pass_command(
+        spec, "/tmp/out.mp4", base_output_path="/tmp/base.mp4",
+    ))
+    assert "xfade=transition=fade" in fc
+    # xfade emits [base_pre] in the dual-output mode.
+    assert "[base_pre]" in fc
+    assert "[base_pre]split=2[base][base_for_overlay]" in fc
+    assert "[base_for_overlay][2:v]overlay=" in fc
+
+
+def test_dual_output_executes_real_ffmpeg(tmp_path):
+    """End-to-end: actually run ffmpeg with two clips + one PNG overlay +
+    base_output_path. Both output files must materialize non-empty. This
+    catches the exact production failure where argv `looked right` to the
+    string-level tests but ffmpeg rejected the filter graph with
+    "Output with label 'base' ... already used elsewhere." The earlier
+    structural tests pin the cause (missing split); this pins the
+    contract (ffmpeg accepts the command).
+    """
+    import subprocess  # noqa: PLC0415
+
+    from PIL import Image  # noqa: PLC0415
+
+    from app.pipeline.single_pass import run_single_pass  # noqa: PLC0415
+
+    clip_a = tmp_path / "a.mp4"
+    clip_b = tmp_path / "b.mp4"
+    png = tmp_path / "p.png"
+    out_full = tmp_path / "out.mp4"
+    out_base = tmp_path / "base.mp4"
+
+    # Two tiny 1080x1920 clips, 0.5s each, distinct colors. lavfi means no
+    # source files needed. yuv420p+aac to match SinglePassInput defaults
+    # (color_space/color_range/colorspace are applied per-clip).
+    for path, color in ((clip_a, "red"), (clip_b, "blue")):
+        subprocess.run([
+            "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", f"color=c={color}:s=1080x1920:r=30:d=0.5",
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100:d=0.5",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(path),
+        ], check=True, capture_output=True, timeout=20)
+
+    # 1x1 transparent PNG so the overlay chain has something to apply
+    # without changing the visible output.
+    Image.new("RGBA", (1, 1), (0, 0, 0, 0)).save(png)
+
+    spec = SinglePassSpec(
+        inputs=[
+            _clip(path=str(clip_a), start=0.0, end=0.4),
+            _clip(path=str(clip_b), start=0.0, end=0.4),
+        ],
+        abs_pngs=[{"png_path": str(png), "start_s": 0.0, "end_s": 0.3}],
+    )
+
+    run_single_pass(spec, str(out_full), base_output_path=str(out_base))
+
+    # Both files exist and have content — ffmpeg accepted the dual-output
+    # filter graph and wrote two encodes.
+    assert out_full.exists() and out_full.stat().st_size > 0
+    assert out_base.exists() and out_base.stat().st_size > 0
+
+
 def test_special_chars_in_ass_path_escaped():
     """The subtitles filter parses : and ' as option separators on
     macOS/Linux. Escape them so a path like /private/var/foo:bar/x.ass

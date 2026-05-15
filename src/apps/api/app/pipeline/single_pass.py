@@ -505,11 +505,15 @@ def build_single_pass_command(
             raise ValueError(f"unknown SinglePassInput kind: {inp.kind!r}")
 
     # ── Join all slots ─────────────────────────────────────────────────────
-    # Three paths now:
+    # Four paths now:
     #   M2 path  (all "none", no overlays)    → single concat=n=N → [vout]
     #   M3 path  (any non-"none" transition)  → concat-then-xfade chain
-    #   M6 path  (absolute overlays exist)    → join emits [base], then
-    #                                           overlay chain produces [vout]
+    #   M6 path  (overlays, single output)    → join emits [base], overlay
+    #                                           chain consumes [base] → [vout]
+    #   M6 dual  (overlays + base_output_path)→ join emits [base_pre],
+    #                                           split forks into [base]
+    #                                           (final -map) + [base_for_overlay]
+    #                                           (consumed by overlay chain → [vout])
     #
     # The concat-grouping rule (consecutive "none" → concat sub-batch)
     # protects against the multi-pass bug class where long chains of
@@ -517,7 +521,21 @@ def build_single_pass_command(
     # spells out the 17-slot Dimples Passport case).
     has_visual_transition = any(t != "none" for t in spec.transitions)
     has_overlays = bool(spec.abs_pngs or spec.abs_ass_paths)
-    join_out_label = "base" if has_overlays else "vout"
+    # Dual-output (one ffmpeg, two encodes): -map [base] AND -map [vout].
+    # The overlay chain consumes its base_label as filter input, which would
+    # leave [base] unmappable as a final output. A `split` filter forks the
+    # joined stream into two pads — one for the final -map [base], one for
+    # the overlay chain to consume.
+    emit_dual_output = bool(base_output_path) and has_overlays
+    if emit_dual_output:
+        join_out_label = "base_pre"
+        overlay_input_label = "base_for_overlay"
+    elif has_overlays:
+        join_out_label = "base"
+        overlay_input_label = "base"
+    else:
+        join_out_label = "vout"
+        overlay_input_label = None  # no overlay chain runs
 
     if has_visual_transition:
         durations = _compute_output_durations(spec)
@@ -530,6 +548,11 @@ def build_single_pass_command(
         filter_chains.append(
             f"{concat_inputs}concat=n={len(slot_labels)}:v=1:a=0[{join_out_label}]"
         )
+
+    # Dual-output split: fork [base_pre] so [base] survives as a free output
+    # pad while the overlay chain consumes [base_for_overlay].
+    if emit_dual_output:
+        filter_chains.append("[base_pre]split=2[base][base_for_overlay]")
 
     # ── Absolute overlays (M6) ─────────────────────────────────────────────
     # PNG inputs are appended to argv between the video inputs and the
@@ -544,7 +567,7 @@ def build_single_pass_command(
             spec.abs_pngs,
             spec.abs_ass_paths,
             spec.fonts_dir,
-            base_label=join_out_label,
+            base_label=overlay_input_label,
             png_input_start_idx=png_input_start_idx,
         )
         filter_chains.extend(overlay_fragments)
