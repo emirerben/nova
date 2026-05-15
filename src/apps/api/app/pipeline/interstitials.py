@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 
 import structlog
 
@@ -219,6 +220,7 @@ def apply_curtain_close_tail(
         anim_start=round(anim_start, 3),
         animate_s=animate_s,
     )
+    _t0 = time.monotonic()
 
     work_dir = tempfile.mkdtemp(prefix="curtain_")
 
@@ -277,6 +279,7 @@ def apply_curtain_close_tail(
         "curtain_close_tail_done",
         output=output_path,
         bar_frames=n_bar_frames,
+        elapsed_ms=int((time.monotonic() - _t0) * 1000),
     )
 
 

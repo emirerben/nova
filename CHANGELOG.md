@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.18.0] - 2026-05-15
+
+### Added
+- **Fast-preview toggle on the admin template test tab.** Cuts a 5-clip cold-cache test run from ~3 min to ~30-60s by gating two expensive stages behind a `preview_mode` flag set only by the admin endpoint. When on, the orchestrator (a) drops curtain-close interstitials before assemble and (b) skips `generate_copy` entirely (returns an empty `PlatformCopy` with `copy_status="skipped_preview_mode"`). Threaded through both `_run_template_job` (multi-video) and `_run_single_video_job` (single-video) so it works on every template kind. Final-output encoder presets are untouched — pixel quality of the rendered video matches production. Toggle off in the UI to run the full pipeline. Default ON for the admin test tab; default OFF on the backend API so external/non-admin callers see zero behavior change.
+- **Per-stage timing diagnostics in the admin test tab.** New `PhaseLogPanel` renders `job.phase_log` as a live table — top-level phases with elapsed times, sub-phases (per-clip Gemini upload + analyze) indented underneath. Surfaces *which* stage a long-running job is stuck in (e.g. "analyze_clips at 8 min and still going") instead of a frozen-looking spinner. Backed by a new `record_sub_phase()` helper in `app/services/job_phases.py` that uses Postgres' atomic JSONB `||` operator so concurrent worker threads can append without the read-modify-write race that `record_phase` has. Sub-phase recording is gated on `preview_mode` so prod jobs' `phase_log` stays byte-for-byte identical to before.
+
+### Fixed
+- **Admin test-tab "polling timed out" message was misleading.** `useJobPoller`'s 10-min default timeout was firing well before the Celery worker's 29-min soft limit, so admins saw "The worker may be down" while the job was still grinding away. Fix: TestTab now passes `timeoutMs: 30 * 60 * 1000` to match the Celery hard limit, and the timeout error string surfaces the last-known `current_phase` so admins know which stage hung. Public template-jobs result page is unaffected (it uses `useJobStream` SSE, not this hook).
+
 ## [0.4.17.0] - 2026-05-15
 
 ### Added

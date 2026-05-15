@@ -51,6 +51,7 @@ export function useJobPoller<T>(
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef(0);
   const activeJobIdRef = useRef<string | null>(null);
+  const latestDataRef = useRef<T | null>(null);
 
   const stopPolling = useCallback(() => {
     if (intervalRef.current) {
@@ -64,6 +65,7 @@ export function useJobPoller<T>(
     (id: string) => {
       stopPolling();
       activeJobIdRef.current = id;
+      latestDataRef.current = null;
       setData(null);
       setError(null);
       setPolling(true);
@@ -72,12 +74,25 @@ export function useJobPoller<T>(
       async function poll() {
         if (Date.now() - startTimeRef.current > timeoutMs) {
           stopPolling();
-          setError("Polling timed out. The worker may be down.");
+          const minutes = Math.round(timeoutMs / 60000);
+          const latest = latestDataRef.current as
+            | { current_phase?: unknown }
+            | null;
+          const phase =
+            latest && typeof latest.current_phase === "string"
+              ? latest.current_phase
+              : null;
+          setError(
+            phase
+              ? `Polling stopped after ${minutes} min — last phase: ${phase}. Worker may still be running; check logs.`
+              : `Polling stopped after ${minutes} min. Worker may still be running; check logs.`,
+          );
           onTimeout?.();
           return;
         }
         try {
           const result = await fetchStatus(id);
+          latestDataRef.current = result;
           setData(result);
           if (isTerminal(result)) {
             stopPolling();

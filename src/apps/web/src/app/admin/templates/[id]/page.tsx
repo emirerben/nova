@@ -29,6 +29,11 @@ import {
 } from "@/lib/api";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { useJobPoller } from "@/hooks/useJobPoller";
+import {
+  formatElapsedMs,
+  humanisePhase,
+  splitPhaseLog,
+} from "@/lib/template-job-phases";
 import { EditorTab } from "./components/EditorTab";
 import { MusicTab } from "./components/MusicTab";
 
@@ -491,6 +496,11 @@ function TestTab({
   // substitution end-to-end without going through the public flow. Empty
   // string sends no subject and the seed placeholder renders verbatim.
   const [subject, setSubject] = useState("");
+  // Fast preview is the admin-test-tab default: orchestrator skips
+  // curtain-close interstitials and generate_copy. Final-output encoder
+  // policy is untouched, so pixel quality of the rendered video matches
+  // production. Toggle off to test the exact user-facing render.
+  const [previewMode, setPreviewMode] = useState(true);
   // Recipe slot summary — drives slot-bound upload for mixed-media templates.
   const [recipeSlots, setRecipeSlots] = useState<Array<{
     position: number;
@@ -548,10 +558,16 @@ function TestTab({
     },
   });
 
-  // Job poller for the test job
+  // Job poller for the test job.
+  // timeoutMs matches the Celery hard limit on orchestrate_template_job
+  // (1800s in template_orchestrate.py:417). Default useJobPoller timeout is 10
+  // min, which gave up well before the worker did and surfaced a misleading
+  // "worker may be down" error on long jobs.
   const poller = useJobPoller<TemplateJobStatusResponse>(testJobId, {
     fetchStatus: getTemplateJobStatus,
     isTerminal: (d) => TERMINAL_STATUSES.has(d.status),
+    timeoutMs: 30 * 60 * 1000,
+    intervalMs: 2000,
   });
 
   // Rerun: rerender with updated recipe (no Gemini needed)
@@ -641,6 +657,7 @@ function TestTab({
       const res = await adminCreateTestJob(template.id, {
         clip_gcs_paths: orderedPaths,
         ...(subject.trim() ? { subject: subject.trim() } : {}),
+        preview_mode: previewMode,
       });
       setTestJobId(res.job_id);
     } catch (err) {
@@ -648,7 +665,14 @@ function TestTab({
     } finally {
       setCreating(false);
     }
-  }, [template.id, upload.successfulPaths, faceUpload.successfulPaths, hasIntroSlot]);
+  }, [
+    template.id,
+    upload.successfulPaths,
+    faceUpload.successfulPaths,
+    hasIntroSlot,
+    previewMode,
+    subject,
+  ]);
 
   return (
     <div className="space-y-6">
@@ -839,6 +863,23 @@ function TestTab({
           />
         </div>
 
+        {/* Fast preview toggle — default ON for the admin test tab. */}
+        <label className="flex items-center gap-2 text-xs text-zinc-300 select-none">
+          <input
+            type="checkbox"
+            checked={previewMode}
+            onChange={(e) => setPreviewMode(e.target.checked)}
+            className="accent-blue-500"
+          />
+          <span>
+            Fast preview
+            <span className="text-zinc-500">
+              {" "}— skips curtain-close + copy generation. Pixel quality is
+              unchanged; toggle off to render the full production pipeline.
+            </span>
+          </span>
+        </label>
+
         {/* Create test job button */}
         <div className="flex items-center gap-3">
           <button
@@ -887,6 +928,12 @@ function TestTab({
               </span>
             </div>
           )}
+          {poller.data && (
+            <PhaseLogPanel
+              phaseLog={poller.data.phase_log}
+              currentPhase={poller.data.current_phase}
+            />
+          )}
           {poller.error && <p className="text-red-400 text-sm">{poller.error}</p>}
           {poller.data?.status === "template_ready" && poller.data.assembly_plan?.output_url && (
             <EvalComparison
@@ -915,6 +962,79 @@ function TestTab({
         </div>
       )}
     </div>
+  );
+}
+
+// ── Phase Log Panel ────────────────────────────────────────────────────────────
+//
+// Live per-stage timing for the active test job. Reads phase_log from the
+// poller. Top-level phases render as rows with their elapsed time; sub-phases
+// (e.g. per-clip gemini_upload inside analyze_clips) render indented underneath.
+// Surfaces *which* phase is currently running so a worker that's busy in
+// (say) analyze_clips for 8 minutes is visible at a glance instead of looking
+// like a frozen page.
+
+function PhaseLogPanel({
+  phaseLog,
+  currentPhase,
+}: {
+  phaseLog: TemplateJobStatusResponse["phase_log"];
+  currentPhase: TemplateJobStatusResponse["current_phase"];
+}) {
+  const entries = phaseLog ?? [];
+  if (entries.length === 0 && !currentPhase) return null;
+
+  const { topLevel, subPhases } = splitPhaseLog(entries);
+  const completedNames = new Set(topLevel.map((p) => p.name));
+  const showLive = currentPhase && !completedNames.has(currentPhase);
+
+  return (
+    <details className="bg-zinc-900/60 border border-zinc-800 rounded p-3" open>
+      <summary className="cursor-pointer text-xs font-medium text-zinc-300">
+        Pipeline phases ({topLevel.length}{showLive ? "+1 live" : ""})
+      </summary>
+      <ul className="mt-2 space-y-1 text-xs font-mono">
+        {topLevel.map((p, i) => (
+          <li key={`${p.name}-${i}`} className="space-y-1">
+            <div className="flex justify-between text-zinc-200">
+              <span>{humanisePhase(p.name)}</span>
+              <span className="text-zinc-500">{formatElapsedMs(p.elapsed_ms)}</span>
+            </div>
+            {(subPhases[p.name] ?? []).length > 0 && (
+              <ul className="ml-4 space-y-0.5 text-zinc-400">
+                {subPhases[p.name].map((s, j) => {
+                  const clipIdx = s.detail?.clip_idx;
+                  const clipPath = s.detail?.clip_path;
+                  const label =
+                    typeof clipIdx === "number"
+                      ? `${s.name} · clip ${clipIdx}${
+                          typeof clipPath === "string" ? ` (${clipPath})` : ""
+                        }`
+                      : s.name;
+                  return (
+                    <li key={`${p.name}-sub-${j}`} className="flex justify-between">
+                      <span className="truncate">{label}</span>
+                      <span className="text-zinc-600 ml-2 shrink-0">
+                        {formatElapsedMs(s.elapsed_ms)}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </li>
+        ))}
+        {showLive && (
+          <li className="flex justify-between text-amber-300">
+            <span>
+              <span className="inline-block w-2 h-2 mr-2 bg-amber-400 rounded-full animate-pulse" />
+              {humanisePhase(currentPhase ?? null)}
+            </span>
+            <span className="text-zinc-500">running…</span>
+          </li>
+        )}
+      </ul>
+    </details>
   );
 }
 

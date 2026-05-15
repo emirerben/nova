@@ -141,12 +141,20 @@ export type JobFailureReason =
 
 /** One completed pipeline phase. Appended to TemplateJobStatusResponse.phase_log
  *  by the worker. The frontend rolls these into a progress bar so the user
- *  sees motion during the multi-second render. */
+ *  sees motion during the multi-second render.
+ *
+ *  Sub-phases (e.g. per-clip gemini_upload timings inside analyze_clips) are
+ *  recorded as entries with a `parent` field set to the parent phase name.
+ *  Entries without `parent` are top-level phases. */
 export interface PhaseLogEntry {
   name: string;
   elapsed_ms: number | null;
   t_offset_ms: number | null;
   ts: string;
+  /** Parent phase name when this entry is a sub-phase (e.g. "analyze_clips"). */
+  parent?: string | null;
+  /** Free-form detail map (e.g. {clip_idx, clip_path}). */
+  detail?: Record<string, unknown> | null;
 }
 
 export interface TemplateJobStatusResponse {

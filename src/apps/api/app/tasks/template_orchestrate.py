@@ -77,6 +77,7 @@ from app.services.job_phases import (
     mark_finished,
     mark_started,
     record_phase,
+    record_sub_phase,
 )
 from app.services.template_poster import (
     PosterExtractionError,
@@ -536,6 +537,10 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         clip_paths_gcs = all_candidates.get("clip_paths", [])
         user_subject = _resolve_user_subject(all_candidates)
         selected_platforms = job.selected_platforms or ["tiktok", "instagram", "youtube"]
+        # Admin test-tab fast preview. Skips visually-expensive interstitials
+        # (curtain-close) and the copy-generation LLM call. Set by admin.py's
+        # create_test_job from TestJobRequest.preview_mode. Default False.
+        preview_mode = bool(all_candidates.get("preview_mode", False))
 
     if not clip_paths_gcs:
         raise ValueError("No clip paths found in job")
@@ -594,6 +599,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             voiceover_gcs_path=voiceover_gcs_path,
             user_subject=user_subject,
             selected_platforms=selected_platforms,
+            preview_mode=preview_mode,
         )
         return
 
@@ -654,6 +660,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
                 local_clip_paths,
                 filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
                 job_id=job_id,
+                record_sub_phases=preview_mode,
             )
 
             # Threshold check: >50% failure → fatal
@@ -812,6 +819,24 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             clip_id_to_local,
             probe_map,
         )
+        # Drop curtain-close interstitials under preview_mode. They survive
+        # the slot transition (a fade-to-black hold still plays) but skip the
+        # PNG-overlay re-encode on the slot tail, which is one of the longest
+        # serial steps inside assemble on a cold worker.
+        assemble_interstitials = recipe.interstitials
+        if preview_mode and assemble_interstitials:
+            filtered = [
+                i for i in assemble_interstitials
+                if (i or {}).get("type") != "curtain-close"
+            ]
+            if len(filtered) != len(assemble_interstitials):
+                log.info(
+                    "interstitials_curtain_close_skipped_preview",
+                    job_id=job_id,
+                    dropped=len(assemble_interstitials) - len(filtered),
+                )
+                assemble_interstitials = filtered
+
         _assemble_clips(
             assembly_plan.steps,
             clip_id_to_local,
@@ -823,7 +848,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             global_color_grade=recipe.color_grade,
             job_id=job_id,
             user_subject=user_subject,
-            interstitials=recipe.interstitials,
+            interstitials=assemble_interstitials,
             base_output_path=base_path,
             output_fit=getattr(recipe, "output_fit", None) or "crop",
             force_single_pass=effective_single_pass,
@@ -858,19 +883,35 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         )
         _phase_t0 = time.monotonic()
 
-        # [7] Generate copy (with template tone)
-        hook_text = _extract_hook_text(clip_metas, assembly_plan.steps)
-        transcript_excerpt = _extract_transcript(clip_metas, assembly_plan.steps)
-        from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
+        # [7] Generate copy (with template tone) — skipped under preview_mode
+        # since the admin test tab doesn't render copy and the call adds 5-15s.
+        if preview_mode:
+            from app.pipeline.agents.copy_writer import (  # noqa: PLC0415
+                InstagramCopy,
+                PlatformCopy,
+                TikTokCopy,
+                YouTubeCopy,
+            )
 
-        platform_copy, copy_status = generate_copy(
-            hook_text=hook_text,
-            transcript_excerpt=transcript_excerpt,
-            platforms=selected_platforms,
-            has_transcript=bool(transcript_excerpt),
-            template_tone=recipe.copy_tone,
-            job_id=job_id,
-        )
+            platform_copy = PlatformCopy(
+                tiktok=TikTokCopy(hook="", caption="", hashtags=[]),
+                instagram=InstagramCopy(hook="", caption="", hashtags=[]),
+                youtube=YouTubeCopy(title="", description="", tags=[]),
+            )
+            copy_status = "skipped_preview_mode"
+            log.info("copy_generation_skipped_preview", job_id=job_id)
+        else:
+            hook_text = _extract_hook_text(clip_metas, assembly_plan.steps)
+            transcript_excerpt = _extract_transcript(clip_metas, assembly_plan.steps)
+            from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
+            platform_copy, copy_status = generate_copy(
+                hook_text=hook_text,
+                transcript_excerpt=transcript_excerpt,
+                platforms=selected_platforms,
+                has_transcript=bool(transcript_excerpt),
+                template_tone=recipe.copy_tone,
+                job_id=job_id,
+            )
 
         record_phase(
             job_id,
@@ -1342,13 +1383,37 @@ def _probe_and_upload_concurrent(
     return probe_map, file_refs
 
 
-def _upload_clips_parallel(local_paths: list[str]) -> list:
-    """Upload all clips to Gemini File API in parallel. Returns file refs in order."""
+def _upload_clips_parallel(
+    local_paths: list[str],
+    *,
+    job_id: str | None = None,
+    record_sub_phases: bool = False,
+) -> list:
+    """Upload all clips to Gemini File API in parallel. Returns file refs in order.
+
+    When record_sub_phases is true, each clip's upload+ACTIVE-poll wall time is
+    appended to the job's phase_log as a sub_phase under analyze_clips so the
+    admin test-tab UI can surface "stuck on clip N" while the job is still
+    running. Off by default to keep prod jobs' phase_log untouched — the
+    admin test endpoint sets it via the preview_mode flag.
+    """
     results: dict[int, object] = {}
 
     def _upload_one(idx_path: tuple[int, str]) -> tuple[int, object]:
         idx, path = idx_path
+        t0 = time.monotonic()
         ref = gemini_upload_and_wait(path)
+        if record_sub_phases and job_id is not None:
+            record_sub_phase(
+                job_id,
+                PHASE_ANALYZE_CLIPS,
+                "gemini_upload",
+                elapsed_ms=int((time.monotonic() - t0) * 1000),
+                detail={
+                    "clip_idx": idx,
+                    "clip_path": os.path.basename(path),
+                },
+            )
         return idx, ref
 
     with ThreadPoolExecutor(
@@ -1367,6 +1432,7 @@ def _analyze_clips_with_cache(
     filter_hint: str = "",
     *,
     job_id: str | None = None,
+    record_sub_phases: bool = False,
 ) -> tuple[list[ClipMeta], list[ClipMeta | None], list, dict, int]:
     """Hash → cache lookup → concurrent (probe + upload misses) → analyze.
 
@@ -1439,7 +1505,12 @@ def _analyze_clips_with_cache(
     miss_paths = [local_paths[i] for i in miss_indices]
     with ThreadPoolExecutor(max_workers=2) as pool:
         probe_future = pool.submit(_probe_clips, local_paths)
-        upload_future = pool.submit(_upload_clips_parallel, miss_paths)
+        upload_future = pool.submit(
+            _upload_clips_parallel,
+            miss_paths,
+            job_id=job_id,
+            record_sub_phases=record_sub_phases,
+        )
         probe_map = probe_future.result()
         miss_refs = upload_future.result()
     for orig_idx, ref in zip(miss_indices, miss_refs):
@@ -1451,6 +1522,7 @@ def _analyze_clips_with_cache(
         probe_map,
         filter_hint,
         job_id=job_id,
+        record_sub_phases=record_sub_phases,
     )
 
     # Re-align analyzed metas back to their original indices.
@@ -1481,6 +1553,7 @@ def _analyze_clips_parallel(
     filter_hint: str = "",
     *,
     job_id: str | None = None,
+    record_sub_phases: bool = False,
 ) -> tuple[list[ClipMeta], int]:
     """Analyze all clips with Gemini in parallel.
 
@@ -1496,8 +1569,20 @@ def _analyze_clips_parallel(
 
     def _analyze_one(args: tuple[int, object, str]) -> tuple[ClipMeta | None, str | None]:
         idx, ref, path = args
+        t0 = time.monotonic()
         try:
             meta = analyze_clip(ref, filter_hint=filter_hint, job_id=job_id)
+            if record_sub_phases and job_id is not None:
+                record_sub_phase(
+                    job_id,
+                    PHASE_ANALYZE_CLIPS,
+                    "gemini_analyze",
+                    elapsed_ms=int((time.monotonic() - t0) * 1000),
+                    detail={
+                        "clip_idx": idx,
+                        "clip_path": os.path.basename(path),
+                    },
+                )
             # Defense-in-depth: empty `best_moments` from a "successful" analysis
             # is unusable downstream (matcher has nothing to match). Treat it the
             # same as an analysis failure so the Whisper fallback engages and the
@@ -4926,6 +5011,7 @@ def _run_single_video_job(
     voiceover_gcs_path: str | None,  # kept for backward compat; unused in v2
     user_subject: str,
     selected_platforms: list[str],
+    preview_mode: bool = False,
 ) -> None:
     """Render path for `template_kind="single_video"` — v2.
 
@@ -5150,22 +5236,39 @@ def _run_single_video_job(
         _phase_t0 = time.monotonic()
 
         # [8] Generate copy. Hook text = the template's signature punchline.
-        hook_text = "How do you enjoy your life?"
-        from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
-
-        with _stage(
-            "generate_copy",
-            FAILURE_REASON_COPY_GENERATION_FAILED,
-            job_id=job_id,
-        ):
-            platform_copy, copy_status = generate_copy(
-                hook_text=hook_text,
-                transcript_excerpt="",
-                platforms=selected_platforms,
-                has_transcript=False,
-                template_tone="provocative",
-                job_id=job_id,
+        # Skipped under preview_mode (admin test tab): saves ~5-15s; the test
+        # tab doesn't render copy.
+        if preview_mode:
+            from app.pipeline.agents.copy_writer import (  # noqa: PLC0415
+                InstagramCopy,
+                PlatformCopy,
+                TikTokCopy,
+                YouTubeCopy,
             )
+
+            platform_copy = PlatformCopy(
+                tiktok=TikTokCopy(hook="", caption="", hashtags=[]),
+                instagram=InstagramCopy(hook="", caption="", hashtags=[]),
+                youtube=YouTubeCopy(title="", description="", tags=[]),
+            )
+            copy_status = "skipped_preview_mode"
+            log.info("copy_generation_skipped_preview", job_id=job_id)
+        else:
+            hook_text = "How do you enjoy your life?"
+            from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
+            with _stage(
+                "generate_copy",
+                FAILURE_REASON_COPY_GENERATION_FAILED,
+                job_id=job_id,
+            ):
+                platform_copy, copy_status = generate_copy(
+                    hook_text=hook_text,
+                    transcript_excerpt="",
+                    platforms=selected_platforms,
+                    has_transcript=False,
+                    template_tone="provocative",
+                    job_id=job_id,
+                )
 
         record_phase(
             job_id,
@@ -5313,6 +5416,9 @@ def _run_single_video_job_entry(job_id: str) -> None:
             "instagram",
             "youtube",
         ]
+        # Same admin test-tab preview flag the multi-video path reads. Default
+        # False; set only by admin.py create_test_job.
+        preview_mode = bool(all_candidates.get("preview_mode", False))
 
     mark_started(job_id)
 
@@ -5347,6 +5453,7 @@ def _run_single_video_job_entry(job_id: str) -> None:
         voiceover_gcs_path=voiceover_gcs_path,
         user_subject=user_subject,
         selected_platforms=selected_platforms,
+        preview_mode=preview_mode,
     )
 
 
