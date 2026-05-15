@@ -1,0 +1,62 @@
+{
+  "agent": "nova.audio.song_sections",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "file_uri": "files/golden-music-track",
+    "file_mime": "audio/mp4",
+    "duration_s": 195.0,
+    "beat_timestamps_s": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0],
+    "audio_template_output": {
+      "creative_direction": "Upbeat synth-pop track with a clear pre-chorus build into a soaring chorus around 0:48 and a second-act drop at 2:00.",
+      "pacing_style": "fast, anthemic with build-and-release dynamics",
+      "subject_niche": "travel highlight reels",
+      "slots": [
+        {"start_s": 0.0, "end_s": 8.0, "energy": "low"},
+        {"start_s": 8.0, "end_s": 24.0, "energy": "medium"},
+        {"start_s": 24.0, "end_s": 48.0, "energy": "medium"},
+        {"start_s": 48.0, "end_s": 78.0, "energy": "high"},
+        {"start_s": 78.0, "end_s": 120.0, "energy": "medium"},
+        {"start_s": 120.0, "end_s": 150.0, "energy": "peaks_high"},
+        {"start_s": 150.0, "end_s": 180.0, "energy": "medium"},
+        {"start_s": 180.0, "end_s": 195.0, "energy": "low"}
+      ]
+    }
+  },
+  "raw_text": "{\"sections\": [{\"rank\": 1, \"start_s\": 48.0, \"end_s\": 78.0, \"label\": \"chorus\", \"energy\": \"peaks_high\", \"suggested_use\": \"climax\", \"rationale\": \"The first chorus lands at 0:48 with the full synth wash and the strongest vocal hook — it is the line viewers will remember.\"}, {\"rank\": 2, \"start_s\": 120.0, \"end_s\": 150.0, \"label\": \"drop\", \"energy\": \"peaks_high\", \"suggested_use\": \"climax\", \"rationale\": \"Second-act drop at 2:00 with a new percussive layer — a meaningfully different climax for variant B.\"}, {\"rank\": 3, \"start_s\": 24.0, \"end_s\": 48.0, \"label\": \"pre_chorus\", \"energy\": \"medium\", \"suggested_use\": \"build\", \"rationale\": \"Pre-chorus build with the bass entrance — strong opener for a hook-first edit that wants anticipation.\"}], \"section_version\": \"2026-05-15\"}",
+  "output": {
+    "sections": [
+      {
+        "rank": 1,
+        "start_s": 48.0,
+        "end_s": 78.0,
+        "label": "chorus",
+        "energy": "peaks_high",
+        "suggested_use": "climax",
+        "rationale": "The first chorus lands at 0:48 with the full synth wash and the strongest vocal hook — it is the line viewers will remember."
+      },
+      {
+        "rank": 2,
+        "start_s": 120.0,
+        "end_s": 150.0,
+        "label": "drop",
+        "energy": "peaks_high",
+        "suggested_use": "climax",
+        "rationale": "Second-act drop at 2:00 with a new percussive layer — a meaningfully different climax for variant B."
+      },
+      {
+        "rank": 3,
+        "start_s": 24.0,
+        "end_s": 48.0,
+        "label": "pre_chorus",
+        "energy": "medium",
+        "suggested_use": "build",
+        "rationale": "Pre-chorus build with the bass entrance — strong opener for a hook-first edit that wants anticipation."
+      }
+    ],
+    "section_version": "2026-05-15"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "synth-pop with three meaningfully distinct sections (chorus, drop, pre-chorus build) — full 3-section happy path"
+  }
+}

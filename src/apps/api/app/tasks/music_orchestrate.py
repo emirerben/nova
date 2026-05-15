@@ -213,8 +213,9 @@ def analyze_music_track_task(self, track_id: str) -> None:
             # ── Gemini audio analysis (new) ──────────────────────────────
             recipe_cached = None
             ai_labels_dict: dict | None = None
+            sections_dict: dict | None = None
             if gemini_upload_and_wait is not None and analyze_audio_template is not None:
-                recipe_cached, ai_labels_dict = _run_gemini_audio_analysis(
+                recipe_cached, ai_labels_dict, sections_dict = _run_gemini_audio_analysis(
                     local_audio,
                     beats,
                     new_config,
@@ -240,6 +241,13 @@ def analyze_music_track_task(self, track_id: str) -> None:
                     track.label_version = (
                         str(ai_labels_dict.get("labels", {}).get("label_version", "")) or None
                     )
+                if sections_dict is not None:
+                    # Phase 2 (auto-music, library side): song_sections picks
+                    # top-3 edit-worthy sections. NULL means the agent failed —
+                    # matcher excludes the track from auto-mode until backfill
+                    # re-runs. See app/agents/_schemas/song_sections.py.
+                    track.best_sections = sections_dict.get("sections")
+                    track.section_version = sections_dict.get("section_version") or None
                 track.analysis_status = "ready"
                 db.commit()
 
@@ -252,6 +260,7 @@ def analyze_music_track_task(self, track_id: str) -> None:
             n_slots=n_slots,
             has_gemini_recipe=recipe_cached is not None,
             has_ai_labels=ai_labels_dict is not None,
+            has_best_sections=sections_dict is not None,
         )
 
     except Exception as exc:
@@ -495,14 +504,15 @@ def _run_gemini_audio_analysis(
     track_config: dict,
     duration_s: float,
     track_id: str,
-) -> tuple[dict | None, dict | None]:
-    """Upload audio to Gemini, run structural analysis + song classifier.
+) -> tuple[dict | None, dict | None, dict | None]:
+    """Upload audio to Gemini, run structural analysis + song classifier + song sections.
 
-    Returns ``(recipe_cached, ai_labels)``. Either side can be ``None``
-    independently — a Gemini-recipe failure does not block label
-    generation, and a classifier failure does not block recipe caching.
-    On a total upload failure both are ``None`` (falls back to beat-only
-    recipe, no labels).
+    Returns ``(recipe_cached, ai_labels, best_sections)``. Each side can
+    be ``None`` independently — a Gemini-recipe failure does not block
+    label generation, a classifier failure does not block recipe
+    caching, and a sections failure does not block either. On a total
+    upload failure all three are ``None`` (falls back to beat-only
+    recipe, no labels, no sections).
     """
     try:
         log.info("gemini_audio_analysis_start", track_id=track_id)
@@ -530,14 +540,20 @@ def _run_gemini_audio_analysis(
         # recipe path doesn't depend on labels.
         ai_labels = _run_song_classifier(file_ref, gemini_recipe, track_id)
 
+        # Phase 2 (auto-music, library side): pick top-3 edit-worthy
+        # sections. Reuses the same file_ref — no second Gemini upload.
+        # Best-effort: matcher's NULL-section filter handles failure.
+        sections = _run_song_sections(file_ref, gemini_recipe, beats, duration_s, track_id)
+
         log.info(
             "gemini_audio_analysis_done",
             track_id=track_id,
             gemini_slots=len(gemini_recipe.get("slots", [])),
             merged_slots=len(merged.get("slots", [])),
             has_ai_labels=ai_labels is not None,
+            has_best_sections=sections is not None,
         )
-        return merged, ai_labels
+        return merged, ai_labels, sections
 
     except Exception as exc:
         # Gemini failure is non-fatal: fall back to beat-only recipe
@@ -546,17 +562,69 @@ def _run_gemini_audio_analysis(
             track_id=track_id,
             error=str(exc),
         )
-        # Return beat-only recipe as fallback. Labels can't be produced
-        # without the file_ref, so they stay None.
+        # Return beat-only recipe as fallback. Labels and sections
+        # can't be produced without the file_ref, so they stay None.
         try:
             track_data = {
                 "beat_timestamps_s": beats,
                 "track_config": track_config,
                 "duration_s": duration_s,
             }
-            return generate_music_recipe(track_data), None
+            return generate_music_recipe(track_data), None, None
         except Exception:
-            return None, None
+            return None, None, None
+
+
+def _run_song_sections(
+    file_ref: Any,
+    audio_template_output: dict,
+    beats: list[float],
+    duration_s: float,
+    track_id: str,
+) -> dict | None:
+    """Best-effort: pick top-3 edit-worthy sections. Never raises.
+
+    Failure is logged and returns ``None``; the matcher will treat the
+    track as unsectioned (filtered out of auto-music selection until
+    the backfill script reruns).
+    """
+    if duration_s <= 0.0:
+        # SongSectionsInput requires duration_s > 0. A track with no
+        # known duration cannot be sectioned — skip silently.
+        log.debug("song_sections_skip_no_duration", track_id=track_id)
+        return None
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.song_sections import (  # noqa: PLC0415
+            SongSectionsAgent,
+            SongSectionsInput,
+        )
+
+        inp = SongSectionsInput(
+            file_uri=file_ref.uri,
+            file_mime=getattr(file_ref, "mime_type", None) or "audio/mp4",
+            duration_s=float(duration_s),
+            beat_timestamps_s=beats,
+            audio_template_output=audio_template_output or {},
+        )
+        out = SongSectionsAgent(default_client()).run(
+            inp, ctx=RunContext(job_id=f"track:{track_id}")
+        )
+        log.info(
+            "song_sections_done",
+            track_id=track_id,
+            section_count=len(out.sections),
+            ranks=[s.rank for s in out.sections],
+        )
+        return out.to_dict()
+    except Exception as exc:
+        log.warning(
+            "song_sections_failed",
+            track_id=track_id,
+            error=str(exc),
+        )
+        return None
 
 
 def _run_song_classifier(
