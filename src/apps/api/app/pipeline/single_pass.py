@@ -29,9 +29,25 @@ Public API:
     build_single_pass_command(spec, output_path) -> list[str]   pure, testable
     run_single_pass(spec, output_path) -> None                  subprocess
 
-Milestone 2 scope: clips + color holds + hard-cut concat. xfade transitions,
-curtain-close PNG overlay, pre-burn PNGs, and the absolute-overlay layer land
-in milestones 3-6.
+Milestone status (May 2026):
+  M2 shipped — clips + color holds + hard-cut concat
+  M3 shipped — xfade transitions in filter_complex
+  M6 shipped — absolute-timestamp PNG and ASS overlays after concat/xfade
+  M4 OPEN  — curtain-close PNG-bar overlay. Templates using
+             curtain-close still raise SinglePassUnsupportedError at the
+             spec-build gate and fall through to multi-pass.
+  M5 OPEN  — slot-relative pre-burn PNGs. Same gate.
+
+Per-template savings (vs current multi-pass), once env flag + per-template
+allow-list both flip:
+  Hard-cut + no overlays   → ~0 saved (multi-pass already stream-copy concats)
+  Hard-cut + abs overlays  → ~1 final encode saved (M6)
+  Xfade + no overlays      → ~1 final encode saved (M3)
+  Xfade + abs overlays     → ~2 final encodes saved (M3 + M6)
+  Curtain-close (any combo) → 0 saved until M4 lands
+
+The 30-50% wall-clock projection in early plan docs assumed M4+M3+M6
+together. Real savings on this branch are the M3 + M6 share only.
 """
 
 from __future__ import annotations
@@ -48,7 +64,7 @@ from app.pipeline.audio_layout import SILENT_AUDIO_INPUT_ARGS
 from app.pipeline.reframe import _build_video_filter, _encoding_args
 from app.pipeline.transitions import (
     DEFAULT_TRANSITION_DURATION_S,
-    _XFADE_MAP,
+    XFADE_MAP,
 )
 
 log = structlog.get_logger()
@@ -320,7 +336,7 @@ def _build_xfade_chain(
         trans_dur = min(DEFAULT_TRANSITION_DURATION_S, max_dur)
         offset = max(0.0, cumulative_dur - cumulative_trans - trans_dur)
 
-        xfade_type = _XFADE_MAP.get(trans, "fade")
+        xfade_type = XFADE_MAP.get(trans, "fade")
         next_label = group_labels[i + 1]
         out_lbl = "vout" if i == len(visual_transitions) - 1 else f"xf{i}"
         fragments.append(

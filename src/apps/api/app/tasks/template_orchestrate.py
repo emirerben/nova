@@ -775,13 +775,9 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         )
         _phase_t0 = time.monotonic()
 
-        # [6] FFmpeg assemble. Effective single-pass = force kwarg (engineer
-        # override) OR (env flag AND template allow-list). The AND of the
-        # two production flags is the safe rollout pattern — flipping the
-        # env flag alone or one template alone has zero render impact until
-        # both are set.
-        effective_single_pass = force_single_pass or (
-            settings.single_pass_encode_enabled and template_single_pass
+        # [6] FFmpeg assemble.
+        effective_single_pass = _resolve_effective_single_pass(
+            force_single_pass, template_single_pass,
         )
         _render_path = _resolve_render_path(effective_single_pass)
         log.info(
@@ -1000,8 +996,8 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         )
 
         # FFmpeg assemble (clip_metas=None is safe — text comes from recipe)
-        effective_single_pass = force_single_pass or (
-            settings.single_pass_encode_enabled and template_single_pass
+        effective_single_pass = _resolve_effective_single_pass(
+            force_single_pass, template_single_pass,
         )
         _render_path = _resolve_render_path(effective_single_pass)
         log.info(
@@ -1866,14 +1862,49 @@ def _resolve_render_path(force_single_pass: bool) -> str:
     """Return 'single' or 'multi' based on the resolved force flag.
 
     Callers (_run_template_job, _run_rerender) compute the effective
-    single-pass decision by combining the per-job kwarg, the env-level
-    ``settings.single_pass_encode_enabled`` kill switch, and the
-    per-template ``template.single_pass_enabled`` allow-list. The
+    single-pass decision via :func:`_resolve_effective_single_pass`. The
     function name is preserved for log-grep compatibility but the
     semantics are now purely "did the caller decide single-pass" —
     not "should we use single-pass."
     """
     return "single" if force_single_pass else "multi"
+
+
+def _resolve_effective_single_pass(
+    force_single_pass: bool, template_single_pass: bool,
+) -> bool:
+    """Compute the effective single-pass decision from three inputs.
+
+    Truth table:
+      force=True, anything else                                  → True
+      force=False, env=True, template=True                       → True
+      any other combination                                      → False
+
+    The AND-gate over (env flag, per-template flag) is the safe rollout
+    pattern — flipping either alone has zero render impact until both
+    are set. ``force_single_pass=True`` from a job kwarg overrides both
+    flags; that path is for engineers debugging an individual job via
+    apply_async kwargs.
+
+    Reads :data:`settings.single_pass_encode_enabled` at call time, so a
+    runtime env flip takes effect on the next job without a reload.
+    """
+    return force_single_pass or (
+        settings.single_pass_encode_enabled and template_single_pass
+    )
+
+
+# Sentinel values passed to generate_text_overlay_png /
+# generate_animated_overlay_ass to mark the post-join absolute-overlay pass
+# (vs the per-slot pre-burn pass). The generators key several internal
+# heuristics off `cumulative_s` and `slot_index`; 999.0 + 99 are far enough
+# from any real per-slot value that they don't collide.
+# Used by:
+#   _burn_text_overlays (multi-pass post-join overlay burn)
+#   _generate_single_pass_overlays (single-pass M6 overlay collection)
+# Both call sites MUST stay in sync or the parity gate diverges.
+ABS_PASS_TIME_S = 999.0
+ABS_PASS_SLOT_INDEX = 99
 
 
 def _generate_single_pass_overlays(
@@ -1925,18 +1956,20 @@ def _generate_single_pass_overlays(
     static_overlays = [o for o in overlays if o.get("effect") not in ASS_ANIMATED_EFFECTS]
     animated_overlays = [o for o in overlays if o.get("effect") in ASS_ANIMATED_EFFECTS]
 
-    # 999.0 + slot_index=99 mirror _burn_text_overlays at line 3191/3201 —
-    # they're sentinel values telling the generators "this is the post-join
-    # absolute pass, not a per-slot pre-burn." Keeping them in sync with
-    # the multi-pass call site is the only way to get byte-identical
-    # PNG/ASS outputs.
+    # ABS_PASS_TIME_S + ABS_PASS_SLOT_INDEX are the post-join sentinels.
+    # _burn_text_overlays calls the same generators with the same constants;
+    # drift here would split the parity contract silently.
     abs_pngs = (
-        generate_text_overlay_png(static_overlays, 999.0, tmpdir, slot_index=99)
+        generate_text_overlay_png(
+            static_overlays, ABS_PASS_TIME_S, tmpdir, slot_index=ABS_PASS_SLOT_INDEX,
+        )
         if static_overlays
         else []
     ) or []
     abs_ass_paths = (
-        generate_animated_overlay_ass(animated_overlays, 999.0, tmpdir, slot_index=99)
+        generate_animated_overlay_ass(
+            animated_overlays, ABS_PASS_TIME_S, tmpdir, slot_index=ABS_PASS_SLOT_INDEX,
+        )
         if animated_overlays
         else []
     ) or []
@@ -3318,16 +3351,18 @@ def _burn_text_overlays(
     animated_overlays = [o for o in overlays if o.get("effect") in ASS_ANIMATED_EFFECTS]
 
     png_configs = (
-        generate_text_overlay_png(static_overlays, 999.0, tmpdir, slot_index=99)
+        generate_text_overlay_png(
+            static_overlays, ABS_PASS_TIME_S, tmpdir, slot_index=ABS_PASS_SLOT_INDEX,
+        )
         if static_overlays
         else None
     ) or []
     ass_files = (
         generate_animated_overlay_ass(
             animated_overlays,
-            999.0,
+            ABS_PASS_TIME_S,
             tmpdir,
-            slot_index=99,
+            slot_index=ABS_PASS_SLOT_INDEX,
         )
         if animated_overlays
         else None
