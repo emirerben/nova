@@ -29,9 +29,25 @@ Public API:
     build_single_pass_command(spec, output_path) -> list[str]   pure, testable
     run_single_pass(spec, output_path) -> None                  subprocess
 
-Milestone 2 scope: clips + color holds + hard-cut concat. xfade transitions,
-curtain-close PNG overlay, pre-burn PNGs, and the absolute-overlay layer land
-in milestones 3-6. The runner (`run_single_pass`) is still stubbed.
+Milestone status (May 2026):
+  M2 shipped — clips + color holds + hard-cut concat
+  M3 shipped — xfade transitions in filter_complex
+  M6 shipped — absolute-timestamp PNG and ASS overlays after concat/xfade
+  M4 OPEN  — curtain-close PNG-bar overlay. Templates using
+             curtain-close still raise SinglePassUnsupportedError at the
+             spec-build gate and fall through to multi-pass.
+  M5 OPEN  — slot-relative pre-burn PNGs. Same gate.
+
+Per-template savings (vs current multi-pass), once env flag + per-template
+allow-list both flip:
+  Hard-cut + no overlays   → ~0 saved (multi-pass already stream-copy concats)
+  Hard-cut + abs overlays  → ~1 final encode saved (M6)
+  Xfade + no overlays      → ~1 final encode saved (M3)
+  Xfade + abs overlays     → ~2 final encodes saved (M3 + M6)
+  Curtain-close (any combo) → 0 saved until M4 lands
+
+The 30-50% wall-clock projection in early plan docs assumed M4+M3+M6
+together. Real savings on this branch are the M3 + M6 share only.
 """
 
 from __future__ import annotations
@@ -46,6 +62,10 @@ import structlog
 from app.config import settings
 from app.pipeline.audio_layout import SILENT_AUDIO_INPUT_ARGS
 from app.pipeline.reframe import _build_video_filter, _encoding_args
+from app.pipeline.transitions import (
+    DEFAULT_TRANSITION_DURATION_S,
+    XFADE_MAP,
+)
 
 log = structlog.get_logger()
 
@@ -194,6 +214,19 @@ def _per_clip_filter_chain(inp: SinglePassInput, input_idx: int, output_label: s
     # across slots silently corrupt the output. Idempotent — adding format=
     # yuv420p when the chain already ends in it is a no-op.
     vf_parts.append("format=yuv420p")
+    # Normalize timebase + PTS so concat and xfade nodes downstream see
+    # matching streams. Without this, raw clip inputs land in xfade with
+    # the source mp4's timebase (e.g. 1/15360) while concat outputs use
+    # AVTB (1/1000000) — xfade rejects the mismatch with
+    #   "First input link main timebase do not match the corresponding
+    #    second input link xfade timebase"
+    # caught empirically by tests/quality/single_pass_parity.py against
+    # dimples-passport on 2026-05-15. settb=AVTB rewrites the stream
+    # timebase to the canonical 1/1000000; setpts=PTS-STARTPTS zeroes the
+    # start so xfade offset math doesn't drift on clips that were seeked
+    # mid-file via -ss.
+    vf_parts.append("setpts=PTS-STARTPTS")
+    vf_parts.append("settb=AVTB")
     chain = ",".join(vf_parts)
     return f"[{input_idx}:v]{chain}[{output_label}]"
 
@@ -203,24 +236,238 @@ def _per_hold_filter_chain(input_idx: int, output_label: str) -> str:
 
     lavfi `color=` already emits the target resolution and fps. Force yuv420p
     so it joins the concat with the same pixel format as the clip chains.
+    Normalize timebase + PTS for the same reason `_per_clip_filter_chain`
+    does — concat and xfade downstream require matching timebases across
+    every input stream.
     """
-    return f"[{input_idx}:v]format=yuv420p[{output_label}]"
+    return (
+        f"[{input_idx}:v]format=yuv420p,setpts=PTS-STARTPTS,settb=AVTB"
+        f"[{output_label}]"
+    )
+
+
+def _compute_output_durations(spec: SinglePassSpec) -> list[float]:
+    """Per-input output duration after speed factor / hold time.
+
+    For xfade offset math we need the OUTPUT timeline duration of each
+    segment, not the source duration. Clips at speed_factor=2.0 occupy
+    half their source duration in the output; color holds occupy their
+    hold_s verbatim.
+    """
+    durations: list[float] = []
+    for inp in spec.inputs:
+        if inp.kind == "clip":
+            assert inp.start_s is not None and inp.end_s is not None  # noqa: S101
+            durations.append((inp.end_s - inp.start_s) / inp.speed_factor)
+        else:
+            durations.append(inp.hold_s)
+    return durations
+
+
+def _group_by_concat_runs(transitions: list[str]) -> list[list[int]]:
+    """Group adjacent slot indices into concat sub-batches.
+
+    Each group is a maximal run of slots joined by ``"none"`` transitions
+    (hard-cut). Groups are separated by visual transitions, which become
+    xfade boundaries between the groups in :func:`_build_xfade_chain`.
+
+    Example: ``transitions=["none", "crossfade", "none"]`` (4 slots) →
+    ``[[0, 1], [2, 3]]`` — slots 0+1 concat into the first group, slots 2+3
+    concat into the second, and the crossfade boundary bridges them.
+
+    Why mirror the multi-pass grouping: ``transitions.py:join_with_transitions``
+    rejects ``"none"`` precisely because chaining many low-duration xfade
+    filters caused FFmpeg to drop frames and truncate long outputs to 3-4s
+    on the 17-slot Dimples Passport recipe. Concat-then-xfade keeps the
+    xfade-filter count bounded by the number of *visual* transitions,
+    independent of slot count.
+    """
+    groups: list[list[int]] = [[0]]
+    for i, trans in enumerate(transitions):
+        if trans == "none":
+            groups[-1].append(i + 1)
+        else:
+            groups.append([i + 1])
+    return groups
+
+
+def _build_xfade_chain(
+    slot_labels: list[str],
+    durations: list[float],
+    transitions: list[str],
+    final_label: str = "vout",
+) -> tuple[list[str], str]:
+    """Build the concat-then-xfade filter graph fragments.
+
+    Returns ``(fragments, final_output_label)``. The fragments are joined
+    by ``;`` and appended to ``filter_complex``. ``final_output_label`` is
+    the value passed in ``final_label`` (default ``"vout"``) — M6 callers
+    pass ``"base"`` so the absolute-overlay chain can consume the joined
+    video and produce the actual ``[vout]``.
+
+    Algorithm mirrors ``transitions._build_xfade_filter`` but operates on
+    per-group durations (each group is a concat of consecutive ``"none"``
+    boundaries) rather than raw per-slot durations.
+    """
+    groups = _group_by_concat_runs(transitions)
+    fragments: list[str] = []
+    group_labels: list[str] = []
+    group_durations: list[float] = []
+
+    # Phase 1: concat each group → labelled stream.
+    for gi, group in enumerate(groups):
+        if len(group) == 1:
+            # No concat needed; reuse the slot label directly.
+            group_labels.append(slot_labels[group[0]])
+            group_durations.append(durations[group[0]])
+        else:
+            inputs_str = "".join(f"[{slot_labels[idx]}]" for idx in group)
+            out_lbl = f"g{gi}"
+            fragments.append(
+                f"{inputs_str}concat=n={len(group)}:v=1:a=0[{out_lbl}]"
+            )
+            group_labels.append(out_lbl)
+            group_durations.append(sum(durations[idx] for idx in group))
+
+    # Phase 2: xfade between groups. The non-"none" transitions in the
+    # caller's list are exactly the visual boundaries between groups; their
+    # order in `transitions` matches the order of the gaps between
+    # consecutive groups in `groups`.
+    visual_transitions = [t for t in transitions if t != "none"]
+    if not visual_transitions:
+        # Pure-"none" inputs route through the M2 concat path; this helper
+        # should not have been called. Raise rather than silently emit a
+        # degenerate filter that callers can't map.
+        raise ValueError(
+            "_build_xfade_chain called with all-'none' transitions; "
+            "use the M2 concat path instead"
+        )
+
+    cumulative_dur = group_durations[0]
+    cumulative_trans = 0.0
+    current_label = group_labels[0]
+
+    for i, trans in enumerate(visual_transitions):
+        # xfade overlap duration is bounded by 30% of the shorter adjacent
+        # group; clip to the default 0.3s. Mirrors
+        # transitions._build_xfade_filter so visual results match multi-pass.
+        max_dur = min(group_durations[i], group_durations[i + 1]) * 0.3
+        trans_dur = min(DEFAULT_TRANSITION_DURATION_S, max_dur)
+        offset = max(0.0, cumulative_dur - cumulative_trans - trans_dur)
+
+        xfade_type = XFADE_MAP.get(trans, "fade")
+        next_label = group_labels[i + 1]
+        out_lbl = "vout" if i == len(visual_transitions) - 1 else f"xf{i}"
+        fragments.append(
+            f"[{current_label}][{next_label}]"
+            f"xfade=transition={xfade_type}"
+            f":duration={trans_dur:.3f}:offset={offset:.3f}"
+            f"[{out_lbl}]"
+        )
+
+        current_label = out_lbl
+        cumulative_dur += group_durations[i + 1]
+        cumulative_trans += trans_dur
+
+    return fragments, final_label
+
+
+def _build_abs_overlay_chain(
+    abs_pngs: list[dict],
+    abs_ass_paths: list[str],
+    fonts_dir: str,
+    base_label: str,
+    png_input_start_idx: int,
+) -> tuple[list[str], str]:
+    """Chain absolute-timestamp PNG overlays + ASS subtitle layers.
+
+    Mirrors ``_burn_text_overlays`` in template_orchestrate.py:3155 so the
+    pixels at every overlay timestamp match multi-pass byte-for-byte (same
+    overlay filter, same ``enable='between(t,...)'`` clamps, same
+    ``subtitles=`` + ``fontsdir=`` for libass).
+
+    Returns ``(fragments, final_label)``. ``final_label`` is the label
+    consumed by the ``-map`` in the caller — ``"vout"`` if any overlays
+    exist, otherwise the unchanged ``base_label`` (caller short-circuits
+    on the empty case so it can route ``[base_label]`` straight to map).
+
+    Args:
+        abs_pngs: list of dicts with ``png_path``, ``start_s``, ``end_s``.
+            Order is preserved; later PNGs paint OVER earlier ones (FFmpeg
+            ``overlay`` filter is destructive on the previous label).
+        abs_ass_paths: ASS file paths applied AFTER the PNG layer. libass
+            absolute timings live inside each Dialogue line; no enable=
+            clamp needed on the filter.
+        fonts_dir: directory containing the font bundle for ``fontsdir=``.
+        base_label: filter graph label flowing into the chain.
+        png_input_start_idx: ffmpeg input index of the first PNG ``-i``
+            argument. PNGs are appended to argv AFTER the clip/hold inputs
+            and BEFORE the silent audio, so the caller computes this as
+            ``len(spec.inputs)`` and the silent audio shifts to
+            ``len(spec.inputs) + len(spec.abs_pngs)``.
+
+    Filter graph shape (2 PNGs + 1 ASS):
+        [base_label][N:v]overlay=0:0:enable=...[png0];
+        [png0][N+1:v]overlay=0:0:enable=...[png1];
+        [png1]subtitles='...':fontsdir='...'[vout]
+
+    The escape on ``:`` and ``'`` mirrors _burn_text_overlays
+    (template_orchestrate.py:3231-3236) — required on macOS/Linux because
+    the subtitles filter parses these as option separators.
+    """
+    if not abs_pngs and not abs_ass_paths:
+        return [], base_label
+
+    total_nodes = len(abs_pngs) + len(abs_ass_paths)
+    fragments: list[str] = []
+    prev = base_label
+    node_count = 0
+
+    for i, cfg in enumerate(abs_pngs):
+        node_count += 1
+        out_lbl = "vout" if node_count == total_nodes else f"png{i}"
+        input_idx = png_input_start_idx + i
+        fragments.append(
+            f"[{prev}][{input_idx}:v]overlay=0:0"
+            f":enable='between(t,{cfg['start_s']:.3f},{cfg['end_s']:.3f})'"
+            f"[{out_lbl}]"
+        )
+        prev = out_lbl
+
+    fonts_escaped = fonts_dir.replace(":", "\\:").replace("'", "\\'")
+    for i, ass_path in enumerate(abs_ass_paths):
+        node_count += 1
+        out_lbl = "vout" if node_count == total_nodes else f"ass{i}"
+        ass_filter_path = ass_path.replace(":", "\\:").replace("'", "\\'")
+        fragments.append(
+            f"[{prev}]subtitles='{ass_filter_path}':fontsdir='{fonts_escaped}'[{out_lbl}]"
+        )
+        prev = out_lbl
+
+    return fragments, "vout"
 
 
 def build_single_pass_command(
     spec: SinglePassSpec,
     output_path: str,
+    base_output_path: str | None = None,
 ) -> list[str]:
     """Construct the single-pass ffmpeg command from a SinglePassSpec.
 
     Pure function — no I/O, no subprocess. Returns the argv list for
     subprocess.run. Unit-testable.
 
-    Milestone 2 scope: hard-cut concat only. Non-"none" transitions raise
-    NotImplementedError (milestone 3 wires xfade). Absolute overlays are
-    silently ignored (milestone 6).
+    Through M6: hard-cut concat, xfade transitions, and absolute overlays
+    all supported. Curtain-close, barn-door-open, and pre-burn PNGs still
+    raise SinglePassUnsupportedError at spec-build time.
 
-    The single FINAL_OUTPUT call site of _encoding_args in this module —
+    When ``base_output_path`` is set AND ``spec`` carries absolute
+    overlays, the command emits TWO outputs sharing the same filter graph
+    (overlay-free at [base], overlay-burned at [vout]). When set but no
+    overlays exist, [base] doesn't exist in the filter graph — callers
+    should ``shutil.copy2`` post-process to materialize base_output_path.
+
+    The FINAL_OUTPUT call sites of _encoding_args in this module are
     locked by tests/test_encoder_policy.py.
     """
     # ── Input args (one -i per clip or hold, then silent audio at the end) ──
@@ -257,54 +504,113 @@ def build_single_pass_command(
         else:
             raise ValueError(f"unknown SinglePassInput kind: {inp.kind!r}")
 
-    # ── Concat all slots (hard-cut only — milestone 3 adds xfade) ──────────
-    for trans in spec.transitions:
-        if trans != "none":
-            raise SinglePassUnsupportedError(
-                f"xfade transition {trans!r} lands in milestone 3 — "
-                f"only 'none' (hard-cut) is supported in milestone 2"
-            )
-    concat_inputs = "".join(f"[{lbl}]" for lbl in slot_labels)
-    filter_chains.append(
-        f"{concat_inputs}concat=n={len(slot_labels)}:v=1:a=0[vout]"
-    )
+    # ── Join all slots ─────────────────────────────────────────────────────
+    # Three paths now:
+    #   M2 path  (all "none", no overlays)    → single concat=n=N → [vout]
+    #   M3 path  (any non-"none" transition)  → concat-then-xfade chain
+    #   M6 path  (absolute overlays exist)    → join emits [base], then
+    #                                           overlay chain produces [vout]
+    #
+    # The concat-grouping rule (consecutive "none" → concat sub-batch)
+    # protects against the multi-pass bug class where long chains of
+    # duration=0.001 xfade filters truncate output (transitions.py:74
+    # spells out the 17-slot Dimples Passport case).
+    has_visual_transition = any(t != "none" for t in spec.transitions)
+    has_overlays = bool(spec.abs_pngs or spec.abs_ass_paths)
+    join_out_label = "base" if has_overlays else "vout"
+
+    if has_visual_transition:
+        durations = _compute_output_durations(spec)
+        xfade_fragments, _ = _build_xfade_chain(
+            slot_labels, durations, spec.transitions, final_label=join_out_label
+        )
+        filter_chains.extend(xfade_fragments)
+    else:
+        concat_inputs = "".join(f"[{lbl}]" for lbl in slot_labels)
+        filter_chains.append(
+            f"{concat_inputs}concat=n={len(slot_labels)}:v=1:a=0[{join_out_label}]"
+        )
+
+    # ── Absolute overlays (M6) ─────────────────────────────────────────────
+    # PNG inputs are appended to argv between the video inputs and the
+    # silent audio so the silent audio index shifts by len(abs_pngs). The
+    # filter graph consumes PNG inputs starting at index len(spec.inputs).
+    png_input_start_idx = len(spec.inputs)
+    for cfg in spec.abs_pngs:
+        input_args += ["-i", cfg["png_path"]]
+
+    if has_overlays:
+        overlay_fragments, _ = _build_abs_overlay_chain(
+            spec.abs_pngs,
+            spec.abs_ass_paths,
+            spec.fonts_dir,
+            base_label=join_out_label,
+            png_input_start_idx=png_input_start_idx,
+        )
+        filter_chains.extend(overlay_fragments)
 
     # ── Silent audio input (post-video so -ss on clips doesn't apply) ──────
     # _mix_template_audio (stage 7) stream-copies the video and re-mixes audio
     # from the template's music track; the silent body track satisfies the
     # AAC/44.1k/stereo contract in audio_layout.BODY_SLOT_AUDIO_OUT_ARGS so
     # the stream-copy is safe.
-    silent_audio_idx = len(spec.inputs)
+    silent_audio_idx = len(spec.inputs) + len(spec.abs_pngs)
     input_args += SILENT_AUDIO_INPUT_ARGS
 
     # ── Final command ──────────────────────────────────────────────────────
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
     cmd += input_args
     cmd += ["-filter_complex", ";".join(filter_chains)]
+    # _encoding_args is the LOCKED final-output encoder contract. The
+    # call sites in this module are tracked by tests/test_encoder_policy.py
+    # (FINAL_OUTPUT_REQUIRED). preset="fast" + crf="18" matches every
+    # other final-output encode in the codebase.
+    #
+    # base_output_path branch: when set AND overlays exist, emit a SECOND
+    # output mapped from [base] sharing the same ffmpeg process. The
+    # filter graph is evaluated once up to the split; libx264 encodes
+    # twice (once per output). Cheaper than running two `run_single_pass`
+    # calls (one decode instead of two; one ffmpeg process startup
+    # instead of two). When no overlays exist, [base] doesn't exist —
+    # callers fall back to a post-process file copy.
+    if base_output_path and has_overlays:
+        cmd += [
+            "-map", "[base]",
+            "-map", f"{silent_audio_idx}:a:0",
+            "-shortest",
+        ]
+        cmd += _encoding_args(base_output_path, preset="fast", crf="18")
     cmd += [
         "-map", "[vout]",
         "-map", f"{silent_audio_idx}:a:0",
         "-shortest",
     ]
-    # _encoding_args is the LOCKED final-output encoder contract. The single
-    # call site in this module is tracked by tests/test_encoder_policy.py
-    # (FINAL_OUTPUT_REQUIRED). preset="fast" + crf="18" matches every other
-    # final-output encode in the codebase.
     cmd += _encoding_args(output_path, preset="fast", crf="18")
     return cmd
 
 
-def run_single_pass(spec: SinglePassSpec, output_path: str) -> None:
+def run_single_pass(
+    spec: SinglePassSpec,
+    output_path: str,
+    base_output_path: str | None = None,
+) -> None:
     """Render the single-pass spec to output_path via FFmpeg subprocess.
 
-    Milestone 2 scope: basic subprocess invocation + structured error path.
-    The libass-missing retry lands in M8 (mirrors reframe_and_export:271);
-    the xfade-fallback retry lands in M3 (mirrors _join_or_concat:2152).
+    When ``base_output_path`` is set AND the spec has absolute overlays,
+    the ffmpeg invocation emits TWO outputs in a single process — the
+    overlay-free render at ``[base]`` and the overlay-burned render at
+    ``[vout]``. Shares the decode + filter graph evaluation, encodes
+    twice. Avoids the regression where M6 doubled encode cost for
+    overlay templates by calling run_single_pass twice.
+
+    When ``base_output_path`` is set but the spec has no overlays,
+    ``base_output_path == output_path`` semantically; the caller is
+    expected to ``shutil.copy2`` after this returns.
 
     Raises SinglePassError on FFmpeg failure (mirrors ReframeError contract
     so callers can keep their existing except clauses).
     """
-    cmd = build_single_pass_command(spec, output_path)
+    cmd = build_single_pass_command(spec, output_path, base_output_path=base_output_path)
     log.info(
         "single_pass_start",
         inputs=len(spec.inputs),

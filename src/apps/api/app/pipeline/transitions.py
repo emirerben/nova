@@ -13,13 +13,19 @@ import structlog
 
 log = structlog.get_logger()
 
-# Transition type → FFmpeg xfade `transition` parameter
-_XFADE_MAP: dict[str, str] = {
+# Transition type → FFmpeg xfade `transition` parameter.
+# Public because single_pass._build_xfade_chain consumes it from a sibling
+# module. Renamed from _XFADE_MAP in the M3 review pass — the leading
+# underscore was misleading once the cross-module consumer landed.
+XFADE_MAP: dict[str, str] = {
     "crossfade": "fade",
     "fade_black": "fadeblack",
     "wipe_left": "wipeleft",
     "wipe_right": "wiperight",
 }
+# Backcompat alias for any downstream consumer that imported the
+# underscore name. Safe to delete after one release.
+_XFADE_MAP = XFADE_MAP
 
 # Gemini vocabulary → internal transition type.
 # Gemini uses video-editor-friendly names; this maps them to _XFADE_MAP keys

@@ -549,6 +549,12 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         # text_designer at template-build time). Manual templates are
         # untouched — same code path, byte-identical output.
         is_agentic = bool(template.is_agentic)
+        # Single-pass allow-list: per-template flag AND env-level kill
+        # switch must both be true for the global rollout to fire on this
+        # template. force_single_pass=True from a kwarg overrides both —
+        # that path is for engineers debugging an individual job via
+        # apply_async kwargs.
+        template_single_pass = bool(template.single_pass_enabled)
 
     # Route on template_kind discriminator. Existing rows without template_kind
     # are backfilled to "multiple_videos" by migration 0012, so .get() with
@@ -769,14 +775,19 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         )
         _phase_t0 = time.monotonic()
 
-        # [6] FFmpeg assemble
-        _render_path = _resolve_render_path(force_single_pass)
+        # [6] FFmpeg assemble.
+        effective_single_pass = _resolve_effective_single_pass(
+            force_single_pass, template_single_pass,
+        )
+        _render_path = _resolve_render_path(effective_single_pass)
         log.info(
             "ffmpeg_assemble_start",
             job_id=job_id,
             render_path=_render_path,
             force_single_pass=force_single_pass,
-            single_pass_enabled=settings.single_pass_encode_enabled,
+            env_single_pass_enabled=settings.single_pass_encode_enabled,
+            template_single_pass=template_single_pass,
+            effective_single_pass=effective_single_pass,
         )
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
         base_path = os.path.join(tmpdir, "base_no_overlays.mp4")
@@ -806,7 +817,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             interstitials=recipe.interstitials,
             base_output_path=base_path,
             output_fit=getattr(recipe, "output_fit", None) or "crop",
-            force_single_pass=force_single_pass,
+            force_single_pass=effective_single_pass,
             is_agentic=is_agentic,
         )
 
@@ -926,6 +937,10 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         recipe_data = template.recipe_cached
         audio_gcs_path = template.audio_gcs_path
         template_gcs_path = template.gcs_path
+        # Same allow-list semantics as _run_template_job — the per-template
+        # flag AND the env flag must both be true for a rerender to take
+        # the single-pass path, unless force_single_pass overrides.
+        template_single_pass = bool(template.single_pass_enabled)
 
     try:
         recipe = _build_recipe(recipe_data)
@@ -981,14 +996,19 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         )
 
         # FFmpeg assemble (clip_metas=None is safe — text comes from recipe)
-        _render_path = _resolve_render_path(force_single_pass)
+        effective_single_pass = _resolve_effective_single_pass(
+            force_single_pass, template_single_pass,
+        )
+        _render_path = _resolve_render_path(effective_single_pass)
         log.info(
             "rerender_assemble_start",
             job_id=job_id,
             steps=len(assembly_steps),
             render_path=_render_path,
             force_single_pass=force_single_pass,
-            single_pass_enabled=settings.single_pass_encode_enabled,
+            env_single_pass_enabled=settings.single_pass_encode_enabled,
+            template_single_pass=template_single_pass,
+            effective_single_pass=effective_single_pass,
         )
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
         base_path = os.path.join(tmpdir, "base_no_overlays.mp4")
@@ -1006,7 +1026,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
             interstitials=recipe.interstitials,
             base_output_path=base_path,
             output_fit=getattr(recipe, "output_fit", None) or "crop",
-            force_single_pass=force_single_pass,
+            force_single_pass=effective_single_pass,
         )
 
         # Mix template audio if available
@@ -1839,47 +1859,180 @@ def _render_planned_slot(plan: SlotPlan) -> str:
 
 
 def _resolve_render_path(force_single_pass: bool) -> str:
-    """Return 'single' or 'multi' based on the force kwarg and env flag.
+    """Return 'single' or 'multi' based on the resolved force flag.
 
-    Centralized so both the main and rerender paths derive render_path
-    identically — drift here would split the assemble/rerender behavior
-    silently.
+    Callers (_run_template_job, _run_rerender) compute the effective
+    single-pass decision via :func:`_resolve_effective_single_pass`. The
+    function name is preserved for log-grep compatibility but the
+    semantics are now purely "did the caller decide single-pass" —
+    not "should we use single-pass."
     """
-    return "single" if (force_single_pass or settings.single_pass_encode_enabled) else "multi"
+    return "single" if force_single_pass else "multi"
+
+
+def _resolve_effective_single_pass(
+    force_single_pass: bool, template_single_pass: bool,
+) -> bool:
+    """Compute the effective single-pass decision from three inputs.
+
+    Truth table:
+      force=True, anything else                                  → True
+      force=False, env=True, template=True                       → True
+      any other combination                                      → False
+
+    The AND-gate over (env flag, per-template flag) is the safe rollout
+    pattern — flipping either alone has zero render impact until both
+    are set. ``force_single_pass=True`` from a job kwarg overrides both
+    flags; that path is for engineers debugging an individual job via
+    apply_async kwargs.
+
+    Reads :data:`settings.single_pass_encode_enabled` at call time, so a
+    runtime env flip takes effect on the next job without a reload.
+    """
+    return force_single_pass or (
+        settings.single_pass_encode_enabled and template_single_pass
+    )
+
+
+# Sentinel values passed to generate_text_overlay_png /
+# generate_animated_overlay_ass to mark the post-join absolute-overlay pass
+# (vs the per-slot pre-burn pass). The generators key several internal
+# heuristics off `cumulative_s` and `slot_index`; 999.0 + 99 are far enough
+# from any real per-slot value that they don't collide.
+# Used by:
+#   _burn_text_overlays (multi-pass post-join overlay burn)
+#   _generate_single_pass_overlays (single-pass M6 overlay collection)
+# Both call sites MUST stay in sync or the parity gate diverges.
+ABS_PASS_TIME_S = 999.0
+ABS_PASS_SLOT_INDEX = 99
+
+
+def _generate_single_pass_overlays(
+    *,
+    steps: list,
+    plans: list[SlotPlan],
+    interstitial_map: dict[int, dict],
+    clip_metas: list | None,
+    subject: str,
+    tmpdir: str,
+    is_agentic: bool = False,
+) -> tuple[list[dict], list[str], str]:
+    """Build absolute-overlay PNG configs + ASS paths for single-pass M6.
+
+    Wraps the same _collect_absolute_overlays + generate_text_overlay_png +
+    generate_animated_overlay_ass calls that multi-pass _burn_text_overlays
+    makes, but produces the bare file paths instead of running ffmpeg.
+
+    Returns ``(abs_pngs, abs_ass_paths, fonts_dir)``. ``abs_pngs`` is the
+    list of ``{"png_path", "start_s", "end_s"}`` dicts the filter graph
+    consumes. ``abs_ass_paths`` is the parallel list of generated .ass
+    files for libass-rendered animations. ``fonts_dir`` is the
+    ``fontsdir=`` argument the subtitles filter expects.
+
+    Lives in the orchestrator (not single_pass.py) so the spec stays
+    filesystem-free for unit tests — mocking PIL / libass at the spec
+    boundary is much more expensive than letting the unit tests pass
+    pre-built overlay dicts directly.
+    """
+    from app.pipeline.text_overlay import (  # noqa: PLC0415
+        ASS_ANIMATED_EFFECTS,
+        FONTS_DIR,
+        generate_animated_overlay_ass,
+        generate_text_overlay_png,
+    )
+
+    slot_durations = [p.slot_target_dur for p in plans]
+    overlays = _collect_absolute_overlays(
+        steps,
+        slot_durations,
+        clip_metas,
+        subject,
+        interstitial_map=interstitial_map,
+        is_agentic=is_agentic,
+    )
+    if not overlays:
+        return [], [], ""
+
+    static_overlays = [o for o in overlays if o.get("effect") not in ASS_ANIMATED_EFFECTS]
+    animated_overlays = [o for o in overlays if o.get("effect") in ASS_ANIMATED_EFFECTS]
+
+    # ABS_PASS_TIME_S + ABS_PASS_SLOT_INDEX are the post-join sentinels.
+    # _burn_text_overlays calls the same generators with the same constants;
+    # drift here would split the parity contract silently.
+    abs_pngs = (
+        generate_text_overlay_png(
+            static_overlays, ABS_PASS_TIME_S, tmpdir, slot_index=ABS_PASS_SLOT_INDEX,
+        )
+        if static_overlays
+        else []
+    ) or []
+    abs_ass_paths = (
+        generate_animated_overlay_ass(
+            animated_overlays, ABS_PASS_TIME_S, tmpdir, slot_index=ABS_PASS_SLOT_INDEX,
+        )
+        if animated_overlays
+        else []
+    ) or []
+    return abs_pngs, abs_ass_paths, FONTS_DIR
 
 
 def _build_single_pass_spec(
     plans: list[SlotPlan],
     interstitial_map: dict[int, dict],
     steps: list,
+    *,
+    abs_pngs: list[dict] | None = None,
+    abs_ass_paths: list[str] | None = None,
+    fonts_dir: str = "",
 ) -> SinglePassSpec:
     """Convert orchestrator plans + interstitials → SinglePassSpec.
 
-    Milestone 2 scope — supports only:
+    Milestones 2-3 scope — supports:
       - clip slots (with all SlotPlan features: speed, color, aspect, grid)
       - non-curtain color-hold interstitials between slots
-      - hard-cut transitions
+      - hard-cut transitions (M2)
+      - xfade transitions: crossfade, fade_black, wipe_left, wipe_right (M3)
 
     Raises SinglePassUnsupportedError if the template needs:
       - curtain-close interstitials (M4 — PNG-bar overlay on slot tail)
-      - non-"none" transitions between slots (M3 — xfade)
+      - barn-door-open interstitials (M4 — PNG-bar overlay on slot head)
       - absolute-timestamp text overlays (M6 — post-concat layer)
       - pre-burn PNGs (M5 — slot-relative overlay before bars)
 
     The caller catches SinglePassUnsupportedError (a NotImplementedError
     subclass) and falls through to multi-pass with a structured warning.
+
+    Transition translation: ``step.slot.transition_in`` is the raw Gemini
+    vocabulary (whip-pan, zoom-in, dissolve, hard-cut, etc.). The
+    :func:`translate_transition` map collapses it to the internal xfade
+    family ({"none", "crossfade", "fade_black", "wipe_left", "wipe_right"}).
+    Unknown vocabulary falls back to "none" — silent degrade to hard-cut
+    is the right failure mode here (matches multi-pass behavior).
     """
+    from app.pipeline.transitions import translate_transition  # noqa: PLC0415
+
     inputs: list[SinglePassInput] = []
+    # ``transitions`` is appended alongside ``inputs`` so the invariant
+    # ``len(transitions) == len(inputs) - 1`` holds without a post-pass.
+    # Two gap shapes contribute "none":
+    #   - clip → color_hold (hard cut into the hold animation)
+    #   - color_hold → next clip (hard cut out; matches multi-pass
+    #     behavior at template_orchestrate.py:2204-2209 where
+    #     prev_had_interstitial forces transition_types[i] = "none")
+    transitions: list[str] = []
 
     for plan, step in zip(plans, steps):
-        # Per-slot transition check (M3 will lift this — for now hard-cut only).
-        if plan.slot_idx > 0:
-            raw_transition = str(step.slot.get("transition_in", "none"))
-            if raw_transition != "none":
-                raise SinglePassUnsupportedError(
-                    f"slot {plan.slot_idx} transition_in={raw_transition!r}; "
-                    f"xfade lands in milestone 3"
-                )
+        # Decide the transition INTO this clip. For slot 0 there's nothing
+        # before it. If the previous input was a color hold (an
+        # interstitial was appended at the end of the prior iteration), the
+        # hold IS the transition effect — hard-cut out. Otherwise apply
+        # the recipe's transition_in for this slot.
+        if inputs:
+            if inputs[-1].kind == "color_hold":
+                transitions.append("none")
+            else:
+                raw_transition = str(step.slot.get("transition_in", "none"))
+                transitions.append(translate_transition(raw_transition))
 
         # Append the clip itself.
         inputs.append(
@@ -1919,9 +2072,27 @@ def _build_single_pass_spec(
                 f"slot {plan.slot_idx} has curtain-close interstitial; "
                 f"PNG-bar overlay lands in milestone 4"
             )
-        # Other types (fade-black-hold, etc.) → color hold input.
+        if inter_type == "barn-door-open":
+            # Multi-pass renders barn-door-open as a color hold AT the
+            # interstitial position PLUS a PNG-bar opening animation on the
+            # head of the NEXT slot (template_orchestrate.py:2121
+            # `apply_barn_door_open_head`). M2 only models the color hold,
+            # which would silently drop the slot-head animation and ship
+            # output that's missing the hero reveal. No production template
+            # uses barn-door-open today, but match-cut + barn-door + speed-
+            # ramp shipped in PR #134 (v0.4.12.0) as first-class effects, so
+            # this gate is the future-proof. Lift it together with the
+            # curtain-close gate when M4 lands.
+            raise SinglePassUnsupportedError(
+                f"slot {plan.slot_idx} has barn-door-open interstitial; "
+                f"slot-head PNG-bar overlay lands in milestone 4"
+            )
+        # Other types (fade-black-hold, flash-white) → color hold input.
         hold_color_hex = inter.get("hold_color", "#000000")
         ffmpeg_color = "white" if hold_color_hex == "#FFFFFF" else "black"
+        # clip → hold transition is always hard cut; the hold animation
+        # itself is the effect.
+        transitions.append("none")
         inputs.append(
             SinglePassInput(
                 kind="color_hold",
@@ -1930,7 +2101,10 @@ def _build_single_pass_spec(
             )
         )
 
-    # Compute total output duration for parity script bridging.
+    # Compute total output duration for parity script bridging. xfade
+    # transitions shorten this by their overlap duration, but the M2
+    # callsite only uses output_duration_s as a sanity check, not for
+    # bridging math (the FFmpeg filter graph computes its own timeline).
     total_dur = 0.0
     for inp in inputs:
         if inp.kind == "clip":
@@ -1940,10 +2114,10 @@ def _build_single_pass_spec(
 
     return SinglePassSpec(
         inputs=inputs,
-        transitions=[],  # M2 = hard cuts only
-        abs_pngs=[],  # M6 will populate
-        abs_ass_paths=[],  # M6 will populate
-        fonts_dir="",  # M6 will populate
+        transitions=transitions,
+        abs_pngs=abs_pngs or [],
+        abs_ass_paths=abs_ass_paths or [],
+        fonts_dir=fonts_dir,
         output_duration_s=total_dur,
     )
 
@@ -2019,23 +2193,53 @@ def _assemble_clips(
     )
     _phase_done("plan", _phase_t0, job_id=job_id, slots=len(plans))
 
-    # ── Gate: single-pass branch (flag-gated, opt-in) ─────────────────────
-    # If the env flag is set OR force_single_pass=True was passed in, attempt
-    # to render the whole template in ONE filter_complex invocation instead of
-    # the multi-pass loop below. The single-pass module raises
-    # NotImplementedError for features it doesn't yet support (xfade, curtain-
-    # close, pre-burn PNGs, absolute overlays); on that exception we fall
-    # through to the multi-pass path with a structured warning so engineers
-    # opting in via force_single_pass don't get cryptic failures on complex
-    # templates.
-    if force_single_pass or settings.single_pass_encode_enabled:
+    # ── Gate: single-pass branch ──────────────────────────────────────────
+    # ``force_single_pass`` is the ONLY gate here — callers
+    # (_run_template_job, _run_rerender) have already resolved the env-level
+    # ``settings.single_pass_encode_enabled`` AND per-template
+    # ``template.single_pass_enabled`` into this kwarg. Unit tests that drive
+    # _assemble_clips directly set force_single_pass=True to opt in.
+    #
+    # When the spec build raises SinglePassUnsupportedError (curtain-close,
+    # barn-door-open, pre-burn PNGs), we catch and fall through to the
+    # multi-pass loop with a structured warning so engineers opting in via
+    # force_single_pass don't get cryptic failures on complex templates.
+    if force_single_pass:
         try:
             _phase_t0_sp = time.monotonic()
-            spec = _build_single_pass_spec(plans, interstitial_map, steps)
-            run_single_pass(spec, output_path)
-            if base_output_path:
-                # M2: no abs overlays in single-pass, so base == output. M6
-                # will diverge these when the absolute-overlay layer lands.
+            # M6: collect absolute-timestamp overlays and pre-generate the
+            # PNGs / ASS files BEFORE building the spec, so the spec carries
+            # ready-to-consume file paths and the filter graph can reference
+            # them by absolute timestamps. This mirrors how multi-pass calls
+            # _burn_text_overlays at the post-join stage; single-pass folds
+            # the same overlay set into the one filter_complex invocation.
+            #
+            # The orchestrator-side generation keeps _build_single_pass_spec
+            # filesystem-free, so unit tests don't need to mock PIL / libass.
+            abs_pngs, abs_ass_paths, fonts_dir = _generate_single_pass_overlays(
+                steps=steps,
+                plans=plans,
+                interstitial_map=interstitial_map,
+                clip_metas=clip_metas,
+                subject=subject,
+                tmpdir=tmpdir,
+                is_agentic=is_agentic,
+            )
+            spec = _build_single_pass_spec(
+                plans,
+                interstitial_map,
+                steps,
+                abs_pngs=abs_pngs,
+                abs_ass_paths=abs_ass_paths,
+                fonts_dir=fonts_dir,
+            )
+            # Single ffmpeg invocation — when overlays exist AND
+            # base_output_path is set, run_single_pass emits a 2-output
+            # command that shares the filter graph (one decode, two
+            # encodes). When no overlays exist, [base] == [vout]
+            # semantically; we copy the file after the render.
+            run_single_pass(spec, output_path, base_output_path=base_output_path)
+            if base_output_path and not (abs_pngs or abs_ass_paths):
                 shutil.copy2(output_path, base_output_path)
             _phase_done(
                 "single_pass",
@@ -2043,6 +2247,7 @@ def _assemble_clips(
                 job_id=job_id,
                 slots=len(plans),
                 inputs=len(spec.inputs),
+                abs_overlays=len(abs_pngs) + len(abs_ass_paths),
             )
             return
         except SinglePassUnsupportedError as exc:
@@ -3272,16 +3477,18 @@ def _burn_text_overlays(
     animated_overlays = [o for o in overlays if o.get("effect") in ASS_ANIMATED_EFFECTS]
 
     png_configs = (
-        generate_text_overlay_png(static_overlays, 999.0, tmpdir, slot_index=99)
+        generate_text_overlay_png(
+            static_overlays, ABS_PASS_TIME_S, tmpdir, slot_index=ABS_PASS_SLOT_INDEX,
+        )
         if static_overlays
         else None
     ) or []
     ass_files = (
         generate_animated_overlay_ass(
             animated_overlays,
-            999.0,
+            ABS_PASS_TIME_S,
             tmpdir,
-            slot_index=99,
+            slot_index=ABS_PASS_SLOT_INDEX,
         )
         if animated_overlays
         else None
