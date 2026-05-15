@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.19.1] - 2026-05-15
+
+### Fixed
+- **Assemble stage no longer dominates admin test-tab runs on non-allow-listed templates.** v0.4.18.0's `preview_mode` toggle skipped curtain-close + `generate_copy` but left the multi-pass encode fan-out (N slot encodes + N-1 xfade encodes + 1 concat encode) untouched. On agentic templates that hadn't been parity-promoted to `single_pass_enabled=true`, assemble was still the long pole in the admin test tab. Fix: when `preview_mode=true`, the admin test endpoint now enqueues with `apply_async(args=[job_id], kwargs={"force_single_pass": True})` instead of `.delay()`. This trips PR #147's documented engineer-debug override (`template_orchestrate.py:1980`) and routes the job through the single-pass `ffmpeg filter_complex` path regardless of the per-template flag. Prod is unaffected: external callers go through the public endpoint which does not set `preview_mode`, and admins running `preview_mode=false` still respect the per-template allow-list. The output isn't pixel-identical to multi-pass on every template (that's why prod uses the allow-list after parity testing), but preview mode is opt-in for speed.
+
 ## [0.4.19.0] - 2026-05-15
 
 ### Added
