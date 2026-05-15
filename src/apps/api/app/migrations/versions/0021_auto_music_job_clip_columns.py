@@ -1,8 +1,16 @@
 """Add nullable auto-music columns to job_clips + jobs.
 
-Revision ID: 0020
-Revises: 0019
+Revision ID: 0021
+Revises: 0020
 Create Date: 2026-05-15
+
+Re-chained from 0020 → 0021 after merge to main: PR #166
+(`0020_music_track_best_sections.py`) had already taken the 0020 slot
+when PR #163 landed without rebasing. Two heads on `0020` made every
+post-#163 Fly deploy fail at `alembic upgrade head` with "Multiple head
+revisions are present for given argument 'head'". This file's revision
+ID and down_revision now point at the post-#166 head; no schema or
+upgrade/downgrade body changes.
 
 Phase 3 of the auto-music feature (see plans/our-current-agentic-template-
 scalable-gem.md). Adds the minimum schema needed for the new
@@ -36,8 +44,8 @@ yet — adds it when we have real cardinality.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0020"
-down_revision = "0019"
+revision = "0021"
+down_revision = "0020"
 branch_labels = None
 depends_on = None
 

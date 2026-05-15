@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.20.6] - 2026-05-15
+
+### Fixed
+- **Production Fly deploys unblocked — re-chained auto-music migration from `0020` → `0021`.** Every `fly-deploy` workflow run since PR #163 (`2c0d148`, auto-music Phase 3) was aborting at `python -m alembic upgrade head` with `UserWarning: Revision 0020 is present more than once` followed by `ERROR Multiple head revisions are present for given argument 'head'`. PR #166 (`89552c5`, song_sections) had landed `0020_music_track_best_sections.py` first; PR #163 then added `0020_auto_music_job_clip_columns.py` without rebasing onto the new head, so both files claimed `revision = "0020"` with `down_revision = "0019"`. Alembic refused to pick a head, every deploy aborted with exit 255, and three PRs piled up behind the broken queue (#167 single-pass fix, #168 gemini mime_type fix, this one). Fix: renamed `0020_auto_music_job_clip_columns.py` → `0021_auto_music_job_clip_columns.py`, set `revision = "0021"` and `down_revision = "0020"`. Chain is now `0019 → 0020 (best_sections) → 0021 (auto_music_columns)`, single head, verified with `ScriptDirectory.get_heads()`. Migration body (upgrade/downgrade SQL) unchanged — same four nullable columns on `job_clips` + `jobs`. Production DB is currently at `0020` (PR #166's migration ran successfully before PR #163's deploy attempted), so the next deploy applies only the renumbered `0021`. No code outside the migration directory references the revision string, verified with `grep "0020"`. This unblocks the queue: the next successful deploy ships PRs #163 + #167 + #168 + this one in the same image.
+
 ## [0.4.20.5] - 2026-05-15
 
 ### Fixed
