@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.16.1] - 2026-05-15
+
+### Fixed
+- **Agentic templates now actually render in the CLIP-identified font.** PR2 (#150, v0.4.15.0) populated `font_alternatives` per overlay and `font_default` at template level; PR #154 (v0.4.15.4) wired that into the agentic analysis path. But the renderer in `app/pipeline/text_overlay.py` only reads `overlay.font_family → overlay.font_style → registry default`; it never consulted `recipe.font_default`. Every overlay still fell through to Playfair Display Bold even when `font_default` was a non-empty string. After re-analyzing agentic template `77151144-...` on v0.4.15.4, `font_default: "Inter Tight"` was set on the recipe but every overlay's `font_family` stayed unset — so the test render still produced "same font everywhere" (the user's observation that prompted this fix). The fix adds `_apply_font_default_to_overlays(recipe)` between `identify_fonts` and `_run_text_designer_on_slots` in `agentic_template_build_task`: any overlay with an unset `font_family` gets the template-level `font_default` baked in. Idempotent — running it again on a re-analysis doesn't overwrite text_designer's per-overlay choice or any human-authored override from the admin editor. No-op when `font_default` is empty (font ID found no above-floor match) so the existing fallback chain still handles those cases. Classic templates are untouched (they don't run font ID per PR #154). `tests/tasks/test_agentic_font_default_bake.py` pins the contract: 7 cases covering bake, override-existing, empty-default, None-default, empty-slots, missing-overlays, and idempotency.
+
 ## [0.4.16.0] - 2026-05-15
 
 ### Added

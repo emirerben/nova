@@ -160,6 +160,44 @@ def _run_text_designer_on_slots(
     return baked
 
 
+def _apply_font_default_to_overlays(recipe) -> int:
+    """Set overlay.font_family to recipe.font_default for any overlay that
+    hasn't been assigned a font yet. Returns the count baked.
+
+    Called between identify_fonts (which sets recipe.font_default) and
+    _run_text_designer_on_slots (which may override font_family per overlay
+    for label-like content). The renderer's resolution chain reads
+    `overlay.font_family → overlay.font_style → registry default
+    (Playfair Display)` — it does NOT consult `recipe.font_default`. Without
+    this baking step, agentic templates with a populated font_default still
+    render every overlay in Playfair because nothing wires the template-level
+    field down to the per-overlay one.
+
+    Idempotent and side-effect-free when font_default is empty (font ID found
+    no above-floor match) or when every overlay already has font_family set.
+    Existing font_family values are never overwritten — text_designer's
+    downstream per-overlay choice always wins, and any human-authored override
+    in the editor JSON stays put on re-analysis.
+    """
+    font_default = getattr(recipe, "font_default", "") or ""
+    if not font_default:
+        return 0
+    applied = 0
+    for slot in getattr(recipe, "slots", []) or []:
+        for overlay in slot.get("text_overlays", []) or []:
+            if overlay.get("font_family"):
+                continue
+            overlay["font_family"] = font_default
+            applied += 1
+    if applied:
+        log.info(
+            "font_default_baked_into_overlays",
+            font_default=font_default,
+            overlay_count=applied,
+        )
+    return applied
+
+
 @celery_app.task(
     name="tasks.agentic_template_build_task",
     bind=True,
@@ -274,6 +312,21 @@ def agentic_template_build_task(self, template_id: str) -> None:
                     template_id=template_id,
                     error=str(exc),
                 )
+
+            # Bake the template-level `font_default` into every overlay whose
+            # `font_family` is not already set. Without this step the renderer's
+            # resolution chain (`font_family → font_style → registry default`)
+            # falls through to Playfair Display Bold even when font_default is
+            # populated on the recipe — `text_overlay.py` never consults the
+            # template-level field. Doing this AT BUILD TIME (before
+            # text_designer runs) means: (1) text_designer is free to override
+            # per overlay if it has a more nuanced choice, and (2) overlays
+            # text_designer skips (e.g. non-label content with role=hook) still
+            # get the CLIP-identified font instead of Playfair. Only baked when
+            # font_default is non-empty (font ID found at least one
+            # above-floor match across all overlays); otherwise the overlay
+            # stays untouched and the renderer chain handles fallback.
+            _apply_font_default_to_overlays(recipe)
 
             # Per-slot text_designer pass — bakes typography into overlays.
             baked = _run_text_designer_on_slots(
