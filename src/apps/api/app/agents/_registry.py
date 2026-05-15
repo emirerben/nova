@@ -27,6 +27,7 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     ("nova.audio.transcript", "app.agents.transcript", "TranscriptAgent"),
     ("nova.audio.template_recipe", "app.agents.audio_template", "AudioTemplateAgent"),
     ("nova.audio.song_classifier", "app.agents.song_classifier", "SongClassifierAgent"),
+    ("nova.audio.song_sections", "app.agents.song_sections", "SongSectionsAgent"),
     ("nova.audio.music_matcher", "app.agents.music_matcher", "MusicMatcherAgent"),
     ("nova.compose.platform_copy", "app.agents.platform_copy", "PlatformCopyAgent"),
     ("nova.compose.creative_direction", "app.agents.creative_direction", "CreativeDirectionAgent"),

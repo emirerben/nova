@@ -14,6 +14,7 @@ import re
 from typing import Any
 
 from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION
+from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
 from app.agents.audio_template import AudioTemplateOutput
 from app.agents.clip_metadata import (
     _BALL_BLACKLIST,
@@ -27,6 +28,14 @@ from app.agents.music_matcher import MusicMatcherInput, MusicMatcherOutput
 from app.agents.platform_copy import PlatformCopyOutput
 from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
 from app.agents.song_classifier import SongClassifierOutput
+from app.agents.song_sections import (
+    MAX_OVERLAP_S,
+    MAX_SECTION_DURATION_S,
+    MIN_SECTION_DURATION_S,
+    SongSectionsInput,
+    SongSectionsOutput,
+    _overlap_s,
+)
 from app.agents.template_recipe import (
     _VALID_COLOR_HINTS,
     _VALID_INTERSTITIAL_TYPES,
@@ -918,6 +927,66 @@ def check_song_classifier(output: SongClassifierOutput) -> list[str]:
     return failures
 
 
+def check_song_sections(
+    output: SongSectionsOutput,
+    input: SongSectionsInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.audio.song_sections.
+
+    Pydantic enforces enums, rank bounds, and the 1-3 section-count band.
+    This layer asserts the cross-field invariants ``parse()`` upholds:
+    section_version is clamped, start/end inside duration, duration is
+    within the TikTok-shape band, ranks are unique, and no pair overlaps
+    by more than 5s.
+    """
+    failures: list[str] = []
+
+    if output.section_version != CURRENT_SECTION_VERSION:
+        failures.append(
+            f"section_version={output.section_version!r} != CURRENT_SECTION_VERSION "
+            f"({CURRENT_SECTION_VERSION!r}) — parse() forces equality"
+        )
+
+    duration_s = float(input.duration_s)
+    seen_ranks: set[int] = set()
+    for i, section in enumerate(output.sections):
+        if section.start_s < 0.0 or section.start_s >= duration_s:
+            failures.append(
+                f"sections[{i}]: start_s={section.start_s:.2f} not in [0, {duration_s:.2f})"
+            )
+        if section.end_s <= section.start_s:
+            failures.append(
+                f"sections[{i}]: end_s={section.end_s:.2f} <= start_s={section.start_s:.2f}"
+            )
+        if section.end_s > duration_s + 1.0:
+            failures.append(
+                f"sections[{i}]: end_s={section.end_s:.2f} > duration_s+1 ({duration_s + 1:.2f})"
+            )
+        dur = section.end_s - section.start_s
+        if dur < MIN_SECTION_DURATION_S or dur > MAX_SECTION_DURATION_S:
+            failures.append(
+                f"sections[{i}]: duration={dur:.2f}s outside "
+                f"[{MIN_SECTION_DURATION_S}, {MAX_SECTION_DURATION_S}]"
+            )
+        if section.rank in seen_ranks:
+            failures.append(f"sections[{i}]: duplicate rank={section.rank}")
+        seen_ranks.add(section.rank)
+        if not section.rationale.strip():
+            failures.append(f"sections[{i}]: rationale empty after strip")
+
+    # Overlap pass — quadratic, but max_length=3 so at most 3 pairs.
+    for i in range(len(output.sections)):
+        for j in range(i + 1, len(output.sections)):
+            ov = _overlap_s(output.sections[i], output.sections[j])
+            if ov > MAX_OVERLAP_S:
+                failures.append(
+                    f"sections[{i}] and sections[{j}] overlap by {ov:.2f}s "
+                    f"(> MAX_OVERLAP_S={MAX_OVERLAP_S})"
+                )
+
+    return failures
+
+
 def check_music_matcher(output: MusicMatcherOutput, input: MusicMatcherInput) -> list[str]:  # noqa: A002
     """Structural floor for nova.audio.music_matcher.
 
@@ -974,6 +1043,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_audio_template(output)
     if agent_name == "nova.audio.song_classifier":
         return check_song_classifier(output)
+    if agent_name == "nova.audio.song_sections":
+        return check_song_sections(output, input)
     if agent_name == "nova.audio.music_matcher":
         return check_music_matcher(output, input)
     if agent_name == "nova.video.clip_router":

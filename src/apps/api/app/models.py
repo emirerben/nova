@@ -207,6 +207,14 @@ class MusicTrack(Base):
     # Mirrors MusicLabels.label_version so the matcher can refuse stale rows
     # without parsing the JSONB.
     label_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # song_sections agent output: ordered list of 1-3 ranked SongSection blobs
+    # (rank 1 = best). See app/agents/_schemas/song_sections.py for the
+    # Pydantic shape. NULL until the song_sections agent succeeds; the matcher
+    # filters NULL-sectioned tracks out of auto-mode.
+    best_sections: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Mirrors CURRENT_SECTION_VERSION so the matcher can refuse stale rows
+    # without parsing the JSONB.
+    section_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     __table_args__ = (

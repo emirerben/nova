@@ -66,6 +66,11 @@ AGENT_NARRATIVE: dict[str, dict[str, str]] = {
         "cardinality": "once · per music track",
         "what": "Creative-direction labels for a music track (genre, vibe_tags, energy, pacing, mood, ideal_content_profile, copy_tone, transition_style, color_grade). Producer of MusicLabels; the matcher (Phase 2) uses these to pair clip sets with songs in auto-music mode.",
     },
+    "nova.audio.song_sections": {
+        "phase": "admin",
+        "cardinality": "once · per music track",
+        "what": "Picks the top 1-3 ranked edit-worthy sections of a music track (15-60s each). Cached on MusicTrack.best_sections; rank 1 is the default section the matcher renders against, ranks 2/3 unlock variant diversity. Replaces the mechanical auto_best_section pick at job time.",
+    },
     "nova.video.clip_metadata": {
         "phase": "job",
         "cardinality": "per-clip · in parallel",
@@ -131,6 +136,7 @@ FIXTURE_AGENT_NAME = {
     "platform_copy": "nova.compose.platform_copy",
     "audio_template": "nova.audio.template_recipe",
     "song_classifier": "nova.audio.song_classifier",
+    "song_sections": "nova.audio.song_sections",
 }
 
 # Map agent_name → prompt files to display (some agents share prompts)
@@ -147,6 +153,7 @@ AGENT_PROMPT_FILES: dict[str, list[str]] = {
         "analyze_template_schema.txt",
     ],
     "nova.audio.song_classifier": ["classify_song.txt"],
+    "nova.audio.song_sections": ["identify_song_sections.txt"],
     "nova.audio.transcript": ["transcribe.txt"],
 }
 
@@ -1944,6 +1951,7 @@ def render_dashboard() -> str:
         "platform_copy",
         "audio_template",
         "song_classifier",
+        "song_sections",
     ):
         fixtures_by_agent_name[FIXTURE_AGENT_NAME[fixture_dir]] = _load_fixtures(fixture_dir)
 

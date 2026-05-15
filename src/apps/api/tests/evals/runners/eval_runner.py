@@ -207,6 +207,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.song_classifier import SongClassifierAgent
 
         return SongClassifierAgent
+    if agent_name == "nova.audio.song_sections":
+        from app.agents.song_sections import SongSectionsAgent
+
+        return SongSectionsAgent
     if agent_name == "nova.audio.music_matcher":
         from app.agents.music_matcher import MusicMatcherAgent
 
