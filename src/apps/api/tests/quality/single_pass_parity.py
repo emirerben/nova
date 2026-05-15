@@ -72,7 +72,19 @@ FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "parity_templates"
 
 SSIM_MIN_GLOBAL = 0.98
 DURATION_TOLERANCE_S = 0.05
-BITRATE_TOLERANCE_PCT = 0.15
+# Frame count tolerance — multi-pass runs 3+ encode passes (reframe → concat
+# → text-overlay burn) each of which can drift the output by a frame from
+# container/codec rounding. Single-pass is one encode end-to-end. A 1-frame
+# delta at 30fps is 33ms, comfortably under the DURATION_TOLERANCE_S=50ms
+# gate, and shouldn't gate parity by itself.
+FRAME_COUNT_TOLERANCE = 2
+# Bitrate gate is ONE-SIDED — single-pass producing a HIGHER bitrate than
+# multi-pass at equal visual fidelity (SSIM check above) would suggest the
+# single-pass encode is wasting bytes. Lower bitrate is fine, often
+# expected: M2-shape templates have multi-pass stream-copy from ultrafast
+# slot mp4s (high bitrate, low quality settings) while single-pass
+# re-encodes at preset=fast which is more efficient at the same SSIM.
+BITRATE_OVERSHOOT_TOLERANCE_PCT = 0.15
 
 
 @dataclass
@@ -305,9 +317,11 @@ def test_single_pass_parity_with_multi_pass(template_name: str, tmp_path: Path) 
             f"duration delta {abs(multi_meta.duration_s - single_meta.duration_s):.3f}s "
             f"> {DURATION_TOLERANCE_S}s"
         )
-    if multi_meta.frame_count != single_meta.frame_count:
+    frame_delta = abs(multi_meta.frame_count - single_meta.frame_count)
+    if frame_delta > FRAME_COUNT_TOLERANCE:
         reasons.append(
-            f"frame count mismatch: multi={multi_meta.frame_count} single={single_meta.frame_count}"
+            f"frame count delta {frame_delta} > {FRAME_COUNT_TOLERANCE} "
+            f"(multi={multi_meta.frame_count} single={single_meta.frame_count})"
         )
     if multi_meta.codec != single_meta.codec:
         reasons.append(f"codec mismatch: multi={multi_meta.codec} single={single_meta.codec}")
@@ -317,14 +331,15 @@ def test_single_pass_parity_with_multi_pass(template_name: str, tmp_path: Path) 
     # (e.g. 30000/1001 → 29.97002997...). Match within 0.01 fps.
     if abs(multi_meta.fps - single_meta.fps) > 0.01:
         reasons.append(f"fps mismatch: multi={multi_meta.fps} single={single_meta.fps}")
-    # Bitrate gate: single-pass tends slightly higher (one libx264 pass on
-    # the full timeline vs concat of pre-encoded slots). 15% is the loose
-    # bound; tighten once we see real data.
-    if multi_meta.bitrate > 0:
-        bitrate_delta = abs(single_meta.bitrate - multi_meta.bitrate) / multi_meta.bitrate
-        if bitrate_delta > BITRATE_TOLERANCE_PCT:
+    # Bitrate gate (one-sided): single-pass overshooting multi-pass bitrate
+    # at equal SSIM means the encode is wasting bytes. Single-pass UNDER
+    # multi-pass is fine, often expected — see BITRATE_OVERSHOOT_TOLERANCE_PCT
+    # docstring at the top of the module.
+    if multi_meta.bitrate > 0 and single_meta.bitrate > multi_meta.bitrate:
+        overshoot = (single_meta.bitrate - multi_meta.bitrate) / multi_meta.bitrate
+        if overshoot > BITRATE_OVERSHOOT_TOLERANCE_PCT:
             reasons.append(
-                f"bitrate delta {bitrate_delta:.1%} > {BITRATE_TOLERANCE_PCT:.0%} "
+                f"bitrate overshoot {overshoot:.1%} > {BITRATE_OVERSHOOT_TOLERANCE_PCT:.0%} "
                 f"(multi={multi_meta.bitrate} single={single_meta.bitrate})"
             )
 

@@ -214,6 +214,19 @@ def _per_clip_filter_chain(inp: SinglePassInput, input_idx: int, output_label: s
     # across slots silently corrupt the output. Idempotent — adding format=
     # yuv420p when the chain already ends in it is a no-op.
     vf_parts.append("format=yuv420p")
+    # Normalize timebase + PTS so concat and xfade nodes downstream see
+    # matching streams. Without this, raw clip inputs land in xfade with
+    # the source mp4's timebase (e.g. 1/15360) while concat outputs use
+    # AVTB (1/1000000) — xfade rejects the mismatch with
+    #   "First input link main timebase do not match the corresponding
+    #    second input link xfade timebase"
+    # caught empirically by tests/quality/single_pass_parity.py against
+    # dimples-passport on 2026-05-15. settb=AVTB rewrites the stream
+    # timebase to the canonical 1/1000000; setpts=PTS-STARTPTS zeroes the
+    # start so xfade offset math doesn't drift on clips that were seeked
+    # mid-file via -ss.
+    vf_parts.append("setpts=PTS-STARTPTS")
+    vf_parts.append("settb=AVTB")
     chain = ",".join(vf_parts)
     return f"[{input_idx}:v]{chain}[{output_label}]"
 
@@ -223,8 +236,14 @@ def _per_hold_filter_chain(input_idx: int, output_label: str) -> str:
 
     lavfi `color=` already emits the target resolution and fps. Force yuv420p
     so it joins the concat with the same pixel format as the clip chains.
+    Normalize timebase + PTS for the same reason `_per_clip_filter_chain`
+    does — concat and xfade downstream require matching timebases across
+    every input stream.
     """
-    return f"[{input_idx}:v]format=yuv420p[{output_label}]"
+    return (
+        f"[{input_idx}:v]format=yuv420p,setpts=PTS-STARTPTS,settb=AVTB"
+        f"[{output_label}]"
+    )
 
 
 def _compute_output_durations(spec: SinglePassSpec) -> list[float]:
