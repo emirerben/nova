@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.14.0] - 2026-05-15
+
+### Added
+- **Template-recipe agent now emits an optional `text_bbox` per text overlay** so a downstream computer-vision step can identify the font used in the reference video. The agent is instructed to emit bboxes ONLY for visible burned-in text (not for text it inferred from voiceover or vibe), with normalized coordinates `(x_norm, y_norm)` as the bbox CENTER, `(w_norm, h_norm)` as size, and `sample_frame_t` seconds relative to slot start. PR1 of two: bbox emission + storage only. PR2 will add the CLIP-style font matcher and admin "font alternatives" picker UI on top of this data.
+  - `prompts/analyze_template_schema.txt` — defines the optional `text_bbox` field with shape, normalization, and emission rules.
+  - `prompts/analyze_template_single.txt` + `analyze_template_pass2.txt` — add bbox emission guidance to both single-pass and two-pass-Part-2 prompts. Pass-1 (creative-direction prose only) is unchanged.
+  - `app/agents/template_recipe.py` — `prompt_version` bump to `2026-05-15`; new `_validate_text_bbox()` helper validates shape, range `[0,1]`, area `> 0`, horizontal/vertical frame containment, and that `sample_frame_t` falls within the overlay's `[start_s, end_s]` window. Invalid bboxes drop to `null` (logged) while the overlay itself survives.
+  - `src/apps/web/src/app/admin/templates/[id]/components/recipe-types.ts` — new `TextBbox` interface and optional `text_bbox?: TextBbox | null` on `RecipeTextOverlay`. No UI consumers yet; landing the type alongside the backend keeps the wire shape in sync for PR2.
+
+### Changed
+- **Eval harness now validates `text_bbox` shape** at the structural layer so fixture or direct-construction callers cannot bypass the agent's `parse()` cleaning. Mirrors the agent's range/window checks in `tests/evals/runners/structural.py:check_template_recipe`. Defense-in-depth: production always reaches `parse()` first, so this guard kicks in for tests and future direct callers.
+- **`text_bbox_plausibility` rubric dimension** added to the LLM judge at `tests/evals/rubrics/template_recipe.md`. Returns `null` (skipped) when no overlay has burned-in text; otherwise scores 1-5 based on bbox tightness, location accuracy, and whether the bbox is absent for vibe-inferred overlays. The judge runner already drops non-numeric scores at parse time so `null` cleanly skips the dimension without breaking the avg calculation.
+
 ## [0.4.13.1] - 2026-05-15
 
 ### Fixed

@@ -135,6 +135,46 @@ def check_template_recipe(output: TemplateRecipeOutput) -> list[str]:
                     f"slot {i} overlay {j}: start_s={start} outside slot duration {slot_dur}"
                 )
 
+            bbox = ov.get("text_bbox")
+            if bbox is not None:
+                if not isinstance(bbox, dict):
+                    failures.append(
+                        f"slot {i} overlay {j}: text_bbox is not a dict (got {type(bbox).__name__})"
+                    )
+                else:
+                    try:
+                        bx = float(bbox.get("x_norm"))
+                        by = float(bbox.get("y_norm"))
+                        bw = float(bbox.get("w_norm"))
+                        bh = float(bbox.get("h_norm"))
+                        bt = float(bbox.get("sample_frame_t"))
+                    except (TypeError, ValueError):
+                        failures.append(f"slot {i} overlay {j}: text_bbox has non-numeric field")
+                    else:
+                        if not (0.0 <= bx <= 1.0 and 0.0 <= by <= 1.0):
+                            failures.append(
+                                f"slot {i} overlay {j}: text_bbox center ({bx},{by}) outside [0,1]"
+                            )
+                        if not (0.0 < bw <= 1.0 and 0.0 < bh <= 1.0):
+                            failures.append(
+                                f"slot {i} overlay {j}: text_bbox dims ({bw},{bh}) outside (0,1]"
+                            )
+                        if (bx - bw / 2.0) < 0.0 or (bx + bw / 2.0) > 1.0:
+                            failures.append(
+                                f"slot {i} overlay {j}: text_bbox horizontal extent "
+                                f"out of frame (x={bx}, w={bw})"
+                            )
+                        if (by - bh / 2.0) < 0.0 or (by + bh / 2.0) > 1.0:
+                            failures.append(
+                                f"slot {i} overlay {j}: text_bbox vertical extent "
+                                f"out of frame (y={by}, h={bh})"
+                            )
+                        if bt < start or bt > end:
+                            failures.append(
+                                f"slot {i} overlay {j}: text_bbox sample_frame_t={bt} "
+                                f"outside overlay window [{start},{end}]"
+                            )
+
     for k, inter in enumerate(output.interstitials):
         itype = inter.get("type")
         if itype not in _VALID_INTERSTITIAL_TYPES:

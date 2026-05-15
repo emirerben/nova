@@ -125,7 +125,7 @@ class TemplateRecipeAgent(Agent[TemplateRecipeInput, TemplateRecipeOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.template_recipe",
         prompt_id="analyze_template_single",  # selected dynamically in render_prompt
-        prompt_version="2026-05-14",
+        prompt_version="2026-05-15",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -358,8 +358,62 @@ def _validate_slots(slots: list[dict[str, Any]], global_color_grade: str) -> Non
             if not ov.get("sample_text") and ov.get("text"):
                 ov["sample_text"] = ov["text"]
             ov.setdefault("sample_text", "")
+            ov["text_bbox"] = _validate_text_bbox(ov.get("text_bbox"), start, end)
             validated.append(ov)
         slot["text_overlays"] = validated
+
+
+def _validate_text_bbox(
+    raw: Any, overlay_start_s: float, overlay_end_s: float
+) -> dict[str, float] | None:
+    """Validate optional text_bbox on an overlay. Returns None for absent/invalid.
+
+    Schema (all fields required when present):
+      x_norm, y_norm: center coords in [0, 1]
+      w_norm, h_norm: dims in (0, 1]
+      sample_frame_t: seconds, must satisfy overlay_start_s <= t <= overlay_end_s
+
+    Invalid bboxes are dropped (logged) so the overlay itself remains usable.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        log.warning("template_overlay_bbox_not_dict", raw=raw)
+        return None
+    try:
+        x = float(raw.get("x_norm"))
+        y = float(raw.get("y_norm"))
+        w = float(raw.get("w_norm"))
+        h = float(raw.get("h_norm"))
+        t = float(raw.get("sample_frame_t"))
+    except (TypeError, ValueError):
+        log.warning("template_overlay_bbox_non_numeric", raw=raw)
+        return None
+    for name, v in (("x_norm", x), ("y_norm", y), ("w_norm", w), ("h_norm", h)):
+        if math.isnan(v) or math.isinf(v):
+            log.warning("template_overlay_bbox_nan", field=name)
+            return None
+    if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+        log.warning("template_overlay_bbox_center_out_of_range", x=x, y=y)
+        return None
+    if not (0.0 < w <= 1.0 and 0.0 < h <= 1.0):
+        log.warning("template_overlay_bbox_zero_or_oversize_area", w=w, h=h)
+        return None
+    if (x + w / 2.0) > 1.0 or (x - w / 2.0) < 0.0:
+        log.warning("template_overlay_bbox_horizontal_overflow", x=x, w=w)
+        return None
+    if (y + h / 2.0) > 1.0 or (y - h / 2.0) < 0.0:
+        log.warning("template_overlay_bbox_vertical_overflow", y=y, h=h)
+        return None
+    if t < overlay_start_s or t > overlay_end_s:
+        log.warning(
+            "template_overlay_bbox_sample_frame_outside_window",
+            sample_frame_t=t,
+            start_s=overlay_start_s,
+            end_s=overlay_end_s,
+        )
+        return None
+    return {"x_norm": x, "y_norm": y, "w_norm": w, "h_norm": h, "sample_frame_t": t}
 
 
 def _validate_interstitials(raw: list[Any], shot_count: int) -> list[dict[str, Any]]:

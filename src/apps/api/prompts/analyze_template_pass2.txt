@@ -71,6 +71,8 @@ transition_style — one-line summary of the template's transition philosophy, c
 
 sync_style — observe what cuts are aligned to: cut-on-beat, transition-on-beat, energy-match, or freeform.
 
+Text bounding boxes (per-overlay `text_bbox`). For every text_overlay where the listed `sample_text` is BURNED INTO THE VIDEO (visible glyphs on screen, not inferred from voiceover, mood, or vibe), emit a `text_bbox` object so a downstream step can crop and identify the font. Coordinates are NORMALIZED to the frame ([0,1]); (x_norm, y_norm) is the CENTER of the bounding box; (w_norm, h_norm) is its size. Pick `sample_frame_t` (relative to slot start, between this overlay's start_s and end_s) at a moment where the text is fully visible — not mid-fade, not mid-typewriter-reveal, not partially occluded. The box must tightly enclose the visible glyphs. When the overlay text was inferred from vibe rather than read off the screen, emit `"text_bbox": null`. Out-of-range, zero-area, or full-frame boxes will be dropped silently as invalid.
+
 subject_niche — macro → sub → micro niche, hyphenated lowercase, e.g. "food-vegan-15min-student-meals". If only macro is identifiable, use that.
 
 has_talking_head — true if the creator appears speaking to camera at any point.
