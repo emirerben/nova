@@ -23,6 +23,7 @@ from app.agents.clip_metadata import (
 )
 from app.agents.clip_router import ClipRouterInput, ClipRouterOutput
 from app.agents.creative_direction import CreativeDirectionOutput
+from app.agents.music_matcher import MusicMatcherInput, MusicMatcherOutput
 from app.agents.platform_copy import PlatformCopyOutput
 from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
 from app.agents.song_classifier import SongClassifierOutput
@@ -917,6 +918,46 @@ def check_song_classifier(output: SongClassifierOutput) -> list[str]:
     return failures
 
 
+def check_music_matcher(output: MusicMatcherOutput, input: MusicMatcherInput) -> list[str]:  # noqa: A002
+    """Structural floor for nova.audio.music_matcher.
+
+    Pydantic enforces score bounds [0, 10] and per-entry required fields. This
+    layer asserts the cross-field invariants ``parse()`` is supposed to uphold:
+    every ``track_id`` resolves against ``available_tracks``, no duplicates,
+    rationale is non-empty after strip, scores are monotonically non-increasing
+    (matcher contract: ranked highest to lowest).
+    """
+    failures: list[str] = []
+    valid_ids = {t.track_id for t in input.available_tracks}
+
+    seen: set[str] = set()
+    last_score: float | None = None
+    for i, entry in enumerate(output.ranked):
+        if entry.track_id not in valid_ids:
+            failures.append(
+                f"ranked[{i}].track_id={entry.track_id!r}: not in available_tracks "
+                "(parse() should have dropped this)"
+            )
+        if entry.track_id in seen:
+            failures.append(f"ranked[{i}].track_id={entry.track_id!r}: duplicate")
+        seen.add(entry.track_id)
+
+        if not entry.rationale.strip():
+            failures.append(f"ranked[{i}]: rationale empty after strip")
+
+        if entry.score < 0.0 or entry.score > 10.0:
+            failures.append(f"ranked[{i}]: score={entry.score} outside [0, 10]")
+
+        if last_score is not None and entry.score - last_score > 0.01:
+            failures.append(
+                f"ranked[{i}]: score={entry.score:.2f} > ranked[{i - 1}].score="
+                f"{last_score:.2f} — ranking should be non-increasing"
+            )
+        last_score = entry.score
+
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.template_recipe":
@@ -933,6 +974,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_audio_template(output)
     if agent_name == "nova.audio.song_classifier":
         return check_song_classifier(output)
+    if agent_name == "nova.audio.music_matcher":
+        return check_music_matcher(output, input)
     if agent_name == "nova.video.clip_router":
         return check_clip_router(output, input)
     if agent_name == "nova.video.shot_ranker":
