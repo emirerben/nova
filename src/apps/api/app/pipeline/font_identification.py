@@ -358,6 +358,74 @@ def cosine_rank(
     return [FontMatch(family=str(registry.families[i]), similarity=float(sims[i])) for i in order]
 
 
+# ── Admin override helpers ───────────────────────────────────────────────────
+
+
+def aggregate_font_alternatives(recipe_dict: dict) -> list[dict]:
+    """Aggregate per-overlay font_alternatives into a template-level top list.
+
+    Walks `recipe_dict["slots"][*]["text_overlays"][*]["font_alternatives"]`,
+    keeps the highest `similarity` seen per font family, sorts descending.
+    Used by the admin font override UI so an agentic template surfaces a
+    single deduped picker even though each overlay has its own ranking.
+
+    Returns `[{"family": str, "similarity": float}, ...]` or `[]` if no
+    overlay has alternatives populated yet (i.e. template was analyzed
+    before PR #154 or `identify_fonts` best-effort failed).
+    """
+    best: dict[str, float] = {}
+    for slot in recipe_dict.get("slots") or []:
+        for overlay in slot.get("text_overlays") or []:
+            for alt in overlay.get("font_alternatives") or []:
+                family = alt.get("family")
+                if not isinstance(family, str) or not family:
+                    continue
+                try:
+                    sim = float(alt.get("similarity") or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                prev = best.get(family, -1.0)
+                if sim > prev:
+                    best[family] = sim
+    return [
+        {"family": f, "similarity": round(s, 4)}
+        for f, s in sorted(best.items(), key=lambda kv: -kv[1])
+    ]
+
+
+def cascade_font_default_change(
+    recipe_dict: dict, new_default: str, *, old_default: str | None = None
+) -> int:
+    """Set `recipe.font_default = new_default` and update overlays in-place.
+
+    Used by the admin font-override endpoint (POST /admin/templates/:id/
+    font-default) — agentic templates lock the recipe editor, so this is the
+    one narrow override surface admins have for font choice.
+
+    Update rule per overlay:
+      - `font_family` empty/None → set to new_default
+      - `font_family == old_default` → set to new_default (cascade)
+      - `font_family` is anything else → leave alone (text_designer's
+         deliberate per-overlay choice OR a prior admin override stays)
+
+    Returns count of overlays whose `font_family` actually changed.
+    """
+    recipe_dict["font_default"] = new_default
+    if old_default is None:
+        old_default = ""
+    updated = 0
+    for slot in recipe_dict.get("slots") or []:
+        for overlay in slot.get("text_overlays") or []:
+            current = overlay.get("font_family") or ""
+            if current and current != old_default:
+                continue
+            if current == new_default:
+                continue
+            overlay["font_family"] = new_default
+            updated += 1
+    return updated
+
+
 # ── Public re-exports for app.services.clip_font_matcher ─────────────────────
 
 __all__ = [
@@ -366,6 +434,8 @@ __all__ = [
     "FontIdLoadError",
     "FontIdExtractError",
     "RegistryEmbeddings",
+    "aggregate_font_alternatives",
+    "cascade_font_default_change",
     "extract_frame_png",
     "crop_bbox",
     "identify_fonts",

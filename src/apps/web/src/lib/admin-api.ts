@@ -247,6 +247,42 @@ export async function adminGetPresignedUpload(
   return res.json();
 }
 
+// ── Font default override (agentic templates) ─────────────────────────────────
+//
+// Agentic templates lock the full recipe editor — this is the one narrow
+// override admins have: pick the template-level `font_default` from the
+// CLIP-suggested alternatives (or any registry font). Backend cascades the
+// pick to every overlay that inherited the old default; text_designer's
+// deliberate per-overlay choices stay.
+
+export interface FontAlternativeItem {
+  family: string;
+  similarity: number;
+}
+
+export interface FontDefaultResponse {
+  font_default: string | null;
+  alternatives: FontAlternativeItem[];
+  registry_families: string[];
+}
+
+export async function adminGetFontDefault(
+  templateId: string,
+): Promise<FontDefaultResponse> {
+  const res = await adminFetch(`/admin/templates/${templateId}/font-default`);
+  return res.json();
+}
+
+export async function adminSetFontDefault(
+  templateId: string,
+  fontDefault: string,
+): Promise<void> {
+  await adminFetch(`/admin/templates/${templateId}/font-default`, {
+    method: "POST",
+    body: JSON.stringify({ font_default: fontDefault }),
+  });
+}
+
 // ── Latest test job API ───────────────────────────────────────────────────────
 
 export interface LatestTestJob {

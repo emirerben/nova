@@ -1558,6 +1558,192 @@ async def save_recipe(
     )
 
 
+# ── Font override (agentic) ───────────────────────────────────────────────────
+
+
+class FontAlternativeItem(BaseModel):
+    family: str
+    similarity: float
+
+
+class FontDefaultResponse(BaseModel):
+    """Snapshot of font state for the agentic font-override picker."""
+
+    font_default: str | None
+    alternatives: list[FontAlternativeItem]
+    registry_families: list[str]
+
+
+class FontDefaultUpdate(BaseModel):
+    font_default: str
+
+    @field_validator("font_default")
+    @classmethod
+    def non_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("font_default cannot be empty")
+        return v.strip()
+
+
+def _load_font_registry_families() -> list[str]:
+    """Return the list of font families from font-registry.json.
+
+    Used to validate font-default override requests (anything outside the
+    registry would fail to render). Reads at request time — the registry is
+    tiny (~20 fonts) and admin font picks are infrequent.
+    """
+    import json  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    registry_path = (
+        Path(__file__).resolve().parent.parent.parent
+        / "assets"
+        / "fonts"
+        / "font-registry.json"
+    )
+    try:
+        with open(registry_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        log.error("font_registry_load_failed", error=str(exc), path=str(registry_path))
+        return []
+    fonts = data.get("fonts") or {}
+    return sorted(fonts.keys())
+
+
+@router.get(
+    "/templates/{template_id}/font-default",
+    response_model=FontDefaultResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def get_font_default(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> FontDefaultResponse:
+    """Return current font_default + aggregated alternatives for the admin
+    font-override picker.
+
+    Surfaced for agentic templates (whose editor is otherwise locked) so the
+    admin has a single narrow control: pick the template-level font.
+    `alternatives` is the deduped union of every overlay's `font_alternatives`
+    sorted by similarity descending. `registry_families` is the full font
+    catalogue so the UI can offer "pick any registered font" as a fallback
+    when alternatives is empty (e.g. template analyzed before PR #154).
+    """
+    from app.pipeline.font_identification import aggregate_font_alternatives  # noqa: PLC0415
+
+    template = await get_template_or_404(template_id, db)
+    require_ready(template)
+
+    recipe = template.recipe_cached if isinstance(template.recipe_cached, dict) else {}
+    alternatives = aggregate_font_alternatives(recipe)
+    return FontDefaultResponse(
+        font_default=recipe.get("font_default") or None,
+        alternatives=[FontAlternativeItem(**a) for a in alternatives],
+        registry_families=_load_font_registry_families(),
+    )
+
+
+@router.post(
+    "/templates/{template_id}/font-default",
+    response_model=RecipeResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def set_font_default(
+    template_id: str,
+    req: FontDefaultUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> RecipeResponse:
+    """Set recipe.font_default and cascade to overlays that inherited it.
+
+    Admin override for agentic templates. The full recipe editor stays
+    locked; this is a single-field write that lets an operator pick from
+    the CLIP-suggested font alternatives (or any registry font) without
+    re-running the agent stack.
+
+    Cascade behaviour: every overlay whose font_family is empty OR equals
+    the OLD font_default is updated to the new value. Overlays where
+    text_designer (or a prior admin override) set a deliberately different
+    font are left alone — that's the contract `cascade_font_default_change`
+    promises.
+
+    Persists a new TemplateRecipeVersion with trigger="admin_font_override"
+    so /recipe-history shows the change.
+    """
+    from app.pipeline.font_identification import cascade_font_default_change  # noqa: PLC0415
+
+    template = await get_template_or_404(template_id, db)
+    require_ready(template)
+
+    if not isinstance(template.recipe_cached, dict):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Template has no cached recipe; re-run analysis first.",
+        )
+
+    registry_families = _load_font_registry_families()
+    if registry_families and req.font_default not in registry_families:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"font_default '{req.font_default}' is not in the font registry. "
+                f"Pick one of: {', '.join(registry_families[:8])}..."
+            ),
+        )
+
+    # SQLAlchemy JSONB change detection needs a fresh dict reference, not
+    # mutation-in-place. Same pattern as save_recipe / record_phase.
+    recipe = dict(template.recipe_cached)
+    old_default = (recipe.get("font_default") or "").strip()
+
+    if old_default == req.font_default:
+        # No-op write — return current state without a new version row.
+        return RecipeResponse(
+            recipe=recipe,
+            version_id="",
+            version_number=0,
+        )
+
+    updated = cascade_font_default_change(
+        recipe, req.font_default, old_default=old_default,
+    )
+
+    version = TemplateRecipeVersion(
+        template_id=template_id,
+        recipe=recipe,
+        trigger="admin_font_override",
+    )
+    db.add(version)
+    template.recipe_cached = recipe
+    template.recipe_cached_at = datetime.now(UTC)
+    await db.commit()
+    await db.refresh(version)
+
+    count_result = await db.execute(
+        select(func.count()).select_from(
+            select(TemplateRecipeVersion)
+            .where(TemplateRecipeVersion.template_id == template_id)
+            .subquery()
+        )
+    )
+    version_count = count_result.scalar() or 0
+
+    log.info(
+        "font_default_override",
+        template_id=template_id,
+        old_font_default=old_default or None,
+        new_font_default=req.font_default,
+        overlays_updated=updated,
+        version_id=str(version.id),
+    )
+
+    return RecipeResponse(
+        recipe=recipe,
+        version_id=str(version.id),
+        version_number=version_count,
+    )
+
+
 # ── Music variant (children) schemas ──────────────────────────────────────────
 
 

@@ -4,9 +4,12 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import {
   adminCreateRerenderJob,
   adminCreateTestJob,
+  adminGetFontDefault,
   adminGetRecipe,
   adminSaveRecipe,
+  adminSetFontDefault,
   adminTextPreview,
+  type FontDefaultResponse,
   type TextPreviewParams,
 } from "@/lib/admin-api";
 import type { AdminTemplate, LatestTestJob } from "@/lib/admin-api";
@@ -207,7 +210,7 @@ interface EditorTabProps {
 
 export function EditorTab({ template, latestTestJob, onTestJobComplete }: EditorTabProps) {
   if (template.is_agentic) {
-    return <AgenticEditorLock />;
+    return <AgenticEditorLock templateId={template.id} />;
   }
   return (
     <EditorTabInner
@@ -218,32 +221,225 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
   );
 }
 
-function AgenticEditorLock() {
+function AgenticEditorLock({ templateId }: { templateId: string }) {
   return (
-    <div className="max-w-2xl mx-auto mt-12 border border-emerald-900/40 bg-emerald-950/20 rounded-lg p-6">
-      <div className="flex items-start gap-3">
-        <div className="text-emerald-400 text-2xl leading-none mt-0.5">●</div>
-        <div>
-          <h2 className="text-base font-semibold text-emerald-200">
-            Agent-built template — editor locked
-          </h2>
-          <p className="text-sm text-zinc-400 mt-2 leading-relaxed">
-            This template&apos;s recipe is generated end-to-end by the agent stack.
-            Manual edits are disabled by design so quality changes flow through
-            agent + prompt iteration (measured by evals), not one-off hand edits
-            that drift from the rest of the agentic templates.
-          </p>
-          <p className="text-sm text-zinc-400 mt-3 leading-relaxed">
-            To change this template, edit the agent prompts and re-run the
-            agents. The current recipe is still viewable on the Recipe tab.
-          </p>
-          <p className="text-xs text-zinc-600 mt-4">
-            If you need a hand-tunable copy of this template, create a new
-            non-agentic template from the same source video.
-          </p>
+    <div className="max-w-3xl mx-auto mt-8 space-y-6">
+      <div className="border border-emerald-900/40 bg-emerald-950/20 rounded-lg p-6">
+        <div className="flex items-start gap-3">
+          <div className="text-emerald-400 text-2xl leading-none mt-0.5">●</div>
+          <div>
+            <h2 className="text-base font-semibold text-emerald-200">
+              Agent-built template — editor locked
+            </h2>
+            <p className="text-sm text-zinc-400 mt-2 leading-relaxed">
+              This template&apos;s recipe is generated end-to-end by the agent stack.
+              Manual edits are disabled by design so quality changes flow through
+              agent + prompt iteration (measured by evals), not one-off hand edits
+              that drift from the rest of the agentic templates.
+            </p>
+            <p className="text-sm text-zinc-400 mt-3 leading-relaxed">
+              The one exception is the template-level font choice (below):
+              the CLIP matcher suggests the top visually-similar registry fonts
+              from the reference video, and you can pick a different one without
+              re-running the agents. Other recipe changes go through Re-run agents.
+            </p>
+          </div>
         </div>
       </div>
+      <AgenticFontPicker templateId={templateId} />
     </div>
+  );
+}
+
+function AgenticFontPicker({ templateId }: { templateId: string }) {
+  const [data, setData] = useState<FontDefaultResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    adminGetFontDefault(templateId)
+      .then(setData)
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load"))
+      .finally(() => setLoading(false));
+  }, [templateId]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const onPick = useCallback(
+    async (family: string) => {
+      if (!data || data.font_default === family) return;
+      setSaving(family);
+      setError(null);
+      try {
+        await adminSetFontDefault(templateId, family);
+        // Optimistic update — refetch will reconcile with server state.
+        setData({ ...data, font_default: family });
+        refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to save");
+      } finally {
+        setSaving(null);
+      }
+    },
+    [data, templateId, refresh],
+  );
+
+  if (loading && !data) {
+    return (
+      <div className="border border-zinc-800 rounded-lg p-6 text-zinc-500 text-sm">
+        Loading font options…
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div className="border border-red-900/40 bg-red-950/20 rounded-lg p-6 text-red-300 text-sm">
+        {error ?? "Failed to load font options."}
+      </div>
+    );
+  }
+
+  const alternatives = data.alternatives;
+  const currentDefault = data.font_default;
+  const hasAlts = alternatives.length > 0;
+
+  return (
+    <div className="border border-zinc-800 rounded-lg p-5 space-y-4">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-white">Template font</h3>
+          <p className="text-xs text-zinc-500 mt-1">
+            Sets <code className="text-zinc-300">font_default</code>. Cascades to
+            every overlay that inherited the old default; per-overlay agent
+            picks stay put.
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500">Current</div>
+          <div className="text-sm text-zinc-200">{currentDefault ?? "—"}</div>
+        </div>
+      </div>
+
+      {error && <p className="text-xs text-red-400">{error}</p>}
+
+      {hasAlts ? (
+        <>
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+            CLIP suggestions ({alternatives.length}) · top match{" "}
+            {(alternatives[0].similarity * 100).toFixed(0)}%
+          </div>
+          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+            {alternatives.map((alt) => (
+              <FontTile
+                key={alt.family}
+                family={alt.family}
+                similarity={alt.similarity}
+                isCurrent={alt.family === currentDefault}
+                isSaving={saving === alt.family}
+                onPick={() => onPick(alt.family)}
+              />
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="text-xs text-zinc-500">
+          No CLIP suggestions yet — this template was analyzed before the font
+          matcher shipped. Re-run agents to populate, or pick any registered
+          font from the dropdown below.
+        </p>
+      )}
+
+      <details className="pt-2">
+        <summary className="text-xs text-zinc-400 cursor-pointer hover:text-zinc-200">
+          Or pick any registered font ({data.registry_families.length})
+        </summary>
+        <select
+          value={currentDefault ?? ""}
+          onChange={(e) => {
+            if (e.target.value && e.target.value !== currentDefault) {
+              onPick(e.target.value);
+            }
+          }}
+          disabled={saving !== null}
+          className="mt-2 w-full px-3 py-2 text-sm bg-zinc-900 border border-zinc-800 rounded text-white focus:border-zinc-600 focus:outline-none"
+        >
+          <option value="" disabled>
+            Select a font…
+          </option>
+          {data.registry_families.map((f) => (
+            <option key={f} value={f}>
+              {f}
+            </option>
+          ))}
+        </select>
+      </details>
+    </div>
+  );
+}
+
+function slugifyFamily(family: string): string {
+  return family.toLowerCase().replace(/\s+/g, "-");
+}
+
+function FontTile({
+  family,
+  similarity,
+  isCurrent,
+  isSaving,
+  onPick,
+}: {
+  family: string;
+  similarity: number;
+  isCurrent: boolean;
+  isSaving: boolean;
+  onPick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      disabled={isSaving || isCurrent}
+      className={[
+        "group relative flex flex-col items-center gap-1 rounded border p-2 transition",
+        isCurrent
+          ? "border-emerald-500 bg-emerald-950/30 cursor-default"
+          : isSaving
+            ? "border-amber-500 bg-amber-950/20 cursor-wait"
+            : "border-zinc-800 bg-zinc-950 hover:border-zinc-600",
+      ].join(" ")}
+      title={`${family} — ${(similarity * 100).toFixed(1)}% similar`}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={`/font-previews/${slugifyFamily(family)}.png`}
+        alt={family}
+        width={120}
+        height={40}
+        loading="lazy"
+        className="h-10 w-full rounded bg-white object-contain"
+        onError={(e) => {
+          const img = e.currentTarget;
+          img.style.display = "none";
+          const fallback = img.nextElementSibling as HTMLElement | null;
+          if (fallback) fallback.style.display = "flex";
+        }}
+      />
+      <span
+        style={{ display: "none" }}
+        className="h-10 w-full items-center justify-center rounded bg-zinc-100 text-[10px] text-zinc-900"
+      >
+        {family}
+      </span>
+      <span className="w-full truncate text-[11px] text-zinc-200">{family}</span>
+      <span className="text-[10px] text-zinc-500">
+        {isSaving ? "saving…" : isCurrent ? "current" : `${(similarity * 100).toFixed(0)}%`}
+      </span>
+    </button>
   );
 }
 

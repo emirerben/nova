@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.20.0] - 2026-05-15
+
+### Added
+- **Agentic templates now have a font picker in the admin Editor tab.** Previously the editor was fully locked for `is_agentic=true` templates (per the lock-by-design philosophy that all recipe changes go through agent + prompt iteration). But that meant the CLIP-identified `font_alternatives` populated by `identify_fonts()` (PRs #150 / #154) had no admin-visible surface — alternatives shipped but nothing rendered them. The lock screen now embeds a single narrow control: an `AgenticFontPicker` showing the deduped union of every overlay's `font_alternatives` as click-to-apply tiles (highest similarity first), with the current `font_default` highlighted, plus a fallback `<details>` dropdown listing every registered font for cases where the matcher didn't run. Picking a tile calls a new admin endpoint that updates `recipe_cached.font_default` and cascades to every overlay where `font_family` is empty or equals the old default — deliberate per-overlay choices made by text_designer stay put. Backed by: `GET /admin/templates/:id/font-default` (returns current default + aggregated alternatives + registry list), `POST /admin/templates/:id/font-default` (persists the override + creates a new `TemplateRecipeVersion` with trigger=`admin_font_override` so /recipe-history surfaces the change). The full recipe-edit endpoint stays 409-locked for agentic templates; this is the single allowed override.
+
+### Changed
+- **`AgenticEditorLock` copy** updated to call out the font picker as the one exception, replacing the dead-end "create a new non-agentic template" footer.
+
+### Internal
+- New helpers in `app/pipeline/font_identification.py`: `aggregate_font_alternatives()` (dedupes per-overlay alternatives by family, keeps max similarity, sorts descending) and `cascade_font_default_change()` (in-place recipe update with the "preserve deliberate picks" cascade rule). Both pure dict operations so the admin endpoint can use them without instantiating a full TemplateRecipe.
+
 ## [0.4.19.1] - 2026-05-15
 
 ### Fixed
