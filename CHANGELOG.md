@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.13.1] - 2026-05-15
+
+### Fixed
+- **Live judge eval no longer fails with `400 INVALID_ARGUMENT: Unsupported file URI type` on every fixture.** Gemini's File API now rejects the bare resource-name form `files/<id>` at `Part.from_uri()` call time and requires the full URL form (`https://generativelanguage.googleapis.com/v1beta/files/<id>`). The production agent path (`app/agents/_model_client.py:137`) was already using `file_ref.uri` (full URL) so prod was unaffected. The eval-only fixture uploader at `tests/evals/_fixture_uploader.py:94` was returning `file_ref.name` (bare form), which silently broke `NOVA_EVAL_MODE=live` runs — every fixture errored before reaching the agent, so 10/10 fixtures failed with zero tokens consumed.
+  - `tests/evals/_fixture_uploader.py` — `FixtureUploader.normalize()` now returns `file_ref.uri` instead of `file_ref.name`. Docstring updated. Inline comment cross-references the prod path to flag that the two attributes are different shapes.
+  - `tests/evals/test_fixture_uploader.py` — `_FakeFileRef` now mirrors the real `google-genai` SDK File-object shape (exposes both `.name` and `.uri`); 6 assertion sites updated to expect the full URL form. New module constant `_GEMINI_FILE_API_BASE` keeps the URL prefix in one place.
+
+  Verified by `NOVA_EVAL_MODE=live pytest -k impressing_myself --eval-mode=live` against a real reference video (~28s, ~$0.02 in Gemini). PASS. Unblocks PR #145's prompt-change gate.
+
 ## [0.4.13.0] - 2026-05-14
 
 ### Fixed

@@ -18,10 +18,20 @@ from ._fixture_uploader import (
     is_bucket_relative,
 )
 
+_GEMINI_FILE_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
 
 class _FakeFileRef:
+    """Mirrors the real google-genai File object shape.
+
+    The SDK exposes both `.name` (bare `files/<id>`) and `.uri` (the full
+    URL form Gemini accepts at `Part.from_uri` call time). Tests should
+    assert against `.uri` because that's what the uploader returns.
+    """
+
     def __init__(self, name: str) -> None:
         self.name = name
+        self.uri = f"{_GEMINI_FILE_API_BASE}/{name}"
 
 
 class _Recorder:
@@ -100,7 +110,7 @@ def test_normalize_uploads_bucket_relative_path() -> None:
 
     result = uploader.normalize("clips/2c750692193b.mp4")
 
-    assert result == "files/abc123"
+    assert result == f"{_GEMINI_FILE_API_BASE}/files/abc123"
     assert len(rec.downloaded) == 1
     assert rec.downloaded[0][0] == "clips/2c750692193b.mp4"
     # Suffix preserved on the temp path so Gemini can sniff mime
@@ -124,8 +134,8 @@ def test_normalize_caches_repeat_uploads() -> None:
     b = uploader.normalize("clips/x.mp4")
     c = uploader.normalize("clips/y.mp4")
 
-    assert a == b == "files/up-1"
-    assert c == "files/up-2"
+    assert a == b == f"{_GEMINI_FILE_API_BASE}/files/up-1"
+    assert c == f"{_GEMINI_FILE_API_BASE}/files/up-2"
     assert counter["n"] == 2  # x.mp4 uploaded once, y.mp4 once
 
 
@@ -161,7 +171,7 @@ def test_normalize_propagates_upload_errors() -> None:
         return _FakeFileRef("files/retry-ok")
 
     uploader._upload = good_up  # type: ignore[attr-defined]
-    assert uploader.normalize("clips/x.mp4") == "files/retry-ok"
+    assert uploader.normalize("clips/x.mp4") == f"{_GEMINI_FILE_API_BASE}/files/retry-ok"
 
 
 def test_normalize_cleans_up_temp_file_on_success(tmp_path: Path) -> None:
@@ -211,7 +221,7 @@ def test_normalize_input_replaces_bucket_relative_file_uri() -> None:
         {"file_uri": "clips/x.mp4", "file_mime": "video/mp4", "extra": 7}
     )
 
-    assert out["file_uri"] == "files/r1"
+    assert out["file_uri"] == f"{_GEMINI_FILE_API_BASE}/files/r1"
     assert out["file_mime"] == "video/mp4"
     assert out["extra"] == 7
 
@@ -263,7 +273,7 @@ def test_normalize_input_does_not_mutate_caller_dict() -> None:
 
     assert original == snapshot, "caller's dict was mutated in place"
     assert out is not original
-    assert out["file_uri"] == "files/r2"
+    assert out["file_uri"] == f"{_GEMINI_FILE_API_BASE}/files/r2"
 
 
 # ── build_default_uploader (smoke) ────────────────────────────────────────────
