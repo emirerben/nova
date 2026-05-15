@@ -412,6 +412,17 @@ def _run_music_job(job_id: str) -> None:
         clip_id_to_local = {
             ref.name: path for ref, path in zip(file_refs, local_clip_paths)
         }
+        # Music jobs always take the multi-pass path for Phase 1 of the
+        # single-pass rollout (env flag + video_templates.single_pass_enabled).
+        # MusicTrack has no equivalent per-track allow-list flag, and music
+        # recipes have a different shape (beat-snapped slots, no
+        # text_overlays / interstitials) that hasn't been parity-tested
+        # against single-pass. The explicit force_single_pass=False here is
+        # documentation, not a behavior change — _assemble_clips's gate is
+        # now force-only and defaults to False, so omitting the kwarg
+        # produces the same routing. Add a MusicTrack.single_pass_enabled
+        # flag and lift this explicit-False if/when music joins the
+        # single-pass rollout.
         _assemble_clips(
             assembly_plan.steps,
             clip_id_to_local,
@@ -424,6 +435,7 @@ def _run_music_job(job_id: str) -> None:
             job_id=job_id,
             user_subject="",
             interstitials=[],
+            force_single_pass=False,
         )
 
         # [10] Mix in music track audio
