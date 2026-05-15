@@ -88,6 +88,15 @@ class Settings(BaseSettings):
     # orchestrate_template_job.
     single_pass_encode_enabled: bool = False
 
+    # Auto-music mode (Phase 3 of the auto-music feature). When False, the
+    # `orchestrate_auto_music_job` Celery task and the (yet-to-land Phase 4)
+    # POST /auto-music-jobs route are unreachable from user input — the
+    # orchestrator early-exits with `processing_failed` if it's somehow
+    # invoked. Existing template-mode + manual music-mode flows are
+    # unaffected either way. Flip to True when the music library has
+    # enough labeled tracks for the matcher to do real work (~15+).
+    enable_auto_music_mode: bool = False
+
     # Security
     token_encryption_key: str = ""
 
