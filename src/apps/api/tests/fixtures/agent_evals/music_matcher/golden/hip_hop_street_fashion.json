@@ -1,0 +1,207 @@
+{
+  "agent": "nova.audio.music_matcher",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "clip_summaries": [
+      {
+        "clip_id": "clip_001",
+        "media_type": "video",
+        "duration_s": 4.0,
+        "subject": "model in oversized leather jacket stepping out of a parked car",
+        "hook_text": "she pulled up like that?",
+        "hook_score": 8.5,
+        "energy": 7.5,
+        "description": "low-angle wide, saturated street tones, slow-mo step-out"
+      },
+      {
+        "clip_id": "clip_002",
+        "media_type": "video",
+        "duration_s": 3.2,
+        "subject": "close-up of chunky chain swinging against jacket",
+        "hook_text": "",
+        "hook_score": 7.0,
+        "energy": 7.0,
+        "description": "macro close-up, motion blur, saturated street tones"
+      },
+      {
+        "clip_id": "clip_003",
+        "media_type": "video",
+        "duration_s": 4.5,
+        "subject": "model walking past graffiti wall",
+        "hook_text": "",
+        "hook_score": 6.8,
+        "energy": 7.2,
+        "description": "tracking side shot, hard sunlight, fast-paced step rhythm"
+      },
+      {
+        "clip_id": "clip_004",
+        "media_type": "video",
+        "duration_s": 3.8,
+        "subject": "sneakers landing on cracked pavement",
+        "hook_text": "",
+        "hook_score": 7.5,
+        "energy": 7.5,
+        "description": "low-angle close-up, hard cut between footsteps"
+      },
+      {
+        "clip_id": "clip_005",
+        "media_type": "video",
+        "duration_s": 4.2,
+        "subject": "model leaning against brick wall flashing peace sign",
+        "hook_text": "",
+        "hook_score": 7.0,
+        "energy": 6.5,
+        "description": "medium shot, saturated street tones, confident pose"
+      }
+    ],
+    "available_tracks": [
+      {
+        "track_id": "track_hiphop_streets",
+        "title": "Concrete Walk",
+        "duration_s": 86.0,
+        "slot_count": 11,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "hip_hop",
+          "vibe_tags": ["swagger", "punchy", "confident"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "street-fashion attitude",
+          "ideal_content_profile": "Street-level lifestyle, fashion close-ups, chunky-jewelry detail shots, swagger walks past urban backdrops.",
+          "copy_tone": "punchy",
+          "transition_style": "hard_cut",
+          "color_grade": "saturated street"
+        }
+      },
+      {
+        "track_id": "track_hiphop_trap",
+        "title": "Trap Lights",
+        "duration_s": 82.0,
+        "slot_count": 12,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "hip_hop",
+          "vibe_tags": ["heavy", "moody", "swagger"],
+          "energy": "high",
+          "pacing": "medium",
+          "mood": "after-dark cool",
+          "ideal_content_profile": "Night-time street fashion, slow swagger walks, low-key lighting, slow-mo step-outs.",
+          "copy_tone": "punchy",
+          "transition_style": "hard_cut",
+          "color_grade": "high-contrast neon"
+        }
+      },
+      {
+        "track_id": "track_pop_glam",
+        "title": "Runway Ready",
+        "duration_s": 90.0,
+        "slot_count": 10,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "pop",
+          "vibe_tags": ["glossy", "anthemic", "confident"],
+          "energy": "peaks_high",
+          "pacing": "fast",
+          "mood": "high-fashion swagger",
+          "ideal_content_profile": "Fashion editorial shoots, runway b-roll, slick lookbook walks with peaks on beat drops.",
+          "copy_tone": "high_energy",
+          "transition_style": "whip_pan",
+          "color_grade": "high-contrast neon"
+        }
+      },
+      {
+        "track_id": "track_electronic_pulse",
+        "title": "Walk Cycle",
+        "duration_s": 88.0,
+        "slot_count": 11,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "electronic",
+          "vibe_tags": ["driving", "moody", "pulsing"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "industrial confidence",
+          "ideal_content_profile": "Movement-driven b-roll synced to a steady pulse — walks, sneakers, mechanical motion.",
+          "copy_tone": "high_energy",
+          "transition_style": "beat_pulse",
+          "color_grade": "desaturated cool"
+        }
+      },
+      {
+        "track_id": "track_acoustic_soft",
+        "title": "Slow Light Folk",
+        "duration_s": 100.0,
+        "slot_count": 6,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "acoustic",
+          "vibe_tags": ["wistful", "patient", "intimate"],
+          "energy": "low",
+          "pacing": "slow",
+          "mood": "introspective afternoon",
+          "ideal_content_profile": "Quiet handheld b-roll, candid family or couple moments, slow color grades.",
+          "copy_tone": "sentimental",
+          "transition_style": "dissolve",
+          "color_grade": "warm golden hour"
+        }
+      }
+    ],
+    "n_variants": 3
+  },
+  "raw_text": "{\"ranked\": [{\"track_id\": \"track_hiphop_streets\", \"score\": 9.0, \"rationale\": \"The clip set is the exact content this track is labeled for — chunky jewelry close-ups, swagger walks, saturated street tones, sneakers on pavement.\", \"predicted_strengths\": [\"saturated street grade matches the footage one-to-one\", \"hard-cut transitions land on the sneaker footstep clip\", \"11 slots over 5 clips leaves room for jewelry detail double-cuts\"]}, {\"track_id\": \"track_hiphop_trap\", \"score\": 8.4, \"rationale\": \"Same genre with a moodier after-dark vibe — fits the slow-mo step-out and leather jacket close-ups; slightly lower because the daytime graffiti tracking shot is brighter than this track's after-dark profile.\", \"predicted_strengths\": [\"slow-mo step-out lands inside this track's profile\", \"swagger vibe overlap with top pick — both hip-hop, but mood is distinct\", \"slot count of 12 supports detail-shot intercutting\"]}, {\"track_id\": \"track_pop_glam\", \"score\": 8.0, \"rationale\": \"Adds editorial fashion polish to the same swagger content — runway-ready glam translates the streetwear clips into a glossier lookbook variant.\", \"predicted_strengths\": [\"distinct vibe from hip-hop picks adds top-K variety\", \"whip_pan transitions fit the side-tracking graffiti-wall shot\", \"peaks_high energy elevates the chunky-chain close-up\"]}, {\"track_id\": \"track_electronic_pulse\", \"score\": 6.5, \"rationale\": \"Movement-driven electronic pulse syncs to the sneaker footsteps but loses the fashion attitude — useful as a fallback if the top three render badly.\", \"predicted_strengths\": [\"beat_pulse transitions sync to footstep rhythm\", \"driving energy supports the tracking-shot pacing\"]}, {\"track_id\": \"track_acoustic_soft\", \"score\": 1.8, \"rationale\": \"Wistful slow folk is the opposite tonal universe from saturated streetwear swagger; slow pacing would drain every clip of its energy.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "output": {
+    "ranked": [
+      {
+        "track_id": "track_hiphop_streets",
+        "score": 9.0,
+        "rationale": "The clip set is the exact content this track is labeled for — chunky jewelry close-ups, swagger walks, saturated street tones, sneakers on pavement.",
+        "predicted_strengths": [
+          "saturated street grade matches the footage one-to-one",
+          "hard-cut transitions land on the sneaker footstep clip",
+          "11 slots over 5 clips leaves room for jewelry detail double-cuts"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_trap",
+        "score": 8.4,
+        "rationale": "Same genre with a moodier after-dark vibe — fits the slow-mo step-out and leather jacket close-ups; slightly lower because the daytime graffiti tracking shot is brighter than this track's after-dark profile.",
+        "predicted_strengths": [
+          "slow-mo step-out lands inside this track's profile",
+          "swagger vibe overlap with top pick — both hip-hop, but mood is distinct",
+          "slot count of 12 supports detail-shot intercutting"
+        ]
+      },
+      {
+        "track_id": "track_pop_glam",
+        "score": 8.0,
+        "rationale": "Adds editorial fashion polish to the same swagger content — runway-ready glam translates the streetwear clips into a glossier lookbook variant.",
+        "predicted_strengths": [
+          "distinct vibe from hip-hop picks adds top-K variety",
+          "whip_pan transitions fit the side-tracking graffiti-wall shot",
+          "peaks_high energy elevates the chunky-chain close-up"
+        ]
+      },
+      {
+        "track_id": "track_electronic_pulse",
+        "score": 6.5,
+        "rationale": "Movement-driven electronic pulse syncs to the sneaker footsteps but loses the fashion attitude — useful as a fallback if the top three render badly.",
+        "predicted_strengths": [
+          "beat_pulse transitions sync to footstep rhythm",
+          "driving energy supports the tracking-shot pacing"
+        ]
+      },
+      {
+        "track_id": "track_acoustic_soft",
+        "score": 1.8,
+        "rationale": "Wistful slow folk is the opposite tonal universe from saturated streetwear swagger; slow pacing would drain every clip of its energy.",
+        "predicted_strengths": [
+          "no real fit"
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "hip-hop street fashion — two hip-hop tracks compete for top, pop glam fills diverse top-K"
+  }
+}
