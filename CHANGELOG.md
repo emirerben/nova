@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.20.3] - 2026-05-15
+
+### Fixed
+- **Admin Test tab renders again on agentic templates with overlays.** Every job triggered from `/admin/templates/<id>?tab=test` was failing with `single-pass ffmpeg failed (rc=234): Output with label 'base' does not exist in any defined filter graph, or was already used elsewhere` — so admins saw no preview at all, just a 500. Root cause: when `base_output_path` AND absolute overlays were both set, `build_single_pass_command` produced a filter graph that emitted `[base]` from the join, let the overlay chain consume it as input, then tried to map it AGAIN as an output. FFmpeg pads can only be consumed once. Fix: when both paths are active, the join now emits `[base_pre]` and a `split=2[base][base_for_overlay]` filter forks it — `-map [base]` gets a free output pad while the overlay chain consumes `[base_for_overlay]` and emits `[vout]` as before. Single decode, two encodes, one ffmpeg process — the dual-output cost model is preserved. Non-dual paths (`has_overlays AND base_output_path=None`, or `has_overlays=False`) are byte-identical to pre-fix. The latent bug had been on `main` since PR #147 (`79a7b5e`, single-pass foundation) but only started biting in production after PR #160 (`0c492ee`) forced single-pass whenever `preview_mode=true`. The previous structural test (`test_dual_output_when_base_path_and_overlays_set`) checked argv strings but never executed ffmpeg, which is how this shipped. This PR adds the missing end-to-end ffmpeg-execution test (`test_dual_output_executes_real_ffmpeg`) plus structural assertions for the split filter on both the concat path and the xfade path.
+
 ## [0.4.20.2] - 2026-05-15
 
 ### Changed
