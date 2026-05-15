@@ -304,22 +304,14 @@ def analyze_template_task(self, template_id: str) -> None:
                 job_id=f"template:{template_id}",
             )
 
-            # Font identification (PR2). Best-effort: a font-id failure must not
-            # abort template analysis. Mutates `recipe.slots[*]["text_overlays"][*]
-            # ["font_alternatives"]` and `recipe.font_default` in place. Skipped
-            # entirely when no overlay has a text_bbox (e.g. the agent inferred
-            # all sample_text from voiceover/vibe, no visible glyphs to match).
-            try:
-                from app.pipeline.font_identification import identify_fonts  # noqa: PLC0415
-                from app.services.clip_font_matcher import get_matcher  # noqa: PLC0415
-
-                identify_fonts(recipe, local_path, get_matcher())
-            except Exception as exc:  # noqa: BLE001
-                log.warning(
-                    "font_identification_failed",
-                    template_id=template_id,
-                    error=str(exc),
-                )
+            # Note: font identification (PR2, identify_fonts + font_alternatives
+            # population) is intentionally scoped to the agentic analysis path
+            # only (app/tasks/agentic_template_build.py). Classic templates are
+            # human-authored with deliberate font picks; running CLIP matching
+            # against the reference video would write font_alternatives onto
+            # overlays whose font_family the operator already chose, costing
+            # ~250-400MB of resident worker memory and ~5-10s of latency per
+            # analysis for no operator value.
 
             # Extract poster JPEG for the homepage gallery (best-effort: a
             # poster failure must not fail analysis — the gradient fallback
@@ -385,7 +377,6 @@ def analyze_template_task(self, template_id: str) -> None:
                         "pacing_style": recipe.pacing_style,
                         "sync_style": recipe.sync_style,
                         "interstitials": recipe.interstitials,
-                        "font_default": recipe.font_default,
                     }
 
                     # Save recipe version before updating cached recipe
