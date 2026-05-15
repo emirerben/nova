@@ -122,6 +122,15 @@ class VideoTemplate(Base):
     # Immutable after row creation; the two paths read/write recipe_cached
     # differently and flipping mid-life would orphan a hand-tuned recipe.
     is_agentic: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Per-template gate for the single-pass encode rollout. Default false
+    # means every existing row stays on the multi-pass path until a
+    # parity + benchmark run promotes it. Combined with the env-level
+    # ``settings.single_pass_encode_enabled`` via AND — flipping either
+    # alone has zero render impact (see _run_template_job's effective
+    # render-path resolution).
+    single_pass_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
 
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 

@@ -650,8 +650,15 @@ class TestGatePoint:
             mock_single.assert_called_once()
             mock_reframe.assert_not_called()
 
-    def test_env_flag_on_invokes_single_pass(self, tmp_path):
-        """settings.single_pass_encode_enabled=True is sufficient (no kwarg needed)."""
+    def test_env_flag_alone_does_NOT_invoke_single_pass(self, tmp_path):
+        """settings.single_pass_encode_enabled=True alone is NO LONGER
+        sufficient at the _assemble_clips boundary. Per the per-template
+        allow-list rollout, the env flag check moved UPSTREAM to
+        _run_template_job / _run_rerender where it's AND-gated with
+        ``template.single_pass_enabled``. _assemble_clips now treats
+        force_single_pass as the sole gate. This regression-tests that
+        setting the env flag without flipping a template still routes
+        through multi-pass."""
         from unittest.mock import patch
 
         from app.tasks.template_orchestrate import _assemble_clips
@@ -671,8 +678,8 @@ class TestGatePoint:
                 tmpdir=str(tmp_path),
                 force_single_pass=False,
             )
-            mock_single.assert_called_once()
-            mock_reframe.assert_not_called()
+            mock_single.assert_not_called()
+            mock_reframe.assert_called_once()
 
     def test_xfade_template_runs_single_pass(self, tmp_path):
         """force_single_pass=True + xfade transition_in → single-pass.

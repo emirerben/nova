@@ -549,6 +549,12 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         # text_designer at template-build time). Manual templates are
         # untouched — same code path, byte-identical output.
         is_agentic = bool(template.is_agentic)
+        # Single-pass allow-list: per-template flag AND env-level kill
+        # switch must both be true for the global rollout to fire on this
+        # template. force_single_pass=True from a kwarg overrides both —
+        # that path is for engineers debugging an individual job via
+        # apply_async kwargs.
+        template_single_pass = bool(template.single_pass_enabled)
 
     # Route on template_kind discriminator. Existing rows without template_kind
     # are backfilled to "multiple_videos" by migration 0012, so .get() with
@@ -769,14 +775,23 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         )
         _phase_t0 = time.monotonic()
 
-        # [6] FFmpeg assemble
-        _render_path = _resolve_render_path(force_single_pass)
+        # [6] FFmpeg assemble. Effective single-pass = force kwarg (engineer
+        # override) OR (env flag AND template allow-list). The AND of the
+        # two production flags is the safe rollout pattern — flipping the
+        # env flag alone or one template alone has zero render impact until
+        # both are set.
+        effective_single_pass = force_single_pass or (
+            settings.single_pass_encode_enabled and template_single_pass
+        )
+        _render_path = _resolve_render_path(effective_single_pass)
         log.info(
             "ffmpeg_assemble_start",
             job_id=job_id,
             render_path=_render_path,
             force_single_pass=force_single_pass,
-            single_pass_enabled=settings.single_pass_encode_enabled,
+            env_single_pass_enabled=settings.single_pass_encode_enabled,
+            template_single_pass=template_single_pass,
+            effective_single_pass=effective_single_pass,
         )
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
         base_path = os.path.join(tmpdir, "base_no_overlays.mp4")
@@ -806,7 +821,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             interstitials=recipe.interstitials,
             base_output_path=base_path,
             output_fit=getattr(recipe, "output_fit", None) or "crop",
-            force_single_pass=force_single_pass,
+            force_single_pass=effective_single_pass,
             is_agentic=is_agentic,
         )
 
@@ -926,6 +941,10 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         recipe_data = template.recipe_cached
         audio_gcs_path = template.audio_gcs_path
         template_gcs_path = template.gcs_path
+        # Same allow-list semantics as _run_template_job — the per-template
+        # flag AND the env flag must both be true for a rerender to take
+        # the single-pass path, unless force_single_pass overrides.
+        template_single_pass = bool(template.single_pass_enabled)
 
     try:
         recipe = _build_recipe(recipe_data)
@@ -981,14 +1000,19 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         )
 
         # FFmpeg assemble (clip_metas=None is safe — text comes from recipe)
-        _render_path = _resolve_render_path(force_single_pass)
+        effective_single_pass = force_single_pass or (
+            settings.single_pass_encode_enabled and template_single_pass
+        )
+        _render_path = _resolve_render_path(effective_single_pass)
         log.info(
             "rerender_assemble_start",
             job_id=job_id,
             steps=len(assembly_steps),
             render_path=_render_path,
             force_single_pass=force_single_pass,
-            single_pass_enabled=settings.single_pass_encode_enabled,
+            env_single_pass_enabled=settings.single_pass_encode_enabled,
+            template_single_pass=template_single_pass,
+            effective_single_pass=effective_single_pass,
         )
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
         base_path = os.path.join(tmpdir, "base_no_overlays.mp4")
@@ -1006,7 +1030,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
             interstitials=recipe.interstitials,
             base_output_path=base_path,
             output_fit=getattr(recipe, "output_fit", None) or "crop",
-            force_single_pass=force_single_pass,
+            force_single_pass=effective_single_pass,
         )
 
         # Mix template audio if available
@@ -1839,13 +1863,17 @@ def _render_planned_slot(plan: SlotPlan) -> str:
 
 
 def _resolve_render_path(force_single_pass: bool) -> str:
-    """Return 'single' or 'multi' based on the force kwarg and env flag.
+    """Return 'single' or 'multi' based on the resolved force flag.
 
-    Centralized so both the main and rerender paths derive render_path
-    identically — drift here would split the assemble/rerender behavior
-    silently.
+    Callers (_run_template_job, _run_rerender) compute the effective
+    single-pass decision by combining the per-job kwarg, the env-level
+    ``settings.single_pass_encode_enabled`` kill switch, and the
+    per-template ``template.single_pass_enabled`` allow-list. The
+    function name is preserved for log-grep compatibility but the
+    semantics are now purely "did the caller decide single-pass" —
+    not "should we use single-pass."
     """
-    return "single" if (force_single_pass or settings.single_pass_encode_enabled) else "multi"
+    return "single" if force_single_pass else "multi"
 
 
 def _generate_single_pass_overlays(
@@ -2132,15 +2160,18 @@ def _assemble_clips(
     )
     _phase_done("plan", _phase_t0, job_id=job_id, slots=len(plans))
 
-    # ── Gate: single-pass branch (flag-gated, opt-in) ─────────────────────
-    # If the env flag is set OR force_single_pass=True was passed in, attempt
-    # to render the whole template in ONE filter_complex invocation instead of
-    # the multi-pass loop below. The single-pass module raises
-    # SinglePassUnsupportedError for features it doesn't yet support (curtain-
-    # close, barn-door-open, pre-burn PNGs); on that exception we fall through
-    # to the multi-pass path with a structured warning so engineers opting in
-    # via force_single_pass don't get cryptic failures on complex templates.
-    if force_single_pass or settings.single_pass_encode_enabled:
+    # ── Gate: single-pass branch ──────────────────────────────────────────
+    # ``force_single_pass`` is the ONLY gate here — callers
+    # (_run_template_job, _run_rerender) have already resolved the env-level
+    # ``settings.single_pass_encode_enabled`` AND per-template
+    # ``template.single_pass_enabled`` into this kwarg. Unit tests that drive
+    # _assemble_clips directly set force_single_pass=True to opt in.
+    #
+    # When the spec build raises SinglePassUnsupportedError (curtain-close,
+    # barn-door-open, pre-burn PNGs), we catch and fall through to the
+    # multi-pass loop with a structured warning so engineers opting in via
+    # force_single_pass don't get cryptic failures on complex templates.
+    if force_single_pass:
         try:
             _phase_t0_sp = time.monotonic()
             # M6: collect absolute-timestamp overlays and pre-generate the
