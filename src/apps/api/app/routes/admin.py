@@ -220,6 +220,13 @@ class TestJobRequest(BaseModel):
     clip_durations: list[float] | None = None
     selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
     subject: str = ""
+    # Fast-preview toggle for the admin test tab. When true, the orchestrator
+    # skips curtain-close, skips generate_copy, and uses lower-quality
+    # intermediate encodes — final-output encode policy is untouched, so
+    # picture quality of the rendered video is the same. Cuts a 5-clip test
+    # from ~3 min cold to ~30-60s. Default false to preserve external API
+    # behaviour; the admin UI sets it to true.
+    preview_mode: bool = False
 
     @field_validator("clip_gcs_paths")
     @classmethod
@@ -1045,13 +1052,20 @@ async def create_test_job(
     validate_clip_count(template, len(req.clip_gcs_paths))
     validate_clip_total_duration(template, req.clip_durations)
 
+    all_candidates: dict = {
+        "clip_paths": req.clip_gcs_paths,
+        "subject": req.subject,
+    }
+    if req.preview_mode:
+        all_candidates["preview_mode"] = True
+
     job = Job(
         user_id=SYNTHETIC_USER_ID,
         job_type="template",
         template_id=template_id,
         raw_storage_path=req.clip_gcs_paths[0],
         selected_platforms=req.selected_platforms,
-        all_candidates={"clip_paths": req.clip_gcs_paths, "subject": req.subject},
+        all_candidates=all_candidates,
         status="queued",
     )
     db.add(job)
@@ -1064,7 +1078,12 @@ async def create_test_job(
 
     orchestrate_template_job.delay(job_id)
 
-    log.info("test_job_created", job_id=job_id, template_id=template_id)
+    log.info(
+        "test_job_created",
+        job_id=job_id,
+        template_id=template_id,
+        preview_mode=req.preview_mode,
+    )
     return TestJobResponse(job_id=job_id, status="queued", template_id=template_id)
 
 

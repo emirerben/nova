@@ -11,13 +11,15 @@ A failed phase write must never fail the user's job.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from datetime import UTC, datetime
-from typing import Final
+from typing import Any, Final
 
 import structlog
-from sqlalchemy import update
+from sqlalchemy import cast, literal, update
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.database import sync_session
 from app.models import Job
@@ -134,6 +136,64 @@ def record_phase(
             "phase_record_failed",
             job_id=str(job_id),
             phase=name,
+            error=str(exc),
+        )
+
+
+def record_sub_phase(
+    job_id: str | uuid.UUID,
+    parent: str,
+    name: str,
+    *,
+    elapsed_ms: int | None = None,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    """Atomically append a sub-phase entry to phase_log.
+
+    Sub-phases are used to surface per-clip / per-step timing inside a parent
+    phase like ``analyze_clips``. Worker threads call this concurrently, so we
+    use Postgres' JSONB ``||`` operator inside a single UPDATE to avoid the
+    read-modify-write race that ``record_phase`` has (acceptable there because
+    top-level phases are sequential, not so here).
+    """
+    job_uuid = _coerce_uuid(job_id)
+    if job_uuid is None:
+        return
+    now = datetime.now(UTC)
+    entry: dict[str, Any] = {
+        "name": name,
+        "parent": parent,
+        "elapsed_ms": int(elapsed_ms) if elapsed_ms is not None else None,
+        "ts": now.isoformat(),
+    }
+    if detail is not None:
+        entry["detail"] = detail
+    try:
+        with sync_session() as db:
+            job = db.get(Job, job_uuid)
+            if job is None:
+                return
+            if job.started_at is not None:
+                entry["t_offset_ms"] = int(
+                    (now - job.started_at).total_seconds() * 1000
+                )
+            stmt = (
+                update(Job)
+                .where(Job.id == job_uuid)
+                .values(
+                    phase_log=Job.phase_log.op("||")(
+                        cast(literal(json.dumps([entry])), JSONB)
+                    )
+                )
+            )
+            db.execute(stmt)
+            db.commit()
+    except Exception as exc:  # pragma: no cover — best-effort
+        log.warning(
+            "sub_phase_record_failed",
+            job_id=str(job_id),
+            parent=parent,
+            name=name,
             error=str(exc),
         )
 

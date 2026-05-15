@@ -224,6 +224,9 @@ export async function adminCreateTestJob(
     clip_gcs_paths: string[];
     selected_platforms?: string[];
     subject?: string;
+    // When true the orchestrator skips curtain-close interstitials and
+    // generate_copy. Backend default is false; admin test tab passes true.
+    preview_mode?: boolean;
   },
 ): Promise<TestJobResponse> {
   const res = await adminFetch(`/admin/templates/${templateId}/test-job`, {
