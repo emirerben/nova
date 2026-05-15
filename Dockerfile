@@ -20,17 +20,25 @@ RUN groupadd --gid 1000 nova && \
 
 WORKDIR /app
 
-# ---------- torch CPU-only install (own cached layer) ----------
-# Install torch from the CPU-only index BEFORE the main pyproject.toml install
-# so pip sees it already satisfied and doesn't pull the CUDA wheel (~2GB) when
-# resolving open-clip-torch. The `+cpu` local-version suffix is NOT published
-# on https://download.pytorch.org/whl/cpu — that index serves plain `torch==X.Y.Z`
+# ---------- torch + torchvision CPU-only install (own cached layer) ----------
+# Install BOTH torch and torchvision from the CPU-only index, in the same pip
+# invocation, BEFORE the main pyproject.toml install. open-clip-torch depends
+# transitively on torchvision (it's used by the preprocess pipeline). Without
+# pinning torchvision to the CPU index too, pip resolves it from the default
+# PyPI mirror, picks a build whose C++ extensions expect CUDA, and at first
+# import the operator `torchvision::nms` fails to register against a CPU-only
+# torch — surfacing as `RuntimeError('operator torchvision::nms does not exist')`
+# on the very first open-clip call. Both wheels must come from the same index
+# so pip picks the matching torch/torchvision pair (torch 2.4 ↔ tv 0.19,
+# torch 2.5 ↔ tv 0.20, etc.). The CPU index publishes only mutually-compatible
+# pairs; leaving torchvision unpinned within `<1` lets pip co-resolve.
+#
+# The `+cpu` local-version suffix is NOT published on
+# https://download.pytorch.org/whl/cpu — that index serves plain `torch==X.Y.Z`
 # wheels that are CPU-only by virtue of which index they came from. Don't pin
 # `torch==X.Y.Z+cpu` here; that exact spec resolves to nothing on this index.
-# Version floor matches what open-clip-torch 3.x requires; ceiling caps the
-# upgrade risk between deploys.
 RUN pip install --no-cache-dir --upgrade pip setuptools && \
-    pip install --no-cache-dir 'torch>=2.4,<3' \
+    pip install --no-cache-dir 'torch>=2.4,<3' 'torchvision<1' \
       --index-url https://download.pytorch.org/whl/cpu
 
 # ---------- dependency install (cached layer) ----------

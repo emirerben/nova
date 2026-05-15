@@ -54,7 +54,47 @@ jobs:
           context: .
           file: ./Dockerfile
           push: false
-          load: false
+          load: true
           tags: nova-build-test:ci
           cache-from: type=gha,scope=docker-build-check
           cache-to: type=gha,scope=docker-build-check,mode=max
+
+      # Runtime smoke check — catches version-mismatch bugs that pass
+      # `pip install` but explode at first import. Motivating incident
+      # (May 2026): PR #150 (v0.4.15.0) pinned torch CPU but not
+      # torchvision; pip pulled a CUDA-built torchvision from the default
+      # index, and the very first open_clip call at worker boot raised
+      # `RuntimeError('operator torchvision::nms does not exist')` because
+      # the C++ op never registered against CPU-only torch. The image
+      # built fine; the failure only surfaced at deploy. Importing
+      # clip_font_matcher and exercising encode_image on a 1×1 image
+      # forces every torch/torchvision/open-clip layer to wire up.
+      - name: Smoke-check CLIP font matcher loads at runtime
+        run: |
+          docker run --rm \
+            -e STORAGE_BUCKET=ci-noop \
+            -e STORAGE_PROVIDER=gcs \
+            -e DATABASE_URL=postgresql://ci:ci@127.0.0.1/ci \
+            -e REDIS_URL=redis://127.0.0.1:6379 \
+            -e OPENAI_API_KEY=sk-ci-noop \
+            -e GEMINI_API_KEY=ci-noop \
+            -e TOKEN_ENCRYPTION_KEY=ci-noop \
+            -e ALLOWED_ORIGINS='["http://localhost:3000"]' \
+            --entrypoint python nova-build-test:ci -c '
+          import io
+          from PIL import Image
+          from app.services.clip_font_matcher import ClipFontMatcher, _ensure_loaded
+
+          # Force the model + registry to load. If torch/torchvision are
+          # mismatched (CUDA vs CPU build skew), this is where the
+          # `operator torchvision::nms does not exist` error surfaces.
+          _ensure_loaded()
+
+          # Run a real embedding to exercise the visual tower + preprocess
+          # pipeline (which is where torchvision ops live).
+          buf = io.BytesIO()
+          Image.new("RGB", (8, 8), color=(128, 128, 128)).save(buf, format="PNG")
+          emb = ClipFontMatcher().embed_image(buf.getvalue())
+          assert emb.shape == (512,), f"unexpected embedding shape {emb.shape}"
+          print("CLIP smoke check passed: embedding shape", emb.shape)
+          '

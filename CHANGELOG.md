@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.15.1] - 2026-05-15
+
+### Fixed
+- **`torchvision` CPU wheel now pinned alongside `torch` in the Dockerfile.** PR2 (#150, v0.4.15.0) installed `torch` from the PyTorch CPU-only index but did not list `torchvision` in the same install step. `open-clip-torch` depends transitively on `torchvision`; pip then resolved it from the default PyPI mirror, picked a CUDA-built wheel, and at the worker's first open-clip call the operator `torchvision::nms` failed to register against a CPU-only torch — surfacing as `RuntimeError('operator torchvision::nms does not exist')` in the worker_ready prewarm. CLIP font matching was silently disabled until this fix; `font_default` and `font_alternatives` would never populate. The Dockerfile now installs `torch` and `torchvision` in the same pip invocation against `https://download.pytorch.org/whl/cpu`, so pip picks a mutually-compatible pair from the only index that publishes CPU-only torchvision wheels.
+- **`.github/workflows/docker-build.yml` now smoke-checks the CLIP matcher inside the built image.** Previous CI only validated that `docker build` succeeded against the .dockerignore-filtered context. That catches Dockerfile/COPY mismatches but not version-skew bugs that pass install yet explode at first import (exactly the torchvision regression above). The new step `docker run`s the built image with `load: true` and executes a minimal `_ensure_loaded()` + `embed_image()` against an 8×8 PNG. The op-registration failure is exactly what fires at this call, so the bug now fails the PR instead of failing the deploy.
+
 ## [0.4.15.0] - 2026-05-15
 
 ### Added
