@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.20.3] - 2026-05-15
+
+### Tests
+- **Expanded `music_matcher` eval fixture set from 1 → 23 golden cases (Phase 2 polish).** The Phase 2 ship in v0.4.19.0 included only the original `golden_hour_family.json` golden, so the plan's GA verification gate (`music_matcher_evals.py judge avg ≥ 3.5/5 across ~20 fixture clip-sets, AND diversity ≥ threshold across the top-3`) was not measurable with n=1. This adds 22 new hand-authored fixtures under `src/apps/api/tests/fixtures/agent_evals/music_matcher/golden/` covering: every `MusicLabels.genre` value (`pop`, `hip_hop`, `electronic`, `cinematic`, `acoustic`, `comedy`, `other`) with ≥2 fixtures each where applicable; the full energy/pacing spread (`low`-`slow` through `peaks_high`-`frantic`); clip-count edges (N=1, N=2, N=4-6, N=8) and library-size edges (2-track minimum, 8-9-track libraries); and four hard-cased difficulty scenarios — (a) `no_good_match_eclectic_clips` where top score is honestly modest (5.8/10), (b) `tied_vibes_diversity_tiebreak` where two near-identical acoustic tracks score within 0.4 points and cinematic wins rank 2 on the diversity tiebreaker, (c) `comedy_reel_sentimental_mismatch` where a sentimental ballad is explicitly ranked 1.5/10 on a slapstick reel, (d) `hype_dance_acoustic_mismatch` where a slow acoustic ballad is explicitly ranked 1.5/10 on a peaks_high+frantic dance reel. Also includes `slot_feasibility_mismatch` where an electronic track with `slot_count=14` is ranked low against an `n_clips=4` set despite a plausible vibe match — exercising the prompt's "rank lower even if the vibe matches" rule. Every fixture passes the structural floor (`check_music_matcher`) in replay mode (23/23 PASS in `pytest tests/evals/test_music_matcher_evals.py -v`), and the full agent+evals suite stays green (292/292 PASS). The judge gate is now measurable; a future live-eval run (`pytest tests/evals/test_music_matcher_evals.py -v --with-judge --eval-mode=live`, ~$2-5/run) should be executed before any `prompt_version` bump per CLAUDE.md. No agent code, prompt, or runtime change — fixtures only.
+
 ## [0.4.20.2] - 2026-05-15
 
 ### Changed
