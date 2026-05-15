@@ -78,23 +78,29 @@ AGENT_NARRATIVE: dict[str, dict[str, str]] = {
     },
     "nova.layout.text_designer": {
         "phase": "job",
-        "cardinality": "per-slot · per-overlay",
-        "what": "Tunes overlay text per slot — font cycle behavior, accel timing, settle phase. Built inline from the slot's overlay dict.",
+        "cardinality": "per-slot · per-overlay · agentic templates",
+        "what": "Tunes overlay text per slot — font cycle behavior, accel timing, settle phase. Promoted from shadow mode to production for <code>is_agentic=true</code> templates (PR #136); manual templates still use static <code>_LABEL_CONFIG</code>.",
+        "status_badge": "PR #136 · in prod",
+        "status_badge_kind": "has-fixtures",
     },
     "nova.layout.transition_picker": {
         "phase": "job",
-        "cardinality": "per-slot",
-        "what": "Picks the transition into each slot from the recipe's vocabulary (whip-pan, dissolve, zoom-in, cut). Built inline.",
+        "cardinality": "per-slot · shadow mode",
+        "what": "Picks the transition into each slot from the recipe's vocabulary (whip-pan, dissolve, zoom-in, cut). Still shadow-mode; production wiring deferred per PR2 scope decision.",
+        "status_badge": "shadow only",
     },
     "nova.video.shot_ranker": {
         "phase": "job",
         "cardinality": "per-clip · candidate ranking",
-        "what": "Ranks candidate moments within a clip when multiple pass clip_metadata's filter — sports highlight reels in particular.",
+        "what": "Moment ranking within a clip. Codified but not yet wired — deferred until <code>clip_router</code> proves itself in production.",
+        "status_badge": "codified · not wired",
     },
     "nova.video.clip_router": {
         "phase": "job",
-        "cardinality": "per-clip",
-        "what": "Routes clips to the right downstream agent (e.g., football clips get the action filter). Cheap routing decision.",
+        "cardinality": "slot → clip · agentic templates",
+        "what": "Slot → clip assignment. Newly wired into production for <code>is_agentic=true</code> templates (PR #136) with a greedy fallback via the new <code>agentic_matcher</code> module. Manual templates still use the rule-based matcher.",
+        "status_badge": "PR #136 · in prod",
+        "status_badge_kind": "has-fixtures",
     },
     "nova.audio.beat_aligner": {
         "phase": "job",
@@ -909,9 +915,22 @@ def _render_agent_tile(idx: int, agent: dict, fixtures_by_agent_name: dict[str, 
         badges.append('<span class="badge py">Python</span>')
     else:
         badges.append('<span class="badge llm">LLM · Gemini</span>')
-    if has_fxs:
+
+    # A `status_badge` from AGENT_NARRATIVE overrides the default "N fixtures"
+    # badge so per-agent prod-status copy ("PR #136 · in prod", "shadow only",
+    # "codified · not wired") sticks across regens.
+    status_badge = nar.get("status_badge")
+    status_kind = nar.get("status_badge_kind", "")
+    if status_badge:
+        kind_attr = f" {status_kind}" if status_kind else ""
+        badges.append(f'<span class="badge{kind_attr}">{_esc(status_badge)}</span>')
+    elif has_fxs:
         n = len(fixtures_by_agent_name[name])
         badges.append(f'<span class="badge has-fixtures">{n} fixtures</span>')
+
+    # `what` allows inline HTML (e.g., <code>) for agents whose narrative
+    # references config flags. Authors of AGENT_NARRATIVE are trusted.
+    what_html = nar["what"] if ("<" in nar["what"]) else _esc(nar["what"])
 
     return f"""<article class="agent-tile is-{phase}{" is-fxs" if has_fxs else ""}"
               data-target="agent-{name.replace(".", "-")}"
@@ -920,7 +939,7 @@ def _render_agent_tile(idx: int, agent: dict, fixtures_by_agent_name: dict[str, 
   <div class="agent-badges">{"".join(badges)}</div>
   <h3 class="agent-name">{_esc(short)}</h3>
   <div class="agent-cardinality">{_esc(nar["cardinality"])}</div>
-  <p class="agent-what">{_esc(nar["what"])}</p>
+  <p class="agent-what">{what_html}</p>
   <div class="agent-meta-row">
     <span><b>model</b> {_esc(agent["model"])}</span>
     <span><b>v</b> {_esc(agent["prompt_version"])}</span>
@@ -1991,20 +2010,53 @@ def render_dashboard() -> str:
   <main class="wrap">
     <section id="overview" class="tab active">
       <div class="hero" style="border:none; padding-top:64px;">
-        <div class="eyebrow">Issue 01 · {ts}</div>
+        <div class="eyebrow">Issue 02 · 2026-05-15 · agentic templates land</div>
         <h1>Inspect every <em>agent</em> in the pipeline.</h1>
         <p class="lede">
           Twelve agents shape every Nova video. This dashboard reads their stored outputs
           across {n_templates} production templates — prompts, schemas, fixtures, tests — so
-          quality regressions are visible before they ship.
+          quality regressions are visible before they ship. Today the <em>agentic</em>
+          template-build path graduates from shadow mode: <code>text_designer</code> and
+          <code>clip_router</code> are wired into production for templates flagged
+          <code>is_agentic=true</code>.
         </p>
         <dl class="meta">
-          <div class="meta-row"><dt>Templates</dt><dd>{n_templates} analyzed</dd></div>
-          <div class="meta-row"><dt>Agents</dt><dd>{len(agent_catalog)} ({n_with_fixtures} with fixtures)</dd></div>
-          <div class="meta-row"><dt>Tests</dt><dd>{n_pass}/{n_total_tests} passing · {duration:.2f}s</dd></div>
+          <div class="meta-row"><dt>Templates</dt><dd>{n_templates} analyzed · agentic flag live</dd></div>
+          <div class="meta-row"><dt>Agents</dt><dd>{len(agent_catalog)} ({n_with_fixtures} with fixtures · 2 newly in prod)</dd></div>
+          <div class="meta-row"><dt>Tests</dt><dd>{n_pass}/{n_total_tests} passing · {duration:.2f}s · new e2e eval in CI</dd></div>
           <div class="meta-row"><dt>Issues</dt><dd>{n_issues} detected · {high_sev} high</dd></div>
-          <div class="meta-row"><dt>Source</dt><dd>VideoTemplate.recipe_cached · JobClip · TemplateRecipeVersion</dd></div>
+          <div class="meta-row"><dt>Source</dt><dd>VideoTemplate.recipe_cached · VideoTemplate.is_agentic · JobClip · TemplateRecipeVersion</dd></div>
+          <div class="meta-row"><dt>Landed today</dt><dd>PR #135 · PR #136 · PR #137 · PR #142</dd></div>
         </dl>
+      </div>
+
+      <div class="section-head" style="margin-top: 48px;">
+        <div class="section-num">§ 00 · Landed 2026-05-15</div>
+        <h2>The agentic-templates <em>cut-over</em>.</h2>
+        <p class="section-lede">Four PRs reshape how templates are built and how their quality is measured. The shorthand: <strong>edit a prompt → CI auto-runs the e2e eval with judge → see score delta on the PR → decide before merge.</strong> This replaces the old loop of hand-editing recipes in the visual overlay editor.</p>
+      </div>
+
+      <div class="commands">
+        <h4>PR #135 · <span class="dim">merged</span> · <code>is_agentic</code> flag on VideoTemplate</h4>
+        <code class="dim">Admin UI: green Agentic badge · All/Manual/Agentic filter · checkbox on create form · read-only banner on visual overlay editor for agentic templates.</code>
+        <code class="dim">Backend: PUT /admin/templates/{{id}}/recipe returns 409 for agentic rows.</code>
+      </div>
+      <div class="commands">
+        <h4>PR #136 · <span class="dim">open</span> · agentic build orchestrator</h4>
+        <code class="dim">New tasks.agentic_template_build_task runs Big 3 + per-slot text_designer.</code>
+        <code class="dim">Job-time branch in template_orchestrate.py skips static _LABEL_CONFIG and calls clip_router instead of the greedy matcher.</code>
+        <code class="dim">New agentic_matcher module with greedy fallback. Manual templates produce byte-identical output (locked by regression test).</code>
+      </div>
+      <div class="commands">
+        <h4>PR #137 · <span class="dim">open · stacked on #136</span> · end-to-end eval</h4>
+        <code>tests/evals/test_agentic_template_e2e.py</code>
+        <code class="dim">10 structural assertions + LLM judge against new rubric: overlay_styling_coherence, transition_pacing_fit, beat_snap_realism, first_slot_hook_design.</code>
+        <code class="dim">CI auto-trigger on agentic-stack prompt/source changes via .github/workflows/agent-evals.yml.</code>
+      </div>
+      <div class="commands">
+        <h4>PR #142 · <span class="dim">open · independent hygiene</span> · alembic bootstrap</h4>
+        <code class="dim">Commits the previously-untracked 0000_initial_schema.py bootstrap migration.</code>
+        <code class="dim">Chains 0001_add_waitlist_signups onto it so alembic has a single head. Fixes fresh-DB bootstrap on every new machine.</code>
       </div>
 
       <div class="section-head" style="margin-top: 48px;">
