@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.14.1] - 2026-05-15
+
+### Removed
+- **Rotted eval fixtures `saygimdan.json` and `saygimdan_v2__gemini.json`** under `tests/fixtures/agent_evals/template_recipe/prod_snapshots/`. Both fixtures reference `templates/a70732f3-9367-4a90-861a-374b311c2427/reference.mp4` in GCS, which returns 404. They worked in replay mode (cached `raw_text`/`output` was self-contained) but failed every `--eval-mode=live` run with a download error. When the saygimdan template's reference video is re-uploaded, regenerate fixtures via `scripts/export_eval_fixtures.py`.
+
+### Changed
+- **`tests/evals/conftest.py` lifts per-test timeout to 300s in live mode.** The global pytest timeout of 30s (set in `pyproject.toml [tool.pytest.ini_options]`) is appropriate for fast unit tests but falsely fails every live Gemini call (template_recipe latency is 30-65s/fixture on real reference videos). The bump is applied via `pytest_collection_modifyitems` only when `--eval-mode=live` or `NOVA_EVAL_MODE=live` is set, so unit-test enforcement is unchanged. Items already carrying an explicit `@pytest.mark.timeout(...)` are left alone.
+
 ## [0.4.14.0] - 2026-05-15
 
 ### Added
