@@ -1,0 +1,35 @@
+{
+  "agent": "nova.audio.song_classifier",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "file_uri": "files/golden-music-track",
+    "file_mime": "audio/mp4",
+    "audio_template_output": {
+      "copy_tone": "sentimental",
+      "transition_style": "dissolve",
+      "pacing_style": "slow, breathy crossfades",
+      "creative_direction": "Acoustic piano ballad with a wistful melody and slow vocal phrasing. Cuts dissolve on long sustains.",
+      "subject_niche": "intimate moments montage"
+    }
+  },
+  "raw_text": "{\"labels\": {\"label_version\": \"2026-05-15\", \"genre\": \"acoustic\", \"vibe_tags\": [\"wistful\", \"intimate\", \"nostalgic\"], \"energy\": \"low\", \"pacing\": \"slow\", \"mood\": \"bittersweet but hopeful\", \"ideal_content_profile\": \"Close-up shots of family or a couple at golden hour. Slow motion candid laughs, hand-held b-roll, lingering eye contact.\", \"copy_tone\": \"sentimental\", \"transition_style\": \"dissolve\", \"color_grade\": \"warm golden hour\"}, \"rationale\": \"Mid-tempo acoustic ballad with wistful timbre; wants intimate human b-roll with soft warm light.\"}",
+  "output": {
+    "labels": {
+      "label_version": "2026-05-15",
+      "genre": "acoustic",
+      "vibe_tags": ["wistful", "intimate", "nostalgic"],
+      "energy": "low",
+      "pacing": "slow",
+      "mood": "bittersweet but hopeful",
+      "ideal_content_profile": "Close-up shots of family or a couple at golden hour. Slow motion candid laughs, hand-held b-roll, lingering eye contact.",
+      "copy_tone": "sentimental",
+      "transition_style": "dissolve",
+      "color_grade": "warm golden hour"
+    },
+    "rationale": "Mid-tempo acoustic ballad with wistful timbre; wants intimate human b-roll with soft warm light."
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "acoustic ballad — wistful intimate labels with downstream-fit dissolve + sentimental copy_tone"
+  }
+}

@@ -61,6 +61,11 @@ AGENT_NARRATIVE: dict[str, dict[str, str]] = {
         "cardinality": "once · per music track",
         "what": "Beat-synced version of template_recipe. Reads detected beats from a music track and produces a slot layout where every slot snaps to a beat.",
     },
+    "nova.audio.song_classifier": {
+        "phase": "admin",
+        "cardinality": "once · per music track",
+        "what": "Creative-direction labels for a music track (genre, vibe_tags, energy, pacing, mood, ideal_content_profile, copy_tone, transition_style, color_grade). Producer of MusicLabels; the matcher (Phase 2) uses these to pair clip sets with songs in auto-music mode.",
+    },
     "nova.video.clip_metadata": {
         "phase": "job",
         "cardinality": "per-clip · in parallel",
@@ -125,6 +130,7 @@ FIXTURE_AGENT_NAME = {
     "transcript": "nova.audio.transcript",
     "platform_copy": "nova.compose.platform_copy",
     "audio_template": "nova.audio.template_recipe",
+    "song_classifier": "nova.audio.song_classifier",
 }
 
 # Map agent_name → prompt files to display (some agents share prompts)
@@ -140,6 +146,7 @@ AGENT_PROMPT_FILES: dict[str, list[str]] = {
         "analyze_audio_template.txt",
         "analyze_template_schema.txt",
     ],
+    "nova.audio.song_classifier": ["classify_song.txt"],
     "nova.audio.transcript": ["transcribe.txt"],
 }
 
@@ -1931,7 +1938,13 @@ def render_dashboard() -> str:
         FIXTURE_AGENT_NAME["template_recipe"]: template_recipe_fxs,
         FIXTURE_AGENT_NAME["creative_direction"]: creative_direction_fxs,
     }
-    for fixture_dir in ("clip_metadata", "transcript", "platform_copy", "audio_template"):
+    for fixture_dir in (
+        "clip_metadata",
+        "transcript",
+        "platform_copy",
+        "audio_template",
+        "song_classifier",
+    ):
         fixtures_by_agent_name[FIXTURE_AGENT_NAME[fixture_dir]] = _load_fixtures(fixture_dir)
 
     # Sort agents: ones with fixtures first, then the rest
