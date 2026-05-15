@@ -1076,13 +1076,27 @@ async def create_test_job(
 
     from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
 
-    orchestrate_template_job.delay(job_id)
+    # Preview-mode test jobs force the single-pass encode path regardless of
+    # the per-template allow-list (template_orchestrate.py:1980 documents this
+    # as the engineer-debug escape hatch). Prod templates that have completed
+    # parity testing get single_pass_enabled=true and hit single-pass naturally;
+    # an admin's not-yet-promoted test template otherwise falls through to the
+    # multi-pass path, which is what made assemble feel slow. Preview mode is
+    # admin-only and explicitly opt-in for "fast at the cost of some fidelity,"
+    # so forcing single-pass here matches what the operator asked for.
+    if req.preview_mode:
+        orchestrate_template_job.apply_async(
+            args=[job_id], kwargs={"force_single_pass": True},
+        )
+    else:
+        orchestrate_template_job.delay(job_id)
 
     log.info(
         "test_job_created",
         job_id=job_id,
         template_id=template_id,
         preview_mode=req.preview_mode,
+        force_single_pass=req.preview_mode,
     )
     return TestJobResponse(job_id=job_id, status="queued", template_id=template_id)
 
