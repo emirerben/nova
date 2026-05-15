@@ -103,6 +103,16 @@ export interface RecipeTextOverlay {
   // only when the agent observed visible glyphs (not when sample_text was
   // inferred from voiceover/vibe). Used by PR2's font-identification step.
   text_bbox?: TextBbox | null;
+  // Top-N visually-similar registry fonts produced by PR2's font-identification
+  // pipeline. Populated only when text_bbox was present and CLIP matching ran.
+  // Sorted by similarity descending. Admin UI renders these as click-to-swap
+  // tiles in FontAlternatives. null when the pipeline skipped this overlay.
+  font_alternatives?: FontAlternative[] | null;
+}
+
+export interface FontAlternative {
+  family: string;       // registry name, e.g. "Montserrat"
+  similarity: number;   // cosine similarity in [0, 1]
 }
 
 export interface RecipeInterstitial {
@@ -140,6 +150,12 @@ export interface Recipe {
   pacing_style: string;
   sync_style: SyncStyle;
   interstitials: RecipeInterstitial[];
+  // Identified font for this template. Aggregated by font-identification from
+  // per-overlay font_alternatives, weighted by similarity × overlay_duration.
+  // Becomes the implicit font_family fallback for overlays whose font_family
+  // is unset. null when no overlay had a text_bbox or all matches were below
+  // the similarity floor.
+  font_default?: string | null;
 }
 
 // ── Editor state ────────────────────────────────────────────────────────────
@@ -174,7 +190,12 @@ export type EditorAction =
   | { type: "REMOVE_INTERSTITIAL"; interstitialIndex: number }
   | { type: "SET_SELECTED"; selection: EditorSelection | null }
   | { type: "RESET_TO_SAVED"; recipe: Recipe }
-  | { type: "SET_VERSION"; versionId: string; versionNumber: number };
+  | { type: "SET_VERSION"; versionId: string; versionNumber: number }
+  // Atomic font-default change: sets recipe.font_default AND overwrites
+  // font_family on every overlay across every slot. Single action so the
+  // editor "dirty" flag and the undo/redo boundary line up with one user
+  // intent ("use this font everywhere") instead of N per-overlay edits.
+  | { type: "APPLY_FONT_TO_ALL_OVERLAYS"; family: string };
 
 export interface EditorState {
   recipe: Recipe | null;

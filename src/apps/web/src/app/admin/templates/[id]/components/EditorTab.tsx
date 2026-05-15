@@ -84,6 +84,21 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       };
     }
 
+    case "APPLY_FONT_TO_ALL_OVERLAYS": {
+      if (!state.recipe) return state;
+      const slots = state.recipe.slots.map((s) => ({
+        ...s,
+        text_overlays: s.text_overlays.map((o) => ({
+          ...o,
+          font_family: action.family,
+        })),
+      }));
+      return {
+        ...state,
+        recipe: { ...state.recipe, slots, font_default: action.family },
+      };
+    }
+
     case "ADD_OVERLAY": {
       if (!state.recipe) return state;
       const slots = state.recipe.slots.map((s, i) => {

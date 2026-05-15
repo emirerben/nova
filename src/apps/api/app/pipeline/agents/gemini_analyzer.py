@@ -86,6 +86,12 @@ class TemplateRecipe:
     # (e.g. "ball must be in frame" for football highlights).
     output_fit: str = "crop"
     clip_filter_hint: str = ""
+    # Identified font family for this template (PR2 font-identification).
+    # Aggregated from per-overlay font_alternatives weighted by similarity ×
+    # overlay duration. Empty string when no overlay had a text_bbox or all
+    # matches fell below the similarity floor — renderer falls back to the
+    # existing default chain (font_family → font_style → Playfair Display).
+    font_default: str = ""
 
 
 @dataclass
