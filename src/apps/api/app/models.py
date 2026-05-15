@@ -200,6 +200,13 @@ class MusicTrack(Base):
     # Gemini audio analysis → cached recipe for audio-only template creation
     recipe_cached: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     recipe_cached_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # song_classifier creative labels (vibe, genre, mood, copy_tone, ...).
+    # See app/agents/_schemas/music_labels.py — MusicLabels Pydantic shape.
+    # Nullable until backfill runs; the matcher filters out NULL-labeled tracks.
+    ai_labels: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Mirrors MusicLabels.label_version so the matcher can refuse stale rows
+    # without parsing the JSONB.
+    label_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     __table_args__ = (
