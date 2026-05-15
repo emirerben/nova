@@ -1919,7 +1919,22 @@ def _build_single_pass_spec(
                 f"slot {plan.slot_idx} has curtain-close interstitial; "
                 f"PNG-bar overlay lands in milestone 4"
             )
-        # Other types (fade-black-hold, etc.) → color hold input.
+        if inter_type == "barn-door-open":
+            # Multi-pass renders barn-door-open as a color hold AT the
+            # interstitial position PLUS a PNG-bar opening animation on the
+            # head of the NEXT slot (template_orchestrate.py:2121
+            # `apply_barn_door_open_head`). M2 only models the color hold,
+            # which would silently drop the slot-head animation and ship
+            # output that's missing the hero reveal. No production template
+            # uses barn-door-open today, but match-cut + barn-door + speed-
+            # ramp shipped in PR #134 (v0.4.12.0) as first-class effects, so
+            # this gate is the future-proof. Lift it together with the
+            # curtain-close gate when M4 lands.
+            raise SinglePassUnsupportedError(
+                f"slot {plan.slot_idx} has barn-door-open interstitial; "
+                f"slot-head PNG-bar overlay lands in milestone 4"
+            )
+        # Other types (fade-black-hold, flash-white) → color hold input.
         hold_color_hex = inter.get("hold_color", "#000000")
         ffmpeg_color = "white" if hold_color_hex == "#FFFFFF" else "black"
         inputs.append(

@@ -481,6 +481,49 @@ class TestGatePoint:
             mock_single.assert_not_called()
             mock_reframe.assert_called_once()
 
+    def test_barn_door_open_template_falls_back_to_multi_pass(self, tmp_path):
+        """force_single_pass=True + barn-door-open interstitial → multi-pass.
+
+        Latent-bug guard. Multi-pass renders barn-door-open as a color hold
+        AT the interstitial position PLUS a PNG-bar opening animation on the
+        head of the NEXT slot. M2 single-pass only models the color hold,
+        which would silently drop the slot-head animation. The gate at
+        _build_single_pass_spec raises SinglePassUnsupportedError to force
+        fallback until M4 lands; this test pins that behavior.
+        """
+        from unittest.mock import patch
+
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        # Two slots so the barn-door head animation has somewhere to land.
+        step1, probe1, file1 = self._make_step_and_probe(tmp_path, slot_idx=1)
+        step2, probe2, file2 = self._make_step_and_probe(tmp_path, slot_idx=2)
+        interstitials = [
+            {"after_slot": 1, "type": "barn-door-open", "animate_s": 4.0, "hold_s": 0.5,
+             "hold_color": "#000000"},
+        ]
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.run_single_pass") as mock_single,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+            patch("app.pipeline.interstitials.apply_barn_door_open_head"),
+            patch("app.tasks.template_orchestrate._join_or_concat"),
+            patch("app.tasks.template_orchestrate._burn_text_overlays"),
+            patch("app.tasks.template_orchestrate._insert_interstitial"),
+            patch("app.tasks.template_orchestrate._probe_duration", return_value=4.0),
+        ):
+            _assemble_clips(
+                steps=[step1, step2],
+                clip_id_to_local={step1.clip_id: str(file1), step2.clip_id: str(file2)},
+                clip_probe_map={str(file1): probe1, str(file2): probe2},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                force_single_pass=True,
+                interstitials=interstitials,
+            )
+            mock_single.assert_not_called()
+            assert mock_reframe.call_count == 2
+
 
 # ── Direct unit tests for _build_single_pass_spec ────────────────────────────
 
@@ -577,6 +620,21 @@ class TestBuildSinglePassSpec:
         from app.tasks.template_orchestrate import _build_single_pass_spec
         interstitial_map = {1: {"type": "curtain-close", "animate_s": 4.0}}
         with pytest.raises(SinglePassUnsupportedError, match="curtain-close"):
+            _build_single_pass_spec(
+                plans=[self._plan(slot_idx=0)],
+                interstitial_map=interstitial_map,
+                steps=[self._step(position=1)],
+            )
+
+    def test_barn_door_open_raises_unsupported(self):
+        """barn-door-open has a slot-head PNG-bar animation that M2 cannot
+        model. The gate must reject it like curtain-close — otherwise it
+        silently falls through the color-hold branch and ships output that's
+        missing the hero reveal animation. No production template uses
+        barn-door-open today (PR #134, May 2026); this is the future-proof."""
+        from app.tasks.template_orchestrate import _build_single_pass_spec
+        interstitial_map = {1: {"type": "barn-door-open", "animate_s": 4.0}}
+        with pytest.raises(SinglePassUnsupportedError, match="barn-door-open"):
             _build_single_pass_spec(
                 plans=[self._plan(slot_idx=0)],
                 interstitial_map=interstitial_map,

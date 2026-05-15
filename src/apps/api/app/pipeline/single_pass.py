@@ -31,7 +31,7 @@ Public API:
 
 Milestone 2 scope: clips + color holds + hard-cut concat. xfade transitions,
 curtain-close PNG overlay, pre-burn PNGs, and the absolute-overlay layer land
-in milestones 3-6. The runner (`run_single_pass`) is still stubbed.
+in milestones 3-6.
 """
 
 from __future__ import annotations

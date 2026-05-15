@@ -1,0 +1,18 @@
+{
+  "name": "just-fine",
+  "slots": [
+    {
+      "position": 1,
+      "target_duration_s": 4.0,
+      "transition_in": "none",
+      "text_overlays": []
+    },
+    {
+      "position": 2,
+      "target_duration_s": 4.0,
+      "transition_in": "none",
+      "text_overlays": []
+    }
+  ],
+  "interstitials": []
+}
