@@ -25,6 +25,7 @@ import re
 import subprocess
 import tempfile
 import uuid
+from typing import Any
 
 import structlog
 
@@ -79,11 +80,14 @@ def _detect_music_beats(audio_path: str, min_gap_s: float = 0.15) -> list[float]
     Returns sorted list of beat timestamps in seconds.
     """
     cmd = [
-        "ffmpeg", "-i", audio_path,
+        "ffmpeg",
+        "-i",
+        audio_path,
         "-af",
-        "astats=metadata=1:reset=1,"
-        "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
-        "-f", "null", "-",
+        "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+        "-f",
+        "null",
+        "-",
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
@@ -208,9 +212,13 @@ def analyze_music_track_task(self, track_id: str) -> None:
 
             # ── Gemini audio analysis (new) ──────────────────────────────
             recipe_cached = None
+            ai_labels_dict: dict | None = None
             if gemini_upload_and_wait is not None and analyze_audio_template is not None:
-                recipe_cached = _run_gemini_audio_analysis(
-                    local_audio, beats, new_config, float(duration_s or 0.0),
+                recipe_cached, ai_labels_dict = _run_gemini_audio_analysis(
+                    local_audio,
+                    beats,
+                    new_config,
+                    float(duration_s or 0.0),
                     track_id,
                 )
 
@@ -221,8 +229,17 @@ def analyze_music_track_task(self, track_id: str) -> None:
                 track.track_config = new_config
                 if recipe_cached is not None:
                     from datetime import UTC, datetime  # noqa: PLC0415
+
                     track.recipe_cached = recipe_cached
                     track.recipe_cached_at = datetime.now(UTC)
+                if ai_labels_dict is not None:
+                    # Phase 1 (auto-music): song_classifier labels feed the
+                    # matcher's stale-row filter via label_version. See
+                    # app/agents/_schemas/music_labels.py.
+                    track.ai_labels = ai_labels_dict
+                    track.label_version = (
+                        str(ai_labels_dict.get("labels", {}).get("label_version", "")) or None
+                    )
                 track.analysis_status = "ready"
                 db.commit()
 
@@ -234,6 +251,7 @@ def analyze_music_track_task(self, track_id: str) -> None:
             best_end=best_end,
             n_slots=n_slots,
             has_gemini_recipe=recipe_cached is not None,
+            has_ai_labels=ai_labels_dict is not None,
         )
 
     except Exception as exc:
@@ -339,6 +357,7 @@ def _run_music_job(job_id: str) -> None:
 
     # Build a TemplateRecipe-compatible object (use the existing dataclass)
     from app.pipeline.agents.gemini_analyzer import TemplateRecipe  # noqa: PLC0415
+
     try:
         recipe = TemplateRecipe(**recipe_dict)
     except (TypeError, ValueError, KeyError) as exc:
@@ -358,14 +377,15 @@ def _run_music_job(job_id: str) -> None:
 
         log.info("gemini_analyze_clips_start", job_id=job_id)
         clip_metas, failed_count = _analyze_clips_parallel(
-            file_refs, local_clip_paths, probe_map, job_id=job_id,
+            file_refs,
+            local_clip_paths,
+            probe_map,
+            job_id=job_id,
         )
 
         total = len(clip_metas) + failed_count
         if failed_count > total * 0.5:
-            raise GeminiAnalysisError(
-                f"{failed_count}/{total} clips failed Gemini analysis"
-            )
+            raise GeminiAnalysisError(f"{failed_count}/{total} clips failed Gemini analysis")
         log.info(
             "gemini_analyze_clips_done",
             job_id=job_id,
@@ -375,7 +395,8 @@ def _run_music_job(job_id: str) -> None:
 
         # [7] Enrich slots with energy from beats
         enriched_slots = _enrich_slots_with_energy(
-            recipe_dict["slots"], track_data["beat_timestamps_s"],
+            recipe_dict["slots"],
+            track_data["beat_timestamps_s"],
         )
         recipe_dict = {**recipe_dict, "slots": enriched_slots}
         recipe = TemplateRecipe(**recipe_dict)
@@ -409,9 +430,7 @@ def _run_music_job(job_id: str) -> None:
         # [9] FFmpeg assemble
         log.info("ffmpeg_assemble_start", job_id=job_id)
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
-        clip_id_to_local = {
-            ref.name: path for ref, path in zip(file_refs, local_clip_paths)
-        }
+        clip_id_to_local = {ref.name: path for ref, path in zip(file_refs, local_clip_paths)}
         # Music jobs always take the multi-pass path for Phase 1 of the
         # single-pass rollout (env flag + video_templates.single_pass_enabled).
         # MusicTrack has no equivalent per-track allow-list flag, and music
@@ -450,6 +469,7 @@ def _run_music_job(job_id: str) -> None:
 
         # [11] Upload final video
         from app.storage import upload_public_read  # noqa: PLC0415
+
         output_gcs = f"music-jobs/{job_id}/output.mp4"
         upload_public_read(final_path, output_gcs)
         log.info("music_job_uploaded", job_id=job_id, gcs_path=output_gcs)
@@ -475,8 +495,15 @@ def _run_gemini_audio_analysis(
     track_config: dict,
     duration_s: float,
     track_id: str,
-) -> dict | None:
-    """Upload audio to Gemini and get a visual recipe. Falls back to beat-only on failure."""
+) -> tuple[dict | None, dict | None]:
+    """Upload audio to Gemini, run structural analysis + song classifier.
+
+    Returns ``(recipe_cached, ai_labels)``. Either side can be ``None``
+    independently — a Gemini-recipe failure does not block label
+    generation, and a classifier failure does not block recipe caching.
+    On a total upload failure both are ``None`` (falls back to beat-only
+    recipe, no labels).
+    """
     try:
         log.info("gemini_audio_analysis_start", track_id=track_id)
         file_ref = gemini_upload_and_wait(local_audio, timeout=120)
@@ -498,13 +525,19 @@ def _run_gemini_audio_analysis(
         beat_recipe = generate_music_recipe(track_data)
         merged = merge_audio_recipe(beat_recipe, gemini_recipe)
 
+        # Phase 1 (auto-music): classify the song while we still have
+        # the file_ref + audio_template output. Best-effort — the
+        # recipe path doesn't depend on labels.
+        ai_labels = _run_song_classifier(file_ref, gemini_recipe, track_id)
+
         log.info(
             "gemini_audio_analysis_done",
             track_id=track_id,
             gemini_slots=len(gemini_recipe.get("slots", [])),
             merged_slots=len(merged.get("slots", [])),
+            has_ai_labels=ai_labels is not None,
         )
-        return merged
+        return merged, ai_labels
 
     except Exception as exc:
         # Gemini failure is non-fatal: fall back to beat-only recipe
@@ -513,16 +546,61 @@ def _run_gemini_audio_analysis(
             track_id=track_id,
             error=str(exc),
         )
-        # Return beat-only recipe as fallback
+        # Return beat-only recipe as fallback. Labels can't be produced
+        # without the file_ref, so they stay None.
         try:
             track_data = {
                 "beat_timestamps_s": beats,
                 "track_config": track_config,
                 "duration_s": duration_s,
             }
-            return generate_music_recipe(track_data)
+            return generate_music_recipe(track_data), None
         except Exception:
-            return None
+            return None, None
+
+
+def _run_song_classifier(
+    file_ref: Any,
+    audio_template_output: dict,
+    track_id: str,
+) -> dict | None:
+    """Best-effort: produce MusicLabels for the track. Never raises.
+
+    Failure is logged and returns ``None``; the matcher will treat the
+    track as unlabeled (filtered out of auto-music selection until the
+    backfill script reruns).
+    """
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.song_classifier import (  # noqa: PLC0415
+            SongClassifierAgent,
+            SongClassifierInput,
+        )
+
+        inp = SongClassifierInput(
+            file_uri=file_ref.uri,
+            file_mime=getattr(file_ref, "mime_type", None) or "audio/mp4",
+            audio_template_output=audio_template_output or {},
+        )
+        out = SongClassifierAgent(default_client()).run(
+            inp, ctx=RunContext(job_id=f"track:{track_id}")
+        )
+        log.info(
+            "song_classifier_done",
+            track_id=track_id,
+            genre=out.labels.genre,
+            energy=out.labels.energy,
+            vibe_tags=out.labels.vibe_tags,
+        )
+        return out.to_dict()
+    except Exception as exc:
+        log.warning(
+            "song_classifier_failed",
+            track_id=track_id,
+            error=str(exc),
+        )
+        return None
 
 
 # ── Templated music jobs (fixed-asset + user-upload slots) ────────────────────
@@ -575,8 +653,7 @@ def _run_templated_music_job(job_id: str) -> None:
             raise ValueError("MusicTrack has no audio_gcs_path")
         if not track.recipe_cached:
             raise ValueError(
-                "Templated music job requires track.recipe_cached "
-                "(slot_type per slot)"
+                "Templated music job requires track.recipe_cached (slot_type per slot)"
             )
         recipe_dict: dict = dict(track.recipe_cached)
         audio_gcs_path = track.audio_gcs_path
@@ -609,9 +686,7 @@ def _run_templated_music_job(job_id: str) -> None:
             position = int(slot.get("position", 0))
             asset_gcs = slot.get("asset_gcs_path")
             if not asset_gcs:
-                raise ValueError(
-                    f"fixed_asset slot {position} missing asset_gcs_path"
-                )
+                raise ValueError(f"fixed_asset slot {position} missing asset_gcs_path")
             asset_local = os.path.join(tmpdir, f"asset_{position}_src")
             try:
                 download_to_file(asset_gcs, asset_local)
@@ -642,6 +717,7 @@ def _run_templated_music_job(job_id: str) -> None:
                 # Re-encode to output spec by passing through reframe.
                 # (Not used for LFM but kept for future templates.)
                 from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
+
                 reframe_and_export(
                     input_path=asset_local,
                     start_s=0.0,
@@ -651,9 +727,7 @@ def _run_templated_music_job(job_id: str) -> None:
                     output_path=slot_clip,
                 )
             else:
-                raise ValueError(
-                    f"Unknown asset_kind {asset_kind!r} for fixed slot {position}"
-                )
+                raise ValueError(f"Unknown asset_kind {asset_kind!r} for fixed slot {position}")
 
             clip_id = f"fixed:slot{position}"
             slot_position_to_clip[position] = (clip_id, slot_clip)
@@ -708,6 +782,7 @@ def _run_templated_music_job(job_id: str) -> None:
                 # because reframe's colorspace filter rejects "unknown" or
                 # arib-std-b67 inputs that are common from iPhones / web exports.
                 from app.pipeline.probe import probe_video  # noqa: PLC0415
+
                 try:
                     probe = probe_video(user_path)
                     video_dur = float(probe.duration_s or 0.0)
@@ -759,9 +834,7 @@ def _run_templated_music_job(job_id: str) -> None:
             position = int(slot.get("position", 0))
             entry = slot_position_to_clip.get(position)
             if entry is None:
-                raise RuntimeError(
-                    f"Slot {position} not bound to any clip — assembly aborted"
-                )
+                raise RuntimeError(f"Slot {position} not bound to any clip — assembly aborted")
             clip_id, local_path = entry
             clip_id_to_local[clip_id] = local_path
             slot_dur = float(slot.get("target_duration_s", 5.0))
@@ -839,7 +912,9 @@ def _run_templated_music_job(job_id: str) -> None:
 
 
 def _concat_pre_rendered_clips(
-    clip_paths: list[str], output_path: str, tmpdir: str,
+    clip_paths: list[str],
+    output_path: str,
+    tmpdir: str,
 ) -> None:
     """Concatenate clips that are already at the output spec into one mp4.
 
@@ -866,11 +941,16 @@ def _concat_pre_rendered_clips(
 
     cmd = [
         "ffmpeg",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", list_file,
-        "-c", "copy",
-        "-movflags", "+faststart",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        list_file,
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
         "-y",
         output_path,
     ]
@@ -886,24 +966,30 @@ def _concat_pre_rendered_clips(
         )
         cmd = [
             "ffmpeg",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", list_file,
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "18",
-            "-pix_fmt", "yuv420p",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            list_file,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
             "-an",
-            "-movflags", "+faststart",
+            "-movflags",
+            "+faststart",
             "-y",
             output_path,
         ]
         result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
         if result.returncode != 0:
             stderr_tail2 = result.stderr.decode("utf-8", errors="replace")[-800:]
-            raise RuntimeError(
-                f"concat re-encode failed (rc={result.returncode}): {stderr_tail2}"
-            )
+            raise RuntimeError(f"concat re-encode failed (rc={result.returncode}): {stderr_tail2}")
 
     if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
         raise RuntimeError(f"concat produced empty output: {output_path}")

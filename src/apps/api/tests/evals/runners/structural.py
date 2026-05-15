@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION
 from app.agents.audio_template import AudioTemplateOutput
 from app.agents.clip_metadata import (
     _BALL_BLACKLIST,
@@ -24,6 +25,7 @@ from app.agents.clip_router import ClipRouterInput, ClipRouterOutput
 from app.agents.creative_direction import CreativeDirectionOutput
 from app.agents.platform_copy import PlatformCopyOutput
 from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
+from app.agents.song_classifier import SongClassifierOutput
 from app.agents.template_recipe import (
     _VALID_COLOR_HINTS,
     _VALID_INTERSTITIAL_TYPES,
@@ -876,6 +878,45 @@ def check_transition_picker(
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 
 
+def check_song_classifier(output: SongClassifierOutput) -> list[str]:
+    """Structural floor for nova.audio.song_classifier.
+
+    Pydantic already enforces the categorical enums and the vibe_tags length
+    bounds. This layer asserts the cross-field invariants that Pydantic can't
+    express on its own.
+    """
+    failures: list[str] = []
+    labels = output.labels
+
+    if labels.label_version != CURRENT_LABEL_VERSION:
+        failures.append(
+            f"label_version={labels.label_version!r} != CURRENT_LABEL_VERSION "
+            f"({CURRENT_LABEL_VERSION!r}) — Phase 1 forces equality in parse()"
+        )
+
+    # vibe_tags: dedup, lowercase, non-empty after normalization. Pydantic
+    # bounds the length 1-8 but does not enforce shape.
+    seen: set[str] = set()
+    for i, tag in enumerate(labels.vibe_tags):
+        if not isinstance(tag, str) or not tag.strip():
+            failures.append(f"vibe_tags[{i}]: empty or non-string")
+            continue
+        if tag != tag.lower():
+            failures.append(f"vibe_tags[{i}]={tag!r}: not lowercase (parse() normalizes)")
+        if tag in seen:
+            failures.append(f"vibe_tags[{i}]={tag!r}: duplicate (parse() dedupes)")
+        seen.add(tag)
+
+    if not labels.mood.strip():
+        failures.append("mood: empty after strip")
+    if not labels.ideal_content_profile.strip():
+        failures.append("ideal_content_profile: empty after strip")
+    if not output.rationale.strip():
+        failures.append("rationale: empty after strip")
+
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.template_recipe":
@@ -890,6 +931,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_platform_copy(output)
     if agent_name == "nova.audio.template_recipe":
         return check_audio_template(output)
+    if agent_name == "nova.audio.song_classifier":
+        return check_song_classifier(output)
     if agent_name == "nova.video.clip_router":
         return check_clip_router(output, input)
     if agent_name == "nova.video.shot_ranker":

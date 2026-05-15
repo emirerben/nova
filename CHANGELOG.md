@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.17.0] - 2026-05-15
+
+### Added
+- **`song_classifier` agent — creative-direction labels per music track (auto-music Phase 1).** New `nova.audio.song_classifier` (Gemini Flash) consumes the audio Gemini File URI + the existing `audio_template` structural analysis and produces a locked-schema `MusicLabels` blob: `genre`, `vibe_tags` (1-8 tokens), `energy`, `pacing`, `mood`, `ideal_content_profile`, `copy_tone`, `transition_style`, `color_grade`, plus a one-sentence rationale. All categorical fields are Pydantic `Literal` enums so a hallucinated value fails before reaching the matcher prompt. `parse()` force-clamps `label_version = CURRENT_LABEL_VERSION` (currently `2026-05-15`) so the Phase 2 matcher's stale-row filter has a single source of truth, dedupes/lowercases `vibe_tags`, and `RefusalError`s on empty rationale so the runtime retries once with a stricter clarification suffix. Wired into `analyze_music_track_task`: after `_run_gemini_audio_analysis` succeeds, the same `file_ref` is reused (no second Gemini upload) to classify the track, and `ai_labels` + `label_version` are persisted in the same DB commit as `recipe_cached`. Classifier failure is non-fatal — recipe still saves, matcher just won't see the track until backfill runs. Ships with a backfill script (`scripts/backfill_song_classifier.py`, idempotent, supports `--dry-run` / `--limit` / `--include-stale`) for tracks analyzed before this PR. Big-3 → Big-4: new eval harness at `tests/evals/test_song_classifier_evals.py` + `tests/evals/rubrics/song_classifier.md` (3 dimensions, pass ≥ 3.5 across label_consistency / content_profile_specificity / downstream_fit), structural-floor check that asserts label_version, lowercase/deduped vibe_tags, non-empty mood/profile/rationale, plus a golden fixture. Eval dashboard (`scripts/build_eval_dashboard.py`) is now aware of the agent in all four lookup maps so it renders alongside the existing Big-3. No user-facing behavior change yet — Phase 1 is the producer; Phases 2-4 add the matcher, multi-variant orchestrator, and "Let AI edit" entry point.
+
 ## [0.4.16.1] - 2026-05-15
 
 ### Fixed
