@@ -114,6 +114,32 @@ export default function TemplateDetailPage() {
     } catch {}
   }, [id]);
 
+  // Poll the template while a (re)analysis is in flight on the worker. Without
+  // this, the page sits on the stale analysis_status="analyzing" returned by
+  // POST /reanalyze-agentic forever, the action-bar button stays disabled,
+  // and the user thinks "nothing happens" when they click again. Polling
+  // refetches every 4s and stops as soon as the worker writes a terminal
+  // status (ready or failed) to the DB.
+  const analysisStatus = template?.analysis_status;
+  useEffect(() => {
+    if (analysisStatus !== "analyzing") return;
+    const tick = setInterval(() => {
+      void refreshTemplate();
+    }, 4000);
+    return () => clearInterval(tick);
+  }, [analysisStatus, refreshTemplate]);
+
+  // Track when the current "analyzing" window started so the action bar can
+  // show elapsed time + a "force retry" hint if the worker has clearly hung.
+  const [analyzingStartMs, setAnalyzingStartMs] = useState<number | null>(null);
+  useEffect(() => {
+    if (analysisStatus === "analyzing") {
+      setAnalyzingStartMs((prev) => prev ?? Date.now());
+    } else {
+      setAnalyzingStartMs(null);
+    }
+  }, [analysisStatus]);
+
   // ── Actions ──────────────────────────────────────────────────────────────
 
   const handlePublish = useCallback(async () => {
@@ -311,23 +337,38 @@ export default function TemplateDetailPage() {
 
       {/* Sticky action bar */}
       <div className="sticky bottom-0 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur px-6 py-3 flex items-center gap-3">
+        {/*
+          Disable only on the in-flight request (actionLoading). The button is
+          intentionally clickable when analysis_status === "analyzing": the
+          backend endpoints force-reset that status on entry, so a re-click
+          is safe and is the documented recovery for a SIGKILL'd worker that
+          left the row stuck. Previously this guard made the button look
+          broken — "nothing happens when I click" — because the click was
+          silently swallowed by the disabled DOM element.
+        */}
         {template.is_agentic ? (
-          <button
+          <ReanalyzeButton
             onClick={handleReanalyzeAgentic}
-            disabled={actionLoading || template.analysis_status === "analyzing"}
-            className="px-4 py-2 text-sm bg-emerald-800 hover:bg-emerald-700 text-white rounded disabled:opacity-50"
+            disabled={actionLoading}
+            status={template.analysis_status}
+            errorDetail={template.error_detail}
+            analyzingStartMs={analyzingStartMs}
+            color="emerald"
+            idleLabel="Re-run agents"
+            busyLabel="Building"
             title="Re-run creative_direction + template_recipe + text_designer"
-          >
-            {template.analysis_status === "analyzing" ? "Building..." : "Re-run agents"}
-          </button>
+          />
         ) : (
-          <button
+          <ReanalyzeButton
             onClick={handleReanalyze}
-            disabled={actionLoading || template.analysis_status === "analyzing"}
-            className="px-4 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 text-white rounded disabled:opacity-50"
-          >
-            {template.analysis_status === "analyzing" ? "Analyzing..." : "Reanalyze"}
-          </button>
+            disabled={actionLoading}
+            status={template.analysis_status}
+            errorDetail={template.error_detail}
+            analyzingStartMs={analyzingStartMs}
+            color="zinc"
+            idleLabel="Reanalyze"
+            busyLabel="Analyzing"
+          />
         )}
         {!template.published_at || template.archived_at ? (
           <button
@@ -1494,6 +1535,104 @@ function SettingsTab({
 }
 
 // ── Shared Components ──────────────────────────────────────────────────────────
+
+function ReanalyzeButton({
+  onClick,
+  disabled,
+  status,
+  errorDetail,
+  analyzingStartMs,
+  color,
+  idleLabel,
+  busyLabel,
+  title,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  status: string;
+  errorDetail: string | null;
+  analyzingStartMs: number | null;
+  color: "emerald" | "zinc";
+  idleLabel: string;
+  busyLabel: string;
+  title?: string;
+}) {
+  // Tick once a second so the elapsed-time readout stays current while the
+  // worker is running. Cheap: a single setInterval per page render.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (status !== "analyzing") return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [status]);
+
+  const isAnalyzing = status === "analyzing";
+  const elapsedS =
+    isAnalyzing && analyzingStartMs != null
+      ? Math.max(0, Math.floor((now - analyzingStartMs) / 1000))
+      : 0;
+  // 25-min soft limit on agentic_template_build_task; over that, the worker
+  // has almost certainly died (SIGKILL/OOM) and the row is stuck. Surface a
+  // dedicated "Force retry" affordance only at this point — not on every
+  // click — so users can't spam the endpoint and queue N parallel builds
+  // that all race to write the same recipe_cached.
+  const stuck = isAnalyzing && elapsedS > 25 * 60;
+  const failed = status === "failed";
+
+  const bg =
+    color === "emerald"
+      ? "bg-emerald-800 hover:bg-emerald-700"
+      : "bg-zinc-800 hover:bg-zinc-700";
+
+  // Disable while analyzing to prevent rapid-click spam — each click would
+  // enqueue another agentic_template_build_task (the endpoint deletes the
+  // redis attempt counter on every call). The Force-retry button below
+  // gives explicit recovery once the worker has clearly hung.
+  const buttonDisabled = disabled || isAnalyzing;
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onClick}
+          disabled={buttonDisabled}
+          className={`px-4 py-2 text-sm ${bg} text-white rounded disabled:opacity-50 flex items-center gap-2`}
+          title={title}
+        >
+          {isAnalyzing && (
+            <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          )}
+          <span>{isAnalyzing ? `${busyLabel}…` : idleLabel}</span>
+        </button>
+        {isAnalyzing && (
+          <span className="text-xs text-zinc-500">{formatElapsed(elapsedS)}</span>
+        )}
+        {stuck && (
+          <button
+            onClick={onClick}
+            disabled={disabled}
+            className="px-3 py-1.5 text-xs bg-amber-900/60 hover:bg-amber-800 text-amber-100 rounded border border-amber-700 disabled:opacity-50"
+            title={`Worker exceeded ${25}min soft limit — start a fresh run`}
+          >
+            Force retry
+          </button>
+        )}
+      </div>
+      {failed && errorDetail && (
+        <p className="text-xs text-red-400 max-w-xl truncate" title={errorDetail}>
+          Last run failed: {errorDetail}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function formatElapsed(s: number): string {
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}m ${r.toString().padStart(2, "0")}s`;
+}
 
 function VideoPlayer({ url }: { url: string }) {
   return (
