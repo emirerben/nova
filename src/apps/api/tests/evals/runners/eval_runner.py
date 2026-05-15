@@ -207,6 +207,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.song_classifier import SongClassifierAgent
 
         return SongClassifierAgent
+    if agent_name == "nova.audio.music_matcher":
+        from app.agents.music_matcher import MusicMatcherAgent
+
+        return MusicMatcherAgent
     if agent_name == "nova.video.clip_router":
         from app.agents.clip_router import ClipRouterAgent
 

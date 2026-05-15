@@ -11,6 +11,7 @@ _EXPECTED = {
     "nova.audio.transcript",
     "nova.audio.template_recipe",
     "nova.audio.song_classifier",
+    "nova.audio.music_matcher",
     "nova.compose.platform_copy",
     "nova.compose.creative_direction",
     "nova.layout.text_designer",
@@ -22,7 +23,7 @@ _EXPECTED = {
 }
 
 
-def test_all_thirteen_agents_register() -> None:
+def test_all_agents_register() -> None:
     registered = AGENTS()
     assert set(registered.keys()) == _EXPECTED, (
         f"missing: {_EXPECTED - set(registered.keys())}, "
