@@ -96,6 +96,61 @@ class TestBuildVideoFilter:
             f"unknown-primaries input; got: {filters[0]!r}"
         )
 
+    def test_hdr_hlg_pipeline_scales_before_tonemap(self):
+        """HDR/HLG pipeline must scale in linear-light BEFORE the tonemap pass.
+
+        Why this is locked: PR2's first prod test job (4551074a... on template
+        77151144..., 2026-05-15) ran reframe_and_export on a 24s iPhone 4K HLG
+        clip (2160×3840) and hit the FFmpeg subprocess's 600s timeout because
+        tonemap was running at full 8.3M pixels per frame on shared-cpu-2x Fly
+        workers; the downstream scale/crop then discarded 75% of that work.
+        Inserting a `scale=...:force_original_aspect_ratio=decrease` step
+        between `zscale=t=linear` (linear-light entry) and the gamut map +
+        tonemap drops the per-frame pixel count by ~4× for 4K sources. It also
+        produces a more physically accurate downscale: averaging linear-light
+        luminance is correct; averaging gamma-encoded HDR luminance is biased
+        toward bright values.
+
+        This test pins the filter ORDER so a future refactor cannot quietly
+        move the scale back behind the tonemap.
+        """
+        from app.config import settings
+        from app.pipeline.reframe import _HLG_TRANSFER, _ZSCALE_SDR_PIPELINE
+
+        pipeline = _ZSCALE_SDR_PIPELINE
+        # Linear-light conversion must come first.
+        assert pipeline.startswith("zscale=t=linear:npl=400"), pipeline
+        # The pre-downscale must appear BEFORE the bt709 gamut map and BEFORE
+        # the tonemap. Indexes anchor the order; any reordering shifts them.
+        linear_idx = pipeline.index("zscale=t=linear")
+        scale_idx = pipeline.index("scale=")
+        gamut_idx = pipeline.index("zscale=p=bt709")
+        tonemap_idx = pipeline.index("tonemap=")
+        assert linear_idx < scale_idx < gamut_idx < tonemap_idx, (
+            f"HDR filter order regressed: linear@{linear_idx}, scale@{scale_idx}, "
+            f"gamut-map@{gamut_idx}, tonemap@{tonemap_idx}. Scale MUST sit "
+            f"between linear-light entry and the gamut map / tonemap."
+        )
+        # The pre-downscale must be a strict downscale (never upscale a 720p
+        # HDR source up to 1080p inside the linear-light pass) and use lanczos
+        # to preserve highlight detail.
+        assert "force_original_aspect_ratio=decrease" in pipeline, pipeline
+        assert "flags=lanczos" in pipeline, pipeline
+        # The scale target is the output height as a bounding box on either
+        # dimension; for the canonical 9:16 1080×1920 output that caps the
+        # long edge at 1920 in either orientation.
+        expected_box = f"scale={settings.output_height}:{settings.output_height}"
+        assert expected_box in pipeline, (
+            f"Pre-downscale must cap at output_height² box; expected "
+            f"{expected_box!r} in {pipeline!r}"
+        )
+        # Sanity: tonemap algorithm pinning. mobius was empirically tuned
+        # against iPhone HLG; bumping to hable/reinhard changes visual output
+        # and should be a deliberate code change, not an unnoticed rewrite.
+        assert "tonemap=tonemap=mobius" in pipeline, pipeline
+        # The HLG transfer-tag check stays the entry gate.
+        assert _HLG_TRANSFER == "arib-std-b67"
+
     def test_color_hint_warm(self):
         """Color hint 'warm' adds colorbalance filter."""
         filters = _build_video_filter("16:9", None, color_hint="warm")
