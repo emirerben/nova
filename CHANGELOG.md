@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.15.4] - 2026-05-15
+
+### Changed
+- **Font identification (PR2) is now scoped to agentic templates only.** Two corrections in one PR:
+  1. **Add to agentic.** PR #150 (v0.4.15.0) only wired `identify_fonts()` into the manual analysis path (`analyze_template_task` in `app/tasks/template_orchestrate.py`). Templates created with `is_agentic=True` route through `agentic_template_build_task` in `app/tasks/agentic_template_build.py`, which was never updated — so the CLIP font matcher never ran during agentic analysis, `font_alternatives` stayed absent on every overlay, `font_default` stayed empty on every template, and the new `<FontAlternatives>` admin panel rendered nothing (it returns `null` when alternatives are missing — correct for unanalyzed sources, but indistinguishable from "the feature is broken" once agentic re-analysis was the path actually exercised). This PR adds the wiring to `agentic_template_build_task`: a best-effort `identify_fonts(recipe, local_path, get_matcher())` call after `analyze_template(...)`, plus `"font_default": recipe.font_default` in the persisted `recipe_dict`.
+  2. **Remove from classic.** Classic (non-agentic) templates are human-authored with deliberate font picks. Running CLIP matching against the reference video to produce `font_alternatives` on overlays whose `font_family` the operator already chose costs ~250-400MB of resident worker memory and ~5-10s of latency per analysis for no operator value — the picker tiles don't add information the operator was missing. The `identify_fonts` call and the `font_default` persistence are removed from `analyze_template_task`; a comment is left in place documenting why this path is intentionally font-ID-free.
+
+  Net effect: same code surface in the agentic path (slightly slower, with the visual font picker enabled), zero PR2 surface on the classic path (back to PR #145's pre-CV state for that flow). The CLIP singleton in worker memory is still prewarmed at boot — any worker may pick up an agentic task and benefit from the warm load. `<FontAlternatives>` in the admin UI continues to render nothing on classic templates because `font_alternatives` is absent there — by design. registry-embeddings.npz, the matcher Protocol, the open-clip + torchvision deps, and the CI smoke check (PR #151) are unchanged and still required for the agentic path.
+
 ## [0.4.15.3] - 2026-05-15
 
 ### Fixed

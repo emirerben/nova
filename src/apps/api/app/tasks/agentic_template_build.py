@@ -257,6 +257,24 @@ def agentic_template_build_task(self, template_id: str) -> None:
                 job_id=f"template:{template_id}:agentic",
             )
 
+            # Font identification (PR2). Best-effort: a font-id failure must
+            # not abort agentic build. Mutates `recipe.slots[*]["text_overlays"]
+            # [*]["font_alternatives"]` and `recipe.font_default` in place.
+            # Mirrors the wiring in template_orchestrate.py's manual analysis
+            # path — agentic templates were missed in PR #150 and never saw
+            # font_alternatives populated until this fix.
+            try:
+                from app.pipeline.font_identification import identify_fonts  # noqa: PLC0415
+                from app.services.clip_font_matcher import get_matcher  # noqa: PLC0415
+
+                identify_fonts(recipe, local_path, get_matcher())
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "font_identification_failed",
+                    template_id=template_id,
+                    error=str(exc),
+                )
+
             # Per-slot text_designer pass — bakes typography into overlays.
             baked = _run_text_designer_on_slots(
                 recipe.slots,
@@ -327,6 +345,7 @@ def agentic_template_build_task(self, template_id: str) -> None:
                     "pacing_style": recipe.pacing_style,
                     "sync_style": recipe.sync_style,
                     "interstitials": recipe.interstitials,
+                    "font_default": recipe.font_default,
                 }
 
                 version = TemplateRecipeVersion(
