@@ -86,5 +86,12 @@ primary_region = "iad"
   processes = ["worker"]
   cpu_kind = "shared"
   cpus = 2
-  memory_mb = 2048
+  # 4096MB instead of 2048: the font-identification pipeline (PR2) holds an
+  # open-clip ViT-B/32 image-tower singleton resident (~150MB weights + ~250MB
+  # torch CPU runtime + activations). Combined with concurrent FFmpeg
+  # subprocesses at 1080×1920 (peak working set 800MB-1.4GB) the 2048MB
+  # ceiling leaves 0-800MB of headroom. OOM mid-render orphans jobs at
+  # status=processing rather than failing cleanly. Revisit once
+  # process_resident_set_size telemetry confirms whether the bump was needed.
+  memory_mb = 4096
   kill_timeout = "30m"

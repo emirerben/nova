@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.15.0] - 2026-05-15
+
+### Added
+- **Font identification CV pipeline + admin "alternatives" picker.** Closes the PR2 half of the font-ID feature on top of PR1's `text_bbox` emission. When the template-recipe agent emits a bbox, the orchestrator now FFmpeg-extracts the sample frame, crops the bbox region, and runs it through a CLIP image-tower embedding to rank the visually-closest registry fonts. Output lands as per-overlay `font_alternatives: [{family, similarity}, ...]` plus a template-level `font_default`, both serialized into `template.recipe_cached`. The admin template editor renders alternatives as click-to-swap PNG preview tiles right under the existing font dropdown, with an "apply to all overlays" shortcut. Font identification is a best-effort enrichment — every failure mode (missing artifact, FFmpeg error, low-confidence match) falls through to the existing Playfair Display default chain.
+  - `app/pipeline/font_identification.py` — new orchestrator. Defines the `FontMatcher` Protocol (swappable later for FontCLIP), FontMatch dataclass, FFmpeg single-frame extract, Pillow bbox crop with frame clamping, weighted-vote aggregator (`similarity × overlay_duration` summed over top-3 per overlay), and the registry `.npz` loader with model-version metadata enforcement.
+  - `app/services/clip_font_matcher.py` — new lazy-singleton open-clip ViT-B/32 implementation. Loads once per worker process, embeds via `model.encode_image` only (text encoder dropped to save ~75MB), L2-normalizes to match registry shape.
+  - `app/worker.py` — Celery `worker_ready` signal handler prewarms the matcher singleton in a background thread, so the first template-analysis after a deploy doesn't pay 3-5s of model-load latency.
+  - `app/tasks/template_orchestrate.py` — calls `identify_fonts(recipe, local_path, get_matcher())` after recipe analysis, wrapped in try/except so a font-ID failure can never abort a template job. Writes `font_default` into `recipe_cached`.
+  - `scripts/generate_font_embeddings.py` — one-time precompute script. Renders each registry font name in its own face, embeds via CLIP, saves to `assets/fonts/registry-embeddings.npz` with `{model_id, model_version, registry_sha256, generated_at}` sidecar metadata so a future regeneration with a different model can't silently misalign. Also writes 600×120 preview PNGs to `src/apps/web/public/font-previews/<slug>.png` for the admin UI tiles.
+  - `assets/fonts/registry-embeddings.npz` — committed precomputed artifact (21 fonts × 512-dim float32, ~44KB).
+  - `src/apps/web/public/font-previews/` — 21 PNG tiles (~252KB total) rendered against each font's own face.
+  - `src/apps/web/src/app/admin/templates/[id]/components/FontAlternatives.tsx` — new component. Renders alternatives as a 4-up grid of click-to-swap tiles with similarity scores, missing-preview fallback, current-selection highlight, and an "apply to all overlays" shortcut.
+  - `src/apps/web/src/app/admin/templates/[id]/components/PropertyPanel.tsx` — mounts `<FontAlternatives>` directly under the existing FontPicker. No mutation to existing dropdown semantics.
+  - `src/apps/web/src/app/admin/templates/[id]/components/EditorTab.tsx` + `recipe-types.ts` — adds the `APPLY_FONT_TO_ALL_OVERLAYS` reducer action (atomic: sets `font_default` AND overwrites `font_family` on every overlay in a single dispatch) plus the `FontAlternative` interface and `font_alternatives` / `font_default` fields on the recipe types.
+  - `app/pipeline/agents/gemini_analyzer.py` — `TemplateRecipe` dataclass gains an optional `font_default: str = ""` field. Default keeps pre-PR2 cached recipes backward-compatible when rebuilt via `TemplateRecipe(**recipe_dict)`.
+
+### Changed
+- **Worker memory bumped 2048MB → 4096MB.** The CLIP image-tower singleton resident set is ~450-600MB (weights + torch CPU runtime + activations). Combined with existing FFmpeg subprocess working sets at 1080×1920 (peak 800MB-1.4GB), the prior 2048MB ceiling left 0-800MB of headroom — tight enough that OOM mid-render would silently orphan jobs at `status=processing`. Bumping now and validating headroom from telemetry is cheaper than chasing orphan incidents later.
+- **Dockerfile: torch CPU-only install promoted to its own cached layer.** Installs torch from `https://download.pytorch.org/whl/cpu` BEFORE the pyproject.toml install step so pip sees the dep already satisfied when resolving `open-clip-torch` and never falls back to the default index (which would pull the CUDA wheel, ~2GB). Version constraint is `torch>=2.4,<3`.
+- **`assets/fonts/font-registry.json` — duplicate `"Inter"` key renamed to `"Inter Regular"`.** Pre-existing bug: JSON parsers silently drop the first occurrence of a duplicate key, so Inter Regular was invisible to the renderer (only the Bold variant was reachable as `font_family: "Inter"`). The .npz embedding artifact and the runtime resolver now both see all 21 unique fonts.
+- **`pyproject.toml`** — adds `numpy>=1.26`, `open-clip-torch>=3.3,<4`. The 3.x floor on open-clip-torch matches what produced the committed `.npz` artifact and prevents a silent 2.x downgrade from changing the preprocess pipeline (which would misalign query embeddings against the registry).
+
 ## [0.4.14.1] - 2026-05-15
 
 ### Removed

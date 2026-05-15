@@ -20,6 +20,19 @@ RUN groupadd --gid 1000 nova && \
 
 WORKDIR /app
 
+# ---------- torch CPU-only install (own cached layer) ----------
+# Install torch from the CPU-only index BEFORE the main pyproject.toml install
+# so pip sees it already satisfied and doesn't pull the CUDA wheel (~2GB) when
+# resolving open-clip-torch. The `+cpu` local-version suffix is NOT published
+# on https://download.pytorch.org/whl/cpu — that index serves plain `torch==X.Y.Z`
+# wheels that are CPU-only by virtue of which index they came from. Don't pin
+# `torch==X.Y.Z+cpu` here; that exact spec resolves to nothing on this index.
+# Version floor matches what open-clip-torch 3.x requires; ceiling caps the
+# upgrade risk between deploys.
+RUN pip install --no-cache-dir --upgrade pip setuptools && \
+    pip install --no-cache-dir 'torch>=2.4,<3' \
+      --index-url https://download.pytorch.org/whl/cpu
+
 # ---------- dependency install (cached layer) ----------
 # Parse deps from pyproject.toml into a requirements file, then install.
 # Includes the [observability] optional-dependencies group (langfuse +
@@ -28,8 +41,7 @@ WORKDIR /app
 # [dev] and [local-whisper] extras are intentionally excluded.
 # This layer only busts when pyproject.toml changes, not on source edits.
 COPY src/apps/api/pyproject.toml /tmp/pyproject.toml
-RUN pip install --no-cache-dir --upgrade pip setuptools && \
-    python -c "import tomllib; \
+RUN python -c "import tomllib; \
       f = open('/tmp/pyproject.toml', 'rb'); \
       data = tomllib.load(f); \
       deps = data['project']['dependencies'] + data['project']['optional-dependencies']['observability']; \
