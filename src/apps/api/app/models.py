@@ -235,9 +235,17 @@ class Job(Base):
     # drive import: importing → queued → processing → ...
     # template jobs: queued → processing → template_ready | processing_failed
     # music jobs:   queued → processing → music_ready   | processing_failed
+    # auto-music: queued → processing → matching → rendering →
+    #             variants_ready | variants_ready_partial |
+    #             matching_failed | no_labeled_tracks | variants_failed
     status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
-    # "default" | "template" | "music"
+    # "default" | "template" | "music" | "auto_music"
     job_type: Mapped[str] = mapped_column(Text, nullable=False, default="default")
+    # Phase 3 (auto-music): the orchestrator-level mode discriminator.
+    # Currently only set to "auto_music" by orchestrate_auto_music_job.
+    # NULL for every pre-Phase-3 row — routing still uses job_type. Kept
+    # nullable so the column stays one-way / rollback safe.
+    mode: Mapped[str | None] = mapped_column(Text, nullable=True)
     template_id: Mapped[str | None] = mapped_column(
         Text, ForeignKey("video_templates.id"), nullable=True
     )
@@ -313,6 +321,18 @@ class JobClip(Base):
     download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     storage_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
     error_detail: Mapped[str | None] = mapped_column(Text)
+    # Phase 3 (auto-music): set on rows produced by orchestrate_auto_music_job.
+    # NULL for template-mode + manual music-mode rows. The FK lets us answer
+    # "which jobs used this track" for the admin music page.
+    music_track_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("music_tracks.id"), nullable=True
+    )
+    # Matcher's 0-10 score for this track on this clip-set. Surfaced on the
+    # variant tile so the user knows how confident the pick was.
+    match_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Matcher's editor's-voice rationale (1-2 sentences). Rendered as
+    # "we picked X because..." copy on the variant tile.
+    match_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     job: Mapped["Job"] = relationship(back_populates="clips")
@@ -320,4 +340,5 @@ class JobClip(Base):
     __table_args__ = (
         Index("idx_job_clips_job_id", "job_id"),
         Index("idx_job_clips_rank", "job_id", "rank"),
+        Index("idx_job_clips_music_track_id", "music_track_id"),
     )
