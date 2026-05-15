@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.16.0] - 2026-05-15
+
+### Added
+- **`MusicLabels` Pydantic schema + nullable `MusicTrack.ai_labels`/`label_version` columns.** Phase 0 of the auto-music feature (plan: `our-current-agentic-template-scalable-gem.md`). The schema (`app/agents/_schemas/music_labels.py`) is the locked creative-direction contract that the upcoming `song_classifier` agent will produce and that `music_matcher` plus the existing `transition_picker` / `text_designer` will consume in auto-music mode. Fields: `label_version` (matcher uses this to refuse stale rows), `genre`, `vibe_tags` (1-8 short tokens), `energy`, `pacing`, `mood`, `ideal_content_profile`, `copy_tone`, `transition_style`, `color_grade`. All five categorical fields are `Literal` enums so a hallucinated value fails Pydantic before it can reach the matcher prompt. `CURRENT_LABEL_VERSION = "2026-05-15"` is exported so the matcher's stale-row filter has a single source of truth — bumping it forces re-labeling via the future backfill script. Alembic 0019 adds both columns as nullable JSONB / text; existing rows continue to satisfy the schema with `NULL`s, and the manual music-pick flow keeps working unchanged because it never reads `ai_labels`. Verified end-to-end: 0000 → 0019 upgrade applies cleanly on a scratch DB, downgrade drops both columns, schema instantiates and rejects empty `label_version`. No behavioral change today — this is the contract lockdown that Phases 1+ build against.
+
 ## [0.4.15.3] - 2026-05-15
 
 ### Fixed
