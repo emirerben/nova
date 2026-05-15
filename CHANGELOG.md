@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.15.2] - 2026-05-15
+
+### Fixed
+- **HDR/HLG tonemap now downscales in linear-light BEFORE the gamut map + tonemap pass.** First prod test job after PR #150 deployed (job `4551074a-e058-4800-9b3c-1564c2da4075` on template `77151144-62f5-477b-b8e6-15d111165222`, 2026-05-15) hit the FFmpeg subprocess's 600s timeout inside `reframe_and_export` on the very first slot — a 24s iPhone 4K HLG clip (2160×3840) being software-tonemapped (`zscale → tonemap=mobius → zscale`) at native resolution before the downstream scale/crop discarded 75% of that work. The orchestrator caught `subprocess.TimeoutExpired` and marked the job failed, ~10m15s after task start. The fix inserts `scale={output_height}:{output_height}:force_original_aspect_ratio=decrease:flags=lanczos` between `zscale=t=linear` (linear-light entry) and the gamut map + tonemap, so an iPhone 4K HDR clip is downscaled to 1080×1920 BEFORE the slow tonemap pass runs — ~4× less pixel work per frame. Scaling in linear-light is also the physically correct order: averaging linear luminance is accurate; averaging gamma-encoded HDR luminance biases toward bright values. lanczos preserves highlight detail across the downscale (bilinear, the FFmpeg default, blurs specular highlights). Expected wall-clock drop on a 24s 4K HLG clip from ~10min (timeout) to ~2-3min on the same shared-cpu-2x Fly worker. SDR sources are unaffected (filter chain is only used when `color_trc in {HLG, HDR10}`). 1080×1920 HDR sources pass through the new scale step unchanged because `force_original_aspect_ratio=decrease` is a strict downscale. tonemap=mobius is kept as-is — the empirical npl=400/mobius tuning against iPhone HLG samples is intentional. `tests/pipeline/test_compositor.py::test_hdr_hlg_pipeline_scales_before_tonemap` pins the filter ORDER so a future refactor cannot quietly move the scale back behind the tonemap.
+
 ## [0.4.15.1] - 2026-05-15
 
 ### Fixed

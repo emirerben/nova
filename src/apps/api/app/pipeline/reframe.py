@@ -425,9 +425,26 @@ _HDR10_TRANSFER = "smpte2084"
 # tonemap=mobius: smooth shoulder rolloff for values approaching 1.0,
 #   preserves midtone contrast better than reinhard, less aggressive than
 #   hable. Specular highlights compressed gracefully instead of clipped.
+#
+# Pre-downscale in linear-light space (between zscale=t=linear and zscale=p=bt709)
+# caps the resolution that tonemap+gamut-map operate on at the output frame box
+# (default 1920 max dim). Without it, an iPhone 4K HDR clip (2160×3840) runs
+# the tonemap at 8.3M pixels/frame and the downstream scale/crop discards 75% of
+# the work — wall clock on shared-cpu-2x Fly workers hit the 600s subprocess
+# timeout in `reframe_and_export` (job 4551074a... on template 77151144...,
+# 2026-05-15). Scaling in linear-light is also the correct HDR-aware order:
+# averaging gamma-encoded HDR luminance biases bright values; averaging linear
+# light is physically accurate. `force_original_aspect_ratio=decrease` makes this
+# a strict downscale — a 1080×1920 HDR source passes through unchanged.
+# flags=lanczos preserves highlight detail across the downscale (bilinear, the
+# scale default, blurs specular highlights). Performance: 4× less pixel work per
+# tonemap frame for 4K sources; expected wall-clock drop from ~10min to ~2-3min
+# for a 24s 4K HLG clip.
 _ZSCALE_SDR_PIPELINE = (
     "zscale=t=linear:npl=400"
     ",format=gbrpf32le"
+    f",scale={settings.output_height}:{settings.output_height}"
+    ":force_original_aspect_ratio=decrease:flags=lanczos"
     ",zscale=p=bt709"
     ",tonemap=tonemap=mobius"
     ",zscale=t=bt709:m=bt709:r=tv"
