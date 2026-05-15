@@ -415,17 +415,24 @@ def _build_abs_overlay_chain(
 def build_single_pass_command(
     spec: SinglePassSpec,
     output_path: str,
+    base_output_path: str | None = None,
 ) -> list[str]:
     """Construct the single-pass ffmpeg command from a SinglePassSpec.
 
     Pure function — no I/O, no subprocess. Returns the argv list for
     subprocess.run. Unit-testable.
 
-    Milestone 2 scope: hard-cut concat only. Non-"none" transitions raise
-    NotImplementedError (milestone 3 wires xfade). Absolute overlays are
-    silently ignored (milestone 6).
+    Through M6: hard-cut concat, xfade transitions, and absolute overlays
+    all supported. Curtain-close, barn-door-open, and pre-burn PNGs still
+    raise SinglePassUnsupportedError at spec-build time.
 
-    The single FINAL_OUTPUT call site of _encoding_args in this module —
+    When ``base_output_path`` is set AND ``spec`` carries absolute
+    overlays, the command emits TWO outputs sharing the same filter graph
+    (overlay-free at [base], overlay-burned at [vout]). When set but no
+    overlays exist, [base] doesn't exist in the filter graph — callers
+    should ``shutil.copy2`` post-process to materialize base_output_path.
+
+    The FINAL_OUTPUT call sites of _encoding_args in this module are
     locked by tests/test_encoder_policy.py.
     """
     # ── Input args (one -i per clip or hold, then silent audio at the end) ──
@@ -519,30 +526,56 @@ def build_single_pass_command(
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
     cmd += input_args
     cmd += ["-filter_complex", ";".join(filter_chains)]
+    # _encoding_args is the LOCKED final-output encoder contract. The
+    # call sites in this module are tracked by tests/test_encoder_policy.py
+    # (FINAL_OUTPUT_REQUIRED). preset="fast" + crf="18" matches every
+    # other final-output encode in the codebase.
+    #
+    # base_output_path branch: when set AND overlays exist, emit a SECOND
+    # output mapped from [base] sharing the same ffmpeg process. The
+    # filter graph is evaluated once up to the split; libx264 encodes
+    # twice (once per output). Cheaper than running two `run_single_pass`
+    # calls (one decode instead of two; one ffmpeg process startup
+    # instead of two). When no overlays exist, [base] doesn't exist —
+    # callers fall back to a post-process file copy.
+    if base_output_path and has_overlays:
+        cmd += [
+            "-map", "[base]",
+            "-map", f"{silent_audio_idx}:a:0",
+            "-shortest",
+        ]
+        cmd += _encoding_args(base_output_path, preset="fast", crf="18")
     cmd += [
         "-map", "[vout]",
         "-map", f"{silent_audio_idx}:a:0",
         "-shortest",
     ]
-    # _encoding_args is the LOCKED final-output encoder contract. The single
-    # call site in this module is tracked by tests/test_encoder_policy.py
-    # (FINAL_OUTPUT_REQUIRED). preset="fast" + crf="18" matches every other
-    # final-output encode in the codebase.
     cmd += _encoding_args(output_path, preset="fast", crf="18")
     return cmd
 
 
-def run_single_pass(spec: SinglePassSpec, output_path: str) -> None:
+def run_single_pass(
+    spec: SinglePassSpec,
+    output_path: str,
+    base_output_path: str | None = None,
+) -> None:
     """Render the single-pass spec to output_path via FFmpeg subprocess.
 
-    Milestone 2 scope: basic subprocess invocation + structured error path.
-    The libass-missing retry lands in M8 (mirrors reframe_and_export:271);
-    the xfade-fallback retry lands in M3 (mirrors _join_or_concat:2152).
+    When ``base_output_path`` is set AND the spec has absolute overlays,
+    the ffmpeg invocation emits TWO outputs in a single process — the
+    overlay-free render at ``[base]`` and the overlay-burned render at
+    ``[vout]``. Shares the decode + filter graph evaluation, encodes
+    twice. Avoids the regression where M6 doubled encode cost for
+    overlay templates by calling run_single_pass twice.
+
+    When ``base_output_path`` is set but the spec has no overlays,
+    ``base_output_path == output_path`` semantically; the caller is
+    expected to ``shutil.copy2`` after this returns.
 
     Raises SinglePassError on FFmpeg failure (mirrors ReframeError contract
     so callers can keep their existing except clauses).
     """
-    cmd = build_single_pass_command(spec, output_path)
+    cmd = build_single_pass_command(spec, output_path, base_output_path=base_output_path)
     log.info(
         "single_pass_start",
         inputs=len(spec.inputs),

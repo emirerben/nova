@@ -2169,20 +2169,14 @@ def _assemble_clips(
                 abs_ass_paths=abs_ass_paths,
                 fonts_dir=fonts_dir,
             )
-            run_single_pass(spec, output_path)
-            if base_output_path:
-                # M6: base output is the joined video WITHOUT absolute
-                # overlays. When overlays exist, render a second pass with
-                # an overlay-stripped spec so re-rendering with edited
-                # overlays doesn't have to redo the heavy concat/xfade.
-                if abs_pngs or abs_ass_paths:
-                    base_spec = _build_single_pass_spec(
-                        plans, interstitial_map, steps,
-                        abs_pngs=[], abs_ass_paths=[], fonts_dir="",
-                    )
-                    run_single_pass(base_spec, base_output_path)
-                else:
-                    shutil.copy2(output_path, base_output_path)
+            # Single ffmpeg invocation — when overlays exist AND
+            # base_output_path is set, run_single_pass emits a 2-output
+            # command that shares the filter graph (one decode, two
+            # encodes). When no overlays exist, [base] == [vout]
+            # semantically; we copy the file after the render.
+            run_single_pass(spec, output_path, base_output_path=base_output_path)
+            if base_output_path and not (abs_pngs or abs_ass_paths):
+                shutil.copy2(output_path, base_output_path)
             _phase_done(
                 "single_pass",
                 _phase_t0_sp,

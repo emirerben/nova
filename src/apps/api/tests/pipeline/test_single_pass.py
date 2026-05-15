@@ -348,6 +348,46 @@ def test_xfade_plus_overlay_routes_via_base_label():
     assert "[vout]" in fc
 
 
+def test_dual_output_when_base_path_and_overlays_set():
+    """M6 dual-output: when base_output_path is provided AND overlays
+    exist, argv emits TWO outputs sharing the filter graph — base from
+    [base], full from [vout]. One decode, two encodes in the same ffmpeg
+    process. Half the cost of two separate run_single_pass calls."""
+    spec = SinglePassSpec(
+        inputs=[_clip(), _clip()],
+        abs_pngs=[{"png_path": "/tmp/p.png", "start_s": 0.0, "end_s": 1.0}],
+    )
+    argv = build_single_pass_command(
+        spec, "/tmp/out.mp4", base_output_path="/tmp/base.mp4",
+    )
+    # Two -map [base] / -map [vout] pairs (each followed by audio map).
+    base_idx = argv.index("[base]")
+    vout_idx = argv.index("[vout]")
+    assert base_idx < vout_idx
+    # Both output paths appear in argv.
+    assert "/tmp/base.mp4" in argv
+    assert "/tmp/out.mp4" in argv
+    # base output appears before vout output (encoder maps base first).
+    assert argv.index("/tmp/base.mp4") < argv.index("/tmp/out.mp4")
+
+
+def test_no_dual_output_when_base_path_set_but_no_overlays():
+    """M6: when base_output_path is set but the spec has no overlays,
+    [base] doesn't exist in the filter graph — the dual-output branch is
+    skipped and the caller is expected to shutil.copy2 post-process.
+    Catches the bug class where the dual-output map appears unconditionally
+    and ffmpeg fails with 'Unable to find output stream for label base'."""
+    spec = SinglePassSpec(inputs=[_clip(), _clip()])
+    argv = build_single_pass_command(
+        spec, "/tmp/out.mp4", base_output_path="/tmp/base.mp4",
+    )
+    # Only [vout] map; no [base] map.
+    assert "[base]" not in argv
+    assert "[vout]" in argv
+    # base path never appears in argv (no second output).
+    assert "/tmp/base.mp4" not in argv
+
+
 def test_special_chars_in_ass_path_escaped():
     """The subtitles filter parses : and ' as option separators on
     macOS/Linux. Escape them so a path like /private/var/foo:bar/x.ass
