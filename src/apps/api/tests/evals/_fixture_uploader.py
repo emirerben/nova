@@ -77,8 +77,8 @@ class FixtureUploader:
         """Return a Gemini-resolvable URI for `file_uri`.
 
         Pass-through for `files/<id>`, `gs://`, and HTTPS. For
-        bucket-relative paths: download → upload → cache → return
-        `files/<id>`.
+        bucket-relative paths: download → upload → cache → return the
+        full Gemini File API URL.
         """
         if not is_bucket_relative(file_uri):
             return file_uri
@@ -91,7 +91,13 @@ class FixtureUploader:
         try:
             self._download(file_uri, local_path)
             file_ref = self._upload(local_path, timeout=self._timeout)
-            uri = file_ref.name  # "files/<id>"
+            # Use the full URL form `.uri` (e.g.
+            # "https://generativelanguage.googleapis.com/v1beta/files/<id>"),
+            # not `.name` ("files/<id>"). Gemini rejects the bare resource
+            # name with 400 INVALID_ARGUMENT at Part.from_uri call time.
+            # Prod's MediaRef path already uses `.uri` — see
+            # app/agents/_model_client.py:137.
+            uri = file_ref.uri
         finally:
             Path(local_path).unlink(missing_ok=True)
 
