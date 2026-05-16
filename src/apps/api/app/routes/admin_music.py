@@ -36,6 +36,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents._schemas.song_sections import SongSection
 from app.config import settings
 from app.database import get_db
 from app.models import MusicTrack
@@ -118,6 +119,11 @@ class MusicTrackResponse(BaseModel):
     published_at: datetime | None
     archived_at: datetime | None
     track_config: dict | None
+    # Output of the song_sections agent — 1-3 ranked edit-worthy windows.
+    # `section_version` mirrors CURRENT_SECTION_VERSION so the admin UI can
+    # spot stale rows scored under an older prompt version at a glance.
+    best_sections: list[SongSection] | None
+    section_version: str | None
     created_at: datetime
 
 
@@ -141,6 +147,25 @@ class ReanalyzeResponse(BaseModel):
 
 def _to_response(t: MusicTrack) -> MusicTrackResponse:
     beats = t.beat_timestamps_s or []
+    # Coerce best_sections per-row. SongSection has strict Literal unions; one
+    # row with a drifted enum (agent retry, manual psql edit, post-bump stale
+    # row) would otherwise raise ValidationError and 500 the entire list
+    # endpoint, locking admin out of /admin/music. Bad rows are dropped and
+    # logged; the frontend's "no agent sections" placeholder surfaces the gap.
+    coerced_sections: list[SongSection] | None = None
+    if t.best_sections:
+        coerced_sections = []
+        for raw in t.best_sections:
+            try:
+                coerced_sections.append(SongSection.model_validate(raw))
+            except Exception as exc:
+                log.warning(
+                    "invalid_song_section_dropped",
+                    track_id=t.id,
+                    error=str(exc),
+                )
+        if not coerced_sections:
+            coerced_sections = None
     return MusicTrackResponse(
         id=t.id,
         title=t.title,
@@ -156,6 +181,8 @@ def _to_response(t: MusicTrack) -> MusicTrackResponse:
         published_at=t.published_at,
         archived_at=t.archived_at,
         track_config=t.track_config,
+        best_sections=coerced_sections,
+        section_version=t.section_version,
         created_at=t.created_at,
     )
 
@@ -212,6 +239,7 @@ async def create_music_track(
 
     # Dispatch analysis task
     from app.tasks.music_orchestrate import analyze_music_track_task  # noqa: PLC0415
+
     analyze_music_track_task.delay(track_id)
 
     log.info("music_track_created", track_id=track_id, source_url=req.source_url)
@@ -232,8 +260,15 @@ async def upload_music_track(
 ) -> CreateMusicTrackResponse:
     """Upload an audio file directly (bypasses yt-dlp). Accepts m4a, mp3, wav, ogg, aac."""
     allowed = {
-        "audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg", "audio/aac",
-        "audio/x-m4a", "audio/m4a", "audio/mp3", "audio/x-wav",
+        "audio/mp4",
+        "audio/mpeg",
+        "audio/wav",
+        "audio/ogg",
+        "audio/aac",
+        "audio/x-m4a",
+        "audio/m4a",
+        "audio/mp3",
+        "audio/x-wav",
         "video/mp4",  # some browsers report m4a as video/mp4
     }
     ct = (file.content_type or "").lower()
@@ -260,10 +295,12 @@ async def upload_music_track(
 
         # Probe duration via ffprobe
         from app.services.audio_download import _probe_duration  # noqa: PLC0415
+
         duration_s = _probe_duration(tmp.name)
 
         # Upload to GCS
         from app.storage import _get_client  # noqa: PLC0415
+
         bucket = _get_client().bucket(settings.storage_bucket)
         blob = bucket.blob(gcs_path)
         blob.upload_from_filename(tmp.name, content_type=ct or "audio/mp4")
@@ -282,6 +319,7 @@ async def upload_music_track(
     await db.refresh(track)
 
     from app.tasks.music_orchestrate import analyze_music_track_task  # noqa: PLC0415
+
     analyze_music_track_task.delay(track_id)
 
     log.info("music_track_uploaded", track_id=track_id, filename=file.filename)
@@ -292,7 +330,12 @@ async def upload_music_track(
 
 
 _IMAGE_CT = {
-    "image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif",
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
 }
 _IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 
@@ -427,9 +470,11 @@ async def create_templated_music_track(
         tmp.flush()
 
         from app.services.audio_download import _probe_duration  # noqa: PLC0415
+
         duration_s = _probe_duration(tmp.name)
 
         from app.storage import _get_client  # noqa: PLC0415
+
         bucket = _get_client().bucket(settings.storage_bucket)
         bucket.blob(audio_gcs).upload_from_filename(
             tmp.name, content_type=audio.content_type or "audio/mp4"
@@ -445,8 +490,7 @@ async def create_templated_music_track(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
-                    f"Slot {position} asset must be an image "
-                    f"(got content_type={ct!r}, ext={ext!r})"
+                    f"Slot {position} asset must be an image (got content_type={ct!r}, ext={ext!r})"
                 ),
             )
         ext = ext or ".jpg"
@@ -461,10 +505,9 @@ async def create_templated_music_track(
             tmp.write(data)
             tmp.flush()
             from app.storage import _get_client  # noqa: PLC0415
+
             bucket = _get_client().bucket(settings.storage_bucket)
-            bucket.blob(asset_gcs).upload_from_filename(
-                tmp.name, content_type=ct or "image/jpeg"
-            )
+            bucket.blob(asset_gcs).upload_from_filename(tmp.name, content_type=ct or "image/jpeg")
         slot["asset_gcs_path"] = asset_gcs
         slot.setdefault("asset_kind", "image")
 
@@ -511,9 +554,7 @@ async def list_music_tracks(
     """List all music tracks (including unpublished and archived)."""
     base_query = select(MusicTrack)
 
-    count_result = await db.execute(
-        select(func.count()).select_from(base_query.subquery())
-    )
+    count_result = await db.execute(select(func.count()).select_from(base_query.subquery()))
     total = count_result.scalar() or 0
 
     result = await db.execute(
@@ -608,6 +649,7 @@ async def reanalyze_music_track(
     await db.commit()
 
     from app.tasks.music_orchestrate import analyze_music_track_task  # noqa: PLC0415
+
     analyze_music_track_task.delay(track_id)
 
     log.info("music_track_reanalyze_dispatched", track_id=track_id)
