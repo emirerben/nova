@@ -174,16 +174,22 @@ def orchestrate_auto_music_job(self, job_id: str) -> None:
         )
         return
 
-    try:
-        _run_auto_music_job(job_id)
-    except Exception as exc:
-        log.error(
-            "auto_music_job_failed",
-            job_id=job_id,
-            error=str(exc),
-            exc_info=True,
-        )
-        _fail_job(job_id, str(exc))
+    # `pipeline_trace_for` binds job_id into a contextvar so every
+    # `record_pipeline_event` call inside the assembly pipeline attributes
+    # to this job. Cleared on exit (including on exception).
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    with pipeline_trace_for(job_id):
+        try:
+            _run_auto_music_job(job_id)
+        except Exception as exc:
+            log.error(
+                "auto_music_job_failed",
+                job_id=job_id,
+                error=str(exc),
+                exc_info=True,
+            )
+            _fail_job(job_id, str(exc))
 
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────

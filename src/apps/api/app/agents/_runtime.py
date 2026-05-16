@@ -41,6 +41,15 @@ from pydantic import BaseModel, ValidationError
 log = structlog.get_logger()
 
 
+# Success outcomes for agent_run rows. A run lands here when the agent
+# returned a parsed Output the caller can use, on either the primary model
+# (``ok``) or a fallback (``ok_fallback``). Any other outcome is a failure
+# for the admin job-debug view's "failures" counter. Imported by SQL filter
+# code in app/routes/admin_jobs.py — keep this set as the single source of
+# truth so adding a new success outcome doesn't silently miscount.
+SUCCESS_OUTCOMES: frozenset[str] = frozenset({"ok", "ok_fallback"})
+
+
 # ── Errors ────────────────────────────────────────────────────────────────────
 
 
@@ -137,6 +146,12 @@ class _RunStats:
     # model actually said. Kept short (500 chars) — enough to see the JSON
     # shape and any partial fields, not enough to blow up Langfuse payloads.
     last_raw_text: str | None = None
+    # Full untruncated raw_text from the most recent invocation. Used by the
+    # admin debug-view persistence layer (`agent_run.raw_text`) so the admin
+    # can read exactly what the model returned, not a 500-char preview.
+    # Kept separate from `last_raw_text` because the Langfuse trace + log
+    # payload still want the short preview.
+    last_full_raw_text: str | None = None
 
 
 # ── Model client interface ────────────────────────────────────────────────────
@@ -406,6 +421,10 @@ class Agent(ABC, Generic[InputT, OutputT]):
             # the Langfuse trace. Without this, refusal traces look like
             # `output: None` and the diagnostic signal is lost.
             stats.last_raw_text = (inv.raw_text or "")[:500]
+            # Full text (untruncated) for the admin debug-view persistence
+            # layer. Truncation happens in `_persistence.persist_agent_run`
+            # at a much higher cap (100KB) than the Langfuse preview.
+            stats.last_full_raw_text = inv.raw_text or ""
 
             # Refusal check (safety + required fields)
             try:
@@ -540,6 +559,33 @@ class Agent(ABC, Generic[InputT, OutputT]):
         if stats.last_raw_text is not None and outcome not in ("ok", "ok_fallback"):
             payload["raw_text_preview"] = stats.last_raw_text
         log.info("agent_run", **payload)
+
+        # Persist one row to the agent_run table for the admin job-debug
+        # view. Skipped silently when ctx.job_id is missing or not a UUID
+        # (track-level analysis, eval harness). Errors are swallowed inside
+        # persist_agent_run — a DB hiccup never breaks an in-flight job.
+        # Caller can opt out via ctx.extra["skip_agent_run_persist"]=True
+        # (eval harness uses this to keep test runs out of prod tables).
+        if not ctx.extra.get("skip_agent_run_persist"):
+            from app.agents._persistence import persist_agent_run  # noqa: PLC0415
+
+            persist_agent_run(
+                job_id=ctx.job_id,
+                segment_idx=ctx.segment_idx,
+                agent_name=self.spec.name,
+                prompt_version=self.spec.prompt_version,
+                model=model,
+                outcome=outcome,
+                attempts=stats.attempts,
+                tokens_in=stats.tokens_in,
+                tokens_out=stats.tokens_out,
+                cost_usd=cost_usd,
+                latency_ms=latency_ms,
+                input_dict=input_dict,
+                output_dict=output_dict,
+                raw_text=stats.last_full_raw_text,
+                error=error,
+            )
 
         # Optional Langfuse trace (no-op unless LANGFUSE_PUBLIC_KEY/SECRET_KEY
         # set + langfuse SDK installed). Fails open: never breaks agent work.

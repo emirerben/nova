@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.22.0] - 2026-05-16
+## [0.4.23.0] - 2026-05-16
 
 ### Fixed
 - **Single-word text overlays no longer disappear from rendered templates when Gemini returns the timing tuple swapped.** Investigation of the 6-second output on template `fdaf3bbc-…` ("not just luck") traced the missing opening "It's" reveal to one overlay where Gemini returned `start_s=3.0, end_s=0.88` — start after end. The validator in `_validate_slots` (`app/agents/template_recipe.py`) used to drop those overlays silently. It now attempts a salvage swap when both values are non-negative and `start_s` is inside the slot window, with a `template_overlay_timing_salvaged` warning so grep-able post-mortems are still possible. NaN/inf timings are dropped explicitly (they previously slipped every gate because all NaN comparisons return False), and salvage refuses to run when `target_duration_s` is missing or zero so the swapped values stay bounded.
@@ -10,6 +10,22 @@ All notable changes to this project will be documented in this file.
 
 ### Tests
 - **12 new pytest cases.** `tests/agents/test_template_recipe_overlay_salvage.py` covers the salvage path (10 cases: inverted timing salvaged in-window, inverted with negative end dropped, inverted with start outside slot dropped, equal timing dropped, valid timing unchanged, prod regression fixture for the "It's" overlay, NaN/inf rejection, and two defense-in-depth cases that call `_validate_slots` directly to exercise the `slot_dur=0` cache-load path that `parse()` would otherwise refuse). `tests/tasks/test_template_orchestrate.py` adds 2 cases for the new `gemini_analyze_failed` sub-phase emission (asserts the event under `record_sub_phases=True`, asserts no event under the default). Existing `test_invalid_overlays_stripped` updated to use a genuinely unsalvageable timing (negative end) since the previous fixture is now legitimately preserved.
+
+## [0.4.22.0] - 2026-05-16
+
+### Added
+- **Admin job-debug view at `/admin/jobs`.** Paginated list of every music + template + auto-music job (filterable by type, "failures only"); each row shows status, linked template/track, total agent_run count, and failure count. Clicking a row opens `/admin/jobs/{id}` — a 5-tab debug surface (Agents, Recipe, Assembly Plan, Pipeline Trace, Raw) that surfaces the full input, raw LLM response, and parsed output for every agent invocation on that job alongside every non-LLM pipeline decision (curtain-close picks, xfade chains, per-slot beat-snap drift). The rendered video plays inline next to the metadata. When a video looks bad, scan top-to-bottom: did an agent refuse or schema-error, did its parameters look off, or did the assembler drift on beat-snap? Legacy/empty-state jobs render gracefully.
+- **`agent_run` table.** New table captures one row per agent invocation: full `input_json`, raw LLM `raw_text`, parsed `output_json`, outcome (ok / ok_fallback / terminal_refusal / terminal_schema / terminal_transient / terminal_unknown), tokens, cost USD, latency ms, error message, prompt_version. Wired in `app/agents/_runtime._log_outcome` via a single best-effort call site so every existing and future agent is captured automatically. DB write failures swallow into a log line — agent work never breaks on persistence. Non-UUID job_ids (e.g. `"track:<id>"` track-level analyses) and the eval harness opt out cleanly via `ctx.extra["skip_agent_run_persist"]`.
+- **`Job.pipeline_trace` JSONB column.** Append-only log of non-LLM pipeline decisions. Orchestrators bind `pipeline_trace_for(job_id)` at task entry; pipeline modules call `record_pipeline_event(stage, event, data)`. Single-statement `COALESCE(col, '[]') || event` UPDATE is safe under concurrent writers (Postgres row-level locking + EvalPlanQual recheck — verified empirically with 50 threads × 10 events, zero lost). Capped at 500 events per job. Three call sites land first: curtain-close timing in `interstitials.py`, xfade chain picks in `transitions.py`, per-slot beat-snap drift in `template_orchestrate.py`.
+- **`GET /admin/jobs` and `GET /admin/jobs/{id}/debug` API endpoints.** Paginated list joins `agent_run` counts via subquery (no row-multiplication). Detail returns Job + JobClip rows + linked VideoTemplate/MusicTrack summary + chronological `agent_run` rows + pipeline_trace. Both gated by `X-Admin-Token` and surfaced through the existing `/api/admin/[...]` Next.js proxy so the token stays server-side.
+- **`SUCCESS_OUTCOMES` constant in `app/agents/_runtime`.** Single source of truth for which outcomes count as success. The admin list endpoint's failure-counting SQL imports it, so adding a new outcome only requires editing one place.
+- **`JsonTreeView` component.** Collapsible JSON tree, no external dependency, depth cap at 32 to prevent React render-stack blowouts on deeply nested payloads.
+
+### Changed
+- **Eval harness `RunContext` now sets `skip_agent_run_persist: True`.** Symmetric to the existing `skip_langfuse_trace` opt-out — keeps replay-mode evals out of the prod `agent_run` table.
+
+### Tests
+- **32 new tests.** Backend (26): persistence happy path AND every failure outcome (terminal_schema via Pydantic-invalid output, terminal_refusal via SAFETY finish_reason, terminal_transient via exhausted fallback chain) — failure rows are the most valuable for the admin view. Pipeline trace covers contextvar set/clear/leak prevention, single + concurrent event append, DB-failure swallow. Admin routes cover auth (401), invalid uuid (400), missing job (404), empty list, agent_run count subquery. Frontend (6): JsonTreeView covers null / primitives / containers / nested expand-collapse / depth-cap / show-more truncation.
 
 ## [0.4.21.1] - 2026-05-16
 

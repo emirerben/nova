@@ -199,6 +199,22 @@ def apply_curtain_close_tail(
 
     anim_start = max(0.0, duration - animate_s)
 
+    # Record the curtain-close decision so the admin debug view can show
+    # exactly when the curtain fired and whether it was clamped. No-op
+    # when no job context is bound (e.g. ad-hoc admin tests, evals).
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    record_pipeline_event(
+        stage="interstitial",
+        event="curtain_close_applied",
+        data={
+            "slot_duration_s": round(duration, 3),
+            "animate_s": round(animate_s, 3),
+            "anim_start_s": round(anim_start, 3),
+            "max_ratio": _CURTAIN_MAX_RATIO,
+        },
+    )
+
     # PNG-overlay implementation. Earlier versions used a per-pixel geq
     # filter to compute bar height as a function of frame time T. geq is
     # single-threaded and evaluates 3 channel expressions for every pixel
