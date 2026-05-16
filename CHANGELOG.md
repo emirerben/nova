@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.22.0] - 2026-05-16
+
+### Added
+- **Admin job-debug view at `/admin/jobs`.** Paginated list of every music + template + auto-music job (filterable by type, "failures only"); each row shows status, linked template/track, total agent_run count, and failure count. Clicking a row opens `/admin/jobs/{id}` — a 5-tab debug surface (Agents, Recipe, Assembly Plan, Pipeline Trace, Raw) that surfaces the full input, raw LLM response, and parsed output for every agent invocation on that job alongside every non-LLM pipeline decision (curtain-close picks, xfade chains, per-slot beat-snap drift). The rendered video plays inline next to the metadata. When a video looks bad, scan top-to-bottom: did an agent refuse or schema-error, did its parameters look off, or did the assembler drift on beat-snap? Legacy/empty-state jobs render gracefully.
+- **`agent_run` table.** New table captures one row per agent invocation: full `input_json`, raw LLM `raw_text`, parsed `output_json`, outcome (ok / ok_fallback / terminal_refusal / terminal_schema / terminal_transient / terminal_unknown), tokens, cost USD, latency ms, error message, prompt_version. Wired in `app/agents/_runtime._log_outcome` via a single best-effort call site so every existing and future agent is captured automatically. DB write failures swallow into a log line — agent work never breaks on persistence. Non-UUID job_ids (e.g. `"track:<id>"` track-level analyses) and the eval harness opt out cleanly via `ctx.extra["skip_agent_run_persist"]`.
+- **`Job.pipeline_trace` JSONB column.** Append-only log of non-LLM pipeline decisions. Orchestrators bind `pipeline_trace_for(job_id)` at task entry; pipeline modules call `record_pipeline_event(stage, event, data)`. Single-statement `COALESCE(col, '[]') || event` UPDATE is safe under concurrent writers (Postgres row-level locking + EvalPlanQual recheck — verified empirically with 50 threads × 10 events, zero lost). Capped at 500 events per job. Three call sites land first: curtain-close timing in `interstitials.py`, xfade chain picks in `transitions.py`, per-slot beat-snap drift in `template_orchestrate.py`.
+- **`GET /admin/jobs` and `GET /admin/jobs/{id}/debug` API endpoints.** Paginated list joins `agent_run` counts via subquery (no row-multiplication). Detail returns Job + JobClip rows + linked VideoTemplate/MusicTrack summary + chronological `agent_run` rows + pipeline_trace. Both gated by `X-Admin-Token` and surfaced through the existing `/api/admin/[...]` Next.js proxy so the token stays server-side.
+- **`SUCCESS_OUTCOMES` constant in `app/agents/_runtime`.** Single source of truth for which outcomes count as success. The admin list endpoint's failure-counting SQL imports it, so adding a new outcome only requires editing one place.
+- **`JsonTreeView` component.** Collapsible JSON tree, no external dependency, depth cap at 32 to prevent React render-stack blowouts on deeply nested payloads.
+
+### Changed
+- **Eval harness `RunContext` now sets `skip_agent_run_persist: True`.** Symmetric to the existing `skip_langfuse_trace` opt-out — keeps replay-mode evals out of the prod `agent_run` table.
+
+### Tests
+- **32 new tests.** Backend (26): persistence happy path AND every failure outcome (terminal_schema via Pydantic-invalid output, terminal_refusal via SAFETY finish_reason, terminal_transient via exhausted fallback chain) — failure rows are the most valuable for the admin view. Pipeline trace covers contextvar set/clear/leak prevention, single + concurrent event append, DB-failure swallow. Admin routes cover auth (401), invalid uuid (400), missing job (404), empty list, agent_run count subquery. Frontend (6): JsonTreeView covers null / primitives / containers / nested expand-collapse / depth-cap / show-more truncation.
+
 ## [0.4.21.1] - 2026-05-16
 
 ### Added

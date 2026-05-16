@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Iterator
@@ -474,6 +475,20 @@ def orchestrate_template_job(
         log.error("template_job_invalid_id", job_id=repr(job_id))
         return
 
+    # `pipeline_trace_for` binds job_id into a contextvar so every
+    # `record_pipeline_event` call inside the assembly pipeline attributes
+    # to this job. The finally inside the context manager clears it on
+    # exit (including on exception) — prevents leaking into the next
+    # Celery task on this worker process.
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    with pipeline_trace_for(job_id):
+        _orchestrate_template_job_inner(job_id, job_uuid, force_single_pass)
+
+
+def _orchestrate_template_job_inner(
+    job_id: str, job_uuid: uuid.UUID, force_single_pass: bool
+) -> None:
     try:
         _run_template_job(job_id, force_single_pass=force_single_pass)
     except _StageError as stage_err:
@@ -627,7 +642,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         # [2] Download all clip files in parallel
         _phase_t0 = time.monotonic()
-        local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
+        local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir, job_id=job_id)
         record_phase(
             job_id,
             PHASE_DOWNLOAD_CLIPS,
@@ -1030,7 +1045,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         gcs_paths_unique = list(dict.fromkeys(step["clip_gcs_path"] for step in steps_data))
 
         # Download only the used clips
-        local_clip_paths = _download_clips_parallel(gcs_paths_unique, tmpdir)
+        local_clip_paths = _download_clips_parallel(gcs_paths_unique, tmpdir, job_id=job_id)
         gcs_to_local = dict(zip(gcs_paths_unique, local_clip_paths))
 
         # Probe all clips
@@ -1343,17 +1358,84 @@ def _add_locked_template_source(
         )
 
 
-def _download_clips_parallel(gcs_paths: list[str], tmpdir: str) -> list[str]:
-    """Download all clips from GCS in parallel. Returns local file paths."""
-    local_paths = [os.path.join(tmpdir, f"clip_{i}.mp4") for i in range(len(gcs_paths))]
+def _download_clips_parallel(
+    gcs_paths: list[str],
+    tmpdir: str,
+    *,
+    job_id: str | None = None,
+) -> list[str]:
+    """Download all clips from GCS in parallel. Returns local file paths.
 
-    def _download_one(args: tuple[str, str]) -> str:
-        gcs_path, local_path = args
+    Emits a `clip_download_timing` structlog event with per-clip wall-clock,
+    size, and bandwidth proxy. Two consumers in mind:
+
+    1. **Validating the P5 (worker-local clip cache) assumption.** P5's
+       projected 4-8s savings per rerender assumes cold GCS-fetch dominates
+       the wall-clock. If real numbers show per-clip download is ~1-2s,
+       P5 isn't worth building. Numbers go into Langfuse via the
+       `PHASE_DOWNLOAD_CLIPS` phase event already wired at the callers,
+       and into Fly logs for ad-hoc grepping.
+
+    2. **Future perf regressions.** A GCS region change, a network blip, or
+       a Fly machine swap that hits a slow NIC will be visible per-clip.
+       Without this, only the aggregate parallel-bound wall-clock is logged.
+
+    `job_id` is passed into the structured log event so a slow-job debug
+    session can grep by job_id and find both this event + the surrounding
+    `phase_done` events. Without it the event is correlatable only by
+    timestamp — fragile in a multi-worker Celery deployment where two jobs
+    can interleave on one machine. The codebase doesn't use
+    `structlog.contextvars`, so each log call carries its own context kwargs.
+
+    The instrumentation cost is ~50 microseconds of `time.monotonic()` calls
+    per clip — negligible vs the second-scale download itself.
+    """
+    local_paths = [os.path.join(tmpdir, f"clip_{i}.mp4") for i in range(len(gcs_paths))]
+    per_clip_stats: list[dict] = []
+    stats_lock = threading.Lock()
+
+    def _download_one(args: tuple[int, str, str]) -> str:
+        idx, gcs_path, local_path = args
+        t0 = time.monotonic()
         download_to_file(gcs_path, local_path)
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        # Best-effort size read; failure to stat is non-fatal because the
+        # download already succeeded — we just lose the bytes-per-second
+        # signal for that clip.
+        try:
+            size_bytes = os.path.getsize(local_path)
+        except OSError:
+            size_bytes = -1
+        with stats_lock:
+            per_clip_stats.append({"idx": idx, "elapsed_ms": elapsed_ms, "size_bytes": size_bytes})
         return local_path
 
+    work_items = [(i, g, p) for i, (g, p) in enumerate(zip(gcs_paths, local_paths))]
     with ThreadPoolExecutor(max_workers=min(len(gcs_paths), 8)) as pool:
-        list(pool.map(_download_one, zip(gcs_paths, local_paths)))
+        list(pool.map(_download_one, work_items))
+
+    # Aggregate stats for a single log line that's easy to grep in Fly logs.
+    elapsed_list = [s["elapsed_ms"] for s in per_clip_stats]
+    sizes_known = [s["size_bytes"] for s in per_clip_stats if s["size_bytes"] >= 0]
+    total_bytes = sum(sizes_known) if sizes_known else None
+    log.info(
+        "clip_download_timing",
+        job_id=job_id,
+        clip_count=len(gcs_paths),
+        max_workers=min(len(gcs_paths), 8),
+        per_clip_ms_max=max(elapsed_list) if elapsed_list else 0,
+        per_clip_ms_min=min(elapsed_list) if elapsed_list else 0,
+        per_clip_ms_mean=int(sum(elapsed_list) / len(elapsed_list)) if elapsed_list else 0,
+        total_ms_serial=sum(elapsed_list),
+        # `total_bytes_clip_count` is the number of clips contributing to
+        # `total_bytes`. When this is < clip_count, the size stat failed for
+        # some clips and `total_bytes` UNDER-counts the true total. Without
+        # this field a consumer doing `bytes/elapsed` math would silently
+        # report wildly low throughput. Adversarial review caught this.
+        total_bytes=total_bytes,
+        total_bytes_clip_count=len(sizes_known),
+        per_clip=per_clip_stats,
+    )
 
     return local_paths
 
@@ -1919,7 +2001,26 @@ def _plan_slots(
             if beats:
                 expected_end = cumulative_s + slot_target_dur
                 snapped_end = _snap_to_beat(expected_end, beats)
+                drift_ms = int(round((snapped_end - expected_end) * 1000))
                 slot_target_dur = max(0.5, snapped_end - cumulative_s)
+                # Beat-snap drift is one of the most common "video looks
+                # off" causes — record per-slot offset so admins can spot
+                # which boundary drifted by how much.
+                from app.services.pipeline_trace import (  # noqa: PLC0415
+                    record_pipeline_event,
+                )
+
+                record_pipeline_event(
+                    stage="beat_snap",
+                    event="slot_snapped",
+                    data={
+                        "slot_index": i,
+                        "expected_end_s": round(expected_end, 3),
+                        "snapped_end_s": round(snapped_end, 3),
+                        "drift_ms": drift_ms,
+                        "final_duration_s": round(slot_target_dur, 3),
+                    },
+                )
                 cumulative_s = snapped_end
             else:
                 cumulative_s += slot_target_dur

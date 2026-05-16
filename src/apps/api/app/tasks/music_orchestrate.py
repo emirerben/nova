@@ -285,15 +285,23 @@ def orchestrate_music_job(self, job_id: str) -> None:
     track's cached recipe declares typed slots; otherwise runs the legacy
     beat-sync pipeline that fills every slot from user clips.
     """
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
     log.info("music_job_start", job_id=job_id)
-    try:
-        if _job_uses_templated_recipe(job_id):
-            _run_templated_music_job(job_id)
-        else:
-            _run_music_job(job_id)
-    except Exception as exc:
-        log.error("music_job_failed", job_id=job_id, error=str(exc), exc_info=True)
-        _fail_job(job_id, str(exc))
+    # `pipeline_trace_for` binds job_id into a contextvar so every
+    # `record_pipeline_event` call downstream in app/pipeline/* attributes
+    # to this job. The finally-block in the context manager clears it on
+    # exit (including on exception) so the next Celery task on this worker
+    # doesn't inherit a stale job_id.
+    with pipeline_trace_for(job_id):
+        try:
+            if _job_uses_templated_recipe(job_id):
+                _run_templated_music_job(job_id)
+            else:
+                _run_music_job(job_id)
+        except Exception as exc:
+            log.error("music_job_failed", job_id=job_id, error=str(exc), exc_info=True)
+            _fail_job(job_id, str(exc))
 
 
 def _job_uses_templated_recipe(job_id: str) -> bool:

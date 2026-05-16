@@ -13,6 +13,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -277,6 +278,10 @@ class Job(Base):
     # Append-only history of completed phases:
     # [{name, elapsed_ms, t_offset_ms, ts}, ...]. Written by services/job_phases.
     phase_log: Mapped[list | None] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # Append-only log of non-LLM pipeline decisions written by services/pipeline_trace.
+    # Each entry: {ts, stage, event, data}. Drives the admin job-debug view's
+    # pipeline-trace tab. NULL on legacy/pre-feature jobs — the UI handles that.
+    pipeline_trace: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     # True pipeline-wall-time anchors. Distinct from created_at (queue insert)
     # and updated_at (any column write).
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
@@ -346,4 +351,42 @@ class JobClip(Base):
         Index("idx_job_clips_job_id", "job_id"),
         Index("idx_job_clips_rank", "job_id", "rank"),
         Index("idx_job_clips_music_track_id", "music_track_id"),
+    )
+
+
+class AgentRun(Base):
+    """One row per agent invocation. Captures full input + raw LLM response +
+    parsed output so the admin job-debug view can show exactly what each
+    agent saw and produced for a given job. job_id is nullable so off-job
+    calls (track-level analysis, eval harness) can also be persisted without
+    inventing a fake job UUID.
+    """
+
+    __tablename__ = "agent_run"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    segment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    agent_name: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    input_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_agent_run_job_id_created", "job_id", "created_at"),
+        Index("idx_agent_run_agent_name", "agent_name"),
     )

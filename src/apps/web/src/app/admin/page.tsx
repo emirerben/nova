@@ -74,7 +74,15 @@ export default function AdminDashboardPage() {
 
   return (
     <div className="p-6 space-y-6">
-      <h1 className="text-lg font-semibold">Template Dashboard</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold">Template Dashboard</h1>
+        <Link
+          href="/admin/jobs"
+          className="text-sm px-3 py-1.5 rounded bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+        >
+          Debug jobs →
+        </Link>
+      </div>
 
       {/* Attention queue */}
       {hasAttention ? (
