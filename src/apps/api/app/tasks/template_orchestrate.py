@@ -280,9 +280,13 @@ def analyze_template_task(self, template_id: str) -> None:
             black_segments = classify_black_segment_type(local_path, black_segments)
 
             file_ref = gemini_upload_and_wait(local_path)
+            # Phase 2 perf: single-pass skips the inline `_extract_creative_direction`
+            # Gemini call (Pass 1). `creative_direction` ends up empty for the recipe;
+            # text_designer + clip_router accept that and use their own defaults.
+            # Tradeoff is documented in the Phase 2 PR. Set "two_pass" here to restore.
             recipe = analyze_template(
                 file_ref,
-                analysis_mode="two_pass",
+                analysis_mode="single",
                 black_segments=black_segments,
                 job_id=f"template:{template_id}",
             )
