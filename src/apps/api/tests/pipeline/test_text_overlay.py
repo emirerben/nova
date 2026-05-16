@@ -280,6 +280,119 @@ class TestAnimatedOverlayASS:
         # Sanity: ensure we didn't accidentally promote scale-up too
         assert "scale-up" not in ASS_ANIMATED_EFFECTS
 
+    def test_pop_in_prewraps_long_text_into_fixed_lines(self):
+        """pop-in must emit `\\N` + `\\q2` for text that would wrap at full scale.
+
+        Repro: production job bb89ea56 with text "Who are you trying to impress
+        with all those travel stories?" rendered as pop-in at Inter Tight 90 px.
+        Without pre-wrap, libass shows 1 line at \\fscx30 and 2 lines at
+        \\fscx100 — the rewrap reads as text jitter at the entrance.
+        """
+        long_text = (
+            '"Who are you trying to impress with all those travel stories?"'
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{
+                    "text": long_text, "start_s": 0.5, "end_s": 3.5,
+                    "position": "center", "effect": "pop-in",
+                    "font_family": "Inter Tight",
+                    "position_y_frac": 0.62, "outline_px": 3,
+                }],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None and len(result) == 1
+            content = open(result[0]).read()
+            # Locate the Dialogue line so we only assert on the rendered text.
+            dialogue = next(
+                ln for ln in content.splitlines() if ln.startswith("Dialogue:")
+            )
+            # WrapStyle override so libass does not re-wrap during \fscx ramp.
+            assert "\\q2" in dialogue, dialogue
+            # Pre-computed break inserted at the natural word boundary.
+            assert "\\N" in dialogue, dialogue
+            # Scale animation still present alongside the wrap fix.
+            assert "\\fscx30" in dialogue
+            assert "\\fscx115" in dialogue
+            assert "\\fscx100" in dialogue
+
+    def test_pop_in_short_text_skips_wrap(self):
+        """Short text that fits on one line must not get a stray `\\N`.
+
+        Adding a needless line break would shift the vertical centroid and the
+        existing test_position_x_frac_in_ass_overrides_centered_x style of
+        layout assertion would silently break.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{
+                    "text": "Pop", "start_s": 0.0, "end_s": 1.1,
+                    "position": "center", "effect": "pop-in",
+                    "font_family": "Inter Tight",
+                }],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None
+            dialogue = next(
+                ln for ln in open(result[0]).read().splitlines()
+                if ln.startswith("Dialogue:")
+            )
+            assert "\\N" not in dialogue, dialogue
+            assert "\\q2" in dialogue  # \q2 emitted unconditionally for pop-in
+
+    def test_bounce_prewraps_long_text_into_fixed_lines(self):
+        """bounce shares the scale-driven rewrap risk with pop-in.
+
+        100→125→90→100 crosses the same wrap threshold as pop-in's
+        30→115→100, so the same `\\N` + `\\q2` treatment must apply.
+        """
+        long_text = (
+            "This is a long bouncing reaction line that will not fit"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{
+                    "text": long_text, "start_s": 0.0, "end_s": 2.0,
+                    "position": "center", "effect": "bounce",
+                    "font_family": "Inter Tight",
+                }],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None
+            dialogue = next(
+                ln for ln in open(result[0]).read().splitlines()
+                if ln.startswith("Dialogue:")
+            )
+            assert "\\q2" in dialogue
+            assert "\\N" in dialogue
+
+    def test_fade_in_not_affected_by_prewrap(self):
+        """fade-in (no scale animation) must keep its existing dialogue shape.
+
+        The pre-wrap fix is scoped to scale-animating effects; touching fade-in
+        would invalidate the existing test_fade_in_contains_fad_tag assertions
+        and risk shifting overlay layout in templates that depend on libass's
+        auto-wrap default (e.g. Just Fine).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{
+                    "text": "this is some long fading text that wraps fine",
+                    "start_s": 0.0, "end_s": 2.0,
+                    "position": "center", "effect": "fade-in",
+                    "font_family": "Inter Tight",
+                }],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None
+            dialogue = next(
+                ln for ln in open(result[0]).read().splitlines()
+                if ln.startswith("Dialogue:")
+            )
+            assert "\\q2" not in dialogue, dialogue
+            assert "\\N" not in dialogue, dialogue
+            assert "\\fad(500,0)" in dialogue
+
     def test_unknown_effect_still_renders_static(self):
         """scale-up and other untracked effects fall through to static
         rendering \u2014 generate_animated_overlay_ass returns None for them.
@@ -918,6 +1031,63 @@ class TestFontCycleTextSize:
         if fonts_72 and fonts_120:
             assert fonts_72[0] is not fonts_120[0]
         _reset_cycle_cache()  # clean up
+
+
+class TestResolveCycleFontsCustom:
+    """Per-overlay cycle_fonts opt-in. Lets a single overlay (e.g. Waka
+    Waka AFRICA) define a curated cycle without affecting the global
+    cycle_role=contrast set every other template inherits."""
+
+    def test_custom_fonts_none_uses_global_contrast_set(self):
+        """Default behavior unchanged: passing custom_fonts=None resolves
+        to the full registry contrast set."""
+        _reset_cycle_cache()
+        default = _resolve_cycle_fonts(120, custom_fonts=None)
+        # Should include settle + every contrast font (count > 2 expected).
+        assert len(default) >= 3, (
+            f"default cycle should pull all contrast fonts; got {len(default)}"
+        )
+
+    def test_custom_fonts_single_returns_settle_plus_one(self):
+        """custom_fonts=['Permanent Marker'] yields exactly [settle, PM] — the
+        single-font cycle the AFRICA overlay uses for ink-flicker."""
+        _reset_cycle_cache()
+        fonts = _resolve_cycle_fonts(
+            120,
+            settle_font_name="Permanent Marker",
+            custom_fonts=["Permanent Marker"],
+        )
+        # settle + 1 custom = 2 entries (same family rendered twice).
+        assert len(fonts) == 2, f"expected 2 entries, got {len(fonts)}"
+
+    def test_custom_fonts_multiple_returns_settle_plus_all(self):
+        """custom_fonts=['Outfit', 'DM Sans'] yields exactly [settle, Outfit,
+        DM Sans] — three entries, registry contrast set bypassed."""
+        _reset_cycle_cache()
+        fonts = _resolve_cycle_fonts(
+            120,
+            settle_font_name="Outfit",
+            custom_fonts=["Outfit", "DM Sans"],
+        )
+        assert len(fonts) == 3, f"expected 3 entries, got {len(fonts)}"
+
+    def test_custom_fonts_cache_independent_from_default(self):
+        """Two calls at the same (size, settle) but different custom_fonts
+        must NOT collide in the cache. Otherwise an overlay's curated list
+        would be shadowed by another overlay's default-list lookup."""
+        _reset_cycle_cache()
+        default = _resolve_cycle_fonts(96, settle_font_name="Permanent Marker")
+        custom = _resolve_cycle_fonts(
+            96,
+            settle_font_name="Permanent Marker",
+            custom_fonts=["Permanent Marker"],
+        )
+        # Default pulls all contrast fonts; custom pulls just one. Lengths
+        # must differ — the cache must not hand the same list to both.
+        assert len(default) != len(custom), (
+            f"cache leak: default={len(default)} == custom={len(custom)}"
+        )
+        _reset_cycle_cache()
 
 
 # -- font_family resolution ---------------------------------------------------

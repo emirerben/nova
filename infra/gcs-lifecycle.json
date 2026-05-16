@@ -1,0 +1,20 @@
+{
+  "lifecycle": {
+    "rule": [
+      {
+        "action": { "type": "Delete" },
+        "condition": {
+          "age": 1,
+          "matchesPrefix": ["dev-user/"]
+        }
+      },
+      {
+        "action": { "type": "Delete" },
+        "condition": {
+          "age": 1,
+          "matchesPrefix": ["music-jobs/"]
+        }
+      }
+    ]
+  }
+}

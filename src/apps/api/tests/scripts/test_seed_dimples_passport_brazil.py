@@ -647,7 +647,7 @@ class TestSubjectSubstitutionContract:
         upload form collects it and the resolver finds it."""
         keys = [spec["key"] for spec in _seed.REQUIRED_INPUTS]
         assert "location" in keys, (
-            "Required-input key 'location' is the contract _resolve_user_subject "
+            "Required-input key 'location' is the contract user_subject resolver "
             "depends on; renaming it breaks substitution silently"
         )
 
@@ -655,13 +655,13 @@ class TestSubjectSubstitutionContract:
 class TestRequiredInputs:
     """The seed must declare a `location` input so the template page renders
     a country/city field. The key name MUST match what
-    _resolve_user_subject() in template_orchestrate.py reads."""
+    user_subject resolver() in template_orchestrate.py reads."""
 
     def test_declares_single_location_input(self):
         assert len(_seed.REQUIRED_INPUTS) == 1
         spec = _seed.REQUIRED_INPUTS[0]
         assert spec["key"] == "location", (
-            "key must be 'location' — _resolve_user_subject reads inputs.location"
+            "key must be 'location' — user_subject resolver reads inputs.location"
         )
 
     def test_location_is_required(self):

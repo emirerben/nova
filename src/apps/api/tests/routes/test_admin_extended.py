@@ -45,6 +45,7 @@ def _make_template(**kwargs):
         template_type="standard",
         parent_template_id=None,
         music_track_id=None,
+        is_agentic=False,
         created_at=datetime.now(UTC),
         recipe_cached={"slots": [{"position": 1}], "total_duration_s": 30.0},
         recipe_cached_at=datetime.now(UTC),

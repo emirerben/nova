@@ -66,6 +66,8 @@ export interface AdminTemplate {
   parent_template_id: string | null;
   music_track_id: string | null;
   has_intro_slot: boolean;
+  is_agentic: boolean;
+  error_detail: string | null;
   created_at: string;
 }
 
@@ -77,6 +79,8 @@ export interface AdminTemplateListItem {
   archived_at: string | null;
   description: string | null;
   thumbnail_gcs_path: string | null;
+  template_type?: string;
+  is_agentic: boolean;
   job_count: number;
   created_at: string;
 }
@@ -161,6 +165,7 @@ export async function adminCreateTemplate(data: {
   required_clips_max?: number;
   description?: string;
   source_url?: string;
+  is_agentic?: boolean;
 }): Promise<AdminTemplate> {
   const res = await adminFetch("/admin/templates", {
     method: "POST",
@@ -175,6 +180,7 @@ export async function adminCreateTemplateFromUrl(data: {
   required_clips_min?: number;
   required_clips_max?: number;
   description?: string;
+  is_agentic?: boolean;
 }): Promise<AdminTemplate> {
   const res = await adminFetch("/admin/templates/from-url", {
     method: "POST",
@@ -185,6 +191,13 @@ export async function adminCreateTemplateFromUrl(data: {
 
 export async function adminReanalyzeTemplate(id: string): Promise<AdminTemplate> {
   const res = await adminFetch(`/admin/templates/${id}/reanalyze`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
+export async function adminReanalyzeAgentic(id: string): Promise<AdminTemplate> {
+  const res = await adminFetch(`/admin/templates/${id}/reanalyze-agentic`, {
     method: "POST",
   });
   return res.json();
@@ -212,6 +225,9 @@ export async function adminCreateTestJob(
     clip_gcs_paths: string[];
     selected_platforms?: string[];
     subject?: string;
+    // When true the orchestrator skips curtain-close interstitials and
+    // generate_copy. Backend default is false; admin test tab passes true.
+    preview_mode?: boolean;
   },
 ): Promise<TestJobResponse> {
   const res = await adminFetch(`/admin/templates/${templateId}/test-job`, {
@@ -230,6 +246,42 @@ export async function adminGetPresignedUpload(
     body: JSON.stringify({ filename, content_type: contentType }),
   });
   return res.json();
+}
+
+// ── Font default override (agentic templates) ─────────────────────────────────
+//
+// Agentic templates lock the full recipe editor — this is the one narrow
+// override admins have: pick the template-level `font_default` from the
+// CLIP-suggested alternatives (or any registry font). Backend cascades the
+// pick to every overlay that inherited the old default; text_designer's
+// deliberate per-overlay choices stay.
+
+export interface FontAlternativeItem {
+  family: string;
+  similarity: number;
+}
+
+export interface FontDefaultResponse {
+  font_default: string | null;
+  alternatives: FontAlternativeItem[];
+  registry_families: string[];
+}
+
+export async function adminGetFontDefault(
+  templateId: string,
+): Promise<FontDefaultResponse> {
+  const res = await adminFetch(`/admin/templates/${templateId}/font-default`);
+  return res.json();
+}
+
+export async function adminSetFontDefault(
+  templateId: string,
+  fontDefault: string,
+): Promise<void> {
+  await adminFetch(`/admin/templates/${templateId}/font-default`, {
+    method: "POST",
+    body: JSON.stringify({ font_default: fontDefault }),
+  });
 }
 
 // ── Latest test job API ───────────────────────────────────────────────────────

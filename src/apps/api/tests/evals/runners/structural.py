@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION
+from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
 from app.agents.audio_template import AudioTemplateOutput
 from app.agents.clip_metadata import (
     _BALL_BLACKLIST,
@@ -20,8 +22,20 @@ from app.agents.clip_metadata import (
     ClipMetadataInput,
     ClipMetadataOutput,
 )
+from app.agents.clip_router import ClipRouterInput, ClipRouterOutput
 from app.agents.creative_direction import CreativeDirectionOutput
+from app.agents.music_matcher import MusicMatcherInput, MusicMatcherOutput
 from app.agents.platform_copy import PlatformCopyOutput
+from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
+from app.agents.song_classifier import SongClassifierOutput
+from app.agents.song_sections import (
+    MAX_OVERLAP_S,
+    MAX_SECTION_DURATION_S,
+    MIN_SECTION_DURATION_S,
+    SongSectionsInput,
+    SongSectionsOutput,
+    _overlap_s,
+)
 from app.agents.template_recipe import (
     _VALID_COLOR_HINTS,
     _VALID_INTERSTITIAL_TYPES,
@@ -29,7 +43,23 @@ from app.agents.template_recipe import (
     _VALID_TRANSITION_TYPES,
     TemplateRecipeOutput,
 )
+from app.agents.text_designer import (
+    _VALID_EFFECTS as _TEXT_DESIGNER_VALID_EFFECTS,
+)
+from app.agents.text_designer import (
+    _VALID_FONT_STYLES,
+    _VALID_TEXT_SIZES,
+    TextDesignerInput,
+    TextDesignerOutput,
+)
 from app.agents.transcript import TranscriptOutput
+from app.agents.transition_picker import (
+    _VALID_TRANSITIONS as _PICKER_VALID_TRANSITIONS,
+)
+from app.agents.transition_picker import (
+    TransitionPickerInput,
+    TransitionPickerOutput,
+)
 from app.pipeline.agents.copy_writer import (
     INSTAGRAM_CAPTION_MAX,
     TIKTOK_CAPTION_MAX,
@@ -116,6 +146,46 @@ def check_template_recipe(output: TemplateRecipeOutput) -> list[str]:
                 failures.append(
                     f"slot {i} overlay {j}: start_s={start} outside slot duration {slot_dur}"
                 )
+
+            bbox = ov.get("text_bbox")
+            if bbox is not None:
+                if not isinstance(bbox, dict):
+                    failures.append(
+                        f"slot {i} overlay {j}: text_bbox is not a dict (got {type(bbox).__name__})"
+                    )
+                else:
+                    try:
+                        bx = float(bbox.get("x_norm"))
+                        by = float(bbox.get("y_norm"))
+                        bw = float(bbox.get("w_norm"))
+                        bh = float(bbox.get("h_norm"))
+                        bt = float(bbox.get("sample_frame_t"))
+                    except (TypeError, ValueError):
+                        failures.append(f"slot {i} overlay {j}: text_bbox has non-numeric field")
+                    else:
+                        if not (0.0 <= bx <= 1.0 and 0.0 <= by <= 1.0):
+                            failures.append(
+                                f"slot {i} overlay {j}: text_bbox center ({bx},{by}) outside [0,1]"
+                            )
+                        if not (0.0 < bw <= 1.0 and 0.0 < bh <= 1.0):
+                            failures.append(
+                                f"slot {i} overlay {j}: text_bbox dims ({bw},{bh}) outside (0,1]"
+                            )
+                        if (bx - bw / 2.0) < 0.0 or (bx + bw / 2.0) > 1.0:
+                            failures.append(
+                                f"slot {i} overlay {j}: text_bbox horizontal extent "
+                                f"out of frame (x={bx}, w={bw})"
+                            )
+                        if (by - bh / 2.0) < 0.0 or (by + bh / 2.0) > 1.0:
+                            failures.append(
+                                f"slot {i} overlay {j}: text_bbox vertical extent "
+                                f"out of frame (y={by}, h={bh})"
+                            )
+                        if bt < start or bt > end:
+                            failures.append(
+                                f"slot {i} overlay {j}: text_bbox sample_frame_t={bt} "
+                                f"outside overlay window [{start},{end}]"
+                            )
 
     for k, inter in enumerate(output.interstitials):
         itype = inter.get("type")
@@ -478,7 +548,483 @@ def check_audio_template(output: AudioTemplateOutput) -> list[str]:
     return failures
 
 
+# ── clip_router ──────────────────────────────────────────────────────────────
+
+
+# Lines shorter than this in a rationale almost always indicate boilerplate
+# ("good fit", "best clip"). The 10-char floor catches the trivial cases
+# without flagging legitimate terse rationales like "hook_score 9 wins".
+_RATIONALE_MIN_CHARS = 10
+_BOILERPLATE_RATIONALES = {
+    "best clip",
+    "best fit",
+    "good fit",
+    "good match",
+    "matches well",
+    "best choice",
+    "looks good",
+    "fits well",
+}
+
+
+def check_clip_router(output: ClipRouterOutput, input: ClipRouterInput) -> list[str]:  # noqa: A002
+    """Structural floor for slot assignment.
+
+    `parse()` already enforces that every slot has exactly one assignment and
+    that every referenced `candidate_id` is in the input. We check the two
+    things parse can't catch:
+
+      - **Duplicate candidate usage.** Same candidate assigned to multiple
+        slots — silently allowed by the parser today, but it defeats the
+        variety constraint. Catch here so the eval fails loudly.
+      - **Boilerplate rationales.** "best fit" / "good match" / empty is a
+        signal that the model is autopiloting through the assignment without
+        reasoning about it. Forces the rubric's `rationale_quality` dimension
+        to have a structural floor to stand on.
+    """
+    failures: list[str] = []
+
+    valid_slots = {s.position for s in input.slots}
+    valid_ids = {c.id for c in input.candidates}
+
+    assigned_slots = {a.slot_position for a in output.assignments}
+    if assigned_slots != valid_slots:
+        missing = sorted(valid_slots - assigned_slots)
+        extra = sorted(assigned_slots - valid_slots)
+        if missing:
+            failures.append(f"missing assignments for slots {missing}")
+        if extra:
+            failures.append(f"assignments reference unknown slots {extra}")
+
+    used_ids: list[str] = []
+    for a in output.assignments:
+        if a.candidate_id not in valid_ids:
+            failures.append(
+                f"slot {a.slot_position}: candidate_id {a.candidate_id!r} not in candidate set"
+            )
+            continue
+        used_ids.append(a.candidate_id)
+
+    duplicates = {cid for cid in used_ids if used_ids.count(cid) > 1}
+    if duplicates:
+        failures.append(
+            f"candidate(s) {sorted(duplicates)} assigned to multiple slots "
+            "(variety constraint violated)"
+        )
+
+    for a in output.assignments:
+        r = (a.rationale or "").strip().lower()
+        if not r:
+            failures.append(f"slot {a.slot_position}: rationale is empty")
+            continue
+        if len(r) < _RATIONALE_MIN_CHARS:
+            failures.append(
+                f"slot {a.slot_position}: rationale {r!r} is too short "
+                f"(<{_RATIONALE_MIN_CHARS} chars — likely boilerplate)"
+            )
+            continue
+        if r in _BOILERPLATE_RATIONALES:
+            failures.append(
+                f"slot {a.slot_position}: rationale {r!r} is boilerplate (needs concrete reason)"
+            )
+
+    return failures
+
+
+# ── shot_ranker ──────────────────────────────────────────────────────────────
+
+
+def check_shot_ranker(output: ShotRankerOutput, input: ShotRankerInput) -> list[str]:  # noqa: A002
+    """Structural floor for top-K moment ranking.
+
+    `parse()` re-numbers ranks 1..N and drops hallucinated IDs. We add:
+
+      - **No duplicate ranks** — parse re-numbers post-hoc, but the model
+        emitting duplicates is a signal the prompt isn't anchoring rank
+        semantics. Catch the raw output's intent before it gets normalized.
+        (parse() sorts and renumbers — by the time we see `output.ranked`
+        ranks ARE 1..N, but we can still check for missing IDs and short
+        rationales.)
+      - **No duplicate IDs.** Same moment ranked twice — silently passable
+        through parse, but breaks the "top-K distinct moments" contract.
+      - **Ranks dense from 1.** No gaps. After parse() this should always
+        hold; the assertion canaries any future parse() change.
+      - **Boilerplate rationales** — same logic as clip_router.
+      - **target_count adherence** — the agent SHOULD return exactly
+        target_count entries (or fewer if it judged the candidate pool weak).
+        Returning MORE than target_count is a contract violation.
+    """
+    failures: list[str] = []
+
+    valid_ids = {c.id for c in input.candidates}
+
+    if len(output.ranked) > input.target_count:
+        failures.append(
+            f"ranked has {len(output.ranked)} entries > target_count={input.target_count}"
+        )
+
+    seen_ids: list[str] = []
+    for m in output.ranked:
+        if m.id not in valid_ids:
+            failures.append(f"rank {m.rank}: id {m.id!r} not in candidate set")
+            continue
+        seen_ids.append(m.id)
+
+    duplicates = {mid for mid in seen_ids if seen_ids.count(mid) > 1}
+    if duplicates:
+        failures.append(f"id(s) {sorted(duplicates)} ranked more than once")
+
+    ranks = [m.rank for m in output.ranked]
+    if ranks and sorted(ranks) != list(range(1, len(ranks) + 1)):
+        failures.append(f"ranks not dense from 1: got {sorted(ranks)}")
+
+    for m in output.ranked:
+        r = (m.rationale or "").strip().lower()
+        if not r:
+            failures.append(f"rank {m.rank}: rationale is empty")
+            continue
+        if len(r) < _RATIONALE_MIN_CHARS:
+            failures.append(
+                f"rank {m.rank}: rationale {r!r} is too short "
+                f"(<{_RATIONALE_MIN_CHARS} chars — likely boilerplate)"
+            )
+            continue
+        if r in _BOILERPLATE_RATIONALES:
+            failures.append(
+                f"rank {m.rank}: rationale {r!r} is boilerplate (needs concrete reason)"
+            )
+
+    return failures
+
+
+# ── text_designer ────────────────────────────────────────────────────────────
+
+
+# Text-size ordering used to assert hierarchy by placeholder kind. A `subject`
+# placeholder must never be 'small' or 'medium' (it's the visual anchor of the
+# slot — that's the agent's stated job). A `prefix` must never be 'xxlarge'
+# (prefix is the quiet lead-in to the subject — outranking the subject in size
+# inverts the read).
+_TEXT_SIZE_RANK = {size: i for i, size in enumerate(_VALID_TEXT_SIZES)}
+
+
+def check_text_designer(
+    output: TextDesignerOutput,
+    input: TextDesignerInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for per-slot typographic decisions.
+
+    `parse()` coerces invalid enum values to defaults, which means a structural
+    floor can't rely on "invalid value → fail". Instead we catch *intent-level*
+    drift that coercion hides:
+
+      - **Hierarchy inversion.** subject placeholder coming back at 'small' /
+        'medium', or prefix coming back at 'xxlarge'. Coercion can't repair
+        this — the model chose the wrong size band on purpose.
+      - **accel_at_s + effect mismatch.** accel_at_s is only meaningful when
+        effect == 'font-cycle' (renderer ignores it otherwise). Setting it
+        with another effect signals confused output.
+      - **start_s in the legal envelope.** A negative start_s would be coerced
+        to 0.0 by parse(); but a start_s past 10s on a 3s slot is silently
+        accepted. We can't see slot_duration from the agent's perspective, but
+        we can flag values that clearly imply a misread of the slot timing.
+      - **text_color shape.** parse() already coerces to '#FFFFFF' on a bad
+        hex; we re-assert so future parse() changes don't silently break the
+        contract.
+    """
+    failures: list[str] = []
+
+    if output.text_size not in _VALID_TEXT_SIZES:
+        failures.append(
+            f"text_size={output.text_size!r} not in {list(_VALID_TEXT_SIZES)} "
+            "(parse() should have coerced — canary for parser regression)"
+        )
+
+    if output.font_style not in _VALID_FONT_STYLES:
+        failures.append(f"font_style={output.font_style!r} not in {list(_VALID_FONT_STYLES)}")
+
+    if output.effect not in _TEXT_DESIGNER_VALID_EFFECTS:
+        failures.append(f"effect={output.effect!r} not in {list(_TEXT_DESIGNER_VALID_EFFECTS)}")
+
+    color = output.text_color or ""
+    if not (color.startswith("#") and len(color) in (4, 7)):
+        failures.append(f"text_color={color!r} not a valid hex code (#RGB or #RRGGBB)")
+
+    # Hierarchy by placeholder_kind.
+    if input.placeholder_kind == "subject":
+        rank = _TEXT_SIZE_RANK.get(output.text_size, -1)
+        if rank >= 0 and rank < _TEXT_SIZE_RANK["large"]:
+            failures.append(
+                f"subject placeholder got text_size={output.text_size!r} "
+                "(must be at least 'large' — subject is the visual anchor of the slot)"
+            )
+    elif input.placeholder_kind == "prefix":
+        rank = _TEXT_SIZE_RANK.get(output.text_size, -1)
+        if rank >= _TEXT_SIZE_RANK["large"]:
+            failures.append(
+                f"prefix placeholder got text_size={output.text_size!r} "
+                "(must be smaller than 'large' — prefix is the quiet lead-in to the subject)"
+            )
+
+    # accel_at_s is meaningful only with effect='font-cycle'.
+    if output.accel_at_s is not None and output.effect != "font-cycle":
+        failures.append(
+            f"accel_at_s={output.accel_at_s} set with effect={output.effect!r} "
+            "(renderer only honors accel_at_s for font-cycle; signals confused output)"
+        )
+    # Inverse canary: font-cycle on a hook subject slot SHOULD have accel_at_s.
+    # We only fire this when the agent's own calibration pattern explicitly
+    # documents it (subject + slot 1 + font-cycle).
+    if (
+        input.placeholder_kind == "subject"
+        and input.slot_position == 1
+        and output.effect == "font-cycle"
+        and output.accel_at_s is None
+    ):
+        failures.append(
+            "subject on slot 1 with font-cycle effect has accel_at_s=None "
+            "(calibration pattern requires a beat-aligned lock-in time)"
+        )
+
+    if output.start_s < 0:
+        failures.append(f"start_s={output.start_s} is negative")
+    # Hard upper sanity bound — slots in prod rarely exceed 15s; start_s past
+    # that strongly implies the agent confused absolute clip time with slot-
+    # relative time. Not a perfect check, but a useful canary.
+    if output.start_s > 15.0:
+        failures.append(
+            f"start_s={output.start_s} > 15.0 — likely confused with absolute "
+            "clip time; start_s is relative to slot start"
+        )
+
+    return failures
+
+
+# ── transition_picker ────────────────────────────────────────────────────────
+
+# Canonical duration ranges per transition. These mirror the duration_envelope
+# table in the agent's prompt. Used to flag picks whose duration is clearly
+# outside the band for the chosen transition (a hard-cut with duration=0.8 is
+# a contract violation; a dissolve at 0.1s reads as a glitch).
+_TRANSITION_DURATION_RANGES: dict[str, tuple[float, float]] = {
+    "hard-cut": (0.0, 0.0),
+    "match-cut": (0.0, 0.0),  # renders identically to hard-cut; instant cut
+    "speed-ramp": (0.0, 0.0),  # cut is instant; mechanic is on dest slot's speed_factor
+    "none": (0.0, 0.0),
+    "whip-pan": (0.20, 0.40),
+    "zoom-in": (0.30, 0.50),
+    "dissolve": (0.40, 0.80),
+    "curtain-close": (0.60, 1.00),
+}
+# Tolerance band around the canonical envelope — slight drift (e.g. dissolve at
+# 0.35s or whip-pan at 0.45s) is fine; the structural check only fires on clear
+# violations (hard-cut at 0.5s, dissolve at 0.1s).
+_DURATION_TOLERANCE_S = 0.15
+
+
+def check_transition_picker(
+    output: TransitionPickerOutput,
+    input: TransitionPickerInput,  # noqa: A002, ARG001
+) -> list[str]:
+    """Structural floor for the per-pair transition pick.
+
+    `parse()` rejects unknown transition values with a SchemaError (good), but
+    clamps duration_s to [0.0, 2.0] silently. The interesting failure modes are
+    semantic, not parse-time:
+
+      - **Duration outside the canonical envelope** for the picked transition.
+        A hard-cut with duration=0.8 means the agent missed the "instant"
+        contract; a dissolve at 0.1s reads as a glitch. Both pass parse but
+        signal drift.
+      - **Empty / too-short rationale.** Like clip_router / shot_ranker, the
+        rubric's `default_fidelity` and `pacing_style_modulation` dimensions
+        need an auditable reason to score against.
+      - **Sanity bound on whip-pan with static cameras.** The agent's own
+        prompt explicitly forbids whip-pan between two static shots ("reads
+        as a glitch, not a transition"). If both clips report
+        camera_movement='static' and the pick is whip-pan, flag it.
+    """
+    failures: list[str] = []
+
+    if output.transition not in _PICKER_VALID_TRANSITIONS:
+        failures.append(
+            f"transition={output.transition!r} not in {list(_PICKER_VALID_TRANSITIONS)}"
+        )
+        return failures  # downstream range check is meaningless without a valid type
+
+    lo, hi = _TRANSITION_DURATION_RANGES[output.transition]
+    if not (lo - _DURATION_TOLERANCE_S <= output.duration_s <= hi + _DURATION_TOLERANCE_S):
+        failures.append(
+            f"duration_s={output.duration_s} outside canonical envelope "
+            f"[{lo}, {hi}] (±{_DURATION_TOLERANCE_S} tolerance) for transition "
+            f"{output.transition!r}"
+        )
+
+    rationale = (output.rationale or "").strip().lower()
+    if not rationale:
+        failures.append("rationale is empty")
+    elif len(rationale) < _RATIONALE_MIN_CHARS:
+        failures.append(
+            f"rationale {rationale!r} is too short "
+            f"(<{_RATIONALE_MIN_CHARS} chars — likely boilerplate)"
+        )
+    elif rationale in _BOILERPLATE_RATIONALES:
+        failures.append(f"rationale {rationale!r} is boilerplate (needs concrete reason)")
+
+    # Camera-state sanity: whip-pan between two static shots is forbidden by
+    # the prompt itself.
+    if (
+        output.transition == "whip-pan"
+        and input.outgoing.camera_movement == "static"
+        and input.incoming.camera_movement == "static"
+    ):
+        failures.append(
+            "whip-pan picked for static→static pair (prompt forbids — reads as a glitch)"
+        )
+
+    return failures
+
+
 # ── Dispatch ─────────────────────────────────────────────────────────────────
+
+
+def check_song_classifier(output: SongClassifierOutput) -> list[str]:
+    """Structural floor for nova.audio.song_classifier.
+
+    Pydantic already enforces the categorical enums and the vibe_tags length
+    bounds. This layer asserts the cross-field invariants that Pydantic can't
+    express on its own.
+    """
+    failures: list[str] = []
+    labels = output.labels
+
+    if labels.label_version != CURRENT_LABEL_VERSION:
+        failures.append(
+            f"label_version={labels.label_version!r} != CURRENT_LABEL_VERSION "
+            f"({CURRENT_LABEL_VERSION!r}) — Phase 1 forces equality in parse()"
+        )
+
+    # vibe_tags: dedup, lowercase, non-empty after normalization. Pydantic
+    # bounds the length 1-8 but does not enforce shape.
+    seen: set[str] = set()
+    for i, tag in enumerate(labels.vibe_tags):
+        if not isinstance(tag, str) or not tag.strip():
+            failures.append(f"vibe_tags[{i}]: empty or non-string")
+            continue
+        if tag != tag.lower():
+            failures.append(f"vibe_tags[{i}]={tag!r}: not lowercase (parse() normalizes)")
+        if tag in seen:
+            failures.append(f"vibe_tags[{i}]={tag!r}: duplicate (parse() dedupes)")
+        seen.add(tag)
+
+    if not labels.mood.strip():
+        failures.append("mood: empty after strip")
+    if not labels.ideal_content_profile.strip():
+        failures.append("ideal_content_profile: empty after strip")
+    if not output.rationale.strip():
+        failures.append("rationale: empty after strip")
+
+    return failures
+
+
+def check_song_sections(
+    output: SongSectionsOutput,
+    input: SongSectionsInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.audio.song_sections.
+
+    Pydantic enforces enums, rank bounds, and the 1-3 section-count band.
+    This layer asserts the cross-field invariants ``parse()`` upholds:
+    section_version is clamped, start/end inside duration, duration is
+    within the TikTok-shape band, ranks are unique, and no pair overlaps
+    by more than 5s.
+    """
+    failures: list[str] = []
+
+    if output.section_version != CURRENT_SECTION_VERSION:
+        failures.append(
+            f"section_version={output.section_version!r} != CURRENT_SECTION_VERSION "
+            f"({CURRENT_SECTION_VERSION!r}) — parse() forces equality"
+        )
+
+    duration_s = float(input.duration_s)
+    seen_ranks: set[int] = set()
+    for i, section in enumerate(output.sections):
+        if section.start_s < 0.0 or section.start_s >= duration_s:
+            failures.append(
+                f"sections[{i}]: start_s={section.start_s:.2f} not in [0, {duration_s:.2f})"
+            )
+        if section.end_s <= section.start_s:
+            failures.append(
+                f"sections[{i}]: end_s={section.end_s:.2f} <= start_s={section.start_s:.2f}"
+            )
+        if section.end_s > duration_s + 1.0:
+            failures.append(
+                f"sections[{i}]: end_s={section.end_s:.2f} > duration_s+1 ({duration_s + 1:.2f})"
+            )
+        dur = section.end_s - section.start_s
+        if dur < MIN_SECTION_DURATION_S or dur > MAX_SECTION_DURATION_S:
+            failures.append(
+                f"sections[{i}]: duration={dur:.2f}s outside "
+                f"[{MIN_SECTION_DURATION_S}, {MAX_SECTION_DURATION_S}]"
+            )
+        if section.rank in seen_ranks:
+            failures.append(f"sections[{i}]: duplicate rank={section.rank}")
+        seen_ranks.add(section.rank)
+        if not section.rationale.strip():
+            failures.append(f"sections[{i}]: rationale empty after strip")
+
+    # Overlap pass — quadratic, but max_length=3 so at most 3 pairs.
+    for i in range(len(output.sections)):
+        for j in range(i + 1, len(output.sections)):
+            ov = _overlap_s(output.sections[i], output.sections[j])
+            if ov > MAX_OVERLAP_S:
+                failures.append(
+                    f"sections[{i}] and sections[{j}] overlap by {ov:.2f}s "
+                    f"(> MAX_OVERLAP_S={MAX_OVERLAP_S})"
+                )
+
+    return failures
+
+
+def check_music_matcher(output: MusicMatcherOutput, input: MusicMatcherInput) -> list[str]:  # noqa: A002
+    """Structural floor for nova.audio.music_matcher.
+
+    Pydantic enforces score bounds [0, 10] and per-entry required fields. This
+    layer asserts the cross-field invariants ``parse()`` is supposed to uphold:
+    every ``track_id`` resolves against ``available_tracks``, no duplicates,
+    rationale is non-empty after strip, scores are monotonically non-increasing
+    (matcher contract: ranked highest to lowest).
+    """
+    failures: list[str] = []
+    valid_ids = {t.track_id for t in input.available_tracks}
+
+    seen: set[str] = set()
+    last_score: float | None = None
+    for i, entry in enumerate(output.ranked):
+        if entry.track_id not in valid_ids:
+            failures.append(
+                f"ranked[{i}].track_id={entry.track_id!r}: not in available_tracks "
+                "(parse() should have dropped this)"
+            )
+        if entry.track_id in seen:
+            failures.append(f"ranked[{i}].track_id={entry.track_id!r}: duplicate")
+        seen.add(entry.track_id)
+
+        if not entry.rationale.strip():
+            failures.append(f"ranked[{i}]: rationale empty after strip")
+
+        if entry.score < 0.0 or entry.score > 10.0:
+            failures.append(f"ranked[{i}]: score={entry.score} outside [0, 10]")
+
+        if last_score is not None and entry.score - last_score > 0.01:
+            failures.append(
+                f"ranked[{i}]: score={entry.score:.2f} > ranked[{i - 1}].score="
+                f"{last_score:.2f} — ranking should be non-increasing"
+            )
+        last_score = entry.score
+
+    return failures
 
 
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
@@ -495,4 +1041,18 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_platform_copy(output)
     if agent_name == "nova.audio.template_recipe":
         return check_audio_template(output)
+    if agent_name == "nova.audio.song_classifier":
+        return check_song_classifier(output)
+    if agent_name == "nova.audio.song_sections":
+        return check_song_sections(output, input)
+    if agent_name == "nova.audio.music_matcher":
+        return check_music_matcher(output, input)
+    if agent_name == "nova.video.clip_router":
+        return check_clip_router(output, input)
+    if agent_name == "nova.video.shot_ranker":
+        return check_shot_ranker(output, input)
+    if agent_name == "nova.layout.text_designer":
+        return check_text_designer(output, input)
+    if agent_name == "nova.layout.transition_picker":
+        return check_transition_picker(output, input)
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

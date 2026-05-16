@@ -40,6 +40,30 @@ export interface MusicTrackListResponse {
 
 // ── Admin types ───────────────────────────────────────────────────────────────
 
+/**
+ * One ranked edit-worthy section from the `song_sections` agent.
+ * Source of truth: src/apps/api/app/agents/_schemas/song_sections.py.
+ * Keep the literal unions in sync manually when that schema changes.
+ */
+export interface SongSection {
+  rank: 1 | 2 | 3;
+  start_s: number;
+  end_s: number;
+  label:
+    | "intro"
+    | "verse"
+    | "pre_chorus"
+    | "chorus"
+    | "drop"
+    | "bridge"
+    | "outro"
+    | "hook"
+    | "build";
+  energy: "low" | "medium" | "high" | "peaks_high";
+  suggested_use: "hook" | "build" | "climax" | "ambient" | "transition";
+  rationale: string;
+}
+
 export interface MusicTrackDetail {
   id: string;
   title: string;
@@ -55,6 +79,8 @@ export interface MusicTrackDetail {
   published_at: string | null;
   archived_at: string | null;
   track_config: TrackConfig | null;
+  best_sections: SongSection[] | null;
+  section_version: string | null;
   created_at: string;
 }
 

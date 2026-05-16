@@ -1,0 +1,40 @@
+{
+  "agent": "nova.video.clip_metadata",
+  "prompt_version": "2026-05-13",
+  "input": {
+    "file_uri": "clips/2c750692193b.mp4",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "{\"clip_id\": \"files/gjfw7iewbbwk\", \"transcript\": \"\", \"hook_text\": \"A DJ takes command of the booth as the room lights pulse with the first beat drop.\", \"hook_score\": 7.0, \"best_moments\": [{\"start_s\": 1.5, \"end_s\": 5.0, \"energy\": 6.5, \"description\": \"DJ leans into mixer and adjusts EQ knob with full focus\"}, {\"start_s\": 8.0, \"end_s\": 13.5, \"energy\": 9.0, \"description\": \"DJ throws hands up triggering the drop as crowd lights flash white\"}, {\"start_s\": 16.0, \"end_s\": 21.0, \"energy\": 7.5, \"description\": \"DJ pushes crossfader and headbangs to the new track\"}], \"detected_subject\": \"DJ\"}",
+  "output": {
+    "clip_id": "files/gjfw7iewbbwk",
+    "transcript": "",
+    "hook_text": "A DJ takes command of the booth as the room lights pulse with the first beat drop.",
+    "hook_score": 7.0,
+    "best_moments": [
+      {
+        "start_s": 1.5,
+        "end_s": 5.0,
+        "energy": 6.5,
+        "description": "DJ leans into mixer and adjusts EQ knob with full focus"
+      },
+      {
+        "start_s": 8.0,
+        "end_s": 13.5,
+        "energy": 9.0,
+        "description": "DJ throws hands up triggering the drop as crowd lights flash white"
+      },
+      {
+        "start_s": 16.0,
+        "end_s": 21.0,
+        "energy": 7.5,
+        "description": "DJ pushes crossfader and headbangs to the new track"
+      }
+    ],
+    "detected_subject": "DJ"
+  },
+  "meta": {
+    "source": "hand-authored golden",
+    "purpose": "Demonstrates well-spaced moments (span 1.5-21s, ~19s), energy variation (6.5/9.0/7.5 spread=2.5), concrete action descriptions, no clustering. Used to verify rubric judging post-prompt-change without needing live Gemini access (original clip bytes are not preserved)."
+  }
+}

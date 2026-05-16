@@ -1,0 +1,193 @@
+{
+  "agent": "nova.audio.music_matcher",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "clip_summaries": [
+      {
+        "clip_id": "clip_only",
+        "media_type": "video",
+        "duration_s": 14.5,
+        "subject": "skateboarder landing a kickflip on a downtown plaza ledge at golden hour",
+        "hook_text": "third try lucky",
+        "hook_score": 8.5,
+        "energy": 8.0,
+        "description": "wide tracking shot, warm golden hour with hard shadows, smooth landing in final third"
+      }
+    ],
+    "available_tracks": [
+      {
+        "track_id": "track_hiphop_skate",
+        "title": "Curb Cuts",
+        "duration_s": 80.0,
+        "slot_count": 9,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "hip_hop",
+          "vibe_tags": ["swagger", "punchy", "playful"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "skate-plaza energy",
+          "ideal_content_profile": "Skate-spot lifestyle, trick-attempt sequences, urban hard-light b-roll.",
+          "copy_tone": "punchy",
+          "transition_style": "hard_cut",
+          "color_grade": "saturated street"
+        }
+      },
+      {
+        "track_id": "track_pop_action",
+        "title": "Push Off",
+        "duration_s": 86.0,
+        "slot_count": 10,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "pop",
+          "vibe_tags": ["upbeat", "anthemic", "playful"],
+          "energy": "peaks_high",
+          "pacing": "fast",
+          "mood": "youthful triumph",
+          "ideal_content_profile": "Action-sport landings, friend hype reactions, sun-flare golden hour b-roll.",
+          "copy_tone": "high_energy",
+          "transition_style": "whip_pan",
+          "color_grade": "warm golden hour"
+        }
+      },
+      {
+        "track_id": "track_electronic_hype",
+        "title": "Glide Loop",
+        "duration_s": 92.0,
+        "slot_count": 11,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "electronic",
+          "vibe_tags": ["pulsing", "driving", "uplifting"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "skate-park momentum",
+          "ideal_content_profile": "Rolling skate-line clips, trick attempts, rhythmic momentum b-roll.",
+          "copy_tone": "high_energy",
+          "transition_style": "beat_pulse",
+          "color_grade": "cool magenta"
+        }
+      },
+      {
+        "track_id": "track_cinematic_hero",
+        "title": "Last Light Hero",
+        "duration_s": 112.0,
+        "slot_count": 6,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "cinematic",
+          "vibe_tags": ["sweeping", "heroic", "tender"],
+          "energy": "high",
+          "pacing": "medium",
+          "mood": "underdog triumph",
+          "ideal_content_profile": "Wide hero-moment shots — solo athletes against landscapes, slow lift on payoff.",
+          "copy_tone": "cinematic",
+          "transition_style": "dissolve",
+          "color_grade": "warm amber"
+        }
+      },
+      {
+        "track_id": "track_acoustic_morning",
+        "title": "Porch Light",
+        "duration_s": 98.0,
+        "slot_count": 7,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "acoustic",
+          "vibe_tags": ["intimate", "wistful", "patient"],
+          "energy": "low",
+          "pacing": "slow",
+          "mood": "morning calm",
+          "ideal_content_profile": "Quiet handheld b-roll, intimate moments, slow color grades.",
+          "copy_tone": "sentimental",
+          "transition_style": "dissolve",
+          "color_grade": "warm tungsten"
+        }
+      },
+      {
+        "track_id": "track_comedy_silly",
+        "title": "Cartoon Logic",
+        "duration_s": 70.0,
+        "slot_count": 10,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "comedy",
+          "vibe_tags": ["silly", "bouncy", "playful"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "cartoon mischief",
+          "ideal_content_profile": "Slapstick fails, pet chaos, exaggerated reaction faces.",
+          "copy_tone": "comedic",
+          "transition_style": "hard_cut",
+          "color_grade": "none"
+        }
+      }
+    ],
+    "n_variants": 3
+  },
+  "raw_text": "{\"ranked\": [{\"track_id\": \"track_hiphop_skate\", \"score\": 8.2, \"rationale\": \"Skate-plaza profile names this clip's content directly; high+fast pacing matches the action and gives the trick-landing punch — slot count of 9 is high for a single 14.5s clip but the long duration makes it survivable.\", \"predicted_strengths\": [\"saturated street grade aligns with downtown plaza setting\", \"hard-cut transitions land the kickflip rotation moment\", \"swagger vibe reads against 'third try lucky' hook\"]}, {\"track_id\": \"track_pop_action\", \"score\": 8.0, \"rationale\": \"Youthful triumph pop with golden-hour grade hits the action-sport landing profile head-on; lifts the 'third try lucky' hook with anthemic energy without losing the sun-flare warmth.\", \"predicted_strengths\": [\"distinct vibe from hip-hop top pick — adds top-K variety\", \"warm golden hour grade matches the footage one-to-one\", \"anthemic mood serves the trick-landing payoff\"]}, {\"track_id\": \"track_cinematic_hero\", \"score\": 7.6, \"rationale\": \"Underdog-triumph cinematic frames the same single clip as a hero moment; 6 slots over 1 long clip is honest — most slots would micro-cut a single 14.5s clip but the dissolve transitions soften that.\", \"predicted_strengths\": [\"third distinct genre — completes diverse top-K\", \"heroic mood gives the trick payoff cinematic weight\", \"warm amber grade aligns with golden hour\"]}, {\"track_id\": \"track_electronic_hype\", \"score\": 6.5, \"rationale\": \"Driving electronic hype works for skate momentum but the cool magenta grade fights the warm golden-hour footage; useful fallback variant.\", \"predicted_strengths\": [\"beat_pulse transitions sync to trick rotation\", \"driving energy supports the tracking shot\"]}, {\"track_id\": \"track_comedy_silly\", \"score\": 4.0, \"rationale\": \"Cartoon mischief comedy would frame a clean kickflip landing as a gag — wrong tone for a genuine trick payoff, but the energy and pacing band aren't disastrous.\", \"predicted_strengths\": [\"only useful if user wants ironic/comedic framing of the fall attempts\"]}, {\"track_id\": \"track_acoustic_morning\", \"score\": 2.0, \"rationale\": \"Slow intimate morning acoustic over a high-energy skate trick is a textbook mismatch — wrong energy band, wrong pacing.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "output": {
+    "ranked": [
+      {
+        "track_id": "track_hiphop_skate",
+        "score": 8.2,
+        "rationale": "Skate-plaza profile names this clip's content directly; high+fast pacing matches the action and gives the trick-landing punch — slot count of 9 is high for a single 14.5s clip but the long duration makes it survivable.",
+        "predicted_strengths": [
+          "saturated street grade aligns with downtown plaza setting",
+          "hard-cut transitions land the kickflip rotation moment",
+          "swagger vibe reads against 'third try lucky' hook"
+        ]
+      },
+      {
+        "track_id": "track_pop_action",
+        "score": 8.0,
+        "rationale": "Youthful triumph pop with golden-hour grade hits the action-sport landing profile head-on; lifts the 'third try lucky' hook with anthemic energy without losing the sun-flare warmth.",
+        "predicted_strengths": [
+          "distinct vibe from hip-hop top pick — adds top-K variety",
+          "warm golden hour grade matches the footage one-to-one",
+          "anthemic mood serves the trick-landing payoff"
+        ]
+      },
+      {
+        "track_id": "track_cinematic_hero",
+        "score": 7.6,
+        "rationale": "Underdog-triumph cinematic frames the same single clip as a hero moment; 6 slots over 1 long clip is honest — most slots would micro-cut a single 14.5s clip but the dissolve transitions soften that.",
+        "predicted_strengths": [
+          "third distinct genre — completes diverse top-K",
+          "heroic mood gives the trick payoff cinematic weight",
+          "warm amber grade aligns with golden hour"
+        ]
+      },
+      {
+        "track_id": "track_electronic_hype",
+        "score": 6.5,
+        "rationale": "Driving electronic hype works for skate momentum but the cool magenta grade fights the warm golden-hour footage; useful fallback variant.",
+        "predicted_strengths": [
+          "beat_pulse transitions sync to trick rotation",
+          "driving energy supports the tracking shot"
+        ]
+      },
+      {
+        "track_id": "track_comedy_silly",
+        "score": 4.0,
+        "rationale": "Cartoon mischief comedy would frame a clean kickflip landing as a gag — wrong tone for a genuine trick payoff, but the energy and pacing band aren't disastrous.",
+        "predicted_strengths": [
+          "only useful if user wants ironic/comedic framing of the fall attempts"
+        ]
+      },
+      {
+        "track_id": "track_acoustic_morning",
+        "score": 2.0,
+        "rationale": "Slow intimate morning acoustic over a high-energy skate trick is a textbook mismatch — wrong energy band, wrong pacing.",
+        "predicted_strengths": [
+          "no real fit"
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "single-clip minimum (N=1) — kickflip trick, hip-hop tops with pop and cinematic for diversity"
+  }
+}

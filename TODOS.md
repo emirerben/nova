@@ -253,6 +253,91 @@
 
 ---
 
+## clip_metadata: best_moments clustered at clip start (added 2026-05-13)
+
+**What:** `nova.video.clip_metadata` (gemini-2.5-flash) returns 3 best_moments compressed into <0.5 seconds with near-identical energies (range 0.5-1.0) on a meaningful fraction of prod clips.
+**Why:** Surfaced by the first run of `pytest tests/evals/test_clip_metadata_evals.py --with-judge` on 5 prod snapshots pulled from the Redis clip_analysis cache — judge avg 2.5/5 vs 3.5 threshold. 3 of 5 fixtures exhibit the pattern (clip_2c750692, clip_04022f9e, clip_1fd09d23). The matcher downstream effectively has one moment to choose from, defeating the point of best_moments.
+**How:** Likely cause is Gemini interpreting `start_s`/`end_s` in some normalized unit when given a short segment, or a prompt that doesn't enforce timestamp spread. Investigate the `analyze_clip` prompt template — add an explicit instruction to spread moments across the clip duration and require non-trivial energy variation. Bump `prompt_version` in `ClipMetadataAgent.spec` and re-run live eval.
+**Evidence:** `src/apps/api/tests/fixtures/agent_evals/clip_metadata/prod_snapshots/clip_2c750692.json` — all 3 moments span 0.0-0.10s.
+**Effort:** S (human: ~3hr / CC: ~30 min — prompt iteration + re-run live eval against the same 5 fixtures)
+**Priority:** P1 — affects every job
+**Depends on:** none
+
+---
+
+## ~~Langfuse: only 2 of 6 prod agents are tracing~~ — RESOLVED 2026-05-13 (caching, by design)
+
+**Resolution:** Not a tracing bug. All four "missing" agents do go through `Agent.run()` via the shims in `app/pipeline/agents/gemini_analyzer.py` and would trace correctly *if* they were invoked per-job. They aren't: their outputs are persisted to `VideoTemplate.recipe_cached` / `MusicTrack.recipe_cached` at admin upload time, and every prod job reads the cached row from Postgres (`template_orchestrate.py:478-481`, `music_orchestrate.py:286,561`). `TranscriptAgent` is only called from the legacy 3-clip pipeline (`app/tasks/orchestrate.py:97`), which isn't on the template-mode hot path. Only `clip_metadata` and `platform_copy` have per-job inputs, so they invoke `Agent.run()` on every job — matching the observed 12 + 6 / 10 sessions ratio.
+
+Full write-up in `src/apps/api/OBSERVABILITY.md` under "What the first prod query revealed".
+
+**Optional follow-up (P3):** emit a lightweight Langfuse `client.event(name="template_recipe_cache_hit", ...)` from `_run_template_job` and `_run_music_job` so per-job dashboards show which cached recipe each job used (cost/latency visibility for the cached path). Not needed for correctness — the cached recipe is already in Postgres and the prior `agent_run` trace from admin upload time is still queryable in Langfuse.
+
+**Original report below for context.**
+
+**What:** Querying Langfuse for `source:prod` traces over 24h returns only `clip_metadata` and `platform_copy` — the other 4 prod-wired agents (`template_recipe`, `creative_direction`, `transcript`, `audio_template`) are missing entirely. 18 traces, 10 distinct job sessions, 0 traces from the missing 4 agents.
+**Why:** Surfaced via SDK query `client.api.trace.list(tags=["source:prod"], from_timestamp=now-24h)` after Lane A verification on 2026-05-13.
+**Effort (was):** S (human: ~2hr / CC: ~30min)
+**Priority (was):** P1 — downgraded after root-cause analysis showed expected behavior.
+
+---
+
+## Langfuse: online judge (Loop B) is not scoring any prod traces (added 2026-05-13)
+
+**What:** With `NOVA_ONLINE_EVAL_SAMPLE_RATE=0.05` confirmed set on Fly and 18 source:prod traces over 24h, zero traces have `judge_*` scores attached. Statistically should be ~1 judged trace per 24h at current volume.
+**Why:** Surfaced alongside the agent-missing finding above. Loop A scores ARE attaching correctly (verified on the 5 eval traces). So the trace + score_trace machinery works — the gap is specifically in the worker-side dispatch.
+**How:** Check three suspects: (1) `ANTHROPIC_API_KEY` may not be reachable on the worker process group on Fly even though `fly secrets` shows it deployed — secrets propagate per process. `fly ssh console --process-group worker -C printenv ANTHROPIC_API_KEY`. (2) Rubric files must be present in the worker container — verify `tests/evals/rubrics/*.md` is included in the Dockerfile COPY. The Dockerfile copies `app/`, `assets/`, `prompts/`, `alembic.ini` per CLAUDE.md — `tests/` is NOT copied. **This is likely the root cause** — the worker can't find the rubric file because the entire `tests/` directory is excluded from the prod image. (3) Confirm `score_trace_async` is registered as a Celery task and a worker is consuming it.
+**Effort:** S (human: ~1hr / CC: ~30min — likely a 2-line Dockerfile change plus verification)
+**Priority:** P1 — Loop B is what makes online observability actually useful; right now it's posting traces but not scoring them
+**Depends on:** none
+
+---
+
+## Yasin's prompt rewrite — follow-ups (added 2026-05-14)
+
+These TODOs were filed when the first wave of Yasin's prompt rewrites shipped (`clip_metadata`, `template_recipe`, `text_designer`, `transition_picker`, all prompt_version="2026-05-14"). `clip_router` and `shot_ranker` were deliberately deferred — see the first two items below.
+
+### ~~Live-eval gate broken on fixture file-URI format~~ — RESOLVED in v0.4.9.0
+**Resolved:** Option 3-equivalent shipped at the eval-harness layer (not the agent base class — surgical scope). New `tests/evals/_fixture_uploader.py` downloads bucket-relative paths from GCS and uploads to Gemini Files API at test time, substituting the `files/<id>` URI into the agent input. Mirrors prod's `gemini_upload_and_wait` flow exactly. Per-session cache keeps the upload cost bounded (~$0.10–0.20 per full live-eval run). 23 unit tests fence each leg of the path.
+
+### Vertex AI service-account auth swap (P2 follow-up to v0.4.9.0)
+**What:** Replace the v0.4.9.0 inline-upload fix with a Vertex AI auth path on `GeminiClient`. Use `GOOGLE_SERVICE_ACCOUNT_JSON` (already in Fly secrets for GCS), prepend `gs://nova-videos-dev/` to all fixture paths, drop the per-test upload step entirely.
+**Why:** v0.4.9.0 works but uploads ~17 fixtures × ~5–50MB each on every live-eval run. Vertex auth removes the cost, unifies dev/prod auth, and enables `gs://` URIs in production too (downstream value: skip the Files API upload step in `template_orchestrate` when the source already lives in GCS).
+**How:** Add Vertex AI auth code path to `app/agents/_model_client.py::GeminiClient` keyed on URI shape (`gs://` → Vertex SA, `files/<id>` → Studio key). Reconcile with the existing `_get_client()` cache. Update fixtures to `gs://...` form. Document the new env var hierarchy.
+**Blast radius:** changes production GeminiClient call path. Needs careful rollout — feature-flag or staged.
+**Effort:** M (human: ~1d / CC: ~1h)
+**Priority:** P2
+
+### ~~Eval scaffolding for `clip_router`~~ — RESOLVED in v0.4.10.0
+**Resolved:** `tests/evals/test_clip_router_evals.py` + `tests/evals/rubrics/clip_router.md` + 3 hand-authored golden fixtures shipped. Rubric dimensions: slot_type_fit, energy_match, sequence_variety, rationale_quality. Yasin-style prompt rewrite (`prompt_version=2026-05-15`) shipped in the same PR. Live-eval baseline will be established when an operator runs the suite with `--with-judge --eval-mode=live --allow-cost` from an environment with creds.
+
+### ~~Eval scaffolding for `shot_ranker`~~ — RESOLVED in v0.4.10.0
+**Resolved:** `tests/evals/test_shot_ranker_evals.py` + `tests/evals/rubrics/shot_ranker.md` + 3 hand-authored golden fixtures shipped. Rubric dimensions: rank_1_hook_strength, set_variety, description_quality, thematic_fit. Yasin-style prompt rewrite (`prompt_version=2026-05-15`) shipped in the same PR. Live-eval baseline will be established when an operator runs the suite with `--with-judge --eval-mode=live --allow-cost` from an environment with creds.
+
+### ~~Retroactive eval scaffolding for `text_designer`~~ — RESOLVED in v0.4.11.0
+**Resolved:** Full four-file scaffold shipped (test entry point, rubric with 4 dimensions, structural floor in `check_text_designer`, 4 hand-authored golden fixtures pinning the prompt's documented calibration patterns). Live-eval baseline will be established when an operator runs `pytest tests/evals/test_text_designer_evals.py --with-judge --eval-mode=live --allow-cost` with creds.
+
+### ~~Retroactive eval scaffolding for `transition_picker`~~ — RESOLVED in v0.4.11.0
+**Resolved:** Full four-file scaffold shipped. The new structural check also surfaced a latent `parse()` bug — `float(...) or 0.3` silently coerced `duration_s=0.0` to `0.3` (Python treats 0.0 as falsy), overriding every hard-cut/none output the prompt explicitly specified as duration 0.0. Fixed in the same PR.
+
+### ~~Renderer support for `match-cut` as a distinct transition~~ — RESOLVED in v0.4.12.0
+**Resolved:** `match-cut` is now a first-class transition. Renders identically to `hard-cut` at the pixel level (mapped to `"none"` in `_GEMINI_TO_INTERNAL`), but the recipe metadata now carries the editorial distinction so transition_picker's rubric can score match-cut discrimination separately. The motion-vector / OpenCV blending approach mentioned in the original TODO is filed as a P4 follow-up — the current "hard-cut at the pixel layer, editorial intent at the metadata layer" implementation is the right scope for the agent loop today.
+
+### ~~Renderer support for `barn-door-open` as a distinct animation~~ — RESOLVED in v0.4.12.0
+**Resolved:** New `apply_barn_door_open_head()` + `_generate_barn_door_bars_png_sequence()` in `app/pipeline/interstitials.py`. Same PNG-overlay strategy as curtain-close (post-PR #105), inverse bar trajectory (`bar_h: half_h → 0`), animation lives at the HEAD of slot N+1 rather than the tail of slot N. Orchestrator post-render phase dispatches to the new helper when `prev_inter_type == "barn-door-open"`. 11 unit tests cover PNG generation correctness + the inverse-of-curtain mirror property.
+
+### ~~Promote `speed-ramp` to a first-class transition~~ — RESOLVED in v0.4.12.0
+**Resolved:** `speed-ramp` is now a first-class transition value. The cut is instant (mapped to `"none"` in `_GEMINI_TO_INTERNAL`); the visible mechanic lives on the destination slot's existing `speed_factor` field (already plumbed through `reframe._build_video_filter` as `setpts=PTS/factor`). transition_picker's prompt explicitly documents the `speed-ramp` ↔ `speed_factor > 1` pairing. The schema field retirement that the original plan called for is deferred — production recipes still use `speed_factor` directly, and removing it would require a coordinated migration. Filed as a follow-up below if/when that becomes a priority.
+
+### Deprecate `speed_factor` schema field in favor of `speed-ramp` transition (follow-up to v0.4.12.0)
+**What:** Once the agents settle on emitting `transition_in: speed-ramp` consistently, retire the standalone `speed_factor` field on the slot schema. The transition value alone should carry the intent; the renderer should derive the actual playback rate from a fixed mapping (e.g., `speed-ramp → speed_factor=1.5`) or from a separate `ramp_intensity` field.
+**Why:** Two fields encoding the same effect is a foot-gun. Recipes can drift into inconsistent states (`transition_in=speed-ramp, speed_factor=1.0`) that the renderer silently treats as "no ramp."
+**How:** One-off audit script over `video_templates.recipe_cached` to count how many recipes use `speed_factor != 1.0` in slots whose `transition_in` is NOT `speed-ramp`. If the count is small (<10), migrate them and remove the field. If large, coordinate a deprecation window.
+**Effort:** M (human: ~1d / CC: ~30 min)
+**Priority:** P3
+
+---
+
 ## Vercel Frontend Deploy (added 2026-04-06)
 
 All items completed 2026-04-06:

@@ -12,6 +12,13 @@ dependencies = [
     "celery[redis]>=5.3",
     "redis>=5.0",
     "sqlalchemy>=2.0",
+    # SQLAlchemy's async runtime needs greenlet. Without it, anything that
+    # routes through AsyncSession (alembic env.py async runner, app routes,
+    # workers) crashes with "the greenlet library is required to use this
+    # function". Pip pulls greenlet transitively when wheels are installed on
+    # platforms it ships them for, but the dep is not declared anywhere — fresh
+    # venvs on macOS arm64 have hit this exact failure twice. Pin it explicitly.
+    "greenlet>=3.0",
     "alembic>=1.13",
     "asyncpg>=0.29",
     "psycopg2-binary>=2.9",
@@ -31,6 +38,19 @@ dependencies = [
     "Pillow>=10.0",
     "pillow-heif>=0.16",
     "yt-dlp>=2024.12",
+    # numpy is a transitive of opencv-python-headless / scenedetect, but the
+    # font-identification pipeline depends on it directly for embedding math.
+    # Pinning explicitly so the resolver can't silently downgrade it.
+    "numpy>=1.26",
+    # CLIP image embeddings for the font-identification pipeline. Torch itself
+    # is installed earlier in the Dockerfile from the CPU-only index, so this
+    # entry must NOT trigger a torch reinstall — `open-clip-torch` declares
+    # `torch` as a runtime dep and pip will see it already satisfied.
+    # Tight floor on 3.x because the registry-embeddings.npz artifact was
+    # produced against open-clip 3.x; a 2.x downgrade would change the
+    # preprocess pipeline and silently misalign query embeddings from the
+    # registry (the model_version check catches this but only at first call).
+    "open-clip-torch>=3.3,<4",
 ]
 
 [project.optional-dependencies]
@@ -63,6 +83,13 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
     "anthropic>=0.40",
+]
+analysis = [
+    # Offline analyzer scripts under scripts/overlay_forensics/ and
+    # scripts/analyze_waka_waka_diff.py. Tesseract binary is the runtime
+    # requirement (brew install tesseract / apt-get install tesseract-ocr).
+    # NOT shipped to prod — analyzer is dev-only.
+    "pytesseract>=0.3.10",
 ]
 
 [tool.setuptools.packages.find]

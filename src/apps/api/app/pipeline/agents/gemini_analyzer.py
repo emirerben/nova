@@ -11,6 +11,8 @@ Handles all Gemini File API interactions:
 """
 
 import json
+import mimetypes
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -86,6 +88,12 @@ class TemplateRecipe:
     # (e.g. "ball must be in frame" for football highlights).
     output_fit: str = "crop"
     clip_filter_hint: str = ""
+    # Identified font family for this template (PR2 font-identification).
+    # Aggregated from per-overlay font_alternatives weighted by similarity ×
+    # overlay duration. Empty string when no overlay had a text_bbox or all
+    # matches fell below the similarity floor — renderer falls back to the
+    # existing default chain (font_family → font_style → Playfair Display).
+    font_default: str = ""
 
 
 @dataclass
@@ -118,6 +126,47 @@ def _get_client() -> Any:
 # ── File upload ───────────────────────────────────────────────────────────────
 
 
+def _infer_mime_type(path: str) -> str:
+    """Best-effort mime type for a local file. Used when uploading to
+    Gemini File API — newer google-genai SDK versions require explicit
+    mime_type and no longer infer from the file extension.
+
+    Maps known extensions to the IANA-registered names Gemini's File
+    API accepts. ``mimetypes.guess_type`` on macOS returns
+    ``audio/mp4a-latm`` for ``.m4a`` which Gemini rejects — that's why
+    we hard-map common extensions before falling back to the stdlib
+    guess. Covers the two cardinal upload paths in this codebase:
+      - audio: ``music_orchestrate._run_gemini_audio_analysis``
+      - video: ``analyze_clip`` and template analysis
+    """
+    ext = os.path.splitext(path)[1].lower()
+    # Explicit IANA-registered mime types Gemini accepts. Keep this
+    # table tight: anything not listed falls through to mimetypes +
+    # video/mp4 default.
+    explicit = {
+        ".m4a": "audio/mp4",
+        ".mp4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
+        ".opus": "audio/opus",
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".webm": "video/webm",
+    }
+    if ext in explicit:
+        return explicit[ext]
+    guess, _ = mimetypes.guess_type(path)
+    # Only trust the stdlib guess if it's an audio/* or video/* type —
+    # stdlib has surprising answers for some extensions (e.g. ".xyz"
+    # maps to "chemical/x-xyz" on macOS).
+    if guess and (guess.startswith("audio/") or guess.startswith("video/")):
+        return guess
+    return "video/mp4"
+
+
 def gemini_upload_and_wait(path: str, timeout: int = 120) -> Any:
     """Upload a local file to Gemini File API and poll until state == ACTIVE.
 
@@ -134,8 +183,10 @@ def gemini_upload_and_wait(path: str, timeout: int = 120) -> Any:
     error hierarchy.
     """
     from google.genai import errors as genai_errors  # type: ignore[import]
+    from google.genai import types as genai_types  # type: ignore[import]
 
     client = _get_client()
+    mime_type = _infer_mime_type(path)
 
     def _is_transient_api_error(exc: Exception) -> bool:
         """503 ServerError or 429 rate-limit ClientError."""
@@ -152,7 +203,10 @@ def gemini_upload_and_wait(path: str, timeout: int = 120) -> Any:
     file_ref = None
     for attempt in range(max_attempts):
         try:
-            file_ref = client.files.upload(file=path)
+            file_ref = client.files.upload(
+                file=path,
+                config=genai_types.UploadFileConfig(mime_type=mime_type),
+            )
             break
         except genai_errors.APIError as exc:
             if not _is_transient_api_error(exc):
@@ -314,26 +368,83 @@ def analyze_clip(
 # depending on clip language hints.
 
 _BALL_WHITELIST = (
-    "ball", "top", "shot", "şut", "vuruş", "pass", "pas", "asist",
-    "goal", "gol", "dribble", "çalım", "save", "kurtarış", "kurtardı",
-    "tackle", "tekleme", "header", "kafa", "cross", "orta", "ortaladı",
-    "strike", "volley", "voleyle", "korner", "corner", "freekick", "frikik",
-    "penalty", "penaltı", "intercept", "kesme", "control", "kontrol",
-    "attack", "atak", "hücum", "finish", "bitiriş",
+    "ball",
+    "top",
+    "shot",
+    "şut",
+    "vuruş",
+    "pass",
+    "pas",
+    "asist",
+    "goal",
+    "gol",
+    "dribble",
+    "çalım",
+    "save",
+    "kurtarış",
+    "kurtardı",
+    "tackle",
+    "tekleme",
+    "header",
+    "kafa",
+    "cross",
+    "orta",
+    "ortaladı",
+    "strike",
+    "volley",
+    "voleyle",
+    "korner",
+    "corner",
+    "freekick",
+    "frikik",
+    "penalty",
+    "penaltı",
+    "intercept",
+    "kesme",
+    "control",
+    "kontrol",
+    "attack",
+    "atak",
+    "hücum",
+    "finish",
+    "bitiriş",
 )
 _BALL_BLACKLIST = (
-    "celebration", "kutlama", "celebrating",
-    "empty", "boş", "geniş plan", "wide shot",
-    "walking", "yürüyor", "walks",
-    "training", "antrenman", "warmup", "ısınma",
-    "bench", "yedek",
-    "stoppage", "oyun durması", "stopped",
-    "idle", "hareketsiz",
-    "tribün", "stand", "audience", "crowd",
-    "referee", "hakem", "linesman", "yan hakem",
-    "interview", "röportaj",
-    "halftime", "devre arası",
-    "no ball", "topsuz",
+    "celebration",
+    "kutlama",
+    "celebrating",
+    "empty",
+    "boş",
+    "geniş plan",
+    "wide shot",
+    "walking",
+    "yürüyor",
+    "walks",
+    "training",
+    "antrenman",
+    "warmup",
+    "ısınma",
+    "bench",
+    "yedek",
+    "stoppage",
+    "oyun durması",
+    "stopped",
+    "idle",
+    "hareketsiz",
+    "tribün",
+    "stand",
+    "audience",
+    "crowd",
+    "referee",
+    "hakem",
+    "linesman",
+    "yan hakem",
+    "interview",
+    "röportaj",
+    "halftime",
+    "devre arası",
+    "no ball",
+    "topsuz",
 )
 
 
@@ -423,9 +534,13 @@ def analyze_template(
     creative_direction = ""
     if analysis_mode == "two_pass":
         from google.genai import types as genai_types  # type: ignore[import]
+
         client = _get_client()
         creative_direction = _extract_creative_direction(
-            client, file_ref, genai_types, job_id=job_id,
+            client,
+            file_ref,
+            genai_types,
+            job_id=job_id,
         )
 
     # ── Pass 2 / single-pass via agent ───────────────────────────
@@ -442,9 +557,7 @@ def analyze_template(
         file_uri=file_ref.uri,
         file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
         analysis_mode=(
-            "two_pass_part2"
-            if (analysis_mode == "two_pass" and creative_direction)
-            else "single"
+            "two_pass_part2" if (analysis_mode == "two_pass" and creative_direction) else "single"
         ),
         creative_direction=creative_direction,
         black_segments=bsegs,
@@ -499,15 +612,30 @@ def analyze_template(
 
 _VALID_OVERLAY_ROLES = {"hook", "reaction", "cta", "label"}
 _VALID_OVERLAY_EFFECTS = {
-    "pop-in", "fade-in", "scale-up", "none",
-    "font-cycle", "typewriter", "glitch", "bounce", "slide-in",
-    "slide-up", "static",
+    "pop-in",
+    "fade-in",
+    "scale-up",
+    "none",
+    "font-cycle",
+    "typewriter",
+    "glitch",
+    "bounce",
+    "slide-in",
+    "slide-up",
+    "static",
 }
 _VALID_OVERLAY_POSITIONS = {"center", "top", "bottom"}
 _VALID_OVERLAY_FONT_SIZES = {"small", "medium", "large", "jumbo"}
 _VALID_CAMERA_MOVEMENTS = {
-    "static", "pan-left", "pan-right", "tilt-up", "tilt-down",
-    "zoom-in", "zoom-out", "handheld", "tracking",
+    "static",
+    "pan-left",
+    "pan-right",
+    "tilt-up",
+    "tilt-down",
+    "zoom-in",
+    "zoom-out",
+    "handheld",
+    "tracking",
 }
 _VALID_TRANSITION_TYPES = {"hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none"}
 _VALID_COLOR_HINTS = {"warm", "cool", "high-contrast", "desaturated", "vintage", "none"}
@@ -543,7 +671,8 @@ def _extract_creative_direction(
     )
     try:
         out = CreativeDirectionAgent(default_client()).run(
-            inp, ctx=RunContext(job_id=job_id),
+            inp,
+            ctx=RunContext(job_id=job_id),
         )
     except TerminalError as exc:
         log.warning("template_creative_direction_failed", error=str(exc))
@@ -613,9 +742,7 @@ def _validate_slots(slots: list[dict], global_color_grade: str) -> None:
                 log.warning("template_overlay_outside_slot", start_s=start, slot_dur=slot_dur)
                 continue
             ov["effect"] = (
-                ov.get("effect", "none")
-                if ov.get("effect") in _VALID_OVERLAY_EFFECTS
-                else "none"
+                ov.get("effect", "none") if ov.get("effect") in _VALID_OVERLAY_EFFECTS else "none"
             )
             ov["position"] = (
                 ov.get("position", "center")
@@ -679,13 +806,15 @@ def _validate_interstitials(raw: list, shot_count: int) -> list[dict]:
         if hold_color not in ("#000000", "#FFFFFF"):
             hold_color = "#000000"
 
-        validated.append({
-            "after_slot": after_slot,
-            "type": itype,
-            "animate_s": animate_s,
-            "hold_s": hold_s,
-            "hold_color": hold_color,
-        })
+        validated.append(
+            {
+                "after_slot": after_slot,
+                "type": itype,
+                "animate_s": animate_s,
+                "hold_s": hold_s,
+                "hold_color": hold_color,
+            }
+        )
 
     if validated:
         log.info("interstitials_validated", count=len(validated))

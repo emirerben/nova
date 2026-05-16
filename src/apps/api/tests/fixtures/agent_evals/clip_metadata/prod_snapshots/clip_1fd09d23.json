@@ -1,0 +1,43 @@
+{
+  "agent": "nova.video.clip_metadata",
+  "prompt_version": "exported",
+  "input": {
+    "file_uri": "clips/1fd09d23e70a.mp4",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "{\"clip_id\": \"files/qtk4wpn4ukhj\", \"transcript\": \"turn on go on on on on on on on turn on turn on turn on turn on turn on turn on just the line up turn on you will not be able to lose yourself you will not be able to lose your to turn on you will not be able to lose yourself you will not be able to lose your turn on you will not be able to lose yourself you will not be able to lose your to turn on you will not be able to lose yourself you will not be able to lose your to turn on you will not be able to lose yourself you will not be able to lose your to turn on you will not be able to lose yourself you will not be able to lose your to turn on\", \"hook_text\": \"you will not be able to lose yourself\", \"hook_score\": 6.0, \"best_moments\": [{\"start_s\": 0.0, \"end_s\": 0.17, \"energy\": 7.0, \"description\": \"Concert crowd enjoying dynamic stage lighting and falling confetti\"}, {\"start_s\": 0.23, \"end_s\": 0.28, \"energy\": 7.0, \"description\": \"Audience actively recording with phones and swaying to music\"}, {\"start_s\": 0.29, \"end_s\": 0.32, \"energy\": 8.0, \"description\": \"Stage lights sweeping over the excited concert crowd\"}], \"detected_subject\": \"\"}",
+  "output": {
+    "clip_id": "files/qtk4wpn4ukhj",
+    "transcript": "turn on go on on on on on on on turn on turn on turn on turn on turn on turn on just the line up turn on you will not be able to lose yourself you will not be able to lose your to turn on you will not be able to lose yourself you will not be able to lose your turn on you will not be able to lose yourself you will not be able to lose your to turn on you will not be able to lose yourself you will not be able to lose your to turn on you will not be able to lose yourself you will not be able to lose your to turn on you will not be able to lose yourself you will not be able to lose your to turn on",
+    "hook_text": "you will not be able to lose yourself",
+    "hook_score": 6.0,
+    "best_moments": [
+      {
+        "start_s": 0.0,
+        "end_s": 0.17,
+        "energy": 7.0,
+        "description": "Concert crowd enjoying dynamic stage lighting and falling confetti"
+      },
+      {
+        "start_s": 0.23,
+        "end_s": 0.28,
+        "energy": 7.0,
+        "description": "Audience actively recording with phones and swaying to music"
+      },
+      {
+        "start_s": 0.29,
+        "end_s": 0.32,
+        "energy": 8.0,
+        "description": "Stage lights sweeping over the excited concert crowd"
+      }
+    ],
+    "detected_subject": ""
+  },
+  "meta": {
+    "source": "Redis clip_analysis cache",
+    "clip_hash": "1fd09d23e70a6a8e75073a45b6c96864d307c5b93012d8bc425f0dd1b584f4b8",
+    "moment_count": 3,
+    "transcript_len": 599,
+    "exported_at": "2026-05-13T04:32:29.354736+00:00"
+  }
+}

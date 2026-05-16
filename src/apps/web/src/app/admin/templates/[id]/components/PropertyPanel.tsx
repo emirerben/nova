@@ -27,6 +27,7 @@ import {
   resolveOverlayPreview,
 } from "./overlay-constants";
 import { SpanEditor } from "./SpanEditor";
+import { FontAlternatives } from "./FontAlternatives";
 
 // ── Shared field components ─────────────────────────────────────────────────
 
@@ -382,6 +383,13 @@ function OverlayListItem({
           onChange={(fontName) => set("font_family", fontName || undefined)}
         />
       </div>
+
+      <FontAlternatives
+        overlay={overlay}
+        slotIndex={slotIndex}
+        overlayIndex={overlayIndex}
+        dispatch={dispatch}
+      />
 
       <div className="grid grid-cols-3 gap-2">
         <SelectInput

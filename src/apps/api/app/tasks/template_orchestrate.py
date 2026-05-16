@@ -40,6 +40,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, TemplateRecipeVersion, VideoTemplate
+from app.pipeline.agentic_matcher import agentic_match_or_fallback as _agentic_match_or_fallback
 from app.pipeline.agents.gemini_analyzer import (
     AssemblyPlan,
     AssemblyStep,
@@ -52,10 +53,31 @@ from app.pipeline.agents.gemini_analyzer import (
     gemini_upload_and_wait,
 )
 from app.pipeline.reframe import ReframeError
+from app.pipeline.single_pass import (
+    SinglePassInput,
+    SinglePassSpec,
+    SinglePassUnsupportedError,
+    run_single_pass,
+)
 from app.pipeline.template_matcher import (
     TemplateMismatchError,
     consolidate_slots,
     match,
+)
+from app.services.job_phases import (
+    PHASE_ANALYZE_CLIPS,
+    PHASE_ASSEMBLE,
+    PHASE_DOWNLOAD_CLIPS,
+    PHASE_FINALIZE,
+    PHASE_GENERATE_COPY,
+    PHASE_MATCH_CLIPS,
+    PHASE_MIX_AUDIO,
+    PHASE_UPLOAD,
+    mark_failed_phase,
+    mark_finished,
+    mark_started,
+    record_phase,
+    record_sub_phase,
 )
 from app.services.template_poster import (
     PosterExtractionError,
@@ -78,16 +100,16 @@ log = structlog.get_logger()
 #            (detected by _is_subject_placeholder returning True)
 _LABEL_CONFIG: dict[str, dict] = {
     "prefix": {
-        "text_size": "small",       # 48px — small italic serif, subordinate to subject
-        "start_s": 2.0,             # appears at absolute second 2
+        "text_size": "small",  # 48px — small italic serif, subordinate to subject
+        "start_s": 2.0,  # appears at absolute second 2
     },
     "subject": {
-        "text_size": "xxlarge",     # 250px — fills ~75% width like reference
-        "font_style": "sans",       # Montserrat ExtraBold
-        "text_color": "#F4D03F",    # warm maize/gold
-        "start_s": 3.0,             # appears 1s after prefix
-        "effect": "font-cycle",     # forced font cycling
-        "accel_at_s": 8.0,          # font cycle accelerates after second 8
+        "text_size": "xxlarge",  # 250px — fills ~75% width like reference
+        "font_style": "sans",  # Montserrat ExtraBold
+        "text_color": "#F4D03F",  # warm maize/gold
+        "start_s": 3.0,  # appears 1s after prefix
+        "effect": "font-cycle",  # forced font cycling
+        "accel_at_s": 8.0,  # font cycle accelerates after second 8
     },
 }
 
@@ -128,7 +150,8 @@ class _StageError(Exception):
 
 
 def _clip_id_to_path_map(
-    clip_metas_ordered: list, paths: list[str],
+    clip_metas_ordered: list,
+    paths: list[str],
 ) -> dict[str, str]:
     """Build clip_id → path mapping, parallel to local_paths by index.
 
@@ -145,24 +168,7 @@ def _clip_id_to_path_map(
     are excluded from the assembly plan upstream so dropping them here is
     consistent and prevents a downstream KeyError.
     """
-    return {
-        meta.clip_id: paths[i]
-        for i, meta in enumerate(clip_metas_ordered)
-        if meta is not None
-    }
-
-
-# REMOVE AFTER 2026-05-16 — see TODOS.md#fallback-removal
-def _resolve_user_subject(all_candidates: dict | None) -> str:
-    """Pull the user's subject (location) from the new inputs shape.
-
-    Falls back to the legacy `subject` field for jobs created before the
-    rename. Delete this fallback (and the inline call sites' REMOVE AFTER
-    blocks) on 2026-05-16; an xfail test in tests/pipeline forces the
-    issue.
-    """
-    ac = all_candidates or {}
-    return (ac.get("inputs") or {}).get("location") or ac.get("subject", "") or ""
+    return {meta.clip_id: paths[i] for i, meta in enumerate(clip_metas_ordered) if meta is not None}
 
 
 @contextmanager
@@ -216,8 +222,11 @@ def _build_recipe(recipe_data: dict) -> TemplateRecipe:
 
 
 @celery_app.task(
-    name="tasks.analyze_template_task", bind=True, max_retries=0,
-    soft_time_limit=840, time_limit=900,
+    name="tasks.analyze_template_task",
+    bind=True,
+    max_retries=0,
+    soft_time_limit=840,
+    time_limit=900,
 )
 def analyze_template_task(self, template_id: str) -> None:
     """Download template video, analyze with Gemini, cache recipe in DB."""
@@ -266,6 +275,7 @@ def analyze_template_task(self, template_id: str) -> None:
                 classify_black_segment_type,
                 detect_black_segments,
             )
+
             black_segments = detect_black_segments(local_path)
             black_segments = classify_black_segment_type(local_path, black_segments)
 
@@ -276,6 +286,15 @@ def analyze_template_task(self, template_id: str) -> None:
                 black_segments=black_segments,
                 job_id=f"template:{template_id}",
             )
+
+            # Note: font identification (PR2, identify_fonts + font_alternatives
+            # population) is intentionally scoped to the agentic analysis path
+            # only (app/tasks/agentic_template_build.py). Classic templates are
+            # human-authored with deliberate font picks; running CLIP matching
+            # against the reference video would write font_alternatives onto
+            # overlays whose font_family the operator already chose, costing
+            # ~250-400MB of resident worker memory and ~5-10s of latency per
+            # analysis for no operator value.
 
             # Extract poster JPEG for the homepage gallery (best-effort: a
             # poster failure must not fail analysis — the gradient fallback
@@ -312,11 +331,7 @@ def analyze_template_task(self, template_id: str) -> None:
                     log.warning("template_audio_redownload_failed", error=str(exc))
 
             # Beat detection: merge Gemini beats with FFmpeg energy onsets
-            ffmpeg_beats = (
-                _detect_audio_beats(audio_local)
-                if os.path.exists(audio_local)
-                else []
-            )
+            ffmpeg_beats = _detect_audio_beats(audio_local) if os.path.exists(audio_local) else []
             merged_beats = _merge_beat_sources(recipe.beat_timestamps_s, ffmpeg_beats)
 
             # Compute per-slot energy from beat density
@@ -393,12 +408,26 @@ def analyze_template_task(self, template_id: str) -> None:
 
 
 @celery_app.task(
-    name="tasks.orchestrate_template_job", bind=True, max_retries=0,
-    soft_time_limit=1740, time_limit=1800,
+    name="tasks.orchestrate_template_job",
+    bind=True,
+    max_retries=0,
+    soft_time_limit=1740,
+    time_limit=1800,
 )
-def orchestrate_template_job(self, job_id: str) -> None:
-    """Full template-mode pipeline. Never raises — all errors go to processing_failed."""
-    log.info("template_job_start", job_id=job_id)
+def orchestrate_template_job(
+    self,
+    job_id: str,
+    force_single_pass: bool = False,
+) -> None:
+    """Full template-mode pipeline. Never raises — all errors go to processing_failed.
+
+    ``force_single_pass`` forces the single-pass FFmpeg encode for THIS job
+    regardless of the env-level ``settings.single_pass_encode_enabled`` flag.
+    Used for staged rollout — ops can enqueue test jobs via
+    ``.apply_async(args=[job_id], kwargs={"force_single_pass": True})`` without
+    bouncing workers.
+    """
+    log.info("template_job_start", job_id=job_id, force_single_pass=force_single_pass)
 
     # Defensive: validate job_id BEFORE entering try/except. A stale Redis
     # queue message (worker restart picking up an old enqueue) can deliver
@@ -412,7 +441,7 @@ def orchestrate_template_job(self, job_id: str) -> None:
         return
 
     try:
-        _run_template_job(job_id)
+        _run_template_job(job_id, force_single_pass=force_single_pass)
     except _StageError as stage_err:
         log.error(
             "template_job_classified_failure",
@@ -462,7 +491,7 @@ def orchestrate_template_job(self, job_id: str) -> None:
         _mark_failed(job_uuid, FAILURE_REASON_UNKNOWN, str(exc))
 
 
-def _run_template_job(job_id: str) -> None:
+def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
     """Core template job logic. May raise — caller wraps in try/except."""
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
@@ -473,17 +502,27 @@ def _run_template_job(job_id: str) -> None:
         job.status = "processing"
         db.commit()
 
+        # Stamp started_at + initial current_phase so the frontend shows motion
+        # the moment the worker picks the job up — distinct from `created_at`
+        # which is the original queue insert time. Inside the session block
+        # because the rest of `_run_template_job` continues here.
+        mark_started(job_id)
+
         # Fast path: locked re-render skips Gemini entirely
         if isinstance(job.assembly_plan, dict) and job.assembly_plan.get("locked"):
-            _run_rerender(job_id, job)
+            _run_rerender(job_id, job, force_single_pass=force_single_pass)
             return
 
         # Snapshot fields before session closes
         template_id = job.template_id
         all_candidates = job.all_candidates or {}
         clip_paths_gcs = all_candidates.get("clip_paths", [])
-        user_subject = _resolve_user_subject(all_candidates)
+        user_subject = ((all_candidates.get("inputs") or {}).get("location") or "").strip()
         selected_platforms = job.selected_platforms or ["tiktok", "instagram", "youtube"]
+        # Admin test-tab fast preview. Skips visually-expensive interstitials
+        # (curtain-close) and the copy-generation LLM call. Set by admin.py's
+        # create_test_job from TestJobRequest.preview_mode. Default False.
+        preview_mode = bool(all_candidates.get("preview_mode", False))
 
     if not clip_paths_gcs:
         raise ValueError("No clip paths found in job")
@@ -500,6 +539,18 @@ def _run_template_job(job_id: str) -> None:
         audio_gcs_path = template.audio_gcs_path  # may be None
         voiceover_gcs_path = template.voiceover_gcs_path  # may be None
         template_gcs_path = template.gcs_path  # for locked-slot rendering
+        # is_agentic gates two job-time changes: clip_router replaces the
+        # greedy matcher, and the _LABEL_CONFIG override is skipped (the
+        # agentic recipe already has per-overlay styling baked in by
+        # text_designer at template-build time). Manual templates are
+        # untouched — same code path, byte-identical output.
+        is_agentic = bool(template.is_agentic)
+        # Single-pass allow-list: per-template flag AND env-level kill
+        # switch must both be true for the global rollout to fire on this
+        # template. force_single_pass=True from a kwarg overrides both —
+        # that path is for engineers debugging an individual job via
+        # apply_async kwargs.
+        template_single_pass = bool(template.single_pass_enabled)
 
     # Route on template_kind discriminator. Existing rows without template_kind
     # are backfilled to "multiple_videos" by migration 0012, so .get() with
@@ -530,6 +581,7 @@ def _run_template_job(job_id: str) -> None:
             voiceover_gcs_path=voiceover_gcs_path,
             user_subject=user_subject,
             selected_platforms=selected_platforms,
+            preview_mode=preview_mode,
         )
         return
 
@@ -540,9 +592,17 @@ def _run_template_job(job_id: str) -> None:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # [2] Download all clip files in parallel
+        _phase_t0 = time.monotonic()
         local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
+        record_phase(
+            job_id,
+            PHASE_DOWNLOAD_CLIPS,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_ANALYZE_CLIPS,
+        )
 
         mixed_media = _is_mixed_media(recipe.slots)
+        _phase_t0 = time.monotonic()
         if mixed_media:
             # Mixed-media template: positional binding (clip[i] → slot[i]).
             # Photo slots skip Gemini entirely; video slots upload+analyze in parallel.
@@ -555,7 +615,10 @@ def _run_template_job(job_id: str) -> None:
             probe_map = _probe_clips(local_clip_paths)
             slots_in_order = _slots_in_position_order(recipe.slots)
             clip_metas = _build_positional_clip_metas(
-                local_clip_paths, slots_in_order, probe_map, job_id=job_id,
+                local_clip_paths,
+                slots_in_order,
+                probe_map,
+                job_id=job_id,
             )
             # Mixed-media path is positional 1:1, so the ordered list mirrors
             # the compact list directly.
@@ -579,6 +642,7 @@ def _run_template_job(job_id: str) -> None:
                 local_clip_paths,
                 filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
                 job_id=job_id,
+                record_sub_phases=preview_mode,
             )
 
             # Threshold check: >50% failure → fatal
@@ -594,6 +658,14 @@ def _run_template_job(job_id: str) -> None:
                 success=len(clip_metas),
                 failed=failed_count,
             )
+
+        record_phase(
+            job_id,
+            PHASE_ANALYZE_CLIPS,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_MATCH_CLIPS,
+        )
+        _phase_t0 = time.monotonic()
 
         # [5] Template match.
         # Pin clip 0 to slot 1 when the template's first slot is "hook"-typed —
@@ -634,10 +706,24 @@ def _run_template_job(job_id: str) -> None:
             if mixed_media:
                 # Positional binding skips consolidate_slots + greedy matcher.
                 assembly_plan = _match_positional(recipe, clip_metas)
+            elif is_agentic:
+                # Agentic match: clip_router picks slot→clip, then we pick the
+                # top-scoring moment from each assigned clip. Falls back to the
+                # greedy matcher on agent failure so a flaky LLM call doesn't
+                # take the whole job down.
+                recipe = consolidate_slots(recipe, clip_metas)
+                assembly_plan = _agentic_match_or_fallback(
+                    recipe,
+                    clip_metas,
+                    pinned_assignments=pinned_assignments,
+                    filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
+                    job_id=job_id,
+                )
             else:
                 recipe = consolidate_slots(recipe, clip_metas)
                 assembly_plan = match(
-                    recipe, clip_metas,
+                    recipe,
+                    clip_metas,
                     pinned_assignments=pinned_assignments,
                     filter_hint=getattr(recipe, "clip_filter_hint", "") or "",
                 )
@@ -679,33 +765,85 @@ def _run_template_job(job_id: str) -> None:
                 job.assembly_plan = plan_data
                 db.commit()
 
-        # [6] FFmpeg assemble
-        log.info("ffmpeg_assemble_start", job_id=job_id)
+        record_phase(
+            job_id,
+            PHASE_MATCH_CLIPS,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_ASSEMBLE,
+        )
+        _phase_t0 = time.monotonic()
+
+        # [6] FFmpeg assemble.
+        effective_single_pass = _resolve_effective_single_pass(
+            force_single_pass,
+            template_single_pass,
+        )
+        _render_path = _resolve_render_path(effective_single_pass)
+        log.info(
+            "ffmpeg_assemble_start",
+            job_id=job_id,
+            render_path=_render_path,
+            force_single_pass=force_single_pass,
+            env_single_pass_enabled=settings.single_pass_encode_enabled,
+            template_single_pass=template_single_pass,
+            effective_single_pass=effective_single_pass,
+        )
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
         base_path = os.path.join(tmpdir, "base_no_overlays.mp4")
         if mixed_media:
-            clip_id_to_local = {
-                f"clip_{i}": path for i, path in enumerate(local_clip_paths)
-            }
+            clip_id_to_local = {f"clip_{i}": path for i, path in enumerate(local_clip_paths)}
         else:
             # Same cache-hit guard as clip_id_to_gcs above.
             clip_id_to_local = _clip_id_to_path_map(clip_metas_ordered, local_clip_paths)
         _add_locked_template_source(
-            recipe_data, template_gcs_path, tmpdir,
-            clip_id_to_local, probe_map,
+            recipe_data,
+            template_gcs_path,
+            tmpdir,
+            clip_id_to_local,
+            probe_map,
         )
+        # Drop curtain-close interstitials under preview_mode. They survive
+        # the slot transition (a fade-to-black hold still plays) but skip the
+        # PNG-overlay re-encode on the slot tail, which is one of the longest
+        # serial steps inside assemble on a cold worker.
+        assemble_interstitials = recipe.interstitials
+        if preview_mode and assemble_interstitials:
+            filtered = [
+                i for i in assemble_interstitials if (i or {}).get("type") != "curtain-close"
+            ]
+            if len(filtered) != len(assemble_interstitials):
+                log.info(
+                    "interstitials_curtain_close_skipped_preview",
+                    job_id=job_id,
+                    dropped=len(assemble_interstitials) - len(filtered),
+                )
+                assemble_interstitials = filtered
+
         _assemble_clips(
-            assembly_plan.steps, clip_id_to_local, probe_map,
-            assembled_path, tmpdir,
+            assembly_plan.steps,
+            clip_id_to_local,
+            probe_map,
+            assembled_path,
+            tmpdir,
             beat_timestamps_s=recipe.beat_timestamps_s,
             clip_metas=clip_metas,
             global_color_grade=recipe.color_grade,
             job_id=job_id,
             user_subject=user_subject,
-            interstitials=recipe.interstitials,
+            interstitials=assemble_interstitials,
             base_output_path=base_path,
             output_fit=getattr(recipe, "output_fit", None) or "crop",
+            force_single_pass=effective_single_pass,
+            is_agentic=is_agentic,
         )
+
+        record_phase(
+            job_id,
+            PHASE_ASSEMBLE,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_MIX_AUDIO,
+        )
+        _phase_t0 = time.monotonic()
 
         # [6b] Mix template audio if available
         if audio_gcs_path:
@@ -719,24 +857,66 @@ def _run_template_job(job_id: str) -> None:
         else:
             output_path = assembled_path
 
-        # [7] Generate copy (with template tone)
-        hook_text = _extract_hook_text(clip_metas, assembly_plan.steps)
-        transcript_excerpt = _extract_transcript(clip_metas, assembly_plan.steps)
-        from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
-        platform_copy, copy_status = generate_copy(
-            hook_text=hook_text,
-            transcript_excerpt=transcript_excerpt,
-            platforms=selected_platforms,
-            has_transcript=bool(transcript_excerpt),
-            template_tone=recipe.copy_tone,
-            job_id=job_id,
+        record_phase(
+            job_id,
+            PHASE_MIX_AUDIO,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_GENERATE_COPY,
         )
+        _phase_t0 = time.monotonic()
+
+        # [7] Generate copy (with template tone) — skipped under preview_mode
+        # since the admin test tab doesn't render copy and the call adds 5-15s.
+        if preview_mode:
+            from app.pipeline.agents.copy_writer import (  # noqa: PLC0415
+                InstagramCopy,
+                PlatformCopy,
+                TikTokCopy,
+                YouTubeCopy,
+            )
+
+            platform_copy = PlatformCopy(
+                tiktok=TikTokCopy(hook="", caption="", hashtags=[]),
+                instagram=InstagramCopy(hook="", caption="", hashtags=[]),
+                youtube=YouTubeCopy(title="", description="", tags=[]),
+            )
+            copy_status = "skipped_preview_mode"
+            log.info("copy_generation_skipped_preview", job_id=job_id)
+        else:
+            hook_text = _extract_hook_text(clip_metas, assembly_plan.steps)
+            transcript_excerpt = _extract_transcript(clip_metas, assembly_plan.steps)
+            from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
+
+            platform_copy, copy_status = generate_copy(
+                hook_text=hook_text,
+                transcript_excerpt=transcript_excerpt,
+                platforms=selected_platforms,
+                has_transcript=bool(transcript_excerpt),
+                template_tone=recipe.copy_tone,
+                job_id=job_id,
+            )
+
+        record_phase(
+            job_id,
+            PHASE_GENERATE_COPY,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_UPLOAD,
+        )
+        _phase_t0 = time.monotonic()
 
         # [8] Upload assembled video + base video to GCS
         gcs_output_path = f"jobs/{job_id}/template_output.mp4"
         video_url = upload_public_read(output_path, gcs_output_path)
         gcs_base_path = f"jobs/{job_id}/template_base.mp4"
         base_video_url = upload_public_read(base_path, gcs_base_path)
+
+        record_phase(
+            job_id,
+            PHASE_UPLOAD,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_FINALIZE,
+        )
+        _phase_t0 = time.monotonic()
 
         # [9] Finalize
         with _sync_session() as db:
@@ -752,13 +932,20 @@ def _run_template_job(job_id: str) -> None:
                 }
                 db.commit()
 
+        record_phase(
+            job_id,
+            PHASE_FINALIZE,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+        )
+        mark_finished(job_id)
+
         log.info("template_job_done", job_id=job_id, output_url=video_url)
 
 
 # ── Locked re-render fast path ─────────────────────────────────────────────────
 
 
-def _run_rerender(job_id: str, job: Job) -> None:
+def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> None:
     """Re-render with locked clip-to-slot assignments. Skips Gemini entirely.
 
     Reads the locked assembly plan, downloads only the used clips,
@@ -770,7 +957,7 @@ def _run_rerender(job_id: str, job: Job) -> None:
     steps_data = plan.get("steps", [])
     template_id = job.template_id
     selected_platforms = job.selected_platforms or ["tiktok", "instagram", "youtube"]
-    user_subject = _resolve_user_subject(job.all_candidates)
+    user_subject = (((job.all_candidates or {}).get("inputs") or {}).get("location") or "").strip()
 
     # Load current recipe from DB (reflects user edits)
     with _sync_session() as db:
@@ -783,6 +970,15 @@ def _run_rerender(job_id: str, job: Job) -> None:
         recipe_data = template.recipe_cached
         audio_gcs_path = template.audio_gcs_path
         template_gcs_path = template.gcs_path
+        # Same allow-list semantics as _run_template_job — the per-template
+        # flag AND the env flag must both be true for a rerender to take
+        # the single-pass path, unless force_single_pass overrides.
+        template_single_pass = bool(template.single_pass_enabled)
+        # F1 fix: agentic flag must travel into _assemble_clips so the rerender
+        # path uses the same pct-vs-seconds dispatch as a fresh job. Without
+        # this, an admin recipe edit on an agentic template silently rendered
+        # via the legacy absolute-seconds path — same recipe, different output.
+        is_agentic = bool(template.is_agentic)
 
     try:
         recipe = _build_recipe(recipe_data)
@@ -797,9 +993,7 @@ def _run_rerender(job_id: str, job: Job) -> None:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Collect unique GCS paths from locked steps
-        gcs_paths_unique = list(dict.fromkeys(
-            step["clip_gcs_path"] for step in steps_data
-        ))
+        gcs_paths_unique = list(dict.fromkeys(step["clip_gcs_path"] for step in steps_data))
 
         # Download only the used clips
         local_clip_paths = _download_clips_parallel(gcs_paths_unique, tmpdir)
@@ -822,25 +1016,47 @@ def _run_rerender(job_id: str, job: Job) -> None:
             clip_id = step_data["clip_id"]
             local_path = gcs_to_local[clip_gcs]
 
-            assembly_steps.append(AssemblyStep(
-                slot=slot,
-                clip_id=clip_id,
-                moment=step_data["moment"],
-            ))
+            assembly_steps.append(
+                AssemblyStep(
+                    slot=slot,
+                    clip_id=clip_id,
+                    moment=step_data["moment"],
+                )
+            )
             clip_id_to_local[clip_id] = local_path
 
         _add_locked_template_source(
-            recipe_data, template_gcs_path, tmpdir,
-            clip_id_to_local, probe_map,
+            recipe_data,
+            template_gcs_path,
+            tmpdir,
+            clip_id_to_local,
+            probe_map,
         )
 
         # FFmpeg assemble (clip_metas=None is safe — text comes from recipe)
-        log.info("rerender_assemble_start", job_id=job_id, steps=len(assembly_steps))
+        effective_single_pass = _resolve_effective_single_pass(
+            force_single_pass,
+            template_single_pass,
+        )
+        _render_path = _resolve_render_path(effective_single_pass)
+        log.info(
+            "rerender_assemble_start",
+            job_id=job_id,
+            steps=len(assembly_steps),
+            render_path=_render_path,
+            force_single_pass=force_single_pass,
+            env_single_pass_enabled=settings.single_pass_encode_enabled,
+            template_single_pass=template_single_pass,
+            effective_single_pass=effective_single_pass,
+        )
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
         base_path = os.path.join(tmpdir, "base_no_overlays.mp4")
         _assemble_clips(
-            assembly_steps, clip_id_to_local, probe_map,
-            assembled_path, tmpdir,
+            assembly_steps,
+            clip_id_to_local,
+            probe_map,
+            assembled_path,
+            tmpdir,
             beat_timestamps_s=recipe.beat_timestamps_s,
             clip_metas=None,
             global_color_grade=recipe.color_grade,
@@ -849,6 +1065,8 @@ def _run_rerender(job_id: str, job: Job) -> None:
             interstitials=recipe.interstitials,
             base_output_path=base_path,
             output_fit=getattr(recipe, "output_fit", None) or "crop",
+            force_single_pass=effective_single_pass,
+            is_agentic=is_agentic,
         )
 
         # Mix template audio if available
@@ -864,6 +1082,7 @@ def _run_rerender(job_id: str, job: Job) -> None:
 
         # Generate copy
         from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
+
         platform_copy, copy_status = generate_copy(
             hook_text="",
             transcript_excerpt="",
@@ -932,12 +1151,12 @@ def _build_positional_clip_metas(
         )
 
     video_indices = [
-        i for i, s in enumerate(slots_in_order)
-        if str(s.get("media_type", "video")) != "photo"
+        i for i, s in enumerate(slots_in_order) if str(s.get("media_type", "video")) != "photo"
     ]
 
     video_metas: dict[int, ClipMeta] = {}
     if video_indices:
+
         def _process(idx: int) -> tuple[int, ClipMeta]:
             path = local_paths[idx]
             slot = slots_in_order[idx]
@@ -955,9 +1174,7 @@ def _build_positional_clip_metas(
                 # the non-positional fallback in `_analyze_one`, minus the
                 # Whisper transcript (positional binding doesn't need it).
                 probe = probe_map.get(path)
-                dur = probe.duration_s if probe else float(
-                    slot.get("target_duration_s", 5.0)
-                )
+                dur = probe.duration_s if probe else float(slot.get("target_duration_s", 5.0))
                 log.warning(
                     "positional_video_analysis_fallback",
                     idx=idx,
@@ -969,12 +1186,14 @@ def _build_positional_clip_metas(
                     transcript="",
                     hook_text="",
                     hook_score=5.0,
-                    best_moments=[{
-                        "start_s": 0.0,
-                        "end_s": float(dur),
-                        "energy": 5.0,
-                        "description": "fallback (gemini refused)",
-                    }],
+                    best_moments=[
+                        {
+                            "start_s": 0.0,
+                            "end_s": float(dur),
+                            "energy": 5.0,
+                            "description": "fallback (gemini refused)",
+                        }
+                    ],
                     analysis_degraded=True,
                     clip_path=path,
                 )
@@ -983,7 +1202,9 @@ def _build_positional_clip_metas(
             meta.clip_path = path
             return idx, meta
 
-        with ThreadPoolExecutor(max_workers=min(len(video_indices), 8)) as pool:
+        with ThreadPoolExecutor(
+            max_workers=min(len(video_indices), _GEMINI_PARALLEL_CAP),
+        ) as pool:
             futures = [pool.submit(_process, i) for i in video_indices]
             for future in as_completed(futures):
                 idx, meta = future.result()
@@ -995,19 +1216,23 @@ def _build_positional_clip_metas(
         if str(slot.get("media_type", "video")) == "photo":
             probe = probe_map.get(path)
             dur = probe.duration_s if probe else float(slot.get("target_duration_s", 5.0))
-            metas.append(ClipMeta(
-                clip_id=f"clip_{i}",
-                transcript="",
-                hook_text="",
-                hook_score=5.0,
-                best_moments=[{
-                    "start_s": 0.0,
-                    "end_s": float(dur),
-                    "energy": 5.0,
-                    "description": "static photo",
-                }],
-                clip_path=path,
-            ))
+            metas.append(
+                ClipMeta(
+                    clip_id=f"clip_{i}",
+                    transcript="",
+                    hook_text="",
+                    hook_score=5.0,
+                    best_moments=[
+                        {
+                            "start_s": 0.0,
+                            "end_s": float(dur),
+                            "energy": 5.0,
+                            "description": "static photo",
+                        }
+                    ],
+                    clip_path=path,
+                )
+            )
         else:
             meta = video_metas.get(i)
             if meta is None:
@@ -1061,9 +1286,7 @@ def _add_locked_template_source(
     from app.pipeline.probe import VideoProbe, probe_video  # noqa: PLC0415
     from app.pipeline.template_matcher import LOCKED_TEMPLATE_CLIP_ID  # noqa: PLC0415
 
-    has_locked = any(
-        s.get("locked", False) for s in recipe_data.get("slots", [])
-    )
+    has_locked = any(s.get("locked", False) for s in recipe_data.get("slots", []))
     if not has_locked:
         return
     if not template_gcs_path:
@@ -1078,10 +1301,12 @@ def _add_locked_template_source(
     except Exception as exc:
         log.warning("template_probe_failed_using_default", error=str(exc))
         probe_map[local_path] = VideoProbe(
-            duration_s=60.0, fps=30.0, width=1920, height=1080,
+            duration_s=60.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
             aspect_ratio="16:9",
         )
-
 
 
 def _download_clips_parallel(gcs_paths: list[str], tmpdir: str) -> list[str]:
@@ -1148,16 +1373,42 @@ def _probe_and_upload_concurrent(
     return probe_map, file_refs
 
 
-def _upload_clips_parallel(local_paths: list[str]) -> list:
-    """Upload all clips to Gemini File API in parallel. Returns file refs in order."""
+def _upload_clips_parallel(
+    local_paths: list[str],
+    *,
+    job_id: str | None = None,
+    record_sub_phases: bool = False,
+) -> list:
+    """Upload all clips to Gemini File API in parallel. Returns file refs in order.
+
+    When record_sub_phases is true, each clip's upload+ACTIVE-poll wall time is
+    appended to the job's phase_log as a sub_phase under analyze_clips so the
+    admin test-tab UI can surface "stuck on clip N" while the job is still
+    running. Off by default to keep prod jobs' phase_log untouched — the
+    admin test endpoint sets it via the preview_mode flag.
+    """
     results: dict[int, object] = {}
 
     def _upload_one(idx_path: tuple[int, str]) -> tuple[int, object]:
         idx, path = idx_path
+        t0 = time.monotonic()
         ref = gemini_upload_and_wait(path)
+        if record_sub_phases and job_id is not None:
+            record_sub_phase(
+                job_id,
+                PHASE_ANALYZE_CLIPS,
+                "gemini_upload",
+                elapsed_ms=int((time.monotonic() - t0) * 1000),
+                detail={
+                    "clip_idx": idx,
+                    "clip_path": os.path.basename(path),
+                },
+            )
         return idx, ref
 
-    with ThreadPoolExecutor(max_workers=min(len(local_paths), 8)) as pool:
+    with ThreadPoolExecutor(
+        max_workers=min(len(local_paths), _GEMINI_PARALLEL_CAP),
+    ) as pool:
         futures = {pool.submit(_upload_one, (i, p)): i for i, p in enumerate(local_paths)}
         for future in as_completed(futures):
             idx, ref = future.result()
@@ -1171,6 +1422,7 @@ def _analyze_clips_with_cache(
     filter_hint: str = "",
     *,
     job_id: str | None = None,
+    record_sub_phases: bool = False,
 ) -> tuple[list[ClipMeta], list[ClipMeta | None], list, dict, int]:
     """Hash → cache lookup → concurrent (probe + upload misses) → analyze.
 
@@ -1243,14 +1495,24 @@ def _analyze_clips_with_cache(
     miss_paths = [local_paths[i] for i in miss_indices]
     with ThreadPoolExecutor(max_workers=2) as pool:
         probe_future = pool.submit(_probe_clips, local_paths)
-        upload_future = pool.submit(_upload_clips_parallel, miss_paths)
+        upload_future = pool.submit(
+            _upload_clips_parallel,
+            miss_paths,
+            job_id=job_id,
+            record_sub_phases=record_sub_phases,
+        )
         probe_map = probe_future.result()
         miss_refs = upload_future.result()
     for orig_idx, ref in zip(miss_indices, miss_refs):
         file_refs_ordered[orig_idx] = ref
 
     miss_metas, failed_count = _analyze_clips_parallel(
-        miss_refs, miss_paths, probe_map, filter_hint, job_id=job_id,
+        miss_refs,
+        miss_paths,
+        probe_map,
+        filter_hint,
+        job_id=job_id,
+        record_sub_phases=record_sub_phases,
     )
 
     # Re-align analyzed metas back to their original indices.
@@ -1281,6 +1543,7 @@ def _analyze_clips_parallel(
     filter_hint: str = "",
     *,
     job_id: str | None = None,
+    record_sub_phases: bool = False,
 ) -> tuple[list[ClipMeta], int]:
     """Analyze all clips with Gemini in parallel.
 
@@ -1296,8 +1559,20 @@ def _analyze_clips_parallel(
 
     def _analyze_one(args: tuple[int, object, str]) -> tuple[ClipMeta | None, str | None]:
         idx, ref, path = args
+        t0 = time.monotonic()
         try:
             meta = analyze_clip(ref, filter_hint=filter_hint, job_id=job_id)
+            if record_sub_phases and job_id is not None:
+                record_sub_phase(
+                    job_id,
+                    PHASE_ANALYZE_CLIPS,
+                    "gemini_analyze",
+                    elapsed_ms=int((time.monotonic() - t0) * 1000),
+                    detail={
+                        "clip_idx": idx,
+                        "clip_path": os.path.basename(path),
+                    },
+                )
             # Defense-in-depth: empty `best_moments` from a "successful" analysis
             # is unusable downstream (matcher has nothing to match). Treat it the
             # same as an analysis failure so the Whisper fallback engages and the
@@ -1308,22 +1583,17 @@ def _analyze_clips_parallel(
                     clip_idx=idx,
                     clip_path=path,
                 )
-                raise GeminiAnalysisError(
-                    "analyze_clip succeeded but returned 0 best_moments"
-                )
+                raise GeminiAnalysisError("analyze_clip succeeded but returned 0 best_moments")
             meta.clip_path = path
             return meta, None
         except (GeminiRefusalError, GeminiAnalysisError, Exception) as exc:
             log.warning("clip_analysis_failed", clip_idx=idx, error=str(exc))
             # Whisper heuristic fallback for failed clips
             from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
+
             try:
                 transcript = transcribe_whisper(path)
-                clip_dur = (
-                    probe_map[path].duration_s
-                    if probe_map and path in probe_map
-                    else 30.0
-                )
+                clip_dur = probe_map[path].duration_s if probe_map and path in probe_map else 30.0
                 fallback_meta = ClipMeta(
                     clip_id=getattr(ref, "name", f"clip_{idx}"),
                     transcript=transcript.full_text,
@@ -1338,7 +1608,9 @@ def _analyze_clips_parallel(
                 log.warning("whisper_fallback_failed", clip_idx=idx, error=str(whisper_exc))
                 return None, str(exc)
 
-    with ThreadPoolExecutor(max_workers=min(len(file_refs), 8)) as pool:
+    with ThreadPoolExecutor(
+        max_workers=min(len(file_refs), _GEMINI_PARALLEL_CAP),
+    ) as pool:
         futures = [
             pool.submit(_analyze_one, (i, ref, path))
             for i, (ref, path) in enumerate(zip(file_refs, local_paths))
@@ -1394,6 +1666,31 @@ _PARALLEL_RENDER_WORKERS = 2  # Match worker vCPU count (fly.toml: cpus=2).
 # which is past the sweet spot for shared-CPU machines. If fly.toml cpus
 # changes, update this to match.
 
+# Concurrency cap for Gemini-bound work (upload + analyze + mixed-media
+# per-clip analysis). Gemini's documented per-project request concurrency
+# is well above this, so the bottleneck is request RTT, not quota. Raised
+# from 8 → 16 in PR (auto-mode) to halve the wall time of the analyze
+# phase on 10+ clip templates without changing failure shape. If we ever
+# see 429s, drop this back to 8 and add an adaptive backoff in
+# agents/gemini_analyzer.py (deferred to a follow-up PR).
+_GEMINI_PARALLEL_CAP = 16
+
+
+def _phase_done(name: str, t0: float, *, job_id: str | None, **extra: object) -> None:
+    """Emit a structured `assemble_phase_done` log for an `_assemble_clips` sub-phase.
+
+    Pure observability — paired manually with `time.monotonic()` at phase
+    start instead of a `with` context manager so wrapping the 80-line
+    interstitials loop doesn't require re-indenting everything inside it.
+    """
+    log.info(
+        "assemble_phase_done",
+        phase=name,
+        elapsed_ms=int((time.monotonic() - t0) * 1000),
+        job_id=job_id,
+        **extra,
+    )
+
 
 @dataclasses.dataclass
 class SlotPlan:
@@ -1448,8 +1745,7 @@ def _extract_grid_params(slot: dict) -> dict:
     highlight_color = slot.get("grid_highlight_color", "#E63946")
     if not _GRID_COLOR_RE.fullmatch(highlight_color):
         raise ValueError(
-            f"slot {pos}: grid_highlight_color {highlight_color!r} must match "
-            "^#[0-9A-Fa-f]{6}$",
+            f"slot {pos}: grid_highlight_color {highlight_color!r} must match ^#[0-9A-Fa-f]{{6}}$",
         )
 
     opacity = max(0.0, min(1.0, float(slot.get("grid_opacity", 0.6))))
@@ -1495,15 +1791,64 @@ def _plan_slots(
     global_color_grade: str,
     tmpdir: str,
     output_fit: str = "crop",
+    *,
+    is_agentic: bool = False,
 ) -> tuple[list[SlotPlan], dict[str, float], float]:
     """Phase 1: sequential arithmetic to plan all slot renders.
 
     Returns (plans, clip_cursors, final_cumulative_s).
     No I/O — only cursor tracking, beat-snap, and speed ramp math.
+
+    When `is_agentic=True` and the recipe slots carry target_duration_pct,
+    per-slot target durations are computed from the sum of the user's clip
+    durations rather than the template's frozen seconds. See
+    app/pipeline/agentic_timing.resolve_slot_duration for the dispatch
+    matrix and lazy-migration fallback.
     """
+    from app.pipeline.agentic_timing import resolve_slot_duration  # noqa: PLC0415
+
     clip_cursors: dict[str, float] = {}
     cumulative_s = 0.0
     plans: list[SlotPlan] = []
+
+    # Agentic templates scale slot durations against the TOTAL user-clip
+    # duration (D4-B). Classic templates ignore this. We sum once up-front
+    # so resolve_slot_duration() is a pure dispatch.
+    #
+    # F2 fix: cap at the template's intended duration (sum of frozen
+    # target_duration_s across all slots = the template's analyzed length).
+    # Without the cap, 5 long user clips on a 24s TikTok template would
+    # blow the output to minutes; with the cap, the template's structural
+    # length is respected as a soft ceiling and shorter user content still
+    # scales down naturally.
+    user_total_dur_s = 0.0
+    if is_agentic:
+        seen_clip_paths: set[str] = set()
+        for step in steps:
+            local_path = clip_id_to_local.get(step.clip_id)
+            if not local_path or local_path in seen_clip_paths:
+                continue
+            seen_clip_paths.add(local_path)
+            probe = clip_probe_map.get(local_path)
+            if probe is not None and probe.duration_s > 0:
+                user_total_dur_s += float(probe.duration_s)
+
+        recipe_total_s = sum(
+            float(step.slot.get("target_duration_s", 0.0) or 0.0) for step in steps
+        )
+        capped = (
+            min(user_total_dur_s, recipe_total_s)
+            if recipe_total_s > 0 and user_total_dur_s > 0
+            else user_total_dur_s
+        )
+        log.info(
+            "agentic_plan_user_total_dur",
+            user_total_dur_s=round(user_total_dur_s, 2),
+            recipe_total_s=round(recipe_total_s, 2),
+            capped_at=round(capped, 2),
+            distinct_clips=len(seen_clip_paths),
+        )
+        user_total_dur_s = capped
 
     for i, step in enumerate(steps):
         clip_id = step.clip_id
@@ -1513,7 +1858,11 @@ def _plan_slots(
 
         probe = clip_probe_map.get(local_path)
         moment = step.moment
-        slot_target_dur = float(step.slot.get("target_duration_s", 5.0))
+        slot_target_dur = resolve_slot_duration(
+            step.slot,
+            is_agentic=is_agentic,
+            user_total_dur_s=user_total_dur_s,
+        )
         slot_target_dur = max(slot_target_dur, 0.5)
 
         is_locked = bool(step.slot.get("locked", False))
@@ -1589,23 +1938,25 @@ def _plan_slots(
 
         grid_params = _extract_grid_params(step.slot)
 
-        plans.append(SlotPlan(
-            slot_idx=i,
-            clip_path=local_path,
-            start_s=start_s,
-            end_s=end_s,
-            speed_factor=speed_factor,
-            slot_target_dur=slot_target_dur,
-            cumulative_s=cumulative_s,
-            aspect_ratio=aspect_ratio,
-            color_hint=slot_color,
-            reframed_path=os.path.join(tmpdir, f"slot_{i}.mp4"),
-            color_transfer=color_transfer,
-            color_trc=color_trc,
-            has_audio=has_audio,
-            output_fit=output_fit,
-            **grid_params,
-        ))
+        plans.append(
+            SlotPlan(
+                slot_idx=i,
+                clip_path=local_path,
+                start_s=start_s,
+                end_s=end_s,
+                speed_factor=speed_factor,
+                slot_target_dur=slot_target_dur,
+                cumulative_s=cumulative_s,
+                aspect_ratio=aspect_ratio,
+                color_hint=slot_color,
+                reframed_path=os.path.join(tmpdir, f"slot_{i}.mp4"),
+                color_transfer=color_transfer,
+                color_trc=color_trc,
+                has_audio=has_audio,
+                output_fit=output_fit,
+                **grid_params,
+            )
+        )
 
     return plans, clip_cursors, cumulative_s
 
@@ -1614,6 +1965,7 @@ def _render_planned_slot(plan: SlotPlan) -> str:
     """Phase 2: render a single planned slot via FFmpeg. Thread-safe."""
     from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
 
+    t0 = time.monotonic()
     reframe_and_export(
         input_path=plan.clip_path,
         start_s=plan.start_s,
@@ -1634,7 +1986,282 @@ def _render_planned_slot(plan: SlotPlan) -> str:
         color_trc=plan.color_trc,
         has_audio=plan.has_audio,
     )
+    log.info(
+        "slot_render_done",
+        slot_idx=plan.slot_idx,
+        target_duration_s=round(plan.slot_target_dur, 3),
+        elapsed_ms=int((time.monotonic() - t0) * 1000),
+    )
     return plan.reframed_path
+
+
+def _resolve_render_path(force_single_pass: bool) -> str:
+    """Return 'single' or 'multi' based on the resolved force flag.
+
+    Callers (_run_template_job, _run_rerender) compute the effective
+    single-pass decision via :func:`_resolve_effective_single_pass`. The
+    function name is preserved for log-grep compatibility but the
+    semantics are now purely "did the caller decide single-pass" —
+    not "should we use single-pass."
+    """
+    return "single" if force_single_pass else "multi"
+
+
+def _resolve_effective_single_pass(
+    force_single_pass: bool,
+    template_single_pass: bool,
+) -> bool:
+    """Compute the effective single-pass decision from three inputs.
+
+    Truth table:
+      force=True, anything else                                  → True
+      force=False, env=True, template=True                       → True
+      any other combination                                      → False
+
+    The AND-gate over (env flag, per-template flag) is the safe rollout
+    pattern — flipping either alone has zero render impact until both
+    are set. ``force_single_pass=True`` from a job kwarg overrides both
+    flags; that path is for engineers debugging an individual job via
+    apply_async kwargs.
+
+    Reads :data:`settings.single_pass_encode_enabled` at call time, so a
+    runtime env flip takes effect on the next job without a reload.
+    """
+    return force_single_pass or (settings.single_pass_encode_enabled and template_single_pass)
+
+
+# Sentinel values passed to generate_text_overlay_png /
+# generate_animated_overlay_ass to mark the post-join absolute-overlay pass
+# (vs the per-slot pre-burn pass). The generators key several internal
+# heuristics off `cumulative_s` and `slot_index`; 999.0 + 99 are far enough
+# from any real per-slot value that they don't collide.
+# Used by:
+#   _burn_text_overlays (multi-pass post-join overlay burn)
+#   _generate_single_pass_overlays (single-pass M6 overlay collection)
+# Both call sites MUST stay in sync or the parity gate diverges.
+ABS_PASS_TIME_S = 999.0
+ABS_PASS_SLOT_INDEX = 99
+
+
+def _generate_single_pass_overlays(
+    *,
+    steps: list,
+    plans: list[SlotPlan],
+    interstitial_map: dict[int, dict],
+    clip_metas: list | None,
+    subject: str,
+    tmpdir: str,
+    is_agentic: bool = False,
+) -> tuple[list[dict], list[str], str]:
+    """Build absolute-overlay PNG configs + ASS paths for single-pass M6.
+
+    Wraps the same _collect_absolute_overlays + generate_text_overlay_png +
+    generate_animated_overlay_ass calls that multi-pass _burn_text_overlays
+    makes, but produces the bare file paths instead of running ffmpeg.
+
+    Returns ``(abs_pngs, abs_ass_paths, fonts_dir)``. ``abs_pngs`` is the
+    list of ``{"png_path", "start_s", "end_s"}`` dicts the filter graph
+    consumes. ``abs_ass_paths`` is the parallel list of generated .ass
+    files for libass-rendered animations. ``fonts_dir`` is the
+    ``fontsdir=`` argument the subtitles filter expects.
+
+    Lives in the orchestrator (not single_pass.py) so the spec stays
+    filesystem-free for unit tests — mocking PIL / libass at the spec
+    boundary is much more expensive than letting the unit tests pass
+    pre-built overlay dicts directly.
+    """
+    from app.pipeline.text_overlay import (  # noqa: PLC0415
+        ASS_ANIMATED_EFFECTS,
+        FONTS_DIR,
+        generate_animated_overlay_ass,
+        generate_text_overlay_png,
+    )
+
+    slot_durations = [p.slot_target_dur for p in plans]
+    overlays = _collect_absolute_overlays(
+        steps,
+        slot_durations,
+        clip_metas,
+        subject,
+        interstitial_map=interstitial_map,
+        is_agentic=is_agentic,
+    )
+    if not overlays:
+        return [], [], ""
+
+    static_overlays = [o for o in overlays if o.get("effect") not in ASS_ANIMATED_EFFECTS]
+    animated_overlays = [o for o in overlays if o.get("effect") in ASS_ANIMATED_EFFECTS]
+
+    # ABS_PASS_TIME_S + ABS_PASS_SLOT_INDEX are the post-join sentinels.
+    # _burn_text_overlays calls the same generators with the same constants;
+    # drift here would split the parity contract silently.
+    abs_pngs = (
+        generate_text_overlay_png(
+            static_overlays,
+            ABS_PASS_TIME_S,
+            tmpdir,
+            slot_index=ABS_PASS_SLOT_INDEX,
+        )
+        if static_overlays
+        else []
+    ) or []
+    abs_ass_paths = (
+        generate_animated_overlay_ass(
+            animated_overlays,
+            ABS_PASS_TIME_S,
+            tmpdir,
+            slot_index=ABS_PASS_SLOT_INDEX,
+        )
+        if animated_overlays
+        else []
+    ) or []
+    return abs_pngs, abs_ass_paths, FONTS_DIR
+
+
+def _build_single_pass_spec(
+    plans: list[SlotPlan],
+    interstitial_map: dict[int, dict],
+    steps: list,
+    *,
+    abs_pngs: list[dict] | None = None,
+    abs_ass_paths: list[str] | None = None,
+    fonts_dir: str = "",
+) -> SinglePassSpec:
+    """Convert orchestrator plans + interstitials → SinglePassSpec.
+
+    Milestones 2-3 scope — supports:
+      - clip slots (with all SlotPlan features: speed, color, aspect, grid)
+      - non-curtain color-hold interstitials between slots
+      - hard-cut transitions (M2)
+      - xfade transitions: crossfade, fade_black, wipe_left, wipe_right (M3)
+
+    Raises SinglePassUnsupportedError if the template needs:
+      - curtain-close interstitials (M4 — PNG-bar overlay on slot tail)
+      - barn-door-open interstitials (M4 — PNG-bar overlay on slot head)
+      - absolute-timestamp text overlays (M6 — post-concat layer)
+      - pre-burn PNGs (M5 — slot-relative overlay before bars)
+
+    The caller catches SinglePassUnsupportedError (a NotImplementedError
+    subclass) and falls through to multi-pass with a structured warning.
+
+    Transition translation: ``step.slot.transition_in`` is the raw Gemini
+    vocabulary (whip-pan, zoom-in, dissolve, hard-cut, etc.). The
+    :func:`translate_transition` map collapses it to the internal xfade
+    family ({"none", "crossfade", "fade_black", "wipe_left", "wipe_right"}).
+    Unknown vocabulary falls back to "none" — silent degrade to hard-cut
+    is the right failure mode here (matches multi-pass behavior).
+    """
+    from app.pipeline.transitions import translate_transition  # noqa: PLC0415
+
+    inputs: list[SinglePassInput] = []
+    # ``transitions`` is appended alongside ``inputs`` so the invariant
+    # ``len(transitions) == len(inputs) - 1`` holds without a post-pass.
+    # Two gap shapes contribute "none":
+    #   - clip → color_hold (hard cut into the hold animation)
+    #   - color_hold → next clip (hard cut out; matches multi-pass
+    #     behavior at template_orchestrate.py:2204-2209 where
+    #     prev_had_interstitial forces transition_types[i] = "none")
+    transitions: list[str] = []
+
+    for plan, step in zip(plans, steps):
+        # Decide the transition INTO this clip. For slot 0 there's nothing
+        # before it. If the previous input was a color hold (an
+        # interstitial was appended at the end of the prior iteration), the
+        # hold IS the transition effect — hard-cut out. Otherwise apply
+        # the recipe's transition_in for this slot.
+        if inputs:
+            if inputs[-1].kind == "color_hold":
+                transitions.append("none")
+            else:
+                raw_transition = str(step.slot.get("transition_in", "none"))
+                transitions.append(translate_transition(raw_transition))
+
+        # Append the clip itself.
+        inputs.append(
+            SinglePassInput(
+                kind="clip",
+                clip_path=plan.clip_path,
+                start_s=plan.start_s,
+                end_s=plan.end_s,
+                speed_factor=plan.speed_factor,
+                aspect_ratio=plan.aspect_ratio,
+                output_fit=plan.output_fit,
+                color_trc=plan.color_trc,
+                color_hint=plan.color_hint,
+                has_audio=plan.has_audio,
+                has_grid=plan.has_grid,
+                grid_params={
+                    "grid_color": plan.grid_color,
+                    "grid_opacity": plan.grid_opacity,
+                    "grid_thickness": plan.grid_thickness,
+                    "grid_highlight_intersection": plan.grid_highlight_intersection,
+                    "grid_highlight_color": plan.grid_highlight_color,
+                    "grid_highlight_windows": plan.grid_highlight_windows,
+                }
+                if plan.has_grid
+                else {},
+            )
+        )
+
+        # Append color-hold interstitial AFTER this slot, if any.
+        slot_position = int(step.slot.get("position", plan.slot_idx + 1))
+        inter = interstitial_map.get(slot_position)
+        if inter is None:
+            continue
+        inter_type = inter.get("type", "")
+        if inter_type == "curtain-close":
+            raise SinglePassUnsupportedError(
+                f"slot {plan.slot_idx} has curtain-close interstitial; "
+                f"PNG-bar overlay lands in milestone 4"
+            )
+        if inter_type == "barn-door-open":
+            # Multi-pass renders barn-door-open as a color hold AT the
+            # interstitial position PLUS a PNG-bar opening animation on the
+            # head of the NEXT slot (template_orchestrate.py:2121
+            # `apply_barn_door_open_head`). M2 only models the color hold,
+            # which would silently drop the slot-head animation and ship
+            # output that's missing the hero reveal. No production template
+            # uses barn-door-open today, but match-cut + barn-door + speed-
+            # ramp shipped in PR #134 (v0.4.12.0) as first-class effects, so
+            # this gate is the future-proof. Lift it together with the
+            # curtain-close gate when M4 lands.
+            raise SinglePassUnsupportedError(
+                f"slot {plan.slot_idx} has barn-door-open interstitial; "
+                f"slot-head PNG-bar overlay lands in milestone 4"
+            )
+        # Other types (fade-black-hold, flash-white) → color hold input.
+        hold_color_hex = inter.get("hold_color", "#000000")
+        ffmpeg_color = "white" if hold_color_hex == "#FFFFFF" else "black"
+        # clip → hold transition is always hard cut; the hold animation
+        # itself is the effect.
+        transitions.append("none")
+        inputs.append(
+            SinglePassInput(
+                kind="color_hold",
+                hold_color=ffmpeg_color,
+                hold_s=float(inter.get("hold_s", 1.0)),
+            )
+        )
+
+    # Compute total output duration for parity script bridging. xfade
+    # transitions shorten this by their overlap duration, but the M2
+    # callsite only uses output_duration_s as a sanity check, not for
+    # bridging math (the FFmpeg filter graph computes its own timeline).
+    total_dur = 0.0
+    for inp in inputs:
+        if inp.kind == "clip":
+            total_dur += (inp.end_s - inp.start_s) / inp.speed_factor
+        else:
+            total_dur += inp.hold_s
+
+    return SinglePassSpec(
+        inputs=inputs,
+        transitions=transitions,
+        abs_pngs=abs_pngs or [],
+        abs_ass_paths=abs_ass_paths or [],
+        fonts_dir=fonts_dir,
+        output_duration_s=total_dur,
+    )
 
 
 def _assemble_clips(
@@ -1651,6 +2278,8 @@ def _assemble_clips(
     interstitials: list[dict] | None = None,
     base_output_path: str | None = None,
     output_fit: str = "crop",
+    force_single_pass: bool = False,
+    is_agentic: bool = False,
 ) -> None:
     """Assemble clips in slot order: plan, parallel-render, then join with transitions.
 
@@ -1668,14 +2297,20 @@ def _assemble_clips(
 
     beats = beat_timestamps_s or []
 
-    # User-provided subject takes priority over auto-detected
-    subject = user_subject or _consensus_subject(clip_metas)
+    # Subject comes ONLY from explicit user input — never from Gemini's
+    # clip-level metadata. Letting `clip_meta.detected_subject` become the
+    # substitution input via a majority-vote fallback caused job
+    # a1091488-09f6-4ce0-b92e-b1cc52695c9c (Rule of Thirds, 2026-05-13) to
+    # render "pilot in cockpit" in place of literal "The"/"Thirds". Templates
+    # that need a user subject must surface it through `inputs.location`;
+    # templates with literal text render literal.
+    subject = user_subject
     if subject:
-        log.info("subject_resolved", subject=subject, source="user" if user_subject else "auto")
+        log.info("subject_resolved", subject=subject, source="user")
 
     # Build lookup of interstitials by after_slot position
     interstitial_map: dict[int, dict] = {}
-    for inter in (interstitials or []):
+    for inter in interstitials or []:
         slot_pos = inter["after_slot"]
         if slot_pos in interstitial_map:
             log.warning(
@@ -1687,13 +2322,92 @@ def _assemble_clips(
         interstitial_map[slot_pos] = inter
 
     # ── Phase 1: plan all slots (sequential, pure math) ───────────────────
+    _phase_t0 = time.monotonic()
     plans, _clip_cursors, cumulative_s = _plan_slots(
-        steps, clip_id_to_local, clip_probe_map, beats,
-        clip_metas, global_color_grade, tmpdir,
+        steps,
+        clip_id_to_local,
+        clip_probe_map,
+        beats,
+        clip_metas,
+        global_color_grade,
+        tmpdir,
         output_fit=output_fit,
+        is_agentic=is_agentic,
     )
+    _phase_done("plan", _phase_t0, job_id=job_id, slots=len(plans))
+
+    # ── Gate: single-pass branch ──────────────────────────────────────────
+    # ``force_single_pass`` is the ONLY gate here — callers
+    # (_run_template_job, _run_rerender) have already resolved the env-level
+    # ``settings.single_pass_encode_enabled`` AND per-template
+    # ``template.single_pass_enabled`` into this kwarg. Unit tests that drive
+    # _assemble_clips directly set force_single_pass=True to opt in.
+    #
+    # When the spec build raises SinglePassUnsupportedError (curtain-close,
+    # barn-door-open, pre-burn PNGs), we catch and fall through to the
+    # multi-pass loop with a structured warning so engineers opting in via
+    # force_single_pass don't get cryptic failures on complex templates.
+    if force_single_pass:
+        try:
+            _phase_t0_sp = time.monotonic()
+            # M6: collect absolute-timestamp overlays and pre-generate the
+            # PNGs / ASS files BEFORE building the spec, so the spec carries
+            # ready-to-consume file paths and the filter graph can reference
+            # them by absolute timestamps. This mirrors how multi-pass calls
+            # _burn_text_overlays at the post-join stage; single-pass folds
+            # the same overlay set into the one filter_complex invocation.
+            #
+            # The orchestrator-side generation keeps _build_single_pass_spec
+            # filesystem-free, so unit tests don't need to mock PIL / libass.
+            abs_pngs, abs_ass_paths, fonts_dir = _generate_single_pass_overlays(
+                steps=steps,
+                plans=plans,
+                interstitial_map=interstitial_map,
+                clip_metas=clip_metas,
+                subject=subject,
+                tmpdir=tmpdir,
+                is_agentic=is_agentic,
+            )
+            spec = _build_single_pass_spec(
+                plans,
+                interstitial_map,
+                steps,
+                abs_pngs=abs_pngs,
+                abs_ass_paths=abs_ass_paths,
+                fonts_dir=fonts_dir,
+            )
+            # Single ffmpeg invocation — when overlays exist AND
+            # base_output_path is set, run_single_pass emits a 2-output
+            # command that shares the filter graph (one decode, two
+            # encodes). When no overlays exist, [base] == [vout]
+            # semantically; we copy the file after the render.
+            run_single_pass(spec, output_path, base_output_path=base_output_path)
+            if base_output_path and not (abs_pngs or abs_ass_paths):
+                shutil.copy2(output_path, base_output_path)
+            _phase_done(
+                "single_pass",
+                _phase_t0_sp,
+                job_id=job_id,
+                slots=len(plans),
+                inputs=len(spec.inputs),
+                abs_overlays=len(abs_pngs) + len(abs_ass_paths),
+            )
+            return
+        except SinglePassUnsupportedError as exc:
+            # Specific catch — only OUR explicit "feature not yet implemented"
+            # signals trigger fallback. A real NotImplementedError from some
+            # other library propagates up and fails the job loudly, instead
+            # of being silently swallowed into the multi-pass branch.
+            log.warning(
+                "single_pass_unsupported_fallback_to_multi",
+                reason=str(exc),
+                job_id=job_id,
+                slots=len(plans),
+            )
+            # Fall through to multi-pass.
 
     # ── Phase 2: render all slots in parallel via FFmpeg ──────────────────
+    _phase_t0 = time.monotonic()
     render_errors: list[Exception] = []
     with ThreadPoolExecutor(max_workers=_PARALLEL_RENDER_WORKERS) as pool:
         futures = {pool.submit(_render_planned_slot, p): p for p in plans}
@@ -1712,8 +2426,16 @@ def _assemble_clips(
         raise render_errors[0]
 
     log.info("parallel_render_complete", slots=len(plans))
+    _phase_done(
+        "render_parallel",
+        _phase_t0,
+        job_id=job_id,
+        slots=len(plans),
+        workers=_PARALLEL_RENDER_WORKERS,
+    )
 
     # ── Phase 3: post-render (curtain-close, interstitials, transitions) ──
+    _phase_t0 = time.monotonic()
     reframed_paths: list[str] = []
     slot_durations: list[float] = []
     transition_types: list[str] = []
@@ -1723,6 +2445,12 @@ def _assemble_clips(
     # transition INTO this slot must be hard-cut (the interstitial IS the
     # transition effect — adding an xfade from a solid color looks broken).
     prev_had_interstitial = False
+    # When the previous slot had a barn-door-open interstitial after it, the
+    # current slot's HEAD gets the opening animation. Tracked separately from
+    # the generic `prev_had_interstitial` because the head animation is a
+    # type-specific effect, not a shared interstitial concern.
+    prev_inter_type: str | None = None
+    prev_inter: dict | None = None
 
     for plan, step in zip(plans, steps):
         i = plan.slot_idx
@@ -1731,13 +2459,55 @@ def _assemble_clips(
         # Check if this slot has an interstitial AFTER it (curtain-close tail effect)
         slot_position = int(step.slot.get("position", i + 1))
         inter = interstitial_map.get(slot_position)
+
+        # If the PREVIOUS slot's interstitial was barn-door-open, apply the
+        # opening animation to the HEAD of this slot before it lands in the
+        # assembly. The matching black hold has already been inserted by
+        # `_insert_interstitial` in the prior loop iteration; this is the
+        # reveal that follows. Same encoder budget as curtain-close — the
+        # bars are a 4s PNG overlay on top of the slot's intro footage.
+        if prev_inter_type == "barn-door-open":
+            from app.pipeline.interstitials import (  # noqa: PLC0415
+                MIN_BARN_DOOR_ANIMATE_S,
+                apply_barn_door_open_head,
+            )
+
+            head_output = os.path.join(tmpdir, f"slot_{i}_barn_door.mp4")
+            try:
+                recipe_animate = (prev_inter or {}).get("animate_s")
+                door_anim = (
+                    recipe_animate if recipe_animate is not None else MIN_BARN_DOOR_ANIMATE_S
+                )
+                apply_barn_door_open_head(
+                    reframed,
+                    head_output,
+                    animate_s=door_anim,
+                )
+                reframed = head_output
+            except Exception as exc:
+                # Same re-raise rationale as curtain-close: a missing hero
+                # animation paired with the black hold reads as a hard cut
+                # to black, which is worse than a hard failure.
+                log.error("barn_door_open_head_failed", slot=i, error=str(exc))
+                raise RuntimeError(
+                    f"barn-door-open failed on slot {i}; refusing to ship a "
+                    f"video with a missing hero animation: {exc}"
+                ) from exc
         if inter and inter["type"] == "curtain-close":
             # ── PRE-BURN text onto slot BEFORE curtain ─────────────────
             # Tiki-style: text appears on video, curtain closes OVER both.
             # We burn text onto the reframed clip first, then apply curtain
             # on top, so the black bars cover the text as they sweep down.
             reframed = _pre_burn_curtain_slot_text(
-                reframed, step, plan.slot_target_dur, clip_metas, subject, i, tmpdir, inter,
+                reframed,
+                step,
+                plan.slot_target_dur,
+                clip_metas,
+                subject,
+                i,
+                tmpdir,
+                inter,
+                is_agentic=is_agentic,
             )
 
             # Apply curtain-close animation to the tail of this slot
@@ -1745,17 +2515,18 @@ def _assemble_clips(
                 MIN_CURTAIN_ANIMATE_S,
                 apply_curtain_close_tail,
             )
+
             tail_output = os.path.join(tmpdir, f"slot_{i}_curtain.mp4")
             try:
                 # Use recipe animate_s directly when explicitly set;
                 # only apply MIN_CURTAIN_ANIMATE_S as default fallback.
                 recipe_animate = inter.get("animate_s")
                 curtain_anim = (
-                    recipe_animate if recipe_animate is not None
-                    else MIN_CURTAIN_ANIMATE_S
+                    recipe_animate if recipe_animate is not None else MIN_CURTAIN_ANIMATE_S
                 )
                 apply_curtain_close_tail(
-                    reframed, tail_output,
+                    reframed,
+                    tail_output,
                     animate_s=curtain_anim,
                 )
                 reframed = tail_output
@@ -1790,12 +2561,18 @@ def _assemble_clips(
         # above) IS the full transition — skip the colour-hold clip so
         # nothing sits between the two slots and beat+scene align perfectly.
         prev_had_interstitial = bool(inter)
+        prev_inter_type = inter["type"] if inter else None
+        prev_inter = inter
         if inter:
             inter_hold = float(inter.get("hold_s", 1.0))
             if inter_hold > 0:
                 _insert_interstitial(
-                    inter, i, reframed_paths, slot_durations,
-                    transition_types, tmpdir,
+                    inter,
+                    i,
+                    reframed_paths,
+                    slot_durations,
+                    transition_types,
+                    tmpdir,
                 )
             else:
                 log.info("interstitial_skip_zero_hold", type=inter["type"], slot=i)
@@ -1807,16 +2584,29 @@ def _assemble_clips(
     if not reframed_paths:
         raise ValueError("No slots to assemble")
 
+    _phase_done(
+        "curtain_and_interstitials",
+        _phase_t0,
+        job_id=job_id,
+        post_render_clip_count=len(reframed_paths),
+        interstitial_count=len(interstitial_map),
+    )
+
     # Join slots (transitions or concat)
+    _phase_t0 = time.monotonic()
     joined_path = os.path.join(tmpdir, "joined.mp4")
     if len(reframed_paths) == 1:
         shutil.copy2(reframed_paths[0], joined_path)
     else:
         _join_or_concat(
-            reframed_paths, transition_types, slot_durations,
-            joined_path, tmpdir,
+            reframed_paths,
+            transition_types,
+            slot_durations,
+            joined_path,
+            tmpdir,
             has_interstitials=bool(interstitial_map),
         )
+    _phase_done("join", _phase_t0, job_id=job_id, clips=len(reframed_paths))
 
     # Debug: probe durations at each stage to trace truncation
     _joined_dur = _probe_duration(joined_path)
@@ -1834,9 +2624,14 @@ def _assemble_clips(
     # ── Post-join text overlays (absolute timestamps, deduplicated) ────
     # Collect overlays across ALL slots, convert to absolute timestamps,
     # and deduplicate so "Welcome to" appears once and persists.
+    _phase_t0 = time.monotonic()
     abs_overlays = _collect_absolute_overlays(
-        steps, original_slot_durations, clip_metas, subject,
+        steps,
+        original_slot_durations,
+        clip_metas,
+        subject,
         interstitial_map=interstitial_map,
+        is_agentic=is_agentic,
     )
     if abs_overlays:
         _burn_text_overlays(joined_path, abs_overlays, output_path, tmpdir)
@@ -1844,6 +2639,12 @@ def _assemble_clips(
         log.info("debug_post_burn_duration", burned_dur=_burned_dur)
     else:
         shutil.copy2(joined_path, output_path)
+    _phase_done(
+        "text_overlay",
+        _phase_t0,
+        job_id=job_id,
+        overlay_count=len(abs_overlays),
+    )
 
     # Eval harness: upload per-slot files for visual comparison
     if settings.eval_harness_enabled and job_id:
@@ -1877,7 +2678,17 @@ def _insert_interstitial(
     inter_path = os.path.join(tmpdir, f"interstitial_{slot_idx}_{inter_type}.mp4")
 
     try:
-        if inter_type in ("curtain-close", "fade-black-hold", "flash-white"):
+        # barn-door-open and curtain-close both insert a black hold here.
+        # The actual barn-door animation lives at the HEAD of slot N+1; the
+        # hold is the pause between the closed-doors moment (end of slot N)
+        # and the open-reveal (start of slot N+1). See the call site in
+        # _post_render_phase for the head-animation dispatch.
+        if inter_type in (
+            "curtain-close",
+            "barn-door-open",
+            "fade-black-hold",
+            "flash-white",
+        ):
             render_color_hold(inter_path, hold_s=hold_s, color=ffmpeg_color)
         else:
             log.warning("unknown_interstitial_type", type=inter_type)
@@ -2005,20 +2816,27 @@ def _join_or_concat(
 
     try:
         join_with_transitions(
-            group_files, boundary_transitions, group_durs, output_path,
+            group_files,
+            boundary_transitions,
+            group_durs,
+            output_path,
         )
     except Exception as exc:
         # Last-resort fallback: drop visual transitions, concat all original
         # slot files. Better to ship a hard-cut version than a 3s truncation.
         log.warning("transition_join_failed_falling_back", error=str(exc))
         _concat_demuxer(
-            reframed_paths, output_path, tmpdir,
+            reframed_paths,
+            output_path,
+            tmpdir,
             expected_duration_s=sum(slot_durations),
         )
 
 
 def _concat_demuxer(
-    reframed_paths: list[str], output_path: str, tmpdir: str,
+    reframed_paths: list[str],
+    output_path: str,
+    tmpdir: str,
     expected_duration_s: float | None = None,
 ) -> None:
     """FFmpeg concat demuxer — stream-copy when slot layouts match, else re-encode.
@@ -2054,11 +2872,16 @@ def _concat_demuxer(
     copy_tmp = output_path + ".copy.mp4"
     copy_cmd = [
         "ffmpeg",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", concat_list,
-        "-c", "copy",
-        "-movflags", "+faststart",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        concat_list,
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
         "-y",
         copy_tmp,
     ]
@@ -2067,6 +2890,7 @@ def _concat_demuxer(
     if copy_result.returncode == 0 and os.path.exists(copy_tmp) and os.path.getsize(copy_tmp) > 0:
         try:
             from app.pipeline.probe import probe_video  # noqa: PLC0415
+
             actual = probe_video(copy_tmp).duration_s
             if expected_duration_s is None:
                 expected = sum(probe_video(p).duration_s for p in reframed_paths)
@@ -2109,12 +2933,25 @@ def _concat_demuxer(
     # Fallback: full re-encode (the historical path).
     encode_cmd = [
         "ffmpeg",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", concat_list,
-        # ultrafast: shared-CPU workers crawl on preset=fast (24-slot Morocco
-        # was hitting ~9 min for transitions alone).
-        *_encoding_args(output_path, preset="ultrafast"),
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        concat_list,
+        # preset=fast (not ultrafast): ultrafast disables mb-tree, psy-rd,
+        # B-frames and trellis quant, which produces visible 16×16 macroblocking
+        # on smooth gradients (the BRAZIL/blue-canopy banding bug). PR #102/#105
+        # fixed this for the curtain-close encode (interstitials.py:59) but the
+        # same flip was never propagated to this concat fallback or to the
+        # downstream burn_text_overlays — so multi-encode banding still compounded
+        # into the final output. PR #105's --concurrency=1 (fly.toml) and PNG-
+        # overlay curtain (~10× faster) unlocked the CPU budget that previously
+        # forced ultrafast here. fast keeps psy-rd + mb-tree on shared-CPU workers
+        # without busting the 1200s timeout. Locked by tests/test_encoder_policy.py.
+        # Old comment, kept for archaeology: "ultrafast: shared-CPU workers crawl
+        # on preset=fast (24-slot Morocco was hitting ~9 min for transitions alone)."
+        *_encoding_args(output_path, preset="fast"),
     ]
     result = subprocess.run(encode_cmd, capture_output=True, timeout=1200, check=False)
     if result.returncode != 0:
@@ -2127,6 +2964,7 @@ def _collect_absolute_overlays(
     clip_metas: list | None,
     subject: str,
     interstitial_map: dict[int, dict] | None = None,
+    is_agentic: bool = False,
 ) -> list[dict]:
     """Collect text overlays across all slots with absolute video timestamps.
 
@@ -2190,12 +3028,30 @@ def _collect_absolute_overlays(
             ):
                 continue
 
-            # 1. Compute ov_start, ov_end from Gemini values
-            ov_start = cumulative_s + float(ov.get("start_s", 0.0))
-            ov_end = cumulative_s + float(ov.get("end_s", dur))
+            # 1. Compute ov_start, ov_end relative to the slot's start.
+            #
+            # For agentic templates with pct fields present, resolve_overlay_window
+            # scales the timings against the slot's actual rendered duration
+            # (which itself was computed from user clip durations in _plan_slots).
+            # For classic templates, or agentic recipes predating the pct schema,
+            # it returns the seconds fields unchanged.
+            from app.pipeline.agentic_timing import (  # noqa: PLC0415
+                resolve_overlay_window,
+            )
+
+            rel_start, rel_end = resolve_overlay_window(
+                ov,
+                dur,
+                is_agentic=is_agentic,
+            )
+            ov_start = cumulative_s + rel_start
+            ov_end = cumulative_s + rel_end
 
             # 2. Apply timing overrides — recipe can specify exact timestamps
-            # to correct Gemini's approximate timing (relative to slot start)
+            # to correct Gemini's approximate timing (relative to slot start).
+            # Overrides are always in seconds; they bypass the pct math
+            # because they exist precisely to bolt-on a manual correction
+            # the agent got wrong.
             if ov.get("start_s_override") is not None:
                 ov_start = cumulative_s + float(ov["start_s_override"])
             if ov.get("end_s_override") is not None:
@@ -2223,6 +3079,14 @@ def _collect_absolute_overlays(
             # Pass through font_family from admin recipe (overrides font_style)
             if ov.get("font_family"):
                 entry["font_family"] = ov["font_family"]
+            # Pass through cycle_fonts so per-overlay curated font-cycle lists
+            # (e.g. Waka Waka AFRICA's brush-only [Permanent Marker, Caveat
+            # Brush]) reach _resolve_cycle_fonts. Without this, the renderer's
+            # overlay.get("cycle_fonts") returns None and the cycle falls back
+            # to the global cycle_role=contrast pool, producing a sans/serif/
+            # script flicker the overlay author specifically opted out of.
+            if ov.get("cycle_fonts"):
+                entry["cycle_fonts"] = ov["cycle_fonts"]
             # Pass through spans for rich inline formatting
             if ov.get("spans"):
                 entry["spans"] = ov["spans"]
@@ -2239,24 +3103,34 @@ def _collect_absolute_overlays(
             # 4. Apply label config based on subject vs prefix detection.
             # Gemini inconsistently returns role="hook" for text that should
             # be role="label", so we also detect by sample_text content.
+            # Skipped for agentic templates — text_designer baked per-slot
+            # timing + accel into the overlay dict at build time, so the
+            # static _LABEL_CONFIG would just clobber the agent's choices.
             role = ov.get("role", "")
             sample_text = ov.get("sample_text", "")
             is_subject = _is_subject_placeholder(sample_text)
             is_label_like = (
                 role == "label" or is_subject or sample_text.lower().startswith("welcome")
             )
-            if is_label_like:
+            if is_label_like and not is_agentic:
                 config = _LABEL_CONFIG["subject" if is_subject else "prefix"]
                 # Only apply non-styling keys from config. Visual properties
                 # (text_size, font_style, text_color, effect) come from the
                 # recipe so the admin editor preview matches the render.
                 _STYLING_KEYS = {
-                    "text_size", "text_size_px", "font_style",
-                    "font_family", "text_color", "effect",
+                    "text_size",
+                    "text_size_px",
+                    "font_style",
+                    "font_family",
+                    "text_color",
+                    "effect",
                 }
                 entry.update(
-                    {k: v for k, v in config.items()
-                     if k not in ("start_s", "accel_at_s") and k not in _STYLING_KEYS}
+                    {
+                        k: v
+                        for k, v in config.items()
+                        if k not in ("start_s", "accel_at_s") and k not in _STYLING_KEYS
+                    }
                 )
 
                 # Timing override for first-slot labels only
@@ -2274,20 +3148,16 @@ def _collect_absolute_overlays(
 
             # 5. Inject font_cycle_accel_at_s with CLAMPED animate_s
             # so font cycling syncs with the visual curtain animation
-            if (
-                entry["effect"] == "font-cycle"
-                and inter
-                and inter.get("type") == "curtain-close"
-            ):
+            if entry["effect"] == "font-cycle" and inter and inter.get("type") == "curtain-close":
                 from app.pipeline.interstitials import (  # noqa: PLC0415
                     _CURTAIN_MAX_RATIO,
                     MIN_CURTAIN_ANIMATE_S,
                 )
+
                 # Use recipe animate_s directly when explicitly set
                 recipe_animate = inter.get("animate_s")
                 animate_s = (
-                    float(recipe_animate) if recipe_animate is not None
-                    else MIN_CURTAIN_ANIMATE_S
+                    float(recipe_animate) if recipe_animate is not None else MIN_CURTAIN_ANIMATE_S
                 )
                 # Apply same 60% clamp as apply_curtain_close_tail
                 animate_s = min(animate_s, dur * _CURTAIN_MAX_RATIO)
@@ -2372,7 +3242,8 @@ def _collect_absolute_overlays(
                 # phase entirely — the white overlay's end_s would extend
                 # over the red, and the renderer never gets the red value.
                 and prev.get("text_color") == ov.get("text_color")
-                and not prev.get("spans") and not ov.get("spans")
+                and not prev.get("spans")
+                and not ov.get("spans")
                 and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
             ):
                 # Merge: extend previous overlay's end time
@@ -2412,6 +3283,125 @@ def _collect_absolute_overlays(
     return result
 
 
+def _concat_escape(path: str) -> str:
+    """Escape a path for inclusion inside single-quoted `file '...'` directives
+    in the ffmpeg concat demuxer list. Per the concat-demuxer spec, a literal
+    single quote inside the quoted value is escaped by closing the quote,
+    emitting an escaped single quote, then reopening (`'\\''`). This is the
+    same trick POSIX shell quoting uses. Hardens us against any future tmpdir
+    or asset path that happens to contain an apostrophe — the legacy per-`-i`
+    path didn't have this risk because paths went straight through argv."""
+    return path.replace("'", "'\\''")
+
+
+def _build_preburn_inputs_and_graph(
+    clip_path: str,
+    png_configs: list[dict],
+    burned_path: str,
+    tmpdir: str,
+) -> tuple[list[str], list[str], str]:
+    """Build the input list and filter_complex parts for the pre-burn ffmpeg cmd.
+
+    Returns ``(ffmpeg_inputs, filter_parts, last_label)``. The caller composes
+    the final argv by prepending ``ffmpeg`` and appending ``-filter_complex
+    <joined> -map [last_label] -map 0:a? <_encoding_args(...)>``. _encoding_args
+    stays at the call site so the encoder-policy lock in
+    tests/test_encoder_policy.py keeps finding a single authoritative
+    invocation for `_pre_burn_curtain_slot_text`.
+
+    Two PNG-feeding strategies, selected per-call:
+
+    1. Font-cycle frames (filenames containing "fontcycle"): when there are
+       2+ of them, they stream through the **concat demuxer** as a single -i
+       input. Per-frame durations are copied verbatim from each config's
+       ``end_s - start_s``, which carries the slow-then-fast cadence from
+       ``_compute_font_cycle_frame_specs`` (recipe ``accel_at_s`` → slow
+       0.15 s/frame → fast 0.07 s/frame transition) into ffmpeg without
+       interpretation.
+
+       Why concat demuxer instead of one -i per frame: a 5.5 s curtain-close
+       slot with font-cycle emits ~57 PNGs at 170 px. Feeding all 57 as
+       separate -i inputs plus a 57-link overlay chain peaks at ~487 MB of
+       RGBA working set, which the 2 GB Fly worker SIGKILLs (verified on
+       machine 4d89590eb44587 with the production image: rc=-9 before, rc=0
+       after). The concat demuxer streams one frame at a time, so the working
+       set stays constant regardless of frame count. Job b6540038 (Dimples
+       Passport, location=Morocco) shipped without the MOROCCO font-cycle
+       because the previous all-inputs path OOMed and the silent fallback
+       below swallowed the failure.
+
+    2. Static overlays (single-frame PNGs from generate_text_overlay_png's
+       non-cycle branch) AND any single-frame "cycle" fallback (which happens
+       when ``_resolve_cycle_fonts`` returned <2 fonts): one -i per PNG with
+       its own ``enable='between(t,…)'`` clamp. Byte-identical to the pre-fix
+       path. Templates that never trigger the cycle branch see no change in
+       their ffmpeg invocation.
+    """
+    cycle = sorted(
+        (c for c in png_configs if "fontcycle" in os.path.basename(c["png_path"])),
+        key=lambda c: c["start_s"],
+    )
+    static = [c for c in png_configs if "fontcycle" not in os.path.basename(c["png_path"])]
+
+    ffmpeg_inputs: list[str] = ["-i", clip_path]
+    fc_parts: list[str] = ["[0:v]null[base]"]
+    prev = "base"
+    next_input_idx = 1  # ffmpeg input index for the next -i we add
+
+    # The concat demuxer requires 2+ entries to avoid the "single-frame
+    # duration collapses to 0" footgun documented at:
+    # https://trac.ffmpeg.org/wiki/Slideshow#Concatdemuxer
+    # If _render_font_cycle fell back to a single static PNG (insufficient
+    # fonts), it lands in the per-PNG branch below.
+    if len(cycle) >= 2:
+        concat_list_path = os.path.join(
+            tmpdir,
+            os.path.basename(burned_path) + ".cycle_concat.txt",
+        )
+        with open(concat_list_path, "w") as fh:
+            for c in cycle:
+                # Guard against zero/negative durations from a malformed spec
+                # — concat requires strictly positive durations.
+                dur = max(0.001, c["end_s"] - c["start_s"])
+                fh.write(f"file '{_concat_escape(c['png_path'])}'\n")
+                fh.write(f"duration {dur:.6f}\n")
+            # ffmpeg concat-demuxer quirk: the duration of the LAST listed
+            # file is ignored unless that file is re-listed immediately after.
+            # Without the re-listing the final cycle frame collapses to 0 ms
+            # and the cycle ends one quantum early (e.g. MOROCCO settles
+            # 0.07 s before the curtain meets the text).
+            fh.write(f"file '{_concat_escape(cycle[-1]['png_path'])}'\n")
+
+        cycle_start = cycle[0]["start_s"]
+        cycle_end = cycle[-1]["end_s"]
+        ffmpeg_inputs.extend(["-f", "concat", "-safe", "0", "-i", concat_list_path])
+        out_lbl = "fc"
+        fc_parts.append(
+            f"[{prev}][{next_input_idx}:v]overlay=0:0"
+            f":enable='between(t,{cycle_start:.3f},{cycle_end:.3f})'[{out_lbl}]"
+        )
+        prev = out_lbl
+        next_input_idx += 1
+        per_png_inputs = static
+    else:
+        # Legacy path. Byte-identical to the pre-fix code: one -i per PNG, one
+        # overlay link per PNG. Behavior unchanged for templates that don't
+        # produce cycle frames on their curtain-close slot.
+        per_png_inputs = png_configs
+
+    for j, c in enumerate(per_png_inputs):
+        ffmpeg_inputs.extend(["-i", c["png_path"]])
+        out_lbl = f"txt{j}"
+        fc_parts.append(
+            f"[{prev}][{next_input_idx}:v]overlay=0:0"
+            f":enable='between(t,{c['start_s']:.3f},{c['end_s']:.3f})'[{out_lbl}]"
+        )
+        prev = out_lbl
+        next_input_idx += 1
+
+    return ffmpeg_inputs, fc_parts, prev
+
+
 def _pre_burn_curtain_slot_text(
     clip_path: str,
     step,
@@ -2421,6 +3411,7 @@ def _pre_burn_curtain_slot_text(
     slot_idx: int,
     tmpdir: str,
     inter: dict | None = None,
+    is_agentic: bool = False,
 ) -> str:
     """Burn text overlays onto a slot clip BEFORE curtain-close is applied.
 
@@ -2485,22 +3476,40 @@ def _pre_burn_curtain_slot_text(
             # `font_cycle_rendered accelerated=False` despite recipe setting it.
             "font_cycle_accel_at_s": ov.get("font_cycle_accel_at_s"),
         }
+        # Pass through font_family + cycle_fonts so per-overlay curated font
+        # selection reaches the renderer. (Both fields are in _STYLING_KEYS
+        # below so the label-config update doesn't overwrite them — but they
+        # also need to be COPIED here first, since the literal entry dict
+        # above doesn't include them.)
+        if ov.get("font_family"):
+            entry["font_family"] = ov["font_family"]
+        if ov.get("cycle_fonts"):
+            entry["cycle_fonts"] = ov["cycle_fonts"]
 
         role = ov.get("role", "")
         sample_text = ov.get("sample_text", "")
         is_subject = _is_subject_placeholder(sample_text)
         is_label_like = role == "label" or is_subject or sample_text.lower().startswith("welcome")
-        if is_label_like:
+        # Agentic templates already have per-overlay styling baked in by
+        # text_designer at build time; skip the static override.
+        if is_label_like and not is_agentic:
             config = _LABEL_CONFIG["subject" if is_subject else "prefix"]
             # Recipe styling takes priority — only apply non-styling keys
             # from _LABEL_CONFIG so admin editor preview matches render.
             _STYLING_KEYS = {
-                "text_size", "text_size_px", "font_style",
-                "font_family", "text_color", "effect",
+                "text_size",
+                "text_size_px",
+                "font_style",
+                "font_family",
+                "text_color",
+                "effect",
             }
             entry.update(
-                {k: v for k, v in config.items()
-                 if k not in ("start_s", "accel_at_s") and k not in _STYLING_KEYS}
+                {
+                    k: v
+                    for k, v in config.items()
+                    if k not in ("start_s", "accel_at_s") and k not in _STYLING_KEYS
+                }
             )
 
             # Font-cycle acceleration synced with curtain animation
@@ -2509,10 +3518,10 @@ def _pre_burn_curtain_slot_text(
                     _CURTAIN_MAX_RATIO,
                     MIN_CURTAIN_ANIMATE_S,
                 )
+
                 recipe_animate = inter.get("animate_s")
                 animate_s = (
-                    float(recipe_animate) if recipe_animate is not None
-                    else MIN_CURTAIN_ANIMATE_S
+                    float(recipe_animate) if recipe_animate is not None else MIN_CURTAIN_ANIMATE_S
                 )
                 animate_s = min(animate_s, slot_dur * _CURTAIN_MAX_RATIO)
                 accel_at = slot_dur - animate_s
@@ -2534,40 +3543,61 @@ def _pre_burn_curtain_slot_text(
     if not png_configs:
         return clip_path
 
-    # Burn PNGs onto clip
+    # Burn PNGs onto clip. The input list and filter graph are built by a
+    # dedicated helper so font-cycle frames take the concat-demuxer path
+    # (constant-RAM, survives the 2 GB Fly worker) while statics keep the
+    # per-PNG path (byte-identical to the pre-fix code for templates that
+    # don't trigger cycle frames). See `_build_preburn_inputs_and_graph` for
+    # the OOM history and why the split is by filename.
     burned_path = os.path.join(tmpdir, f"slot_{slot_idx}_textburned.mp4")
-    cmd = ["ffmpeg", "-i", clip_path]
-    for cfg in png_configs:
-        cmd.extend(["-i", cfg["png_path"]])
-
-    fc_parts = ["[0:v]null[base]"]
-    prev = "base"
-    for j, cfg in enumerate(png_configs):
-        out = f"txt{j}"
-        fc_parts.append(
-            f"[{prev}][{j + 1}:v]overlay=0:0"
-            f":enable='between(t,{cfg['start_s']:.3f},{cfg['end_s']:.3f})'"
-            f"[{out}]"
-        )
-        prev = out
-
-    cmd.extend([
-        "-filter_complex", ";".join(fc_parts),
-        "-map", f"[{prev}]",
-        "-map", "0:a?",
-        *_encoding_args(burned_path, preset="ultrafast"),
-    ])
+    ffmpeg_inputs, fc_parts, last_label = _build_preburn_inputs_and_graph(
+        clip_path,
+        png_configs,
+        burned_path,
+        tmpdir,
+    )
+    cmd = [
+        "ffmpeg",
+        *ffmpeg_inputs,
+        "-filter_complex",
+        ";".join(fc_parts),
+        "-map",
+        f"[{last_label}]",
+        "-map",
+        "0:a?",
+        # preset=fast (not ultrafast): this slot is about to be re-encoded ONE
+        # MORE TIME by apply_curtain_close_tail_overlay (which already uses
+        # preset=fast + tune=film). If we encode here at ultrafast, the mb-tree/
+        # psy-rd losses are baked in BEFORE curtain-close runs, and the curtain
+        # encoder can't undo them — visible as banding on smooth gradients under
+        # the title text (Dimples slot 5 BRAZIL on the blue canopy). Locked by
+        # tests/test_encoder_policy.py. Per-slot wall-clock cost is small because
+        # the slot is short (typically 2-5s) and the overlay filter chain
+        # dominates encode time anyway.
+        *_encoding_args(burned_path, preset="fast"),
+    ]
 
     log.info("pre_burn_curtain_text", slot=slot_idx, overlays=len(png_configs))
     result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
     if result.returncode != 0:
-        log.warning(
+        # Hard fail. Mirrors curtain_close_tail_failed (above) and
+        # animated_overlay_failed (text_overlay.py) — recipe-defined hero
+        # overlays are not a "best effort" surface. Job b6540038 (Dimples
+        # Passport, location=Morocco) shipped without the MOROCCO font-cycle
+        # because the previous silent fallback returned `clip_path` here,
+        # then apply_curtain_close_tail ran on a textless slot. A failed job
+        # with `failure_reason=ffmpeg_failed` is strictly better than a
+        # "successful" job that lost the slot's hero word.
+        log.error(
             "pre_burn_curtain_text_failed",
             slot=slot_idx,
             rc=result.returncode,
-            stderr=result.stderr[-500:] if result.stderr else b"",
+            stderr=(result.stderr.decode(errors="replace")[-1500:] if result.stderr else ""),
         )
-        return clip_path  # fallback: no text, curtain still applied
+        raise RuntimeError(
+            f"pre-burn curtain text failed on slot {slot_idx} (rc={result.returncode}); "
+            f"refusing to ship a video with a missing recipe-defined hero overlay"
+        )
 
     return burned_path
 
@@ -2604,21 +3634,25 @@ def _burn_text_overlays(
         generate_text_overlay_png,
     )
 
-    static_overlays = [
-        o for o in overlays if o.get("effect") not in ASS_ANIMATED_EFFECTS
-    ]
-    animated_overlays = [
-        o for o in overlays if o.get("effect") in ASS_ANIMATED_EFFECTS
-    ]
+    static_overlays = [o for o in overlays if o.get("effect") not in ASS_ANIMATED_EFFECTS]
+    animated_overlays = [o for o in overlays if o.get("effect") in ASS_ANIMATED_EFFECTS]
 
     png_configs = (
-        generate_text_overlay_png(static_overlays, 999.0, tmpdir, slot_index=99)
+        generate_text_overlay_png(
+            static_overlays,
+            ABS_PASS_TIME_S,
+            tmpdir,
+            slot_index=ABS_PASS_SLOT_INDEX,
+        )
         if static_overlays
         else None
     ) or []
     ass_files = (
         generate_animated_overlay_ass(
-            animated_overlays, 999.0, tmpdir, slot_index=99,
+            animated_overlays,
+            ABS_PASS_TIME_S,
+            tmpdir,
+            slot_index=ABS_PASS_SLOT_INDEX,
         )
         if animated_overlays
         else None
@@ -2654,38 +3688,66 @@ def _burn_text_overlays(
         ass_filter_path = ass_path.replace(":", "\\:").replace("'", "\\'")
         out = f"ass{ass_files.index(ass_path)}"
         fc_parts.append(
-            f"[{prev}]subtitles='{ass_filter_path}'"
-            f":fontsdir='{fonts_dir_escaped}'[{out}]"
+            f"[{prev}]subtitles='{ass_filter_path}':fontsdir='{fonts_dir_escaped}'[{out}]"
         )
         prev = out
 
-    cmd.extend([
-        "-filter_complex", ";".join(fc_parts),
-        "-map", f"[{prev}]",
-        "-map", "0:a?",
-        # ultrafast: matches the speed bump made in _concat_demuxer. The
-        # joined input already has slot-boundary I-frames from the concat
-        # step, and the overlay filter chain dominates burn cost anyway —
-        # CRF 18 keeps quality high. preset=fast was timing out at 600s
-        # on 24-slot recipes; ultrafast finishes in well under a minute.
-        *_encoding_args(output_path, preset="ultrafast"),
-    ])
+    cmd.extend(
+        [
+            "-filter_complex",
+            ";".join(fc_parts),
+            "-map",
+            f"[{prev}]",
+            "-map",
+            "0:a?",
+            # preset=fast (not ultrafast): this is the FINAL encode pass —
+            # the bytes that ship to the user. ultrafast disables mb-tree,
+            # psy-rd, B-frames and trellis quant, which is exactly what
+            # protects smooth gradients (sky, dark canopy) from visible
+            # 16×16 macroblocking. The previous comment claimed "CRF 18 keeps
+            # quality high" but CRF only controls the rate target — preset
+            # controls which encoder features run. Without psy-rd + mb-tree,
+            # ultrafast produces blocky output regardless of CRF.
+            # The previous 600s timeout pressure on 24-slot recipes was at
+            # --concurrency=2; PR #105 dropped to --concurrency=1 (fly.toml)
+            # which gives ~2× more CPU per worker. Combined with the PNG-
+            # overlay curtain (10× faster than geq), per-slot encode budget
+            # absorbs preset=fast easily. Locked by tests/test_encoder_policy.py.
+            # Old comment, kept for archaeology: "ultrafast: matches the speed
+            # bump made in _concat_demuxer. preset=fast was timing out at 600s
+            # on 24-slot recipes; ultrafast finishes in well under a minute."
+            *_encoding_args(output_path, preset="fast"),
+        ]
+    )
 
+    # png_count is already a per-frame count: font-cycle overlays append one
+    # cfg per frame (up to MAX_FONT_CYCLE_FRAMES). A high png_count relative
+    # to static_overlay_count means a font-cycle overlay is exploding.
     log.info(
         "burn_text_overlays",
         png_count=len(png_configs),
         ass_count=len(ass_files),
+        static_overlay_count=len(static_overlays),
+        animated_overlay_count=len(animated_overlays),
     )
+    burn_t0 = time.monotonic()
     result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
+    burn_elapsed_ms = int((time.monotonic() - burn_t0) * 1000)
     if result.returncode != 0:
         log.warning(
             "burn_text_failed",
             rc=result.returncode,
+            elapsed_ms=burn_elapsed_ms,
             stderr=result.stderr.decode(errors="replace")[-500:],
         )
         shutil.copy2(input_path, output_path)
     else:
-        log.info("burn_text_done")
+        log.info(
+            "burn_text_done",
+            elapsed_ms=burn_elapsed_ms,
+            png_count=len(png_configs),
+            ass_count=len(ass_files),
+        )
 
 
 def _upload_eval_slots(
@@ -2824,7 +3886,9 @@ def _split_subject(subject: str, part: str) -> str:
 
 
 def _resolve_overlay_text(
-    role: str, clip_meta: "ClipMeta | None", overlay: dict,
+    role: str,
+    clip_meta: "ClipMeta | None",
+    overlay: dict,
     subject: str = "",
 ) -> str:
     """Resolve overlay text based on role, substituting detected subject.
@@ -2851,11 +3915,37 @@ def _resolve_overlay_text(
     substitution, so a partial typewriter beat reveals only "Mor" instead of
     the full "Morocco". Empty subject falls back to the literal text so admin
     previews still render.
+
+    `subject_substitute: False` on the overlay is an explicit opt-OUT that
+    pins the overlay to its literal `sample_text` and bypasses every
+    substitution path (subject_template, subject_part, AND the casing
+    heuristic). Used for templates with literal title-cased or all-caps
+    intros — e.g. Waka Waka's "This" / "is" / "AFRICA" — that the casing
+    heuristic would otherwise rewrite to the user's subject. Default
+    (None / missing / True) preserves existing behavior.
+
+    ⚠️  DO NOT READ FROM `clip_meta` IN THIS FUNCTION ⚠️
+    `clip_meta` is kept in the signature only because the two call sites
+    (`_collect_absolute_overlays`, `_pre_burn_curtain_slot_text`) thread it
+    through for legacy reasons. The earlier `clip_meta.hook_text` fallback
+    was removed after job a1091488 (Rule of Thirds, 2026-05-13) leaked
+    Gemini's per-clip description into rendered hook text. Reading ANY
+    field off `clip_meta` here re-opens that bug. `TestNoGeminiTextLeaks`
+    in tests/tasks/test_template_orchestrate.py pins this contract; if you
+    need a Gemini-derived field downstream, add an explicit per-overlay
+    opt-in (like `subject_template` / `subject_part`) so the leak surface
+    is declared in the recipe, not inferred from clip metadata.
     """
     sample = overlay.get("sample_text", "") or overlay.get("text", "")
 
     if role == "cta":
         return ""  # CTA text generated later by copy_writer
+
+    # Explicit literal opt-out beats every substitution path. Used by
+    # templates whose intro words are literal title-cased / all-caps text
+    # that the casing heuristic would otherwise misread as placeholders.
+    if overlay.get("subject_substitute") is False:
+        return sample
 
     # Explicit subject_template (typewriter/embedded) beats both subject_part
     # and the heuristic. Used for slots whose text is a sentence wrapping the
@@ -2887,45 +3977,23 @@ def _resolve_overlay_text(
     if subject and _is_subject_placeholder(sample):
         return _substitute_subject(sample, subject)
 
-    # If the template already has text for this overlay, USE IT.
-    # "Welcome to" means "Welcome to" — not clip hook_text.
-    if sample:
-        return sample
-
-    # Empty sample_text with hook role: use clip analysis hook text.
-    if role == "hook" and clip_meta and clip_meta.hook_text:
-        return clip_meta.hook_text
-
+    # The template defines the rendered text. Period. There is no fallback to
+    # `clip_meta.hook_text` for empty hook overlays — that path leaked Gemini's
+    # per-clip description into the rendered video (e.g. "pilot in cockpit"
+    # over Rule of Thirds). A template author that wants the clip's hook
+    # description as text must opt in via subject_template/subject_part, the
+    # same explicit-intent surface Brazil uses for user-provided locations.
     return sample
 
 
-def _consensus_subject(clip_metas: list | None) -> str:
-    """Determine the consensus detected_subject across all analyzed clips.
-
-    Uses majority vote — the most common non-empty subject wins.
-    Returns empty string if no clips have a detected subject.
-    """
-    if not clip_metas:
-        return ""
-
-    subjects: dict[str, int] = {}
-    for meta in clip_metas:
-        s = (meta.detected_subject or "").strip()
-        if s:
-            # Normalize: lowercase for counting, keep original casing of first occurrence
-            key = s.lower()
-            subjects[key] = subjects.get(key, 0) + 1
-
-    if not subjects:
-        return ""
-
-    # Return the most common subject (original casing from first clip)
-    best_key = max(subjects, key=subjects.get)
-    for meta in clip_metas:
-        s = (meta.detected_subject or "").strip()
-        if s.lower() == best_key:
-            return s
-    return ""
+# Removed: _consensus_subject(clip_metas).
+# Took a majority vote across clips' Gemini `detected_subject` fields and
+# fed the result to the placeholder-substitution path when the user didn't
+# provide a subject. That fallback turned Gemini's per-clip analysis into
+# user-visible rendered text — caught when job a1091488 rendered "pilot in
+# cockpit" in place of "The"/"Thirds" on Rule of Thirds. Subject is now
+# user-input-only at every call site. Do NOT reintroduce; see the sentinel
+# test in tests/tasks/test_template_orchestrate.py.
 
 
 # ── Beat detection helpers ─────────────────────────────────────────────────────
@@ -2942,9 +4010,14 @@ def _detect_audio_beats(audio_path: str, threshold_db: float = -35.0) -> list[fl
     Non-fatal: returns [] on any error.
     """
     cmd = [
-        "ffmpeg", "-i", audio_path,
-        "-af", f"silencedetect=noise={threshold_db}dB:d=0.1",
-        "-f", "null", "-",
+        "ffmpeg",
+        "-i",
+        audio_path,
+        "-af",
+        f"silencedetect=noise={threshold_db}dB:d=0.1",
+        "-f",
+        "null",
+        "-",
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=30, check=False)
@@ -2956,8 +4029,7 @@ def _detect_audio_beats(audio_path: str, threshold_db: float = -35.0) -> list[fl
         # Format: [silencedetect @ 0x...] silence_end: 1.234 | silence_duration: 0.567
         stderr_text = result.stderr.decode()
         beats = sorted(
-            float(m.group(1))
-            for m in re.finditer(r"silence_end:\s*([\d.]+)", stderr_text)
+            float(m.group(1)) for m in re.finditer(r"silence_end:\s*([\d.]+)", stderr_text)
         )
         log.info("beat_detect_done", count=len(beats))
         return beats
@@ -3073,12 +4145,18 @@ def _extract_template_audio(local_video_path: str, output_path: str) -> bool:
     Uses .m4a container (AAC in MP4) for broad FFmpeg compatibility.
     """
     cmd = [
-        "ffmpeg", "-i", local_video_path,
-        "-vn",          # no video
-        "-acodec", "aac",
-        "-b:a", "192k",
-        "-f", "mp4",    # force mp4 container (more compatible than raw ADTS .aac)
-        "-y", output_path,
+        "ffmpeg",
+        "-i",
+        local_video_path,
+        "-vn",  # no video
+        "-acodec",
+        "aac",
+        "-b:a",
+        "192k",
+        "-f",
+        "mp4",  # force mp4 container (more compatible than raw ADTS .aac)
+        "-y",
+        output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
     if result.returncode != 0:
@@ -3093,9 +4171,19 @@ def _extract_template_audio(local_video_path: str, output_path: str) -> bool:
 def _probe_duration(path: str) -> float:
     """Return the duration in seconds of a media file via ffprobe."""
     result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", path],
-        capture_output=True, timeout=10, check=False,
+        [
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+        ],
+        capture_output=True,
+        timeout=10,
+        check=False,
     )
     try:
         return float(result.stdout.strip())
@@ -3176,17 +4264,25 @@ def _mix_template_audio(
 
     cmd = [
         "ffmpeg",
-        "-i", video_path,
-        "-stream_loop", "-1",
-        "-i", audio_local,
-        "-map", "0:v",
-        "-map", "1:a",
-        "-c:v", "copy",
-        "-c:a", "aac",
+        "-i",
+        video_path,
+        "-stream_loop",
+        "-1",
+        "-i",
+        audio_local,
+        "-map",
+        "0:v",
+        "-map",
+        "1:a",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
         "-af",
         f"afade=t=out:st={fade_start}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",  # noqa: E501
         *(["-t", f"{use_duration:.3f}"] if use_duration > 0 else []),
-        "-y", output_path,
+        "-y",
+        output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
     if result.returncode != 0:
@@ -3212,9 +4308,7 @@ def _extract_transcript(clip_metas: list[ClipMeta], steps: list) -> str:
     """Concatenate transcripts from clips used in the assembly."""
     used_clip_ids = {step.clip_id for step in steps}
     parts = [
-        meta.transcript
-        for meta in clip_metas
-        if meta.clip_id in used_clip_ids and meta.transcript
+        meta.transcript for meta in clip_metas if meta.clip_id in used_clip_ids and meta.transcript
     ]
     return " ".join(parts)[:500]
 
@@ -3319,9 +4413,7 @@ def _build_fixed_intro_ass(
             .replace("}", "\\}")
             .replace("\n", "\\N")
         )
-        lines.append(
-            f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{text}\n"
-        )
+        lines.append(f"Dialogue: 0,{start},{end},Caption,,0,0,0,,{text}\n")
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.writelines(lines)
@@ -3352,28 +4444,43 @@ def _render_intro_with_captions(
 
     cmd = [
         "ffmpeg",
-        "-f", "lavfi",
-        "-i", (
+        "-f",
+        "lavfi",
+        "-i",
+        (
             f"color=c={background_color}:"
             f"s={_FIXED_INTRO_WIDTH}x{_FIXED_INTRO_HEIGHT}:"
             f"d={intro_duration_s:.3f}:r={_FIXED_INTRO_FPS}"
         ),
-        "-vf", f"subtitles='{ass_filter_path}':fontsdir='{fonts_dir_escaped}'",
-        "-c:v", "libx264",
-        "-profile:v", "high",
-        "-preset", "fast",
-        "-crf", "18",
-        "-pix_fmt", "yuv420p",
+        "-vf",
+        f"subtitles='{ass_filter_path}':fontsdir='{fonts_dir_escaped}'",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
+        "-preset",
+        "fast",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
         # Pin color metadata so the concat-copy boundary with body.mp4
         # doesn't produce a sudden color shift on QuickTime/Safari/iOS.
-        "-color_range", "tv",
-        "-color_primaries", "bt709",
-        "-color_trc", "bt709",
-        "-colorspace", "bt709",
-        "-r", str(_FIXED_INTRO_FPS),
-        "-t", f"{intro_duration_s:.3f}",
+        "-color_range",
+        "tv",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-colorspace",
+        "bt709",
+        "-r",
+        str(_FIXED_INTRO_FPS),
+        "-t",
+        f"{intro_duration_s:.3f}",
         "-an",
-        "-movflags", "+faststart",
+        "-movflags",
+        "+faststart",
         "-y",
         out_path,
     ]
@@ -3408,25 +4515,41 @@ def _cut_body_segment(
     )
     cmd = [
         "ffmpeg",
-        "-ss", f"{start_s:.3f}",
-        "-t", f"{duration_s:.3f}",
-        "-i", src_video,
-        "-vf", vf,
-        "-c:v", "libx264",
-        "-profile:v", "high",
-        "-preset", "fast",
-        "-crf", "18",
-        "-pix_fmt", "yuv420p",
+        "-ss",
+        f"{start_s:.3f}",
+        "-t",
+        f"{duration_s:.3f}",
+        "-i",
+        src_video,
+        "-vf",
+        vf,
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
+        "-preset",
+        "fast",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
         # Match intro's color metadata so concat-copy doesn't produce a
         # sudden color shift at the boundary on QuickTime/Safari/iOS.
-        "-color_range", "tv",
-        "-color_primaries", "bt709",
-        "-color_trc", "bt709",
-        "-colorspace", "bt709",
-        "-r", str(_FIXED_INTRO_FPS),
-        "-vsync", "cfr",
+        "-color_range",
+        "tv",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-colorspace",
+        "bt709",
+        "-r",
+        str(_FIXED_INTRO_FPS),
+        "-vsync",
+        "cfr",
         "-an",
-        "-movflags", "+faststart",
+        "-movflags",
+        "+faststart",
         "-y",
         out_path,
     ]
@@ -3451,12 +4574,17 @@ def _concat_silent(segments: list[str], out_path: str, tmpdir: str) -> None:
 
     cmd = [
         "ffmpeg",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", list_path,
-        "-c", "copy",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        list_path,
+        "-c",
+        "copy",
         "-an",
-        "-movflags", "+faststart",
+        "-movflags",
+        "+faststart",
         "-y",
         out_path,
     ]
@@ -3483,12 +4611,17 @@ def _audio_energy_curve(
     """
     samples_per_bucket = int(bucket_s * 44100)
     cmd = [
-        "ffmpeg", "-i", user_video_path, "-vn",
+        "ffmpeg",
+        "-i",
+        user_video_path,
+        "-vn",
         "-af",
         f"asetnsamples={samples_per_bucket},"
         "astats=metadata=1:reset=1,"
         "ametadata=print:key=lavfi.astats.Overall.RMS_level",
-        "-f", "null", "-",
+        "-f",
+        "null",
+        "-",
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
     if result.returncode != 0:
@@ -3546,8 +4679,7 @@ def _select_body_window_peak_anchored(
     user_dur = probe.duration_s
     if user_dur < _HARD_MIN_BODY_S:
         raise ValueError(
-            f"User video unusable: have {user_dur:.2f}s "
-            f"(need at least {_HARD_MIN_BODY_S:.1f}s)"
+            f"User video unusable: have {user_dur:.2f}s (need at least {_HARD_MIN_BODY_S:.1f}s)"
         )
 
     if user_dur < min_body_s:
@@ -3606,27 +4738,44 @@ def _extract_intro_from_template_video(
     )
     cmd = [
         "ffmpeg",
-        "-ss", "0",
-        "-t", f"{intro_duration_s:.3f}",
-        "-i", template_video_path,
-        "-vf", vf,
-        "-c:v", "libx264",
-        "-profile:v", "high",
-        "-preset", "fast",
-        "-crf", "18",
-        "-pix_fmt", "yuv420p",
-        "-color_range", "tv",
-        "-color_primaries", "bt709",
-        "-color_trc", "bt709",
-        "-colorspace", "bt709",
-        "-r", str(fps),
-        "-vsync", "cfr",
+        "-ss",
+        "0",
+        "-t",
+        f"{intro_duration_s:.3f}",
+        "-i",
+        template_video_path,
+        "-vf",
+        vf,
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
+        "-preset",
+        "fast",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-color_range",
+        "tv",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-colorspace",
+        "bt709",
+        "-r",
+        str(fps),
+        "-vsync",
+        "cfr",
         # Audio: pass through at source quality. Re-encoding here was
         # the first of TWO encode passes degrading the intro VO. The
         # composer below mixes it once more — that's the only encode
         # the intro audio should suffer, not two.
-        "-c:a", "copy",
-        "-movflags", "+faststart",
+        "-c:a",
+        "copy",
+        "-movflags",
+        "+faststart",
         "-y",
         out_path,
     ]
@@ -3732,32 +4881,53 @@ def _compose_intro_body_with_music(
 
     cmd = [
         "ffmpeg",
-        "-i", intro_path,
-        "-i", body_path,
-        "-i", music_path,
-        "-filter_complex", filter_complex,
-        "-map", "[v_out]",
-        "-map", "[a_out]",
-        "-c:v", "libx264",
-        "-profile:v", "high",
+        "-i",
+        intro_path,
+        "-i",
+        body_path,
+        "-i",
+        music_path,
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[v_out]",
+        "-map",
+        "[a_out]",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
         # ultrafast (was: fast). Matches the prior optimization in commit
         # 4c678fc which moved _concat_demuxer and _burn_text_overlays to
         # ultrafast for 3-5x faster encoding. Compose was missed in that
         # pass and was the bottleneck behind the 300s subprocess timeout
         # that bricked job ae43a33c on 2026-05-08.
-        "-preset", "ultrafast",
-        "-crf", "18",
-        "-pix_fmt", "yuv420p",
-        "-color_range", "tv",
-        "-color_primaries", "bt709",
-        "-color_trc", "bt709",
-        "-colorspace", "bt709",
-        "-r", str(_FIXED_INTRO_FPS),
-        "-vsync", "cfr",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-t", f"{total_dur:.3f}",
-        "-movflags", "+faststart",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-color_range",
+        "tv",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-colorspace",
+        "bt709",
+        "-r",
+        str(_FIXED_INTRO_FPS),
+        "-vsync",
+        "cfr",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-t",
+        f"{total_dur:.3f}",
+        "-movflags",
+        "+faststart",
         "-y",
         output_path,
     ]
@@ -3785,10 +4955,19 @@ def _probe_duration_for_compose(path: str) -> float:
     """Same as _probe_duration in intro_voiceover_mix; redeclared locally to
     avoid pulling that whole module into orchestrator scope just for one helper."""
     result = subprocess.run(
-        ["ffprobe", "-v", "quiet",
-         "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", path],
-        capture_output=True, timeout=10, check=False,
+        [
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+        ],
+        capture_output=True,
+        timeout=10,
+        check=False,
     )
     try:
         return float(result.stdout.strip())
@@ -3823,8 +5002,7 @@ def _select_body_window(
     user_dur = probe.duration_s
     if user_dur < target_duration_s:
         raise ValueError(
-            f"User video too short for body: have {user_dur:.2f}s, "
-            f"need ≥ {target_duration_s:.2f}s"
+            f"User video too short for body: have {user_dur:.2f}s, need ≥ {target_duration_s:.2f}s"
         )
 
     natural_start = max(0.0, (user_dur - target_duration_s) / 2.0)
@@ -3881,9 +5059,7 @@ def _select_body_window(
         return base_start, base_start + target_duration_s
 
     nearby = [c for c in eligible if abs(c - base_start) <= tolerance_s]
-    chosen = (
-        min(nearby, key=lambda c: abs(c - base_start)) if nearby else base_start
-    )
+    chosen = min(nearby, key=lambda c: abs(c - base_start)) if nearby else base_start
 
     log.info(
         "body_window_chosen",
@@ -3905,6 +5081,7 @@ def _run_single_video_job(
     voiceover_gcs_path: str | None,  # kept for backward compat; unused in v2
     user_subject: str,
     selected_platforms: list[str],
+    preview_mode: bool = False,
 ) -> None:
     """Render path for `template_kind="single_video"` — v2.
 
@@ -3927,8 +5104,7 @@ def _run_single_video_job(
         # the template's clip-count config is out of sync with its kind.
         raise _StageError(
             FAILURE_REASON_TEMPLATE_MISCONFIGURED,
-            "single_video templates expect exactly 1 user clip; "
-            f"got {len(clip_paths_gcs)}",
+            f"single_video templates expect exactly 1 user clip; got {len(clip_paths_gcs)}",
         )
 
     intro_duration_s = float(recipe_data.get("intro_duration_s", 10.5))
@@ -3957,6 +5133,7 @@ def _run_single_video_job(
     audio_health: list[str] = []
 
     with tempfile.TemporaryDirectory() as tmpdir:
+        _phase_t0 = time.monotonic()
         # [1] Download template's reference video (intro source).
         ref_video_local = os.path.join(tmpdir, "template_ref.mp4")
         with _stage(
@@ -3974,6 +5151,14 @@ def _run_single_video_job(
             job_id=job_id,
         ):
             download_to_file(clip_paths_gcs[0], user_local)
+
+        record_phase(
+            job_id,
+            PHASE_DOWNLOAD_CLIPS,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_ANALYZE_CLIPS,
+        )
+        _phase_t0 = time.monotonic()
 
         # [3] Pick body window (peak-anchored, variable length). A ValueError
         # here means the user's clip is unusable (too short, no audio, probe
@@ -4001,11 +5186,21 @@ def _run_single_video_job(
             raise
         body_dur = body_end - body_start
 
+        record_phase(
+            job_id,
+            PHASE_ANALYZE_CLIPS,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_ASSEMBLE,
+        )
+        _phase_t0 = time.monotonic()
+
         # [4] Extract intro from template reference (KEEPS audio).
         intro_path = os.path.join(tmpdir, "intro.mp4")
         with _stage("extract_intro", FAILURE_REASON_FFMPEG_FAILED, job_id=job_id):
             _extract_intro_from_template_video(
-                ref_video_local, intro_duration_s, intro_path,
+                ref_video_local,
+                intro_duration_s,
+                intro_path,
             )
 
         # [5] Cut body segment (silent, 9:16).
@@ -4021,7 +5216,9 @@ def _run_single_video_job(
             log.warning("fixed_intro_no_music_asset", template_id=template_id)
             audio_health.append("music_path_unset")
             with _stage(
-                "concat_silent", FAILURE_REASON_FFMPEG_FAILED, job_id=job_id,
+                "concat_silent",
+                FAILURE_REASON_FFMPEG_FAILED,
+                job_id=job_id,
             ):
                 _concat_silent([intro_path, body_path], final_path, tmpdir)
         else:
@@ -4035,10 +5232,14 @@ def _run_single_video_job(
                 music_ok = False
             if not music_ok:
                 with _stage(
-                    "concat_silent", FAILURE_REASON_FFMPEG_FAILED, job_id=job_id,
+                    "concat_silent",
+                    FAILURE_REASON_FFMPEG_FAILED,
+                    job_id=job_id,
                 ):
                     _concat_silent(
-                        [intro_path, body_path], final_path, tmpdir,
+                        [intro_path, body_path],
+                        final_path,
+                        tmpdir,
                     )
             else:
                 # compose returns False on timeout / ffmpeg non-zero. We
@@ -4068,8 +5269,18 @@ def _run_single_video_job(
                         job_id=job_id,
                     ):
                         _concat_silent(
-                            [intro_path, body_path], final_path, tmpdir,
+                            [intro_path, body_path],
+                            final_path,
+                            tmpdir,
                         )
+
+        record_phase(
+            job_id,
+            PHASE_ASSEMBLE,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_UPLOAD,
+        )
+        _phase_t0 = time.monotonic()
 
         # [7] Upload primary + base output. template_output.mp4 and
         # template_base.mp4 are byte-identical for this template family
@@ -4086,22 +5297,57 @@ def _run_single_video_job(
             video_url = upload_public_read(final_path, gcs_output_path)
             base_video_url = copy_object_signed_url(gcs_output_path, gcs_base_path)
 
+        record_phase(
+            job_id,
+            PHASE_UPLOAD,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_GENERATE_COPY,
+        )
+        _phase_t0 = time.monotonic()
+
         # [8] Generate copy. Hook text = the template's signature punchline.
-        hook_text = "How do you enjoy your life?"
-        from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
-        with _stage(
-            "generate_copy",
-            FAILURE_REASON_COPY_GENERATION_FAILED,
-            job_id=job_id,
-        ):
-            platform_copy, copy_status = generate_copy(
-                hook_text=hook_text,
-                transcript_excerpt="",
-                platforms=selected_platforms,
-                has_transcript=False,
-                template_tone="provocative",
-                job_id=job_id,
+        # Skipped under preview_mode (admin test tab): saves ~5-15s; the test
+        # tab doesn't render copy.
+        if preview_mode:
+            from app.pipeline.agents.copy_writer import (  # noqa: PLC0415
+                InstagramCopy,
+                PlatformCopy,
+                TikTokCopy,
+                YouTubeCopy,
             )
+
+            platform_copy = PlatformCopy(
+                tiktok=TikTokCopy(hook="", caption="", hashtags=[]),
+                instagram=InstagramCopy(hook="", caption="", hashtags=[]),
+                youtube=YouTubeCopy(title="", description="", tags=[]),
+            )
+            copy_status = "skipped_preview_mode"
+            log.info("copy_generation_skipped_preview", job_id=job_id)
+        else:
+            hook_text = "How do you enjoy your life?"
+            from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
+
+            with _stage(
+                "generate_copy",
+                FAILURE_REASON_COPY_GENERATION_FAILED,
+                job_id=job_id,
+            ):
+                platform_copy, copy_status = generate_copy(
+                    hook_text=hook_text,
+                    transcript_excerpt="",
+                    platforms=selected_platforms,
+                    has_transcript=False,
+                    template_tone="provocative",
+                    job_id=job_id,
+                )
+
+        record_phase(
+            job_id,
+            PHASE_GENERATE_COPY,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+            next_phase=PHASE_FINALIZE,
+        )
+        _phase_t0 = time.monotonic()
 
         # [9] Persist
         plan_data = {
@@ -4124,10 +5370,15 @@ def _run_single_video_job(
                 job.status = "template_ready"
                 job.assembly_plan = plan_data
                 if audio_health:
-                    job.error_detail = (
-                        f"audio assets unavailable: {','.join(audio_health)}"
-                    )
+                    job.error_detail = f"audio assets unavailable: {','.join(audio_health)}"
                 db.commit()
+
+        record_phase(
+            job_id,
+            PHASE_FINALIZE,
+            elapsed_ms=int((time.monotonic() - _phase_t0) * 1000),
+        )
+        mark_finished(job_id)
 
         log.info(
             "fixed_intro_template_done",
@@ -4194,8 +5445,7 @@ def orchestrate_single_video_job(self, job_id: str) -> None:
         _mark_failed(
             job_uuid,
             FAILURE_REASON_TIMEOUT,
-            f"Single-video job timed out "
-            f"(exceeded {_SINGLE_VIDEO_SOFT_TIMEOUT_S}s soft limit)",
+            f"Single-video job timed out (exceeded {_SINGLE_VIDEO_SOFT_TIMEOUT_S}s soft limit)",
         )
     except TemplateMismatchError as exc:
         log.error(
@@ -4231,10 +5481,17 @@ def _run_single_video_job_entry(job_id: str) -> None:
         template_id = job.template_id
         all_candidates = job.all_candidates or {}
         clip_paths_gcs = all_candidates.get("clip_paths", [])
-        user_subject = _resolve_user_subject(all_candidates)
+        user_subject = ((all_candidates.get("inputs") or {}).get("location") or "").strip()
         selected_platforms = job.selected_platforms or [
-            "tiktok", "instagram", "youtube",
+            "tiktok",
+            "instagram",
+            "youtube",
         ]
+        # Same admin test-tab preview flag the multi-video path reads. Default
+        # False; set only by admin.py create_test_job.
+        preview_mode = bool(all_candidates.get("preview_mode", False))
+
+    mark_started(job_id)
 
     if not template_id:
         raise _StageError(
@@ -4267,6 +5524,7 @@ def _run_single_video_job_entry(job_id: str) -> None:
         voiceover_gcs_path=voiceover_gcs_path,
         user_subject=user_subject,
         selected_platforms=selected_platforms,
+        preview_mode=preview_mode,
     )
 
 
@@ -4279,3 +5537,6 @@ def _mark_failed(job_uuid: uuid.UUID, reason: str, message: str) -> None:
             job.error_detail = message[:1000] if message else None
             job.failure_reason = reason
             db.commit()
+    # Clear current_phase and stamp finished_at so the progress UI shows a
+    # terminal state instead of frozen mid-phase. Best-effort and idempotent.
+    mark_failed_phase(job_uuid)

@@ -71,28 +71,31 @@ def presigned_put_url(
 
 
 def upload_public_read(local_path: str, object_path: str, content_type: str = "video/mp4") -> str:
-    """Upload a local file to GCS and return a signed URL valid for 7 days.
+    """Upload a local file to GCS and return a signed URL valid for 1 day.
 
-    Uses signed URLs instead of ACLs — compatible with uniform bucket-level access.
+    URL TTL matches the bucket lifecycle rule (infra/gcs-lifecycle.json): per-job
+    objects under dev-user/ and music-jobs/ are deleted at age 1 day, so a longer
+    URL TTL would point at a 404. Uses signed URLs instead of ACLs — compatible
+    with uniform bucket-level access.
     """
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     blob.upload_from_filename(local_path, content_type=content_type)
     return blob.generate_signed_url(
         version="v4",
-        expiration=datetime.timedelta(days=7),
+        expiration=datetime.timedelta(days=1),
         method="GET",
     )
 
 
 def upload_bytes_public_read(data: bytes, object_path: str, content_type: str = "image/jpeg") -> str:  # noqa: E501
-    """Upload raw bytes to GCS and return a signed URL valid for 7 days."""
+    """Upload raw bytes to GCS and return a signed URL valid for 1 day."""
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     blob.upload_from_string(data, content_type=content_type)
     return blob.generate_signed_url(
         version="v4",
-        expiration=datetime.timedelta(days=7),
+        expiration=datetime.timedelta(days=1),
         method="GET",
     )
 
@@ -120,7 +123,7 @@ def copy_object_signed_url(
     dst_blob = bucket.copy_blob(src_blob, bucket, dst_object_path)
     return dst_blob.generate_signed_url(
         version="v4",
-        expiration=datetime.timedelta(days=7),
+        expiration=datetime.timedelta(days=1),
         method="GET",
     )
 

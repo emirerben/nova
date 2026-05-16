@@ -317,10 +317,19 @@ class TestOrchestratePipelineHelpers:
 
 
 class TestPreBurnCurtainSlotText:
-    """Test _pre_burn_curtain_slot_text encodes intermediates with ultrafast."""
+    """Test _pre_burn_curtain_slot_text encodes with preset=fast (final-output
+    quality budget — see tests/test_encoder_policy.py and CLAUDE.md "Encoder
+    policy"). Prior policy used preset=ultrafast to fit Fly.io's 600s timeout
+    on 24-slot recipes; PR #105's --concurrency=1 + PNG-overlay curtain freed
+    enough CPU budget that fast fits. ultrafast disables mb-tree + psy-rd,
+    which made smooth blue-canopy gradients (Dimples slot 5 BRAZIL title)
+    show visible macroblocking — fixed by propagating fast here."""
 
-    def test_pre_burn_uses_ultrafast_preset(self):
-        """Intermediate clip must use preset=ultrafast to avoid 600s timeouts on Fly.io."""
+    def test_pre_burn_uses_fast_preset(self):
+        """Pre-curtain text burn must use preset=fast — the slot is about to be
+        re-encoded once more by curtain-close, so ultrafast losses would be
+        baked in before curtain-close can run. See app/pipeline/reframe.py:
+        _encoding_args.__doc__ for the full call-site audit."""
         import tempfile
 
         from app.tasks.template_orchestrate import _pre_burn_curtain_slot_text
@@ -370,8 +379,9 @@ class TestPreBurnCurtainSlotText:
         cmd = mock_run.call_args[0][0]
         assert "-preset" in cmd, f"No -preset flag in cmd: {cmd}"
         preset_idx = cmd.index("-preset")
-        assert cmd[preset_idx + 1] == "ultrafast", (
-            f"Expected ultrafast preset for intermediate, got: {cmd[preset_idx + 1]}"
+        assert cmd[preset_idx + 1] == "fast", (
+            f"Expected preset=fast (final-output quality budget — locked by "
+            f"tests/test_encoder_policy.py), got: {cmd[preset_idx + 1]}"
         )
 
 
@@ -429,9 +439,12 @@ class TestConcatDemuxerStreamCopyFallback:
         # Two subprocess.run calls: the failed stream-copy + the re-encode fallback.
         assert mock_run.call_count == 2
         last_cmd = mock_run.call_args_list[-1][0][0]
-        # The fallback uses _encoding_args which sets -preset ultrafast.
+        # The fallback uses _encoding_args which is locked to preset=fast for
+        # this call site (final-output quality budget). Locked by
+        # tests/test_encoder_policy.py — ultrafast here compounds banding
+        # because the bytes written are the bytes shipped.
         assert "-preset" in last_cmd
-        assert last_cmd[last_cmd.index("-preset") + 1] == "ultrafast"
+        assert last_cmd[last_cmd.index("-preset") + 1] == "fast"
         # And the rejected copy_tmp must have been cleaned up before the
         # fallback wrote its own output_path.
         assert not os.path.exists(copy_tmp)
@@ -470,15 +483,19 @@ class TestConcatDemuxerStreamCopyFallback:
 
 
 class TestConcatDemuxerPreset:
-    """_concat_demuxer uses preset=ultrafast for shared-CPU iteration speed."""
+    """_concat_demuxer fallback re-encode uses preset=fast — this is a
+    final-output path, the bytes get shipped to users. See
+    tests/test_encoder_policy.py for the policy, CLAUDE.md "Encoder policy"
+    for the rule, and app/pipeline/reframe.py:_encoding_args docstring for
+    the full call-site audit. ultrafast was the previous policy and produced
+    visible macroblocking on smooth gradients (the BRAZIL/blue-canopy bug);
+    PR #105 unlocked enough CPU budget that fast fits within the 1200s timeout.
+    """
 
-    def test_concat_uses_ultrafast_preset(self):
-        """Final concat must use preset=ultrafast to fit Fly.io's 600s ffmpeg
-        timeout on 24-slot recipes. CRF 18 and the 4M bitrate cap keep quality
-        in the visually-lossless band; the scenecut/I-frame benefit of
-        preset=fast was costing 9+ minutes per render — not worth it for
-        marginal seam quality.
-        """
+    def test_concat_uses_fast_preset(self):
+        """Concat fallback must use preset=fast so banding doesn't compound
+        through the final output. mb-tree + psy-rd (disabled by ultrafast)
+        are what protect smooth gradients from 16x16 macroblocking."""
         import tempfile
 
         from app.tasks.template_orchestrate import _concat_demuxer
@@ -503,8 +520,9 @@ class TestConcatDemuxerPreset:
         cmd = mock_run.call_args[0][0]
         assert "-preset" in cmd, f"No -preset flag in cmd: {cmd}"
         preset_idx = cmd.index("-preset")
-        assert cmd[preset_idx + 1] == "ultrafast", (
-            f"concat must use preset=ultrafast, got: {cmd[preset_idx + 1]}"
+        assert cmd[preset_idx + 1] == "fast", (
+            f"concat must use preset=fast (final-output quality budget — "
+            f"locked by tests/test_encoder_policy.py), got: {cmd[preset_idx + 1]}"
         )
 
 
@@ -1004,6 +1022,7 @@ class TestTemplateAudio:
 
         mock_template = MagicMock()
         mock_template.analysis_status = "ready"
+        mock_template.is_agentic = False
         mock_template.recipe_cached = {
             "shot_count": 1,
             "total_duration_s": 5.0,
@@ -1668,6 +1687,49 @@ class TestAssembleClipsTextOverlays:
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert result == []
 
+    def test_cycle_fonts_pass_through_to_renderer(self):
+        """REGRESSION: recipe-level `cycle_fonts` MUST reach the renderer
+        entry dict. Earlier the orchestrator's hand-rolled entry builder
+        didn't copy cycle_fonts, so _resolve_cycle_fonts fell back to the
+        global cycle_role=contrast pool, producing a sans/serif/script
+        flicker that overlay authors specifically opted out of. The Waka
+        Waka AFRICA overlay relies on this pass-through to render its
+        hand-drawn cycle (Permanent Marker, Caveat Brush, Shadows Into
+        Light, Kalam, Indie Flower, Architects Daughter)."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        africa_cycle = [
+            "Permanent Marker",
+            "Caveat Brush",
+            "Shadows Into Light",
+            "Kalam",
+            "Indie Flower",
+            "Architects Daughter",
+        ]
+        step = self._make_step_with_overlays(overlays=[{
+            "role": "label",
+            "start_s": 0.0,
+            "end_s": 2.4,
+            "position": "center",
+            "effect": "font-cycle",
+            "sample_text": "AFRICA",
+            "font_family": "Permanent Marker",
+            "cycle_fonts": list(africa_cycle),
+            "subject_substitute": False,
+            "text_color": "#FFD700",
+            "text_size_px": 250,
+        }])
+        result = _collect_absolute_overlays([step], [2.4], None, "Morocco")
+        assert len(result) == 1
+        entry = result[0]
+        # The cycle_fonts list must survive the orchestrator's field-copy
+        # logic and arrive at the renderer's entry dict intact.
+        assert entry.get("cycle_fonts") == africa_cycle
+        # font_family also propagates (separate but related bug class).
+        assert entry.get("font_family") == "Permanent Marker"
+        # Text doesn't get rewritten to "Morocco" because subject_substitute=False.
+        assert entry["text"] == "AFRICA"
+
     def test_curtain_close_slots_skipped_in_collect(self):
         """Curtain-close slot overlays are pre-burned, so skipped in _collect."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
@@ -1996,11 +2058,19 @@ class TestCrossSlotMerge:
 
 
 class TestResolveOverlayText:
-    def test_hook_role_uses_hook_text(self):
+    def test_empty_hook_overlay_does_not_leak_clip_meta_hook_text(self):
+        """REGRESSION: empty hook overlay MUST render empty — never fall
+        back to Gemini's `clip_meta.hook_text`. The earlier fallback
+        leaked Gemini's per-clip description into the rendered video
+        (job a1091488, Rule of Thirds, 2026-05-13)."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
-        meta = _make_clip_meta()
+        meta = _make_clip_meta()  # hook_text="test hook" populated
         result = _resolve_overlay_text("hook", meta, {})
-        assert result == "test hook"
+        assert result == "", (
+            "Gemini hook_text leaked into an empty overlay — the fallback "
+            "branch was reintroduced. See template_orchestrate.py's "
+            "_resolve_overlay_text and the 'pilot in cockpit' incident."
+        )
 
     def test_reaction_role_uses_sample_text(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
@@ -2113,6 +2183,108 @@ class TestSubjectSubstitution:
         from app.tasks.template_orchestrate import _is_subject_placeholder
         assert _is_subject_placeholder("Welcome to peru") is False
         assert _is_subject_placeholder("Welcome to") is False
+
+
+class TestSubjectSubstituteOptOut:
+    """`subject_substitute: False` pins an overlay to its literal sample_text.
+
+    REGRESSION coverage for the Waka Waka "Morocco appears instead of This"
+    bug. Without the opt-out, "This" (single title-cased word) and "AFRICA"
+    (all-caps) match `_is_subject_placeholder` and get rewritten to the
+    user's location. The opt-out is the explicit "this is literal text" flag
+    that templates with title-cased / all-caps intros must set.
+    """
+
+    def test_optout_beats_casing_heuristic_title_case(self):
+        """REGRESSION: 'This' is title-case and would otherwise match the
+        heuristic; opt-out must return the literal text."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {"sample_text": "This", "subject_substitute": False},
+            subject="Morocco",
+        )
+        assert result == "This"
+
+    def test_optout_beats_casing_heuristic_all_caps(self):
+        """REGRESSION: 'AFRICA' is all-caps and would otherwise be replaced
+        with 'MOROCCO'; opt-out must return the literal text."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {"sample_text": "AFRICA", "subject_substitute": False},
+            subject="Morocco",
+        )
+        assert result == "AFRICA"
+
+    def test_optout_beats_subject_template(self):
+        """`subject_template` would normally interpolate; opt-out wins."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {
+                "sample_text": "that one trip to AFRICA",
+                "subject_template": "that one trip to {subject}",
+                "subject_substitute": False,
+            },
+            subject="Morocco",
+        )
+        assert result == "that one trip to AFRICA"
+
+    def test_optout_beats_subject_part(self):
+        """`subject_part` would normally slice and substitute; opt-out wins."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {
+                "sample_text": "lon",
+                "subject_part": "first_half",
+                "subject_substitute": False,
+            },
+            subject="Paris",
+        )
+        assert result == "lon"
+
+    def test_optout_preserves_empty_subject_fallback(self):
+        """Opt-out returns the literal text regardless of subject value."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {"sample_text": "This", "subject_substitute": False},
+            subject="",
+        )
+        assert result == "This"
+
+    def test_missing_field_keeps_heuristic_behavior(self):
+        """REGRESSION GUARD: absence of subject_substitute means default
+        (substitute via heuristic) behavior is preserved — Dimples Passport
+        and similar templates still work."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None, {"sample_text": "PERU"}, subject="Tokyo",
+        )
+        assert result == "TOKYO"
+
+    def test_true_flag_keeps_heuristic_behavior(self):
+        """Explicit subject_substitute=True is functionally equivalent to
+        the field being absent — heuristic still applies."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {"sample_text": "PERU", "subject_substitute": True},
+            subject="Tokyo",
+        )
+        assert result == "TOKYO"
+
+    def test_optout_does_not_break_cta_role(self):
+        """CTA always returns empty regardless of overlay fields."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "cta", None,
+            {"sample_text": "click me", "subject_substitute": False},
+            subject="Tokyo",
+        )
+        assert result == ""
 
 
 class TestEmbeddedAllcapsToken:
@@ -2462,6 +2634,61 @@ class TestResolveOverlayTextSubjectTemplate:
         ov = {"subject_template": "that one trip to {subject}"}
         assert _resolve_overlay_text("label", None, ov, subject="New York") == \
             "that one trip to New York"
+
+
+class TestWakaWakaSubjectTemplate:
+    """Covers the shukran-Africa outro substitution backfilled by
+    scripts/backfill_waka_waka_location.py.
+
+    Shape mirrors what the backfill writes onto the prod outro overlay:
+        sample_text = "shukran Africa!"
+        subject_template = "shukran {subject}!"
+    Blank-input fallback resolves to sample_text (= "shukran Africa!"),
+    not the literal "Morocco" the template was originally built around.
+    """
+
+    def test_substitutes_user_location(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="Bali") == \
+            "shukran Bali!"
+
+    def test_empty_subject_falls_back_to_africa(self):
+        """Blank Location input → renders 'shukran Africa!' (per product spec)."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="") == \
+            "shukran Africa!"
+
+    def test_preserves_input_casing(self):
+        """Subject 'new york' → 'shukran new york!' — the subject_template
+        branch never auto-uppercases, unlike the heuristic AFRICA→BALI path."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="new york") == \
+            "shukran new york!"
+
+    def test_multi_word_location_preserved(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="New York") == \
+            "shukran New York!"
 
 
 # ── Timeout & error_detail tests ──────────────────────────────────────────────
@@ -3275,3 +3502,214 @@ class TestTemplateKindStrip:
         recipe = _build_recipe(recipe_data)
         assert recipe.shot_count == 3
         assert len(recipe.slots) == 3
+
+
+class TestRuleOfThirdsHookLiterals:
+    """REGRESSION: Rule of Thirds template — literal hook words must NOT be
+    substituted by the placeholder heuristic.
+
+    Production job a1091488-09f6-4ce0-b92e-b1cc52695c9c (2026-05-13) rendered
+    the hook with "pilot in cockpit" in place of "The" and "Thirds" because
+    those single title-cased words triggered _is_subject_placeholder() and the
+    seed script lacked the subject_substitute=False opt-out that PR #125 added
+    for Waka Waka. These tests pin every overlay in seed_rule_of_thirds.py so
+    a future edit that removes the flag fails CI instead of shipping.
+    """
+
+    @staticmethod
+    def _clip_meta_with_hook():
+        return ClipMeta(
+            clip_id="files/q5p2zfdeepuw",
+            transcript="",
+            hook_text="pilot in cockpit",
+            hook_score=7.0,
+            best_moments=[{
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "energy": 6.0,
+                "description": "pilot adjusts controls",
+            }],
+            clip_path="/tmp/clip.mp4",
+        )
+
+    def test_overlay_the_returns_literal(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        overlay = {
+            "role": "hook",
+            "text": "The",
+            "subject_substitute": False,
+        }
+        result = _resolve_overlay_text(
+            "hook", self._clip_meta_with_hook(), overlay, subject="Vieques",
+        )
+        assert result == "The"
+
+    def test_overlay_rule_of_returns_literal(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        overlay = {
+            "role": "hook",
+            "text": "Rule of",
+            "subject_substitute": False,
+        }
+        result = _resolve_overlay_text(
+            "hook", self._clip_meta_with_hook(), overlay, subject="Vieques",
+        )
+        assert result == "Rule of"
+
+    def test_overlay_thirds_returns_literal(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        overlay = {
+            "role": "hook",
+            "text": "Thirds",
+            "subject_substitute": False,
+        }
+        result = _resolve_overlay_text(
+            "hook", self._clip_meta_with_hook(), overlay, subject="Vieques",
+        )
+        assert result == "Thirds"
+
+    def test_seed_recipe_pins_optout_on_every_literal_overlay(self):
+        """Snapshot: every literal-text overlay produced by build_recipe() in
+        the Rule of Thirds seed script must carry subject_substitute=False —
+        regardless of which slot it lives in. Walking ALL slots (not just
+        slot_type=='hook') prevents a future edit that moves "Thirds" or
+        similar copy into a broll slot from silently bypassing the safety
+        contract.
+        """
+        from app.tasks.template_orchestrate import _is_subject_placeholder
+        from scripts.seed_rule_of_thirds import build_recipe
+        recipe = build_recipe()
+        hook_seen = False
+        for slot in recipe["slots"]:
+            for overlay in slot.get("text_overlays", []) or []:
+                text = overlay.get("text") or overlay.get("sample_text") or ""
+                if not text:
+                    continue
+                if not _is_subject_placeholder(text):
+                    # Heuristic doesn't match → no substitution risk → flag
+                    # not required.
+                    continue
+                if slot.get("slot_type") == "hook":
+                    hook_seen = True
+                assert overlay.get("subject_substitute") is False, (
+                    f"Rule of Thirds overlay {text!r} in slot "
+                    f"{slot.get('position')!r} ({slot.get('slot_type')!r}) is "
+                    "missing subject_substitute=False — see plan "
+                    "~/.claude/plans/the-rule-of-third-floating-thompson.md"
+                )
+        assert hook_seen, (
+            "Rule of Thirds seed produced no placeholder-shaped overlays in "
+            "any hook slot — the recipe shape has drifted from what this "
+            "test was designed to pin. Verify build_recipe() still emits "
+            "'The' / 'Rule of' / 'Thirds' style title text."
+        )
+
+
+class TestNoGeminiTextLeaks:
+    """Architectural invariant: Gemini's per-clip metadata MUST NOT become
+    user-visible rendered text. Subject substitution is fed exclusively by
+    explicit user input (inputs.location / legacy subject field).
+
+    These tests act as sentinels — they fail loudly if either Gemini-leak
+    path (the consensus-subject fallback or the empty-hook hook_text
+    fallback) is reintroduced. Both paths existed before 2026-05-13 and
+    produced "pilot in cockpit" on Rule of Thirds job a1091488.
+    """
+
+    def test_consensus_subject_function_removed(self):
+        """_consensus_subject took a majority vote across clip_meta
+        .detected_subject and fed the result into the substitution path.
+        Removing the function makes accidental reintroduction stand out
+        in a diff. Reintroducing the helper without updating this test
+        is a deliberate review event."""
+        from app.tasks import template_orchestrate
+        assert not hasattr(template_orchestrate, "_consensus_subject"), (
+            "_consensus_subject was reintroduced. This function lets "
+            "Gemini's clip_meta.detected_subject become subject-substitution "
+            "input when user_subject is empty — the exact bug that rendered "
+            "'pilot in cockpit' on Rule of Thirds. If a legitimate need for "
+            "majority-vote subject detection exists, gate it behind an "
+            "explicit per-template opt-in, not a default fallback."
+        )
+
+    def test_assemble_clips_call_site_uses_user_subject_only(self):
+        """Static check: the line in _assemble_clips that selects `subject`
+        must not call _consensus_subject. The fallback path was the
+        production bug; this test pins the code shape so a refactor
+        cannot silently reintroduce it."""
+        import inspect
+
+        from app.tasks import template_orchestrate
+        src = inspect.getsource(template_orchestrate._assemble_clips)
+        assert "_consensus_subject" not in src, (
+            "_assemble_clips references _consensus_subject — the Gemini "
+            "fallback is back. Replace with `subject = user_subject` only."
+        )
+
+    def test_assemble_clips_subject_does_not_consume_clip_metas(self):
+        """AST-based sentinel: walk _assemble_clips and assert that every
+        assignment to `subject` has a right-hand side that does NOT pipe
+        `clip_metas` into any function call.
+
+        The string-grep sibling test only catches the literal name
+        `_consensus_subject`. A refactor that renames the helper
+        (`_majority_subject`, `_subject_from_clips`, `_auto_detect_subject`)
+        would silently pass that test while reintroducing the same
+        Gemini-leak path. This AST check inspects the data flow instead
+        of the symbol name — any call that takes `clip_metas` as an
+        argument while computing `subject` trips the assertion.
+
+        Multi-specialist confirmed: testing + maintainability + security +
+        red-team all flagged the string-grep as evasion-prone.
+        """
+        import ast
+        import inspect
+
+        from app.tasks import template_orchestrate
+        src = inspect.cleandoc(inspect.getsource(template_orchestrate._assemble_clips))
+        tree = ast.parse(src)
+        fn = tree.body[0]
+        offenders: list[str] = []
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Assign):
+                continue
+            if not any(
+                isinstance(t, ast.Name) and t.id == "subject" for t in node.targets
+            ):
+                continue
+            # Walk the RHS; any function call that takes `clip_metas` as
+            # an argument is a Gemini-leak reintroduction.
+            for sub in ast.walk(node.value):
+                if not isinstance(sub, ast.Call):
+                    continue
+                call_args = list(sub.args) + [kw.value for kw in sub.keywords]
+                for arg in call_args:
+                    if isinstance(arg, ast.Name) and arg.id == "clip_metas":
+                        offenders.append(
+                            f"line {sub.lineno}: subject assignment calls "
+                            f"a function with `clip_metas` as an argument"
+                        )
+        assert not offenders, (
+            "_assemble_clips routes clip_metas into subject computation — "
+            "that's the exact Gemini-leak path PR (this commit) closed. "
+            f"Offenders: {offenders}. Subject must come from user_subject "
+            "only; do NOT derive it from clip-level Gemini analysis."
+        )
+
+    def test_resolve_overlay_text_does_not_return_hook_text(self):
+        """Even when role=='hook' and clip_meta.hook_text is rich and
+        sample is empty, the resolver must return empty — not the
+        Gemini-derived hook text. Pins the lack of the fallback branch."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        meta = ClipMeta(
+            clip_id="x",
+            transcript="",
+            hook_text="this is a Gemini description of the clip",
+            hook_score=8.0,
+            best_moments=[],
+        )
+        # Empty overlay, hook role, subject empty → must NOT leak hook_text.
+        assert _resolve_overlay_text("hook", meta, {}, subject="") == ""
+        # Even with a subject set, empty overlay with no placeholder field
+        # to interpolate into must NOT return hook_text.
+        assert _resolve_overlay_text("hook", meta, {}, subject="Tokyo") == ""
