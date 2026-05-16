@@ -165,10 +165,11 @@ class TemplateRecipeVersion(Base):
     # initial_analysis | reanalysis | manual_edit | remerge
     trigger: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
-    # Build wall-clock start. Paired with `created_at` (end), gives per-run
-    # latency without relying on Langfuse trace aggregation. NULL for rows
-    # written before migration 0022 (or by an orchestrator that crashed
-    # before setting it).
+    # Build wall-clock start, captured at WORKER pickup (not at button-click
+    # time — Celery queue-wait is excluded). Paired with `created_at` (end),
+    # gives per-run compute latency without relying on Langfuse trace
+    # aggregation. NULL for rows written before migration 0023 (or by an
+    # orchestrator that crashed before setting it).
     build_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
 
     template: Mapped["VideoTemplate"] = relationship(back_populates="recipe_versions")
