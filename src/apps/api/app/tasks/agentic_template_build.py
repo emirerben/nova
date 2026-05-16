@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 
 import redis as redis_lib
@@ -102,6 +103,9 @@ def _bake_text_designer_into_overlay(
         overlay["font_cycle_accel_at_s"] = float(designer_output.accel_at_s)
 
 
+_TEXT_DESIGNER_PARALLEL_CAP = 8
+
+
 def _run_text_designer_on_slots(
     slots: list[dict],
     copy_tone: str,
@@ -110,8 +114,13 @@ def _run_text_designer_on_slots(
 ) -> int:
     """Call text_designer for every label-like overlay; bake results in place.
 
-    Returns the number of overlays styled. Sequential — N ≤ ~20 calls per
-    template, each ~2-5s. Parallelize later if it bites.
+    Returns the number of overlays styled. Parallelized across a bounded pool
+    (`_TEXT_DESIGNER_PARALLEL_CAP`) because on a 20-overlay template a sequential
+    loop spent ~60s of single-threaded LLM wait per agentic reanalyze. Workers
+    only issue the LLM call; the main thread mutates each overlay dict after
+    `future.result()` so there is no shared-state contention. Per-overlay
+    `TerminalError` is isolated: the overlay keeps whatever `template_recipe`
+    set, and the rest of the batch still bakes.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
@@ -122,8 +131,8 @@ def _run_text_designer_on_slots(
 
     agent = TextDesignerAgent(default_client())
     ctx = RunContext(job_id=job_id)
-    baked = 0
 
+    work_items: list[tuple[dict, int, str, str, TextDesignerInput]] = []
     for slot in slots:
         slot_position = int(slot.get("position", 0)) or 1  # text_designer needs ≥ 1
         slot_type = str(slot.get("slot_type", "broll"))
@@ -131,8 +140,12 @@ def _run_text_designer_on_slots(
             kind = _classify_overlay(overlay)
             if kind is None:
                 continue
-            try:
-                out = agent.run(
+            work_items.append(
+                (
+                    overlay,
+                    slot_position,
+                    slot_type,
+                    kind,
                     TextDesignerInput(
                         slot_position=slot_position,
                         slot_type=slot_type,
@@ -140,12 +153,25 @@ def _run_text_designer_on_slots(
                         copy_tone=copy_tone,
                         creative_direction=creative_direction,
                     ),
-                    ctx=ctx,
                 )
+            )
+
+    if not work_items:
+        return 0
+
+    def _call(agent_input: TextDesignerInput) -> object:
+        return agent.run(agent_input, ctx=ctx)
+
+    baked = 0
+    with ThreadPoolExecutor(
+        max_workers=min(len(work_items), _TEXT_DESIGNER_PARALLEL_CAP),
+    ) as pool:
+        futures = {pool.submit(_call, item[4]): item for item in work_items}
+        for future in as_completed(futures):
+            overlay, slot_position, _slot_type, kind, _agent_input = futures[future]
+            try:
+                out = future.result()
             except TerminalError as exc:
-                # One agent failure shouldn't kill the whole build — the
-                # overlay keeps whatever template_recipe set. Log loudly so
-                # evals can spot systematic regressions per slot.
                 log.warning(
                     "text_designer_failed",
                     job_id=job_id,
