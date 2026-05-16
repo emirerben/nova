@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.23.0] - 2026-05-16
+
+### Fixed
+- **Single-word text overlays no longer disappear from rendered templates when Gemini returns the timing tuple swapped.** Investigation of the 6-second output on template `fdaf3bbc-…` ("not just luck") traced the missing opening "It's" reveal to one overlay where Gemini returned `start_s=3.0, end_s=0.88` — start after end. The validator in `_validate_slots` (`app/agents/template_recipe.py`) used to drop those overlays silently. It now attempts a salvage swap when both values are non-negative and `start_s` is inside the slot window, with a `template_overlay_timing_salvaged` warning so grep-able post-mortems are still possible. NaN/inf timings are dropped explicitly (they previously slipped every gate because all NaN comparisons return False), and salvage refuses to run when `target_duration_s` is missing or zero so the swapped values stay bounded.
+- **Failed Gemini clip analyses now leave a positive trace in `Job.phase_log`.** `_analyze_clips_parallel` (`app/tasks/template_orchestrate.py`) used to record a `gemini_analyze` sub-phase on success and nothing on failure — post-mortems were inferring failure from the *absence* of an entry. A new `gemini_analyze_failed` sub-phase carries `clip_idx`, `clip_path`, and a 200-char-truncated error string, so investigations can see exactly which clip fell through and why even when the Whisper fallback rescues the job. Same `record_sub_phases and job_id is not None` gating as the existing success path — no new noise on production jobs that didn't already opt in.
+
+### Tests
+- **12 new pytest cases.** `tests/agents/test_template_recipe_overlay_salvage.py` covers the salvage path (10 cases: inverted timing salvaged in-window, inverted with negative end dropped, inverted with start outside slot dropped, equal timing dropped, valid timing unchanged, prod regression fixture for the "It's" overlay, NaN/inf rejection, and two defense-in-depth cases that call `_validate_slots` directly to exercise the `slot_dur=0` cache-load path that `parse()` would otherwise refuse). `tests/tasks/test_template_orchestrate.py` adds 2 cases for the new `gemini_analyze_failed` sub-phase emission (asserts the event under `record_sub_phases=True`, asserts no event under the default). Existing `test_invalid_overlays_stripped` updated to use a genuinely unsalvageable timing (negative end) since the previous fixture is now legitimately preserved.
+
 ## [0.4.22.0] - 2026-05-16
 
 ### Added

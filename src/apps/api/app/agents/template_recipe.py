@@ -390,11 +390,48 @@ def _validate_slots(slots: list[dict[str, Any]], global_color_grade: str) -> Non
                 end = float(ov.get("end_s", 0.0) or 0.0)
             except (TypeError, ValueError):
                 continue
+            ov_text = ov.get("text") or ov.get("sample_text")
+            # Drop NaN/inf timings outright. `start >= end` returns False for
+            # NaN comparisons, so these would otherwise slip every downstream
+            # gate and reach the renderer.
+            if not (math.isfinite(start) and math.isfinite(end)):
+                log.warning(
+                    "template_overlay_non_finite_timing",
+                    text=ov_text,
+                    start_s=start,
+                    end_s=end,
+                )
+                continue
+            # Salvage inverted (start, end) tuples. Gemini occasionally returns
+            # the timing pair swapped — observed in prod on template
+            # fdaf3bbc-… where overlay "It's" came back as start=3.0 end=0.88.
+            # Require a known positive slot duration so both values stay
+            # bounded after the swap; anything weirder gets dropped below.
+            if start > end and end >= 0.0 and slot_dur > 0 and start <= slot_dur:
+                log.warning(
+                    "template_overlay_timing_salvaged",
+                    text=ov_text,
+                    original_start=start,
+                    original_end=end,
+                )
+                start, end = end, start
+                ov["start_s"] = start
+                ov["end_s"] = end
             if start >= end:
-                log.warning("template_overlay_bad_timing", start_s=start, end_s=end)
+                log.warning(
+                    "template_overlay_bad_timing",
+                    text=ov_text,
+                    start_s=start,
+                    end_s=end,
+                )
                 continue
             if slot_dur > 0 and start >= slot_dur:
-                log.warning("template_overlay_outside_slot", start_s=start, slot_dur=slot_dur)
+                log.warning(
+                    "template_overlay_outside_slot",
+                    text=ov_text,
+                    start_s=start,
+                    slot_dur=slot_dur,
+                )
                 continue
 
             # Agentic pct fields — additive, both required-together, range

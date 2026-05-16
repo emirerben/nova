@@ -315,6 +315,85 @@ class TestOrchestratePipelineHelpers:
         assert failed_count == 4
         assert len(metas) == 0
 
+    def test_gemini_failure_records_phase_log_event(self):
+        """Investigations of silent 6s outputs were inferring clip-analysis
+        failure from the absence of a `gemini_analyze` event. With this fix,
+        a Gemini failure positively records `gemini_analyze_failed` with
+        clip_idx + error so post-mortems can see exactly which clip fell
+        through, even when Whisper rescues the job."""
+        from app.tasks.template_orchestrate import _analyze_clips_parallel
+
+        file_refs = [MagicMock(), MagicMock()]
+        file_refs[0].name = "files/clip_0"
+        file_refs[1].name = "files/clip_1"
+        local_paths = ["/tmp/clip_0.mp4", "/tmp/clip_1.mp4"]
+
+        # First clip succeeds, second fails Gemini and Whisper rescues it.
+        def _mock_analyze(ref, **_kw):
+            if ref is file_refs[1]:
+                raise GeminiAnalysisError("boom")
+            return _make_clip_meta("clip_0")
+
+        from app.pipeline.transcribe import Transcript
+        whisper_transcript = Transcript(words=[], full_text="hello", low_confidence=False)
+
+        with (
+            patch("app.tasks.template_orchestrate.analyze_clip", side_effect=_mock_analyze),
+            patch("app.pipeline.transcribe.transcribe_whisper", return_value=whisper_transcript),
+            patch("app.tasks.template_orchestrate.record_sub_phase") as mock_record,
+        ):
+            metas, failed_count = _analyze_clips_parallel(
+                file_refs,
+                local_paths,
+                job_id="job-abc",
+                record_sub_phases=True,
+            )
+
+        assert failed_count == 0
+        assert len(metas) == 2  # second meta is degraded fallback
+
+        # Find the failure event among recorded sub-phases.
+        failure_calls = [
+            c for c in mock_record.call_args_list
+            if len(c.args) >= 3 and c.args[2] == "gemini_analyze_failed"
+        ]
+        assert len(failure_calls) == 1, (
+            f"expected one gemini_analyze_failed event, got "
+            f"{[c.args[2] for c in mock_record.call_args_list if len(c.args) >= 3]}"
+        )
+        call = failure_calls[0]
+        # Positional args: (job_id, phase, event_name)
+        assert call.args[0] == "job-abc"
+        # detail carries clip_idx + error string
+        detail = call.kwargs["detail"]
+        assert detail["clip_idx"] == 1
+        assert "boom" in detail["error"]
+        assert detail["clip_path"] == "clip_1.mp4"
+
+    def test_gemini_failure_not_logged_when_record_sub_phases_false(self):
+        """The diagnostic only fires under record_sub_phases — the legacy
+        path keeps zero new noise."""
+        from app.tasks.template_orchestrate import _analyze_clips_parallel
+
+        file_refs = [MagicMock()]
+        file_refs[0].name = "files/clip_0"
+        local_paths = ["/tmp/clip_0.mp4"]
+
+        from app.pipeline.transcribe import Transcript
+        whisper_transcript = Transcript(words=[], full_text="", low_confidence=True)
+
+        with (
+            patch(
+                "app.tasks.template_orchestrate.analyze_clip",
+                side_effect=GeminiAnalysisError("boom"),
+            ),
+            patch("app.pipeline.transcribe.transcribe_whisper", return_value=whisper_transcript),
+            patch("app.tasks.template_orchestrate.record_sub_phase") as mock_record,
+        ):
+            _analyze_clips_parallel(file_refs, local_paths)  # record_sub_phases default False
+
+        assert mock_record.call_count == 0
+
 
 class TestPreBurnCurtainSlotText:
     """Test _pre_burn_curtain_slot_text encodes with preset=fast (final-output
