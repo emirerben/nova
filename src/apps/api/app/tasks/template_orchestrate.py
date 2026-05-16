@@ -281,9 +281,10 @@ def analyze_template_task(self, template_id: str) -> None:
 
             file_ref = gemini_upload_and_wait(local_path)
             # Phase 2 perf: single-pass skips the inline `_extract_creative_direction`
-            # Gemini call (Pass 1). `creative_direction` ends up empty for the recipe;
-            # text_designer + clip_router accept that and use their own defaults.
-            # Tradeoff is documented in the Phase 2 PR. Set "two_pass" here to restore.
+            # Gemini call (Pass 1). `recipe.creative_direction` is still populated —
+            # it now comes from the structural JSON itself, set by `TemplateRecipeAgent`
+            # via `analyze_template_schema.txt` which requires the field. To restore
+            # the standalone Pass-1 call set "two_pass" here.
             recipe = analyze_template(
                 file_ref,
                 analysis_mode="single",

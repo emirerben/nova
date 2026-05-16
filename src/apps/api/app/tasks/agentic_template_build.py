@@ -316,10 +316,13 @@ def agentic_template_build_task(self, template_id: str) -> None:
 
             file_ref = gemini_upload_and_wait(local_path)
             # Phase 2 perf: single-pass skips the inline `_extract_creative_direction`
-            # Gemini call (Pass 1). `creative_direction` becomes empty for this build;
-            # downstream agents (text_designer, clip_router) accept an empty string and
-            # fall through to their own defaults. Tradeoff is documented in the Phase 2
-            # PR. To re-enable the two-pass recipe enrichment, set "two_pass" here.
+            # Gemini call (Pass 1). `recipe.creative_direction` is still populated —
+            # it now comes from the structural JSON itself, set by `TemplateRecipeAgent`
+            # via `analyze_template_schema.txt` which requires the field. Downstream
+            # agents (text_designer, clip_router, shot_ranker) read a real
+            # model-generated creative_direction in both regimes; what changes is just
+            # the source (recipe-embedded vs separate Pass-1 paragraph). To restore the
+            # standalone Pass-1 call set "two_pass" here.
             recipe = analyze_template(
                 file_ref,
                 analysis_mode="single",
