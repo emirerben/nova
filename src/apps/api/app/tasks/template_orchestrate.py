@@ -171,24 +171,6 @@ def _clip_id_to_path_map(
     return {meta.clip_id: paths[i] for i, meta in enumerate(clip_metas_ordered) if meta is not None}
 
 
-# REMOVE AFTER 2026-05-16 — see TODOS.md#fallback-removal
-def _resolve_user_subject(all_candidates: dict | None) -> str:
-    """Pull the user's subject (location) from the new inputs shape.
-
-    Falls back to the legacy `subject` field for jobs created before the
-    rename. Delete this fallback (and the inline call sites' REMOVE AFTER
-    blocks) on 2026-05-16; an xfail test in tests/pipeline forces the
-    issue.
-    """
-    ac = all_candidates or {}
-    raw = (ac.get("inputs") or {}).get("location") or ac.get("subject", "") or ""
-    # Strip whitespace at the boundary so a user submitting "  " (single space,
-    # Unicode whitespace, etc.) doesn't pass the `if subject` truthiness check
-    # downstream — that would route a blank string into `_substitute_subject`
-    # and render an empty overlay where the literal placeholder belongs.
-    return raw.strip()
-
-
 @contextmanager
 def _stage(name: str, on_fail: str, *, job_id: str) -> Iterator[None]:
     """Time + log a pipeline stage; classify uncaught exceptions.
@@ -535,7 +517,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         template_id = job.template_id
         all_candidates = job.all_candidates or {}
         clip_paths_gcs = all_candidates.get("clip_paths", [])
-        user_subject = _resolve_user_subject(all_candidates)
+        user_subject = ((all_candidates.get("inputs") or {}).get("location") or "").strip()
         selected_platforms = job.selected_platforms or ["tiktok", "instagram", "youtube"]
         # Admin test-tab fast preview. Skips visually-expensive interstitials
         # (curtain-close) and the copy-generation LLM call. Set by admin.py's
@@ -793,7 +775,8 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
 
         # [6] FFmpeg assemble.
         effective_single_pass = _resolve_effective_single_pass(
-            force_single_pass, template_single_pass,
+            force_single_pass,
+            template_single_pass,
         )
         _render_path = _resolve_render_path(effective_single_pass)
         log.info(
@@ -826,8 +809,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         assemble_interstitials = recipe.interstitials
         if preview_mode and assemble_interstitials:
             filtered = [
-                i for i in assemble_interstitials
-                if (i or {}).get("type") != "curtain-close"
+                i for i in assemble_interstitials if (i or {}).get("type") != "curtain-close"
             ]
             if len(filtered) != len(assemble_interstitials):
                 log.info(
@@ -904,6 +886,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             hook_text = _extract_hook_text(clip_metas, assembly_plan.steps)
             transcript_excerpt = _extract_transcript(clip_metas, assembly_plan.steps)
             from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
+
             platform_copy, copy_status = generate_copy(
                 hook_text=hook_text,
                 transcript_excerpt=transcript_excerpt,
@@ -974,7 +957,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
     steps_data = plan.get("steps", [])
     template_id = job.template_id
     selected_platforms = job.selected_platforms or ["tiktok", "instagram", "youtube"]
-    user_subject = _resolve_user_subject(job.all_candidates)
+    user_subject = (((job.all_candidates or {}).get("inputs") or {}).get("location") or "").strip()
 
     # Load current recipe from DB (reflects user edits)
     with _sync_session() as db:
@@ -1047,7 +1030,8 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
 
         # FFmpeg assemble (clip_metas=None is safe — text comes from recipe)
         effective_single_pass = _resolve_effective_single_pass(
-            force_single_pass, template_single_pass,
+            force_single_pass,
+            template_single_pass,
         )
         _render_path = _resolve_render_path(effective_single_pass)
         log.info(
@@ -1965,7 +1949,8 @@ def _resolve_render_path(force_single_pass: bool) -> str:
 
 
 def _resolve_effective_single_pass(
-    force_single_pass: bool, template_single_pass: bool,
+    force_single_pass: bool,
+    template_single_pass: bool,
 ) -> bool:
     """Compute the effective single-pass decision from three inputs.
 
@@ -1983,9 +1968,7 @@ def _resolve_effective_single_pass(
     Reads :data:`settings.single_pass_encode_enabled` at call time, so a
     runtime env flip takes effect on the next job without a reload.
     """
-    return force_single_pass or (
-        settings.single_pass_encode_enabled and template_single_pass
-    )
+    return force_single_pass or (settings.single_pass_encode_enabled and template_single_pass)
 
 
 # Sentinel values passed to generate_text_overlay_png /
@@ -2055,14 +2038,20 @@ def _generate_single_pass_overlays(
     # drift here would split the parity contract silently.
     abs_pngs = (
         generate_text_overlay_png(
-            static_overlays, ABS_PASS_TIME_S, tmpdir, slot_index=ABS_PASS_SLOT_INDEX,
+            static_overlays,
+            ABS_PASS_TIME_S,
+            tmpdir,
+            slot_index=ABS_PASS_SLOT_INDEX,
         )
         if static_overlays
         else []
     ) or []
     abs_ass_paths = (
         generate_animated_overlay_ass(
-            animated_overlays, ABS_PASS_TIME_S, tmpdir, slot_index=ABS_PASS_SLOT_INDEX,
+            animated_overlays,
+            ABS_PASS_TIME_S,
+            tmpdir,
+            slot_index=ABS_PASS_SLOT_INDEX,
         )
         if animated_overlays
         else []
@@ -2254,8 +2243,8 @@ def _assemble_clips(
     # substitution input via a majority-vote fallback caused job
     # a1091488-09f6-4ce0-b92e-b1cc52695c9c (Rule of Thirds, 2026-05-13) to
     # render "pilot in cockpit" in place of literal "The"/"Thirds". Templates
-    # that need a user subject must surface it through `inputs.location`
-    # (see _resolve_user_subject); templates with literal text render literal.
+    # that need a user subject must surface it through `inputs.location`;
+    # templates with literal text render literal.
     subject = user_subject
     if subject:
         log.info("subject_resolved", subject=subject, source="user")
@@ -3572,7 +3561,10 @@ def _burn_text_overlays(
 
     png_configs = (
         generate_text_overlay_png(
-            static_overlays, ABS_PASS_TIME_S, tmpdir, slot_index=ABS_PASS_SLOT_INDEX,
+            static_overlays,
+            ABS_PASS_TIME_S,
+            tmpdir,
+            slot_index=ABS_PASS_SLOT_INDEX,
         )
         if static_overlays
         else None
@@ -5256,6 +5248,7 @@ def _run_single_video_job(
         else:
             hook_text = "How do you enjoy your life?"
             from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
+
             with _stage(
                 "generate_copy",
                 FAILURE_REASON_COPY_GENERATION_FAILED,
@@ -5410,7 +5403,7 @@ def _run_single_video_job_entry(job_id: str) -> None:
         template_id = job.template_id
         all_candidates = job.all_candidates or {}
         clip_paths_gcs = all_candidates.get("clip_paths", [])
-        user_subject = _resolve_user_subject(all_candidates)
+        user_subject = ((all_candidates.get("inputs") or {}).get("location") or "").strip()
         selected_platforms = job.selected_platforms or [
             "tiktok",
             "instagram",
