@@ -160,12 +160,31 @@ def get_cached_recipe(
         return None
 
 
+def _is_degraded_recipe(recipe: TemplateRecipe) -> bool:
+    """A recipe with no slots or zero shots is structurally unusable downstream
+    (the matcher needs slots; the renderer needs shot_count). These show up
+    when `analyze_template` recovers a partial JSON from Gemini and returns the
+    pydantic defaults instead of raising. Refusing to cache them mirrors
+    `clip_cache.set_cached_meta`'s `analysis_degraded`/`failed` gate — without
+    this guard a single bad reanalyze would pin a broken recipe for 30 days."""
+    return recipe.shot_count == 0 or not recipe.slots
+
+
 def set_cached_recipe(
     template_hash: str,
     analysis_mode: str,
     recipe: TemplateRecipe,
 ) -> None:
     """Write TemplateRecipe to cache. Best-effort — failures are logged, not raised."""
+    if _is_degraded_recipe(recipe):
+        log.warning(
+            "template_cache_skip_degraded_recipe",
+            template_hash=template_hash[:12],
+            analysis_mode=analysis_mode,
+            shot_count=recipe.shot_count,
+            slot_count=len(recipe.slots),
+        )
+        return
     r = _get_redis()
     if r is None:
         return

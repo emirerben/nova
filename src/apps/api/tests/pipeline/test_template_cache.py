@@ -278,7 +278,97 @@ def test_set_falls_open_on_redis_setex_error(monkeypatch):
     template_cache.set_cached_recipe("hash1", "single", _recipe())
 
 
+# ── degraded-recipe gate ─────────────────────────────────────────────────────
+
+
+def test_set_skips_recipe_with_no_slots(fake_redis):
+    """Empty slots = matcher has nothing to do = recipe is broken. Must not
+    enter the cache or it pins a useless recipe for 30 days."""
+    degraded = _recipe(slots=[], shot_count=5)
+    template_cache.set_cached_recipe("hash1", "single", degraded)
+    assert template_cache.get_cached_recipe("hash1", "single") is None
+
+
+def test_set_skips_recipe_with_zero_shot_count(fake_redis):
+    """shot_count == 0 is the structural signal that JSON recovery returned
+    a partial recipe with pydantic defaults instead of raising."""
+    degraded = _recipe(shot_count=0)
+    template_cache.set_cached_recipe("hash1", "single", degraded)
+    assert template_cache.get_cached_recipe("hash1", "single") is None
+
+
+def test_set_accepts_well_formed_recipe(fake_redis):
+    """The gate must NOT block legitimate recipes — the helper test_round_trip
+    already covers this implicitly, but make the contract explicit."""
+    healthy = _recipe(shot_count=7, slots=[{"position": 1, "slot_type": "hook"}])
+    template_cache.set_cached_recipe("hash1", "single", healthy)
+    assert template_cache.get_cached_recipe("hash1", "single") is not None
+
+
 # ── connection-pooling guarantee ─────────────────────────────────────────────
+
+
+# ── call-site integration contract ───────────────────────────────────────────
+
+
+def test_agentic_build_task_cache_check_precedes_gemini_upload():
+    """Phase 3 load-bearing contract: in `agentic_template_build_task`, the
+    cache lookup must run BEFORE `gemini_upload_and_wait`. If a future refactor
+    moves the upload outside the `if recipe is None:` guard, cache hits would
+    still pay the 30-60s upload cost — the cache becomes dead code.
+
+    This is a source-inspection test rather than a full-task integration test
+    because mocking the full agentic_template_build_task dependency chain
+    (~15 boundaries) for one assertion is more brittle than this pin.
+    """
+    import inspect
+
+    from app.tasks import agentic_template_build
+
+    src = inspect.getsource(agentic_template_build.agentic_template_build_task)
+    cache_call_idx = src.find("get_cached_recipe(")
+    upload_call_idx = src.find("gemini_upload_and_wait(")
+    assert cache_call_idx >= 0, "agentic build path must use get_cached_recipe"
+    assert upload_call_idx >= 0, "agentic build path must still have a fallback upload"
+    assert cache_call_idx < upload_call_idx, (
+        "get_cached_recipe must be called BEFORE gemini_upload_and_wait — "
+        "otherwise cache hits pay the upload cost and the cache is dead code"
+    )
+
+
+def test_manual_analyze_template_task_cache_check_precedes_gemini_upload():
+    """Same contract for the manual reanalyze path."""
+    import inspect
+
+    from app.tasks import template_orchestrate
+
+    src = inspect.getsource(template_orchestrate.analyze_template_task)
+    cache_call_idx = src.find("get_cached_recipe(")
+    upload_call_idx = src.find("gemini_upload_and_wait(")
+    assert cache_call_idx >= 0, "manual analyze path must use get_cached_recipe"
+    assert upload_call_idx >= 0, "manual analyze path must still have a fallback upload"
+    assert cache_call_idx < upload_call_idx, (
+        "get_cached_recipe must be called BEFORE gemini_upload_and_wait — "
+        "otherwise cache hits pay the upload cost and the cache is dead code"
+    )
+
+
+def test_agentic_build_task_caches_after_analyze():
+    """Phase 3 contract: the cache write must follow `analyze_template`, not
+    precede it (you can't cache what hasn't been computed). Source-inspection
+    pin for the same reason as the previous tests."""
+    import inspect
+
+    from app.tasks import agentic_template_build
+
+    src = inspect.getsource(agentic_template_build.agentic_template_build_task)
+    analyze_idx = src.find("analyze_template(")
+    set_idx = src.find("set_cached_recipe(")
+    assert analyze_idx >= 0
+    assert set_idx >= 0
+    assert analyze_idx < set_idx, (
+        "set_cached_recipe must follow analyze_template — caching empty data is a bug"
+    )
 
 
 def test_get_redis_returns_singleton(monkeypatch):
