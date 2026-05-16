@@ -125,7 +125,7 @@ class TemplateRecipeAgent(Agent[TemplateRecipeInput, TemplateRecipeOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.template_recipe",
         prompt_id="analyze_template_single",  # selected dynamically in render_prompt
-        prompt_version="2026-05-15",
+        prompt_version="2026-05-17",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -253,9 +253,34 @@ class TemplateRecipeAgent(Agent[TemplateRecipeInput, TemplateRecipeOutput]):
             sync_style = "freeform"
 
         # ── Interstitials ────────────────────────────────────────
+        # Pass the input's detected black_segments so the guard can drop
+        # interstitials Gemini hallucinated for shot boundaries where no
+        # dark frames actually exist. See the 24ac3408 incident (2026-05-15):
+        # Gemini emitted a fade-black-hold with hold_s=2.0 for a template
+        # with black_segments=[]. Pre-guard, the renderer faithfully built
+        # a 2-second fade-to-black in the middle of a continuous shot.
         interstitials = _validate_interstitials(
-            data.get("interstitials", []) or [], int(data.get("shot_count", 0) or 0)
+            data.get("interstitials", []) or [],
+            int(data.get("shot_count", 0) or 0),
+            black_segments=input.black_segments,
         )
+
+        # ── Recipe-validation guards (D2) ───────────────────────
+        # Merge duplicate adjacent-slot overlays so the same logical text
+        # doesn't restart on every slot boundary. Belt-and-braces with the
+        # render-time same-text merge in _collect_absolute_overlays: parsing
+        # the dedup at write time also cleans the stored recipe so future
+        # job-time logs are not flooded with merge events.
+        _dedup_overlays_across_slots(slots)
+
+        # F8 fix: enforce pct uniformity across the whole recipe. The
+        # renderer dispatches per overlay AND per slot on pct presence,
+        # so a recipe with pct on some slots/overlays but not others would
+        # produce mixed-mode output (some scaled, some legacy seconds in
+        # the same render). Make it all-or-nothing: if ANY pct field is
+        # missing anywhere, strip pct from EVERYTHING so the legacy path
+        # runs uniformly. Logged so the agent prompt gets feedback.
+        _enforce_pct_uniformity(slots)
 
         try:
             return TemplateRecipeOutput(
@@ -285,8 +310,39 @@ class TemplateRecipeAgent(Agent[TemplateRecipeInput, TemplateRecipeOutput]):
 
 
 def _validate_slots(slots: list[dict[str, Any]], global_color_grade: str) -> None:
-    """Normalize per-slot fields in place. Lifted verbatim from legacy code."""
+    """Normalize per-slot fields in place. Lifted verbatim from legacy code.
+
+    Also validates the agentic pct schema additively: `target_duration_pct`
+    on the slot and `start_pct` / `end_pct` on each overlay. These are
+    optional — classic recipes never carry them; agentic recipes emit both
+    seconds AND pct so the renderer can dispatch on `is_agentic` and still
+    have a legacy fallback when older agentic recipes lack pct fields.
+    """
     for slot in slots:
+        # target_duration_pct — agentic-only, optional, must be in (0, 1]
+        # when present. Dropped silently if invalid so the legacy
+        # target_duration_s path remains usable.
+        pct_raw = slot.get("target_duration_pct")
+        if pct_raw is not None:
+            try:
+                pct_val = float(pct_raw)
+                if 0.0 < pct_val <= 1.0:
+                    slot["target_duration_pct"] = pct_val
+                else:
+                    log.warning(
+                        "template_slot_target_pct_out_of_range",
+                        slot_position=slot.get("position"),
+                        pct=pct_val,
+                    )
+                    slot.pop("target_duration_pct", None)
+            except (TypeError, ValueError):
+                log.warning(
+                    "template_slot_target_pct_not_numeric",
+                    slot_position=slot.get("position"),
+                    raw=pct_raw,
+                )
+                slot.pop("target_duration_pct", None)
+
         # transition_in
         transition_in = slot.get("transition_in", "none")
         slot["transition_in"] = (
@@ -340,6 +396,34 @@ def _validate_slots(slots: list[dict[str, Any]], global_color_grade: str) -> Non
             if slot_dur > 0 and start >= slot_dur:
                 log.warning("template_overlay_outside_slot", start_s=start, slot_dur=slot_dur)
                 continue
+
+            # Agentic pct fields — additive, both required-together, range
+            # [0, 1] with start < end. Dropped from the overlay (not the
+            # whole overlay) if invalid; the seconds fields still let the
+            # overlay render. Agentic templates also emit start_s/end_s so
+            # this is purely about whether the pct precedence path is usable.
+            start_pct_raw = ov.get("start_pct")
+            end_pct_raw = ov.get("end_pct")
+            if start_pct_raw is not None or end_pct_raw is not None:
+                pct_ok = False
+                if start_pct_raw is not None and end_pct_raw is not None:
+                    try:
+                        s_pct = float(start_pct_raw)
+                        e_pct = float(end_pct_raw)
+                        if 0.0 <= s_pct < e_pct <= 1.0:
+                            ov["start_pct"] = s_pct
+                            ov["end_pct"] = e_pct
+                            pct_ok = True
+                    except (TypeError, ValueError):
+                        pass
+                if not pct_ok:
+                    log.warning(
+                        "template_overlay_pct_invalid",
+                        start_pct=start_pct_raw,
+                        end_pct=end_pct_raw,
+                    )
+                    ov.pop("start_pct", None)
+                    ov.pop("end_pct", None)
             ov["effect"] = (
                 ov.get("effect", "none") if ov.get("effect") in _VALID_OVERLAY_EFFECTS else "none"
             )
@@ -416,10 +500,29 @@ def _validate_text_bbox(
     return {"x_norm": x, "y_norm": y, "w_norm": w, "h_norm": h, "sample_frame_t": t}
 
 
-def _validate_interstitials(raw: list[Any], shot_count: int) -> list[dict[str, Any]]:
-    """Validate + normalize interstitial entries. Drops invalid ones silently."""
+def _validate_interstitials(
+    raw: list[Any],
+    shot_count: int,
+    *,
+    black_segments: list[BlackSegment] | None = None,
+) -> list[dict[str, Any]]:
+    """Validate + normalize interstitial entries. Drops invalid ones silently.
+
+    When `black_segments` is provided (D2 grounding guard), interstitials
+    that claim more than _MIN_GROUNDED_HOLD_S of black/white hold but have
+    no corresponding detected dark segment are dropped. This protects
+    against Gemini hallucinating fade-to-black transitions where none
+    exist in the source video, which would otherwise be rendered faithfully
+    as a literal blackout in the output (the 24ac3408 incident).
+
+    Interstitials with hold_s below the threshold pass through unfiltered —
+    those are rhythmic black-frame emphasis the agent may legitimately add
+    even without a measurable dark segment.
+    """
     if not isinstance(raw, list):
         return []
+
+    has_any_black = bool(black_segments) and len(black_segments) > 0
     validated: list[dict[str, Any]] = []
     for item in raw:
         if not isinstance(item, dict):
@@ -444,6 +547,31 @@ def _validate_interstitials(raw: list[Any], shot_count: int) -> list[dict[str, A
         hold_color = item.get("hold_color", "#000000")
         if hold_color not in ("#000000", "#FFFFFF"):
             hold_color = "#000000"
+
+        # D2 grounding guard — only enforced when the caller passed
+        # black_segments (i.e. we have FFmpeg-detected evidence to check
+        # against). If the input list is None, we behave as before.
+        #
+        # F4 fix: the guard only applies to interstitial types that ARE
+        # detectable in black_segments. flash-white is a WHITE frame, and
+        # barn-door-open is a reveal animation — neither would appear in
+        # black-segment detection. Without this scope, those legitimate
+        # interstitials with hold_s >= 0.5s were being silently dropped.
+        if (
+            black_segments is not None
+            and itype in _BLACK_FRAME_INTERSTITIAL_TYPES
+            and hold_s >= _MIN_GROUNDED_HOLD_S
+            and not has_any_black
+        ):
+            log.warning(
+                "interstitial_hallucinated_dropped",
+                type=itype,
+                after_slot=after_slot,
+                hold_s=hold_s,
+                reason="no detected black segment supports this transition",
+            )
+            continue
+
         validated.append(
             {
                 "after_slot": after_slot,
@@ -456,3 +584,155 @@ def _validate_interstitials(raw: list[Any], shot_count: int) -> list[dict[str, A
     if validated:
         log.info("interstitials_validated", count=len(validated))
     return validated
+
+
+def _enforce_pct_uniformity(slots: list[dict[str, Any]]) -> None:
+    """Strip pct fields from every slot+overlay if uniformity is broken.
+
+    Pct presence is all-or-nothing per recipe. The renderer dispatches on
+    `is_agentic + pct present` per slot and per overlay; a recipe with
+    pct on some slots and not others would render some slots scaled and
+    others at frozen seconds. That's worse than either pure mode because
+    the operator cannot predict slot durations.
+
+    Strategy: count what's there, then either keep all or strip all.
+    Slot-level pct and overlay-level pct are evaluated together — either
+    every slot has target_duration_pct AND every overlay has both
+    start_pct and end_pct, or nothing has pct.
+    """
+    if not slots:
+        return
+
+    slot_count = len(slots)
+    slots_with_pct = sum(1 for s in slots if s.get("target_duration_pct") is not None)
+
+    overlay_count = 0
+    overlays_with_pct = 0
+    for slot in slots:
+        for ov in slot.get("text_overlays", []):
+            overlay_count += 1
+            if ov.get("start_pct") is not None and ov.get("end_pct") is not None:
+                overlays_with_pct += 1
+
+    fully_pct = slots_with_pct == slot_count and (
+        overlay_count == 0 or overlays_with_pct == overlay_count
+    )
+    fully_legacy = slots_with_pct == 0 and overlays_with_pct == 0
+
+    if fully_pct or fully_legacy:
+        return
+
+    # Partial — strip pct everywhere so the legacy seconds path renders
+    # the entire recipe uniformly.
+    log.warning(
+        "template_pct_partial_stripped",
+        slots_with_pct=slots_with_pct,
+        slot_count=slot_count,
+        overlays_with_pct=overlays_with_pct,
+        overlay_count=overlay_count,
+        reason="pct fields present on some slots/overlays but not all — "
+        "stripped for uniform legacy rendering",
+    )
+    for slot in slots:
+        slot.pop("target_duration_pct", None)
+        for ov in slot.get("text_overlays", []):
+            ov.pop("start_pct", None)
+            ov.pop("end_pct", None)
+
+
+# Below this hold duration, we don't require a matching black_segment.
+# A 2-4 frame (~0.1s) black emphasis is a stylistic choice the editor may
+# add without it being a true fade. A 0.5s+ hold is structural and must be
+# anchored to actual dark frames in the source video.
+_MIN_GROUNDED_HOLD_S = 0.5
+
+# Only these interstitial types produce a black hold detectable by FFmpeg
+# black-segment detection. The other types in _VALID_INTERSTITIAL_TYPES
+# (flash-white, barn-door-open) are white or animated reveals and cannot
+# be cross-checked against black_segments — so the grounding guard skips
+# them entirely.
+_BLACK_FRAME_INTERSTITIAL_TYPES = {"fade-black-hold", "curtain-close"}
+
+
+def _dedup_overlays_across_slots(slots: list[dict[str, Any]]) -> None:
+    """Merge duplicate same-text overlays that span adjacent slots.
+
+    Catches the failure mode where Gemini fragments a logical overlay
+    ("being rich in life" reading 5s→24s of a continuous shot) across
+    two slot boundaries it shouldn't have introduced. The 24ac3408
+    16:35 recipe is the canonical case: slot 1 ends at 15s with text X,
+    slot 2 starts at 0s with text X — the renderer plays the same text
+    on both sides of an interstitial, producing a visual "restart".
+
+    Pairwise pass: for each (slot_i, slot_i+1), find overlays on slot_i+1
+    whose normalized sample_text and position match an overlay on slot_i.
+    EXTEND slot_i's overlay end_s to cover the duration the duplicate
+    occupied on slot_i+1, then drop the duplicate from slot_i+1. This
+    preserves designer intent (the text was meant to stay visible across
+    the boundary) and mirrors the renderer's existing same-text merge in
+    `_collect_absolute_overlays`. Both layers run for defence in depth.
+
+    Operates in place on `slots`. Logged so prompt regressions surface
+    in agent_evals.
+    """
+    if len(slots) < 2:
+        return
+
+    def _norm(s: Any) -> str:
+        return str(s or "").strip().lower()
+
+    for i in range(len(slots) - 1):
+        slot_a = slots[i]
+        slot_b = slots[i + 1]
+        overlays_a = slot_a.get("text_overlays", [])
+        overlays_b = slot_b.get("text_overlays", [])
+        if not overlays_a or not overlays_b:
+            continue
+        slot_a_dur = float(slot_a.get("target_duration_s", 0.0) or 0.0)
+        # Map (text, position) → reference to the slot_a overlay so we can
+        # extend its end_s when a duplicate is found on slot_b.
+        a_by_key: dict[tuple[str, str], dict[str, Any]] = {
+            (_norm(ov.get("sample_text")), str(ov.get("position", "center"))): ov
+            for ov in overlays_a
+            if _norm(ov.get("sample_text"))
+        }
+        if not a_by_key:
+            continue
+        kept_b: list[dict[str, Any]] = []
+        for ov in overlays_b:
+            key = (_norm(ov.get("sample_text")), str(ov.get("position", "center")))
+            ref_a = a_by_key.get(key)
+            if ref_a is None:
+                kept_b.append(ov)
+                continue
+            # Merge: extend slot_a's overlay so the cross-slot duration of
+            # this text reads as one continuous overlay. start stays put;
+            # end extends by however long the duplicate occupied on slot_b.
+            b_extra = max(
+                0.0, float(ov.get("end_s", 0.0) or 0.0) - float(ov.get("start_s", 0.0) or 0.0)
+            )
+            old_end_a = float(ref_a.get("end_s", slot_a_dur) or slot_a_dur)
+            new_end_a = old_end_a + b_extra
+            if new_end_a > old_end_a:
+                ref_a["end_s"] = new_end_a
+            # If the recipe carries pct fields too (agentic), extend the
+            # pct in the same proportion. Without this, the seconds and
+            # pct end values would diverge and the renderer's dispatch
+            # would produce different windows depending on is_agentic.
+            if "end_pct" in ref_a and slot_a_dur > 0:
+                try:
+                    new_end_pct = min(1.0, float(ref_a["end_pct"]) + b_extra / slot_a_dur)
+                    ref_a["end_pct"] = new_end_pct
+                except (TypeError, ValueError):
+                    pass
+            log.warning(
+                "template_overlay_dedup_merged",
+                slot_position=slot_b.get("position"),
+                sample_text=ov.get("sample_text"),
+                position=ov.get("position"),
+                merged_into_slot=slot_a.get("position"),
+                extra_s=round(b_extra, 3),
+                new_end_s_a=round(new_end_a, 3),
+                reason="same text+position on preceding slot, end extended",
+            )
+        slot_b["text_overlays"] = kept_b

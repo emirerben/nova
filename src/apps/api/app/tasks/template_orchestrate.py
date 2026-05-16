@@ -974,6 +974,11 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         # flag AND the env flag must both be true for a rerender to take
         # the single-pass path, unless force_single_pass overrides.
         template_single_pass = bool(template.single_pass_enabled)
+        # F1 fix: agentic flag must travel into _assemble_clips so the rerender
+        # path uses the same pct-vs-seconds dispatch as a fresh job. Without
+        # this, an admin recipe edit on an agentic template silently rendered
+        # via the legacy absolute-seconds path — same recipe, different output.
+        is_agentic = bool(template.is_agentic)
 
     try:
         recipe = _build_recipe(recipe_data)
@@ -1061,6 +1066,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
             base_output_path=base_path,
             output_fit=getattr(recipe, "output_fit", None) or "crop",
             force_single_pass=effective_single_pass,
+            is_agentic=is_agentic,
         )
 
         # Mix template audio if available
@@ -1785,15 +1791,64 @@ def _plan_slots(
     global_color_grade: str,
     tmpdir: str,
     output_fit: str = "crop",
+    *,
+    is_agentic: bool = False,
 ) -> tuple[list[SlotPlan], dict[str, float], float]:
     """Phase 1: sequential arithmetic to plan all slot renders.
 
     Returns (plans, clip_cursors, final_cumulative_s).
     No I/O — only cursor tracking, beat-snap, and speed ramp math.
+
+    When `is_agentic=True` and the recipe slots carry target_duration_pct,
+    per-slot target durations are computed from the sum of the user's clip
+    durations rather than the template's frozen seconds. See
+    app/pipeline/agentic_timing.resolve_slot_duration for the dispatch
+    matrix and lazy-migration fallback.
     """
+    from app.pipeline.agentic_timing import resolve_slot_duration  # noqa: PLC0415
+
     clip_cursors: dict[str, float] = {}
     cumulative_s = 0.0
     plans: list[SlotPlan] = []
+
+    # Agentic templates scale slot durations against the TOTAL user-clip
+    # duration (D4-B). Classic templates ignore this. We sum once up-front
+    # so resolve_slot_duration() is a pure dispatch.
+    #
+    # F2 fix: cap at the template's intended duration (sum of frozen
+    # target_duration_s across all slots = the template's analyzed length).
+    # Without the cap, 5 long user clips on a 24s TikTok template would
+    # blow the output to minutes; with the cap, the template's structural
+    # length is respected as a soft ceiling and shorter user content still
+    # scales down naturally.
+    user_total_dur_s = 0.0
+    if is_agentic:
+        seen_clip_paths: set[str] = set()
+        for step in steps:
+            local_path = clip_id_to_local.get(step.clip_id)
+            if not local_path or local_path in seen_clip_paths:
+                continue
+            seen_clip_paths.add(local_path)
+            probe = clip_probe_map.get(local_path)
+            if probe is not None and probe.duration_s > 0:
+                user_total_dur_s += float(probe.duration_s)
+
+        recipe_total_s = sum(
+            float(step.slot.get("target_duration_s", 0.0) or 0.0) for step in steps
+        )
+        capped = (
+            min(user_total_dur_s, recipe_total_s)
+            if recipe_total_s > 0 and user_total_dur_s > 0
+            else user_total_dur_s
+        )
+        log.info(
+            "agentic_plan_user_total_dur",
+            user_total_dur_s=round(user_total_dur_s, 2),
+            recipe_total_s=round(recipe_total_s, 2),
+            capped_at=round(capped, 2),
+            distinct_clips=len(seen_clip_paths),
+        )
+        user_total_dur_s = capped
 
     for i, step in enumerate(steps):
         clip_id = step.clip_id
@@ -1803,7 +1858,11 @@ def _plan_slots(
 
         probe = clip_probe_map.get(local_path)
         moment = step.moment
-        slot_target_dur = float(step.slot.get("target_duration_s", 5.0))
+        slot_target_dur = resolve_slot_duration(
+            step.slot,
+            is_agentic=is_agentic,
+            user_total_dur_s=user_total_dur_s,
+        )
         slot_target_dur = max(slot_target_dur, 0.5)
 
         is_locked = bool(step.slot.get("locked", False))
@@ -2273,6 +2332,7 @@ def _assemble_clips(
         global_color_grade,
         tmpdir,
         output_fit=output_fit,
+        is_agentic=is_agentic,
     )
     _phase_done("plan", _phase_t0, job_id=job_id, slots=len(plans))
 
@@ -2968,12 +3028,30 @@ def _collect_absolute_overlays(
             ):
                 continue
 
-            # 1. Compute ov_start, ov_end from Gemini values
-            ov_start = cumulative_s + float(ov.get("start_s", 0.0))
-            ov_end = cumulative_s + float(ov.get("end_s", dur))
+            # 1. Compute ov_start, ov_end relative to the slot's start.
+            #
+            # For agentic templates with pct fields present, resolve_overlay_window
+            # scales the timings against the slot's actual rendered duration
+            # (which itself was computed from user clip durations in _plan_slots).
+            # For classic templates, or agentic recipes predating the pct schema,
+            # it returns the seconds fields unchanged.
+            from app.pipeline.agentic_timing import (  # noqa: PLC0415
+                resolve_overlay_window,
+            )
+
+            rel_start, rel_end = resolve_overlay_window(
+                ov,
+                dur,
+                is_agentic=is_agentic,
+            )
+            ov_start = cumulative_s + rel_start
+            ov_end = cumulative_s + rel_end
 
             # 2. Apply timing overrides — recipe can specify exact timestamps
-            # to correct Gemini's approximate timing (relative to slot start)
+            # to correct Gemini's approximate timing (relative to slot start).
+            # Overrides are always in seconds; they bypass the pct math
+            # because they exist precisely to bolt-on a manual correction
+            # the agent got wrong.
             if ov.get("start_s_override") is not None:
                 ov_start = cumulative_s + float(ov["start_s_override"])
             if ov.get("end_s_override") is not None:
