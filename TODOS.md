@@ -132,6 +132,14 @@
 **Priority:** P2 — add before marketing drives volume
 **Depends on:** Usage baseline from real jobs
 
+### Content-aware `_fallback_moments()` (added 2026-05-16)
+**What:** Replace the three hardcoded `[0, min(clip_dur, 5/10/15)]` windows in `_fallback_moments()` (`app/tasks/template_orchestrate.py:1359`) with content-aware moments derived from the Whisper transcript — e.g., longest speech bursts, word-density peaks.
+**Why:** Current fallback is a last-resort code path that produces near-useless moments. For clips ≤ 5s all three windows collapse to identical `[0, clip_dur]`, leaving the matcher with no real choice. When the matcher picks a fallback clip the rendered slot is structurally weak. Surfaced during the v0.4.22.0 investigation — clip 3 of job `9ec8e5ff-…` was assigned its single collapsed `[0, 5]` fallback moment for a 10s slot, producing the 6s silent-failure output.
+**How:** Use the Whisper transcript already computed at `template_orchestrate.py:1321`. Score windows by speech density / longest contiguous phrase. Generate 2-3 candidates of different lengths so the matcher still has options.
+**Effort:** S (human: ~3h / CC: ~20 min)
+**Priority:** P3 — low-leverage if Gemini reliability stays high (the common case never hits fallback)
+**Depends on:** nothing — standalone PR
+
 ### Multiple Template Support
 **What:** Support different template structures for different content categories (tutorial vs. reaction vs. vlog).
 **Why:** v1 validates the single-template UX; after validation, multiple templates unlock more use cases.
@@ -196,6 +204,14 @@
 **Effort:** S (human: ~1 day / CC: ~15 min)
 **Priority:** P3 — after audio handling is understood
 **Depends on:** Template prompt improvement merged (for speed_factor data)
+
+### Agent text-overlay coverage for word-by-word templates (added 2026-05-16)
+**What:** Tighten the recipe agent prompt at `src/apps/api/prompts/analyze_template_single.txt` (and `analyze_template_pass2.txt`) so Gemini enumerates *all* text overlays, including brief single-word reveals in rapid kinetic-typography templates. Today the schema says "text_overlays is a list of **large text moments** visible during this slot" — permissive wording that lets Gemini drop short or overlapping reveals.
+**Why:** Investigation of job `9ec8e5ff-3adb-4de5-bde5-7cc7f6c1ec80` (template `fdaf3bbc-…` "not just luck") confirmed the source TikTok has more on-screen text than the 11 overlays the agent captured. The v0.4.22.0 salvage fix recovers individual overlays whose timing tuples were swapped, but does nothing about reveals Gemini omits entirely. Templates with rapid word-by-word kinetic typography (the most common viral format) lose entire reveals.
+**How:** Rewrite the schema/prompt wording to "Enumerate every visible text element, including single-word reveals and overlapping pairs." Add an eval-fixture assertion comparing overlay count against a hand-counted ground truth on `tests/fixtures/agent_evals/template_recipe/prod_snapshots/large_text.json`. Bump `prompt_version` in `template_recipe.py:128` per CLAUDE.md prompt-change rule and run `pytest tests/evals/template_recipe_evals.py -v --with-judge --eval-mode=live` before merge.
+**Effort:** S (human: ~2h / CC: ~30 min, plus live-eval wait)
+**Priority:** P2 — quality gap that survives the salvage fix; affects every text-heavy template
+**Depends on:** nothing — standalone PR
 
 ---
 
