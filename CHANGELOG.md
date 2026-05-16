@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.21.1] - 2026-05-16
+
+### Added
+- **Visual QA tool for the `song_sections` agent's output, inside the admin music-track detail page.** Each ranked section (1-3 per track) renders as a colored band above the beat strip — rank #1 in saturated violet on top, rank #2 mid-tone, rank #3 muted. A time ruler with adaptive tick spacing (5/10/20/30/60s depending on track length) sits above the bands so you can read timestamps at a glance. Hover any band to see the agent's `rationale`, `suggested_use`, and `mm:ss–mm:ss` range in a card below the SVG; click a band to seek audio to its `start_s` and play through `end_s`. A `sections v<version>` badge near "Re-analyze beats" shows the prompt-version each track was scored under (amber `no agent sections` when missing). The new "Music" link in the admin nav makes the gallery reachable without typing the URL.
+- **Two new fields on the admin music-track API response.** `GET /admin/music-tracks` and `GET /admin/music-tracks/{id}` now include `best_sections: list[SongSection] | None` and `section_version: str | None`. The columns landed in migration 0020 (PR #166); this PR is purely additive serialization plus per-row tolerance — strict `Literal` enums on `SongSection` mean any single drifted enum value (agent retry, manual psql edit, post-version-bump stale row) would otherwise cascade through the list endpoint and 500 the entire `/admin/music` page. `_to_response` now coerces sections row-by-row, drops + logs the bad ones, and lets the rest through.
+
+### Tests
+- **4 new pytest cases** locking the admin response shape: round-trips a fully-populated `best_sections` list through Pydantic, drops one bad row while keeping the good one, returns `None` when every row is malformed, and tolerates null fields. Test count for `test_admin_music.py`: 8 → 12.
+
 ## [0.4.21.0] - 2026-05-16
 
 ### Added
