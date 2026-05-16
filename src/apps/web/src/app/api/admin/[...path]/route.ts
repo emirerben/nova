@@ -8,7 +8,15 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 
-const API_BASE = process.env.API_URL ?? "http://localhost:8000";
+// Server-only `API_URL` takes precedence so deploys can decouple the admin
+// upstream from the public client bundle, but fall back to the same
+// `NEXT_PUBLIC_API_URL` the rest of the web app uses. Without this fallback,
+// a Vercel deploy that only sets `NEXT_PUBLIC_API_URL` (the documented var in
+// CLAUDE.md) drops every admin proxy call to localhost:8000 → ECONNREFUSED
+// → 502 "Backend unavailable" from the catch block below. Surfaced when the
+// new "Music" admin nav link prompted the first real prod hit on the proxy.
+const API_BASE =
+  process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 
 async function proxy(
