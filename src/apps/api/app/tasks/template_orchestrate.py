@@ -26,6 +26,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Iterator
@@ -1341,16 +1342,64 @@ def _add_locked_template_source(
 
 
 def _download_clips_parallel(gcs_paths: list[str], tmpdir: str) -> list[str]:
-    """Download all clips from GCS in parallel. Returns local file paths."""
-    local_paths = [os.path.join(tmpdir, f"clip_{i}.mp4") for i in range(len(gcs_paths))]
+    """Download all clips from GCS in parallel. Returns local file paths.
 
-    def _download_one(args: tuple[str, str]) -> str:
-        gcs_path, local_path = args
+    Emits a `clip_download_timing` structlog event with per-clip wall-clock,
+    size, and bandwidth proxy. Two consumers in mind:
+
+    1. **Validating the P5 (worker-local clip cache) assumption.** P5's
+       projected 4-8s savings per rerender assumes cold GCS-fetch dominates
+       the wall-clock. If real numbers show per-clip download is ~1-2s,
+       P5 isn't worth building. Numbers go into Langfuse via the
+       `PHASE_DOWNLOAD_CLIPS` phase event already wired at the callers,
+       and into Fly logs for ad-hoc grepping.
+
+    2. **Future perf regressions.** A GCS region change, a network blip, or
+       a Fly machine swap that hits a slow NIC will be visible per-clip.
+       Without this, only the aggregate parallel-bound wall-clock is logged.
+
+    The instrumentation cost is ~50 microseconds of `time.monotonic()` calls
+    per clip — negligible vs the second-scale download itself.
+    """
+    local_paths = [os.path.join(tmpdir, f"clip_{i}.mp4") for i in range(len(gcs_paths))]
+    per_clip_stats: list[dict] = []
+    stats_lock = threading.Lock()
+
+    def _download_one(args: tuple[int, str, str]) -> str:
+        idx, gcs_path, local_path = args
+        t0 = time.monotonic()
         download_to_file(gcs_path, local_path)
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        # Best-effort size read; failure to stat is non-fatal because the
+        # download already succeeded — we just lose the bytes-per-second
+        # signal for that clip.
+        try:
+            size_bytes = os.path.getsize(local_path)
+        except OSError:
+            size_bytes = -1
+        with stats_lock:
+            per_clip_stats.append({"idx": idx, "elapsed_ms": elapsed_ms, "size_bytes": size_bytes})
         return local_path
 
+    work_items = [(i, g, p) for i, (g, p) in enumerate(zip(gcs_paths, local_paths))]
     with ThreadPoolExecutor(max_workers=min(len(gcs_paths), 8)) as pool:
-        list(pool.map(_download_one, zip(gcs_paths, local_paths)))
+        list(pool.map(_download_one, work_items))
+
+    # Aggregate stats for a single log line that's easy to grep in Fly logs.
+    elapsed_list = [s["elapsed_ms"] for s in per_clip_stats]
+    sizes_known = [s["size_bytes"] for s in per_clip_stats if s["size_bytes"] >= 0]
+    total_bytes = sum(sizes_known) if sizes_known else None
+    log.info(
+        "clip_download_timing",
+        clip_count=len(gcs_paths),
+        max_workers=min(len(gcs_paths), 8),
+        per_clip_ms_max=max(elapsed_list) if elapsed_list else 0,
+        per_clip_ms_min=min(elapsed_list) if elapsed_list else 0,
+        per_clip_ms_mean=int(sum(elapsed_list) / len(elapsed_list)) if elapsed_list else 0,
+        total_ms_serial=sum(elapsed_list),
+        total_bytes=total_bytes,
+        per_clip=per_clip_stats,
+    )
 
     return local_paths
 
