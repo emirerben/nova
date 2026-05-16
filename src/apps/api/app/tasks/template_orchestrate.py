@@ -625,7 +625,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         # [2] Download all clip files in parallel
         _phase_t0 = time.monotonic()
-        local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
+        local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir, job_id=job_id)
         record_phase(
             job_id,
             PHASE_DOWNLOAD_CLIPS,
@@ -1028,7 +1028,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         gcs_paths_unique = list(dict.fromkeys(step["clip_gcs_path"] for step in steps_data))
 
         # Download only the used clips
-        local_clip_paths = _download_clips_parallel(gcs_paths_unique, tmpdir)
+        local_clip_paths = _download_clips_parallel(gcs_paths_unique, tmpdir, job_id=job_id)
         gcs_to_local = dict(zip(gcs_paths_unique, local_clip_paths))
 
         # Probe all clips
@@ -1341,7 +1341,12 @@ def _add_locked_template_source(
         )
 
 
-def _download_clips_parallel(gcs_paths: list[str], tmpdir: str) -> list[str]:
+def _download_clips_parallel(
+    gcs_paths: list[str],
+    tmpdir: str,
+    *,
+    job_id: str | None = None,
+) -> list[str]:
     """Download all clips from GCS in parallel. Returns local file paths.
 
     Emits a `clip_download_timing` structlog event with per-clip wall-clock,
@@ -1357,6 +1362,13 @@ def _download_clips_parallel(gcs_paths: list[str], tmpdir: str) -> list[str]:
     2. **Future perf regressions.** A GCS region change, a network blip, or
        a Fly machine swap that hits a slow NIC will be visible per-clip.
        Without this, only the aggregate parallel-bound wall-clock is logged.
+
+    `job_id` is passed into the structured log event so a slow-job debug
+    session can grep by job_id and find both this event + the surrounding
+    `phase_done` events. Without it the event is correlatable only by
+    timestamp — fragile in a multi-worker Celery deployment where two jobs
+    can interleave on one machine. The codebase doesn't use
+    `structlog.contextvars`, so each log call carries its own context kwargs.
 
     The instrumentation cost is ~50 microseconds of `time.monotonic()` calls
     per clip — negligible vs the second-scale download itself.
@@ -1391,13 +1403,20 @@ def _download_clips_parallel(gcs_paths: list[str], tmpdir: str) -> list[str]:
     total_bytes = sum(sizes_known) if sizes_known else None
     log.info(
         "clip_download_timing",
+        job_id=job_id,
         clip_count=len(gcs_paths),
         max_workers=min(len(gcs_paths), 8),
         per_clip_ms_max=max(elapsed_list) if elapsed_list else 0,
         per_clip_ms_min=min(elapsed_list) if elapsed_list else 0,
         per_clip_ms_mean=int(sum(elapsed_list) / len(elapsed_list)) if elapsed_list else 0,
         total_ms_serial=sum(elapsed_list),
+        # `total_bytes_clip_count` is the number of clips contributing to
+        # `total_bytes`. When this is < clip_count, the size stat failed for
+        # some clips and `total_bytes` UNDER-counts the true total. Without
+        # this field a consumer doing `bytes/elapsed` math would silently
+        # report wildly low throughput. Adversarial review caught this.
         total_bytes=total_bytes,
+        total_bytes_clip_count=len(sizes_known),
         per_clip=per_clip_stats,
     )
 

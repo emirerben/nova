@@ -70,6 +70,11 @@ def test_emits_clip_download_timing_event(captured_logs, tmp_path):
     assert fields["per_clip_ms_mean"] >= 0
     assert fields["total_ms_serial"] >= 0
     assert fields["total_bytes"] is not None and fields["total_bytes"] > 0
+    # total_bytes_clip_count must equal clip_count when all sizes succeed.
+    assert fields["total_bytes_clip_count"] == 3
+    # job_id is None when caller doesn't pass it (default). Callers in
+    # production always pass it; the None default is a backwards-compat hatch.
+    assert fields["job_id"] is None
 
     per_clip = fields["per_clip"]
     assert len(per_clip) == 3
@@ -77,6 +82,22 @@ def test_emits_clip_download_timing_event(captured_logs, tmp_path):
         assert stat["elapsed_ms"] >= 0
         assert stat["size_bytes"] > 0
         assert 0 <= stat["idx"] < 3
+
+
+def test_job_id_propagates_to_timing_event(captured_logs, tmp_path):
+    """job_id is the load-bearing field for correlating a slow-job debug
+    session with the surrounding phase_done events. Pin that the caller's
+    job_id ends up on the event. Adversarial review caught this gap."""
+    gcs_paths = ["users/u1/clip_0.mp4"]
+
+    with patch.object(template_orchestrate, "download_to_file", side_effect=_fake_download):
+        template_orchestrate._download_clips_parallel(
+            gcs_paths, str(tmp_path), job_id="job-abc-123"
+        )
+
+    timing_events = [(e, kw) for e, kw in captured_logs if e == "clip_download_timing"]
+    _, fields = timing_events[0]
+    assert fields["job_id"] == "job-abc-123"
 
 
 def test_handles_eight_clip_pool_cap(captured_logs, tmp_path):
@@ -117,6 +138,11 @@ def test_size_failure_does_not_break_timing(captured_logs, tmp_path):
     assert per_clip_by_idx[1]["size_bytes"] > 0
     # Aggregate `total_bytes` only sums known sizes.
     assert fields["total_bytes"] == per_clip_by_idx[1]["size_bytes"]
+    # total_bytes_clip_count signals that only 1 of 2 clips contributed —
+    # without this field a consumer doing bytes/elapsed math would silently
+    # report half-throughput. Adversarial review caught this.
+    assert fields["total_bytes_clip_count"] == 1
+    assert fields["clip_count"] == 2
 
 
 def test_download_propagates_underlying_errors(captured_logs, tmp_path):
@@ -130,6 +156,41 @@ def test_download_propagates_underlying_errors(captured_logs, tmp_path):
     with patch.object(template_orchestrate, "download_to_file", side_effect=_failing_download):
         with pytest.raises(RuntimeError, match="simulated GCS auth failure"):
             template_orchestrate._download_clips_parallel(gcs_paths, str(tmp_path))
+
+
+def test_concurrent_appends_under_lock_yield_correct_count(captured_logs, tmp_path):
+    """The 5 existing tests use a `_fake_download` that's so fast threads
+    never overlap — they effectively serialize, so the threading.Lock is
+    untested. A future refactor that drops the lock would pass every other
+    test and silently corrupt `per_clip_stats` in production.
+
+    This test uses a `threading.Barrier` to force all N workers into
+    `_download_one` simultaneously. The result must be exactly N stats with
+    unique idxs in 0..N-1, no duplicates, no missing entries.
+
+    Adversarial review caught this gap."""
+    import threading as _t
+
+    n_clips = 8  # matches the pool cap so all threads run concurrently
+    gcs_paths = [f"users/u1/clip_{i}.mp4" for i in range(n_clips)]
+    barrier = _t.Barrier(n_clips)
+
+    def _barriered_download(gcs_path: str, local_path: str) -> None:
+        """Block all threads at the barrier, then race to append under lock."""
+        barrier.wait(timeout=5)
+        _fake_download(gcs_path, local_path)
+
+    with patch.object(template_orchestrate, "download_to_file", side_effect=_barriered_download):
+        template_orchestrate._download_clips_parallel(gcs_paths, str(tmp_path))
+
+    timing_events = [(e, kw) for e, kw in captured_logs if e == "clip_download_timing"]
+    _, fields = timing_events[0]
+    per_clip = fields["per_clip"]
+    assert len(per_clip) == n_clips
+    idxs = {stat["idx"] for stat in per_clip}
+    assert idxs == set(range(n_clips)), f"missing or duplicate idx after concurrent appends: {idxs}"
+    assert fields["clip_count"] == n_clips
+    assert fields["total_bytes_clip_count"] == n_clips
 
 
 def test_no_clips_emits_no_timing_event(captured_logs, tmp_path):
