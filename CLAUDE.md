@@ -34,7 +34,7 @@ Rules:
 - src/apps/web/src/app/admin/music/ — admin music management (upload tracks, monitor analysis, publish/archive)
 - src/apps/web/src/lib/music-api.ts — typed API client for music routes
 - src/apps/api/  — Python API (upload endpoint, job queue, FFmpeg pipeline)
-- src/apps/api/app/routes/admin_music.py — admin music-track CRUD + publish/reanalyze endpoints
+- src/apps/api/app/routes/admin_music.py — admin music-track CRUD + publish/reanalyze endpoints; also serializes `best_sections` + `section_version` from the `song_sections` agent (per-row Pydantic coercion drops drifted enums so one bad row can't 500 the whole list)
 - src/apps/api/app/routes/music.py — public music-track gallery endpoint
 - src/apps/api/app/routes/music_jobs.py — beat-sync job submission + status polling
 - src/apps/api/app/pipeline/music_recipe.py — beat-snap recipe generator (slot layout from beats)
@@ -94,6 +94,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Beat-sync guard: tracks with 0 detected beats are marked `failed` at analysis time; `POST /music-jobs` rejects non-ready or non-published tracks
 - Auto-music classification: after `_run_gemini_audio_analysis` succeeds, `analyze_music_track_task` reuses the same Gemini `file_ref` to run `song_classifier` (`nova.audio.song_classifier`) and persists a locked-schema `MusicLabels` blob on `MusicTrack.ai_labels` + `label_version` (schema: `app/agents/_schemas/music_labels.py`, `CURRENT_LABEL_VERSION = 2026-05-15`). Classifier failure is non-fatal — recipe still saves, the track just won't be visible to `music_matcher` until backfill (`scripts/backfill_song_classifier.py`)
 - Auto-music matching: `music_matcher` (`nova.audio.music_matcher`, Gemini Flash, text-only) ranks the full published-track library against a clip set using each track's Phase-1 `MusicLabels` — orchestrator (Phase 3, not yet shipped) will take the top-K as variants
+- Song-sections visualizer: `song_sections` agent output (`MusicTrack.best_sections` + `section_version`, schema: `app/agents/_schemas/song_sections.py`) is exposed on `GET /admin/music-tracks` + `/admin/music-tracks/{id}` and rendered as a ranked band SVG over the beat strip at `/admin/music/[id]` (with hover rationale + click-to-seek). `_to_response` in `admin_music.py` coerces sections row-by-row and drops drifted enums so a single bad row can't 500 the list endpoint. `src/lib/music-api.ts` carries a hand-mirrored `SongSection` interface — keep its literal unions in sync when the Pydantic schema changes.
 
 ## Template pipeline
 - Interstitials: `app/pipeline/interstitials.py` detects curtain-close vs fade-to-black via FFmpeg luminance band analysis, renders color holds and `geq` pixel-expression curtain-close animations (drawbox cannot animate bar height over time)
