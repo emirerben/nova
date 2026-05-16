@@ -243,6 +243,10 @@ def agentic_template_build_task(self, template_id: str) -> None:
     Mirrors `analyze_template_task` so the manual path is unchanged; the only
     difference is the extra text_designer pass per slot before persistence.
     """
+    # Captured once at task entry and written to TemplateRecipeVersion.build_started_at
+    # at the end of the happy path. Paired with the DB-generated `created_at` (end),
+    # gives per-run wall-clock without relying on Langfuse trace aggregation.
+    build_started_at = datetime.now(UTC)
     log.info("agentic_template_build_start", template_id=template_id)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -466,6 +470,7 @@ def agentic_template_build_task(self, template_id: str) -> None:
                     template_id=template_id,
                     recipe=recipe_dict,
                     trigger=trigger,
+                    build_started_at=build_started_at,
                 )
                 db.add(version)
 

@@ -31,7 +31,7 @@ import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from datetime import UTC
+from datetime import UTC, datetime
 
 import redis as redis_lib
 import structlog
@@ -235,6 +235,10 @@ def _build_recipe(recipe_data: dict) -> TemplateRecipe:
 )
 def analyze_template_task(self, template_id: str) -> None:
     """Download template video, analyze with Gemini, cache recipe in DB."""
+    # Captured once at task entry and written to TemplateRecipeVersion.build_started_at
+    # at the end of the happy path. Paired with the DB-generated `created_at` (end),
+    # gives per-run wall-clock for forward-looking perf baselines.
+    build_started_at = datetime.now(UTC)
     log.info("analyze_template_start", template_id=template_id)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -371,8 +375,6 @@ def analyze_template_task(self, template_id: str) -> None:
             with _sync_session() as db:
                 template = db.get(VideoTemplate, template_id)
                 if template:
-                    from datetime import datetime  # noqa: PLC0415
-
                     # Determine trigger: reanalysis if recipe already exists
                     is_reanalysis = template.recipe_cached is not None
                     trigger = "reanalysis" if is_reanalysis else "initial_analysis"
@@ -398,6 +400,7 @@ def analyze_template_task(self, template_id: str) -> None:
                         template_id=template_id,
                         recipe=recipe_dict,
                         trigger=trigger,
+                        build_started_at=build_started_at,
                     )
                     db.add(version)
 
