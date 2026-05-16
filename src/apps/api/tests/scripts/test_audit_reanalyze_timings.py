@@ -185,6 +185,124 @@ def test_render_markdown_handles_one_sided_data():
     assert "—" in md
 
 
+# ── trace clustering (the bug E2E smoke caught) ──────────────────────────────
+
+
+def test_cluster_separates_runs_by_gap():
+    """The original implementation grouped all traces by session_id alone.
+    But production reuses session_id across reanalyzes for the same template,
+    so two reanalyzes 60 minutes apart got collapsed into one "session" with
+    a wall-clock spanning the gap. Clustering by timestamp gap fixes this.
+
+    Setup: two distinct reanalyze runs, 60 min apart (well above the 10-min
+    gap threshold). Each run has 3 agent traces. Cluster must produce 2."""
+    run1_start = datetime(2026, 5, 15, 10, 0, 0, tzinfo=UTC)
+    run2_start = datetime(2026, 5, 15, 11, 0, 0, tzinfo=UTC)
+    traces = [
+        _FakeTrace(timestamp=run1_start.isoformat().replace("+00:00", "Z"), latency=20000.0),
+        _FakeTrace(
+            timestamp=(run1_start + timedelta(seconds=25)).isoformat().replace("+00:00", "Z"),
+            latency=15000.0,
+        ),
+        _FakeTrace(
+            timestamp=(run1_start + timedelta(seconds=60)).isoformat().replace("+00:00", "Z"),
+            latency=10000.0,
+        ),
+        _FakeTrace(timestamp=run2_start.isoformat().replace("+00:00", "Z"), latency=2000.0),
+        _FakeTrace(
+            timestamp=(run2_start + timedelta(seconds=3)).isoformat().replace("+00:00", "Z"),
+            latency=1500.0,
+        ),
+        _FakeTrace(
+            timestamp=(run2_start + timedelta(seconds=5)).isoformat().replace("+00:00", "Z"),
+            latency=1000.0,
+        ),
+    ]
+    clusters = audit._cluster_traces_by_gap(traces)
+    assert len(clusters) == 2
+    # Run 1 wall-clock: 60s from start to last trace start + 10s last latency = 70s
+    assert clusters[0].trace_count == 3
+    assert 65 <= (clusters[0].max_end - clusters[0].min_start).total_seconds() <= 75
+    # Run 2 wall-clock: 5s + 1s = 6s
+    assert clusters[1].trace_count == 3
+    assert 5 <= (clusters[1].max_end - clusters[1].min_start).total_seconds() <= 7
+
+
+def test_cluster_groups_close_traces_together():
+    """Multiple agent calls within one reanalyze must end up in the SAME
+    cluster — the gap inside one run is seconds, not minutes."""
+    base = datetime(2026, 5, 15, 10, 0, 0, tzinfo=UTC)
+    traces = [
+        _FakeTrace(timestamp=base.isoformat().replace("+00:00", "Z"), latency=5000.0),
+        _FakeTrace(
+            timestamp=(base + timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+            latency=3000.0,
+        ),
+        _FakeTrace(
+            timestamp=(base + timedelta(seconds=30)).isoformat().replace("+00:00", "Z"),
+            latency=2000.0,
+        ),
+    ]
+    clusters = audit._cluster_traces_by_gap(traces)
+    assert len(clusters) == 1
+    assert clusters[0].trace_count == 3
+
+
+def test_cluster_handles_unsorted_input():
+    """Langfuse may return traces in any order. Cluster must sort first."""
+    run1_start = datetime(2026, 5, 15, 10, 0, 0, tzinfo=UTC)
+    run2_start = datetime(2026, 5, 15, 11, 0, 0, tzinfo=UTC)
+    traces = [
+        _FakeTrace(timestamp=run2_start.isoformat().replace("+00:00", "Z"), latency=2000.0),
+        _FakeTrace(timestamp=run1_start.isoformat().replace("+00:00", "Z"), latency=20000.0),
+        _FakeTrace(
+            timestamp=(run1_start + timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+            latency=5000.0,
+        ),
+    ]
+    clusters = audit._cluster_traces_by_gap(traces)
+    assert len(clusters) == 2
+    assert clusters[0].min_start == run1_start
+    assert clusters[1].min_start == run2_start
+
+
+def test_cluster_empty_input_returns_empty():
+    assert audit._cluster_traces_by_gap([]) == []
+
+
+def test_cluster_skips_traces_with_missing_timestamps():
+    """If a trace has no timestamp/latency, exclude it from clustering rather
+    than crash — same fail-open philosophy as _trace_start_end."""
+    base = datetime(2026, 5, 15, 10, 0, 0, tzinfo=UTC)
+    traces = [
+        _FakeTrace(timestamp=base.isoformat().replace("+00:00", "Z"), latency=5000.0),
+        _FakeTrace(timestamp=None, latency=3000.0),
+        _FakeTrace(timestamp="not-a-real-iso-string", latency=None),
+    ]
+    clusters = audit._cluster_traces_by_gap(traces)
+    assert len(clusters) == 1
+    assert clusters[0].trace_count == 1
+
+
+def test_cluster_uses_max_end_not_max_start_for_gap_detection():
+    """Use end-to-start gap, not start-to-start. A long-running trace that
+    almost butts up against the next one should NOT trigger a split."""
+    base = datetime(2026, 5, 15, 10, 0, 0, tzinfo=UTC)
+    traces = [
+        _FakeTrace(
+            timestamp=base.isoformat().replace("+00:00", "Z"),
+            latency=300000.0,  # 5 min latency
+        ),
+        _FakeTrace(
+            # 9 min after first START, only 4 min after it ENDED.
+            timestamp=(base + timedelta(minutes=9)).isoformat().replace("+00:00", "Z"),
+            latency=5000.0,
+        ),
+    ]
+    clusters = audit._cluster_traces_by_gap(traces)
+    assert len(clusters) == 1
+
+
 # ── credential / SDK gating ─────────────────────────────────────────────────
 
 
