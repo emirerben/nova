@@ -271,12 +271,12 @@ def _detect_issues(
     if bad:
         issues.append(
             {
-                "title": "All `has_*` flags are None (pre-two-pass schema)",
+                "title": "All `has_*` flags are None (pre-current-schema recipe)",
                 "severity": "high",
                 "count": len(bad),
                 "templates": bad,
-                "what": f"{len(bad)} templates have None for all three boolean flags. These were analyzed before two-pass mode shipped.",
-                "fix": "Reanalyze with `analysis_mode='two_pass'` so the agent populates booleans.",
+                "what": f"{len(bad)} templates have None for all three boolean flags. These were analyzed before the current `TemplateRecipeAgent` schema shipped.",
+                "fix": "Reanalyze the template (admin UI 'Reanalyze' button or `scripts/reanalyze_underbaked_templates.py`) so the agent populates booleans. Production mode is single-pass since Phase 2; if you suspect single-pass under-populates booleans on a particular template, the two_pass code path in `gemini_analyzer.analyze_template()` is still callable and can be A/B tested by an engineer.",
             }
         )
 

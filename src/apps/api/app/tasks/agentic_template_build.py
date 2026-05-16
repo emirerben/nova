@@ -6,8 +6,9 @@ Manual templates keep using `analyze_template_task`; the two never interact.
 Flow:
   1. download template video from GCS
   2. detect black segments (for interstitial placement)
-  3. upload to Gemini, run `analyze_template(two_pass)` — Big 3 produce the
-     structural recipe (slots, transitions, overlay placeholders)
+  3. upload to Gemini, run `analyze_template(analysis_mode="single")` — the
+     `TemplateRecipeAgent` produces the structural recipe (slots, transitions,
+     overlay placeholders) in a single Gemini call
   4. per slot, per label-like overlay, call `text_designer` and BAKE the
      returned styling into the overlay dict so the job-time pipeline reads
      it directly instead of falling back to the static _LABEL_CONFIG
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 
 import redis as redis_lib
@@ -42,6 +44,11 @@ from app.pipeline.agents.gemini_analyzer import (
     GeminiRefusalError,
     analyze_template,
     gemini_upload_and_wait,
+)
+from app.pipeline.template_cache import (
+    compute_template_hash,
+    get_cached_recipe,
+    set_cached_recipe,
 )
 from app.services.template_poster import (
     PosterExtractionError,
@@ -102,6 +109,9 @@ def _bake_text_designer_into_overlay(
         overlay["font_cycle_accel_at_s"] = float(designer_output.accel_at_s)
 
 
+_TEXT_DESIGNER_PARALLEL_CAP = 8
+
+
 def _run_text_designer_on_slots(
     slots: list[dict],
     copy_tone: str,
@@ -110,8 +120,13 @@ def _run_text_designer_on_slots(
 ) -> int:
     """Call text_designer for every label-like overlay; bake results in place.
 
-    Returns the number of overlays styled. Sequential — N ≤ ~20 calls per
-    template, each ~2-5s. Parallelize later if it bites.
+    Returns the number of overlays styled. Parallelized across a bounded pool
+    (`_TEXT_DESIGNER_PARALLEL_CAP`) because on a 20-overlay template a sequential
+    loop spent ~60s of single-threaded LLM wait per agentic reanalyze. Workers
+    only issue the LLM call; the main thread mutates each overlay dict after
+    `future.result()` so there is no shared-state contention. Per-overlay
+    `TerminalError` is isolated: the overlay keeps whatever `template_recipe`
+    set, and the rest of the batch still bakes.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
@@ -122,8 +137,8 @@ def _run_text_designer_on_slots(
 
     agent = TextDesignerAgent(default_client())
     ctx = RunContext(job_id=job_id)
-    baked = 0
 
+    work_items: list[tuple[dict, int, str, str, TextDesignerInput]] = []
     for slot in slots:
         slot_position = int(slot.get("position", 0)) or 1  # text_designer needs ≥ 1
         slot_type = str(slot.get("slot_type", "broll"))
@@ -131,8 +146,12 @@ def _run_text_designer_on_slots(
             kind = _classify_overlay(overlay)
             if kind is None:
                 continue
-            try:
-                out = agent.run(
+            work_items.append(
+                (
+                    overlay,
+                    slot_position,
+                    slot_type,
+                    kind,
                     TextDesignerInput(
                         slot_position=slot_position,
                         slot_type=slot_type,
@@ -140,12 +159,25 @@ def _run_text_designer_on_slots(
                         copy_tone=copy_tone,
                         creative_direction=creative_direction,
                     ),
-                    ctx=ctx,
                 )
+            )
+
+    if not work_items:
+        return 0
+
+    def _call(agent_input: TextDesignerInput) -> object:
+        return agent.run(agent_input, ctx=ctx)
+
+    baked = 0
+    with ThreadPoolExecutor(
+        max_workers=min(len(work_items), _TEXT_DESIGNER_PARALLEL_CAP),
+    ) as pool:
+        futures = {pool.submit(_call, item[4]): item for item in work_items}
+        for future in as_completed(futures):
+            overlay, slot_position, _slot_type, kind, _agent_input = futures[future]
+            try:
+                out = future.result()
             except TerminalError as exc:
-                # One agent failure shouldn't kill the whole build — the
-                # overlay keeps whatever template_recipe set. Log loudly so
-                # evals can spot systematic regressions per slot.
                 log.warning(
                     "text_designer_failed",
                     job_id=job_id,
@@ -287,13 +319,42 @@ def agentic_template_build_task(self, template_id: str) -> None:
             black_segments = detect_black_segments(local_path)
             black_segments = classify_black_segment_type(local_path, black_segments)
 
-            file_ref = gemini_upload_and_wait(local_path)
-            recipe = analyze_template(
-                file_ref,
-                analysis_mode="two_pass",
-                black_segments=black_segments,
-                job_id=f"template:{template_id}:agentic",
-            )
+            # Phase 3 perf: content-hash the source video and check Redis before
+            # uploading to the Gemini File API. On hit we skip both the upload
+            # (~30-60s for a 1080p template — ACTIVE-poll bound) and the actual
+            # `analyze_template` LLM call. identify_fonts, text_designer, poster,
+            # and audio extraction still run on the local copy.
+            _AGENTIC_ANALYSIS_MODE = "single"
+            template_hash = compute_template_hash(local_path)
+            recipe = None
+            if template_hash is not None:
+                cached = get_cached_recipe(template_hash, _AGENTIC_ANALYSIS_MODE)
+                if cached is not None:
+                    log.info(
+                        "agentic_template_recipe_cache_hit",
+                        template_id=template_id,
+                        template_hash=template_hash[:12],
+                    )
+                    recipe = cached
+
+            if recipe is None:
+                file_ref = gemini_upload_and_wait(local_path)
+                # Phase 2 perf: single-pass skips the inline `_extract_creative_direction`
+                # Gemini call (Pass 1). `recipe.creative_direction` is still populated —
+                # it now comes from the structural JSON itself, set by `TemplateRecipeAgent`
+                # via `analyze_template_schema.txt` which requires the field. Downstream
+                # agents (text_designer, clip_router, shot_ranker) read a real
+                # model-generated creative_direction in both regimes; what changes is just
+                # the source (recipe-embedded vs separate Pass-1 paragraph). To restore the
+                # standalone Pass-1 call set "two_pass" here.
+                recipe = analyze_template(
+                    file_ref,
+                    analysis_mode=_AGENTIC_ANALYSIS_MODE,
+                    black_segments=black_segments,
+                    job_id=f"template:{template_id}:agentic",
+                )
+                if template_hash is not None:
+                    set_cached_recipe(template_hash, _AGENTIC_ANALYSIS_MODE, recipe)
 
             # Font identification (PR2). Best-effort: a font-id failure must
             # not abort agentic build. Mutates `recipe.slots[*]["text_overlays"]
