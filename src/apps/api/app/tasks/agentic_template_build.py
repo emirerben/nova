@@ -6,8 +6,9 @@ Manual templates keep using `analyze_template_task`; the two never interact.
 Flow:
   1. download template video from GCS
   2. detect black segments (for interstitial placement)
-  3. upload to Gemini, run `analyze_template(two_pass)` — Big 3 produce the
-     structural recipe (slots, transitions, overlay placeholders)
+  3. upload to Gemini, run `analyze_template(analysis_mode="single")` — the
+     `TemplateRecipeAgent` produces the structural recipe (slots, transitions,
+     overlay placeholders) in a single Gemini call
   4. per slot, per label-like overlay, call `text_designer` and BAKE the
      returned styling into the overlay dict so the job-time pipeline reads
      it directly instead of falling back to the static _LABEL_CONFIG
@@ -314,9 +315,17 @@ def agentic_template_build_task(self, template_id: str) -> None:
             black_segments = classify_black_segment_type(local_path, black_segments)
 
             file_ref = gemini_upload_and_wait(local_path)
+            # Phase 2 perf: single-pass skips the inline `_extract_creative_direction`
+            # Gemini call (Pass 1). `recipe.creative_direction` is still populated —
+            # it now comes from the structural JSON itself, set by `TemplateRecipeAgent`
+            # via `analyze_template_schema.txt` which requires the field. Downstream
+            # agents (text_designer, clip_router, shot_ranker) read a real
+            # model-generated creative_direction in both regimes; what changes is just
+            # the source (recipe-embedded vs separate Pass-1 paragraph). To restore the
+            # standalone Pass-1 call set "two_pass" here.
             recipe = analyze_template(
                 file_ref,
-                analysis_mode="two_pass",
+                analysis_mode="single",
                 black_segments=black_segments,
                 job_id=f"template:{template_id}:agentic",
             )
