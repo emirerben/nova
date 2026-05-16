@@ -45,6 +45,11 @@ from app.pipeline.agents.gemini_analyzer import (
     analyze_template,
     gemini_upload_and_wait,
 )
+from app.pipeline.template_cache import (
+    compute_template_hash,
+    get_cached_recipe,
+    set_cached_recipe,
+)
 from app.services.template_poster import (
     PosterExtractionError,
 )
@@ -314,21 +319,42 @@ def agentic_template_build_task(self, template_id: str) -> None:
             black_segments = detect_black_segments(local_path)
             black_segments = classify_black_segment_type(local_path, black_segments)
 
-            file_ref = gemini_upload_and_wait(local_path)
-            # Phase 2 perf: single-pass skips the inline `_extract_creative_direction`
-            # Gemini call (Pass 1). `recipe.creative_direction` is still populated —
-            # it now comes from the structural JSON itself, set by `TemplateRecipeAgent`
-            # via `analyze_template_schema.txt` which requires the field. Downstream
-            # agents (text_designer, clip_router, shot_ranker) read a real
-            # model-generated creative_direction in both regimes; what changes is just
-            # the source (recipe-embedded vs separate Pass-1 paragraph). To restore the
-            # standalone Pass-1 call set "two_pass" here.
-            recipe = analyze_template(
-                file_ref,
-                analysis_mode="single",
-                black_segments=black_segments,
-                job_id=f"template:{template_id}:agentic",
-            )
+            # Phase 3 perf: content-hash the source video and check Redis before
+            # uploading to the Gemini File API. On hit we skip both the upload
+            # (~30-60s for a 1080p template — ACTIVE-poll bound) and the actual
+            # `analyze_template` LLM call. identify_fonts, text_designer, poster,
+            # and audio extraction still run on the local copy.
+            _AGENTIC_ANALYSIS_MODE = "single"
+            template_hash = compute_template_hash(local_path)
+            recipe = None
+            if template_hash is not None:
+                cached = get_cached_recipe(template_hash, _AGENTIC_ANALYSIS_MODE)
+                if cached is not None:
+                    log.info(
+                        "agentic_template_recipe_cache_hit",
+                        template_id=template_id,
+                        template_hash=template_hash[:12],
+                    )
+                    recipe = cached
+
+            if recipe is None:
+                file_ref = gemini_upload_and_wait(local_path)
+                # Phase 2 perf: single-pass skips the inline `_extract_creative_direction`
+                # Gemini call (Pass 1). `recipe.creative_direction` is still populated —
+                # it now comes from the structural JSON itself, set by `TemplateRecipeAgent`
+                # via `analyze_template_schema.txt` which requires the field. Downstream
+                # agents (text_designer, clip_router, shot_ranker) read a real
+                # model-generated creative_direction in both regimes; what changes is just
+                # the source (recipe-embedded vs separate Pass-1 paragraph). To restore the
+                # standalone Pass-1 call set "two_pass" here.
+                recipe = analyze_template(
+                    file_ref,
+                    analysis_mode=_AGENTIC_ANALYSIS_MODE,
+                    black_segments=black_segments,
+                    job_id=f"template:{template_id}:agentic",
+                )
+                if template_hash is not None:
+                    set_cached_recipe(template_hash, _AGENTIC_ANALYSIS_MODE, recipe)
 
             # Font identification (PR2). Best-effort: a font-id failure must
             # not abort agentic build. Mutates `recipe.slots[*]["text_overlays"]

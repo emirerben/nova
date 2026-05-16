@@ -59,6 +59,11 @@ from app.pipeline.single_pass import (
     SinglePassUnsupportedError,
     run_single_pass,
 )
+from app.pipeline.template_cache import (
+    compute_template_hash,
+    get_cached_recipe,
+    set_cached_recipe,
+)
 from app.pipeline.template_matcher import (
     TemplateMismatchError,
     consolidate_slots,
@@ -279,18 +284,39 @@ def analyze_template_task(self, template_id: str) -> None:
             black_segments = detect_black_segments(local_path)
             black_segments = classify_black_segment_type(local_path, black_segments)
 
-            file_ref = gemini_upload_and_wait(local_path)
-            # Phase 2 perf: single-pass skips the inline `_extract_creative_direction`
-            # Gemini call (Pass 1). `recipe.creative_direction` is still populated —
-            # it now comes from the structural JSON itself, set by `TemplateRecipeAgent`
-            # via `analyze_template_schema.txt` which requires the field. To restore
-            # the standalone Pass-1 call set "two_pass" here.
-            recipe = analyze_template(
-                file_ref,
-                analysis_mode="single",
-                black_segments=black_segments,
-                job_id=f"template:{template_id}",
-            )
+            # Phase 3 perf: content-hash the source and check Redis before
+            # uploading to Gemini. On hit we skip both the upload (~30-60s
+            # ACTIVE-poll on a 1080p template) and the analyze_template LLM
+            # call. Poster + audio + beat extraction below still run on the
+            # local copy.
+            _MANUAL_ANALYSIS_MODE = "single"
+            template_hash = compute_template_hash(local_path)
+            recipe = None
+            if template_hash is not None:
+                cached = get_cached_recipe(template_hash, _MANUAL_ANALYSIS_MODE)
+                if cached is not None:
+                    log.info(
+                        "manual_template_recipe_cache_hit",
+                        template_id=template_id,
+                        template_hash=template_hash[:12],
+                    )
+                    recipe = cached
+
+            if recipe is None:
+                file_ref = gemini_upload_and_wait(local_path)
+                # Phase 2 perf: single-pass skips the inline `_extract_creative_direction`
+                # Gemini call (Pass 1). `recipe.creative_direction` is still populated —
+                # it now comes from the structural JSON itself, set by `TemplateRecipeAgent`
+                # via `analyze_template_schema.txt` which requires the field. To restore
+                # the standalone Pass-1 call set "two_pass" here.
+                recipe = analyze_template(
+                    file_ref,
+                    analysis_mode=_MANUAL_ANALYSIS_MODE,
+                    black_segments=black_segments,
+                    job_id=f"template:{template_id}",
+                )
+                if template_hash is not None:
+                    set_cached_recipe(template_hash, _MANUAL_ANALYSIS_MODE, recipe)
 
             # Note: font identification (PR2, identify_fonts + font_alternatives
             # population) is intentionally scoped to the agentic analysis path
