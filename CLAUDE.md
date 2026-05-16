@@ -135,6 +135,16 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - **Prompt-change rule:** when editing any file under `src/apps/api/prompts/` or any `render_prompt()`, bump the agent's `prompt_version` in its `AgentSpec` AND run `pytest tests/evals/<agent>_evals.py -v --with-judge --eval-mode=live` against current fixtures before merge. Compare scores against the prior version's run.
 - See `tests/evals/README.md` for the full prompt-iteration loop.
 
+## Admin job-debug view
+- Surfaces every agent's full I/O + every non-LLM pipeline decision per job. Lives at `/admin/jobs` (list) and `/admin/jobs/{id}` (detail). Use it to answer "is this bad output from an agent, the agent's parameters, or assembly?"
+- Two storage layers:
+  - `agent_run` table (one row per agent invocation) — written automatically by `app/agents/_runtime._log_outcome` via `app/agents/_persistence.persist_agent_run`. Captures input/output Pydantic dicts, full raw LLM response, outcome, tokens, cost, latency. Best-effort: DB failure never breaks an in-flight job. Skips non-UUID job_ids (e.g. `"track:<id>"` track-level analyses).
+  - `Job.pipeline_trace` JSONB column — appended by `app/services/pipeline_trace.record_pipeline_event(stage, event, data)`. Reads the current job_id from a contextvar set by `pipeline_trace_for(job_id)`. Capped at 500 events/job.
+- **Mandatory orchestrator contract:** every Celery task that drives agents must wrap its body in `with pipeline_trace_for(job_id):` and clear on exit (the contextmanager handles this). Currently applied in `orchestrate_music_job`, `orchestrate_template_job`, `orchestrate_auto_music_job`. New orchestrators MUST do the same or downstream `record_pipeline_event` calls silently drop.
+- **Adding pipeline events:** call `record_pipeline_event("<stage>", "<event_name>", {"...": ...})` from inside any `app/pipeline/*` module at any decision point (current sites: curtain-close, xfade picks, beat-snap drift). Stage buckets: `interstitial`, `transition`, `overlay`, `beat_snap`, `reframe`, `audio_mix`, `assembly`.
+- **Eval harness opt-out:** the eval RunContext sets `extra={"skip_agent_run_persist": True}` so replay-mode evals don't pollute the prod `agent_run` table. Don't drop this flag.
+- **Success-outcome set:** `app/agents/_runtime.SUCCESS_OUTCOMES` is the single source of truth for which agent outcomes count as success. Any SQL filter or UI label that distinguishes pass/fail MUST import this constant — the admin route already does (`app/routes/admin_jobs.py`).
+
 ## Deploy Configuration
 
 ### Architecture: Split Deploy

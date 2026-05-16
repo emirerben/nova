@@ -471,6 +471,20 @@ def orchestrate_template_job(
         log.error("template_job_invalid_id", job_id=repr(job_id))
         return
 
+    # `pipeline_trace_for` binds job_id into a contextvar so every
+    # `record_pipeline_event` call inside the assembly pipeline attributes
+    # to this job. The finally inside the context manager clears it on
+    # exit (including on exception) — prevents leaking into the next
+    # Celery task on this worker process.
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    with pipeline_trace_for(job_id):
+        _orchestrate_template_job_inner(job_id, job_uuid, force_single_pass)
+
+
+def _orchestrate_template_job_inner(
+    job_id: str, job_uuid: uuid.UUID, force_single_pass: bool
+) -> None:
     try:
         _run_template_job(job_id, force_single_pass=force_single_pass)
     except _StageError as stage_err:
@@ -1916,7 +1930,26 @@ def _plan_slots(
             if beats:
                 expected_end = cumulative_s + slot_target_dur
                 snapped_end = _snap_to_beat(expected_end, beats)
+                drift_ms = int(round((snapped_end - expected_end) * 1000))
                 slot_target_dur = max(0.5, snapped_end - cumulative_s)
+                # Beat-snap drift is one of the most common "video looks
+                # off" causes — record per-slot offset so admins can spot
+                # which boundary drifted by how much.
+                from app.services.pipeline_trace import (  # noqa: PLC0415
+                    record_pipeline_event,
+                )
+
+                record_pipeline_event(
+                    stage="beat_snap",
+                    event="slot_snapped",
+                    data={
+                        "slot_index": i,
+                        "expected_end_s": round(expected_end, 3),
+                        "snapped_end_s": round(snapped_end, 3),
+                        "drift_ms": drift_ms,
+                        "final_duration_s": round(slot_target_dur, 3),
+                    },
+                )
                 cumulative_s = snapped_end
             else:
                 cumulative_s += slot_target_dur
