@@ -1619,6 +1619,22 @@ def _analyze_clips_parallel(
             return meta, None
         except (GeminiRefusalError, GeminiAnalysisError, Exception) as exc:
             log.warning("clip_analysis_failed", clip_idx=idx, error=str(exc))
+            # phase_log diagnostic. Investigations were previously inferring
+            # clip-analysis failure from the absence of a `gemini_analyze` entry;
+            # this records the failure positively so post-mortems can see which
+            # clips fell through and why.
+            if record_sub_phases and job_id is not None:
+                record_sub_phase(
+                    job_id,
+                    PHASE_ANALYZE_CLIPS,
+                    "gemini_analyze_failed",
+                    elapsed_ms=int((time.monotonic() - t0) * 1000),
+                    detail={
+                        "clip_idx": idx,
+                        "clip_path": os.path.basename(path),
+                        "error": str(exc)[:200],
+                    },
+                )
             # Whisper heuristic fallback for failed clips
             from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
 
