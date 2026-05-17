@@ -170,7 +170,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Merge method: squash
 - Process groups: api (FastAPI/uvicorn) + worker (Celery)
 - Release command: `python -m alembic upgrade head` (runs migrations on every deploy)
-- VM sizing: api = 1 shared CPU / 512MB, worker = 2 shared CPUs / 2048MB
+- VM sizing: api = 1 shared CPU / 512MB, worker = 2 shared CPUs / 6144MB (bumped 2026-05-17 after single-pass OOM, see `fly.toml`)
 - Dockerfile: repo-root `Dockerfile` (cached dependency layer from pyproject.toml)
 - Docker image includes: `app/`, `assets/`, `prompts/`, `alembic.ini`
 - CORS: `ALLOWED_ORIGINS` env var — JSON array format, e.g. `'["http://localhost:3000","https://nova-video.vercel.app"]'`
