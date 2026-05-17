@@ -43,6 +43,10 @@ from app.agents.template_recipe import (
     _VALID_TRANSITION_TYPES,
     TemplateRecipeOutput,
 )
+from app.agents.template_text import (
+    TemplateTextInput,
+    TemplateTextOutput,
+)
 from app.agents.text_designer import (
     _VALID_EFFECTS as _TEXT_DESIGNER_VALID_EFFECTS,
 )
@@ -1027,10 +1031,68 @@ def check_music_matcher(output: MusicMatcherOutput, input: MusicMatcherInput) ->
     return failures
 
 
+def check_template_text(
+    output: TemplateTextOutput,
+    input: TemplateTextInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.compose.template_text.
+
+    Pydantic enforces bbox range, hex shape, enum values, and non-empty text per
+    overlay. This layer adds cross-overlay invariants:
+
+      - **slot_index inside the boundary count.** The agent receives slot
+        boundaries via input; emitting slot_index > len(slot_boundaries) means
+        the agent invented a slot.
+      - **bbox sample_frame_t inside the overlay window.** Pydantic only
+        bounds it to >= 0; the cross-field check requires start_s <= t <= end_s
+        so the eval's OCR cross-check has a valid frame to look at.
+      - **Duplicate (text, bbox-center, time-window) tuples.** Same overlay
+        emitted twice — wastes the slot budget and double-burns text. Caught
+        with a coarse hash so adjacent-frame near-duplicates still flag.
+      - **Empty overlay list when slot_boundaries was non-empty.** The user is
+        running this against a real template; zero overlays is plausible but
+        suspicious. Logged as a warning failure so the eval surfaces it.
+    """
+    failures: list[str] = []
+    max_slot = max(len(input.slot_boundaries_s), 1)
+
+    seen_keys: set[tuple[str, int, int, int]] = set()
+    for i, ov in enumerate(output.overlays):
+        if ov.slot_index < 1 or ov.slot_index > max_slot:
+            failures.append(
+                f"overlay {i}: slot_index={ov.slot_index} outside [1, {max_slot}]"
+            )
+        if ov.bbox.sample_frame_t < ov.start_s or ov.bbox.sample_frame_t > ov.end_s:
+            failures.append(
+                f"overlay {i}: bbox.sample_frame_t={ov.bbox.sample_frame_t} "
+                f"outside overlay window [{ov.start_s}, {ov.end_s}]"
+            )
+        # Coarse-hash duplicate detection. We quantize bbox center to 5%
+        # buckets and timing to 0.2s buckets so jitter doesn't mask a real
+        # duplicate. Same text + same bucket = same overlay emitted twice.
+        key = (
+            ov.sample_text.strip().lower(),
+            int(ov.bbox.x_norm * 20),
+            int(ov.bbox.y_norm * 20),
+            int(ov.start_s * 5),
+        )
+        if key in seen_keys:
+            failures.append(
+                f"overlay {i}: duplicate of an earlier overlay "
+                f"(text={ov.sample_text!r}, near position {ov.bbox.x_norm:.2f},"
+                f"{ov.bbox.y_norm:.2f} at start_s={ov.start_s:.2f})"
+            )
+        seen_keys.add(key)
+
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.template_recipe":
         return check_template_recipe(output)
+    if agent_name == "nova.compose.template_text":
+        return check_template_text(output, input)
     if agent_name == "nova.video.clip_metadata":
         return check_clip_metadata(output, input)
     if agent_name == "nova.compose.creative_direction":

@@ -205,13 +205,8 @@
 **Priority:** P3 — after audio handling is understood
 **Depends on:** Template prompt improvement merged (for speed_factor data)
 
-### Agent text-overlay coverage for word-by-word templates (added 2026-05-16)
-**What:** Tighten the recipe agent prompt at `src/apps/api/prompts/analyze_template_single.txt` (and `analyze_template_pass2.txt`) so Gemini enumerates *all* text overlays, including brief single-word reveals in rapid kinetic-typography templates. Today the schema says "text_overlays is a list of **large text moments** visible during this slot" — permissive wording that lets Gemini drop short or overlapping reveals.
-**Why:** Investigation of job `9ec8e5ff-3adb-4de5-bde5-7cc7f6c1ec80` (template `fdaf3bbc-…` "not just luck") confirmed the source TikTok has more on-screen text than the 11 overlays the agent captured. The v0.4.22.0 salvage fix recovers individual overlays whose timing tuples were swapped, but does nothing about reveals Gemini omits entirely. Templates with rapid word-by-word kinetic typography (the most common viral format) lose entire reveals.
-**How:** Rewrite the schema/prompt wording to "Enumerate every visible text element, including single-word reveals and overlapping pairs." Add an eval-fixture assertion comparing overlay count against a hand-counted ground truth on `tests/fixtures/agent_evals/template_recipe/prod_snapshots/large_text.json`. Bump `prompt_version` in `template_recipe.py:128` per CLAUDE.md prompt-change rule and run `pytest tests/evals/template_recipe_evals.py -v --with-judge --eval-mode=live` before merge.
-**Effort:** S (human: ~2h / CC: ~30 min, plus live-eval wait)
-**Priority:** P2 — quality gap that survives the salvage fix; affects every text-heavy template
-**Depends on:** nothing — standalone PR
+### ~~Agent text-overlay coverage for word-by-word templates~~ (added 2026-05-16)
+**Completed in v0.4.26.0 (2026-05-17):** Solved by carving text extraction into its own agent (`nova.compose.template_text`) instead of tightening the recipe prompt. Dedicated agent + dedicated prompt + dedicated rubric + OCR ground-truth eval. Recipe prompt left alone — the new agent overwrites recipe overlays in `agentic_template_build_task`. See CHANGELOG v0.4.26.0.
 
 ---
 
