@@ -33,12 +33,12 @@ Rules:
 - src/apps/web/  — Next.js frontend (upload UI, progress tracker, result viewer)
 - src/apps/web/src/app/admin/templates/[id]/components/ — visual overlay editor (OverlayPreview, OverlayTimeline, PropertyPanel, overlay-constants.ts)
 - src/apps/web/src/app/music/ — music gallery page (browse tracks, select, upload clips, poll result)
-- src/apps/web/src/app/admin/music/ — admin music management (upload tracks, monitor analysis, publish/archive)
+- src/apps/web/src/app/admin/music/ — admin music management (upload tracks, monitor analysis, publish/archive); `/admin/music/[id]` has Config + Test tabs (Test tab uploads clips, renders a job against the track, polls status, plays output, and re-renders the same clips against the latest `track_config`)
 - src/apps/web/src/lib/music-api.ts — typed API client for music routes
 - src/apps/api/  — Python API (upload endpoint, job queue, FFmpeg pipeline)
-- src/apps/api/app/routes/admin_music.py — admin music-track CRUD + publish/reanalyze endpoints; also serializes `best_sections` + `section_version` from the `song_sections` agent (per-row Pydantic coercion drops drifted enums so one bad row can't 500 the whole list)
+- src/apps/api/app/routes/admin_music.py — admin music-track CRUD + publish/reanalyze endpoints; also serializes `best_sections` + `section_version` from the `song_sections` agent (per-row Pydantic coercion drops drifted enums so one bad row can't 500 the whole list). Hosts the Test tab's admin-token-gated job endpoints: `POST /admin/music-tracks/{id}/test-job` (bypasses the public `published_at`/`archived_at` gates, still requires `ready` + `audio_gcs_path`), `POST /admin/music-tracks/{id}/rerender-job` (re-renders a prior job's clips against the track's current `track_config`), `GET /admin/music-tracks/{id}/jobs/{job_id}/status` (track-scoped status poll so admin job IDs don't leak through the public endpoint), and `GET /admin/music-tracks/{id}/test-jobs` (recent jobs list for the "Previous renders" panel). `clip_gcs_paths` on test/rerender is allowlisted to the `music-uploads/` and `slot-uploads/` prefixes at the Pydantic validator — arbitrary bucket keys are rejected before any download.
 - src/apps/api/app/routes/music.py — public music-track gallery endpoint
-- src/apps/api/app/routes/music_jobs.py — beat-sync job submission + status polling
+- src/apps/api/app/routes/music_jobs.py — beat-sync job submission + status polling. `_validate_clip_count` is public (no underscore) so `admin_music.py`'s test-job/rerender endpoints can reuse it across modules.
 - src/apps/api/app/pipeline/music_recipe.py — beat-snap recipe generator (slot layout from beats)
 - src/apps/api/app/tasks/music_orchestrate.py — Celery tasks: beat analysis + music job orchestration
 - src/apps/api/app/services/audio_download.py — yt-dlp audio download + beat detection via FFmpeg
@@ -89,6 +89,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Best-section auto-select: `_auto_best_section()` scores 30s windows by beat density; result stored in `MusicTrack.track_config` as `best_start_s`/`best_end_s`/`slot_every_n_beats`
 - Recipe generation: `generate_music_recipe()` in `music_recipe.py` slices the best section into N slots where N = beat_count / slot_every_n_beats; each slot target duration = beats-per-slot × beat interval
 - Job orchestration: `orchestrate_music_job` Celery task runs parallel Gemini clip analysis → `template_matcher.match` → `_assemble_clips` with beat-snap → `_mix_template_audio`
+- Output URL contract: `_run_music_job`, `_run_templated_music_job`, and `orchestrate_auto_music_job` persist the signed URL returned by `upload_public_read` into `assembly_plan.output_url` — NOT the relative GCS path. Matches the template orchestrator and lets consumers (admin Test tab, public job-status responses) drop the value straight into `<video src>`. Legacy rows that still hold the relative path are stripped to `null` by the admin "Previous renders" list (`GET /admin/music-tracks/{id}/test-jobs`); the UI shows a "legacy format, re-render to view" notice instead of a broken `<video>`.
 - Audio download: `audio_download.py` uses yt-dlp subprocess (not yt-dlp Python API) to avoid RAM buffering; downloads to a temp path in GCS-mounted storage
 - Track lifecycle: `pending` → `analyzing` → `ready` | `failed`; only `ready`+`published` tracks appear in the public gallery
 - Admin proxy: Next.js `/api/admin/[...path]` route proxies to Fly.io API, keeping the admin token server-side only (never exposed to browser)
