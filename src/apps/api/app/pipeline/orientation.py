@@ -57,6 +57,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 
 import structlog
 
@@ -90,8 +91,6 @@ _NORMALIZE_TIMEOUT_S = 600
 # Only the ffmpeg invocation inside ``normalize_orientation``'s re-encode
 # branch waits on the semaphore. The stale-flag fast path (codec-copy
 # remux) is cheap and not gated.
-import threading
-
 _MAX_CONCURRENT_NORMALIZE_REENCODES = 2
 _normalize_reencode_semaphore = threading.BoundedSemaphore(
     _MAX_CONCURRENT_NORMALIZE_REENCODES
