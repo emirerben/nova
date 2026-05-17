@@ -106,7 +106,7 @@ async def _get_published_ready_track(track_id: str, db: AsyncSession) -> MusicTr
     return track
 
 
-def _validate_clip_count(track: MusicTrack, n_clips: int) -> None:
+def validate_clip_count(track: MusicTrack, n_clips: int) -> None:
     """Validate the user's clip count against the track's recipe.
 
     Templated tracks (recipe_cached has typed slots) require exactly one upload
@@ -114,9 +114,7 @@ def _validate_clip_count(track: MusicTrack, n_clips: int) -> None:
     track_config min/max bounds.
     """
     recipe = track.recipe_cached or {}
-    user_slots = [
-        s for s in recipe.get("slots", []) if s.get("slot_type") == "user_upload"
-    ]
+    user_slots = [s for s in recipe.get("slots", []) if s.get("slot_type") == "user_upload"]
     if user_slots:
         expected = len(user_slots)
         if n_clips != expected:
@@ -154,7 +152,7 @@ async def create_music_job(
 ) -> MusicJobResponse:
     """Create a music beat-sync job."""
     track = await _get_published_ready_track(req.music_track_id, db)
-    _validate_clip_count(track, len(req.clip_gcs_paths))
+    validate_clip_count(track, len(req.clip_gcs_paths))
 
     job = Job(
         user_id=SYNTHETIC_USER_ID,
@@ -172,6 +170,7 @@ async def create_music_job(
     job_id = str(job.id)
 
     from app.tasks.music_orchestrate import orchestrate_music_job  # noqa: PLC0415
+
     orchestrate_music_job.delay(job_id)
 
     log.info(
@@ -185,7 +184,12 @@ async def create_music_job(
 
 _SLOT_UPLOAD_VIDEO_CT = {"video/mp4", "video/quicktime", "video/x-msvideo", "video/x-m4v"}
 _SLOT_UPLOAD_IMAGE_CT = {
-    "image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif",
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
 }
 _SLOT_UPLOAD_VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi"}
 _SLOT_UPLOAD_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
@@ -246,6 +250,7 @@ async def upload_slot_clip(
         tmp.flush()
 
         from app.storage import _get_client  # noqa: PLC0415
+
         bucket = _get_client().bucket(settings.storage_bucket)
         bucket.blob(gcs_path).upload_from_filename(
             tmp.name,

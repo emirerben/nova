@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.28.0] - 2026-05-17
+
+### Added
+- **Admin Test tab on `/admin/music/[id]`.** Upload clips, render against any `ready` track (published or not), watch status, view the output video, and re-render with the same clips against the latest `track_config` — all without leaving the track page. Mirrors the template editor's test loop. Drag-and-drop multi-clip upload uses `Promise.allSettled` so partial failures keep the successful uploads.
+- **`POST /admin/music-tracks/{id}/test-job`** — admin-token-gated music job creation that skips the public-endpoint `published_at`/`archived_at` gates. Still enforces `analysis_status == "ready"` and `audio_gcs_path` present.
+- **`POST /admin/music-tracks/{id}/rerender-job`** — re-render a prior music job's clips against the track's current config. Since beat-sync recipes are regenerated from `track_config` on every run, editing `slot_every_n_beats` and rerendering produces a fresh cut without re-uploading clips.
+- **`GET /admin/music-tracks/{id}/jobs/{job_id}/status`** — admin-token-gated music job status poll, scoped to the track. Replaces the public `/music-jobs/{id}/status` for admin UI polling so admin job IDs no longer leak through an unauthenticated endpoint.
+- **`GET /admin/music-tracks/{id}/test-jobs`** — list recent music jobs for a track, used by the Test tab's "Previous renders" panel.
+- **Clip-path prefix allowlist on the new admin endpoints.** `clip_gcs_paths` must start with `music-uploads/` or `slot-uploads/`; arbitrary GCS object keys (raw uploads, internal artifacts, traversal sequences) are rejected at the Pydantic validator before any download is attempted. Closes a cross-tenant exfiltration vector where an attacker with admin proxy access could otherwise smuggle any bucket key through the render pipeline.
+
+### Fixed
+- **Music orchestrators now persist the signed output URL instead of the relative GCS path.** `_run_music_job`, `_run_templated_music_job`, and `orchestrate_auto_music_job` were discarding the signed URL returned by `upload_public_read` and storing `music-jobs/{job_id}/output.mp4` in `assembly_plan.output_url`. The template orchestrator already stored the URL; the music side mismatched the contract, which broke direct `<video src>` playback in any consumer. Aligned all three call sites with the template convention.
+- **List endpoint strips legacy non-URL `output_url` values.** Pre-fix rows in production have the relative GCS path here. The admin "Previous renders" list now returns `null` for those (UI shows a "legacy format, re-render to view" notice) rather than a broken `<video src="music-jobs/...">`.
+
+### Changed
+- **`_validate_clip_count` promoted from private to public** in `app/routes/music_jobs.py`. The admin music routes need it across module boundaries; underscore-prefixed cross-module imports were a code smell.
+
 ## [0.4.27.0] - 2026-05-17
 
 ### Added
