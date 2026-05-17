@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.28.1] - 2026-05-17
+
+### Fixed
+- **Music jobs no longer crash at recipe construction.** Submitting a pure-music-track job hit `TemplateRecipe.__init__() got an unexpected keyword argument 'required_clips_min'` and aborted before any clip analysis ran. `generate_music_recipe()` emits `required_clips_min`/`required_clips_max` so admin endpoints and `POST /music-jobs` can validate clip counts, but those keys are not `TemplateRecipe` fields. The template orchestrator already solved the same kind of mismatch (`template_kind`, `has_intro_slot`) with a local `_build_recipe` helper — that helper is now shared as `build_recipe` / `NON_RECIPE_KEYS` in `gemini_analyzer.py`, both orchestrators (and the seed test that had inlined the strip logic) route through it, and a regression test pins both the broken raw-splat behaviour and the working helper path.
+
 ## [0.4.28.0] - 2026-05-17
 
 ### Added
