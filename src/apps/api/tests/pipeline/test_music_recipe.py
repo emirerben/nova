@@ -418,7 +418,14 @@ def test_music_recipe_dict_constructs_template_recipe() -> None:
     assert "required_clips_min" in recipe_dict
     assert "required_clips_max" in recipe_dict
 
-    # And build_recipe() must strip those keys so the dataclass constructs cleanly.
+    # Document the OLD broken path: splatting the dict directly raises,
+    # which is exactly what _run_music_job hit in prod before this fix.
+    # Pins the regression so reverting to raw `TemplateRecipe(**recipe_dict)`
+    # breaks the test instead of breaking music jobs silently.
+    with pytest.raises(TypeError, match="required_clips_min"):
+        TemplateRecipe(**recipe_dict)
+
+    # The shared helper strips those keys so the dataclass constructs cleanly.
     recipe = build_recipe(recipe_dict)
     assert isinstance(recipe, TemplateRecipe)
     assert recipe.shot_count == len(recipe_dict["slots"])

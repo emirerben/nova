@@ -114,7 +114,7 @@ NON_RECIPE_KEYS: frozenset[str] = frozenset({
 })
 
 
-def build_recipe(recipe_data: dict) -> "TemplateRecipe":
+def build_recipe(recipe_data: dict) -> TemplateRecipe:
     """Construct a TemplateRecipe from a recipe dict (DB `recipe_cached` blob
     or the output of `generate_music_recipe`), stripping fields that are stored
     on the dict but are not TemplateRecipe constructor kwargs (see NON_RECIPE_KEYS).
