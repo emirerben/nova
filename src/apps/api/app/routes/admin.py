@@ -2229,6 +2229,59 @@ def _substitute_subject(overlays: list[dict], subject: str | None) -> list[dict]
     return out
 
 
+def _strip_unknown_font_families(overlays: list[dict]) -> list[dict]:
+    """Drop overlay/span `font_family` values that aren't in the backend registry.
+
+    The editor saves a `font_family` string and the pipeline looks it up in
+    `font-registry.json`. If a recipe carries a stale or hand-edited font
+    name the pipeline can't resolve, downstream renderers can raise instead of
+    falling back, which used to surface as a 500 from this endpoint. Strip
+    unknown names so rendering falls through to the legacy `font_style` path.
+    """
+    from app.pipeline.text_overlay import _FONT_REGISTRY  # noqa: PLC0415
+
+    known = set(_FONT_REGISTRY.get("fonts", {}).keys())
+    cleaned: list[dict] = []
+    for overlay in overlays:
+        copy = dict(overlay)
+        ff = copy.get("font_family")
+        if ff and ff not in known:
+            log.info("unknown_font_family_stripped", font_family=ff, where="overlay")
+            copy.pop("font_family", None)
+        spans = copy.get("spans")
+        if isinstance(spans, list):
+            new_spans = []
+            for span in spans:
+                span_copy = dict(span)
+                sf = span_copy.get("font_family")
+                if sf and sf not in known:
+                    log.info("unknown_font_family_stripped", font_family=sf, where="span")
+                    span_copy.pop("font_family", None)
+                new_spans.append(span_copy)
+            copy["spans"] = new_spans
+        cleaned.append(copy)
+    return cleaned
+
+
+def _blank_preview_png() -> bytes:
+    """Return a transparent 1080x1920 PNG (the editor's expected canvas).
+
+    Used as a degrade-gracefully fallback when overlay rendering raises, so
+    the admin editor doesn't surface a 500 to the user. The DOM preview is
+    still rendered client-side; the server PNG just goes blank for that frame.
+    """
+    import io  # noqa: PLC0415
+
+    from PIL import Image  # noqa: PLC0415
+
+    from app.pipeline.text_overlay import CANVAS_H, CANVAS_W  # noqa: PLC0415
+
+    img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
 @router.post(
     "/overlay-preview",
     dependencies=[Depends(_require_admin)],
@@ -2238,6 +2291,11 @@ async def overlay_preview(req: OverlayPreviewRequest):
 
     Used by OverlayPreview.tsx for WYSIWYG. Reuses the export pipeline's
     draw helpers so the preview is pixel-identical to the exported video.
+
+    On unexpected render errors, returns a transparent PNG with the failure
+    logged at exception level. The editor falls back to its DOM preview;
+    surfacing a 500 here used to break the entire editor on a single bad
+    overlay.
     """
     import os as _os  # noqa: PLC0415
     import shutil  # noqa: PLC0415
@@ -2247,11 +2305,15 @@ async def overlay_preview(req: OverlayPreviewRequest):
 
     from app.pipeline.text_overlay import render_overlays_at_time  # noqa: PLC0415
 
-    overlays = _substitute_subject(req.overlays, req.preview_subject)
-
-    tmp_dir = tempfile.mkdtemp(prefix="overlay_preview_route_")
-    png_path = _os.path.join(tmp_dir, "preview.png")
+    tmp_dir: str | None = None
+    data: bytes
+    overlays: list[dict] = []
     try:
+        overlays = _substitute_subject(req.overlays, req.preview_subject)
+        overlays = _strip_unknown_font_families(overlays)
+
+        tmp_dir = tempfile.mkdtemp(prefix="overlay_preview_route_")
+        png_path = _os.path.join(tmp_dir, "preview.png")
         render_overlays_at_time(
             overlays=overlays,
             slot_duration_s=req.slot_duration_s,
@@ -2261,13 +2323,19 @@ async def overlay_preview(req: OverlayPreviewRequest):
         with open(png_path, "rb") as f:
             data = f.read()
     except Exception as exc:
-        log.warning("overlay_preview_failed", error=str(exc))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"overlay preview render failed: {exc}",
-        ) from exc
+        log.exception(
+            "overlay_preview_failed",
+            error=str(exc),
+            overlay_count=len(overlays),
+            font_families=[o.get("font_family") for o in overlays],
+            effects=[o.get("effect") for o in overlays],
+            slot_duration_s=req.slot_duration_s,
+            time_in_slot_s=req.time_in_slot_s,
+        )
+        data = _blank_preview_png()
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if tmp_dir is not None:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return Response(
         content=data,

@@ -1,0 +1,165 @@
+{
+  "fonts": {
+    "Inter Regular": {
+      "file": "Inter-Regular.ttf",
+      "ass_name": "Inter",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Inter', sans-serif"
+    },
+    "Inter Medium": {
+      "file": "Inter-Medium.ttf",
+      "ass_name": "Inter",
+      "weight": 500,
+      "category": "sans",
+      "css_family": "'Inter', sans-serif"
+    },
+    "Playfair Display": {
+      "file": "PlayfairDisplay-Bold.ttf",
+      "ass_name": "Playfair Display",
+      "weight": 700,
+      "category": "serif",
+      "css_family": "'Playfair Display', serif",
+      "cycle_role": "settle"
+    },
+    "Playfair Display Regular": {
+      "file": "PlayfairDisplay-Regular.ttf",
+      "ass_name": "Playfair Display",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Playfair Display', serif"
+    },
+    "Montserrat": {
+      "file": "Montserrat-ExtraBold.ttf",
+      "ass_name": "Montserrat",
+      "weight": 800,
+      "category": "sans",
+      "css_family": "'Montserrat', sans-serif",
+      "cycle_role": "contrast"
+    },
+    "Space Grotesk": {
+      "file": "SpaceGrotesk-Bold.ttf",
+      "ass_name": "Space Grotesk",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Space Grotesk', sans-serif"
+    },
+    "DM Sans": {
+      "file": "DMSans-Bold.ttf",
+      "ass_name": "DM Sans",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'DM Sans', sans-serif"
+    },
+    "Inter": {
+      "file": "Inter-Bold.ttf",
+      "ass_name": "Inter",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Inter', sans-serif"
+    },
+    "Inter Tight": {
+      "file": "InterTight-Bold.ttf",
+      "ass_name": "Inter Tight",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Inter Tight', sans-serif"
+    },
+    "Instrument Serif": {
+      "file": "InstrumentSerif-Regular.ttf",
+      "ass_name": "Instrument Serif",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Instrument Serif', serif",
+      "cycle_role": "contrast"
+    },
+    "Bodoni Moda": {
+      "file": "BodoniModa-Bold.ttf",
+      "ass_name": "Bodoni Moda",
+      "weight": 700,
+      "category": "serif",
+      "css_family": "'Bodoni Moda', serif",
+      "cycle_role": "contrast"
+    },
+    "Fraunces": {
+      "file": "Fraunces-Bold.ttf",
+      "ass_name": "Fraunces",
+      "weight": 700,
+      "category": "serif",
+      "css_family": "'Fraunces', serif",
+      "cycle_role": "contrast"
+    },
+    "Space Mono": {
+      "file": "SpaceMono-Bold.ttf",
+      "ass_name": "Space Mono",
+      "weight": 700,
+      "category": "mono",
+      "css_family": "'Space Mono', monospace"
+    },
+    "Outfit": {
+      "file": "Outfit-Bold.ttf",
+      "ass_name": "Outfit",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Outfit', sans-serif"
+    },
+    "Permanent Marker": {
+      "file": "PermanentMarker-Regular.ttf",
+      "ass_name": "Permanent Marker",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Permanent Marker', cursive",
+      "cycle_role": "contrast"
+    },
+    "Pacifico": {
+      "file": "Pacifico-Regular.ttf",
+      "ass_name": "Pacifico",
+      "weight": 400,
+      "category": "script",
+      "css_family": "'Pacifico', cursive",
+      "cycle_role": "contrast"
+    },
+    "Caveat Brush": {
+      "file": "CaveatBrush-Regular.ttf",
+      "ass_name": "Caveat Brush",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Caveat Brush', cursive"
+    },
+    "Shadows Into Light": {
+      "file": "ShadowsIntoLight-Regular.ttf",
+      "ass_name": "Shadows Into Light",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Shadows Into Light', cursive"
+    },
+    "Kalam": {
+      "file": "Kalam-Regular.ttf",
+      "ass_name": "Kalam",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Kalam', cursive"
+    },
+    "Indie Flower": {
+      "file": "IndieFlower-Regular.ttf",
+      "ass_name": "Indie Flower",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Indie Flower', cursive"
+    },
+    "Architects Daughter": {
+      "file": "ArchitectsDaughter-Regular.ttf",
+      "ass_name": "Architects Daughter",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Architects Daughter', cursive"
+    }
+  },
+  "style_defaults": {
+    "display": "Playfair Display",
+    "sans": "Montserrat",
+    "serif": "Playfair Display Regular",
+    "serif_italic": "Instrument Serif",
+    "script": "Fraunces"
+  }
+}

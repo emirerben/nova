@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import fontRegistryJson from "@/data/font-registry.json";
 import {
   adminValidateToken,
   clearAdminToken,
@@ -10,94 +11,39 @@ import {
   setAdminToken,
 } from "@/lib/admin-api";
 
-// ── Font face declarations for all registry fonts ────────────────────────────
-// Admin-only (2 users), so eager loading is fine. TTF files served from /fonts/.
-const FONT_FACES = `
-@font-face {
-  font-family: 'Inter';
-  src: url('/fonts/Inter-Regular.ttf') format('truetype');
-  font-weight: 400;
-  font-display: swap;
+// ── Font face declarations from the shared registry ──────────────────────────
+// Admin-only (2 users), so eager loading is fine. TTFs are served from /fonts/.
+// The CSS family deliberately collapses Inter Regular/Medium/Bold onto a single
+// `'Inter'` family with different `font-weight` values so the browser can pick
+// the right weight via standard CSS — matching how the registry resolves them.
+function buildFontFaces(
+  registry: { fonts: Record<string, { file: string; weight: number; css_family: string }> },
+): string {
+  // De-dup by (css-family, weight, file) so we don't emit the same @font-face
+  // multiple times when two registry keys share a CSS family (e.g. Inter).
+  const seen = new Set<string>();
+  const blocks: string[] = [];
+  for (const entry of Object.values(registry.fonts)) {
+    // Extract the first family from `'Family Name', fallback` so the @font-face
+    // family is the bare family token without the fallback list.
+    const match = entry.css_family.match(/^\s*['"]([^'"]+)['"]/);
+    const family = match ? match[1] : entry.css_family;
+    const key = `${family}|${entry.weight}|${entry.file}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    blocks.push(
+      `@font-face {\n` +
+      `  font-family: '${family}';\n` +
+      `  src: url('/fonts/${entry.file}') format('truetype');\n` +
+      `  font-weight: ${entry.weight};\n` +
+      `  font-display: swap;\n` +
+      `}`,
+    );
+  }
+  return blocks.join("\n");
 }
-@font-face {
-  font-family: 'Inter';
-  src: url('/fonts/Inter-Medium.ttf') format('truetype');
-  font-weight: 500;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Playfair Display';
-  src: url('/fonts/PlayfairDisplay-Bold.ttf') format('truetype');
-  font-weight: 700;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Playfair Display';
-  src: url('/fonts/PlayfairDisplay-Regular.ttf') format('truetype');
-  font-weight: 400;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Montserrat';
-  src: url('/fonts/Montserrat-ExtraBold.ttf') format('truetype');
-  font-weight: 800;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Space Grotesk';
-  src: url('/fonts/SpaceGrotesk-Bold.ttf') format('truetype');
-  font-weight: 700;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'DM Sans';
-  src: url('/fonts/DMSans-Bold.ttf') format('truetype');
-  font-weight: 700;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Instrument Serif';
-  src: url('/fonts/InstrumentSerif-Regular.ttf') format('truetype');
-  font-weight: 400;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Bodoni Moda';
-  src: url('/fonts/BodoniModa-Bold.ttf') format('truetype');
-  font-weight: 700;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Fraunces';
-  src: url('/fonts/Fraunces-Bold.ttf') format('truetype');
-  font-weight: 700;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Space Mono';
-  src: url('/fonts/SpaceMono-Bold.ttf') format('truetype');
-  font-weight: 700;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Outfit';
-  src: url('/fonts/Outfit-Bold.ttf') format('truetype');
-  font-weight: 700;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Permanent Marker';
-  src: url('/fonts/PermanentMarker-Regular.ttf') format('truetype');
-  font-weight: 400;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Pacifico';
-  src: url('/fonts/Pacifico-Regular.ttf') format('truetype');
-  font-weight: 400;
-  font-display: swap;
-}
-`;
+
+const FONT_FACES = buildFontFaces(fontRegistryJson);
 
 /**
  * Admin layout: wraps all /admin pages with auth gate + nav.
