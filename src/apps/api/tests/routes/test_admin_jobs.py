@@ -194,20 +194,27 @@ class TestJobDebug:
 
             async def _gen():
                 db = AsyncMock()
-                # 1) get(Job) → returns j
+                # Execute order in get_job_debug:
+                #   1) select(Job)
+                #   2) select(JobClip)
+                #   3) select(MusicTrack)              — job.music_track_id set
+                #   4) select(AgentRun) by job_id
+                #   5) select(AgentRun) by music_track_id
+                # template_id is None on this fixture so the template branches
+                # (VideoTemplate lookup + AgentRun by template_id) are skipped.
                 job_res = MagicMock()
                 job_res.scalar_one_or_none.return_value = j
-                # 2) get(JobClip) → empty
                 clips_res = MagicMock()
                 clips_res.scalars.return_value.all.return_value = []
-                # 3) get(AgentRun) → empty
-                runs_res = MagicMock()
-                runs_res.scalars.return_value.all.return_value = []
-                # job.template_id is None so template lookup is skipped.
-                # job.music_track_id="track-a" triggers a music_track lookup.
                 mt_res = MagicMock()
                 mt_res.scalar_one_or_none.return_value = None
-                db.execute = AsyncMock(side_effect=[job_res, clips_res, mt_res, runs_res])
+                runs_res = MagicMock()
+                runs_res.scalars.return_value.all.return_value = []
+                track_runs_res = MagicMock()
+                track_runs_res.scalars.return_value.all.return_value = []
+                db.execute = AsyncMock(
+                    side_effect=[job_res, clips_res, mt_res, runs_res, track_runs_res]
+                )
                 yield db
 
             app.dependency_overrides[get_db] = _gen
@@ -222,5 +229,125 @@ class TestJobDebug:
         body = res.json()
         assert body["job"]["id"] == str(j.id)
         assert body["agent_runs"] == []
+        assert body["template_agent_runs"] == []
+        assert body["track_agent_runs"] == []
         assert body["job_clips"] == []
         assert body["job"]["pipeline_trace"] is None
+
+    def test_template_and_track_agent_runs_returned(self, client):
+        """When the job links to a template AND a track that both have
+        analysis-time agent_runs, the debug payload returns them in their
+        own arrays, separate from job-time agent_runs.
+        """
+        template_id = uuid.uuid4()
+        music_track_id = uuid.uuid4()
+        j = _job_row(
+            job_type="template",
+            template_id=str(template_id),
+            music_track_id=str(music_track_id),
+        )
+
+        def _run_row(name: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                id=uuid.uuid4(),
+                segment_idx=None,
+                agent_name=name,
+                prompt_version="1",
+                model="m",
+                outcome="ok",
+                attempts=1,
+                tokens_in=10,
+                tokens_out=10,
+                cost_usd=None,
+                latency_ms=100,
+                error_message=None,
+                input_json={"k": "v"},
+                output_json={"answer": "y"},
+                raw_text=None,
+                created_at=datetime.now(UTC),
+            )
+
+        template_summary = SimpleNamespace(
+            id=str(template_id),
+            name="Tiki Welcome",
+            analysis_status="ready",
+            recipe_cached={"shot_count": 5},
+            audio_gcs_path=None,
+            error_detail=None,
+        )
+        track_summary = SimpleNamespace(
+            id=str(music_track_id),
+            title="Waka Waka",
+            artist="Shakira",
+            analysis_status="ready",
+            audio_gcs_path=None,
+            track_config={},
+            recipe_cached=None,
+            beat_timestamps_s=[],
+            ai_labels=None,
+            best_sections=None,
+            error_detail=None,
+        )
+
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+
+            async def _gen():
+                db = AsyncMock()
+                # Execute order: Job → JobClip → VideoTemplate →
+                # MusicTrack → AgentRun(job_id) → AgentRun(template_id) →
+                # AgentRun(music_track_id)
+                job_res = MagicMock()
+                job_res.scalar_one_or_none.return_value = j
+                clips_res = MagicMock()
+                clips_res.scalars.return_value.all.return_value = []
+                tpl_res = MagicMock()
+                tpl_res.scalar_one_or_none.return_value = template_summary
+                mt_res = MagicMock()
+                mt_res.scalar_one_or_none.return_value = track_summary
+                runs_res = MagicMock()
+                runs_res.scalars.return_value.all.return_value = [
+                    _run_row("nova.video.clip_metadata"),
+                ]
+                tpl_runs_res = MagicMock()
+                tpl_runs_res.scalars.return_value.all.return_value = [
+                    _run_row("nova.compose.template_recipe"),
+                ]
+                track_runs_res = MagicMock()
+                track_runs_res.scalars.return_value.all.return_value = [
+                    _run_row("nova.audio.song_classifier"),
+                    _run_row("nova.audio.music_matcher"),
+                ]
+                db.execute = AsyncMock(
+                    side_effect=[
+                        job_res,
+                        clips_res,
+                        tpl_res,
+                        mt_res,
+                        runs_res,
+                        tpl_runs_res,
+                        track_runs_res,
+                    ]
+                )
+                yield db
+
+            app.dependency_overrides[get_db] = _gen
+            try:
+                res = client.get(
+                    f"/admin/jobs/{j.id}/debug",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+        assert res.status_code == 200
+        body = res.json()
+        assert [r["agent_name"] for r in body["agent_runs"]] == [
+            "nova.video.clip_metadata"
+        ]
+        assert [r["agent_name"] for r in body["template_agent_runs"]] == [
+            "nova.compose.template_recipe"
+        ]
+        assert [r["agent_name"] for r in body["track_agent_runs"]] == [
+            "nova.audio.song_classifier",
+            "nova.audio.music_matcher",
+        ]

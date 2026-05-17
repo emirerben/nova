@@ -214,6 +214,12 @@ function AdminNav({ onLogout }: { onLogout: () => void }) {
           >
             Music
           </NavLink>
+          <NavLink
+            href="/admin/jobs"
+            active={pathname === "/admin/jobs" || pathname.startsWith("/admin/jobs/")}
+          >
+            Jobs
+          </NavLink>
           <NavLink href="/admin/templates/new" active={pathname === "/admin/templates/new"}>
             New Template
           </NavLink>

@@ -3203,10 +3203,13 @@ def _collect_absolute_overlays(
             # Overrides are always in seconds; they bypass the pct math
             # because they exist precisely to bolt-on a manual correction
             # the agent got wrong.
+            _clamped_by: str | None = None
             if ov.get("start_s_override") is not None:
                 ov_start = cumulative_s + float(ov["start_s_override"])
+                _clamped_by = "override"
             if ov.get("end_s_override") is not None:
                 ov_end = cumulative_s + float(ov["end_s_override"])
+                _clamped_by = "override"
             # Guard against negative timestamps from bad override values
             ov_start = max(0.0, ov_start)
             ov_end = max(ov_start + 0.01, ov_end)
@@ -3329,6 +3332,14 @@ def _collect_absolute_overlays(
                 slot_end_abs = cumulative_s + dur
                 if entry["end_s"] > slot_end_abs:
                     entry["end_s"] = slot_end_abs
+                    _clamped_by = "curtain_close"
+
+            # Internal-only bookkeeping for the admin timeline: which slot(s)
+            # this overlay originated from (becomes a list after dedup 1 merge)
+            # and what last touched its end time. Stripped before return so
+            # downstream renderers never see these keys.
+            entry["_origin_slots"] = [slot_position]
+            entry["_clamped_by"] = _clamped_by
 
             raw.append(entry)
 
@@ -3405,6 +3416,15 @@ def _collect_absolute_overlays(
                 # If current has accel, copy it to previous
                 if "font_cycle_accel_at_s" in ov:
                     prev["font_cycle_accel_at_s"] = ov["font_cycle_accel_at_s"]
+                # Union origin slot positions for the admin timeline
+                prev_slots = prev.get("_origin_slots") or []
+                ov_slots = ov.get("_origin_slots") or []
+                prev["_origin_slots"] = sorted(set(prev_slots) | set(ov_slots))
+                # Inherit clamp reason from the later overlay if it set one
+                # (curtain-close clamps fire per-slot; the merged result
+                # should reflect whether the *final* end was clamped).
+                if ov.get("_clamped_by"):
+                    prev["_clamped_by"] = ov["_clamped_by"]
                 merged = True
                 break
         if not merged:
@@ -3422,6 +3442,7 @@ def _collect_absolute_overlays(
         if _slot_key(unique[i]) == _slot_key(unique[i + 1]):
             if unique[i]["end_s"] > unique[i + 1]["start_s"]:
                 unique[i]["end_s"] = unique[i + 1]["start_s"] - 0.1
+                unique[i]["_clamped_by"] = "overlap_truncated"
                 # Keep font-cycle accel timestamp within the truncated range
                 accel = unique[i].get("font_cycle_accel_at_s")
                 if accel is not None and accel >= unique[i]["end_s"]:
@@ -3429,6 +3450,46 @@ def _collect_absolute_overlays(
 
     # Remove any that became invalid after truncation
     result = [o for o in unique if o["end_s"] > o["start_s"]]
+
+    # Emit one pipeline_trace event per surviving overlay so the admin
+    # timeline can show the exact post-merge / post-clamp / post-override
+    # window that will be burned into the rendered video. record_pipeline_event
+    # is a no-op when no job_id contextvar is bound (eval harness, tests
+    # that exercise this function in isolation), so this is safe outside
+    # the orchestrator.
+    try:
+        from app.services.pipeline_trace import (  # noqa: PLC0415
+            record_pipeline_event,
+        )
+
+        for o in result:
+            origin_slots = o.get("_origin_slots") or []
+            record_pipeline_event(
+                stage="overlay",
+                event="render_window",
+                data={
+                    "text": o.get("text", ""),
+                    "abs_start_s": round(float(o["start_s"]), 3),
+                    "abs_end_s": round(float(o["end_s"]), 3),
+                    "slot_index": origin_slots[0] if origin_slots else None,
+                    "merged_from_slots": origin_slots if len(origin_slots) > 1 else None,
+                    "position": o.get("position"),
+                    "position_y_frac": o.get("position_y_frac"),
+                    "effect": o.get("effect"),
+                    "text_size": o.get("text_size"),
+                    "text_color": o.get("text_color"),
+                    "font_cycle_accel_at_s": o.get("font_cycle_accel_at_s"),
+                    "clamped_by": o.get("_clamped_by"),
+                },
+            )
+    except Exception:  # noqa: BLE001 — trace write must never break a render
+        log.warning("overlay_trace_emit_failed", exc_info=True)
+
+    # Strip internal bookkeeping keys before returning so downstream
+    # renderers (PNG/ASS generators) never see them.
+    for o in result:
+        o.pop("_origin_slots", None)
+        o.pop("_clamped_by", None)
 
     log.info("text_overlays_collected", raw=len(raw), deduped=len(result))
     return result

@@ -151,6 +151,12 @@ class JobDebugResponse(BaseModel):
     template: TemplateSummary | None
     music_track: MusicTrackSummary | None
     agent_runs: list[AgentRunPayload]
+    # Template/track-level analysis runs that shaped the template's recipe
+    # but ran outside this job's lifecycle. Empty arrays when the job has
+    # no linked template/track or when those entities were analyzed before
+    # the agent_run.template_id / music_track_id columns existed.
+    template_agent_runs: list[AgentRunPayload]
+    track_agent_runs: list[AgentRunPayload]
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -295,6 +301,44 @@ async def get_job_debug(
     )
     runs = list(runs_res.scalars().all())
 
+    template_runs: list[AgentRun] = []
+    if job.template_id:
+        tpl_runs_res = await db.execute(
+            select(AgentRun)
+            .where(AgentRun.template_id == job.template_id)
+            .order_by(AgentRun.created_at)
+        )
+        template_runs = list(tpl_runs_res.scalars().all())
+
+    track_runs: list[AgentRun] = []
+    if job.music_track_id:
+        track_runs_res = await db.execute(
+            select(AgentRun)
+            .where(AgentRun.music_track_id == job.music_track_id)
+            .order_by(AgentRun.created_at)
+        )
+        track_runs = list(track_runs_res.scalars().all())
+
+    def _to_payload(r: AgentRun) -> AgentRunPayload:
+        return AgentRunPayload(
+            id=str(r.id),
+            segment_idx=r.segment_idx,
+            agent_name=r.agent_name,
+            prompt_version=r.prompt_version,
+            model=r.model,
+            outcome=r.outcome,
+            attempts=r.attempts,
+            tokens_in=r.tokens_in,
+            tokens_out=r.tokens_out,
+            cost_usd=float(r.cost_usd) if r.cost_usd is not None else None,
+            latency_ms=r.latency_ms,
+            error_message=r.error_message,
+            input_json=r.input_json,
+            output_json=r.output_json,
+            raw_text=r.raw_text,
+            created_at=r.created_at,
+        )
+
     job_payload = JobPayload(
         id=str(job.id),
         user_id=str(job.user_id),
@@ -346,25 +390,7 @@ async def get_job_debug(
         ],
         template=template,
         music_track=music,
-        agent_runs=[
-            AgentRunPayload(
-                id=str(r.id),
-                segment_idx=r.segment_idx,
-                agent_name=r.agent_name,
-                prompt_version=r.prompt_version,
-                model=r.model,
-                outcome=r.outcome,
-                attempts=r.attempts,
-                tokens_in=r.tokens_in,
-                tokens_out=r.tokens_out,
-                cost_usd=float(r.cost_usd) if r.cost_usd is not None else None,
-                latency_ms=r.latency_ms,
-                error_message=r.error_message,
-                input_json=r.input_json,
-                output_json=r.output_json,
-                raw_text=r.raw_text,
-                created_at=r.created_at,
-            )
-            for r in runs
-        ],
+        agent_runs=[_to_payload(r) for r in runs],
+        template_agent_runs=[_to_payload(r) for r in template_runs],
+        track_agent_runs=[_to_payload(r) for r in track_runs],
     )
