@@ -232,11 +232,22 @@ def normalize_orientation(file_path: str) -> str:
         file_path,
         "-vf",
         transpose_chain,
-        # Strip the container rotation flag so downstream ffprobe sees
-        # rotation=0 — every consumer (probe.py, gemini upload, reframe)
-        # then agrees on the new pixel orientation.
-        "-metadata:s:v:0",
-        "rotate=0",
+        # Strip the container Display Matrix side-data so downstream
+        # ffprobe sees no rotation flag. CRITICAL: the earlier
+        # `-metadata:s:v:0 rotate=0` form only clears the LEGACY
+        # `rotate` tag and leaves the Display Matrix side_data entry
+        # intact. CI on Linux FFmpeg 7.x confirmed: pixels rotated
+        # correctly via the transpose filter but ffprobe still reported
+        # `Display Matrix rotation=-90` on the output, which would
+        # cause Gemini's autorotating decoder AND `reframe.py`'s ffmpeg
+        # (no `-noautorotate`) to rotate the already-portrait pixels a
+        # SECOND time — net result: original yan-yatık bug returns.
+        # `-map_metadata -1` discards all input-side metadata mapping
+        # including the side_data carrying Display Matrix. Codec
+        # extradata is unaffected (libx264 writes its own on re-encode);
+        # `-c:a copy` preserves the audio stream verbatim.
+        "-map_metadata",
+        "-1",
         # Video: minimal H.264 intermediate. yuv420p is the universal
         # decoder-friendly format; high profile matches what reframe
         # produces. CRF 18 is visually lossless for a single intermediate
