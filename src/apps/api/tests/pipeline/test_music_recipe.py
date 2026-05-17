@@ -389,3 +389,37 @@ class TestMergeAudioRecipe:
         # No Gemini visuals applied
         assert merged["slots"][0]["transition_in"] == "cut"
         assert merged["color_grade"] == "none"  # unchanged
+
+
+def test_music_recipe_dict_constructs_template_recipe() -> None:
+    """Regression: generate_music_recipe()'s output must be splat-safe into
+    TemplateRecipe via build_recipe(). Previously failed with
+    `TemplateRecipe.__init__() got an unexpected keyword argument 'required_clips_min'`
+    because the music orchestrator splatted the dict directly without stripping
+    routing/validation-only keys (admin endpoints still need those keys on the dict).
+    """
+    from app.pipeline.agents.gemini_analyzer import TemplateRecipe, build_recipe
+
+    data = {
+        # 40 beats at 0.5s intervals → 0.0s..19.5s
+        "beat_timestamps_s": [i * 0.5 for i in range(40)],
+        "track_config": {
+            "best_start_s": 0.0,
+            "best_end_s": 16.0,
+            "slot_every_n_beats": 8,
+        },
+        "duration_s": 20.0,
+    }
+    recipe_dict = generate_music_recipe(data)
+
+    # The dict MUST keep the routing/validation keys — admin endpoints
+    # (admin.py:1562, admin.py:2000) and POST /music-jobs (music_jobs.py:133)
+    # read them back from recipe_cached / track_config.
+    assert "required_clips_min" in recipe_dict
+    assert "required_clips_max" in recipe_dict
+
+    # And build_recipe() must strip those keys so the dataclass constructs cleanly.
+    recipe = build_recipe(recipe_dict)
+    assert isinstance(recipe, TemplateRecipe)
+    assert recipe.shot_count == len(recipe_dict["slots"])
+    assert recipe.shot_count > 0
