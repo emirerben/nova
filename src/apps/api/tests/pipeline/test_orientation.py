@@ -615,6 +615,64 @@ class TestNormalizeOrientationIntegration:
             with pytest.raises(OrientationError, match="ffmpeg normalize failed"):
                 normalize_orientation(str(bad))
 
+    def test_strip_flag_only_ffmpeg_failure_raises(self, tmp_path: Path) -> None:
+        """The stale-flag (codec-copy remux) path has its own error handler.
+        Pin it — a corrupt or unreadable file routed to the strip path must
+        raise OrientationError with the strip-specific message."""
+        bad = tmp_path / "bad_portrait.mp4"
+        bad.write_bytes(b"not a real video")
+
+        # Force the stale-flag fast path by returning portrait dims with a
+        # rotation flag (height > width with rotation in ±90 → strip path).
+        with patch(
+            "app.pipeline.orientation.detect_rotation_and_dims",
+            return_value=(-90, 240, 320),
+        ):
+            with pytest.raises(OrientationError, match="ffmpeg flag-strip failed"):
+                normalize_orientation(str(bad))
+
+    def test_strip_flag_only_timeout_raises(
+        self, plain_clip: Path, tmp_path: Path
+    ) -> None:
+        """The strip path's TimeoutExpired handler must clean up the tmp
+        file and raise OrientationError with the strip-specific timeout
+        message. Mock subprocess.run to simulate the timeout."""
+        import subprocess as _subprocess
+
+        # Use a real valid clip so ffprobe (the dims probe) succeeds, but
+        # force-route to the stale-flag path by mocking dims, then mock
+        # ffmpeg call to raise TimeoutExpired.
+        target = tmp_path / "portrait_real.mp4"
+        target.write_bytes(plain_clip.read_bytes())
+
+        real_run = _subprocess.run
+        cmd_seen: list[list[str]] = []
+
+        def fake_run(cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+            cmd_seen.append(list(cmd))
+            # ffprobe calls are fine — pass through
+            if cmd[0] == "ffprobe":
+                return real_run(cmd, *args, **kwargs)
+            # ffmpeg call → simulate hang
+            raise _subprocess.TimeoutExpired(cmd=cmd, timeout=300)
+
+        with patch(
+            "app.pipeline.orientation.detect_rotation_and_dims",
+            return_value=(-90, 240, 320),  # forces strip path
+        ):
+            with patch(
+                "app.pipeline.orientation.subprocess.run",
+                side_effect=fake_run,
+            ):
+                with pytest.raises(OrientationError, match="ffmpeg flag-strip timed out"):
+                    normalize_orientation(str(target))
+
+        # Tmp file (would be <input>.flagstrip.tmp.mp4) must not be left behind.
+        tmp_artifact = target.with_suffix(target.suffix + ".flagstrip.tmp.mp4")
+        assert not tmp_artifact.exists(), (
+            "strip path must clean up its tmp file on timeout"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Stale-flag regression tests — portrait pixels carrying a redundant rotation

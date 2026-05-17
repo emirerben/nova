@@ -228,6 +228,61 @@ def _transpose_filter_for(rotation: int) -> str:
     raise OrientationError(f"unsupported rotation {rotation}")
 
 
+def _run_ffmpeg_atomic_replace(
+    src: str,
+    tmp_path: str,
+    cmd: list[str],
+    op_label: str,
+) -> None:
+    """Run an ffmpeg command that writes to ``tmp_path``, then atomically
+    swap with ``src`` via ``os.replace``. Both call sites in this module
+    (the flag-strip remux and the full re-encode) follow the same recipe:
+    same timeout, same cleanup-on-failure pattern, same atomic swap.
+
+    The caller owns the cmd list and the tmp path. ``cmd`` must already
+    include ``tmp_path`` as its final argument so ffmpeg writes there.
+    ``op_label`` is interpolated into error messages so failures from
+    different call sites are distinguishable (e.g. "flag-strip" vs
+    "normalize").
+
+    On TimeoutExpired or non-zero return code: best-effort delete the
+    half-written tmp file, then raise OrientationError with the labelled
+    message. On success: ``os.replace(tmp_path, src)`` performs the
+    atomic swap (rename(2) on POSIX), so either the new file fully
+    replaces the old or the original is left untouched.
+
+    Raises:
+        OrientationError: on ffmpeg failure (timeout or non-zero rc).
+    """
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=_NORMALIZE_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise OrientationError(
+            f"ffmpeg {op_label} timed out after {_NORMALIZE_TIMEOUT_S}s on {src}"
+        ) from exc
+
+    if result.returncode != 0:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        stderr = result.stderr.decode("utf-8", errors="replace")[:500]
+        raise OrientationError(
+            f"ffmpeg {op_label} failed (rc={result.returncode}): {stderr}"
+        )
+
+    os.replace(tmp_path, src)
+
+
 def _strip_rotation_flag_only(file_path: str) -> None:
     """Remux to clear the Display-Matrix rotation flag WITHOUT touching pixels.
 
@@ -271,31 +326,7 @@ def _strip_rotation_flag_only(file_path: str) -> None:
         "copy",
         tmp_path,
     ]
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=_NORMALIZE_TIMEOUT_S,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        raise OrientationError(
-            f"ffmpeg flag-strip timed out after {_NORMALIZE_TIMEOUT_S}s on {file_path}"
-        ) from exc
-
-    if result.returncode != 0:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        stderr = result.stderr.decode("utf-8", errors="replace")[:500]
-        raise OrientationError(f"ffmpeg flag-strip failed (rc={result.returncode}): {stderr}")
-
-    os.replace(tmp_path, file_path)
+    _run_ffmpeg_atomic_replace(file_path, tmp_path, cmd, op_label="flag-strip")
 
 
 def normalize_orientation(file_path: str) -> str:
@@ -506,34 +537,7 @@ def normalize_orientation(file_path: str) -> str:
         tmp_path,
     ]
 
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=_NORMALIZE_TIMEOUT_S,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        # Best-effort cleanup; missing tmp file is fine.
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        raise OrientationError(
-            f"ffmpeg normalize timed out after {_NORMALIZE_TIMEOUT_S}s on {file_path}"
-        ) from exc
-
-    if result.returncode != 0:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        stderr = result.stderr.decode("utf-8", errors="replace")[:500]
-        raise OrientationError(f"ffmpeg normalize failed (rc={result.returncode}): {stderr}")
-
-    # Atomic swap — on POSIX os.replace is rename(2). Either the new file
-    # is fully written when we replace, or we leave the original untouched.
-    os.replace(tmp_path, file_path)
+    _run_ffmpeg_atomic_replace(file_path, tmp_path, cmd, op_label="normalize")
 
     log.info(
         "orientation_normalized",
