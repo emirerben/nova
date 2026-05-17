@@ -347,6 +347,14 @@ These TODOs were filed when the first wave of Yasin's prompt rewrites shipped (`
 **Effort:** M (human: ~1d / CC: ~30 min)
 **Priority:** P3
 
+### Slim the recipe-agent prompt: drop text_overlays once manual templates adopt TemplateTextAgent (follow-up to PR #188)
+**What:** Remove the text-overlay extraction instructions from `src/apps/api/prompts/analyze_template_single.txt` and `src/apps/api/prompts/analyze_template_pass2.txt` (the two recipe-agent prompt templates used by `TemplateRecipeAgent.render_prompt()`). Update `_validate_slots()` in `src/apps/api/app/agents/template_recipe.py` to stop validating `text_overlays` on slot dicts. Drop the related validators (`_validate_text_bbox`, the `text_overlays` for-loop inside `_validate_slots`, `_dedup_overlays_across_slots`, `_enforce_pct_uniformity`'s overlay leg) and any callsites that read `recipe.slots[*].text_overlays` in the manual-template path.
+**Why:** PR #188 (v0.4.26.0) shipped `nova.compose.template_text` as a dedicated text-extraction agent. In the agentic build path (`agentic_template_build_task`), `template_text_extraction._merge_overlays_into_slots` already OVERWRITES `recipe.slots[*].text_overlays` with the text agent's richer output — so the recipe agent's text extraction in that path is wasted tokens. Once the manual-template build path also calls `TemplateTextAgent`, the recipe prompt is duplicating work on every template analysis. Slimming it will improve focus on slot decomposition, interstitials, transitions, and creative direction, and reduce per-call token usage.
+**How:** 1) Wire `TemplateTextAgent` into the manual-template build path (separate prerequisite — no plan exists yet). 2) Once that lands and is verified in prod, edit `analyze_template_single.txt` and `analyze_template_pass2.txt` to remove the text-overlay extraction section. 3) Bump `TemplateRecipeAgent.spec.prompt_version` in `src/apps/api/app/agents/template_recipe.py`. 4) Run `pytest tests/evals/test_template_recipe_evals.py -v --with-judge --eval-mode=live` against existing fixtures and compare scores against the prior `prompt_version` run. 5) After a release cycle, drop the `text_overlays` validation logic from `_validate_slots()` and its helper functions (`_validate_text_bbox`, `_dedup_overlays_across_slots`, the overlay leg of `_enforce_pct_uniformity`).
+**Effort:** ~half a day once the prerequisite manual-path wiring is done (~30 min prompt edit + schema cleanup + fixture re-export + eval comparison). The unscoped blocker is the manual-path wiring itself.
+**Priority:** P2 — quality improvement, not a bug. Blocked.
+**Depends on:** Manual-template build path adopting `TemplateTextAgent` (no plan exists yet — separate work).
+
 ---
 
 ## Single-pass OOM follow-ups (added 2026-05-17)
