@@ -216,7 +216,7 @@ def _transpose_filter_for(rotation: int) -> str:
     the existing dim-swap tests because BOTH CW and CCW rotations swap
     pixel dimensions identically. The tests never asserted on pixel
     direction. The fix adds that assertion in
-    ``TestNormalizeOrientationPixelDirection``.
+    ``TestNormalizeOrientationIntegration.test_neg_90_pixel_direction_matches_player``.
     """
     if rotation == -90 or rotation == 270:
         return "transpose=1"
@@ -320,6 +320,18 @@ def normalize_orientation(file_path: str) -> str:
     implementation always re-encoded with a transpose, which double-rotated
     those files and produced upside-down/sideways output for users.
 
+    Two cases collapse into the ``rotation == 0`` skip row upstream of this
+    function and won't appear in the case table above:
+
+    - Non-orthogonal angles (e.g. 45°). ``_extract_rotation`` normalizes
+      those to 0 with a warning so the file passes through reframe's
+      normal handling.
+    - Files with no video stream. ``detect_rotation_and_dims`` returns
+      ``(0, 0, 0)`` and the function takes the skip path. The trace
+      event will show ``width=0, height=0`` — this is a deliberate
+      no-op, not a probe failure (the orchestrator surfaces the real
+      error at the next step).
+
     Both paths atomically replace ``file_path`` in place (.tmp + os.replace).
 
     Killable via env var ``ORIENTATION_NORMALIZE_ENABLED=false`` (default
@@ -340,7 +352,7 @@ def normalize_orientation(file_path: str) -> str:
     # redeploy by setting ORIENTATION_NORMALIZE_ENABLED=false on the worker
     # and restarting it. Used as a safety valve when a regression slips in.
     if os.getenv("ORIENTATION_NORMALIZE_ENABLED", "true").strip().lower() == "false":
-        log.warning("orientation_disabled_by_env", path=file_path)
+        log.warning("orientation_disabled_by_env", path=os.path.basename(file_path))
         record_pipeline_event(
             stage="orientation",
             event="disabled_by_env",

@@ -401,6 +401,78 @@ class TestNormalizeOrientationIntegration:
         assert (w, h) == (320, 240)
         assert _probe_for_rotation(rotated_180_clip) == 0
 
+    def test_square_pixels_with_rotation_flag_take_re_encode_path(
+        self, plain_clip: Path, tmp_path: Path
+    ) -> None:
+        """Square videos (width == height) with a rotation flag fall through
+        to the re-encode path, NOT the stale-flag fast path. iPhone Live
+        Photo videos can land here. Trusting the flag is the conservative
+        default since pixel dims give no orientation signal for squares.
+
+        Pin the boundary so a future refactor that flips ``height > width``
+        to ``height >= width`` doesn't silently change behavior."""
+        if not _ffmpeg_available():
+            pytest.skip("ffmpeg not installed")
+        d = tmp_path / "square_plain.mp4"
+        _build_plain_clip(d, width=320, height=320)
+        target = _bake_rotation(d, tmp_path / "square_rotated.mov", -90)
+        assert _probe_dims(target) == (320, 320), "precondition"
+
+        with patch("app.services.pipeline_trace.record_pipeline_event") as mock_record:
+            normalize_orientation(str(target))
+
+        events = [c.kwargs.get("event") or (c.args[1] if len(c.args) > 1 else None)
+                  for c in mock_record.call_args_list]
+        assert "normalized" in events, (
+            f"square+flag must hit the re-encode path (event='normalized'), got {events}"
+        )
+
+    def test_pos_90_pixel_direction_matches_player(
+        self, rotated_pos90_clip: Path, tmp_path: Path
+    ) -> None:
+        """Mirror of test_neg_90_pixel_direction_matches_player for the +90
+        (Android) branch. The +90 transpose was ALSO flipped in this fix
+        (was transpose=1, now transpose=2). Without this test, a future
+        regression that re-inverted only the +90 branch would not be caught
+        by any integration-level assertion — the dim-swap test passes for
+        both directions identically."""
+        reference = tmp_path / "ref_pos90.png"
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-ss", "0.3", "-i", str(rotated_pos90_clip),
+                "-vframes", "1", str(reference),
+            ],
+            check=True, timeout=30, capture_output=True,
+        )
+        normalize_orientation(str(rotated_pos90_clip))
+        normalized = tmp_path / "norm_pos90.png"
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-ss", "0.3", "-i", str(rotated_pos90_clip),
+                "-vframes", "1", str(normalized),
+            ],
+            check=True, timeout=30, capture_output=True,
+        )
+        psnr_out = subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "info",
+                "-i", str(normalized), "-i", str(reference),
+                "-filter_complex", "psnr",
+                "-f", "null", "-",
+            ],
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+        import re
+        match = re.search(r"PSNR.*average:([0-9.]+|inf)", psnr_out.stderr)
+        assert match is not None, f"PSNR parse failed:\n{psnr_out.stderr[-500:]}"
+        psnr_value = float("inf") if match.group(1) == "inf" else float(match.group(1))
+        assert psnr_value > 25.0, (
+            f"+90 normalized frame diverges from player reference (PSNR avg = {psnr_value} dB). "
+            "Likely a wrong transpose direction on the +90 branch — will ship sideways/upside-down."
+        )
+
     def test_neg_90_pixel_direction_matches_player(
         self, rotated_neg90_clip: Path, tmp_path: Path
     ) -> None:
