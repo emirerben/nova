@@ -224,30 +224,38 @@ def normalize_orientation(file_path: str) -> str:
         "ffmpeg",
         "-y",
         "-hide_banner",
-        # `-noautorotate` MUST come before `-i`. Without it FFmpeg 7.x's
-        # decoder applies the Display Matrix rotation before our filter
-        # graph sees the frames, and our transpose then double-applies.
+        # `-display_rotation 0` REPLACES the input AVStream's rotation
+        # matrix with identity. With this, the muxer writes an identity
+        # `tkhd` matrix on output → ffprobe sees no Display Matrix
+        # side_data → downstream consumers (probe.py, Gemini upload,
+        # reframe ffmpeg) all agree the file has no rotation. Must come
+        # BEFORE `-i`. Available since FFmpeg 5.0 (Bookworm has 7.x).
+        #
+        # CRITICAL — why not the earlier approaches:
+        #   - `-metadata:s:v:0 rotate=0` only clears the LEGACY `rotate`
+        #     tag, not the Display Matrix side_data entry. macOS
+        #     Homebrew 8.1 happened to strip it via the transpose
+        #     filter's side-effect, hiding this gap locally.
+        #   - `-map_metadata -1` discards metadata mapping but does NOT
+        #     touch side_data — those are separate FFmpeg constructs.
+        #     CI on Linux FFmpeg 7.x confirmed: pixels rotated correctly
+        #     via transpose but ffprobe still reported `Display Matrix
+        #     rotation=-90` on the output. That would have caused
+        #     Gemini's autorotating decoder AND `reframe.py`'s ffmpeg
+        #     (no `-noautorotate`) to rotate the already-portrait pixels
+        #     a SECOND time → original yan-yatık bug returns.
+        #
+        # `-noautorotate` is kept as belt-and-suspenders: with
+        # `-display_rotation 0` the matrix is already 0 so the decoder
+        # has nothing to apply, but the redundancy costs nothing and
+        # locks behavior across any future FFmpeg version drift.
+        "-display_rotation",
+        "0",
         "-noautorotate",
         "-i",
         file_path,
         "-vf",
         transpose_chain,
-        # Strip the container Display Matrix side-data so downstream
-        # ffprobe sees no rotation flag. CRITICAL: the earlier
-        # `-metadata:s:v:0 rotate=0` form only clears the LEGACY
-        # `rotate` tag and leaves the Display Matrix side_data entry
-        # intact. CI on Linux FFmpeg 7.x confirmed: pixels rotated
-        # correctly via the transpose filter but ffprobe still reported
-        # `Display Matrix rotation=-90` on the output, which would
-        # cause Gemini's autorotating decoder AND `reframe.py`'s ffmpeg
-        # (no `-noautorotate`) to rotate the already-portrait pixels a
-        # SECOND time — net result: original yan-yatık bug returns.
-        # `-map_metadata -1` discards all input-side metadata mapping
-        # including the side_data carrying Display Matrix. Codec
-        # extradata is unaffected (libx264 writes its own on re-encode);
-        # `-c:a copy` preserves the audio stream verbatim.
-        "-map_metadata",
-        "-1",
         # Video: minimal H.264 intermediate. yuv420p is the universal
         # decoder-friendly format; high profile matches what reframe
         # produces. CRF 18 is visually lossless for a single intermediate
