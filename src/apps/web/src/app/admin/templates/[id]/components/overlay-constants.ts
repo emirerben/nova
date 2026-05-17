@@ -1,3 +1,4 @@
+import fontRegistryJson from "@/data/font-registry.json";
 import type { RecipeTextOverlay, TextSpan, OverlayPosition, OverlayRole, TextSize } from "./recipe-types";
 
 // ── Backend-to-frontend mapping ─────────────────────────────────────────────
@@ -25,7 +26,10 @@ export const FONT_SIZE_MAP: Record<string, number> = {
   jumbo: 199,
 };
 
-// ── Font registry (must match src/apps/api/assets/fonts/font-registry.json) ──
+// ── Font registry (sourced from src/data/font-registry.json) ─────────────────
+// The JSON is a byte-identical mirror of src/apps/api/assets/fonts/font-registry.json,
+// kept in sync by `scripts/sync-font-registry.mjs` (runs on `npm run dev`,
+// checked on `npm run build`). Edit the backend file; the web copy follows.
 
 export interface FontRegistryEntry {
   file: string;
@@ -36,106 +40,16 @@ export interface FontRegistryEntry {
   cycle_role?: string;
 }
 
-export const FONT_REGISTRY: Record<string, FontRegistryEntry> = {
-  "Inter": {
-    file: "Inter-Regular.ttf",
-    ass_name: "Inter",
-    weight: 400,
-    category: "sans",
-    css_family: "'Inter', sans-serif",
-  },
-  "Inter Medium": {
-    file: "Inter-Medium.ttf",
-    ass_name: "Inter",
-    weight: 500,
-    category: "sans",
-    css_family: "'Inter', sans-serif",
-  },
-  "Playfair Display": {
-    file: "PlayfairDisplay-Bold.ttf",
-    ass_name: "Playfair Display",
-    weight: 700,
-    category: "serif",
-    css_family: "'Playfair Display', serif",
-    cycle_role: "settle",
-  },
-  "Playfair Display Regular": {
-    file: "PlayfairDisplay-Regular.ttf",
-    ass_name: "Playfair Display",
-    weight: 400,
-    category: "serif",
-    css_family: "'Playfair Display', serif",
-  },
-  "Montserrat": {
-    file: "Montserrat-ExtraBold.ttf",
-    ass_name: "Montserrat",
-    weight: 800,
-    category: "sans",
-    css_family: "'Montserrat', sans-serif",
-    cycle_role: "contrast",
-  },
-  "Space Grotesk": {
-    file: "SpaceGrotesk-Bold.ttf",
-    ass_name: "Space Grotesk",
-    weight: 700,
-    category: "sans",
-    css_family: "'Space Grotesk', sans-serif",
-  },
-  "DM Sans": {
-    file: "DMSans-Bold.ttf",
-    ass_name: "DM Sans",
-    weight: 700,
-    category: "sans",
-    css_family: "'DM Sans', sans-serif",
-  },
-  "Instrument Serif": {
-    file: "InstrumentSerif-Regular.ttf",
-    ass_name: "Instrument Serif",
-    weight: 400,
-    category: "serif",
-    css_family: "'Instrument Serif', serif",
-    cycle_role: "contrast",
-  },
-  "Bodoni Moda": {
-    file: "BodoniModa-Bold.ttf",
-    ass_name: "Bodoni Moda",
-    weight: 700,
-    category: "serif",
-    css_family: "'Bodoni Moda', serif",
-    cycle_role: "contrast",
-  },
-  "Fraunces": {
-    file: "Fraunces-Bold.ttf",
-    ass_name: "Fraunces",
-    weight: 700,
-    category: "serif",
-    css_family: "'Fraunces', serif",
-  },
-  "Space Mono": {
-    file: "SpaceMono-Bold.ttf",
-    ass_name: "Space Mono",
-    weight: 700,
-    category: "mono",
-    css_family: "'Space Mono', monospace",
-  },
-  "Outfit": {
-    file: "Outfit-Bold.ttf",
-    ass_name: "Outfit",
-    weight: 700,
-    category: "sans",
-    css_family: "'Outfit', sans-serif",
-  },
-};
+interface FontRegistryFile {
+  fonts: Record<string, FontRegistryEntry>;
+  style_defaults: Record<string, string>;
+}
 
+const _registry = fontRegistryJson as FontRegistryFile;
+export const FONT_REGISTRY: Record<string, FontRegistryEntry> = _registry.fonts;
 export const FONT_NAMES = Object.keys(FONT_REGISTRY);
 
-const STYLE_DEFAULTS: Record<string, string> = {
-  display: "Playfair Display",
-  sans: "Montserrat",
-  serif: "Playfair Display Regular",
-  serif_italic: "Instrument Serif",
-  script: "Fraunces",
-};
+const STYLE_DEFAULTS: Record<string, string> = _registry.style_defaults;
 
 /** Legacy map — kept for code that still references it by font_style key */
 export const FONT_FAMILY_MAP: Record<string, { family: string; weight: number; italic?: boolean }> = {
