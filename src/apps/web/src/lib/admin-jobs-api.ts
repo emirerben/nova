@@ -134,7 +134,12 @@ export interface JobDebugResponse {
   job_clips: JobClipPayload[];
   template: TemplateSummary | null;
   music_track: MusicTrackSummary | null;
+  /** Agent runs that ran inside this job's Celery task (clip_metadata, text_designer, etc.) */
   agent_runs: AgentRunPayload[];
+  /** Agent runs that shaped the linked template's recipe (template_recipe, creative_direction, etc.) */
+  template_agent_runs: AgentRunPayload[];
+  /** Agent runs that analyzed the linked music track (song_classifier, song_sections, music_matcher, etc.) */
+  track_agent_runs: AgentRunPayload[];
 }
 
 // ── Calls ─────────────────────────────────────────────────────────────────────
