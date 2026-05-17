@@ -8,6 +8,9 @@ Walks DB rows and writes one JSON fixture per record under
   - transcript            ← Job.transcript
   - platform_copy         ← JobClip.platform_copy
   - audio_template        ← MusicTrack.recipe_cached
+  - template_text         ← VideoTemplate.recipe_cached.slots[*].text_overlays
+                            (only templates built with the new text agent —
+                             detected by `_extracted_by` marker on overlays)
 
 Each fixture is a self-contained replay payload:
     {
@@ -175,6 +178,106 @@ def _build_audio_template_fixture(track: MusicTrack) -> dict | None:
     }
 
 
+def _build_template_text_fixture(tpl: VideoTemplate) -> dict | None:
+    """Reconstruct a template_text fixture from a post-PR-#188 recipe_cached.
+
+    The text agent's output is merged INTO `recipe.slots[i].text_overlays` by
+    `template_text_extraction._merge_overlays_into_slots` — there is no separate
+    DB column for it. To reconstruct the agent's flat-list output we walk the
+    slot dicts, undo the slot-relative → slot-internal timing conversion, and
+    re-emit one TemplateTextOverlay-shaped dict per overlay.
+
+    Detection: only templates whose overlays carry the `_extracted_by` marker
+    (set by `_overlay_to_recipe_dict`) AND a `text_bbox` are eligible. This
+    excludes pre-PR-#188 templates whose `text_overlays` were emitted by the
+    recipe agent without bbox.
+
+    Slot duration source: `target_duration_s` per slot, matching the bridge's
+    `_build_slot_boundaries`. Interstitials are ignored — slot_boundaries are
+    cumulative target durations.
+    """
+    recipe = tpl.recipe_cached
+    if not isinstance(recipe, dict):
+        return None
+    slots = recipe.get("slots")
+    if not isinstance(slots, list) or not slots:
+        return None
+
+    flat_overlays: list[dict] = []
+    slot_boundaries: list[tuple[float, float]] = []
+    cursor = 0.0
+    for i, slot in enumerate(slots, start=1):
+        try:
+            dur = float(slot.get("target_duration_s", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            dur = 0.0
+        if dur <= 0:
+            continue
+        slot_boundaries.append((cursor, cursor + dur))
+
+        slot_overlays = slot.get("text_overlays") or []
+        if not isinstance(slot_overlays, list):
+            slot_overlays = []
+        for ov in slot_overlays:
+            if not isinstance(ov, dict):
+                continue
+            if ov.get("_extracted_by") != "nova.compose.template_text":
+                continue
+            bbox = ov.get("text_bbox")
+            if not isinstance(bbox, dict):
+                continue
+            # Slot-relative → global (reverse of _merge_overlays_into_slots).
+            try:
+                start_local = float(ov.get("start_s", 0.0) or 0.0)
+                end_local = float(ov.get("end_s", 0.0) or 0.0)
+                sft_local = float(bbox.get("sample_frame_t", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            flat_overlays.append(
+                {
+                    "slot_index": i,
+                    "sample_text": ov.get("sample_text") or "",
+                    "start_s": start_local + cursor,
+                    "end_s": end_local + cursor,
+                    "bbox": {
+                        "x_norm": bbox.get("x_norm"),
+                        "y_norm": bbox.get("y_norm"),
+                        "w_norm": bbox.get("w_norm"),
+                        "h_norm": bbox.get("h_norm"),
+                        "sample_frame_t": sft_local + cursor,
+                    },
+                    "font_color_hex": ov.get("font_color_hex") or "#FFFFFF",
+                    "effect": ov.get("effect") or "none",
+                    "role": ov.get("role") or "label",
+                    "size_class": ov.get("font_size_hint") or "medium",
+                }
+            )
+        cursor += dur
+
+    if not flat_overlays:
+        return None
+
+    output = {"overlays": flat_overlays}
+    return {
+        "agent": "nova.compose.template_text",
+        "prompt_version": "exported",
+        "input": {
+            "file_uri": tpl.gcs_path or f"templates/{tpl.id}/reference.mp4",
+            "file_mime": "video/mp4",
+            "slot_boundaries_s": slot_boundaries,
+        },
+        "raw_text": json.dumps(output),
+        "output": output,
+        "meta": {
+            "source": "VideoTemplate.recipe_cached.slots[*].text_overlays",
+            "template_id": tpl.id,
+            "template_name": tpl.name,
+            "overlay_count": len(flat_overlays),
+            "exported_at": datetime.now(UTC).isoformat(),
+        },
+    }
+
+
 def _build_creative_direction_fixture(tpl: VideoTemplate) -> dict | None:
     recipe = tpl.recipe_cached
     if not isinstance(recipe, dict):
@@ -235,6 +338,7 @@ async def export_all(
 ) -> dict[str, int]:
     counts = {
         "template_recipe": 0,
+        "template_text": 0,
         "creative_direction": 0,
         "transcript": 0,
         "platform_copy": 0,
@@ -315,6 +419,11 @@ async def export_all(
             if payload is not None:
                 _emit("creative_direction", slug, payload)
 
+        if only in (None, "template_text"):
+            payload = _build_template_text_fixture(tpl)
+            if payload is not None:
+                _emit("template_text", slug, payload)
+
     for job in jobs:
         payload = _build_transcript_fixture(job)
         if payload is None:
@@ -345,6 +454,7 @@ def main() -> None:
         "--only",
         choices=[
             "template_recipe",
+            "template_text",
             "creative_direction",
             "transcript",
             "platform_copy",
@@ -373,6 +483,7 @@ def main() -> None:
     )
     print(
         f"\nExported: {counts['template_recipe']} template_recipe, "
+        f"{counts['template_text']} template_text, "
         f"{counts['creative_direction']} creative_direction, "
         f"{counts['transcript']} transcript, "
         f"{counts['platform_copy']} platform_copy, "
