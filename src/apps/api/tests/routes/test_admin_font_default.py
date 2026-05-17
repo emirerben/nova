@@ -13,7 +13,6 @@ in migration 0010. Migration 0025 closes the gap. These tests guard:
 """
 
 import re
-import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
