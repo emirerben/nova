@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   adminGetMusicTrack,
   adminGetAudioUrl,
@@ -14,6 +14,14 @@ import {
   type TrackConfig,
 } from "@/lib/music-api";
 import { adminCreateTemplateFromMusicTrack } from "@/lib/admin-api";
+import { TestTab } from "./components/TestTab";
+
+type AdminMusicTabId = "config" | "test";
+
+const ADMIN_MUSIC_TABS: { id: AdminMusicTabId; label: string }[] = [
+  { id: "config", label: "Config" },
+  { id: "test", label: "Test" },
+];
 
 // ── Audio player with interactive waveform ────────────────────────────────────
 
@@ -438,6 +446,17 @@ export default function AdminMusicTrackPage({
 }) {
   const { id } = params;
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const activeTabRaw = (searchParams.get("tab") as AdminMusicTabId) || "config";
+  const activeTab: AdminMusicTabId = ADMIN_MUSIC_TABS.some((t) => t.id === activeTabRaw)
+    ? activeTabRaw
+    : "config";
+  const setTab = useCallback(
+    (tab: AdminMusicTabId) => {
+      router.replace(`/admin/music/${id}?tab=${tab}`);
+    },
+    [id, router],
+  );
   const [track, setTrack] = useState<MusicTrackDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -591,6 +610,96 @@ export default function AdminMusicTrackPage({
         </span>
       </div>
 
+      {/* Tabs */}
+      <div className="border-b border-zinc-800 mb-6">
+        <div className="flex gap-1">
+          {ADMIN_MUSIC_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setTab(tab.id)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === tab.id
+                  ? "border-white text-white"
+                  : "border-transparent text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeTab === "test" ? (
+        <TestTab trackId={id} track={track} />
+      ) : (
+        <ConfigTabContent
+          id={id}
+          track={track}
+          cfg={cfg}
+          bestStart={bestStart}
+          setBestStart={setBestStart}
+          bestEnd={bestEnd}
+          setBestEnd={setBestEnd}
+          slotEveryN={slotEveryN}
+          setSlotEveryN={setSlotEveryN}
+          saving={saving}
+          saveMsg={saveMsg}
+          reanalyzing={reanalyzing}
+          creatingTemplate={creatingTemplate}
+          handleSaveConfig={handleSaveConfig}
+          handleTogglePublish={handleTogglePublish}
+          handleReanalyze={handleReanalyze}
+          handleCreateTemplate={handleCreateTemplate}
+          handleArchive={handleArchive}
+        />
+      )}
+    </div>
+  );
+}
+
+interface ConfigTabContentProps {
+  id: string;
+  track: MusicTrackDetail;
+  cfg: TrackConfig;
+  bestStart: string;
+  setBestStart: (s: string) => void;
+  bestEnd: string;
+  setBestEnd: (s: string) => void;
+  slotEveryN: string;
+  setSlotEveryN: (s: string) => void;
+  saving: boolean;
+  saveMsg: string | null;
+  reanalyzing: boolean;
+  creatingTemplate: boolean;
+  handleSaveConfig: (e: React.FormEvent) => void;
+  handleTogglePublish: () => void;
+  handleReanalyze: () => void;
+  handleCreateTemplate: () => void;
+  handleArchive: () => void;
+}
+
+function ConfigTabContent({
+  id,
+  track,
+  cfg,
+  bestStart,
+  setBestStart,
+  bestEnd,
+  setBestEnd,
+  slotEveryN,
+  setSlotEveryN,
+  saving,
+  saveMsg,
+  reanalyzing,
+  creatingTemplate,
+  handleSaveConfig,
+  handleTogglePublish,
+  handleReanalyze,
+  handleCreateTemplate,
+  handleArchive,
+}: ConfigTabContentProps) {
+  return (
+    <>
       {/* Info card */}
       <div className="bg-zinc-900 rounded-xl border border-zinc-700 p-5 mb-6 grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
         <Row label="Artist" value={track.artist || "—"} />
@@ -776,7 +885,7 @@ export default function AdminMusicTrackPage({
           </button>
         )}
       </div>
-    </div>
+    </>
   );
 }
 
