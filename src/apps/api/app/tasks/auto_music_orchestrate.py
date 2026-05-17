@@ -212,9 +212,7 @@ def _run_auto_music_job(job_id: str) -> None:
 
         all_candidates = job.all_candidates or {}
         clip_paths_gcs: list[str] = all_candidates.get("clip_paths", []) or []
-        n_variants = int(
-            all_candidates.get("n_variants", DEFAULT_N_VARIANTS) or DEFAULT_N_VARIANTS
-        )
+        n_variants = int(all_candidates.get("n_variants", DEFAULT_N_VARIANTS) or DEFAULT_N_VARIANTS)
         n_variants = max(1, min(n_variants, 10))
 
     if not clip_paths_gcs:
@@ -754,15 +752,17 @@ def _render_one_variant(
         final_path = os.path.join(variant_dir, "final.mp4")
         _mix_template_audio(assembled_path, track.audio_gcs_path, final_path, variant_dir)
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
-            raise RuntimeError(
-                f"_mix_template_audio produced empty output for variant {rank}"
-            )
+            raise RuntimeError(f"_mix_template_audio produced empty output for variant {rank}")
 
         # [e] Upload + JobClip row
         from app.storage import upload_public_read  # noqa: PLC0415
 
         output_gcs = f"auto-music-jobs/{job_id}/variant_{rank}.mp4"
-        upload_public_read(final_path, output_gcs)
+        # Capture the signed URL so consumers can render it directly as a
+        # <video src>. Matches the convention used by _run_music_job and
+        # template_orchestrate; the relative GCS path is logged but never
+        # stored as the user-facing output_url.
+        output_url = upload_public_read(final_path, output_gcs)
         log.info(
             "auto_music_variant_uploaded",
             job_id=job_id,
@@ -786,7 +786,7 @@ def _render_one_variant(
             "rank": rank,
             "track_id": track_id,
             "score": match_score,
-            "output_url": output_gcs,
+            "output_url": output_url,
         }
     except Exception as exc:
         err = str(exc)[:MAX_ERROR_DETAIL_LEN]

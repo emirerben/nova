@@ -488,7 +488,11 @@ def _run_music_job(job_id: str) -> None:
         from app.storage import upload_public_read  # noqa: PLC0415
 
         output_gcs = f"music-jobs/{job_id}/output.mp4"
-        upload_public_read(final_path, output_gcs)
+        # Capture the signed URL — template_orchestrate stores the URL,
+        # so the public/admin viewers can use assembly_plan.output_url
+        # directly as a <video src>. Was previously discarding this and
+        # storing the relative GCS path, which broke direct playback.
+        output_url = upload_public_read(final_path, output_gcs)
         log.info("music_job_uploaded", job_id=job_id, gcs_path=output_gcs)
 
     # [12] Mark done
@@ -497,7 +501,7 @@ def _run_music_job(job_id: str) -> None:
         if job:
             job.status = "music_ready"
             existing_plan = job.assembly_plan or {}
-            job.assembly_plan = {**existing_plan, "output_url": output_gcs}
+            job.assembly_plan = {**existing_plan, "output_url": output_url}
             db.commit()
 
     log.info("music_job_done", job_id=job_id)
@@ -973,7 +977,7 @@ def _run_templated_music_job(job_id: str) -> None:
 
         # [8] Upload result
         output_gcs = f"music-jobs/{job_id}/output.mp4"
-        upload_public_read(final_path, output_gcs)
+        output_url = upload_public_read(final_path, output_gcs)
         log.info("templated_music_job_uploaded", job_id=job_id, gcs_path=output_gcs)
 
     # [9] Mark done
@@ -982,7 +986,7 @@ def _run_templated_music_job(job_id: str) -> None:
         if j:
             j.status = "music_ready"
             existing = j.assembly_plan or {}
-            j.assembly_plan = {**existing, "output_url": output_gcs}
+            j.assembly_plan = {**existing, "output_url": output_url}
             db.commit()
     log.info("templated_music_job_done", job_id=job_id)
 
