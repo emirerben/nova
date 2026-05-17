@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.24.1] - 2026-05-17
+
+### Fixed
+- **The admin template-test tab now completes on jobs that were OOM-killing the worker.** A minimal single-pass render (1 input clip, 0 transitions, 2 ASS subtitle overlays) was hitting Linux's OOM killer at ~1.9 GB anon-RSS on the 4096 MB Fly.io worker — kernel log: `Out of memory: Killed process 892 (ffmpeg)`. Worker memory bumped 4096 → 6144 MB in `fly.toml`, giving ~2.2 GB FFmpeg headroom above the observed working set. Specific failing job: `022a00e4-7926-4d82-b248-16431dec543b`. This is the immediate fix; the structural follow-ups (drop the dual-output `split=2` fork on the preview-mode path; restructure the float-buffer chain so `format=gbrpf32le` doesn't persist across the split) are recorded in `TODOS.md` under "Single-pass OOM follow-ups".
+
 ## [0.4.24.0] - 2026-05-17
 
 ### Added
