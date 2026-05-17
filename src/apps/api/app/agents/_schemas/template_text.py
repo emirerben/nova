@@ -73,7 +73,7 @@ class TextBBox(BaseModel):
         return v
 
     @classmethod
-    def model_validate_with_extent(cls, data: dict) -> "TextBBox":  # noqa: D401
+    def model_validate_with_extent(cls, data: dict) -> TextBBox:  # noqa: D401
         """Helper for callers that want the extent check raised as ValueError."""
         bbox = cls.model_validate(data)
         if (bbox.x_norm - bbox.w_norm / 2.0) < 0.0 or (bbox.x_norm + bbox.w_norm / 2.0) > 1.0:

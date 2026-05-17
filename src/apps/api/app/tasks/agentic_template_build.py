@@ -45,9 +45,6 @@ from app.pipeline.agents.gemini_analyzer import (
     analyze_template,
     gemini_upload_and_wait,
 )
-from app.tasks.template_text_extraction import (
-    extract_template_text_overlays,
-)
 from app.pipeline.template_cache import (
     AGENT_SET_RECIPE_PLUS_TEXT,
     compute_template_hash,
@@ -67,6 +64,9 @@ from app.tasks.template_orchestrate import (
     _extract_template_audio,
     _is_subject_placeholder,
     _merge_beat_sources,
+)
+from app.tasks.template_text_extraction import (
+    extract_template_text_overlays,
 )
 from app.worker import celery_app
 

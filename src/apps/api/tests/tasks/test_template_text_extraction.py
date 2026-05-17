@@ -15,12 +15,12 @@ from typing import Any
 
 import pytest
 
+from app.agents._schemas.template_text import TextBBox
 from app.agents.template_text import (
     TemplateTextInput,
     TemplateTextOutput,
     TemplateTextOverlay,
 )
-from app.agents._schemas.template_text import TextBBox
 from app.tasks.template_text_extraction import (
     _bbox_to_named_position,
     _build_slot_boundaries,

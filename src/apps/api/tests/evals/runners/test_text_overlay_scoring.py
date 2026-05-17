@@ -22,7 +22,6 @@ from .text_overlay_scoring import (
     temporal_iou,
 )
 
-
 # ── temporal_iou ─────────────────────────────────────────────────────────────
 
 

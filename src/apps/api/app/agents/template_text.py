@@ -21,7 +21,7 @@ import json
 from typing import ClassVar
 
 import structlog
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.template_text import (
