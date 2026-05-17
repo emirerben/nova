@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.25.0] - 2026-05-17
+
+### Added
+- **Debug tab on `/admin/templates/[id]`.** Surfaces the `agent_run` rows that shaped a template's analysis (`template_recipe`, `creative_direction`, `song_classifier`, `song_sections`, `music_matcher`, `beat_aligner`) without needing to find a job that referenced the template. PR #184 added a Template-analysis section to `/admin/jobs/[id]`, but that view was only reachable from a specific job — useless for freshly-analyzed templates that haven't been used yet, or for debugging templates stuck in `analyzing`. New endpoint `GET /admin/templates/{id}/debug` returns the template summary, agent runs (capped at 100, DESC ordered), and cached recipe. Failed templates show their `error_detail` in a red banner; in-flight `analyzing` runs surface a hint to refresh.
+
+### Changed
+- **Shared `AgentSection` component extracted to `src/apps/web/src/app/admin/_shared/`.** Both `/admin/jobs/[id]` and `/admin/templates/[id]`'s Debug tab now import the same agent-run renderer (title, subtitle, link, expandable input/output/raw panels). Replaces ~100 lines of duplicated JSX.
+- **Shared `AgentRunPayload` Pydantic schema extracted to `src/apps/api/app/routes/_admin_schemas.py`.** Both `admin.py` and `admin_jobs.py` consume it from the same module instead of `admin.py` reaching across to `admin_jobs.py`.
+
+### Fixed
+- **`tsconfig.tsbuildinfo` no longer churns in `git status`.** Added `*.tsbuildinfo` to `.gitignore` — TypeScript's incremental compiler was writing a 211KB file on every `tsc --noEmit` run that would have caused merge conflicts on every dev's machine.
+
 ## [0.4.24.2] - 2026-05-17
 
 ### Fixed

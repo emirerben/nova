@@ -137,6 +137,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 
 ## Admin job-debug view
 - Surfaces every agent's full I/O + every non-LLM pipeline decision per job. Lives at `/admin/jobs` (list) and `/admin/jobs/{id}` (detail). Use it to answer "is this bad output from an agent, the agent's parameters, or assembly?"
+- **Template-scoped sibling:** `/admin/templates/{id}` has a "Debug" tab backed by `GET /admin/templates/{id}/debug` that surfaces the same agent_runs (`template_recipe`, `creative_direction`, etc.) but scoped to one template — usable before any job has referenced it. Uses the same shared `AgentSection` component (`src/apps/web/src/app/admin/_shared/`). Cap: 100 runs, DESC ordered (newest first).
 - Two storage layers:
   - `agent_run` table (one row per agent invocation) — written automatically by `app/agents/_runtime._log_outcome` via `app/agents/_persistence.persist_agent_run`. Captures input/output Pydantic dicts, full raw LLM response, outcome, tokens, cost, latency. Best-effort: DB failure never breaks an in-flight job. Skips non-UUID job_ids (e.g. `"track:<id>"` track-level analyses).
   - `Job.pipeline_trace` JSONB column — appended by `app/services/pipeline_trace.record_pipeline_event(stage, event, data)`. Reads the current job_id from a contextvar set by `pipeline_trace_for(job_id)`. Capped at 500 events/job.
