@@ -3576,9 +3576,9 @@ class TestTemplateKindStrip:
         with pytest.raises(TypeError, match="template_kind"):
             TemplateRecipe(**recipe_data)
 
-        # The orchestrator's _build_recipe helper MUST succeed
-        from app.tasks.template_orchestrate import _build_recipe
-        recipe = _build_recipe(recipe_data)
+        # The shared build_recipe helper MUST succeed
+        from app.pipeline.agents.gemini_analyzer import build_recipe
+        recipe = build_recipe(recipe_data)
         assert recipe.shot_count == 3
         assert len(recipe.slots) == 3
 

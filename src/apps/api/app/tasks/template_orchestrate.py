@@ -51,6 +51,7 @@ from app.pipeline.agents.gemini_analyzer import (
     TemplateRecipe,
     analyze_clip,
     analyze_template,
+    build_recipe,
     gemini_upload_and_wait,
 )
 from app.pipeline.orientation import normalize_orientation
@@ -119,12 +120,6 @@ _LABEL_CONFIG: dict[str, dict] = {
         "accel_at_s": 8.0,  # font cycle accelerates after second 8
     },
 }
-
-
-# Routing-only keys that live on `recipe_cached` JSON but are NOT valid
-# TemplateRecipe constructor kwargs. Migration 0010 backfilled `template_kind`
-# onto every existing recipe; future routing/dispatch fields go here.
-_ROUTING_ONLY_RECIPE_KEYS: frozenset[str] = frozenset({"template_kind", "has_intro_slot"})
 
 
 # Failure-reason taxonomy. Persisted on Job.failure_reason for any
@@ -216,13 +211,6 @@ def _stage(name: str, on_fail: str, *, job_id: str) -> Iterator[None]:
             elapsed_ms=elapsed_ms,
             job_id=job_id,
         )
-
-
-def _build_recipe(recipe_data: dict) -> TemplateRecipe:
-    """Construct a TemplateRecipe from a DB `recipe_cached` blob, stripping
-    routing-only fields the dataclass doesn't accept as kwargs."""
-    kwargs = {k: v for k, v in recipe_data.items() if k not in _ROUTING_ONLY_RECIPE_KEYS}
-    return TemplateRecipe(**kwargs)
 
 
 # ── analyze_template_task ─────────────────────────────────────────────────────
@@ -636,7 +624,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         return
 
     try:
-        recipe = _build_recipe(recipe_data)
+        recipe = build_recipe(recipe_data)
     except (TypeError, ValueError, KeyError) as exc:
         raise ValueError(f"Template recipe in DB is malformed: {exc}") from exc
 
@@ -1031,7 +1019,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         is_agentic = bool(template.is_agentic)
 
     try:
-        recipe = _build_recipe(recipe_data)
+        recipe = build_recipe(recipe_data)
     except (TypeError, ValueError, KeyError) as exc:
         raise ValueError(f"Template recipe in DB is malformed: {exc}") from exc
 

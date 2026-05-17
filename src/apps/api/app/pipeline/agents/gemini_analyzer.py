@@ -96,6 +96,33 @@ class TemplateRecipe:
     font_default: str = ""
 
 
+# Keys that live on `recipe_cached` JSON (and on the dict returned by
+# generate_music_recipe) but are NOT valid TemplateRecipe constructor kwargs.
+# Two categories:
+#   - template routing/dispatch (template_kind, has_intro_slot) — read by the
+#     template orchestrator to pick a code path; not consumed by the dataclass.
+#   - submission validation (required_clips_min/max) — read by admin endpoints
+#     and POST /music-jobs to enforce clip-count bounds; not consumed by the
+#     dataclass or the downstream pipeline (matcher / assembler).
+# Any new field that lives on the recipe dict but isn't a TemplateRecipe field
+# must be added here, otherwise `build_recipe()` will raise TypeError.
+NON_RECIPE_KEYS: frozenset[str] = frozenset({
+    "template_kind",
+    "has_intro_slot",
+    "required_clips_min",
+    "required_clips_max",
+})
+
+
+def build_recipe(recipe_data: dict) -> TemplateRecipe:
+    """Construct a TemplateRecipe from a recipe dict (DB `recipe_cached` blob
+    or the output of `generate_music_recipe`), stripping fields that are stored
+    on the dict but are not TemplateRecipe constructor kwargs (see NON_RECIPE_KEYS).
+    """
+    kwargs = {k: v for k, v in recipe_data.items() if k not in NON_RECIPE_KEYS}
+    return TemplateRecipe(**kwargs)
+
+
 @dataclass
 class AssemblyStep:
     slot: dict

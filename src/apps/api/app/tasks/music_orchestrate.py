@@ -372,11 +372,13 @@ def _run_music_job(job_id: str) -> None:
     # [3] Generate recipe from beats
     recipe_dict = generate_music_recipe(track_data)
 
-    # Build a TemplateRecipe-compatible object (use the existing dataclass)
-    from app.pipeline.agents.gemini_analyzer import TemplateRecipe  # noqa: PLC0415
+    # Build a TemplateRecipe-compatible object (use the existing dataclass).
+    # `build_recipe` strips routing/validation-only keys (e.g. required_clips_min)
+    # that live on the recipe dict but are not TemplateRecipe constructor kwargs.
+    from app.pipeline.agents.gemini_analyzer import build_recipe  # noqa: PLC0415
 
     try:
-        recipe = TemplateRecipe(**recipe_dict)
+        recipe = build_recipe(recipe_dict)
     except (TypeError, ValueError, KeyError) as exc:
         raise ValueError(f"Failed to build TemplateRecipe from music recipe: {exc}") from exc
 
@@ -416,7 +418,7 @@ def _run_music_job(job_id: str) -> None:
             track_data["beat_timestamps_s"],
         )
         recipe_dict = {**recipe_dict, "slots": enriched_slots}
-        recipe = TemplateRecipe(**recipe_dict)
+        recipe = build_recipe(recipe_dict)
 
         # [8] Template match (slot consolidation + greedy assignment)
         log.info("template_match_start", job_id=job_id)

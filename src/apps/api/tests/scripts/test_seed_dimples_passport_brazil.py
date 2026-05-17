@@ -544,14 +544,18 @@ class TestCurtainSurvivesConsolidation:
         This would have caught the prior bug where slot 5's animate_s clamp
         (1.638s) fell below _MIN_CURTAIN_ANIMATE_S (4.0s), silently dropping
         the curtain during consolidation."""
-        from app.pipeline.agents.gemini_analyzer import ClipMeta, TemplateRecipe
+        from app.pipeline.agents.gemini_analyzer import (
+            ClipMeta,
+        )
+        from app.pipeline.agents.gemini_analyzer import (
+            build_recipe as build_template_recipe,
+        )
         from app.pipeline.template_matcher import consolidate_slots
 
         recipe_dict = build_recipe()
-        # Strip routing-only keys (matches _build_recipe in orchestrator)
-        ROUTING_ONLY = {"template_kind", "has_intro_slot"}
-        kwargs = {k: v for k, v in recipe_dict.items() if k not in ROUTING_ONLY}
-        recipe = TemplateRecipe(**kwargs)
+        # Use the shared helper so we stay in sync with what the orchestrators
+        # actually do (strips template_kind / has_intro_slot / required_clips_*).
+        recipe = build_template_recipe(recipe_dict)
 
         # Simulate the minimum (5) clips a user can upload — only fields
         # consolidate_slots reads (clip_id for uniqueness count) need real
