@@ -91,7 +91,18 @@ primary_region = "iad"
   # torch CPU runtime + activations). Combined with concurrent FFmpeg
   # subprocesses at 1080×1920 (peak working set 800MB-1.4GB) the 2048MB
   # ceiling leaves 0-800MB of headroom. OOM mid-render orphans jobs at
-  # status=processing rather than failing cleanly. Revisit once
-  # process_resident_set_size telemetry confirms whether the bump was needed.
-  memory_mb = 4096
+  # status=processing rather than failing cleanly.
+  #
+  # 2026-05-17: bumped 4096 → 6144 after admin-test job
+  # 022a00e4-7926-4d82-b248-16431dec543b OOM-killed at FFmpeg anon-rss 1897MB
+  # / total-vm 3596MB on a MINIMAL single-pass spec (inputs=1 transitions=0
+  # abs_pngs=0 abs_ass=2). Kernel log: "Out of memory: Killed process 892
+  # (ffmpeg)". The small input count rules out the many-decoders failure
+  # mode — single-pass.py's dual-output [base]+[vout] split at line 555
+  # holds float-pipeline frames for two simultaneous libx264 encoders, and
+  # the reframe chain's format=gbrpf32le step is a 6.4× memory expansion
+  # (reframe.py:438). 6144 gives ~2.2GB FFmpeg headroom above the observed
+  # working set; if this recurs the structural fix is dropping
+  # base_output_path on the preview_mode path.
+  memory_mb = 6144
   kill_timeout = "30m"

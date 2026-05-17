@@ -354,6 +354,32 @@ These TODOs were filed when the first wave of Yasin's prompt rewrites shipped (`
 
 ---
 
+## Single-pass OOM follow-ups (added 2026-05-17)
+
+### Drop `base_output_path` on the admin-test / preview path
+**What:** When `preview_mode=True` in `POST /admin/templates/{id}/test-job` (`admin.py:1099` → `orchestrate_template_job` → `_assemble_clips` → `run_single_pass`), pass `base_output_path=None`. Eliminates the `split=2` dual-output fork in `single_pass.py` and the second simultaneous libx264 encoder.
+**Why:** Admin test surface OOM'd at 1.9 GB anon-RSS on a MINIMAL spec (1 input clip, 0 transitions, 0 PNGs, 2 ASS subs) on 2026-05-17 — job `022a00e4-7926-4d82-b248-16431dec543b`. The 4096 → 6144 MB `fly.toml` bump is the immediate fix; this is the structural one. The overlay-free `[base]` output exists for the production audio-mix step (`_mix_template_audio`), which the preview path doesn't run, so the second encode is wasted work AND the dominant memory consumer.
+**How:** Conditional at the `run_single_pass` call site in `_assemble_clips`: `base_output_path=None if preview_mode else base_path`. Verify the post-process `shutil.copy2` branch at `single_pass.py` still works (it's the no-overlays fallback, not the preview path). Existing tests in `tests/pipeline/test_single_pass.py` already cover the single-output path. Add one regression test asserting `preview_mode=True` produces a command with exactly one `-map [vout]` block.
+**Effort:** S (human: ~1h / CC: ~15 min)
+**Priority:** P2
+
+### Investigate float-buffer working set on single-pass HDR sources
+**What:** Profile `_per_clip_filter_chain` on an HDR/HLG source to confirm whether `format=gbrpf32le` in the reframe chain (a 6.4× memory expansion, ~24 MB per 1080×1920 frame) is the dominant memory hog when `split=2` dual-output is active. If yes, move the format conversion AFTER the split so the fork holds 8-bit YUV not 32-bit float.
+**Why:** OOM at 1.9 GB on a 1-input spec is high for an SDR source; need to confirm whether clip `files/d22usve26ly4` on job `022a00e4-...` was HDR. Pull metadata via `/admin/jobs/022a00e4-7926-4d82-b248-16431dec543b/debug` (shipped v0.4.22.0). If HDR-driven, the structural fix may eliminate the need for the 6144 MB worker bump.
+**How:** (1) Read the clip's `colorspace`/`color_transfer` from the job-debug page. (2) Reproduce locally; run ffmpeg with `-progress`/`-stats` and watch RSS in `top`. (3) If confirmed HDR-driven, restructure so `format=yuv420p` happens before the `split=2` fork — currently it happens earlier in `_per_clip_filter_chain` but the float buffer may persist through the split point.
+**Effort:** M (human: ~1d / CC: ~2h)
+**Priority:** P2
+**Depends on:** "Drop base_output_path on the admin-test / preview path" — that change may resolve the symptom on the admin surface and reduce the urgency.
+
+### Worker memory telemetry
+**What:** Wire `process_resident_set_size` (and ideally peak RSS during a render) into the worker's structured logging or Prometheus metrics. The original 2048 → 4096 fly.toml comment ended with "Revisit once `process_resident_set_size` telemetry confirms whether the bump was needed" — that telemetry never landed, so the 4096 → 6144 bump on 2026-05-17 is again "vibes-based capacity planning."
+**Why:** Without RSS telemetry, every OOM is a surprise discovered by a user report. With it, we'd see the working-set trend over time and bump RAM (or apply structural fixes) preemptively.
+**How:** Wrap `subprocess.run(ffmpeg, ...)` in `single_pass.py` and `reframe.py` with `psutil`-based peak-RSS sampling (one thread polling `proc.memory_info().rss` every 100ms). Log peak alongside the existing `single_pass_start`/`single_pass_done` events. Optional: emit a Prometheus gauge or a Langfuse trace metric.
+**Effort:** S (human: ~2h / CC: ~30 min)
+**Priority:** P3
+
+---
+
 ## Vercel Frontend Deploy (added 2026-04-06)
 
 All items completed 2026-04-06:
