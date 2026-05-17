@@ -53,6 +53,7 @@ from app.pipeline.agents.gemini_analyzer import (
     analyze_template,
     gemini_upload_and_wait,
 )
+from app.pipeline.orientation import normalize_orientation
 from app.pipeline.reframe import ReframeError
 from app.pipeline.single_pass import (
     SinglePassInput,
@@ -1399,6 +1400,16 @@ def _download_clips_parallel(
         t0 = time.monotonic()
         download_to_file(gcs_path, local_path)
         elapsed_ms = int((time.monotonic() - t0) * 1000)
+        # Strip Display-Matrix rotation if the file is a phone-recorded
+        # landscape-with-portrait-flag (iPhone HEVC etc). No-op for true
+        # landscape, true portrait, or any file without the metadata flag.
+        # Must run BEFORE probe + Gemini upload (which both happen in
+        # parallel after this function returns) so all downstream
+        # consumers agree on pixel orientation.
+        # See pipeline/orientation.py for the why.
+        normalize_t0 = time.monotonic()
+        normalize_orientation(local_path)
+        normalize_ms = int((time.monotonic() - normalize_t0) * 1000)
         # Best-effort size read; failure to stat is non-fatal because the
         # download already succeeded — we just lose the bytes-per-second
         # signal for that clip.
@@ -1407,7 +1418,14 @@ def _download_clips_parallel(
         except OSError:
             size_bytes = -1
         with stats_lock:
-            per_clip_stats.append({"idx": idx, "elapsed_ms": elapsed_ms, "size_bytes": size_bytes})
+            per_clip_stats.append(
+                {
+                    "idx": idx,
+                    "elapsed_ms": elapsed_ms,
+                    "normalize_ms": normalize_ms,
+                    "size_bytes": size_bytes,
+                }
+            )
         return local_path
 
     work_items = [(i, g, p) for i, (g, p) in enumerate(zip(gcs_paths, local_paths))]
