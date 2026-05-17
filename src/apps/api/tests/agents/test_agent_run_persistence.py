@@ -18,7 +18,7 @@ import pytest
 
 from app.agents._persistence import (
     _RAW_TEXT_MAX,
-    _parse_job_uuid,
+    _parse_owner,
     _truncate_raw_text,
     persist_agent_run,
 )
@@ -33,18 +33,29 @@ from tests.agents.conftest import (
 # ── Unit tests for helpers ────────────────────────────────────────────────────
 
 
-def test_parse_job_uuid_accepts_real_uuid():
+def test_parse_owner_accepts_bare_uuid_as_job():
     j = uuid.uuid4()
-    assert _parse_job_uuid(str(j)) == j
+    assert _parse_owner(str(j)) == (j, None, None)
 
 
-def test_parse_job_uuid_rejects_track_prefix():
-    assert _parse_job_uuid("track:abc-123") is None
+def test_parse_owner_routes_template_prefix():
+    j = uuid.uuid4()
+    assert _parse_owner(f"template:{j}") == (None, j, None)
 
 
-def test_parse_job_uuid_rejects_none_and_empty():
-    assert _parse_job_uuid(None) is None
-    assert _parse_job_uuid("") is None
+def test_parse_owner_routes_track_prefix():
+    j = uuid.uuid4()
+    assert _parse_owner(f"track:{j}") == (None, None, j)
+
+
+def test_parse_owner_rejects_malformed_prefix():
+    assert _parse_owner("template:not-a-uuid") == (None, None, None)
+    assert _parse_owner("track:abc-123") == (None, None, None)
+
+
+def test_parse_owner_rejects_none_and_empty():
+    assert _parse_owner(None) == (None, None, None)
+    assert _parse_owner("") == (None, None, None)
 
 
 def test_truncate_raw_text_passthrough_under_cap():
@@ -86,11 +97,13 @@ def _fake_engine_capturing():
     return engine, captured
 
 
-def test_persist_skips_non_uuid_job_id():
+def test_persist_skips_unparseable_job_id():
+    """A non-UUID, non-prefixed string (eval harness, garbage) is still
+    dropped silently — there is nothing sensible to FK on."""
     engine, captured = _fake_engine_capturing()
     with patch("app.database.sync_engine", engine):
         persist_agent_run(
-            job_id="track:abc-123",
+            job_id="random-string-not-a-uuid",
             segment_idx=None,
             agent_name="t",
             prompt_version="1",
@@ -107,6 +120,58 @@ def test_persist_skips_non_uuid_job_id():
         )
     assert captured == []
     engine.begin.assert_not_called()
+
+
+def test_persist_routes_template_prefix_to_template_id():
+    engine, captured = _fake_engine_capturing()
+    tpl = uuid.uuid4()
+    with patch("app.database.sync_engine", engine):
+        persist_agent_run(
+            job_id=f"template:{tpl}",
+            segment_idx=None,
+            agent_name="nova.compose.template_recipe",
+            prompt_version="1",
+            model="m",
+            outcome="ok",
+            attempts=1,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            latency_ms=10,
+            input_dict={"a": 1},
+            output_dict={"b": 2},
+            raw_text="hi",
+        )
+    assert len(captured) == 1
+    assert captured[0]["job_id"] is None
+    assert captured[0]["template_id"] == str(tpl)
+    assert captured[0]["music_track_id"] is None
+
+
+def test_persist_routes_track_prefix_to_music_track_id():
+    engine, captured = _fake_engine_capturing()
+    tr = uuid.uuid4()
+    with patch("app.database.sync_engine", engine):
+        persist_agent_run(
+            job_id=f"track:{tr}",
+            segment_idx=None,
+            agent_name="nova.audio.song_classifier",
+            prompt_version="1",
+            model="m",
+            outcome="ok",
+            attempts=1,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            latency_ms=10,
+            input_dict={"a": 1},
+            output_dict={"b": 2},
+            raw_text="hi",
+        )
+    assert len(captured) == 1
+    assert captured[0]["job_id"] is None
+    assert captured[0]["template_id"] is None
+    assert captured[0]["music_track_id"] == str(tr)
 
 
 def test_persist_writes_row_for_uuid_job():
@@ -132,6 +197,8 @@ def test_persist_writes_row_for_uuid_job():
     assert len(captured) == 1
     row = captured[0]
     assert row["job_id"] == str(j)
+    assert row["template_id"] is None
+    assert row["music_track_id"] is None
     assert row["segment_idx"] == 3
     assert row["agent_name"] == "nova.x"
     assert row["outcome"] == "ok"
@@ -223,10 +290,28 @@ def test_agent_run_triggers_persist_for_uuid_job(
     assert captured[0]["outcome"] == "ok"
 
 
-def test_agent_run_skips_persist_for_track_context(
+def test_agent_run_persists_track_context_to_music_track_id(
     sample_agent: SampleAgent, mock_client: MockModelClient
 ):
-    """Track-level analysis uses ctx.job_id='track:<id>' — must NOT persist."""
+    """Track-level analysis uses ctx.job_id='track:<uuid>' and now lands in
+    agent_run.music_track_id so the per-job admin view can join it back."""
+    engine, captured = _fake_engine_capturing()
+    track_uuid = uuid.uuid4()
+    mock_client.queue("gemini-2.5-flash", {"answer": "ok", "score": 50})
+    with patch("app.database.sync_engine", engine):
+        sample_agent.run(
+            SampleInput(topic="x"),
+            ctx=RunContext(job_id=f"track:{track_uuid}"),
+        )
+    assert len(captured) == 1
+    assert captured[0]["job_id"] is None
+    assert captured[0]["music_track_id"] == str(track_uuid)
+
+
+def test_agent_run_skips_persist_for_malformed_track_context(
+    sample_agent: SampleAgent, mock_client: MockModelClient
+):
+    """A track-prefixed but non-UUID suffix (legacy/eval) is still dropped."""
     engine, captured = _fake_engine_capturing()
     mock_client.queue("gemini-2.5-flash", {"answer": "ok", "score": 50})
     with patch("app.database.sync_engine", engine):

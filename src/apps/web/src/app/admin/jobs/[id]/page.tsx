@@ -23,12 +23,14 @@ import {
   type PipelineTraceEvent,
 } from "@/lib/admin-jobs-api";
 
-type Tab = "agents" | "recipe" | "assembly" | "trace" | "raw";
+import { Timeline } from "./Timeline";
+
+type Tab = "agents" | "timeline" | "recipe" | "trace" | "raw";
 
 const TAB_LABEL: Record<Tab, string> = {
   agents: "Agents",
+  timeline: "Timeline",
   recipe: "Recipe",
-  assembly: "Assembly Plan",
   trace: "Pipeline Trace",
   raw: "Raw Job",
 };
@@ -106,9 +108,9 @@ export default function JobDebugPage({
             <Header data={data} />
             <Tabs tab={tab} onChange={setTab} />
             <div className="mt-6">
-              {tab === "agents" && <AgentsTab runs={data.agent_runs} />}
+              {tab === "agents" && <AgentsTab data={data} />}
+              {tab === "timeline" && <Timeline data={data} />}
               {tab === "recipe" && <RecipeTab data={data} />}
-              {tab === "assembly" && <AssemblyTab data={data} />}
               {tab === "trace" && (
                 <TraceTab events={(data.job.pipeline_trace ?? []) as PipelineTraceEvent[]} />
               )}
@@ -213,8 +215,11 @@ function Tabs({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }): JSX.
 
 // ── Agents tab ────────────────────────────────────────────────────────────────
 
-function AgentsTab({ runs }: { runs: AgentRunPayload[] }): JSX.Element {
-  if (runs.length === 0) {
+function AgentsTab({ data }: { data: JobDebugResponse }): JSX.Element {
+  const { agent_runs, template_agent_runs, track_agent_runs, template, music_track } = data;
+
+  const total = agent_runs.length + template_agent_runs.length + track_agent_runs.length;
+  if (total === 0) {
     return (
       <div className="rounded border border-zinc-800 px-4 py-8 text-center text-sm text-zinc-500">
         No agent runs captured for this job. Either the job pre-dates the
@@ -222,12 +227,95 @@ function AgentsTab({ runs }: { runs: AgentRunPayload[] }): JSX.Element {
       </div>
     );
   }
+
   return (
-    <div className="space-y-3">
-      {runs.map((run) => (
-        <AgentRunPanel key={run.id} run={run} />
-      ))}
+    <div className="space-y-8">
+      {template_agent_runs.length > 0 && (
+        <AgentSection
+          title="Template analysis"
+          subtitle={
+            template
+              ? `Ran when the template ${template.name} was analyzed`
+              : "Ran during template analysis"
+          }
+          link={
+            template
+              ? { href: `/admin/templates/${template.id}`, label: "open template" }
+              : null
+          }
+          runs={template_agent_runs}
+        />
+      )}
+      {track_agent_runs.length > 0 && (
+        <AgentSection
+          title="Music track analysis"
+          subtitle={
+            music_track
+              ? `Ran when "${music_track.title}" — ${music_track.artist} was analyzed`
+              : "Ran during music-track analysis"
+          }
+          link={
+            music_track
+              ? { href: `/admin/music/${music_track.id}`, label: "open track" }
+              : null
+          }
+          runs={track_agent_runs}
+        />
+      )}
+      <AgentSection
+        title="Job-time agents"
+        subtitle="Ran inside this job's Celery task"
+        link={null}
+        runs={agent_runs}
+        emptyHint="No job-time agents fired — check that orchestration started."
+      />
     </div>
+  );
+}
+
+function AgentSection({
+  title,
+  subtitle,
+  link,
+  runs,
+  emptyHint,
+}: {
+  title: string;
+  subtitle: string;
+  link: { href: string; label: string } | null;
+  runs: AgentRunPayload[];
+  emptyHint?: string;
+}): JSX.Element {
+  return (
+    <section>
+      <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-300">
+          {title}
+        </h2>
+        <span className="text-xs text-zinc-500">
+          {subtitle} · {runs.length} run{runs.length === 1 ? "" : "s"}
+        </span>
+        {link && (
+          <Link
+            href={link.href}
+            className="text-xs text-zinc-400 hover:text-white underline-offset-2 hover:underline"
+          >
+            {link.label} →
+          </Link>
+        )}
+      </header>
+      {runs.length === 0 ? (
+        <div className="rounded border border-dashed border-zinc-800 px-4 py-3 text-xs text-zinc-500">
+          {emptyHint ?? "No runs in this section."}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {runs.map((run) => (
+            <AgentRunPanel key={run.id} run={run} />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -321,43 +409,6 @@ function RecipeTab({ data }: { data: JobDebugResponse }): JSX.Element {
       ) : (
         <div className="text-sm text-zinc-500">No recipe available.</div>
       )}
-    </div>
-  );
-}
-
-function AssemblyTab({ data }: { data: JobDebugResponse }): JSX.Element {
-  return (
-    <div className="space-y-4">
-      <div className="rounded border border-zinc-800 bg-zinc-950 px-4 py-3">
-        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">
-          assembly_plan (Job column)
-        </div>
-        {data.job.assembly_plan ? (
-          <JsonTreeView value={data.job.assembly_plan} defaultDepth={2} />
-        ) : (
-          <div className="text-sm text-zinc-500">Empty.</div>
-        )}
-      </div>
-      <div className="rounded border border-zinc-800 bg-zinc-950 px-4 py-3">
-        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">
-          probe_metadata
-        </div>
-        {data.job.probe_metadata ? (
-          <JsonTreeView value={data.job.probe_metadata} />
-        ) : (
-          <div className="text-sm text-zinc-500">Empty.</div>
-        )}
-      </div>
-      <div className="rounded border border-zinc-800 bg-zinc-950 px-4 py-3">
-        <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">
-          job_clips
-        </div>
-        {data.job_clips.length > 0 ? (
-          <JsonTreeView value={data.job_clips} defaultDepth={2} />
-        ) : (
-          <div className="text-sm text-zinc-500">No JobClip rows.</div>
-        )}
-      </div>
     </div>
   );
 }

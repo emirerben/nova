@@ -371,6 +371,19 @@ class AgentRun(Base):
         ForeignKey("jobs.id", ondelete="CASCADE"),
         nullable=True,
     )
+    # video_templates.id and music_tracks.id are Text (not UUID) so the FK
+    # columns must also be Text. ondelete=CASCADE mirrors job_id and avoids
+    # a check-constraint violation on parent-delete (see migration 0024).
+    template_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("video_templates.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    music_track_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("music_tracks.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     segment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
     agent_name: Mapped[str] = mapped_column(Text, nullable=False)
     prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
@@ -390,4 +403,6 @@ class AgentRun(Base):
     __table_args__ = (
         Index("idx_agent_run_job_id_created", "job_id", "created_at"),
         Index("idx_agent_run_agent_name", "agent_name"),
+        Index("idx_agent_run_template_id_created", "template_id", "created_at"),
+        Index("idx_agent_run_music_track_id_created", "music_track_id", "created_at"),
     )
