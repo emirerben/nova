@@ -27,7 +27,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
+from app.models import AgentRun, Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
+from app.routes._admin_schemas import AgentRunPayload, agent_run_to_payload
 from app.services.template_validation import (
     get_template_or_404,
     require_ready,
@@ -849,6 +850,77 @@ async def get_template(
     return _template_response(template)
 
 
+class TemplateDebugSummary(BaseModel):
+    id: str
+    name: str
+    analysis_status: str
+    template_type: str
+    is_agentic: bool
+    gcs_path: str | None
+    audio_gcs_path: str | None
+    music_track_id: str | None
+    error_detail: str | None
+    recipe_cached_at: datetime | None
+    created_at: datetime
+
+
+class TemplateDebugResponse(BaseModel):
+    template: TemplateDebugSummary
+    template_agent_runs: list[AgentRunPayload]
+    recipe_cached: dict | None
+
+
+# Cap so a template with hundreds of re-runs doesn't bloat the payload.
+# Job-debug doesn't cap because jobs are one-shot; templates get re-analyzed.
+_TEMPLATE_DEBUG_RUN_LIMIT = 100
+
+
+@router.get(
+    "/templates/{template_id}/debug",
+    response_model=TemplateDebugResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def get_template_debug(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateDebugResponse:
+    """Return template metadata + agent_runs that shaped its analysis.
+
+    Mirrors GET /admin/jobs/{id}/debug's Template-analysis section, but
+    scoped to one template — usable before any job has referenced it.
+    """
+    template = await get_template_or_404(template_id, db)
+
+    # DESC (newest-first) intentional: admins re-analyze templates frequently and
+    # want the latest attempt on top. Job-debug uses ASC for chronological flow;
+    # template-debug isn't chronological because each row is an independent run.
+    runs_res = await db.execute(
+        select(AgentRun)
+        .where(AgentRun.template_id == template_id)
+        .order_by(AgentRun.created_at.desc())
+        .limit(_TEMPLATE_DEBUG_RUN_LIMIT)
+    )
+    runs = list(runs_res.scalars().all())
+
+    return TemplateDebugResponse(
+        template=TemplateDebugSummary(
+            id=template.id,
+            name=template.name,
+            analysis_status=template.analysis_status,
+            template_type=template.template_type,
+            is_agentic=template.is_agentic,
+            gcs_path=template.gcs_path,
+            audio_gcs_path=template.audio_gcs_path,
+            music_track_id=template.music_track_id,
+            error_detail=template.error_detail,
+            recipe_cached_at=template.recipe_cached_at,
+            created_at=template.created_at,
+        ),
+        template_agent_runs=[agent_run_to_payload(r) for r in runs],
+        recipe_cached=template.recipe_cached,
+    )
+
+
 @router.patch(
     "/templates/{template_id}",
     response_model=TemplateResponse,
@@ -1086,7 +1158,8 @@ async def create_test_job(
     # so forcing single-pass here matches what the operator asked for.
     if req.preview_mode:
         orchestrate_template_job.apply_async(
-            args=[job_id], kwargs={"force_single_pass": True},
+            args=[job_id],
+            kwargs={"force_single_pass": True},
         )
     else:
         orchestrate_template_job.delay(job_id)
@@ -1596,10 +1669,7 @@ def _load_font_registry_families() -> list[str]:
     from pathlib import Path  # noqa: PLC0415
 
     registry_path = (
-        Path(__file__).resolve().parent.parent.parent
-        / "assets"
-        / "fonts"
-        / "font-registry.json"
+        Path(__file__).resolve().parent.parent.parent / "assets" / "fonts" / "font-registry.json"
     )
     try:
         with open(registry_path, encoding="utf-8") as f:
@@ -1705,7 +1775,9 @@ async def set_font_default(
         )
 
     updated = cascade_font_default_change(
-        recipe, req.font_default, old_default=old_default,
+        recipe,
+        req.font_default,
+        old_default=old_default,
     )
 
     version = TemplateRecipeVersion(
