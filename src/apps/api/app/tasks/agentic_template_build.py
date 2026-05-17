@@ -103,12 +103,41 @@ def _bake_text_designer_into_overlay(
     These fields override anything template_recipe set, and the job-time
     pipeline's is_agentic branch will skip the _LABEL_CONFIG override block,
     so what the agent decides here is what ships.
+
+    Timing invariant: text_designer proposes a ``start_s`` (e.g. 3.0 for
+    subject labels on the first slot) without knowing the source text's
+    visible window. If the overlay's ``end_s`` is smaller than the proposed
+    ``start_s`` (e.g. end_s=0.9 from text-extraction, start_s=3.0 from
+    designer calibration), the write would produce an inverted overlay that
+    downstream renderers reject. We clamp ``start_s`` to ``end_s - 0.01``
+    after the write so the stored overlay always satisfies
+    ``0 <= start_s < end_s``.
+
+    Band-aid note: the underlying semantic gap is that "designer start_s" and
+    "source-extraction start_s" are different concepts sharing one field —
+    a proper refactor (separate fields, resolved at job time) is tracked as a
+    follow-up. This clamp matches the pattern in PR #198/#200
+    (template_text.parse) and PR #200 (unconditional sample_frame_t clamp).
     """
     overlay["text_size"] = designer_output.text_size
     overlay["font_style"] = designer_output.font_style
     overlay["text_color"] = designer_output.text_color
     overlay["effect"] = designer_output.effect
     overlay["start_s"] = float(designer_output.start_s)
+    # Clamp: designer's suggested start_s must not exceed (or equal) end_s.
+    # end_s comes from the text-extraction pass and reflects the actual visible
+    # window; text_designer doesn't know it, so inversion is possible.
+    end_s = float(overlay.get("end_s", overlay["start_s"] + 0.01))
+    if overlay["start_s"] >= end_s:
+        clamped_from = overlay["start_s"]
+        overlay["start_s"] = max(0.0, end_s - 0.01)
+        log.warning(
+            "text_designer_bake_start_s_clamped",
+            sample_text=overlay.get("sample_text"),
+            start_s_clamped_from=clamped_from,
+            start_s_clamped_to=overlay["start_s"],
+            end_s=end_s,
+        )
     if designer_output.accel_at_s is not None:
         overlay["font_cycle_accel_at_s"] = float(designer_output.accel_at_s)
 
