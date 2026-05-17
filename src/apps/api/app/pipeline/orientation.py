@@ -62,11 +62,26 @@ import structlog
 
 log = structlog.get_logger()
 
-# ffprobe / ffmpeg timeouts. Probe is ~50ms; full re-encode of a 6s
-# 1080p HEVC clip is ~3-10s on the worker — give 5min headroom for
-# longer user clips at the 200MB upload cap.
+# ffprobe / ffmpeg timeouts. Probe is ~50ms.
+#
+# Normalize re-encode is the big variable. A 6s 1080p HEVC clip is ~3-10s
+# on the worker; a 90s 4K HEVC clip with 8 concurrent ThreadPool ffmpeg
+# processes contending for 4 worker cores has been observed to push past
+# 5min. Job d1b9b9d8 (Dimples Passport, 15 iPhone clips) timed out at 300s
+# on one of its clips. We bump to 10min as belt-and-suspenders alongside
+# the dim-cap optimization below (which is the real fix — caps intermediate
+# at 1920px on the longest edge so 4K input drops to ~1080×1920 BEFORE
+# encode, cutting work ~4x).
 _PROBE_TIMEOUT_S = 30
-_NORMALIZE_TIMEOUT_S = 300
+_NORMALIZE_TIMEOUT_S = 600
+
+# Intermediate-output dimension cap. The downstream reframe pass produces
+# 1080×1920 final output regardless, so encoding the normalize intermediate
+# at higher resolution is wasted work — every pixel here is re-encoded
+# downstream anyway. Cap the longest edge so 4K iPhone clips
+# (3840×2160 → 2160×3840 post-transpose) get scaled to 1080×1920 right
+# here, cutting encode work to ~25% of the un-capped case.
+_INTERMEDIATE_MAX_EDGE = 1920
 
 # Rotations we know how to handle. Phone cameras only emit orthogonal
 # rotations (±90, 180). Non-orthogonal angles (45, etc.) never come from
@@ -226,6 +241,35 @@ def _transpose_filter_for(rotation: int) -> str:
         return "transpose=2,transpose=2"
     # Caller should have filtered to _SUPPORTED_ROTATIONS already.
     raise OrientationError(f"unsupported rotation {rotation}")
+
+
+def _scaled_dims_for_intermediate(
+    post_transpose_w: int, post_transpose_h: int
+) -> tuple[int, int] | None:
+    """If the post-transpose intermediate exceeds ``_INTERMEDIATE_MAX_EDGE``
+    on its longest edge, return the proportionally-scaled (W, H) capped at
+    the limit. Returns ``None`` if no scaling is needed.
+
+    Dims returned are always even (libx264 with yuv420p requires it).
+
+    The reframe pass downstream re-encodes to 1080×1920 final output, so
+    encoding the normalize intermediate at higher resolution is wasted
+    work. Capping at 1920 means a 4K iPhone clip (3840×2160 sensor,
+    becomes 2160×3840 post-transpose) drops to ~1080×1920 here, cutting
+    libx264 work to roughly a quarter of the un-capped case. For inputs
+    already within the cap (e.g. 1920×1080 → 1080×1920 post-transpose),
+    this is a no-op.
+    """
+    longest = max(post_transpose_w, post_transpose_h)
+    if longest <= _INTERMEDIATE_MAX_EDGE:
+        return None
+    scale = _INTERMEDIATE_MAX_EDGE / longest
+    new_w = int(post_transpose_w * scale)
+    new_h = int(post_transpose_h * scale)
+    # Force even dims — yuv420p subsampling requires WxH to be even.
+    new_w -= new_w % 2
+    new_h -= new_h % 2
+    return (new_w, new_h)
 
 
 def _run_ffmpeg_atomic_replace(
@@ -469,17 +513,37 @@ def normalize_orientation(file_path: str) -> str:
     transpose_chain = _transpose_filter_for(rotation)
     tmp_path = f"{file_path}.norot.tmp.mp4"
 
+    # Cap intermediate at 1920px on the longest edge. 4K iPhone clips
+    # (3840×2160 sensor → 2160×3840 post-transpose) get scaled to
+    # 1080×1920 here, cutting libx264 work to ~25% of the un-capped case.
+    # The reframe pass downstream produces 1080×1920 final output anyway,
+    # so no information is lost — we're just moving the scale step
+    # upstream where the encoder budget matters most.
+    post_transpose_w, post_transpose_h = height, width  # transpose swaps WxH
+    scaled = _scaled_dims_for_intermediate(post_transpose_w, post_transpose_h)
+    if scaled is not None:
+        scaled_w, scaled_h = scaled
+        vf_chain = f"{transpose_chain},scale={scaled_w}:{scaled_h}"
+    else:
+        vf_chain = transpose_chain
+
     # Intermediate-quality libx264 args. Deliberately NOT calling
     # `reframe._encoding_args` — that helper bakes in `-s 1080x1920`,
     # `-r 30`, `BODY_SLOT_AUDIO_OUT_ARGS`, and bt709 colorspace re-tagging
     # that are correct for the final reframe output but wrong here. The
-    # normalize step is an in-place dimension-preserving rewrite; reframe
-    # re-encodes the result to final spec downstream.
+    # normalize step is an in-place rewrite (with optional scale-down to
+    # 1920px); reframe re-encodes the result to final spec downstream.
     #
     # Preset rationale: ultrafast is policy-compliant for intermediate
     # re-encodes (see tests/test_encoder_policy.py docstring). The output
     # is re-encoded by reframe, so the macroblocking ultrafast causes on
     # smooth gradients gets resampled away in the final pass.
+    #
+    # CRF 23 not 18: intermediate is re-encoded by reframe anyway, so
+    # the visual budget is large. CRF 23 cuts encode time ~30% vs CRF 18
+    # for libx264 ultrafast. CRF 18 was originally chosen for "visually
+    # lossless single hop" but reframe is the second hop and overrides
+    # it anyway.
     cmd = [
         "ffmpeg",
         "-y",
@@ -515,12 +579,11 @@ def normalize_orientation(file_path: str) -> str:
         "-i",
         file_path,
         "-vf",
-        transpose_chain,
+        vf_chain,
         # Video: minimal H.264 intermediate. yuv420p is the universal
         # decoder-friendly format; high profile matches what reframe
-        # produces. CRF 18 is visually lossless for a single intermediate
-        # hop. No -bf 0 / no -x264-params: reframe re-encodes anyway and
-        # closed-GOP concerns only matter at the final concat boundary.
+        # produces. No -bf 0 / no -x264-params: reframe re-encodes anyway
+        # and closed-GOP concerns only matter at the final concat boundary.
         "-c:v",
         "libx264",
         "-profile:v",
@@ -528,7 +591,7 @@ def normalize_orientation(file_path: str) -> str:
         "-preset",
         "ultrafast",
         "-crf",
-        "18",
+        "23",
         "-pix_fmt",
         "yuv420p",
         # Audio is unchanged — codec-copy avoids a wasted aac re-encode.

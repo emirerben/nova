@@ -130,6 +130,57 @@ class TestTransposeFilterFor:
 
 
 # ---------------------------------------------------------------------------
+# _scaled_dims_for_intermediate — caps post-transpose dims at 1920px on
+# the longest edge so 4K iPhone clips drop to ~1080×1920 before encode.
+# ---------------------------------------------------------------------------
+
+
+class TestScaledDimsForIntermediate:
+    def test_already_within_cap_returns_none(self) -> None:
+        from app.pipeline.orientation import _scaled_dims_for_intermediate
+
+        # 1080×1920 post-transpose (the iPhone 1080p case) — no scaling needed.
+        assert _scaled_dims_for_intermediate(1080, 1920) is None
+
+    def test_landscape_within_cap_returns_none(self) -> None:
+        from app.pipeline.orientation import _scaled_dims_for_intermediate
+
+        # Square 1920×1920 — at the cap, no scaling.
+        assert _scaled_dims_for_intermediate(1920, 1920) is None
+
+    def test_4k_iphone_post_transpose_scales_to_1080x1920(self) -> None:
+        """The real failure case from job d1b9b9d8: a 4K iPhone clip
+        (3840×2160 sensor) becomes 2160×3840 after transpose. Cap should
+        bring it to 1080×1920 (longest edge clamped to 1920)."""
+        from app.pipeline.orientation import _scaled_dims_for_intermediate
+
+        scaled = _scaled_dims_for_intermediate(2160, 3840)
+        assert scaled == (1080, 1920)
+
+    def test_oversized_landscape_scales_proportionally(self) -> None:
+        from app.pipeline.orientation import _scaled_dims_for_intermediate
+
+        # 3840×2160 landscape (no transpose case). Longest = 3840, scale
+        # factor 1920/3840 = 0.5 → 1920×1080.
+        scaled = _scaled_dims_for_intermediate(3840, 2160)
+        assert scaled == (1920, 1080)
+
+    def test_odd_dims_rounded_to_even(self) -> None:
+        """libx264 with yuv420p subsampling rejects odd dims. Helper must
+        always return even WxH."""
+        from app.pipeline.orientation import _scaled_dims_for_intermediate
+
+        # Synthetic input that would produce odd dims after scale.
+        scaled = _scaled_dims_for_intermediate(2161, 3841)
+        assert scaled is not None
+        w, h = scaled
+        assert w % 2 == 0, f"width {w} must be even for yuv420p"
+        assert h % 2 == 0, f"height {h} must be even for yuv420p"
+        # And still capped at 1920.
+        assert max(w, h) <= 1920
+
+
+# ---------------------------------------------------------------------------
 # detect_rotation — subprocess.run is mocked. No real FFmpeg.
 # ---------------------------------------------------------------------------
 
@@ -400,6 +451,48 @@ class TestNormalizeOrientationIntegration:
         w, h = _probe_dims(rotated_180_clip)
         assert (w, h) == (320, 240)
         assert _probe_for_rotation(rotated_180_clip) == 0
+
+    def test_oversize_input_is_scaled_down_during_normalize(
+        self, rotated_neg90_clip: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Real failure case from job d1b9b9d8: 4K iPhone clip timed out at
+        300s during normalize because ffmpeg was re-encoding 8M pixels per
+        frame under CPU contention. The fix caps the intermediate at 1920px
+        on the longest edge — for a 4K input, output becomes ~1080×1920.
+
+        Verifies the integration: monkeypatch the cap to 200px against the
+        existing 320×240 fixture (so it triggers the scale path without
+        needing a real 4K test source). After normalize the longest edge
+        must respect the cap."""
+        # Lower the cap so the existing 320x240 fixture triggers downscale.
+        monkeypatch.setattr("app.pipeline.orientation._INTERMEDIATE_MAX_EDGE", 200)
+
+        normalize_orientation(str(rotated_neg90_clip))
+
+        w, h = _probe_dims(rotated_neg90_clip)
+        assert max(w, h) <= 200, (
+            f"longest edge must be capped at 200 (got {w}x{h})"
+        )
+        # Aspect ratio is preserved (320:240 = 4:3 → after transpose 240:320 = 3:4).
+        # Scaled to fit within 200×200 with aspect: 200*240/320 = 150 wide, 200 tall.
+        assert (w, h) == (150, 200), (
+            f"expected proportionally-scaled (150, 200), got {w}x{h}"
+        )
+        # Rotation flag still stripped.
+        assert _probe_for_rotation(rotated_neg90_clip) == 0
+
+    def test_within_cap_input_is_not_scaled(
+        self, rotated_neg90_clip: Path
+    ) -> None:
+        """Inputs that fit within the cap (default 1920px) must NOT be
+        scaled — the 320×240 fixture transposes to 240×320, well within
+        the cap. Asserts no accidental scaling on the common path."""
+        normalize_orientation(str(rotated_neg90_clip))
+        w, h = _probe_dims(rotated_neg90_clip)
+        # 320×240 landscape → 240×320 portrait after transpose. No scaling.
+        assert (w, h) == (240, 320), (
+            f"small input within cap must keep its post-transpose dims, got {w}x{h}"
+        )
 
     def test_square_pixels_with_rotation_flag_take_re_encode_path(
         self, plain_clip: Path, tmp_path: Path
