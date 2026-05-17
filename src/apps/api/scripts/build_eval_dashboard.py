@@ -37,6 +37,7 @@ DASHBOARD_FILE = DASHBOARD_DIR / "dashboard.html"
 
 AGENTS = (
     "template_recipe",
+    "template_text",
     "creative_direction",
     "clip_metadata",
     "transcript",
@@ -55,6 +56,13 @@ AGENT_NARRATIVE: dict[str, dict[str, str]] = {
         "phase": "admin",
         "cardinality": "once · template onboarding · Pass 2",
         "what": "Turns the reference video plus the Pass 1 paragraph into a structured JSON recipe: shot count, slot durations, transitions, overlays, interstitials, color grade.",
+    },
+    "nova.compose.template_text": {
+        "phase": "admin",
+        "cardinality": "once · agentic templates only",
+        "what": "Focused text-overlay extraction: enumerates every visible on-screen text with required normalized bbox + font color + per-overlay timing. Overwrites recipe.slots[*].text_overlays during agentic build. Manual templates still rely on template_recipe's text_overlays field.",
+        "status_badge": "agentic-only",
+        "status_badge_kind": "has-fixtures",
     },
     "nova.audio.template_recipe": {
         "phase": "admin",
@@ -130,6 +138,7 @@ sys.path.insert(0, str(ROOT))
 # Map fixture-dir name → registered agent name (for cross-referencing)
 FIXTURE_AGENT_NAME = {
     "template_recipe": "nova.compose.template_recipe",
+    "template_text": "nova.compose.template_text",
     "creative_direction": "nova.compose.creative_direction",
     "clip_metadata": "nova.video.clip_metadata",
     "transcript": "nova.audio.transcript",
@@ -148,6 +157,7 @@ AGENT_PROMPT_FILES: dict[str, list[str]] = {
         "analyze_template_pass2.txt",
         "analyze_template_schema.txt",
     ],
+    "nova.compose.template_text": ["extract_template_text.txt"],
     "nova.audio.template_recipe": [
         "analyze_audio_template.txt",
         "analyze_template_schema.txt",

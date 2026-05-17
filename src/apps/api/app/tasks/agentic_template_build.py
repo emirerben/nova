@@ -45,7 +45,11 @@ from app.pipeline.agents.gemini_analyzer import (
     analyze_template,
     gemini_upload_and_wait,
 )
+from app.tasks.template_text_extraction import (
+    extract_template_text_overlays,
+)
 from app.pipeline.template_cache import (
+    AGENT_SET_RECIPE_PLUS_TEXT,
     compute_template_hash,
     get_cached_recipe,
     set_cached_recipe,
@@ -332,7 +336,11 @@ def agentic_template_build_task(self, template_id: str) -> None:
             template_hash = compute_template_hash(local_path)
             recipe = None
             if template_hash is not None:
-                cached = get_cached_recipe(template_hash, _AGENTIC_ANALYSIS_MODE)
+                cached = get_cached_recipe(
+                    template_hash,
+                    _AGENTIC_ANALYSIS_MODE,
+                    agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+                )
                 if cached is not None:
                     log.info(
                         "agentic_template_recipe_cache_hit",
@@ -357,8 +365,31 @@ def agentic_template_build_task(self, template_id: str) -> None:
                     black_segments=black_segments,
                     job_id=f"template:{template_id}:agentic",
                 )
-                if template_hash is not None:
-                    set_cached_recipe(template_hash, _AGENTIC_ANALYSIS_MODE, recipe)
+                # Focused text-extraction pass — overwrites recipe.slots[*].text_overlays
+                # with the dedicated text agent's output (every visible text, required
+                # bbox, font color). Runs in agentic build ONLY; manual templates and
+                # music jobs keep the recipe-agent overlays. Must run BEFORE the cache
+                # write so a future hit serves the merged overlays. Agentic builds use
+                # the `recipe+text` cache namespace so this never invalidates manual
+                # caches.
+                #
+                # text_success gates the cache write: a failed text-extraction pass
+                # leaves the recipe with recipe-agent overlays under a cache key that
+                # promises text-agent overlays. Caching that would pin stale data for
+                # the full TTL. Skip the cache on failure; the next reanalyze gets
+                # another shot at producing the proper merged recipe.
+                text_success, _text_count = extract_template_text_overlays(
+                    file_ref,
+                    recipe,
+                    job_id=f"template:{template_id}:agentic",
+                )
+                if template_hash is not None and text_success:
+                    set_cached_recipe(
+                        template_hash,
+                        _AGENTIC_ANALYSIS_MODE,
+                        recipe,
+                        agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+                    )
 
             # Font identification (PR2). Best-effort: a font-id failure must
             # not abort agentic build. Mutates `recipe.slots[*]["text_overlays"]
