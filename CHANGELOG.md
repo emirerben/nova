@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.27.0] - 2026-05-17
+## [0.4.28.0] - 2026-05-17
 
 ### Added
 - **Admin Test tab on `/admin/music/[id]`.** Upload clips, render against any `ready` track (published or not), watch status, view the output video, and re-render with the same clips against the latest `track_config` — all without leaving the track page. Mirrors the template editor's test loop. Drag-and-drop multi-clip upload uses `Promise.allSettled` so partial failures keep the successful uploads.
@@ -18,6 +18,18 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - **`_validate_clip_count` promoted from private to public** in `app/routes/music_jobs.py`. The admin music routes need it across module boundaries; underscore-prefixed cross-module imports were a code smell.
+
+## [0.4.27.0] - 2026-05-17
+
+### Added
+- **New `app/pipeline/orientation.py`: Display-Matrix rotation normalization for user uploads.** iPhones (and some Androids) record video as physical landscape (1920×1080) with a `Display Matrix` side-data flag (`rotation: -90`) — QuickTime/TikTok read the flag and play upright, but Nova's pipeline read the raw pixel dimensions and was treating these as true 16:9 sources. Two cascading bugs followed: (1) `probe._classify_aspect` labelled them `"16:9"`, so `reframe._build_video_filter` applied a face-tracked landscape→portrait crop to landscape pixels and the user's portrait subject shipped as a yan-yatık crop; (2) `_upload_clips_parallel` hands the raw downloaded file to the Gemini File API, so `detected_subject`/`composition`/`motion_direction`/`safe_zone_y_max` were all computed against a sideways frame. The new `detect_rotation()` reads the container's `side_data_list` for `Display Matrix`, and `normalize_orientation()` re-encodes in place with explicit `transpose` (mapping `-90→transpose=2`, `90→transpose=1`, `180→transpose=2,transpose=2`) plus `-metadata:s:v:0 rotate=0` to strip the flag. `-noautorotate` is passed before `-i` so FFmpeg 7.x's decoder doesn't auto-rotate AND our filter rotate (which would double-apply). Real landscape sources (rotation=0) are byte-for-byte untouched — reframe's existing 16:9 handling owns those. Empirically verified on a real iPhone HEVC + Dolby Vision recording: 1920×1080+rot=-90 → 1080×1920+rot=0 in 920ms, 184 frames + AAC stereo preserved.
+- **`_download_clips_parallel` calls `normalize_orientation()` per clip** between `download_to_file` and the parallel probe + Gemini upload — one chokepoint shared by both the music-jobs and template-jobs paths. Per-clip `normalize_ms` is appended to the `clip_download_timing` structlog event alongside `elapsed_ms`/`size_bytes`. No-op when rotation=0 (skipped after a single ffprobe, < 100ms).
+- **Pipeline trace events under `stage="orientation"`** (`event: "normalized" | "skipped"`) so `/admin/jobs/{id}` Trace tab surfaces orientation decisions per upload. New orange stage color added to the admin UI map. Answers the "did this video get rotated, and why" question without grepping Fly logs.
+- **`tests/pipeline/test_orientation.py`: 33 tests** — 24 unit tests (mocked ffprobe) covering rotation extraction edge cases (non-orthogonal angles, iPhone HEVC `DOVI configuration record` interleaved before `Display Matrix`, missing/stringified rotation values, ffprobe failure modes), 6 transpose-mapping tests, and 9 real-FFmpeg integration tests that generate a synthetic rotated fixture at runtime (`-display_rotation` as input + `-c copy`), run `normalize_orientation()`, then ffprobe the output to assert dimension swap, flag strip, audio stream preservation, atomic same-path return, and pipeline event firing on both normalize and skip paths. Fixtures are generated at runtime, not committed (repo `.gitignore` blocks `*.mp4 *.mov ...`).
+
+### Changed
+- **`tests/tasks/test_download_clips_timing.py` autouse fixture mocks `normalize_orientation` to a no-op pass-through.** These tests use a `_fake_download` that writes placeholder bytes — without the mock, the new ffprobe inside `detect_rotation` would fail on non-video content. The tests exercise timing instrumentation only; orientation behavior is locked down in `test_orientation.py`.
+- **`reframe._encoding_args` docstring updated** with a new "INTERMEDIATE — does NOT route through `_encoding_args`" section pointing at `normalize_orientation`. The orientation re-encode deliberately uses inline ultrafast libx264 args (no `-s 1080x1920`, no `BODY_SLOT_AUDIO_OUT_ARGS`, no bt709 re-tagging) because it needs in-place dimension preservation, not final-output spec. Documented so the encoder-policy test's allow-list stays accurate.
 
 ## [0.4.26.0] - 2026-05-17
 

@@ -137,6 +137,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Live Gemini: `NOVA_EVAL_MODE=live ... --eval-mode=live --with-judge` (needs both keys; ~$2-5/run).
 - Manual GH Action: `.github/workflows/agent-evals.yml` (`workflow_dispatch`).
 - **Prompt-change rule:** when editing any file under `src/apps/api/prompts/` or any `render_prompt()`, bump the agent's `prompt_version` in its `AgentSpec` AND run `pytest tests/evals/<agent>_evals.py -v --with-judge --eval-mode=live` against current fixtures before merge. Compare scores against the prior version's run.
+- **Convenient wrapper for template_text live eval:** `bash src/apps/api/scripts/run_template_text_eval.sh` — checks env vars and fixtures, runs the live + judge eval, tees output to `.dev/eval-results/template_text-<timestamp>.log`, and prints a one-line summary. Run with `--help` for full usage. The raw pytest invocation (above) still works directly when you need more control (e.g. adding `--shadow-prompts-dir`).
 - See `tests/evals/README.md` for the full prompt-iteration loop.
 
 ## Admin job-debug view
