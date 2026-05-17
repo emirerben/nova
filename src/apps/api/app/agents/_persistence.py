@@ -5,8 +5,10 @@ errors are swallowed: a DB hiccup must never break an in-flight job.
 The structlog ``agent_run`` event remains the source of truth for
 observability; this layer adds queryable per-job rows on top.
 
-When ``job_id`` is missing or not a UUID (e.g. eval harness, track-level
-analysis using ``"track:<id>"``), the row is dropped silently.
+``RunContext.job_id`` may be a job UUID, ``"template:<uuid>"`` (template
+analysis), or ``"track:<uuid>"`` (music-track analysis). Each prefix routes
+to the appropriate FK column on ``agent_run``. Anything else (eval harness,
+plain strings) is dropped silently.
 """
 
 from __future__ import annotations
@@ -24,15 +26,37 @@ log = structlog.get_logger()
 _RAW_TEXT_MAX = 100_000
 
 
-def _parse_job_uuid(job_id: str | None) -> uuid.UUID | None:
+_TEMPLATE_PREFIX = "template:"
+_TRACK_PREFIX = "track:"
+
+
+def _parse_owner(
+    job_id: str | None,
+) -> tuple[uuid.UUID | None, uuid.UUID | None, uuid.UUID | None]:
+    """Route a ``RunContext.job_id`` to ``(job_uuid, template_uuid, track_uuid)``.
+
+    Exactly zero or one of the three values will be non-null; an all-None tuple
+    means the row should be dropped (eval harness, malformed prefix).
+    """
     if not job_id:
-        return None
+        return (None, None, None)
+
+    if job_id.startswith(_TEMPLATE_PREFIX):
+        try:
+            return (None, uuid.UUID(job_id[len(_TEMPLATE_PREFIX) :]), None)
+        except (ValueError, AttributeError):
+            return (None, None, None)
+
+    if job_id.startswith(_TRACK_PREFIX):
+        try:
+            return (None, None, uuid.UUID(job_id[len(_TRACK_PREFIX) :]))
+        except (ValueError, AttributeError):
+            return (None, None, None)
+
     try:
-        return uuid.UUID(job_id)
+        return (uuid.UUID(job_id), None, None)
     except (ValueError, AttributeError):
-        # "track:<id>" prefix (music track analysis) and other non-job
-        # contexts fall through here. No persistence.
-        return None
+        return (None, None, None)
 
 
 def _truncate_raw_text(raw_text: str | None) -> str | None:
@@ -75,8 +99,8 @@ def persist_agent_run(
     """Insert one agent_run row. Swallows all errors. Uses the sync engine
     directly to stay decoupled from any caller-owned session/transaction.
     """
-    job_uuid = _parse_job_uuid(job_id)
-    if job_uuid is None:
+    job_uuid, template_uuid, track_uuid = _parse_owner(job_id)
+    if job_uuid is None and template_uuid is None and track_uuid is None:
         return
 
     try:
@@ -90,11 +114,13 @@ def persist_agent_run(
                 text(
                     """
                     INSERT INTO agent_run (
-                        job_id, segment_idx, agent_name, prompt_version, model,
+                        job_id, template_id, music_track_id,
+                        segment_idx, agent_name, prompt_version, model,
                         input_json, raw_text, output_json, outcome, attempts,
                         tokens_in, tokens_out, cost_usd, latency_ms, error_message
                     ) VALUES (
-                        :job_id, :segment_idx, :agent_name, :prompt_version, :model,
+                        :job_id, :template_id, :music_track_id,
+                        :segment_idx, :agent_name, :prompt_version, :model,
                         CAST(:input_json AS JSONB), :raw_text,
                         CAST(:output_json AS JSONB), :outcome, :attempts,
                         :tokens_in, :tokens_out, :cost_usd, :latency_ms, :error_message
@@ -102,7 +128,9 @@ def persist_agent_run(
                     """
                 ),
                 {
-                    "job_id": str(job_uuid),
+                    "job_id": str(job_uuid) if job_uuid else None,
+                    "template_id": str(template_uuid) if template_uuid else None,
+                    "music_track_id": str(track_uuid) if track_uuid else None,
                     "segment_idx": segment_idx,
                     "agent_name": agent_name,
                     "prompt_version": prompt_version,
