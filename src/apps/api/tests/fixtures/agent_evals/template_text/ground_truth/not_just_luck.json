@@ -1,0 +1,191 @@
+{
+  "overlays": [
+    {
+      "slot_index": 1,
+      "sample_text": "of",
+      "start_s": 8.0,
+      "end_s": 8.25,
+      "bbox": {
+        "x_norm": 0.5019,
+        "y_norm": 0.5021,
+        "w_norm": 0.0815,
+        "h_norm": 0.0417,
+        "sample_frame_t": 8.0
+      },
+      "font_color_hex": "#FBFBF7",
+      "effect": "pop-in",
+      "role": "label",
+      "size_class": "medium"
+    },
+    {
+      "slot_index": 1,
+      "sample_text": "hard",
+      "start_s": 8.0,
+      "end_s": 8.25,
+      "bbox": {
+        "x_norm": 0.4731,
+        "y_norm": 0.5867,
+        "w_norm": 0.2167,
+        "h_norm": 0.0505,
+        "sample_frame_t": 8.0
+      },
+      "font_color_hex": "#FDFDFC",
+      "effect": "none",
+      "role": "label",
+      "size_class": "medium"
+    },
+    {
+      "slot_index": 1,
+      "sample_text": "work",
+      "start_s": 8.0,
+      "end_s": 8.25,
+      "bbox": {
+        "x_norm": 0.7306,
+        "y_norm": 0.5867,
+        "w_norm": 0.2519,
+        "h_norm": 0.0505,
+        "sample_frame_t": 8.0
+      },
+      "font_color_hex": "#FBFBF7",
+      "effect": "none",
+      "role": "label",
+      "size_class": "medium"
+    },
+    {
+      "slot_index": 1,
+      "sample_text": "and",
+      "start_s": 8.5,
+      "end_s": 9.0,
+      "bbox": {
+        "x_norm": 0.5005,
+        "y_norm": 0.4505,
+        "w_norm": 0.1769,
+        "h_norm": 0.0531,
+        "sample_frame_t": 8.75
+      },
+      "font_color_hex": "#FDFDFC",
+      "effect": "pop-in",
+      "role": "label",
+      "size_class": "medium"
+    },
+    {
+      "slot_index": 1,
+      "sample_text": "good",
+      "start_s": 8.5,
+      "end_s": 9.0,
+      "bbox": {
+        "x_norm": 0.5116,
+        "y_norm": 0.5161,
+        "w_norm": 0.125,
+        "h_norm": 0.0385,
+        "sample_frame_t": 8.75
+      },
+      "font_color_hex": "#C5C7AB",
+      "effect": "none",
+      "role": "label",
+      "size_class": "small"
+    },
+    {
+      "slot_index": 1,
+      "sample_text": "timing",
+      "start_s": 8.5,
+      "end_s": 9.0,
+      "bbox": {
+        "x_norm": 0.6782,
+        "y_norm": 0.5177,
+        "w_norm": 0.1639,
+        "h_norm": 0.0354,
+        "sample_frame_t": 8.75
+      },
+      "font_color_hex": "#D2D4BC",
+      "effect": "none",
+      "role": "label",
+      "size_class": "small"
+    },
+    {
+      "slot_index": 1,
+      "sample_text": "don't",
+      "start_s": 9.75,
+      "end_s": 10.0,
+      "bbox": {
+        "x_norm": 0.3324,
+        "y_norm": 0.412,
+        "w_norm": 0.1759,
+        "h_norm": 0.0406,
+        "sample_frame_t": 9.75
+      },
+      "font_color_hex": "#FBFBF6",
+      "effect": "fade-in",
+      "role": "label",
+      "size_class": "medium"
+    },
+    {
+      "slot_index": 1,
+      "sample_text": "ali",
+      "start_s": 9.75,
+      "end_s": 10.0,
+      "bbox": {
+        "x_norm": 0.4556,
+        "y_norm": 0.4703,
+        "w_norm": 0.2167,
+        "h_norm": 0.049,
+        "sample_frame_t": 9.75
+      },
+      "font_color_hex": "#E3E5D4",
+      "effect": "none",
+      "role": "label",
+      "size_class": "medium"
+    },
+    {
+      "slot_index": 1,
+      "sample_text": "Wy",
+      "start_s": 9.75,
+      "end_s": 10.0,
+      "bbox": {
+        "x_norm": 0.6537,
+        "y_norm": 0.4771,
+        "w_norm": 0.1574,
+        "h_norm": 0.0625,
+        "sample_frame_t": 9.75
+      },
+      "font_color_hex": "#CDCFBB",
+      "effect": "none",
+      "role": "label",
+      "size_class": "medium"
+    },
+    {
+      "slot_index": 1,
+      "sample_text": "to",
+      "start_s": 9.75,
+      "end_s": 10.25,
+      "bbox": {
+        "x_norm": 0.2292,
+        "y_norm": 0.5297,
+        "w_norm": 0.0731,
+        "h_norm": 0.0375,
+        "sample_frame_t": 10.0
+      },
+      "font_color_hex": "#FAFDFA",
+      "effect": "pop-in",
+      "role": "label",
+      "size_class": "small"
+    },
+    {
+      "slot_index": 1,
+      "sample_text": "diminish",
+      "start_s": 9.75,
+      "end_s": 10.25,
+      "bbox": {
+        "x_norm": 0.4412,
+        "y_norm": 0.5286,
+        "w_norm": 0.3139,
+        "h_norm": 0.0406,
+        "sample_frame_t": 10.0
+      },
+      "font_color_hex": "#FCFDFC",
+      "effect": "none",
+      "role": "label",
+      "size_class": "medium"
+    }
+  ]
+}
