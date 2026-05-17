@@ -141,6 +141,27 @@ class TemplateTextAgent(Agent[TemplateTextInput, TemplateTextOutput]):
                     original_end=e,
                 )
                 ov["start_s"], ov["end_s"] = e, s
+                # Also clamp bbox.sample_frame_t into the corrected window.
+                # After the swap the new window is [e, s]. sample_frame_t may
+                # sit outside it (the prod failure: 0.45 outside [0.9, 3.0]).
+                # Clamping is conservative — it pins to the nearer boundary
+                # rather than dropping the overlay entirely.
+                bbox = ov.get("bbox")
+                if isinstance(bbox, dict):
+                    try:
+                        raw_t = float(bbox.get("sample_frame_t", e))
+                        clamped_t = max(e, min(s, raw_t))
+                        if clamped_t != raw_t:
+                            log.warning(
+                                "template_text_overlay_bbox_sample_frame_t_clamped",
+                                index=i,
+                                sample_text=ov.get("sample_text"),
+                                sample_frame_t_clamped_from=raw_t,
+                                sample_frame_t_clamped_to=clamped_t,
+                            )
+                            bbox["sample_frame_t"] = clamped_t
+                    except (TypeError, ValueError):
+                        pass  # non-numeric sample_frame_t caught by model_validate below
             try:
                 validated.append(TemplateTextOverlay.model_validate(ov))
             except ValidationError as exc:
