@@ -162,7 +162,9 @@ class TemplateRecipeVersion(Base):
         Text, ForeignKey("video_templates.id", ondelete="CASCADE"), nullable=False
     )
     recipe: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    # initial_analysis | reanalysis | manual_edit | remerge
+    # initial_analysis | reanalysis | manual_edit | remerge | admin_font_override
+    # Constrained by ck_recipe_version_trigger — keep in sync with migrations
+    # 0010 (added remerge) and 0025 (added admin_font_override).
     trigger: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     # Build wall-clock start, captured at WORKER pickup (not at button-click
