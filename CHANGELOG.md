@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.24.2] - 2026-05-17
+
+### Fixed
+- **Worker `memory_mb = 6144` from v0.4.24.1 is now actually deployable.** v0.4.24.1 merged but the worker deploy was rejected by Fly with `invalid config.guest.memory_mb, cannot exceed 4096 MiB` — `shared-cpu-2x` hard-caps at 4096MB. Workers stayed on the old image so the OOM fix never reached production. Moving the worker size class to `shared-cpu-4x` (cpus = 4) unlocks the 6144MB ceiling. CPU change is incidental (`--concurrency=1` still gates work to one task per worker); the extra vCPUs let ffmpeg parallelise filter/encode threads. Cost: +~$10/mo per worker over the prior shared-cpu-2x tier.
+
 ## [0.4.24.1] - 2026-05-17
 
 ### Fixed
