@@ -1,0 +1,60 @@
+{
+  "agent": "nova.compose.template_text",
+  "prompt_version": "exported",
+  "input": {
+    "file_uri": "templates/079dd138-dc0a-4d6e-a113-6130d9203cbc/video.mp4",
+    "file_mime": "video/mp4",
+    "slot_boundaries_s": [
+      [
+        0.0,
+        22.95
+      ]
+    ]
+  },
+  "raw_text": "{\"overlays\": [{\"slot_index\": 1, \"sample_text\": \"this is what i call:\", \"start_s\": 2.0, \"end_s\": 0.04, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.5, \"w_norm\": 0.296, \"h_norm\": 0.018, \"sample_frame_t\": 0.02}, \"font_color_hex\": \"#FFFFFF\", \"effect\": \"fade-in\", \"role\": \"label\", \"size_class\": \"medium\"}, {\"slot_index\": 1, \"sample_text\": \"being rich in life\", \"start_s\": 0.05, \"end_s\": 22.95, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.5, \"w_norm\": 0.296, \"h_norm\": 0.018, \"sample_frame_t\": 0.06}, \"font_color_hex\": \"#C8D977\", \"effect\": \"static\", \"role\": \"hook\", \"size_class\": \"medium\"}]}",
+  "output": {
+    "overlays": [
+      {
+        "slot_index": 1,
+        "sample_text": "this is what i call:",
+        "start_s": 2.0,
+        "end_s": 0.04,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.5,
+          "w_norm": 0.296,
+          "h_norm": 0.018,
+          "sample_frame_t": 0.02
+        },
+        "font_color_hex": "#FFFFFF",
+        "effect": "fade-in",
+        "role": "label",
+        "size_class": "medium"
+      },
+      {
+        "slot_index": 1,
+        "sample_text": "being rich in life",
+        "start_s": 0.05,
+        "end_s": 22.95,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.5,
+          "w_norm": 0.296,
+          "h_norm": 0.018,
+          "sample_frame_t": 0.06
+        },
+        "font_color_hex": "#C8D977",
+        "effect": "static",
+        "role": "hook",
+        "size_class": "medium"
+      }
+    ]
+  },
+  "meta": {
+    "source": "VideoTemplate.recipe_cached.slots[*].text_overlays",
+    "template_id": "77151144-62f5-477b-b8e6-15d111165222",
+    "template_name": "Rich in life v2",
+    "overlay_count": 2,
+    "exported_at": "2026-05-17T15:19:35.108589+00:00"
+  }
+}
