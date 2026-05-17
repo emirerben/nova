@@ -22,10 +22,23 @@ intermediate with an explicit transpose filter and strip the metadata
 flag. Real landscape sources (rotation = 0) are untouched — those are
 reframe's intended case.
 
-`-noautorotate` is critical: FFmpeg 7.x's decoder applies Display Matrix
-rotation by default. Without `-noautorotate`, the decoder rotates AND our
-transpose filter rotates → double-rotated garbage. With it, behavior is
-identical on FFmpeg 5 / 6 / 7.
+Two input flags do the heavy lifting and must come BEFORE `-i`:
+
+  - `-display_rotation 0` REPLACES the input AVStream's rotation matrix
+    with identity. The muxer then writes an identity `tkhd` matrix on
+    output, so ffprobe (and Gemini's decoder, and reframe's ffmpeg)
+    sees no Display Matrix side_data. Available since FFmpeg 5.0.
+    Bookworm worker ships FFmpeg 5.1.
+
+  - `-noautorotate` belt-and-suspenders: prevents the decoder from
+    applying ANY existing rotation before our transpose filter sees
+    the frames. Without it, FFmpeg 7+ defaults would auto-rotate AND
+    our transpose would rotate AGAIN → double-rotated garbage.
+
+CI on Linux confirmed why `-metadata:s:v:0 rotate=0` alone (the legacy
+form) and `-map_metadata -1` both fail: metadata and side_data are
+separate FFmpeg constructs, and neither flag touches the Display
+Matrix side_data entry. `-display_rotation 0` is the one that works.
 
 CRITICAL: Never use shell=True. Always pass args as a list.
 """
