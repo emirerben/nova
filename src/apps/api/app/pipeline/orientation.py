@@ -16,11 +16,20 @@ pixel dimensions and was getting confused:
     frame.
 
 This module fixes both at the single download chokepoint. After download,
-we ffprobe the file's side_data_list for "Display Matrix", and if a
-non-zero orthogonal rotation is present we re-encode the local
-intermediate with an explicit transpose filter and strip the metadata
-flag. Real landscape sources (rotation = 0) are untouched — those are
-reframe's intended case.
+we ffprobe the file's side_data_list for "Display Matrix" alongside pixel
+dimensions. Three cases:
+
+  - No rotation flag (or non-orthogonal) → untouched.
+  - Rotation flag + landscape pixels (the genuine iPhone-portrait recording
+    case) → re-encode with an explicit transpose filter + strip flag.
+  - Rotation flag + already-portrait pixels (iOS Photos exports etc. that
+    carry a redundant flag on already-rotated bytes) → STRIP THE FLAG ONLY
+    via codec-copy remux. Re-encoding here would double-rotate the clip
+    (the regression that produced upside-down/sideways output in v0.4.27.0).
+
+A kill switch is available: setting env var ``ORIENTATION_NORMALIZE_ENABLED``
+to ``false`` and restarting workers makes ``normalize_orientation`` a no-op,
+useful if a regression slips into prod.
 
 Two input flags do the heavy lifting and must come BEFORE `-i`:
 
@@ -72,23 +81,25 @@ class OrientationError(Exception):
     silently shipping yan-yatik output is worse than failing the job."""
 
 
-def detect_rotation(file_path: str) -> int:
-    """Return Display-Matrix rotation in degrees, or 0 if none / non-orthogonal.
+def detect_rotation_and_dims(file_path: str) -> tuple[int, int, int]:
+    """Return ``(rotation_degrees, pixel_width, pixel_height)`` for a video file.
 
-    ffprobe surfaces container rotation in the video stream's `side_data_list`
-    as `{"side_data_type": "Display Matrix", "rotation": -90}`. The value is
-    an integer; iPhones emit -90 for portrait-held landscape recording,
-    Android emits 90, and 180 (upside-down) appears occasionally.
+    One ffprobe call, three signals callers need together:
 
-    Returns one of: -180, -90, 0, 90, 180.
+    - ``rotation_degrees`` — Display Matrix value, one of ``-180, -90, 0, 90, 180``.
+      Non-orthogonal angles (e.g. 45) are normalized to 0 with a warning so we
+      fall through to reframe's normal pixel-dim handling.
+    - ``pixel_width`` / ``pixel_height`` — coded pixel dimensions (not display
+      dimensions). For an iPhone portrait recording these are ``(1920, 1080)``;
+      for an already-rotated portrait export they are ``(1080, 1920)``.
 
-    Non-orthogonal angles (e.g. 45) are normalized to 0 with a warning —
-    the transpose filter only handles 90-degree multiples. Phones never
-    emit these in practice; if we see one it's a malformed file and we
-    fall through to reframe's normal handling.
+    The dim values exist so ``normalize_orientation`` can detect the stale-flag
+    case: pixels already in target orientation (height > width) carrying a
+    redundant rotation flag. Re-encoding such files double-rotates them.
 
-    Raises OrientationError if ffprobe fails outright; that's a fatal
-    signal (corrupt file, ffprobe missing).
+    Raises ``OrientationError`` if ffprobe fails. Returns ``(0, 0, 0)`` when
+    the input has no video stream — the orchestrator will fail with a clearer
+    error at the next step.
     """
     cmd = [
         "ffprobe",
@@ -127,11 +138,24 @@ def detect_rotation(file_path: str) -> int:
         None,
     )
     if video_stream is None:
-        # No video stream is not our concern — orchestrator will fail
-        # at the next step with a clearer error.
-        return 0
+        return (0, 0, 0)
 
-    return _extract_rotation(video_stream)
+    rotation = _extract_rotation(video_stream)
+    try:
+        width = int(video_stream.get("width") or 0)
+        height = int(video_stream.get("height") or 0)
+    except (TypeError, ValueError):
+        width = height = 0
+    return (rotation, width, height)
+
+
+def detect_rotation(file_path: str) -> int:
+    """Thin wrapper over :func:`detect_rotation_and_dims` for callers that only
+    want the rotation flag. Kept for the existing test surface; new code should
+    prefer ``detect_rotation_and_dims`` (single ffprobe call returning dims too).
+    """
+    rotation, _, _ = detect_rotation_and_dims(file_path)
+    return rotation
 
 
 def _extract_rotation(video_stream: dict) -> int:
@@ -167,38 +191,187 @@ def _extract_rotation(video_stream: dict) -> int:
 def _transpose_filter_for(rotation: int) -> str:
     """Map a container rotation in degrees to an FFmpeg vf transpose chain.
 
-    transpose=1 = 90° clockwise (top edge becomes right edge)
-    transpose=2 = 90° counter-clockwise (top edge becomes left edge)
-    180° = two CCW transposes (cheaper than hflip+vflip in this filter chain)
+    Pixel-level convention:
 
-    The mapping reverses the container's "rotate by N degrees on
-    playback" instruction: if the file says "rotate -90 on playback"
-    (counter-clockwise), we apply that same -90 in pixels.
+    - ``transpose=1`` = 90° CLOCKWISE rotation of the image.
+    - ``transpose=2`` = 90° COUNTER-CLOCKWISE rotation of the image.
+
+    Mapping from Display Matrix ``rotation`` value to transpose direction
+    was verified empirically against a real iPhone HEVC portrait recording
+    (1920×1080 sensor pixels + ``rotation: -90`` flag). The intuition
+    "rotation=-90 means apply -90° (CCW) in pixels" is WRONG and was the
+    root cause of the v0.4.27.0 upside-down-output regression.
+
+    What actually works (per direct test, frame-extracted and visually
+    confirmed):
+
+    - ``rotation == -90`` (iPhone portrait recording) → ``transpose=1``
+      (CW). The sensor records with "up" on the LEFT side of the decoded
+      frame; rotating CW brings "up" to the top.
+    - ``rotation == 90`` (Android portrait recording) → ``transpose=2``
+      (CCW). Mirror case to the above.
+    - ``rotation == ±180`` → two transposes (180° net, direction-agnostic).
+
+    The previous mapping (-90 → transpose=2, 90 → transpose=1) passed
+    the existing dim-swap tests because BOTH CW and CCW rotations swap
+    pixel dimensions identically. The tests never asserted on pixel
+    direction. The fix adds that assertion in
+    ``TestNormalizeOrientationIntegration.test_neg_90_pixel_direction_matches_player``.
     """
     if rotation == -90 or rotation == 270:
-        return "transpose=2"
-    if rotation == 90 or rotation == -270:
         return "transpose=1"
+    if rotation == 90 or rotation == -270:
+        return "transpose=2"
     if rotation == 180 or rotation == -180:
         return "transpose=2,transpose=2"
     # Caller should have filtered to _SUPPORTED_ROTATIONS already.
     raise OrientationError(f"unsupported rotation {rotation}")
 
 
+def _run_ffmpeg_atomic_replace(
+    src: str,
+    tmp_path: str,
+    cmd: list[str],
+    op_label: str,
+) -> None:
+    """Run an ffmpeg command that writes to ``tmp_path``, then atomically
+    swap with ``src`` via ``os.replace``. Both call sites in this module
+    (the flag-strip remux and the full re-encode) follow the same recipe:
+    same timeout, same cleanup-on-failure pattern, same atomic swap.
+
+    The caller owns the cmd list and the tmp path. ``cmd`` must already
+    include ``tmp_path`` as its final argument so ffmpeg writes there.
+    ``op_label`` is interpolated into error messages so failures from
+    different call sites are distinguishable (e.g. "flag-strip" vs
+    "normalize").
+
+    On TimeoutExpired or non-zero return code: best-effort delete the
+    half-written tmp file, then raise OrientationError with the labelled
+    message. On success: ``os.replace(tmp_path, src)`` performs the
+    atomic swap (rename(2) on POSIX), so either the new file fully
+    replaces the old or the original is left untouched.
+
+    Raises:
+        OrientationError: on ffmpeg failure (timeout or non-zero rc).
+    """
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=_NORMALIZE_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise OrientationError(
+            f"ffmpeg {op_label} timed out after {_NORMALIZE_TIMEOUT_S}s on {src}"
+        ) from exc
+
+    if result.returncode != 0:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        stderr = result.stderr.decode("utf-8", errors="replace")[:500]
+        raise OrientationError(
+            f"ffmpeg {op_label} failed (rc={result.returncode}): {stderr}"
+        )
+
+    os.replace(tmp_path, src)
+
+
+def _strip_rotation_flag_only(file_path: str) -> None:
+    """Remux to clear the Display-Matrix rotation flag WITHOUT touching pixels.
+
+    Used when ``normalize_orientation`` determines the pixel dims already
+    match the target orientation and the rotation flag is stale. Applying a
+    transpose in that case would double-rotate the clip (the bug PR #192
+    introduced for iOS Photos exports).
+
+    ``-c copy`` means codec-copy: ffmpeg remuxes the existing H.264/HEVC
+    bitstream into a new container without decoding or re-encoding a single
+    frame. Cost is roughly the file's I/O size, e.g. ~100ms for a 100MB
+    intermediate vs. ~30s for a full re-encode on the worker.
+
+    ``-display_rotation 0`` is the FFmpeg 5.0+ input flag that replaces the
+    input AVStream's rotation matrix with identity. With ``-c copy`` the
+    muxer writes the (now-identity) matrix to the output container, so
+    ffprobe and every downstream consumer see the file as having no
+    rotation metadata.
+
+    Atomic via sibling ``.tmp`` file + ``os.replace`` — either the new file
+    fully replaces the old, or the original is left untouched on failure.
+
+    Raises ``OrientationError`` on ffmpeg failure.
+    """
+    tmp_path = f"{file_path}.flagstrip.tmp.mp4"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        # See `normalize_orientation` for the rationale behind both flags.
+        # Short version: `-display_rotation 0` rewrites the input matrix to
+        # identity; `-noautorotate` is belt-and-suspenders against decoder
+        # auto-rotate behavior drift between FFmpeg versions.
+        "-display_rotation",
+        "0",
+        "-noautorotate",
+        "-i",
+        file_path,
+        # Codec copy: no pixel decode, no encode. Pure container remux.
+        "-c",
+        "copy",
+        tmp_path,
+    ]
+    _run_ffmpeg_atomic_replace(file_path, tmp_path, cmd, op_label="flag-strip")
+
+
 def normalize_orientation(file_path: str) -> str:
-    """If the file carries a Display-Matrix rotation flag, re-encode in
-    place with explicit transpose + strip the flag. No-op otherwise.
+    """Normalize a file's Display-Matrix rotation so downstream consumers see
+    physical orientation matching the metadata.
 
-    Returns the same `file_path` — the rewrite is atomic via a sibling
-    `.tmp` file plus os.replace(). Callers don't need to track a new path.
+    Two paths, picked based on rotation flag + pixel dims::
 
-    The output is an intermediate (downstream reframe re-encodes anyway),
-    so libx264 ultrafast is the right quality budget. We intentionally do
-    NOT route through `reframe._encoding_args` here — see the inline
-    comment above the ffmpeg cmd for why.
+        rotation flag   pixel dims         action
+        --------------  ----------------- --------------------------------
+        0               any                no-op (event="skipped")
+        ±90 / ±270      width  > height    full re-encode + transpose
+                        height > width     strip flag, NO pixel rotation  ←
+                        width == height    full re-encode (treat as landscape)
+        ±180            width  > height    full re-encode + 180° transpose
+                        height > width     strip flag, log warning        ←
+                        width == height    full re-encode
 
-    Raises OrientationError on ffmpeg failure. Fail-fast is intentional:
-    silently shipping a yan-yatik clip after a normalize failure would be
+    The marked ``←`` rows are why this function exists in its current form:
+    iOS Photos and various export pipelines retain a rotation flag on files
+    whose pixels are ALREADY in the rotated orientation. PR #192's original
+    implementation always re-encoded with a transpose, which double-rotated
+    those files and produced upside-down/sideways output for users.
+
+    Two cases collapse into the ``rotation == 0`` skip row upstream of this
+    function and won't appear in the case table above:
+
+    - Non-orthogonal angles (e.g. 45°). ``_extract_rotation`` normalizes
+      those to 0 with a warning so the file passes through reframe's
+      normal handling.
+    - Files with no video stream. ``detect_rotation_and_dims`` returns
+      ``(0, 0, 0)`` and the function takes the skip path. The trace
+      event will show ``width=0, height=0`` — this is a deliberate
+      no-op, not a probe failure (the orchestrator surfaces the real
+      error at the next step).
+
+    Both paths atomically replace ``file_path`` in place (.tmp + os.replace).
+
+    Killable via env var ``ORIENTATION_NORMALIZE_ENABLED=false`` (default
+    ``true``). Set to ``false`` and restart workers to make this function a
+    no-op for ops emergencies — a regression here cannot survive past the
+    next worker restart.
+
+    Raises ``OrientationError`` on ffmpeg/ffprobe failure. Fail-fast is
+    intentional: silently shipping a yan-yatık or upside-down clip would be
     invisible to the user until they watched the final render.
     """
     # Lazy import: pipeline_trace pulls in SQLAlchemy + asyncpg which we
@@ -206,19 +379,93 @@ def normalize_orientation(file_path: str) -> str:
     # download path; the trace call only matters when a job_id is bound).
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-    rotation = detect_rotation(file_path)
-    if rotation == 0:
-        # Record the no-op too. Surfaces in admin/jobs/{id} as evidence
-        # that normalize ran and found nothing to do — answers the
-        # "why didn't my upright-looking video get rotated" question
-        # without the user having to grep Fly logs.
+    # Kill switch. Ops can disable orientation normalization without a
+    # redeploy by setting ORIENTATION_NORMALIZE_ENABLED=false on the worker
+    # and restarting it. Used as a safety valve when a regression slips in.
+    if os.getenv("ORIENTATION_NORMALIZE_ENABLED", "true").strip().lower() == "false":
+        log.warning("orientation_disabled_by_env", path=os.path.basename(file_path))
         record_pipeline_event(
             stage="orientation",
-            event="skipped",
-            data={"rotation": 0, "path": os.path.basename(file_path)},
+            event="disabled_by_env",
+            data={"path": os.path.basename(file_path)},
         )
         return file_path
 
+    rotation, width, height = detect_rotation_and_dims(file_path)
+
+    if rotation == 0:
+        # Record the no-op too. Surfaces in admin/jobs/{id} as evidence
+        # that normalize ran and found nothing to do.
+        record_pipeline_event(
+            stage="orientation",
+            event="skipped",
+            data={
+                "rotation": 0,
+                "width": width,
+                "height": height,
+                "path": os.path.basename(file_path),
+            },
+        )
+        return file_path
+
+    # Stale-flag fast path: pixels are already in portrait orientation but
+    # the container still carries a portrait rotation flag (iOS Photos
+    # exports, share-sheet re-encodes, etc.). Re-encoding here would
+    # rotate the already-upright pixels a second time → sideways/upside-down
+    # output. Just strip the flag.
+    #
+    # Note: width == height (square) falls through to the re-encode path
+    # below because a square video gives no signal about whether the
+    # rotation flag is stale. iPhone Live Photo videos that record square
+    # land here; trusting the flag is the safer default.
+    if rotation in (-90, 90, -270, 270) and height > width:
+        _strip_rotation_flag_only(file_path)
+        log.info(
+            "orientation_flag_stripped_no_rotation",
+            path=file_path,
+            rotation_flag=rotation,
+            width=width,
+            height=height,
+        )
+        record_pipeline_event(
+            stage="orientation",
+            event="flag_stripped_no_rotation",
+            data={
+                "rotation_flag": rotation,
+                "width": width,
+                "height": height,
+                "path": os.path.basename(file_path),
+            },
+        )
+        return file_path
+
+    if rotation in (-180, 180) and height > width:
+        # Already-portrait pixels with a 180° flag — ambiguous. Could be
+        # an intentional upside-down recording (rare) or a stale flag
+        # (common for re-exported clips). Default to "stale" and log so
+        # we catch genuine cases via the admin job-debug view.
+        log.warning(
+            "orientation_180_on_portrait_pixels_stripping_flag",
+            path=file_path,
+            width=width,
+            height=height,
+        )
+        _strip_rotation_flag_only(file_path)
+        record_pipeline_event(
+            stage="orientation",
+            event="flag_stripped_no_rotation_180",
+            data={
+                "rotation_flag": rotation,
+                "width": width,
+                "height": height,
+                "path": os.path.basename(file_path),
+            },
+        )
+        return file_path
+
+    # Landscape (or square) pixels with a rotation flag — the genuine
+    # iPhone-portrait-recording case PR #192 was shipped to fix. Full
+    # re-encode with transpose.
     transpose_chain = _transpose_filter_for(rotation)
     tmp_path = f"{file_path}.norot.tmp.mp4"
 
@@ -290,34 +537,7 @@ def normalize_orientation(file_path: str) -> str:
         tmp_path,
     ]
 
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=_NORMALIZE_TIMEOUT_S,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        # Best-effort cleanup; missing tmp file is fine.
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        raise OrientationError(
-            f"ffmpeg normalize timed out after {_NORMALIZE_TIMEOUT_S}s on {file_path}"
-        ) from exc
-
-    if result.returncode != 0:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        stderr = result.stderr.decode("utf-8", errors="replace")[:500]
-        raise OrientationError(f"ffmpeg normalize failed (rc={result.returncode}): {stderr}")
-
-    # Atomic swap — on POSIX os.replace is rename(2). Either the new file
-    # is fully written when we replace, or we leave the original untouched.
-    os.replace(tmp_path, file_path)
+    _run_ffmpeg_atomic_replace(file_path, tmp_path, cmd, op_label="normalize")
 
     log.info(
         "orientation_normalized",

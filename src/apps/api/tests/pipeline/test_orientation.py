@@ -102,11 +102,15 @@ class TestExtractRotation:
 
 
 class TestTransposeFilterFor:
-    def test_neg_90_maps_to_transpose_2(self) -> None:
-        assert _transpose_filter_for(-90) == "transpose=2"
+    def test_neg_90_maps_to_transpose_1_cw(self) -> None:
+        """iPhone portrait (rotation=-90) needs CW rotation in pixels.
+        Verified empirically against a real HEVC iPhone clip: transpose=2
+        produced upside-down output; transpose=1 produces upright."""
+        assert _transpose_filter_for(-90) == "transpose=1"
 
-    def test_pos_90_maps_to_transpose_1(self) -> None:
-        assert _transpose_filter_for(90) == "transpose=1"
+    def test_pos_90_maps_to_transpose_2_ccw(self) -> None:
+        """Android portrait (rotation=90) is the mirror case: CCW in pixels."""
+        assert _transpose_filter_for(90) == "transpose=2"
 
     def test_180_maps_to_double_transpose(self) -> None:
         assert _transpose_filter_for(180) == "transpose=2,transpose=2"
@@ -115,7 +119,10 @@ class TestTransposeFilterFor:
         assert _transpose_filter_for(-180) == "transpose=2,transpose=2"
 
     def test_270_aliases_to_neg_90(self) -> None:
-        assert _transpose_filter_for(270) == "transpose=2"
+        assert _transpose_filter_for(270) == "transpose=1"
+
+    def test_neg_270_aliases_to_pos_90(self) -> None:
+        assert _transpose_filter_for(-270) == "transpose=2"
 
     def test_unsupported_raises(self) -> None:
         with pytest.raises(OrientationError, match="unsupported rotation"):
@@ -394,6 +401,159 @@ class TestNormalizeOrientationIntegration:
         assert (w, h) == (320, 240)
         assert _probe_for_rotation(rotated_180_clip) == 0
 
+    def test_square_pixels_with_rotation_flag_take_re_encode_path(
+        self, plain_clip: Path, tmp_path: Path
+    ) -> None:
+        """Square videos (width == height) with a rotation flag fall through
+        to the re-encode path, NOT the stale-flag fast path. iPhone Live
+        Photo videos can land here. Trusting the flag is the conservative
+        default since pixel dims give no orientation signal for squares.
+
+        Pin the boundary so a future refactor that flips ``height > width``
+        to ``height >= width`` doesn't silently change behavior."""
+        if not _ffmpeg_available():
+            pytest.skip("ffmpeg not installed")
+        d = tmp_path / "square_plain.mp4"
+        _build_plain_clip(d, width=320, height=320)
+        target = _bake_rotation(d, tmp_path / "square_rotated.mov", -90)
+        assert _probe_dims(target) == (320, 320), "precondition"
+
+        with patch("app.services.pipeline_trace.record_pipeline_event") as mock_record:
+            normalize_orientation(str(target))
+
+        events = [c.kwargs.get("event") or (c.args[1] if len(c.args) > 1 else None)
+                  for c in mock_record.call_args_list]
+        assert "normalized" in events, (
+            f"square+flag must hit the re-encode path (event='normalized'), got {events}"
+        )
+
+    def test_pos_90_pixel_direction_matches_player(
+        self, rotated_pos90_clip: Path, tmp_path: Path
+    ) -> None:
+        """Mirror of test_neg_90_pixel_direction_matches_player for the +90
+        (Android) branch. The +90 transpose was ALSO flipped in this fix
+        (was transpose=1, now transpose=2). Without this test, a future
+        regression that re-inverted only the +90 branch would not be caught
+        by any integration-level assertion — the dim-swap test passes for
+        both directions identically."""
+        reference = tmp_path / "ref_pos90.png"
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-ss", "0.3", "-i", str(rotated_pos90_clip),
+                "-vframes", "1", str(reference),
+            ],
+            check=True, timeout=30, capture_output=True,
+        )
+        normalize_orientation(str(rotated_pos90_clip))
+        normalized = tmp_path / "norm_pos90.png"
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-ss", "0.3", "-i", str(rotated_pos90_clip),
+                "-vframes", "1", str(normalized),
+            ],
+            check=True, timeout=30, capture_output=True,
+        )
+        psnr_out = subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "info",
+                "-i", str(normalized), "-i", str(reference),
+                "-filter_complex", "psnr",
+                "-f", "null", "-",
+            ],
+            capture_output=True, text=True, timeout=30, check=True,
+        )
+        import re
+        match = re.search(r"PSNR.*average:([0-9.]+|inf)", psnr_out.stderr)
+        assert match is not None, f"PSNR parse failed:\n{psnr_out.stderr[-500:]}"
+        psnr_value = float("inf") if match.group(1) == "inf" else float(match.group(1))
+        assert psnr_value > 25.0, (
+            f"+90 normalized frame diverges from player reference (PSNR avg = {psnr_value} dB). "
+            "Likely a wrong transpose direction on the +90 branch — will ship sideways/upside-down."
+        )
+
+    def test_neg_90_pixel_direction_matches_player(
+        self, rotated_neg90_clip: Path, tmp_path: Path
+    ) -> None:
+        """REGRESSION: PR #192 shipped with the wrong transpose direction,
+        producing upside-down output for genuine iPhone portrait clips. The
+        dim-swap tests above did NOT catch it because both CW and CCW
+        rotations swap WxH identically.
+
+        This test compares the first-frame pixel content of our normalized
+        output against the canonical "what a video player shows" reference
+        (ffmpeg default auto-rotate). If they match within a tight tolerance,
+        our transpose direction is correct. If they diverge by more than a
+        few RGB units, the rotation is inverted and the clip will play
+        upside-down/sideways in production.
+        """
+        # Reference: what a media player (QuickTime, browser, iPhone)
+        # would show. ffmpeg's default behavior reads the Display Matrix
+        # and auto-rotates on decode, giving us the "user's intended view".
+        reference = tmp_path / "reference_autorotate.png"
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-ss", "0.3", "-i", str(rotated_neg90_clip),
+                "-vframes", "1", str(reference),
+            ],
+            check=True,
+            timeout=30,
+            capture_output=True,
+        )
+
+        # Run our normalize (in-place).
+        normalize_orientation(str(rotated_neg90_clip))
+        normalized_frame = tmp_path / "normalized_frame.png"
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-ss", "0.3", "-i", str(rotated_neg90_clip),
+                "-vframes", "1", str(normalized_frame),
+            ],
+            check=True,
+            timeout=30,
+            capture_output=True,
+        )
+
+        # Reference and normalized frame should be visually equivalent.
+        # ffmpeg's PSNR filter gives us a single quality number — for two
+        # frames showing the same content with the same encoding pass,
+        # PSNR should be very high (lossless ≈ inf, near-lossless > 40dB).
+        # A wrong-direction rotation would produce a completely different
+        # frame, PSNR well below 20dB.
+        psnr_out = subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "info",
+                "-i", str(normalized_frame),
+                "-i", str(reference),
+                "-filter_complex", "psnr",
+                "-f", "null", "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        # PSNR result is on stderr like:
+        #   [Parsed_psnr_0 @ 0x...] PSNR y:42.5 u:48.1 v:48.2 average:43.7 min:43.7 max:43.7
+        import re
+        match = re.search(r"PSNR.*average:([0-9.]+|inf)", psnr_out.stderr)
+        assert match is not None, (
+            f"could not parse PSNR from ffmpeg output:\n{psnr_out.stderr[-500:]}"
+        )
+        psnr_str = match.group(1)
+        psnr_value = float("inf") if psnr_str == "inf" else float(psnr_str)
+        # 25dB is a permissive floor — same content, same codec, same
+        # frame index should easily clear this. A wrong rotation produces
+        # PSNR well below 20dB (totally different image).
+        assert psnr_value > 25.0, (
+            f"normalized frame diverges from player reference (PSNR avg = {psnr_value} dB). "
+            "Almost certainly a wrong transpose direction — output will play "
+            "upside-down or sideways in production."
+        )
+
     def test_preserves_audio_stream(self, rotated_neg90_clip: Path) -> None:
         assert _has_audio_stream(rotated_neg90_clip), "precondition"
         normalize_orientation(str(rotated_neg90_clip))
@@ -444,8 +604,279 @@ class TestNormalizeOrientationIntegration:
         bad = tmp_path / "bad.mp4"
         bad.write_bytes(b"not a real video")
 
-        # Mock detect_rotation directly so we skip ffprobe (which would
-        # legitimately fail on this junk file) and reach the ffmpeg path.
-        with patch("app.pipeline.orientation.detect_rotation", return_value=-90):
+        # Mock the probe helper directly so we skip ffprobe (which would
+        # legitimately fail on this junk file) and reach the ffmpeg
+        # re-encode path. We return landscape dims so the stale-flag
+        # fast path is NOT taken (we want to exercise the re-encode failure).
+        with patch(
+            "app.pipeline.orientation.detect_rotation_and_dims",
+            return_value=(-90, 320, 240),
+        ):
             with pytest.raises(OrientationError, match="ffmpeg normalize failed"):
                 normalize_orientation(str(bad))
+
+    def test_strip_flag_only_ffmpeg_failure_raises(self, tmp_path: Path) -> None:
+        """The stale-flag (codec-copy remux) path has its own error handler.
+        Pin it — a corrupt or unreadable file routed to the strip path must
+        raise OrientationError with the strip-specific message."""
+        bad = tmp_path / "bad_portrait.mp4"
+        bad.write_bytes(b"not a real video")
+
+        # Force the stale-flag fast path by returning portrait dims with a
+        # rotation flag (height > width with rotation in ±90 → strip path).
+        with patch(
+            "app.pipeline.orientation.detect_rotation_and_dims",
+            return_value=(-90, 240, 320),
+        ):
+            with pytest.raises(OrientationError, match="ffmpeg flag-strip failed"):
+                normalize_orientation(str(bad))
+
+    def test_strip_flag_only_timeout_raises(
+        self, plain_clip: Path, tmp_path: Path
+    ) -> None:
+        """The strip path's TimeoutExpired handler must clean up the tmp
+        file and raise OrientationError with the strip-specific timeout
+        message. Mock subprocess.run to simulate the timeout."""
+        import subprocess as _subprocess
+
+        # Use a real valid clip so ffprobe (the dims probe) succeeds, but
+        # force-route to the stale-flag path by mocking dims, then mock
+        # ffmpeg call to raise TimeoutExpired.
+        target = tmp_path / "portrait_real.mp4"
+        target.write_bytes(plain_clip.read_bytes())
+
+        real_run = _subprocess.run
+        cmd_seen: list[list[str]] = []
+
+        def fake_run(cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+            cmd_seen.append(list(cmd))
+            # ffprobe calls are fine — pass through
+            if cmd[0] == "ffprobe":
+                return real_run(cmd, *args, **kwargs)
+            # ffmpeg call → simulate hang
+            raise _subprocess.TimeoutExpired(cmd=cmd, timeout=300)
+
+        with patch(
+            "app.pipeline.orientation.detect_rotation_and_dims",
+            return_value=(-90, 240, 320),  # forces strip path
+        ):
+            with patch(
+                "app.pipeline.orientation.subprocess.run",
+                side_effect=fake_run,
+            ):
+                with pytest.raises(OrientationError, match="ffmpeg flag-strip timed out"):
+                    normalize_orientation(str(target))
+
+        # Tmp file (would be <input>.flagstrip.tmp.mp4) must not be left behind.
+        tmp_artifact = target.with_suffix(target.suffix + ".flagstrip.tmp.mp4")
+        assert not tmp_artifact.exists(), (
+            "strip path must clean up its tmp file on timeout"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Stale-flag regression tests — portrait pixels carrying a redundant rotation
+# flag. These are the case that produced upside-down/sideways output in
+# v0.4.27.0 (PR #192). The fix makes normalize_orientation strip the flag
+# without re-encoding pixels.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def plain_portrait_clip(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Session-scoped plain 240x320 H.264 clip (portrait pixel dims), no
+    rotation metadata. Simulates an already-rotated portrait file (e.g.
+    iOS Photos export) before any rotation flag is added."""
+    if not _ffmpeg_available():
+        pytest.skip("ffmpeg not installed")
+    d = tmp_path_factory.mktemp("orientation_fixtures_portrait")
+    return _build_plain_clip(d / "portrait_plain.mp4", width=240, height=320)
+
+
+@pytest.fixture
+def portrait_with_stale_neg90(plain_portrait_clip: Path, tmp_path: Path) -> Path:
+    """Portrait pixels (240x320) + baked rotation:-90 flag.
+
+    Pre-fix behavior: normalize_orientation re-encoded with transpose=2,
+    which rotated the already-upright pixels 90° CCW → sideways/upside-down.
+    Post-fix behavior: strip the flag, leave pixels intact.
+    """
+    return _bake_rotation(plain_portrait_clip, tmp_path / "portrait_stale_neg90.mov", -90)
+
+
+@pytest.fixture
+def portrait_with_stale_pos90(plain_portrait_clip: Path, tmp_path: Path) -> Path:
+    return _bake_rotation(plain_portrait_clip, tmp_path / "portrait_stale_pos90.mov", 90)
+
+
+@pytest.fixture
+def portrait_with_stale_180(plain_portrait_clip: Path, tmp_path: Path) -> Path:
+    return _bake_rotation(plain_portrait_clip, tmp_path / "portrait_stale_180.mov", 180)
+
+
+@needs_ffmpeg
+class TestNormalizeOrientationStaleFlagRegression:
+    """Regression tests for the v0.4.27.0 stale-flag double-rotation bug.
+
+    Each test asserts the fix's hard contract: when pixels are already in
+    portrait orientation, the rotation flag is removed but pixel dims and
+    pixel content are untouched.
+    """
+
+    def test_stale_neg90_strips_flag_without_rotating_pixels(
+        self, portrait_with_stale_neg90: Path
+    ) -> None:
+        assert _probe_for_rotation(portrait_with_stale_neg90) == -90, "precondition"
+        assert _probe_dims(portrait_with_stale_neg90) == (240, 320), "precondition"
+
+        normalize_orientation(str(portrait_with_stale_neg90))
+
+        assert _probe_for_rotation(portrait_with_stale_neg90) == 0, (
+            "stale rotation flag must be stripped"
+        )
+        assert _probe_dims(portrait_with_stale_neg90) == (240, 320), (
+            "pixel dims must NOT change — applying transpose to already-portrait "
+            "pixels was the v0.4.27.0 bug"
+        )
+
+    def test_stale_pos90_strips_flag_without_rotating_pixels(
+        self, portrait_with_stale_pos90: Path
+    ) -> None:
+        assert _probe_for_rotation(portrait_with_stale_pos90) == 90, "precondition"
+        assert _probe_dims(portrait_with_stale_pos90) == (240, 320), "precondition"
+
+        normalize_orientation(str(portrait_with_stale_pos90))
+
+        assert _probe_for_rotation(portrait_with_stale_pos90) == 0
+        assert _probe_dims(portrait_with_stale_pos90) == (240, 320)
+
+    def test_stale_180_strips_flag_without_rotating_pixels(
+        self, portrait_with_stale_180: Path
+    ) -> None:
+        # ffmpeg's `-display_rotation 180` may store the value as either
+        # 180 or -180 in side_data depending on version — they're equivalent
+        # rotations and `normalize_orientation` accepts both via
+        # `_SUPPORTED_ROTATIONS`. Pin the precondition loosely.
+        assert _probe_for_rotation(portrait_with_stale_180) in (180, -180), "precondition"
+        assert _probe_dims(portrait_with_stale_180) == (240, 320), "precondition"
+
+        normalize_orientation(str(portrait_with_stale_180))
+
+        assert _probe_for_rotation(portrait_with_stale_180) == 0
+        assert _probe_dims(portrait_with_stale_180) == (240, 320)
+
+    def test_stale_neg90_records_flag_stripped_event(
+        self, portrait_with_stale_neg90: Path
+    ) -> None:
+        """The admin job-debug view distinguishes stale-flag strips from
+        legitimate transposes via the event name. Pin the wire."""
+        with patch("app.services.pipeline_trace.record_pipeline_event") as mock_record:
+            normalize_orientation(str(portrait_with_stale_neg90))
+        assert mock_record.called
+        call_kwargs = mock_record.call_args.kwargs or dict(
+            zip(("stage", "event", "data"), mock_record.call_args.args, strict=False)
+        )
+        assert call_kwargs["stage"] == "orientation"
+        assert call_kwargs["event"] == "flag_stripped_no_rotation"
+        assert call_kwargs["data"]["rotation_flag"] == -90
+        assert call_kwargs["data"]["width"] == 240
+        assert call_kwargs["data"]["height"] == 320
+
+    def test_stale_180_records_separate_event(
+        self, portrait_with_stale_180: Path
+    ) -> None:
+        """180° on portrait pixels emits its own event so the warning log
+        and the event are aligned. Operators looking for 'is there a real
+        upside-down recording?' can filter on this event."""
+        with patch("app.services.pipeline_trace.record_pipeline_event") as mock_record:
+            normalize_orientation(str(portrait_with_stale_180))
+        assert mock_record.called
+        call_kwargs = mock_record.call_args.kwargs or dict(
+            zip(("stage", "event", "data"), mock_record.call_args.args, strict=False)
+        )
+        assert call_kwargs["event"] == "flag_stripped_no_rotation_180"
+
+
+# ---------------------------------------------------------------------------
+# Env-var kill switch — ops should be able to disable orientation
+# normalization without a redeploy if a regression slips in.
+# ---------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+class TestNormalizeOrientationKillSwitch:
+    def test_env_false_disables_normalize(
+        self, rotated_neg90_clip: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With ORIENTATION_NORMALIZE_ENABLED=false the function must be a
+        no-op: the input file is untouched byte-for-byte."""
+        original_bytes = rotated_neg90_clip.read_bytes()
+        monkeypatch.setenv("ORIENTATION_NORMALIZE_ENABLED", "false")
+
+        normalize_orientation(str(rotated_neg90_clip))
+
+        assert rotated_neg90_clip.read_bytes() == original_bytes, (
+            "kill switch must skip ffprobe and ffmpeg — file unchanged"
+        )
+        # Flag must still be present since we did nothing.
+        assert _probe_for_rotation(rotated_neg90_clip) == -90
+
+    def test_env_false_records_disabled_event(
+        self, rotated_neg90_clip: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ORIENTATION_NORMALIZE_ENABLED", "false")
+        with patch("app.services.pipeline_trace.record_pipeline_event") as mock_record:
+            normalize_orientation(str(rotated_neg90_clip))
+        assert mock_record.called
+        call_kwargs = mock_record.call_args.kwargs or dict(
+            zip(("stage", "event", "data"), mock_record.call_args.args, strict=False)
+        )
+        assert call_kwargs["stage"] == "orientation"
+        assert call_kwargs["event"] == "disabled_by_env"
+
+    def test_env_true_default_runs_normalize(
+        self, rotated_neg90_clip: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default (no env var, or =true) must keep current behavior. Guards
+        against accidental opt-out via typo / casing mismatch."""
+        monkeypatch.delenv("ORIENTATION_NORMALIZE_ENABLED", raising=False)
+        normalize_orientation(str(rotated_neg90_clip))
+        assert _probe_for_rotation(rotated_neg90_clip) == 0, (
+            "default env state must still normalize"
+        )
+
+
+# ---------------------------------------------------------------------------
+# detect_rotation_and_dims — single-call probe returning rotation + dims.
+# ---------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+class TestDetectRotationAndDims:
+    def test_returns_dims_for_plain_landscape(self, plain_clip: Path) -> None:
+        from app.pipeline.orientation import detect_rotation_and_dims
+
+        rotation, width, height = detect_rotation_and_dims(str(plain_clip))
+        assert rotation == 0
+        assert (width, height) == (320, 240)
+
+    def test_returns_dims_for_rotated(self, rotated_neg90_clip: Path) -> None:
+        from app.pipeline.orientation import detect_rotation_and_dims
+
+        rotation, width, height = detect_rotation_and_dims(str(rotated_neg90_clip))
+        assert rotation == -90
+        # Pre-normalize: pixels are still landscape, flag says rotate.
+        assert (width, height) == (320, 240)
+
+    def test_returns_dims_for_portrait_with_stale_flag(
+        self, portrait_with_stale_neg90: Path
+    ) -> None:
+        """This is the case the fix branches on: portrait dims + rotation
+        flag together signal a stale flag, not a real rotation."""
+        from app.pipeline.orientation import detect_rotation_and_dims
+
+        rotation, width, height = detect_rotation_and_dims(str(portrait_with_stale_neg90))
+        assert rotation == -90
+        assert (width, height) == (240, 320)
+        # The fix uses height > width to recognize this case.
+        assert height > width
