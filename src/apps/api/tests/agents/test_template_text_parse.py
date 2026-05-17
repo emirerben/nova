@@ -210,3 +210,97 @@ def test_inverted_timing_salvage_also_clamps_sample_frame_t() -> None:
 
     # sample_frame_t clamped to start of corrected window (0.45 < 0.9 → pin to 0.9).
     assert ov.bbox.sample_frame_t == pytest.approx(0.9)
+
+
+# ── Non-inversion sample_frame_t clamp (PR #199 regression) ──────────────────
+
+
+def test_non_inversion_clamps_sample_frame_t_below_start() -> None:
+    """Regression for the life_s_richness_3 prod failure (PR #199).
+
+    Gemini returned start_s=2.0, end_s=22.18 (valid — no inversion). But
+    bbox.sample_frame_t=0.07 sits below start_s=2.0. PR #198's clamp lived
+    inside the salvage branch so it never fired here. The downstream structural
+    validator rejected the overlay.
+
+    After the fix _clamp_sample_frame_t() runs unconditionally, pinning
+    sample_frame_t to start_s (2.0).
+    """
+    ov = _valid_overlay(
+        slot_index=1,
+        sample_text="Life is rich",
+        start_s=2.0,
+        end_s=22.18,
+        font_color_hex="#F4D03F",
+    )
+    ov["bbox"] = {
+        "x_norm": 0.5,
+        "y_norm": 0.5,
+        "w_norm": 0.4,
+        "h_norm": 0.1,
+        "sample_frame_t": 0.07,  # below start_s=2.0
+    }
+    raw = json.dumps({"overlays": [ov]})
+    out = _agent().parse(raw, _input())
+
+    assert len(out.overlays) == 1, "overlay was dropped; unconditional clamp did not fire"
+    parsed = out.overlays[0]
+    # Timings are unchanged — no inversion occurred.
+    assert parsed.start_s == pytest.approx(2.0)
+    assert parsed.end_s == pytest.approx(22.18)
+    # sample_frame_t clamped up to start_s.
+    assert parsed.bbox.sample_frame_t == pytest.approx(2.0)
+
+
+def test_non_inversion_no_clamp_when_in_window() -> None:
+    """sample_frame_t already inside [start_s, end_s] — must pass through unchanged."""
+    ov = _valid_overlay(
+        slot_index=1,
+        sample_text="Life is rich",
+        start_s=2.0,
+        end_s=22.18,
+        font_color_hex="#F4D03F",
+    )
+    ov["bbox"] = {
+        "x_norm": 0.5,
+        "y_norm": 0.5,
+        "w_norm": 0.4,
+        "h_norm": 0.1,
+        "sample_frame_t": 10.0,  # inside [2.0, 22.18]
+    }
+    raw = json.dumps({"overlays": [ov]})
+    out = _agent().parse(raw, _input())
+
+    assert len(out.overlays) == 1
+    parsed = out.overlays[0]
+    assert parsed.start_s == pytest.approx(2.0)
+    assert parsed.end_s == pytest.approx(22.18)
+    # No clamping needed; value is unchanged.
+    assert parsed.bbox.sample_frame_t == pytest.approx(10.0)
+
+
+def test_non_inversion_clamps_sample_frame_t_above_end() -> None:
+    """sample_frame_t past end_s — must be clamped down to end_s."""
+    ov = _valid_overlay(
+        slot_index=1,
+        sample_text="Life is rich",
+        start_s=2.0,
+        end_s=22.18,
+        font_color_hex="#F4D03F",
+    )
+    ov["bbox"] = {
+        "x_norm": 0.5,
+        "y_norm": 0.5,
+        "w_norm": 0.4,
+        "h_norm": 0.1,
+        "sample_frame_t": 50.0,  # past end_s=22.18
+    }
+    raw = json.dumps({"overlays": [ov]})
+    out = _agent().parse(raw, _input())
+
+    assert len(out.overlays) == 1
+    parsed = out.overlays[0]
+    assert parsed.start_s == pytest.approx(2.0)
+    assert parsed.end_s == pytest.approx(22.18)
+    # sample_frame_t clamped down to end_s.
+    assert parsed.bbox.sample_frame_t == pytest.approx(22.18)

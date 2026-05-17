@@ -141,27 +141,19 @@ class TemplateTextAgent(Agent[TemplateTextInput, TemplateTextOutput]):
                     original_end=e,
                 )
                 ov["start_s"], ov["end_s"] = e, s
-                # Also clamp bbox.sample_frame_t into the corrected window.
-                # After the swap the new window is [e, s]. sample_frame_t may
-                # sit outside it (the prod failure: 0.45 outside [0.9, 3.0]).
-                # Clamping is conservative — it pins to the nearer boundary
-                # rather than dropping the overlay entirely.
-                bbox = ov.get("bbox")
-                if isinstance(bbox, dict):
-                    try:
-                        raw_t = float(bbox.get("sample_frame_t", e))
-                        clamped_t = max(e, min(s, raw_t))
-                        if clamped_t != raw_t:
-                            log.warning(
-                                "template_text_overlay_bbox_sample_frame_t_clamped",
-                                index=i,
-                                sample_text=ov.get("sample_text"),
-                                sample_frame_t_clamped_from=raw_t,
-                                sample_frame_t_clamped_to=clamped_t,
-                            )
-                            bbox["sample_frame_t"] = clamped_t
-                    except (TypeError, ValueError):
-                        pass  # non-numeric sample_frame_t caught by model_validate below
+                # Update s/e to reflect the corrected window so the
+                # unconditional clamp below uses the post-swap values.
+                s, e = e, s
+            # Always clamp bbox.sample_frame_t into the resolved [s, e] window.
+            # This covers two failure modes:
+            #   1. Inversion case (salvage ran above): sample_frame_t may sit
+            #      outside the corrected window (PR #198 prod failure).
+            #   2. Non-inversion case: Gemini returns valid start/end but
+            #      sample_frame_t drifts just outside the window (e.g. 0.07
+            #      with start_s=2.0) — salvage never fires, but the downstream
+            #      structural validator still rejects (life_s_richness_3 prod
+            #      failure surfaced during PR #199).
+            _clamp_sample_frame_t(ov, s, e, i)
             try:
                 validated.append(TemplateTextOverlay.model_validate(ov))
             except ValidationError as exc:
@@ -181,6 +173,39 @@ class TemplateTextAgent(Agent[TemplateTextInput, TemplateTextOutput]):
             return TemplateTextOutput(overlays=validated)
         except ValidationError as exc:
             raise SchemaError(f"template_text: output validation — {exc}") from exc
+
+
+# ── Parse helpers ─────────────────────────────────────────────────────────────
+
+
+def _clamp_sample_frame_t(ov: dict, start_s: float, end_s: float, index: int) -> None:
+    """Clamp ``bbox.sample_frame_t`` into ``[start_s, end_s]`` in-place.
+
+    Mutates *ov* only when the value actually moves. Logs once per clamped
+    overlay so callers can trace which overlays were adjusted without flooding
+    the log on every parse call.
+
+    This runs unconditionally after timing resolution so it covers both:
+    - the inversion case (salvage swapped start/end, s/e reflect new window)
+    - the non-inversion case (valid timings but sample_frame_t drifts outside)
+    """
+    bbox = ov.get("bbox")
+    if not isinstance(bbox, dict):
+        return
+    try:
+        raw_t = float(bbox.get("sample_frame_t", start_s))
+        clamped_t = max(start_s, min(end_s, raw_t))
+        if clamped_t != raw_t:
+            log.warning(
+                "template_text_overlay_bbox_sample_frame_t_clamped",
+                index=index,
+                sample_text=ov.get("sample_text"),
+                sample_frame_t_clamped_from=raw_t,
+                sample_frame_t_clamped_to=clamped_t,
+            )
+            bbox["sample_frame_t"] = clamped_t
+    except (TypeError, ValueError):
+        pass  # non-numeric sample_frame_t caught by model_validate in caller
 
 
 # ── Prompt helpers ────────────────────────────────────────────────────────────
