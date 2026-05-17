@@ -1,0 +1,230 @@
+{
+  "agent": "nova.compose.template_text",
+  "prompt_version": "exported",
+  "input": {
+    "file_uri": "templates/7d98d667-0ec9-4a7f-ab6d-b2b9ef4417df/video.mp4",
+    "file_mime": "video/mp4",
+    "slot_boundaries_s": [
+      [
+        0.0,
+        10.749
+      ]
+    ]
+  },
+  "raw_text": "{\"overlays\": [{\"slot_index\": 1, \"sample_text\": \"It's\", \"start_s\": 3.0, \"end_s\": 0.9, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.486, \"w_norm\": 0.096, \"h_norm\": 0.027, \"sample_frame_t\": 0.45}, \"font_color_hex\": \"#FFFFFF\", \"effect\": \"font-cycle\", \"role\": \"label\", \"size_class\": \"medium\"}, {\"slot_index\": 1, \"sample_text\": \"not\", \"start_s\": 1.0, \"end_s\": 1.63, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.486, \"w_norm\": 0.078, \"h_norm\": 0.027, \"sample_frame_t\": 1.28}, \"font_color_hex\": \"#FFFFFF\", \"effect\": \"pop-in\", \"role\": \"label\", \"size_class\": \"medium\"}, {\"slot_index\": 1, \"sample_text\": \"if\", \"start_s\": 0.5, \"end_s\": 2.35, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.486, \"w_norm\": 0.035, \"h_norm\": 0.027, \"sample_frame_t\": 2.0}, \"font_color_hex\": \"#FFFFFF\", \"effect\": \"pop-in\", \"role\": \"label\", \"size_class\": \"medium\"}, {\"slot_index\": 1, \"sample_text\": \"you\", \"start_s\": 1.0, \"end_s\": 3.09, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.486, \"w_norm\": 0.089, \"h_norm\": 0.027, \"sample_frame_t\": 2.73}, \"font_color_hex\": \"#FFFFFF\", \"effect\": \"pop-in\", \"role\": \"label\", \"size_class\": \"medium\"}, {\"slot_index\": 1, \"sample_text\": \"The\", \"start_s\": 3.0, \"end_s\": 6.09, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.457, \"w_norm\": 0.119, \"h_norm\": 0.041, \"sample_frame_t\": 5.56}, \"font_color_hex\": \"#FFFFFF\", \"effect\": \"font-cycle\", \"role\": \"label\", \"size_class\": \"medium\"}, {\"slot_index\": 1, \"sample_text\": \"work\", \"start_s\": 2.0, \"end_s\": 6.09, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.49, \"w_norm\": 0.15, \"h_norm\": 0.027, \"sample_frame_t\": 5.56}, \"font_color_hex\": \"#FFFFFF\", \"effect\": \"none\", \"role\": \"label\", \"size_class\": \"medium\"}, {\"slot_index\": 1, \"sample_text\": \"to get\", \"start_s\": 1.5, \"end_s\": 6.81, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.486, \"w_norm\": 0.167, \"h_norm\": 0.027, \"sample_frame_t\": 6.47}, \"font_color_hex\": \"#FFFFFF\", \"effect\": \"pop-in\", \"role\": \"label\", \"size_class\": \"medium\"}, {\"slot_index\": 1, \"sample_text\": \"luck\", \"start_s\": 2.0, \"end_s\": 7.53, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.486, \"w_norm\": 0.106, \"h_norm\": 0.027, \"sample_frame_t\": 7.19}, \"font_color_hex\": \"#FFFFFF\", \"effect\": \"pop-in\", \"role\": \"label\", \"size_class\": \"medium\"}, {\"slot_index\": 1, \"sample_text\": \"combination\", \"start_s\": 1.5, \"end_s\": 8.26, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.486, \"w_norm\": 0.341, \"h_norm\": 0.027, \"sample_frame_t\": 7.92}, \"font_color_hex\": \"#FFFFFF\", \"effect\": \"pop-in\", \"role\": \"label\", \"size_class\": \"medium\"}, {\"slot_index\": 1, \"sample_text\": \"and\", \"start_s\": 2.0, \"end_s\": 8.98, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.486, \"w_norm\": 0.076, \"h_norm\": 0.027, \"sample_frame_t\": 8.64}, \"font_color_hex\": \"#FFFFFF\", \"effect\": \"pop-in\", \"role\": \"label\", \"size_class\": \"medium\"}, {\"slot_index\": 1, \"sample_text\": \"don't\", \"start_s\": 2.0, \"end_s\": 10.749, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.457, \"w_norm\": 0.141, \"h_norm\": 0.041, \"sample_frame_t\": 9.89}, \"font_color_hex\": \"#FFFFFF\", \"effect\": \"fade-in\", \"role\": \"label\", \"size_class\": \"medium\"}, {\"slot_index\": 1, \"sample_text\": \"allow anyone\", \"start_s\": 2.0, \"end_s\": 10.749, \"bbox\": {\"x_norm\": 0.5, \"y_norm\": 0.49, \"w_norm\": 0.322, \"h_norm\": 0.027, \"sample_frame_t\": 9.89}, \"font_color_hex\": \"#FFFFFF\", \"effect\": \"pop-in\", \"role\": \"label\", \"size_class\": \"medium\"}]}",
+  "output": {
+    "overlays": [
+      {
+        "slot_index": 1,
+        "sample_text": "It's",
+        "start_s": 3.0,
+        "end_s": 0.9,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.486,
+          "w_norm": 0.096,
+          "h_norm": 0.027,
+          "sample_frame_t": 0.45
+        },
+        "font_color_hex": "#FFFFFF",
+        "effect": "font-cycle",
+        "role": "label",
+        "size_class": "medium"
+      },
+      {
+        "slot_index": 1,
+        "sample_text": "not",
+        "start_s": 1.0,
+        "end_s": 1.63,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.486,
+          "w_norm": 0.078,
+          "h_norm": 0.027,
+          "sample_frame_t": 1.28
+        },
+        "font_color_hex": "#FFFFFF",
+        "effect": "pop-in",
+        "role": "label",
+        "size_class": "medium"
+      },
+      {
+        "slot_index": 1,
+        "sample_text": "if",
+        "start_s": 0.5,
+        "end_s": 2.35,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.486,
+          "w_norm": 0.035,
+          "h_norm": 0.027,
+          "sample_frame_t": 2.0
+        },
+        "font_color_hex": "#FFFFFF",
+        "effect": "pop-in",
+        "role": "label",
+        "size_class": "medium"
+      },
+      {
+        "slot_index": 1,
+        "sample_text": "you",
+        "start_s": 1.0,
+        "end_s": 3.09,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.486,
+          "w_norm": 0.089,
+          "h_norm": 0.027,
+          "sample_frame_t": 2.73
+        },
+        "font_color_hex": "#FFFFFF",
+        "effect": "pop-in",
+        "role": "label",
+        "size_class": "medium"
+      },
+      {
+        "slot_index": 1,
+        "sample_text": "The",
+        "start_s": 3.0,
+        "end_s": 6.09,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.457,
+          "w_norm": 0.119,
+          "h_norm": 0.041,
+          "sample_frame_t": 5.56
+        },
+        "font_color_hex": "#FFFFFF",
+        "effect": "font-cycle",
+        "role": "label",
+        "size_class": "medium"
+      },
+      {
+        "slot_index": 1,
+        "sample_text": "work",
+        "start_s": 2.0,
+        "end_s": 6.09,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.49,
+          "w_norm": 0.15,
+          "h_norm": 0.027,
+          "sample_frame_t": 5.56
+        },
+        "font_color_hex": "#FFFFFF",
+        "effect": "none",
+        "role": "label",
+        "size_class": "medium"
+      },
+      {
+        "slot_index": 1,
+        "sample_text": "to get",
+        "start_s": 1.5,
+        "end_s": 6.81,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.486,
+          "w_norm": 0.167,
+          "h_norm": 0.027,
+          "sample_frame_t": 6.47
+        },
+        "font_color_hex": "#FFFFFF",
+        "effect": "pop-in",
+        "role": "label",
+        "size_class": "medium"
+      },
+      {
+        "slot_index": 1,
+        "sample_text": "luck",
+        "start_s": 2.0,
+        "end_s": 7.53,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.486,
+          "w_norm": 0.106,
+          "h_norm": 0.027,
+          "sample_frame_t": 7.19
+        },
+        "font_color_hex": "#FFFFFF",
+        "effect": "pop-in",
+        "role": "label",
+        "size_class": "medium"
+      },
+      {
+        "slot_index": 1,
+        "sample_text": "combination",
+        "start_s": 1.5,
+        "end_s": 8.26,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.486,
+          "w_norm": 0.341,
+          "h_norm": 0.027,
+          "sample_frame_t": 7.92
+        },
+        "font_color_hex": "#FFFFFF",
+        "effect": "pop-in",
+        "role": "label",
+        "size_class": "medium"
+      },
+      {
+        "slot_index": 1,
+        "sample_text": "and",
+        "start_s": 2.0,
+        "end_s": 8.98,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.486,
+          "w_norm": 0.076,
+          "h_norm": 0.027,
+          "sample_frame_t": 8.64
+        },
+        "font_color_hex": "#FFFFFF",
+        "effect": "pop-in",
+        "role": "label",
+        "size_class": "medium"
+      },
+      {
+        "slot_index": 1,
+        "sample_text": "don't",
+        "start_s": 2.0,
+        "end_s": 10.749,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.457,
+          "w_norm": 0.141,
+          "h_norm": 0.041,
+          "sample_frame_t": 9.89
+        },
+        "font_color_hex": "#FFFFFF",
+        "effect": "fade-in",
+        "role": "label",
+        "size_class": "medium"
+      },
+      {
+        "slot_index": 1,
+        "sample_text": "allow anyone",
+        "start_s": 2.0,
+        "end_s": 10.749,
+        "bbox": {
+          "x_norm": 0.5,
+          "y_norm": 0.49,
+          "w_norm": 0.322,
+          "h_norm": 0.027,
+          "sample_frame_t": 9.89
+        },
+        "font_color_hex": "#FFFFFF",
+        "effect": "pop-in",
+        "role": "label",
+        "size_class": "medium"
+      }
+    ]
+  },
+  "meta": {
+    "source": "VideoTemplate.recipe_cached.slots[*].text_overlays",
+    "template_id": "fdaf3bbc-2f4f-43bc-ba7c-e5cd819de102",
+    "template_name": "not just luck",
+    "overlay_count": 12,
+    "exported_at": "2026-05-17T15:19:35.109261+00:00"
+  }
+}
