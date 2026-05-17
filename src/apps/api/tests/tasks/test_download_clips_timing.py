@@ -42,6 +42,16 @@ def captured_logs(monkeypatch):
     return events
 
 
+@pytest.fixture(autouse=True)
+def _skip_orientation_normalize(monkeypatch):
+    """`_download_clips_parallel` runs `normalize_orientation` on each clip
+    after download. The fake download in these tests writes placeholder
+    bytes (not a real video), so the ffprobe inside detect_rotation would
+    fail. These tests exercise timing instrumentation only — patch
+    normalize_orientation to a no-op pass-through."""
+    monkeypatch.setattr(template_orchestrate, "normalize_orientation", lambda path: path)
+
+
 def _fake_download(gcs_path: str, local_path: str) -> None:
     """Stand-in for the real GCS download — writes a tiny placeholder file
     so that the post-download size stat in _download_clips_parallel

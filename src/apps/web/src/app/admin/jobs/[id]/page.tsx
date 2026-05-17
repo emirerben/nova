@@ -43,6 +43,7 @@ const STAGE_COLOR: Record<string, string> = {
   reframe: "bg-emerald-600/70",
   audio_mix: "bg-blue-600/70",
   assembly: "bg-zinc-600/70",
+  orientation: "bg-orange-600/70",
 };
 
 export default function JobDebugPage({
