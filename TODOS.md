@@ -373,6 +373,95 @@ These TODOs were filed when the first wave of Yasin's prompt rewrites shipped (`
 **Effort:** S (human: ~2h / CC: ~30 min)
 **Priority:** P3
 
+## P0 — pre-existing test failures on main (noticed 2026-05-17)
+
+### Fix overlay-constants snapToNearestZone zone-boundary tests
+**What:** 5 failing tests in `src/apps/web/src/__tests__/admin/overlay-editor.test.tsx` under the `overlay-constants > snapToNearestZone` block. Expected `"center"` / `"top"` but got `"center-above"` at zone boundaries. Surfaced during `/ship` of the admin music Test tab branch on 2026-05-17.
+**Why:** The branch I shipped doesn't touch overlay code, but these failures are on origin/main right now. Whoever introduced `center-above` as a snap zone didn't update the boundary tests. CI will fail for everyone shipping until this is fixed.
+**How:** Either (a) update the tests to expect the new zone labels, or (b) revert the snap-zone change. Check `git log -p src/apps/web/src/lib/admin/overlay-constants.ts` to find the introducing commit.
+**Effort:** XS (human: ~30 min / CC: ~10 min)
+**Priority:** P0
+
+---
+
+## Music-only edits — quality gaps (added 2026-05-17)
+
+Discovered during the `/plan-eng-review` audit for the admin Music Test tab. The
+beat-sync path (`_run_music_job`) works today but has these soft edges. The Test
+tab itself shipped in the same PR — these items only matter once admins start
+producing real music-only edits at volume.
+
+### Authenticate `POST /music-jobs`
+**What:** Replace the `SYNTHETIC_USER_ID = 00000000-...-001` constant in `src/apps/api/app/routes/music_jobs.py:31` with `Depends(get_current_user)`. Right now any caller can POST a music job and burn Gemini quota.
+**Why:** The endpoint comment already calls this out as a known MVP gap. The admin test-job endpoint (added in this PR) is admin-token-gated, so this only blocks public exposure of `/music-jobs` — but it must land before /music goes back to public users.
+**How:** Mirror the `template_jobs.py` auth pattern when that lands. Single dependency swap.
+**Effort:** S (human: ~2h / CC: ~15 min)
+**Priority:** P2
+**Depends on:** "Sign-in / auth on the new header" (above)
+
+### Music-only output eval harness
+**What:** Extend `src/apps/api/tests/evals/` with `music_assembly_evals.py`. Structural checks: every produced slot's `cumulative_s` is within 0.05s of the nearest beat in `beat_timestamps_s`; no slot's actual duration deviates from `target_duration_s` by more than 0.1s; audio track length matches video length within 0.5s.
+**Why:** The Big-3 eval harness (`template_recipe`, `clip_metadata`, `creative_direction`) covers prompt agents. Music assembly is pure deterministic FFmpeg + math, but beat-snap regressions slip through every refactor of `_assemble_clips` / `_plan_slots`. A 5-min smoke job + ffprobe-based structural checks would catch them.
+**How:** Replay-mode fixture is a `(beat_timestamps, track_config, clip_durations)` tuple → assembled-slot ranges. Live mode renders a real video and probes the output. Reuse the `eval_mode` flag from existing harness.
+**Effort:** M (human: ~1d / CC: ~45 min)
+**Priority:** P2
+
+### End-to-end test for `_run_music_job`
+**What:** New pytest under `src/apps/api/tests/tasks/test_music_orchestrate_e2e.py` that walks a real beat-sync flow through `_run_music_job` with a fixture track (mocked Gemini, real FFmpeg, tmp clips). Asserts the job ends in `music_ready` and `assembly_plan.output_url` is a non-empty string.
+**Why:** Today the only coverage is route-level validators. A regression in `generate_music_recipe`, `match`, or `_assemble_clips` for the music path would only surface in prod or manual admin testing.
+**How:** Generate 3 short tone-clips via `ffmpeg lavfi` in the fixture, mock `_upload_clips_parallel` + `_analyze_clips_parallel` to return canned `clip_metas`, run the orchestrator end-to-end against a tmp GCS bucket.
+**Effort:** M (human: ~1d / CC: ~40 min)
+**Priority:** P2
+
+### Music recipe: transition vocabulary beyond `cut`
+**What:** `generate_music_recipe()` in `src/apps/api/app/pipeline/music_recipe.py:63` hardcodes `"transition_in": "cut"` for every slot. The infrastructure in `transitions.py` already supports whip-pan, flash-cut, zoom-in, dissolve — the recipe just never asks for them.
+**Why:** Most viral music edits punch transitions on the beat (whip on the snare, flash on the kick). Cut-only output looks flat next to organic refs.
+**How:** Add `transition_style` to `track_config` (one of `cut` | `whip` | `flash` | `mixed`) and let the recipe pick per-slot transitions based on the song's section labels (already on `MusicTrack.best_sections`).
+**Effort:** M (human: ~1d / CC: ~45 min)
+**Priority:** P3
+
+### Music recipe: speed ramps / slow-mo
+**What:** `speed_factor` in `_plan_slots` defaults to 1.0 for music recipes. No way to drop to 0.5x on a drop or 2x on a build.
+**Why:** Speed contrast is a core music-edit lever. Beat-sync without speed ramps reads as mechanical.
+**How:** Map `MusicTrack.best_sections[*].energy` ("peaks_high" / "high" / "medium" / "low") to a per-slot speed_factor curve in `generate_music_recipe`.
+**Effort:** M (human: ~1d / CC: ~45 min)
+**Priority:** P3
+
+### `_assemble_clips` Phase 3 short-circuit for music-only
+**What:** Add `skip_overlays: bool = False` parameter to `_assemble_clips()` in `src/apps/api/app/tasks/template_orchestrate.py:1663`. When `True`, skip the curtain-close, interstitial-insert, and overlay-merge loops (`music_orchestrate.py:425–426` already passes `interstitials=[]` and `user_subject=""`, so Phase 3 currently runs as a series of no-ops).
+**Why:** Marginal CPU win, much cleaner code. Makes the music-only path readable as a path rather than as a sequence of empty branches.
+**How:** Wrap lines 1758–1894 in `if not skip_overlays:` and add a fast-path collect of `reframed_paths` + `slot_durations`. Pass `skip_overlays=True` from both `_run_music_job` and `_run_templated_music_job`.
+**Effort:** S (human: ~3h / CC: ~25 min)
+**Priority:** P3
+
+### Clip-shorter-than-slot policy
+**What:** Document and test what happens when a clip is shorter than its assigned slot's `target_duration_s` — does `_plan_slots` loop the clip, freeze on the last frame, or trim the slot? Today this is implicit FFmpeg behavior.
+**Why:** Admin testing the Music tab will hit this with short test clips. Silent fallback = bad output without a clear failure.
+**How:** Probe each clip's actual duration in `_plan_slots` and either (a) reject with 422 at submit, (b) trim the slot to clip length and compensate elsewhere, or (c) loop the clip. Pick one policy, document it, test it.
+**Effort:** S (human: ~3h / CC: ~30 min)
+**Priority:** P2
+
+### Tighten `_validate_clip_count` for beat-sync tracks
+**What:** Today `_validate_clip_count` in `src/apps/api/app/routes/music_jobs.py:109` defaults `required_clips_min=1`, `required_clips_max=20` for beat-sync tracks. The "correct" count is `beat_count / slot_every_n_beats`, but the validator doesn't enforce it — so admins can submit any 1–20 clips and the assembler will silently truncate or repeat.
+**Why:** Wrong clip count → silently wrong output. Should surface at submit time, not playback time.
+**How:** During beat analysis, write `required_clips_min == required_clips_max == slot_count` into `MusicTrack.track_config`. Drop the 1/20 default fallback.
+**Effort:** S (human: ~2h / CC: ~20 min)
+**Priority:** P2
+
+### Cap music-only output at 60s
+**What:** Per CLAUDE.md domain context, target output is sub-60s. The beat-sync path doesn't enforce this — if a track's `best_section` is 75s, the output is 75s.
+**Why:** Over-spec videos are uploaded to TikTok/Reels and silently rejected or auto-trimmed by the platform. The pipeline should refuse to produce them.
+**How:** Clamp `best_end_s - best_start_s ≤ 60` in `_auto_best_section()` (`src/apps/api/app/services/audio_download.py`). Show a warning in the admin Config tab when the saved section exceeds 60s.
+**Effort:** S (human: ~2h / CC: ~15 min)
+**Priority:** P2
+
+### Programmatic audio-mix QA on music-only output
+**What:** After `_mix_template_audio` finishes in `_run_music_job`, run an ffprobe loudness measurement on a 1-second window every ~5 seconds of the output. If any window is silent (< -50 dBFS RMS), mark the job as `music_ready_warning` and surface the gap in the admin Test tab.
+**Why:** Silent-failure mode: if `_mix_template_audio` produces a video with the audio track muted, out-of-sync, or only partially looped, there is no automated check today — admins only catch it by ear, and the public viewer would ship a broken video.
+**How:** New helper `probe_audio_loudness(path)` in `app/pipeline/audio_qa.py`. Call after the mix step, write `assembly_plan.audio_qa = { peak_dbfs, silent_windows: [...] }`. Render a warning chip in `TestTab.tsx` when `silent_windows` is non-empty.
+**Effort:** M (human: ~1d / CC: ~45 min)
+**Priority:** P2
+
 ---
 
 ## Vercel Frontend Deploy (added 2026-04-06)
