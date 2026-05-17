@@ -847,6 +847,130 @@ class TestNormalizeOrientationKillSwitch:
 
 
 # ---------------------------------------------------------------------------
+# Concurrent-encode semaphore — gates the pixel-rewriting path so a
+# long-duration HEVC clip can't time out under 8-way ThreadPool contention.
+# ---------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+class TestNormalizeReencodeSemaphore:
+    """The semaphore wraps the re-encode path only. Stale-flag remux,
+    rotation==0 skip, and env-var-disabled paths do NOT acquire it.
+
+    Test strategy: spy on the module-level semaphore's acquire/release
+    methods. Run normalize_orientation through each code path. Assert
+    acquire is called only on the re-encode path. Avoids the flakiness
+    of timing-based concurrency tests in CI.
+    """
+
+    def _spy_on_semaphore(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> list[str]:
+        """Replace the module-level semaphore with a spy that records
+        every acquire/release call. Returns the recorded events list."""
+        import app.pipeline.orientation as mod
+
+        events: list[str] = []
+
+        class SpySemaphore:
+            def acquire(self, blocking: bool = True) -> bool:
+                events.append(f"acquire(blocking={blocking})")
+                return True
+
+            def release(self) -> None:
+                events.append("release")
+
+        monkeypatch.setattr(mod, "_normalize_reencode_semaphore", SpySemaphore())
+        return events
+
+    def test_re_encode_path_acquires_semaphore(
+        self,
+        rotated_neg90_clip: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Landscape pixels + rotation flag → re-encode path → must
+        acquire and release the semaphore exactly once."""
+        events = self._spy_on_semaphore(monkeypatch)
+        normalize_orientation(str(rotated_neg90_clip))
+        # acquire might be called twice if the non-blocking acquire
+        # fails first and we fall through to blocking acquire — that's
+        # the contention case. For an uncontended test we should see
+        # acquire(blocking=False) then release.
+        assert any("acquire" in e for e in events), (
+            f"re-encode path must acquire the semaphore. events={events}"
+        )
+        assert events.count("release") == 1, (
+            f"re-encode path must release exactly once. events={events}"
+        )
+
+    def test_skip_path_does_not_acquire_semaphore(
+        self,
+        plain_clip: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """rotation == 0 → skip → must NOT acquire the semaphore."""
+        target = tmp_path / "plain_copy.mp4"
+        target.write_bytes(plain_clip.read_bytes())
+        events = self._spy_on_semaphore(monkeypatch)
+        normalize_orientation(str(target))
+        assert events == [], (
+            f"skip path must not touch the semaphore. events={events}"
+        )
+
+    def test_stale_flag_path_does_not_acquire_semaphore(
+        self,
+        portrait_with_stale_neg90: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Portrait pixels + stale rotation flag → codec-copy remux → must
+        NOT acquire the semaphore. The remux is cheap and doesn't need
+        rate-limiting; gating it would just stall the pipeline."""
+        events = self._spy_on_semaphore(monkeypatch)
+        normalize_orientation(str(portrait_with_stale_neg90))
+        assert events == [], (
+            f"stale-flag path must not touch the semaphore. events={events}"
+        )
+
+    def test_env_disabled_path_does_not_acquire_semaphore(
+        self,
+        rotated_neg90_clip: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Kill switch active → no work happens → no semaphore touch."""
+        monkeypatch.setenv("ORIENTATION_NORMALIZE_ENABLED", "false")
+        events = self._spy_on_semaphore(monkeypatch)
+        normalize_orientation(str(rotated_neg90_clip))
+        assert events == [], (
+            f"kill-switch path must not touch the semaphore. events={events}"
+        )
+
+    def test_semaphore_releases_even_on_ffmpeg_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If ffmpeg fails mid-encode, the semaphore must still be released
+        so the next clip can proceed. A leaked permit would deadlock the
+        ThreadPool over time."""
+        bad = tmp_path / "bad.mp4"
+        bad.write_bytes(b"not a real video")
+
+        events = self._spy_on_semaphore(monkeypatch)
+        # Force the re-encode path via mocked dims.
+        with patch(
+            "app.pipeline.orientation.detect_rotation_and_dims",
+            return_value=(-90, 320, 240),
+        ):
+            with pytest.raises(OrientationError):
+                normalize_orientation(str(bad))
+
+        assert "release" in events, (
+            f"semaphore must release on failure. events={events}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # detect_rotation_and_dims — single-call probe returning rotation + dims.
 # ---------------------------------------------------------------------------
 

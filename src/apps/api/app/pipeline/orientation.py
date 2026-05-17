@@ -57,16 +57,44 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 
 import structlog
 
 log = structlog.get_logger()
 
-# ffprobe / ffmpeg timeouts. Probe is ~50ms; full re-encode of a 6s
-# 1080p HEVC clip is ~3-10s on the worker — give 5min headroom for
-# longer user clips at the 200MB upload cap.
+# ffprobe / ffmpeg timeouts. Probe is ~50ms.
+#
+# Normalize re-encode is the big variable. A 6s 1080p HEVC clip is ~3-10s
+# on the worker. A long-duration HEVC clip (e.g. 3+ min) under concurrent
+# encode contention can push past 5min. Job d1b9b9d8 (Dimples Passport,
+# 15 iPhone clips with one 3.7-min HEVC 10-bit Dolby Vision outlier among
+# them) timed out at 300s on that outlier — the real failure mode is the
+# combination of long-duration video and concurrent encode pressure on a
+# 4-core worker. We bump to 10min and gate concurrent re-encodes via the
+# semaphore below so the worst case stays inside the timeout.
 _PROBE_TIMEOUT_S = 30
-_NORMALIZE_TIMEOUT_S = 300
+_NORMALIZE_TIMEOUT_S = 600
+
+# Concurrency cap on the pixel-rewriting path. ``_download_clips_parallel``
+# in ``template_orchestrate.py`` runs up to 8 concurrent download+normalize
+# threads. On a 4-core worker each thread gets ~0.5 core under contention,
+# so a libx264 ultrafast re-encode that would take 60-90s on a dedicated
+# core can stretch past 5min when 8 of them are fighting for CPU. We cap
+# at 2 concurrent pixel-rewrites so each gets ~2 cores — empirically clip_008
+# (3.7-min HEVC 10-bit, the d1b9b9d8 timeout case) finishes in ~30s locally
+# at no-contention. 2 concurrent re-encodes also leaves 2 cores free for the
+# other pipeline work (Gemini upload, ffprobe, GCS download), so we don't
+# starve the rest of the orchestrator.
+#
+# Downloads themselves stay 8-parallel (they're I/O-bound, not CPU-bound).
+# Only the ffmpeg invocation inside ``normalize_orientation``'s re-encode
+# branch waits on the semaphore. The stale-flag fast path (codec-copy
+# remux) is cheap and not gated.
+_MAX_CONCURRENT_NORMALIZE_REENCODES = 2
+_normalize_reencode_semaphore = threading.BoundedSemaphore(
+    _MAX_CONCURRENT_NORMALIZE_REENCODES
+)
 
 # Rotations we know how to handle. Phone cameras only emit orthogonal
 # rotations (±90, 180). Non-orthogonal angles (45, etc.) never come from
@@ -480,6 +508,12 @@ def normalize_orientation(file_path: str) -> str:
     # re-encodes (see tests/test_encoder_policy.py docstring). The output
     # is re-encoded by reframe, so the macroblocking ultrafast causes on
     # smooth gradients gets resampled away in the final pass.
+    #
+    # CRF 23 not 18: intermediate is re-encoded by reframe anyway, so
+    # the visual budget is large. CRF 23 cuts encode time ~30% vs CRF 18
+    # for libx264 ultrafast. CRF 18 was originally chosen for "visually
+    # lossless single hop" but reframe is the second hop and overrides
+    # it anyway.
     cmd = [
         "ffmpeg",
         "-y",
@@ -518,9 +552,8 @@ def normalize_orientation(file_path: str) -> str:
         transpose_chain,
         # Video: minimal H.264 intermediate. yuv420p is the universal
         # decoder-friendly format; high profile matches what reframe
-        # produces. CRF 18 is visually lossless for a single intermediate
-        # hop. No -bf 0 / no -x264-params: reframe re-encodes anyway and
-        # closed-GOP concerns only matter at the final concat boundary.
+        # produces. No -bf 0 / no -x264-params: reframe re-encodes anyway
+        # and closed-GOP concerns only matter at the final concat boundary.
         "-c:v",
         "libx264",
         "-profile:v",
@@ -528,7 +561,7 @@ def normalize_orientation(file_path: str) -> str:
         "-preset",
         "ultrafast",
         "-crf",
-        "18",
+        "23",
         "-pix_fmt",
         "yuv420p",
         # Audio is unchanged — codec-copy avoids a wasted aac re-encode.
@@ -537,7 +570,28 @@ def normalize_orientation(file_path: str) -> str:
         tmp_path,
     ]
 
-    _run_ffmpeg_atomic_replace(file_path, tmp_path, cmd, op_label="normalize")
+    # Gate concurrent re-encodes to keep CPU contention bounded on the
+    # 4-core worker. Without this, 8-way parallel ThreadPool in
+    # `_download_clips_parallel` lets a long-duration HEVC clip
+    # (e.g. clip_008 from job d1b9b9d8, 3.7 min 10-bit) stretch past the
+    # 5-min timeout. With the gate, at most 2 ffmpeg re-encodes run
+    # simultaneously so each gets ~2 cores. Empirically clip_008 finishes
+    # in ~30s under those conditions vs. >300s under 8-way contention.
+    #
+    # If a thread blocks waiting for the semaphore, log it so the admin
+    # job-debug view shows the contention. Other threads (download,
+    # ffprobe, Gemini upload) are unaffected.
+    if not _normalize_reencode_semaphore.acquire(blocking=False):
+        log.info(
+            "orientation_normalize_waiting_for_slot",
+            path=os.path.basename(file_path),
+            max_concurrent=_MAX_CONCURRENT_NORMALIZE_REENCODES,
+        )
+        _normalize_reencode_semaphore.acquire()
+    try:
+        _run_ffmpeg_atomic_replace(file_path, tmp_path, cmd, op_label="normalize")
+    finally:
+        _normalize_reencode_semaphore.release()
 
     log.info(
         "orientation_normalized",
