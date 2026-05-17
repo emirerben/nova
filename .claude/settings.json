@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          { "type": "command", "command": "bash scripts/session-check.sh" }
+        ]
+      }
+    ]
+  }
+}
