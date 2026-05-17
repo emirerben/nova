@@ -23,9 +23,7 @@ def _input(boundaries: list[tuple[float, float]] | None = None) -> TemplateTextI
     return TemplateTextInput(
         file_uri="files/test",
         file_mime="video/mp4",
-        slot_boundaries_s=(
-            boundaries if boundaries is not None else [(0.0, 5.0), (5.0, 10.0)]
-        ),
+        slot_boundaries_s=(boundaries if boundaries is not None else [(0.0, 5.0), (5.0, 10.0)]),
     )
 
 
@@ -172,3 +170,43 @@ def test_parse_equal_start_end_dropped_by_validator() -> None:
     # overlay (validation is split between parse and the structural pass).
     # What we assert here: parse does not crash.
     assert out.overlays == [] or out.overlays[0].start_s == 2.0
+
+
+def test_inverted_timing_salvage_also_clamps_sample_frame_t() -> None:
+    """Regression for the not_just_luck prod failure (2026-05-17).
+
+    Gemini returned start_s=3.0, end_s=0.9 (inverted). The salvage path swapped
+    them to [0.9, 3.0] but left bbox.sample_frame_t=0.45 untouched. The
+    downstream structural validator rejected: 0.45 is outside [0.9, 3.0].
+
+    After the fix the salvage path also clamps sample_frame_t into the corrected
+    window, so the overlay survives all the way to TemplateTextOutput.
+    """
+    # Exact values from the prod failure.
+    inverted = _valid_overlay(
+        slot_index=1,
+        sample_text="It's",
+        start_s=3.0,
+        end_s=0.9,
+        font_color_hex="#FFFFFF",
+    )
+    inverted["bbox"] = {
+        "x_norm": 0.5,
+        "y_norm": 0.5,
+        "w_norm": 0.3,
+        "h_norm": 0.1,
+        "sample_frame_t": 0.45,  # outside [0.9, 3.0] after swap
+    }
+    raw = json.dumps({"overlays": [inverted]})
+    out = _agent().parse(raw, _input())
+
+    # Overlay must survive — NOT rejected.
+    assert len(out.overlays) == 1, "overlay was dropped; sample_frame_t clamp did not fire"
+
+    ov = out.overlays[0]
+    # Timing was swapped.
+    assert ov.start_s == pytest.approx(0.9)
+    assert ov.end_s == pytest.approx(3.0)
+
+    # sample_frame_t clamped to start of corrected window (0.45 < 0.9 → pin to 0.9).
+    assert ov.bbox.sample_frame_t == pytest.approx(0.9)
