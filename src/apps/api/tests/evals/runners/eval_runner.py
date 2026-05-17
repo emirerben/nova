@@ -183,6 +183,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.template_recipe import TemplateRecipeAgent
 
         return TemplateRecipeAgent
+    if agent_name == "nova.compose.template_text":
+        from app.agents.template_text import TemplateTextAgent
+
+        return TemplateTextAgent
     if agent_name == "nova.video.clip_metadata":
         from app.agents.clip_metadata import ClipMetadataAgent
 

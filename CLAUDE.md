@@ -127,7 +127,8 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - GEMINI_API_KEY — required for clip analysis (music jobs) and template analysis
 
 ## Agent evals
-- Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, and `audio_template` agents. Two layers: deterministic structural assertions + Claude-Sonnet LLM-as-judge.
+- Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents. Two layers: deterministic structural assertions + Claude-Sonnet LLM-as-judge.
+- **`nova.compose.template_text`** is a focused text-overlay extraction pass that runs after `template_recipe` in agentic templates (`agentic_template_build_task` only — NOT music jobs, NOT manual templates). Replaces `recipe.slots[*].text_overlays` with overlays that have a required normalized bbox + font color + better recall. Its eval consumes optional OCR ground truth at `tests/fixtures/agent_evals/template_text/ground_truth/<slug>.json` (build via `scripts/build_text_ground_truth.py`, which uses the pre-existing `pytesseract` dep). Without ground truth, the judge falls back to qualitative inspection per the rubric.
 - Default: `cd src/apps/api && pytest tests/evals/ -v` — structural-only, replay mode, no network. Runs in CI.
 - With judge: `... --with-judge` (needs `ANTHROPIC_API_KEY`).
 - Live Gemini: `NOVA_EVAL_MODE=live ... --eval-mode=live --with-judge` (needs both keys; ~$2-5/run).

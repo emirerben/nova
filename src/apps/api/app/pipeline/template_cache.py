@@ -54,10 +54,25 @@ log = structlog.get_logger()
 # analyze_template_single.txt, analyze_template_pass2.txt) change in a way
 # that affects recipe semantics. Old entries become invisible and eventually
 # expire via TTL.
+#
+# Kept at v1 even after TemplateTextAgent shipped (2026-05-17): the text
+# agent runs only in the agentic build path, which uses a SEPARATE
+# `agent_set` namespace ("recipe+text"). Manual templates ("recipe-only")
+# don't see the text agent and don't need invalidation — bumping
+# TEMPLATE_PROMPT_VERSION here would have forced a no-op re-analyze on
+# every manual template the next time they touched cache.
 TEMPLATE_PROMPT_VERSION = "v1"
 
 # Bump when `TemplateRecipe` gains/renames/drops a field.
 CACHE_SCHEMA_VERSION = "s1"
+
+# Which set of agents produced the cached recipe. Manual templates use only
+# TemplateRecipeAgent and key as "recipe-only"; agentic templates additionally
+# run TemplateTextAgent and key as "recipe+text". Separating the namespaces
+# means a future change to the text-extraction prompt only invalidates
+# agentic caches, not manual ones.
+AGENT_SET_RECIPE_ONLY = "recipe-only"
+AGENT_SET_RECIPE_PLUS_TEXT = "recipe+text"
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.
@@ -98,10 +113,14 @@ def compute_template_hash(path: str) -> str | None:
     return h.hexdigest()
 
 
-def _cache_key(template_hash: str, analysis_mode: str) -> str:
+def _cache_key(
+    template_hash: str,
+    analysis_mode: str,
+    agent_set: str = AGENT_SET_RECIPE_ONLY,
+) -> str:
     return (
         f"template_analysis:{TEMPLATE_PROMPT_VERSION}:{CACHE_SCHEMA_VERSION}"
-        f":{analysis_mode}:{template_hash}"
+        f":{agent_set}:{analysis_mode}:{template_hash}"
     )
 
 
@@ -135,12 +154,19 @@ def _get_redis() -> Any:
 def get_cached_recipe(
     template_hash: str,
     analysis_mode: str,
+    agent_set: str = AGENT_SET_RECIPE_ONLY,
 ) -> TemplateRecipe | None:
-    """Return cached TemplateRecipe or None on miss / Redis failure / corrupt entry."""
+    """Return cached TemplateRecipe or None on miss / Redis failure / corrupt entry.
+
+    `agent_set` selects which build path's cache namespace to read from.
+    Manual builds (analyze_template_task) use the default ("recipe-only");
+    agentic builds (agentic_template_build_task) pass "recipe+text" so the
+    two paths don't collide.
+    """
     r = _get_redis()
     if r is None:
         return None
-    key = _cache_key(template_hash, analysis_mode)
+    key = _cache_key(template_hash, analysis_mode, agent_set)
     try:
         raw = r.get(key)
     except Exception as exc:
@@ -174,13 +200,19 @@ def set_cached_recipe(
     template_hash: str,
     analysis_mode: str,
     recipe: TemplateRecipe,
+    agent_set: str = AGENT_SET_RECIPE_ONLY,
 ) -> None:
-    """Write TemplateRecipe to cache. Best-effort — failures are logged, not raised."""
+    """Write TemplateRecipe to cache. Best-effort — failures are logged, not raised.
+
+    `agent_set` selects which build path's cache namespace to write to.
+    Mirrors `get_cached_recipe`'s parameter exactly so the two stay paired.
+    """
     if _is_degraded_recipe(recipe):
         log.warning(
             "template_cache_skip_degraded_recipe",
             template_hash=template_hash[:12],
             analysis_mode=analysis_mode,
+            agent_set=agent_set,
             shot_count=recipe.shot_count,
             slot_count=len(recipe.slots),
         )
@@ -188,7 +220,7 @@ def set_cached_recipe(
     r = _get_redis()
     if r is None:
         return
-    key = _cache_key(template_hash, analysis_mode)
+    key = _cache_key(template_hash, analysis_mode, agent_set)
     try:
         payload = dataclasses.asdict(recipe)
         r.setex(key, CACHE_TTL_S, json.dumps(payload))
