@@ -130,57 +130,6 @@ class TestTransposeFilterFor:
 
 
 # ---------------------------------------------------------------------------
-# _scaled_dims_for_intermediate — caps post-transpose dims at 1920px on
-# the longest edge so 4K iPhone clips drop to ~1080×1920 before encode.
-# ---------------------------------------------------------------------------
-
-
-class TestScaledDimsForIntermediate:
-    def test_already_within_cap_returns_none(self) -> None:
-        from app.pipeline.orientation import _scaled_dims_for_intermediate
-
-        # 1080×1920 post-transpose (the iPhone 1080p case) — no scaling needed.
-        assert _scaled_dims_for_intermediate(1080, 1920) is None
-
-    def test_landscape_within_cap_returns_none(self) -> None:
-        from app.pipeline.orientation import _scaled_dims_for_intermediate
-
-        # Square 1920×1920 — at the cap, no scaling.
-        assert _scaled_dims_for_intermediate(1920, 1920) is None
-
-    def test_4k_iphone_post_transpose_scales_to_1080x1920(self) -> None:
-        """The real failure case from job d1b9b9d8: a 4K iPhone clip
-        (3840×2160 sensor) becomes 2160×3840 after transpose. Cap should
-        bring it to 1080×1920 (longest edge clamped to 1920)."""
-        from app.pipeline.orientation import _scaled_dims_for_intermediate
-
-        scaled = _scaled_dims_for_intermediate(2160, 3840)
-        assert scaled == (1080, 1920)
-
-    def test_oversized_landscape_scales_proportionally(self) -> None:
-        from app.pipeline.orientation import _scaled_dims_for_intermediate
-
-        # 3840×2160 landscape (no transpose case). Longest = 3840, scale
-        # factor 1920/3840 = 0.5 → 1920×1080.
-        scaled = _scaled_dims_for_intermediate(3840, 2160)
-        assert scaled == (1920, 1080)
-
-    def test_odd_dims_rounded_to_even(self) -> None:
-        """libx264 with yuv420p subsampling rejects odd dims. Helper must
-        always return even WxH."""
-        from app.pipeline.orientation import _scaled_dims_for_intermediate
-
-        # Synthetic input that would produce odd dims after scale.
-        scaled = _scaled_dims_for_intermediate(2161, 3841)
-        assert scaled is not None
-        w, h = scaled
-        assert w % 2 == 0, f"width {w} must be even for yuv420p"
-        assert h % 2 == 0, f"height {h} must be even for yuv420p"
-        # And still capped at 1920.
-        assert max(w, h) <= 1920
-
-
-# ---------------------------------------------------------------------------
 # detect_rotation — subprocess.run is mocked. No real FFmpeg.
 # ---------------------------------------------------------------------------
 
@@ -451,48 +400,6 @@ class TestNormalizeOrientationIntegration:
         w, h = _probe_dims(rotated_180_clip)
         assert (w, h) == (320, 240)
         assert _probe_for_rotation(rotated_180_clip) == 0
-
-    def test_oversize_input_is_scaled_down_during_normalize(
-        self, rotated_neg90_clip: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Real failure case from job d1b9b9d8: 4K iPhone clip timed out at
-        300s during normalize because ffmpeg was re-encoding 8M pixels per
-        frame under CPU contention. The fix caps the intermediate at 1920px
-        on the longest edge — for a 4K input, output becomes ~1080×1920.
-
-        Verifies the integration: monkeypatch the cap to 200px against the
-        existing 320×240 fixture (so it triggers the scale path without
-        needing a real 4K test source). After normalize the longest edge
-        must respect the cap."""
-        # Lower the cap so the existing 320x240 fixture triggers downscale.
-        monkeypatch.setattr("app.pipeline.orientation._INTERMEDIATE_MAX_EDGE", 200)
-
-        normalize_orientation(str(rotated_neg90_clip))
-
-        w, h = _probe_dims(rotated_neg90_clip)
-        assert max(w, h) <= 200, (
-            f"longest edge must be capped at 200 (got {w}x{h})"
-        )
-        # Aspect ratio is preserved (320:240 = 4:3 → after transpose 240:320 = 3:4).
-        # Scaled to fit within 200×200 with aspect: 200*240/320 = 150 wide, 200 tall.
-        assert (w, h) == (150, 200), (
-            f"expected proportionally-scaled (150, 200), got {w}x{h}"
-        )
-        # Rotation flag still stripped.
-        assert _probe_for_rotation(rotated_neg90_clip) == 0
-
-    def test_within_cap_input_is_not_scaled(
-        self, rotated_neg90_clip: Path
-    ) -> None:
-        """Inputs that fit within the cap (default 1920px) must NOT be
-        scaled — the 320×240 fixture transposes to 240×320, well within
-        the cap. Asserts no accidental scaling on the common path."""
-        normalize_orientation(str(rotated_neg90_clip))
-        w, h = _probe_dims(rotated_neg90_clip)
-        # 320×240 landscape → 240×320 portrait after transpose. No scaling.
-        assert (w, h) == (240, 320), (
-            f"small input within cap must keep its post-transpose dims, got {w}x{h}"
-        )
 
     def test_square_pixels_with_rotation_flag_take_re_encode_path(
         self, plain_clip: Path, tmp_path: Path
@@ -936,6 +843,130 @@ class TestNormalizeOrientationKillSwitch:
         normalize_orientation(str(rotated_neg90_clip))
         assert _probe_for_rotation(rotated_neg90_clip) == 0, (
             "default env state must still normalize"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Concurrent-encode semaphore — gates the pixel-rewriting path so a
+# long-duration HEVC clip can't time out under 8-way ThreadPool contention.
+# ---------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+class TestNormalizeReencodeSemaphore:
+    """The semaphore wraps the re-encode path only. Stale-flag remux,
+    rotation==0 skip, and env-var-disabled paths do NOT acquire it.
+
+    Test strategy: spy on the module-level semaphore's acquire/release
+    methods. Run normalize_orientation through each code path. Assert
+    acquire is called only on the re-encode path. Avoids the flakiness
+    of timing-based concurrency tests in CI.
+    """
+
+    def _spy_on_semaphore(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> list[str]:
+        """Replace the module-level semaphore with a spy that records
+        every acquire/release call. Returns the recorded events list."""
+        import app.pipeline.orientation as mod
+
+        events: list[str] = []
+
+        class SpySemaphore:
+            def acquire(self, blocking: bool = True) -> bool:
+                events.append(f"acquire(blocking={blocking})")
+                return True
+
+            def release(self) -> None:
+                events.append("release")
+
+        monkeypatch.setattr(mod, "_normalize_reencode_semaphore", SpySemaphore())
+        return events
+
+    def test_re_encode_path_acquires_semaphore(
+        self,
+        rotated_neg90_clip: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Landscape pixels + rotation flag → re-encode path → must
+        acquire and release the semaphore exactly once."""
+        events = self._spy_on_semaphore(monkeypatch)
+        normalize_orientation(str(rotated_neg90_clip))
+        # acquire might be called twice if the non-blocking acquire
+        # fails first and we fall through to blocking acquire — that's
+        # the contention case. For an uncontended test we should see
+        # acquire(blocking=False) then release.
+        assert any("acquire" in e for e in events), (
+            f"re-encode path must acquire the semaphore. events={events}"
+        )
+        assert events.count("release") == 1, (
+            f"re-encode path must release exactly once. events={events}"
+        )
+
+    def test_skip_path_does_not_acquire_semaphore(
+        self,
+        plain_clip: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """rotation == 0 → skip → must NOT acquire the semaphore."""
+        target = tmp_path / "plain_copy.mp4"
+        target.write_bytes(plain_clip.read_bytes())
+        events = self._spy_on_semaphore(monkeypatch)
+        normalize_orientation(str(target))
+        assert events == [], (
+            f"skip path must not touch the semaphore. events={events}"
+        )
+
+    def test_stale_flag_path_does_not_acquire_semaphore(
+        self,
+        portrait_with_stale_neg90: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Portrait pixels + stale rotation flag → codec-copy remux → must
+        NOT acquire the semaphore. The remux is cheap and doesn't need
+        rate-limiting; gating it would just stall the pipeline."""
+        events = self._spy_on_semaphore(monkeypatch)
+        normalize_orientation(str(portrait_with_stale_neg90))
+        assert events == [], (
+            f"stale-flag path must not touch the semaphore. events={events}"
+        )
+
+    def test_env_disabled_path_does_not_acquire_semaphore(
+        self,
+        rotated_neg90_clip: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Kill switch active → no work happens → no semaphore touch."""
+        monkeypatch.setenv("ORIENTATION_NORMALIZE_ENABLED", "false")
+        events = self._spy_on_semaphore(monkeypatch)
+        normalize_orientation(str(rotated_neg90_clip))
+        assert events == [], (
+            f"kill-switch path must not touch the semaphore. events={events}"
+        )
+
+    def test_semaphore_releases_even_on_ffmpeg_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If ffmpeg fails mid-encode, the semaphore must still be released
+        so the next clip can proceed. A leaked permit would deadlock the
+        ThreadPool over time."""
+        bad = tmp_path / "bad.mp4"
+        bad.write_bytes(b"not a real video")
+
+        events = self._spy_on_semaphore(monkeypatch)
+        # Force the re-encode path via mocked dims.
+        with patch(
+            "app.pipeline.orientation.detect_rotation_and_dims",
+            return_value=(-90, 320, 240),
+        ):
+            with pytest.raises(OrientationError):
+                normalize_orientation(str(bad))
+
+        assert "release" in events, (
+            f"semaphore must release on failure. events={events}"
         )
 
 

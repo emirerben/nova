@@ -65,23 +65,37 @@ log = structlog.get_logger()
 # ffprobe / ffmpeg timeouts. Probe is ~50ms.
 #
 # Normalize re-encode is the big variable. A 6s 1080p HEVC clip is ~3-10s
-# on the worker; a 90s 4K HEVC clip with 8 concurrent ThreadPool ffmpeg
-# processes contending for 4 worker cores has been observed to push past
-# 5min. Job d1b9b9d8 (Dimples Passport, 15 iPhone clips) timed out at 300s
-# on one of its clips. We bump to 10min as belt-and-suspenders alongside
-# the dim-cap optimization below (which is the real fix — caps intermediate
-# at 1920px on the longest edge so 4K input drops to ~1080×1920 BEFORE
-# encode, cutting work ~4x).
+# on the worker. A long-duration HEVC clip (e.g. 3+ min) under concurrent
+# encode contention can push past 5min. Job d1b9b9d8 (Dimples Passport,
+# 15 iPhone clips with one 3.7-min HEVC 10-bit Dolby Vision outlier among
+# them) timed out at 300s on that outlier — the real failure mode is the
+# combination of long-duration video and concurrent encode pressure on a
+# 4-core worker. We bump to 10min and gate concurrent re-encodes via the
+# semaphore below so the worst case stays inside the timeout.
 _PROBE_TIMEOUT_S = 30
 _NORMALIZE_TIMEOUT_S = 600
 
-# Intermediate-output dimension cap. The downstream reframe pass produces
-# 1080×1920 final output regardless, so encoding the normalize intermediate
-# at higher resolution is wasted work — every pixel here is re-encoded
-# downstream anyway. Cap the longest edge so 4K iPhone clips
-# (3840×2160 → 2160×3840 post-transpose) get scaled to 1080×1920 right
-# here, cutting encode work to ~25% of the un-capped case.
-_INTERMEDIATE_MAX_EDGE = 1920
+# Concurrency cap on the pixel-rewriting path. ``_download_clips_parallel``
+# in ``template_orchestrate.py`` runs up to 8 concurrent download+normalize
+# threads. On a 4-core worker each thread gets ~0.5 core under contention,
+# so a libx264 ultrafast re-encode that would take 60-90s on a dedicated
+# core can stretch past 5min when 8 of them are fighting for CPU. We cap
+# at 2 concurrent pixel-rewrites so each gets ~2 cores — empirically clip_008
+# (3.7-min HEVC 10-bit, the d1b9b9d8 timeout case) finishes in ~30s locally
+# at no-contention. 2 concurrent re-encodes also leaves 2 cores free for the
+# other pipeline work (Gemini upload, ffprobe, GCS download), so we don't
+# starve the rest of the orchestrator.
+#
+# Downloads themselves stay 8-parallel (they're I/O-bound, not CPU-bound).
+# Only the ffmpeg invocation inside ``normalize_orientation``'s re-encode
+# branch waits on the semaphore. The stale-flag fast path (codec-copy
+# remux) is cheap and not gated.
+import threading
+
+_MAX_CONCURRENT_NORMALIZE_REENCODES = 2
+_normalize_reencode_semaphore = threading.BoundedSemaphore(
+    _MAX_CONCURRENT_NORMALIZE_REENCODES
+)
 
 # Rotations we know how to handle. Phone cameras only emit orthogonal
 # rotations (±90, 180). Non-orthogonal angles (45, etc.) never come from
@@ -241,35 +255,6 @@ def _transpose_filter_for(rotation: int) -> str:
         return "transpose=2,transpose=2"
     # Caller should have filtered to _SUPPORTED_ROTATIONS already.
     raise OrientationError(f"unsupported rotation {rotation}")
-
-
-def _scaled_dims_for_intermediate(
-    post_transpose_w: int, post_transpose_h: int
-) -> tuple[int, int] | None:
-    """If the post-transpose intermediate exceeds ``_INTERMEDIATE_MAX_EDGE``
-    on its longest edge, return the proportionally-scaled (W, H) capped at
-    the limit. Returns ``None`` if no scaling is needed.
-
-    Dims returned are always even (libx264 with yuv420p requires it).
-
-    The reframe pass downstream re-encodes to 1080×1920 final output, so
-    encoding the normalize intermediate at higher resolution is wasted
-    work. Capping at 1920 means a 4K iPhone clip (3840×2160 sensor,
-    becomes 2160×3840 post-transpose) drops to ~1080×1920 here, cutting
-    libx264 work to roughly a quarter of the un-capped case. For inputs
-    already within the cap (e.g. 1920×1080 → 1080×1920 post-transpose),
-    this is a no-op.
-    """
-    longest = max(post_transpose_w, post_transpose_h)
-    if longest <= _INTERMEDIATE_MAX_EDGE:
-        return None
-    scale = _INTERMEDIATE_MAX_EDGE / longest
-    new_w = int(post_transpose_w * scale)
-    new_h = int(post_transpose_h * scale)
-    # Force even dims — yuv420p subsampling requires WxH to be even.
-    new_w -= new_w % 2
-    new_h -= new_h % 2
-    return (new_w, new_h)
 
 
 def _run_ffmpeg_atomic_replace(
@@ -513,26 +498,12 @@ def normalize_orientation(file_path: str) -> str:
     transpose_chain = _transpose_filter_for(rotation)
     tmp_path = f"{file_path}.norot.tmp.mp4"
 
-    # Cap intermediate at 1920px on the longest edge. 4K iPhone clips
-    # (3840×2160 sensor → 2160×3840 post-transpose) get scaled to
-    # 1080×1920 here, cutting libx264 work to ~25% of the un-capped case.
-    # The reframe pass downstream produces 1080×1920 final output anyway,
-    # so no information is lost — we're just moving the scale step
-    # upstream where the encoder budget matters most.
-    post_transpose_w, post_transpose_h = height, width  # transpose swaps WxH
-    scaled = _scaled_dims_for_intermediate(post_transpose_w, post_transpose_h)
-    if scaled is not None:
-        scaled_w, scaled_h = scaled
-        vf_chain = f"{transpose_chain},scale={scaled_w}:{scaled_h}"
-    else:
-        vf_chain = transpose_chain
-
     # Intermediate-quality libx264 args. Deliberately NOT calling
     # `reframe._encoding_args` — that helper bakes in `-s 1080x1920`,
     # `-r 30`, `BODY_SLOT_AUDIO_OUT_ARGS`, and bt709 colorspace re-tagging
     # that are correct for the final reframe output but wrong here. The
-    # normalize step is an in-place rewrite (with optional scale-down to
-    # 1920px); reframe re-encodes the result to final spec downstream.
+    # normalize step is an in-place dimension-preserving rewrite; reframe
+    # re-encodes the result to final spec downstream.
     #
     # Preset rationale: ultrafast is policy-compliant for intermediate
     # re-encodes (see tests/test_encoder_policy.py docstring). The output
@@ -579,7 +550,7 @@ def normalize_orientation(file_path: str) -> str:
         "-i",
         file_path,
         "-vf",
-        vf_chain,
+        transpose_chain,
         # Video: minimal H.264 intermediate. yuv420p is the universal
         # decoder-friendly format; high profile matches what reframe
         # produces. No -bf 0 / no -x264-params: reframe re-encodes anyway
@@ -600,7 +571,28 @@ def normalize_orientation(file_path: str) -> str:
         tmp_path,
     ]
 
-    _run_ffmpeg_atomic_replace(file_path, tmp_path, cmd, op_label="normalize")
+    # Gate concurrent re-encodes to keep CPU contention bounded on the
+    # 4-core worker. Without this, 8-way parallel ThreadPool in
+    # `_download_clips_parallel` lets a long-duration HEVC clip
+    # (e.g. clip_008 from job d1b9b9d8, 3.7 min 10-bit) stretch past the
+    # 5-min timeout. With the gate, at most 2 ffmpeg re-encodes run
+    # simultaneously so each gets ~2 cores. Empirically clip_008 finishes
+    # in ~30s under those conditions vs. >300s under 8-way contention.
+    #
+    # If a thread blocks waiting for the semaphore, log it so the admin
+    # job-debug view shows the contention. Other threads (download,
+    # ffprobe, Gemini upload) are unaffected.
+    if not _normalize_reencode_semaphore.acquire(blocking=False):
+        log.info(
+            "orientation_normalize_waiting_for_slot",
+            path=os.path.basename(file_path),
+            max_concurrent=_MAX_CONCURRENT_NORMALIZE_REENCODES,
+        )
+        _normalize_reencode_semaphore.acquire()
+    try:
+        _run_ffmpeg_atomic_replace(file_path, tmp_path, cmd, op_label="normalize")
+    finally:
+        _normalize_reencode_semaphore.release()
 
     log.info(
         "orientation_normalized",
