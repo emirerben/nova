@@ -191,18 +191,37 @@ def _extract_rotation(video_stream: dict) -> int:
 def _transpose_filter_for(rotation: int) -> str:
     """Map a container rotation in degrees to an FFmpeg vf transpose chain.
 
-    transpose=1 = 90° clockwise (top edge becomes right edge)
-    transpose=2 = 90° counter-clockwise (top edge becomes left edge)
-    180° = two CCW transposes (cheaper than hflip+vflip in this filter chain)
+    Pixel-level convention:
 
-    The mapping reverses the container's "rotate by N degrees on
-    playback" instruction: if the file says "rotate -90 on playback"
-    (counter-clockwise), we apply that same -90 in pixels.
+    - ``transpose=1`` = 90° CLOCKWISE rotation of the image.
+    - ``transpose=2`` = 90° COUNTER-CLOCKWISE rotation of the image.
+
+    Mapping from Display Matrix ``rotation`` value to transpose direction
+    was verified empirically against a real iPhone HEVC portrait recording
+    (1920×1080 sensor pixels + ``rotation: -90`` flag). The intuition
+    "rotation=-90 means apply -90° (CCW) in pixels" is WRONG and was the
+    root cause of the v0.4.27.0 upside-down-output regression.
+
+    What actually works (per direct test, frame-extracted and visually
+    confirmed):
+
+    - ``rotation == -90`` (iPhone portrait recording) → ``transpose=1``
+      (CW). The sensor records with "up" on the LEFT side of the decoded
+      frame; rotating CW brings "up" to the top.
+    - ``rotation == 90`` (Android portrait recording) → ``transpose=2``
+      (CCW). Mirror case to the above.
+    - ``rotation == ±180`` → two transposes (180° net, direction-agnostic).
+
+    The previous mapping (-90 → transpose=2, 90 → transpose=1) passed
+    the existing dim-swap tests because BOTH CW and CCW rotations swap
+    pixel dimensions identically. The tests never asserted on pixel
+    direction. The fix adds that assertion in
+    ``TestNormalizeOrientationPixelDirection``.
     """
     if rotation == -90 or rotation == 270:
-        return "transpose=2"
-    if rotation == 90 or rotation == -270:
         return "transpose=1"
+    if rotation == 90 or rotation == -270:
+        return "transpose=2"
     if rotation == 180 or rotation == -180:
         return "transpose=2,transpose=2"
     # Caller should have filtered to _SUPPORTED_ROTATIONS already.

@@ -102,11 +102,15 @@ class TestExtractRotation:
 
 
 class TestTransposeFilterFor:
-    def test_neg_90_maps_to_transpose_2(self) -> None:
-        assert _transpose_filter_for(-90) == "transpose=2"
+    def test_neg_90_maps_to_transpose_1_cw(self) -> None:
+        """iPhone portrait (rotation=-90) needs CW rotation in pixels.
+        Verified empirically against a real HEVC iPhone clip: transpose=2
+        produced upside-down output; transpose=1 produces upright."""
+        assert _transpose_filter_for(-90) == "transpose=1"
 
-    def test_pos_90_maps_to_transpose_1(self) -> None:
-        assert _transpose_filter_for(90) == "transpose=1"
+    def test_pos_90_maps_to_transpose_2_ccw(self) -> None:
+        """Android portrait (rotation=90) is the mirror case: CCW in pixels."""
+        assert _transpose_filter_for(90) == "transpose=2"
 
     def test_180_maps_to_double_transpose(self) -> None:
         assert _transpose_filter_for(180) == "transpose=2,transpose=2"
@@ -115,7 +119,10 @@ class TestTransposeFilterFor:
         assert _transpose_filter_for(-180) == "transpose=2,transpose=2"
 
     def test_270_aliases_to_neg_90(self) -> None:
-        assert _transpose_filter_for(270) == "transpose=2"
+        assert _transpose_filter_for(270) == "transpose=1"
+
+    def test_neg_270_aliases_to_pos_90(self) -> None:
+        assert _transpose_filter_for(-270) == "transpose=2"
 
     def test_unsupported_raises(self) -> None:
         with pytest.raises(OrientationError, match="unsupported rotation"):
@@ -393,6 +400,87 @@ class TestNormalizeOrientationIntegration:
         w, h = _probe_dims(rotated_180_clip)
         assert (w, h) == (320, 240)
         assert _probe_for_rotation(rotated_180_clip) == 0
+
+    def test_neg_90_pixel_direction_matches_player(
+        self, rotated_neg90_clip: Path, tmp_path: Path
+    ) -> None:
+        """REGRESSION: PR #192 shipped with the wrong transpose direction,
+        producing upside-down output for genuine iPhone portrait clips. The
+        dim-swap tests above did NOT catch it because both CW and CCW
+        rotations swap WxH identically.
+
+        This test compares the first-frame pixel content of our normalized
+        output against the canonical "what a video player shows" reference
+        (ffmpeg default auto-rotate). If they match within a tight tolerance,
+        our transpose direction is correct. If they diverge by more than a
+        few RGB units, the rotation is inverted and the clip will play
+        upside-down/sideways in production.
+        """
+        # Reference: what a media player (QuickTime, browser, iPhone)
+        # would show. ffmpeg's default behavior reads the Display Matrix
+        # and auto-rotates on decode, giving us the "user's intended view".
+        reference = tmp_path / "reference_autorotate.png"
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-ss", "0.3", "-i", str(rotated_neg90_clip),
+                "-vframes", "1", str(reference),
+            ],
+            check=True,
+            timeout=30,
+            capture_output=True,
+        )
+
+        # Run our normalize (in-place).
+        normalize_orientation(str(rotated_neg90_clip))
+        normalized_frame = tmp_path / "normalized_frame.png"
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-ss", "0.3", "-i", str(rotated_neg90_clip),
+                "-vframes", "1", str(normalized_frame),
+            ],
+            check=True,
+            timeout=30,
+            capture_output=True,
+        )
+
+        # Reference and normalized frame should be visually equivalent.
+        # ffmpeg's PSNR filter gives us a single quality number — for two
+        # frames showing the same content with the same encoding pass,
+        # PSNR should be very high (lossless ≈ inf, near-lossless > 40dB).
+        # A wrong-direction rotation would produce a completely different
+        # frame, PSNR well below 20dB.
+        psnr_out = subprocess.run(
+            [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "info",
+                "-i", str(normalized_frame),
+                "-i", str(reference),
+                "-filter_complex", "psnr",
+                "-f", "null", "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        # PSNR result is on stderr like:
+        #   [Parsed_psnr_0 @ 0x...] PSNR y:42.5 u:48.1 v:48.2 average:43.7 min:43.7 max:43.7
+        import re
+        match = re.search(r"PSNR.*average:([0-9.]+|inf)", psnr_out.stderr)
+        assert match is not None, (
+            f"could not parse PSNR from ffmpeg output:\n{psnr_out.stderr[-500:]}"
+        )
+        psnr_str = match.group(1)
+        psnr_value = float("inf") if psnr_str == "inf" else float(psnr_str)
+        # 25dB is a permissive floor — same content, same codec, same
+        # frame index should easily clear this. A wrong rotation produces
+        # PSNR well below 20dB (totally different image).
+        assert psnr_value > 25.0, (
+            f"normalized frame diverges from player reference (PSNR avg = {psnr_value} dB). "
+            "Almost certainly a wrong transpose direction — output will play "
+            "upside-down or sideways in production."
+        )
 
     def test_preserves_audio_stream(self, rotated_neg90_clip: Path) -> None:
         assert _has_audio_stream(rotated_neg90_clip), "precondition"
