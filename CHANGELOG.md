@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.29.0] - 2026-05-17
+
+### Added
+- **Layer-2 text-overlay OCR foundation (no behavior change).** Ships the dependency declarations + backend wrapper module + feature flag for the Cloud Vision per-frame OCR pipeline that will replace the current `nova.compose.template_text` single-Gemini-call agent in a future PR. The current agent reads ~half the visible words on build-up / typewriter-style caption templates (Gemini-Flash and -Pro both fail on script-italic fonts over low-contrast backgrounds). Apple Vision and Cloud Vision both read every visible word on the same templates in smoke tests, with only minor character-level errors that downstream transcript alignment fixes. PR 1 is foundation only; no caller is wired and the flag is OFF by default.
+- **`app/services/text_overlay_ocr.py`: `CloudVisionBackend` + `AppleVisionBackend` + `default_backend()` selection.** Both backends return the same `FrameDetection` shape (4-point normalized polygon, confidence in `[0, 1]`, global frame timestamp) so the downstream temporal-grouping and phrase-reconstruction stages stay backend-agnostic. Cloud Vision is the production path (uses the same service account as GCS); Apple Vision is local-dev only on macOS. The wrapper imports its SDK lazily inside `__init__` so non-OCR call sites can import the module without paying the `grpc`/`pyobjc` cost, and so the module loads cleanly on environments that have neither installed.
+- **`app/agents/_schemas/text_overlay_ocr.py`: `OcrPolygon` + `FrameDetection` Pydantic models.** `OcrPolygon` carries the full quadrilateral (TL/TR/BR/BL clockwise from the text's own top-left, which is NOT the image's top-left for rotated text — `aabb()` is the only safe path to axis-aligned image coords) so a follow-up PR can consume rotation without a schema migration. `FrameDetection` enforces `confidence ∈ [0, 1]`, non-empty text, and non-negative timestamps via Pydantic constraints.
+- **`tests/services/test_text_overlay_ocr.py`: 15 unit tests, all mocked.** Schema constraint tests + `_clamp01` + `_assemble_paragraph_text` break-type assembly + three `CloudVisionBackend.detect()` paths (happy path with normalized polygon, API-error propagation, non-quad polygon skipped) + `AppleVisionBackend` instantiation (auto-skips on non-Darwin CI) + `default_backend()` selection order. CI runs without GCP credentials or pyobjc — the SDK mocks are injected by bypassing `__init__` via `__new__` because `from google.cloud import vision` is awkward to patch through `sys.modules`.
+- **`pyproject.toml` extras: `ocr` (`google-cloud-vision>=3.7`) and `dev-ocr` (`pyobjc-framework-Vision`/`Quartz`, Darwin-only).** Optional because the pipeline is gated by `settings.text_overlay_v2_enabled` (default OFF). The Dockerfile will install `[ocr]` explicitly once PR 3 flips the flag, so the default prod image stays lean during PR 2 development. `dev-ocr` is platform-pinned so prod builds never see pyobjc on Linux.
+- **`settings.text_overlay_v2_enabled` feature flag, default `False`.** Reserves the activation point for PR 3; no code path reads it yet.
+
 ## [0.4.28.1] - 2026-05-17
 
 ### Fixed
