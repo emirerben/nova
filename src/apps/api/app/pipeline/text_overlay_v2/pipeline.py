@@ -53,6 +53,7 @@ from app.pipeline.text_overlay_v2.phrases import (
     DEFAULT_X_BAND_THRESHOLD,
     reconstruct_phrases,
 )
+from app.pipeline.text_overlay_v2.tokenize import tokenize_detections_into_words
 from app.services.text_overlay_ocr import OcrBackend, default_backend
 from app.services.video_frames import (
     DEFAULT_FPS,
@@ -90,6 +91,7 @@ def run_full_pipeline(
     alignment_client=None,
     classification_client=None,
     dump_stages_dir: str | Path | None = None,
+    atomize_words: bool = True,
 ) -> TemplateTextOutput:
     """Run the full A→B→C→D→E→F→G pipeline on a local video file.
 
@@ -126,6 +128,16 @@ def run_full_pipeline(
     `stage_g.json`). Stage E also writes `stage_e_dropped.txt` with the
     alignment drop count. Used by `scripts/debug_layer2.py` to attribute
     overlay errors to a specific stage; safe to leave None in production.
+
+    `atomize_words=True` (default) tokenizes each OCR detection into per-word
+    sub-detections at stage B's output, then forces stage D into
+    `atomize_per_event` mode so each word becomes its own overlay with its
+    own first-seen `start_s`. This matches viral short-form templates whose
+    text builds up word-by-word with individual pop-in animations
+    (canary: `not just luck` / template `fdaf3bbc-…`). Set `False` to fall
+    back to phrase-level overlays (one overlay per visually-coherent
+    multi-line block) — useful for templates with a single stable headline
+    rather than a word-by-word reveal.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents._runtime import RunContext  # noqa: PLC0415
@@ -184,6 +196,23 @@ def run_full_pipeline(
         log.info("full_pipeline_stage_b_done", n_detections=len(detections), job_id=job_id)
         _dump_stage(dump_dir, "stage_b", detections)
 
+        # ── B.5: Word tokenization (when atomize_words=True) ──────────────
+        # Splits each multi-word OCR detection into per-word sub-detections so
+        # stage C groups same-word detections across frames instead of treating
+        # "if" and "if you" as different events that stage D then stacks as
+        # redundant lines. See tokenize.py docstring for the full rationale.
+        if atomize_words:
+            log.info(
+                "full_pipeline_stage_b5_start", n_detections=len(detections), job_id=job_id
+            )
+            detections = tokenize_detections_into_words(detections)
+            log.info(
+                "full_pipeline_stage_b5_done",
+                n_word_detections=len(detections),
+                job_id=job_id,
+            )
+            _dump_stage(dump_dir, "stage_b5_words", detections)
+
         # ── C: Temporal grouping ──────────────────────────────────────────
         log.info("full_pipeline_stage_c_start", job_id=job_id)
         events = group_detections_into_events(
@@ -195,8 +224,15 @@ def run_full_pipeline(
         _dump_stage(dump_dir, "stage_c", events)
 
         # ── D: Phrase reconstruction ──────────────────────────────────────
+        # When atomize_words=True, each event is already a single word; stage D
+        # MUST NOT re-cluster same-line words into multi-line phrases, so we
+        # force atomize_per_event so each event becomes its own one-line phrase.
         log.info("full_pipeline_stage_d_start", job_id=job_id)
-        phrases = reconstruct_phrases(events, x_band_threshold=x_band_threshold)
+        phrases = reconstruct_phrases(
+            events,
+            x_band_threshold=x_band_threshold,
+            atomize_per_event=atomize_words,
+        )
         log.info("full_pipeline_stage_d_done", n_phrases=len(phrases), job_id=job_id)
         _dump_stage(dump_dir, "stage_d", phrases)
 
