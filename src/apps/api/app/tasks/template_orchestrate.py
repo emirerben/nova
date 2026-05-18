@@ -41,7 +41,7 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.config import settings
 from app.database import sync_session as _sync_session
-from app.models import Job, TemplateRecipeVersion, VideoTemplate
+from app.models import Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
 from app.pipeline.agentic_matcher import agentic_match_or_fallback as _agentic_match_or_fallback
 from app.pipeline.agents.gemini_analyzer import (
     AssemblyPlan,
@@ -725,6 +725,19 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         # apply_async kwargs.
         template_single_pass = bool(template.single_pass_enabled)
 
+        # For templates backed by a music track (template_type="audio_only"
+        # — created from a MusicTrack with auto-detected best section), the
+        # audio file is the FULL song. Read the music-track's best_start_s
+        # so the mix can seek past the intro to the chorus/drop. Regular
+        # video templates have music_track_id=None → offset stays 0.
+        audio_start_offset_s = 0.0
+        if template.music_track_id:
+            track = db.get(MusicTrack, template.music_track_id)
+            if track and track.track_config:
+                audio_start_offset_s = float(
+                    track.track_config.get("best_start_s", 0.0) or 0.0
+                )
+
     # Route on template_kind discriminator. Existing rows without template_kind
     # are backfilled to "multiple_videos" by migration 0012, so .get() with
     # a default is just a belt-and-suspenders guard.
@@ -1021,11 +1034,17 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         # [6b] Mix template audio if available
         if audio_gcs_path:
             final_path = os.path.join(tmpdir, "final.mp4")
-            _mix_template_audio(assembled_path, audio_gcs_path, final_path, tmpdir)
+            _mix_template_audio(
+                assembled_path, audio_gcs_path, final_path, tmpdir,
+                audio_start_offset_s=audio_start_offset_s,
+            )
             output_path = final_path
             # Also mix audio into the base video for editor preview
             base_final = os.path.join(tmpdir, "base_final.mp4")
-            _mix_template_audio(base_path, audio_gcs_path, base_final, tmpdir)
+            _mix_template_audio(
+                base_path, audio_gcs_path, base_final, tmpdir,
+                audio_start_offset_s=audio_start_offset_s,
+            )
             base_path = base_final
         else:
             output_path = assembled_path
@@ -1153,6 +1172,15 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         # via the legacy absolute-seconds path — same recipe, different output.
         is_agentic = bool(template.is_agentic)
 
+        # Same music-track offset lookup as _run_template_job — see comment there.
+        audio_start_offset_s = 0.0
+        if template.music_track_id:
+            track = db.get(MusicTrack, template.music_track_id)
+            if track and track.track_config:
+                audio_start_offset_s = float(
+                    track.track_config.get("best_start_s", 0.0) or 0.0
+                )
+
     try:
         recipe = build_recipe(recipe_data)
     except (TypeError, ValueError, KeyError) as exc:
@@ -1245,10 +1273,16 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         # Mix template audio if available
         if audio_gcs_path:
             final_path = os.path.join(tmpdir, "final.mp4")
-            _mix_template_audio(assembled_path, audio_gcs_path, final_path, tmpdir)
+            _mix_template_audio(
+                assembled_path, audio_gcs_path, final_path, tmpdir,
+                audio_start_offset_s=audio_start_offset_s,
+            )
             output_path = final_path
             base_final = os.path.join(tmpdir, "base_final.mp4")
-            _mix_template_audio(base_path, audio_gcs_path, base_final, tmpdir)
+            _mix_template_audio(
+                base_path, audio_gcs_path, base_final, tmpdir,
+                audio_start_offset_s=audio_start_offset_s,
+            )
             base_path = base_final
         else:
             output_path = assembled_path
@@ -4570,11 +4604,19 @@ def _probe_duration(path: str) -> float:
 
 
 def _mix_template_audio(
-    video_path: str, audio_gcs_path: str, output_path: str, tmpdir: str
+    video_path: str,
+    audio_gcs_path: str,
+    output_path: str,
+    tmpdir: str,
+    audio_start_offset_s: float = 0.0,
 ) -> None:
     """Replace assembled video's audio with template music track.
 
     Non-fatal if anything fails — falls back to copying video_path → output_path.
+
+    audio_start_offset_s seeks into the source audio before mixing — used to
+    align playback with the auto-detected "best section" of the track instead
+    of starting from second 0.
     """
     audio_local = os.path.join(tmpdir, "template_audio.m4a")
     try:
@@ -4600,6 +4642,15 @@ def _mix_template_audio(
     # Defensive: probe failures return 0.0 sentinel. Fall back gracefully.
     video_dur = _probe_duration(video_path)
     audio_dur = _probe_duration(audio_local)
+
+    # Clamp offset: if it would seek past EOF (or close to it), drop back so
+    # at least 5s of audio remains before -stream_loop wraps around.
+    safe_offset = max(0.0, float(audio_start_offset_s or 0.0))
+    if audio_dur > 0 and safe_offset > 0:
+        safe_offset = min(safe_offset, max(0.0, audio_dur - 5.0))
+    if safe_offset > 0 and audio_dur > 0:
+        # Audio available to play after the seek = audio_dur - safe_offset.
+        audio_dur = max(0.0, audio_dur - safe_offset)
 
     # Only trim video when audio is within this many seconds of video.
     _AUDIO_SYNC_MAX_GAP_S = 5.0
@@ -4646,6 +4697,7 @@ def _mix_template_audio(
         video_path,
         "-stream_loop",
         "-1",
+        *(["-ss", f"{safe_offset:.3f}"] if safe_offset > 0 else []),
         "-i",
         audio_local,
         "-map",
