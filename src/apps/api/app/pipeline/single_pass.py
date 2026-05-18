@@ -357,7 +357,7 @@ def _build_xfade_chain(
 
         xfade_type = XFADE_MAP.get(trans, "fade")
         next_label = group_labels[i + 1]
-        out_lbl = "vout" if i == len(visual_transitions) - 1 else f"xf{i}"
+        out_lbl = final_label if i == len(visual_transitions) - 1 else f"xf{i}"
         fragments.append(
             f"[{current_label}][{next_label}]"
             f"xfade=transition={xfade_type}"
