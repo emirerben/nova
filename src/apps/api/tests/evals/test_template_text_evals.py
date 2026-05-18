@@ -57,6 +57,38 @@ def _load_ground_truth(fixture_path: Path) -> list[dict] | None:
     return overlays
 
 
+_FLOOR_KEYS = {"completeness", "mean_temporal_iou", "mean_spatial_iou"}
+
+
+def _load_floor_overrides(fixture_path: Path) -> dict[str, float]:
+    """Load optional per-fixture hard-floor overrides.
+
+    Sidecar at `ground_truth/<stem>.thresholds.json` may relax (or tighten)
+    a fixture's hard floors when the global default is the wrong gate for
+    that fixture — e.g. a known agent regression we want to track but not
+    block landing.
+
+    Shape:
+        {"reason": "...", "floors": {"mean_spatial_iou": 0.05}}
+
+    Only keys in `_FLOOR_KEYS` are honored. `reason` is required when
+    `floors` is non-empty so the override is self-documenting.
+    """
+    candidate = GROUND_TRUTH_DIR / f"{fixture_path.stem}.thresholds.json"
+    if not candidate.exists():
+        return {}
+    data = json.loads(candidate.read_text())
+    floors = data.get("floors") or {}
+    if not isinstance(floors, dict):
+        raise ValueError(f"{candidate}: 'floors' must be an object")
+    bad = set(floors) - _FLOOR_KEYS
+    if bad:
+        raise ValueError(f"{candidate}: unknown floor keys {sorted(bad)}")
+    if floors and not data.get("reason"):
+        raise ValueError(f"{candidate}: 'reason' is required when 'floors' is set")
+    return {k: float(v) for k, v in floors.items()}
+
+
 def _summarize_scoring(s: OverlayScores) -> str:
     return (
         f"completeness={s.completeness:.2f} "
@@ -134,24 +166,31 @@ def test_template_text_eval(
         predicted = [ov.model_dump() for ov in output.overlays]
         scoring = score_overlays(predicted, truth)
         # Apply hard floors — only gate if ground truth was available.
-        if scoring.completeness < COMPLETENESS_HARD_FLOOR:
+        overrides = _load_floor_overrides(fixture_path)
+        floors = {
+            "completeness": COMPLETENESS_HARD_FLOOR,
+            "mean_temporal_iou": TEMPORAL_IOU_HARD_FLOOR,
+            "mean_spatial_iou": SPATIAL_IOU_HARD_FLOOR,
+            **overrides,
+        }
+        if scoring.completeness < floors["completeness"]:
             floor_failures.append(
                 f"completeness {scoring.completeness:.2f} < hard floor "
-                f"{COMPLETENESS_HARD_FLOOR}"
+                f"{floors['completeness']}"
             )
         # Temporal/spatial IoU floors only fire when we actually matched at
         # least one pair — otherwise the mean is zero by convention and the
         # completeness floor already caught the regression.
         if scoring.matched_count > 0:
-            if scoring.mean_temporal_iou < TEMPORAL_IOU_HARD_FLOOR:
+            if scoring.mean_temporal_iou < floors["mean_temporal_iou"]:
                 floor_failures.append(
                     f"mean_temporal_iou {scoring.mean_temporal_iou:.2f} < hard floor "
-                    f"{TEMPORAL_IOU_HARD_FLOOR}"
+                    f"{floors['mean_temporal_iou']}"
                 )
-            if scoring.mean_spatial_iou < SPATIAL_IOU_HARD_FLOOR:
+            if scoring.mean_spatial_iou < floors["mean_spatial_iou"]:
                 floor_failures.append(
                     f"mean_spatial_iou {scoring.mean_spatial_iou:.2f} < hard floor "
-                    f"{SPATIAL_IOU_HARD_FLOOR}"
+                    f"{floors['mean_spatial_iou']}"
                 )
 
     all_structural = structural_failures + floor_failures

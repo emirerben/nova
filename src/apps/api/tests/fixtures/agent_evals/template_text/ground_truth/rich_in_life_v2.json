@@ -1,0 +1,38 @@
+{
+  "overlays": [
+    {
+      "slot_index": 1,
+      "sample_text": "this is what I call:",
+      "start_s": 0.0,
+      "end_s": 5.5,
+      "bbox": {
+        "x_norm": 0.3943,
+        "y_norm": 0.4722,
+        "w_norm": 0.2099,
+        "h_norm": 0.05,
+        "sample_frame_t": 1.0
+      },
+      "font_color_hex": "#FFFFFF",
+      "effect": "static",
+      "role": "label",
+      "size_class": "medium"
+    },
+    {
+      "slot_index": 1,
+      "sample_text": "being rich in life",
+      "start_s": 5.5,
+      "end_s": 22.37,
+      "bbox": {
+        "x_norm": 0.4026,
+        "y_norm": 0.4722,
+        "w_norm": 0.1953,
+        "h_norm": 0.0602,
+        "sample_frame_t": 8.0
+      },
+      "font_color_hex": "#FBF6A9",
+      "effect": "static",
+      "role": "hook",
+      "size_class": "medium"
+    }
+  ]
+}
