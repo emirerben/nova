@@ -160,33 +160,40 @@ class AppleVisionBackend:
     name = "apple-vision"
 
     def __init__(self) -> None:
-        # Same lazy-import rationale as CloudVisionBackend.
+        # Same lazy-import rationale as CloudVisionBackend. PyObjC's
+        # lazy-attribute machinery is NOT thread-safe — the first access
+        # to `Quartz.CFURLCreateWithFileSystemPath`, `Quartz.kCFURLPOSIXPathStyle`,
+        # `Vision.VNRequestTextRecognitionLevelAccurate`, etc. mutates an
+        # internal funcmap dict. Two worker threads hitting an unresolved
+        # constant simultaneously race and raise KeyError. Pre-resolve every
+        # attribute `detect()` uses on the main thread so the per-frame
+        # parallel calls only read already-cached instance attrs.
         import Quartz  # type: ignore[import]  # noqa: PLC0415
         import Vision  # type: ignore[import]  # noqa: PLC0415
 
-        self._Quartz = Quartz
-        self._Vision = Vision
+        self._cf_url_create = Quartz.CFURLCreateWithFileSystemPath
+        self._cf_url_posix = Quartz.kCFURLPOSIXPathStyle
+        self._cg_image_source_create_with_url = Quartz.CGImageSourceCreateWithURL
+        self._cg_image_source_create_at_index = Quartz.CGImageSourceCreateImageAtIndex
+        self._vn_text_request_cls = Vision.VNRecognizeTextRequest
+        self._vn_level_accurate = Vision.VNRequestTextRecognitionLevelAccurate
+        self._vn_handler_cls = Vision.VNImageRequestHandler
 
     def detect(self, image_path: str, *, frame_t_s: float) -> list[FrameDetection]:
-        Quartz = self._Quartz
-        Vision = self._Vision
-
-        url = Quartz.CFURLCreateWithFileSystemPath(
-            None, image_path, Quartz.kCFURLPOSIXPathStyle, False
-        )
-        src = Quartz.CGImageSourceCreateWithURL(url, None)
+        url = self._cf_url_create(None, image_path, self._cf_url_posix, False)
+        src = self._cg_image_source_create_with_url(url, None)
         if src is None:
             return []
-        cg = Quartz.CGImageSourceCreateImageAtIndex(src, 0, None)
+        cg = self._cg_image_source_create_at_index(src, 0, None)
         if cg is None:
             return []
 
-        request = Vision.VNRecognizeTextRequest.alloc().init()
-        request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+        request = self._vn_text_request_cls.alloc().init()
+        request.setRecognitionLevel_(self._vn_level_accurate)
         request.setUsesLanguageCorrection_(True)
         request.setRecognitionLanguages_(["en-US"])
 
-        handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(cg, {})
+        handler = self._vn_handler_cls.alloc().initWithCGImage_options_(cg, {})
         ok, _err = handler.performRequests_error_([request], None)
         if not ok or request.results() is None:
             return []
