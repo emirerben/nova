@@ -64,7 +64,9 @@ def _load_transcript(path: str | None) -> list[dict] | None:
     if isinstance(data, dict) and "words" in data:
         data = data["words"]
     if not isinstance(data, list):
-        raise SystemExit(f"--transcript-json {path}: expected list or {{'words': [...]}}, got {type(data)}")
+        raise SystemExit(
+            f"--transcript-json {path}: expected list or {{'words': [...]}}, got {type(data)}"
+        )
     return data
 
 
@@ -125,14 +127,20 @@ def _diff_against_ground_truth(stages_dir: Path, gt_path: str) -> None:
     print(f"  mean_spatial_iou   = {scoring.mean_spatial_iou:.2f}")
     print(f"  color_match        = {scoring.color_match_fraction:.2f}")
     print(f"  effect_accuracy    = {scoring.effect_label_accuracy:.2f}")
-    print(f"  matched {scoring.matched_count}/{scoring.truth_count} (pred={scoring.predicted_count})")
+    print(
+        f"  matched {scoring.matched_count}/{scoring.truth_count} (pred={scoring.predicted_count})"
+    )
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--video", required=True, help="Local path to the template video")
     ap.add_argument("--out", required=True, help="Directory to write stage dumps into")
-    ap.add_argument("--slot-boundaries-s", help='Comma-separated "start:end" pairs, e.g. "0:5.5,5.5:22"')
+    ap.add_argument(
+        "--slot-boundaries-s", help='Comma-separated "start:end" pairs, e.g. "0:5.5,5.5:22"'
+    )
     ap.add_argument("--transcript-json", help="Path to a transcript words JSON file")
     ap.add_argument("--fps", type=float, default=2.0, help="Frame extraction fps (default 2.0)")
     ap.add_argument("--template-id", help="Optional template_id label for logging")
@@ -153,8 +161,10 @@ def main() -> int:
     transcript = _load_transcript(args.transcript_json)
 
     print(f"Running Layer-2 pipeline on {video}")
-    print(f"  out_dir={out_dir}  fps={args.fps}  n_slot_boundaries={len(boundaries or [])}  "
-          f"n_transcript_words={len(transcript or [])}")
+    print(
+        f"  out_dir={out_dir}  fps={args.fps}  n_slot_boundaries={len(boundaries or [])}  "
+        f"n_transcript_words={len(transcript or [])}"
+    )
 
     output = run_full_pipeline(
         video,
