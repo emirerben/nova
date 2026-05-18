@@ -214,6 +214,20 @@ def _per_clip_filter_chain(inp: SinglePassInput, input_idx: int, output_label: s
     # across slots silently corrupt the output. Idempotent — adding format=
     # yuv420p when the chain already ends in it is a no-op.
     vf_parts.append("format=yuv420p")
+    # Force CFR before concat/xfade. `_build_video_filter` already emits
+    # `framerate=fps=N` at the head of the chain, but `framerate=` interpolates
+    # against the source PTS clock and silently fails to coerce inputs that
+    # report `avg_frame_rate=1/0` (FFmpeg's "unknown rate" — seen on some
+    # phone HEVC, HEIF-derived video, and screen recordings). The metadata
+    # that xfade reads downstream stays `1/0` and xfade rejects with
+    #   "The inputs needs to be a constant frame rate; current rate of 1/0
+    #    is invalid"
+    # caught in prod 2026-05-18 on job 856daa32-…  (BAD BUNNY music template,
+    # one user-uploaded clip with unparseable FPS). The `fps=` filter
+    # drops/duplicates frames to hit the target rate independent of input
+    # PTS coherence, so it succeeds where `framerate=` couldn't. Idempotent
+    # when the upstream `framerate=` already produced CFR output.
+    vf_parts.append(f"fps={settings.output_fps}")
     # Normalize timebase + PTS so concat and xfade nodes downstream see
     # matching streams. Without this, raw clip inputs land in xfade with
     # the source mp4's timebase (e.g. 1/15360) while concat outputs use
