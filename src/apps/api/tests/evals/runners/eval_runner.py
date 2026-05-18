@@ -183,6 +183,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.template_recipe import TemplateRecipeAgent
 
         return TemplateRecipeAgent
+    if agent_name == "nova.compose.template_text":
+        from app.agents.template_text import TemplateTextAgent
+
+        return TemplateTextAgent
     if agent_name == "nova.video.clip_metadata":
         from app.agents.clip_metadata import ClipMetadataAgent
 
@@ -295,7 +299,12 @@ def run_eval(
     # Eval runs post their own Langfuse trace (with source:eval) at the end
     # of run_eval. Suppress the inner per-Agent.run() trace so we don't
     # double-post replay-mode evals as if they were prod traffic.
-    eval_ctx = RunContext(extra={"skip_langfuse_trace": True})
+    # `skip_agent_run_persist` keeps eval rows out of the prod `agent_run`
+    # table — the admin debug view filters by job_id and eval runs have no
+    # job, so persisting them would just be noise on the way to nowhere.
+    eval_ctx = RunContext(
+        extra={"skip_langfuse_trace": True, "skip_agent_run_persist": True}
+    )
 
     effective_input = fixture.input
     if live_input_normalizer is not None and model_client is not None:

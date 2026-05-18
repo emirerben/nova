@@ -4,21 +4,23 @@ Nova transforms raw real-life videos into viral short-form content (TikTok, Reel
 
 ## Session workflow: isolate in a worktree
 
-**Before starting non-trivial work, create a git worktree.** The main checkout (`/Users/emirerben/Projects/nova`) is shared across sessions and uncommitted edits collide. Symptoms seen in the wild: stray `.venv` deletions, duplicate migration files, mixed `git status` spanning unrelated branches.
+**Before starting non-trivial work, create a fresh worktree off `origin/main`.** The primary checkout at `/Users/emirerben/Projects/nova` is shared across sessions; uncommitted edits collide and the checkout stays pinned to whatever branch was last left there. Symptoms: stray `.venv` deletions, duplicate migration files, mixed `git status`, PRs with phantom conflicts because work landed against a stale base.
+
+One command does the whole flow (fetch origin/main + worktree off the fresh tip + correct branch naming):
 
 ```bash
-# From repo root, branch off main into a sibling checkout
-git fetch origin main
-git worktree add -b feat/<topic>-$(date +%Y-%m-%d) ../nova-<topic> origin/main
-cd ../nova-<topic>
+bash scripts/new-session.sh <topic>      # e.g. template-text-100
+cd ../nova-<topic>                       # script prints this; copy it
 ```
+
+A `SessionStart` hook (`.claude/settings.json` → `scripts/session-check.sh`) fetches `origin/main` and prints a warning if the current worktree is behind. If you see that warning at session start, run `new-session.sh` for new work, or `git merge --ff-only origin/main` to update an in-flight branch.
 
 Rules:
 - Run all edits, tests, and commits from the worktree path — never from `/Users/emirerben/Projects/nova` directly.
 - One worktree per logical change. Don't reuse a worktree for an unrelated feature.
 - When done, `git worktree remove ../nova-<topic>` after the PR merges. List active worktrees with `git worktree list`.
 - `.claude/worktrees/agent-*` are auto-managed by the Agent tool (`isolation: "worktree"`) — leave those alone.
-- Skip the worktree only for read-only investigation or single-line config tweaks confined to one file.
+- Skip the worktree only for read-only investigation or single-line config tweaks confined to one file. The session-check warning still applies.
 
 ## Stack
 - Frontend: Next.js (src/apps/web/) — TypeScript, React
@@ -31,12 +33,12 @@ Rules:
 - src/apps/web/  — Next.js frontend (upload UI, progress tracker, result viewer)
 - src/apps/web/src/app/admin/templates/[id]/components/ — visual overlay editor (OverlayPreview, OverlayTimeline, PropertyPanel, overlay-constants.ts)
 - src/apps/web/src/app/music/ — music gallery page (browse tracks, select, upload clips, poll result)
-- src/apps/web/src/app/admin/music/ — admin music management (upload tracks, monitor analysis, publish/archive)
+- src/apps/web/src/app/admin/music/ — admin music management (upload tracks, monitor analysis, publish/archive); `/admin/music/[id]` has Config + Test tabs (Test tab uploads clips, renders a job against the track, polls status, plays output, and re-renders the same clips against the latest `track_config`)
 - src/apps/web/src/lib/music-api.ts — typed API client for music routes
 - src/apps/api/  — Python API (upload endpoint, job queue, FFmpeg pipeline)
-- src/apps/api/app/routes/admin_music.py — admin music-track CRUD + publish/reanalyze endpoints
+- src/apps/api/app/routes/admin_music.py — admin music-track CRUD + publish/reanalyze endpoints; also serializes `best_sections` + `section_version` from the `song_sections` agent (per-row Pydantic coercion drops drifted enums so one bad row can't 500 the whole list). Hosts the Test tab's admin-token-gated job endpoints: `POST /admin/music-tracks/{id}/test-job` (bypasses the public `published_at`/`archived_at` gates, still requires `ready` + `audio_gcs_path`), `POST /admin/music-tracks/{id}/rerender-job` (re-renders a prior job's clips against the track's current `track_config`), `GET /admin/music-tracks/{id}/jobs/{job_id}/status` (track-scoped status poll so admin job IDs don't leak through the public endpoint), and `GET /admin/music-tracks/{id}/test-jobs` (recent jobs list for the "Previous renders" panel). `clip_gcs_paths` on test/rerender is allowlisted to the `music-uploads/` and `slot-uploads/` prefixes at the Pydantic validator — arbitrary bucket keys are rejected before any download.
 - src/apps/api/app/routes/music.py — public music-track gallery endpoint
-- src/apps/api/app/routes/music_jobs.py — beat-sync job submission + status polling
+- src/apps/api/app/routes/music_jobs.py — beat-sync job submission + status polling. `_validate_clip_count` is public (no underscore) so `admin_music.py`'s test-job/rerender endpoints can reuse it across modules.
 - src/apps/api/app/pipeline/music_recipe.py — beat-snap recipe generator (slot layout from beats)
 - src/apps/api/app/tasks/music_orchestrate.py — Celery tasks: beat analysis + music job orchestration
 - src/apps/api/app/services/audio_download.py — yt-dlp audio download + beat detection via FFmpeg
@@ -87,6 +89,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Best-section auto-select: `_auto_best_section()` scores 30s windows by beat density; result stored in `MusicTrack.track_config` as `best_start_s`/`best_end_s`/`slot_every_n_beats`
 - Recipe generation: `generate_music_recipe()` in `music_recipe.py` slices the best section into N slots where N = beat_count / slot_every_n_beats; each slot target duration = beats-per-slot × beat interval
 - Job orchestration: `orchestrate_music_job` Celery task runs parallel Gemini clip analysis → `template_matcher.match` → `_assemble_clips` with beat-snap → `_mix_template_audio`
+- Output URL contract: `_run_music_job`, `_run_templated_music_job`, and `orchestrate_auto_music_job` persist the signed URL returned by `upload_public_read` into `assembly_plan.output_url` — NOT the relative GCS path. Matches the template orchestrator and lets consumers (admin Test tab, public job-status responses) drop the value straight into `<video src>`. Legacy rows that still hold the relative path are stripped to `null` by the admin "Previous renders" list (`GET /admin/music-tracks/{id}/test-jobs`); the UI shows a "legacy format, re-render to view" notice instead of a broken `<video>`.
 - Audio download: `audio_download.py` uses yt-dlp subprocess (not yt-dlp Python API) to avoid RAM buffering; downloads to a temp path in GCS-mounted storage
 - Track lifecycle: `pending` → `analyzing` → `ready` | `failed`; only `ready`+`published` tracks appear in the public gallery
 - Admin proxy: Next.js `/api/admin/[...path]` route proxies to Fly.io API, keeping the admin token server-side only (never exposed to browser)
@@ -94,6 +97,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Beat-sync guard: tracks with 0 detected beats are marked `failed` at analysis time; `POST /music-jobs` rejects non-ready or non-published tracks
 - Auto-music classification: after `_run_gemini_audio_analysis` succeeds, `analyze_music_track_task` reuses the same Gemini `file_ref` to run `song_classifier` (`nova.audio.song_classifier`) and persists a locked-schema `MusicLabels` blob on `MusicTrack.ai_labels` + `label_version` (schema: `app/agents/_schemas/music_labels.py`, `CURRENT_LABEL_VERSION = 2026-05-15`). Classifier failure is non-fatal — recipe still saves, the track just won't be visible to `music_matcher` until backfill (`scripts/backfill_song_classifier.py`)
 - Auto-music matching: `music_matcher` (`nova.audio.music_matcher`, Gemini Flash, text-only) ranks the full published-track library against a clip set using each track's Phase-1 `MusicLabels` — orchestrator (Phase 3, not yet shipped) will take the top-K as variants
+- Song-sections visualizer: `song_sections` agent output (`MusicTrack.best_sections` + `section_version`, schema: `app/agents/_schemas/song_sections.py`) is exposed on `GET /admin/music-tracks` + `/admin/music-tracks/{id}` and rendered as a ranked band SVG over the beat strip at `/admin/music/[id]` (with hover rationale + click-to-seek). `_to_response` in `admin_music.py` coerces sections row-by-row and drops drifted enums so a single bad row can't 500 the list endpoint. `src/lib/music-api.ts` carries a hand-mirrored `SongSection` interface — keep its literal unions in sync when the Pydantic schema changes.
 
 ## Template pipeline
 - Interstitials: `app/pipeline/interstitials.py` detects curtain-close vs fade-to-black via FFmpeg luminance band analysis, renders color holds and `geq` pixel-expression curtain-close animations (drawbox cannot animate bar height over time)
@@ -111,6 +115,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Timing overrides: `start_s_override` / `end_s_override` on overlay JSON correct Gemini's approximate timing; curtain exit clamp always wins
 - Beat-snap: `cumulative_s` in `_assemble_clips()` must account for interstitial hold durations to keep beat-snap calculations accurate
 - Timing: `_burn_text_overlays()` must not reassign font-cycle multi-PNG timestamps with single overlay timestamps (bug fixed in v0.1.1.0)
+- Agentic pct-timing: AGENTIC templates emit relative timings — slots carry `target_duration_pct` and text overlays carry `start_pct`/`end_pct` instead of absolute seconds. `template_orchestrate.py` dispatches via the `is_agentic` flag through `app/pipeline/agentic_timing.py`, which resolves pct → seconds against the matched clip's effective duration. Classic templates are entirely unaffected. `template_recipe.parse()` adds two D2 guards for agentic output: `_dedup_overlays_across_slots` (collapses duplicate overlays across adjacent slots before render-time merge) and interstitial grounding (rejects interstitial slots that don't line up with an FFmpeg-detected `black_segments` boundary). Bump `prompt_version` (currently `2026-05-17`) when editing the agentic recipe prompt.
 
 ## Encoder policy (libx264 preset)
 - **Intermediate encodes** (re-encoded downstream by another stage) → `preset="ultrafast"` is fine. Call sites: `reframe_and_export`, `_build_overlay_cmd` in `reframe.py`; `render_color_hold` in `interstitials.py`; `image_clip` rendering; `drive_import` thumbnailing.
@@ -123,15 +128,29 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - DATABASE_URL
 - OPENAI_API_KEY
 - GEMINI_API_KEY — required for clip analysis (music jobs) and template analysis
+- `ORIENTATION_NORMALIZE_ENABLED` — defaults to `true`. Set to `false` and restart workers to make `normalize_orientation` (the upload-rotation fix in `app/pipeline/orientation.py`) a no-op without redeploying. Safety valve for orientation regressions. Apply with `fly secrets set ORIENTATION_NORMALIZE_ENABLED=false --app nova-video` and then `fly machine restart <id>` on the worker process group.
 
 ## Agent evals
-- Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, and `audio_template` agents. Two layers: deterministic structural assertions + Claude-Sonnet LLM-as-judge.
+- Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents. Two layers: deterministic structural assertions + Claude-Sonnet LLM-as-judge.
+- **`nova.compose.template_text`** is a focused text-overlay extraction pass that runs after `template_recipe` in agentic templates (`agentic_template_build_task` only — NOT music jobs, NOT manual templates). Replaces `recipe.slots[*].text_overlays` with overlays that have a required normalized bbox + font color + better recall. Its eval consumes optional OCR ground truth at `tests/fixtures/agent_evals/template_text/ground_truth/<slug>.json` (build via `scripts/build_text_ground_truth.py`, which uses the pre-existing `pytesseract` dep). Without ground truth, the judge falls back to qualitative inspection per the rubric.
 - Default: `cd src/apps/api && pytest tests/evals/ -v` — structural-only, replay mode, no network. Runs in CI.
 - With judge: `... --with-judge` (needs `ANTHROPIC_API_KEY`).
 - Live Gemini: `NOVA_EVAL_MODE=live ... --eval-mode=live --with-judge` (needs both keys; ~$2-5/run).
 - Manual GH Action: `.github/workflows/agent-evals.yml` (`workflow_dispatch`).
 - **Prompt-change rule:** when editing any file under `src/apps/api/prompts/` or any `render_prompt()`, bump the agent's `prompt_version` in its `AgentSpec` AND run `pytest tests/evals/<agent>_evals.py -v --with-judge --eval-mode=live` against current fixtures before merge. Compare scores against the prior version's run.
+- **Convenient wrapper for template_text live eval:** `bash src/apps/api/scripts/run_template_text_eval.sh` — checks env vars and fixtures, runs the live + judge eval, tees output to `.dev/eval-results/template_text-<timestamp>.log`, and prints a one-line summary. Run with `--help` for full usage. The raw pytest invocation (above) still works directly when you need more control (e.g. adding `--shadow-prompts-dir`).
 - See `tests/evals/README.md` for the full prompt-iteration loop.
+
+## Admin job-debug view
+- Surfaces every agent's full I/O + every non-LLM pipeline decision per job. Lives at `/admin/jobs` (list) and `/admin/jobs/{id}` (detail). Use it to answer "is this bad output from an agent, the agent's parameters, or assembly?"
+- **Template-scoped sibling:** `/admin/templates/{id}` has a "Debug" tab backed by `GET /admin/templates/{id}/debug` that surfaces the same agent_runs (`template_recipe`, `creative_direction`, etc.) but scoped to one template — usable before any job has referenced it. Uses the same shared `AgentSection` component (`src/apps/web/src/app/admin/_shared/`). Cap: 100 runs, DESC ordered (newest first).
+- Two storage layers:
+  - `agent_run` table (one row per agent invocation) — written automatically by `app/agents/_runtime._log_outcome` via `app/agents/_persistence.persist_agent_run`. Captures input/output Pydantic dicts, full raw LLM response, outcome, tokens, cost, latency. Best-effort: DB failure never breaks an in-flight job. Skips non-UUID job_ids (e.g. `"track:<id>"` track-level analyses).
+  - `Job.pipeline_trace` JSONB column — appended by `app/services/pipeline_trace.record_pipeline_event(stage, event, data)`. Reads the current job_id from a contextvar set by `pipeline_trace_for(job_id)`. Capped at 500 events/job.
+- **Mandatory orchestrator contract:** every Celery task that drives agents must wrap its body in `with pipeline_trace_for(job_id):` and clear on exit (the contextmanager handles this). Currently applied in `orchestrate_music_job`, `orchestrate_template_job`, `orchestrate_auto_music_job`. New orchestrators MUST do the same or downstream `record_pipeline_event` calls silently drop.
+- **Adding pipeline events:** call `record_pipeline_event("<stage>", "<event_name>", {"...": ...})` from inside any `app/pipeline/*` module at any decision point (current sites: curtain-close, xfade picks, beat-snap drift, orientation normalization). Stage buckets: `interstitial`, `transition`, `overlay`, `beat_snap`, `reframe`, `audio_mix`, `assembly`, `orientation`. The `orientation` stage emits five events: `skipped` (rotation flag is 0), `flag_stripped_no_rotation` (already-portrait pixels with stale ±90 flag — codec-copy remux, no pixel change), `flag_stripped_no_rotation_180` (already-portrait + ambiguous 180 flag, also strip-only with a warning), `normalized` (landscape pixels + flag, full re-encode with transpose), `disabled_by_env` (env var kill switch hit).
+- **Eval harness opt-out:** the eval RunContext sets `extra={"skip_agent_run_persist": True}` so replay-mode evals don't pollute the prod `agent_run` table. Don't drop this flag.
+- **Success-outcome set:** `app/agents/_runtime.SUCCESS_OUTCOMES` is the single source of truth for which agent outcomes count as success. Any SQL filter or UI label that distinguishes pass/fail MUST import this constant — the admin route already does (`app/routes/admin_jobs.py`).
 
 ## Deploy Configuration
 
@@ -158,7 +177,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Merge method: squash
 - Process groups: api (FastAPI/uvicorn) + worker (Celery)
 - Release command: `python -m alembic upgrade head` (runs migrations on every deploy)
-- VM sizing: api = 1 shared CPU / 512MB, worker = 2 shared CPUs / 2048MB
+- VM sizing: api = 1 shared CPU / 512MB, worker = 4 shared CPUs / 6144MB (size class is shared-cpu-4x because shared-cpu-2x hard-caps at 4096MB; see `fly.toml` for the 2026-05-17 OOM incident that drove the bump)
 - Dockerfile: repo-root `Dockerfile` (cached dependency layer from pyproject.toml)
 - Docker image includes: `app/`, `assets/`, `prompts/`, `alembic.ini`
 - CORS: `ALLOWED_ORIGINS` env var — JSON array format, e.g. `'["http://localhost:3000","https://nova-video.vercel.app"]'`

@@ -132,6 +132,14 @@
 **Priority:** P2 — add before marketing drives volume
 **Depends on:** Usage baseline from real jobs
 
+### Content-aware `_fallback_moments()` (added 2026-05-16)
+**What:** Replace the three hardcoded `[0, min(clip_dur, 5/10/15)]` windows in `_fallback_moments()` (`app/tasks/template_orchestrate.py:1359`) with content-aware moments derived from the Whisper transcript — e.g., longest speech bursts, word-density peaks.
+**Why:** Current fallback is a last-resort code path that produces near-useless moments. For clips ≤ 5s all three windows collapse to identical `[0, clip_dur]`, leaving the matcher with no real choice. When the matcher picks a fallback clip the rendered slot is structurally weak. Surfaced during the v0.4.22.0 investigation — clip 3 of job `9ec8e5ff-…` was assigned its single collapsed `[0, 5]` fallback moment for a 10s slot, producing the 6s silent-failure output.
+**How:** Use the Whisper transcript already computed at `template_orchestrate.py:1321`. Score windows by speech density / longest contiguous phrase. Generate 2-3 candidates of different lengths so the matcher still has options.
+**Effort:** S (human: ~3h / CC: ~20 min)
+**Priority:** P3 — low-leverage if Gemini reliability stays high (the common case never hits fallback)
+**Depends on:** nothing — standalone PR
+
 ### Multiple Template Support
 **What:** Support different template structures for different content categories (tutorial vs. reaction vs. vlog).
 **Why:** v1 validates the single-template UX; after validation, multiple templates unlock more use cases.
@@ -196,6 +204,9 @@
 **Effort:** S (human: ~1 day / CC: ~15 min)
 **Priority:** P3 — after audio handling is understood
 **Depends on:** Template prompt improvement merged (for speed_factor data)
+
+### ~~Agent text-overlay coverage for word-by-word templates~~ (added 2026-05-16)
+**Completed in v0.4.26.0 (2026-05-17):** Solved by carving text extraction into its own agent (`nova.compose.template_text`) instead of tightening the recipe prompt. Dedicated agent + dedicated prompt + dedicated rubric + OCR ground-truth eval. Recipe prompt left alone — the new agent overwrites recipe overlays in `agentic_template_build_task`. See CHANGELOG v0.4.26.0.
 
 ---
 
@@ -335,6 +346,129 @@ These TODOs were filed when the first wave of Yasin's prompt rewrites shipped (`
 **How:** One-off audit script over `video_templates.recipe_cached` to count how many recipes use `speed_factor != 1.0` in slots whose `transition_in` is NOT `speed-ramp`. If the count is small (<10), migrate them and remove the field. If large, coordinate a deprecation window.
 **Effort:** M (human: ~1d / CC: ~30 min)
 **Priority:** P3
+
+### Slim the recipe-agent prompt: drop text_overlays once manual templates adopt TemplateTextAgent (follow-up to PR #188)
+**What:** Remove the text-overlay extraction instructions from `src/apps/api/prompts/analyze_template_single.txt` and `src/apps/api/prompts/analyze_template_pass2.txt` (the two recipe-agent prompt templates used by `TemplateRecipeAgent.render_prompt()`). Update `_validate_slots()` in `src/apps/api/app/agents/template_recipe.py` to stop validating `text_overlays` on slot dicts. Drop the related validators (`_validate_text_bbox`, the `text_overlays` for-loop inside `_validate_slots`, `_dedup_overlays_across_slots`, `_enforce_pct_uniformity`'s overlay leg) and any callsites that read `recipe.slots[*].text_overlays` in the manual-template path.
+**Why:** PR #188 (v0.4.26.0) shipped `nova.compose.template_text` as a dedicated text-extraction agent. In the agentic build path (`agentic_template_build_task`), `template_text_extraction._merge_overlays_into_slots` already OVERWRITES `recipe.slots[*].text_overlays` with the text agent's richer output — so the recipe agent's text extraction in that path is wasted tokens. Once the manual-template build path also calls `TemplateTextAgent`, the recipe prompt is duplicating work on every template analysis. Slimming it will improve focus on slot decomposition, interstitials, transitions, and creative direction, and reduce per-call token usage.
+**How:** 1) Wire `TemplateTextAgent` into the manual-template build path (separate prerequisite — no plan exists yet). 2) Once that lands and is verified in prod, edit `analyze_template_single.txt` and `analyze_template_pass2.txt` to remove the text-overlay extraction section. 3) Bump `TemplateRecipeAgent.spec.prompt_version` in `src/apps/api/app/agents/template_recipe.py`. 4) Run `pytest tests/evals/test_template_recipe_evals.py -v --with-judge --eval-mode=live` against existing fixtures and compare scores against the prior `prompt_version` run. 5) After a release cycle, drop the `text_overlays` validation logic from `_validate_slots()` and its helper functions (`_validate_text_bbox`, `_dedup_overlays_across_slots`, the overlay leg of `_enforce_pct_uniformity`).
+**Effort:** ~half a day once the prerequisite manual-path wiring is done (~30 min prompt edit + schema cleanup + fixture re-export + eval comparison). The unscoped blocker is the manual-path wiring itself.
+**Priority:** P2 — quality improvement, not a bug. Blocked.
+**Depends on:** Manual-template build path adopting `TemplateTextAgent` (no plan exists yet — separate work).
+
+---
+
+## Single-pass OOM follow-ups (added 2026-05-17)
+
+### Drop `base_output_path` on the admin-test / preview path
+**What:** When `preview_mode=True` in `POST /admin/templates/{id}/test-job` (`admin.py:1099` → `orchestrate_template_job` → `_assemble_clips` → `run_single_pass`), pass `base_output_path=None`. Eliminates the `split=2` dual-output fork in `single_pass.py` and the second simultaneous libx264 encoder.
+**Why:** Admin test surface OOM'd at 1.9 GB anon-RSS on a MINIMAL spec (1 input clip, 0 transitions, 0 PNGs, 2 ASS subs) on 2026-05-17 — job `022a00e4-7926-4d82-b248-16431dec543b`. The 4096 → 6144 MB `fly.toml` bump is the immediate fix; this is the structural one. The overlay-free `[base]` output exists for the production audio-mix step (`_mix_template_audio`), which the preview path doesn't run, so the second encode is wasted work AND the dominant memory consumer.
+**How:** Conditional at the `run_single_pass` call site in `_assemble_clips`: `base_output_path=None if preview_mode else base_path`. Verify the post-process `shutil.copy2` branch at `single_pass.py` still works (it's the no-overlays fallback, not the preview path). Existing tests in `tests/pipeline/test_single_pass.py` already cover the single-output path. Add one regression test asserting `preview_mode=True` produces a command with exactly one `-map [vout]` block.
+**Effort:** S (human: ~1h / CC: ~15 min)
+**Priority:** P2
+
+### Investigate float-buffer working set on single-pass HDR sources
+**What:** Profile `_per_clip_filter_chain` on an HDR/HLG source to confirm whether `format=gbrpf32le` in the reframe chain (a 6.4× memory expansion, ~24 MB per 1080×1920 frame) is the dominant memory hog when `split=2` dual-output is active. If yes, move the format conversion AFTER the split so the fork holds 8-bit YUV not 32-bit float.
+**Why:** OOM at 1.9 GB on a 1-input spec is high for an SDR source; need to confirm whether clip `files/d22usve26ly4` on job `022a00e4-...` was HDR. Pull metadata via `/admin/jobs/022a00e4-7926-4d82-b248-16431dec543b/debug` (shipped v0.4.22.0). If HDR-driven, the structural fix may eliminate the need for the 6144 MB worker bump.
+**How:** (1) Read the clip's `colorspace`/`color_transfer` from the job-debug page. (2) Reproduce locally; run ffmpeg with `-progress`/`-stats` and watch RSS in `top`. (3) If confirmed HDR-driven, restructure so `format=yuv420p` happens before the `split=2` fork — currently it happens earlier in `_per_clip_filter_chain` but the float buffer may persist through the split point.
+**Effort:** M (human: ~1d / CC: ~2h)
+**Priority:** P2
+**Depends on:** "Drop base_output_path on the admin-test / preview path" — that change may resolve the symptom on the admin surface and reduce the urgency.
+
+### Worker memory telemetry
+**What:** Wire `process_resident_set_size` (and ideally peak RSS during a render) into the worker's structured logging or Prometheus metrics. The original 2048 → 4096 fly.toml comment ended with "Revisit once `process_resident_set_size` telemetry confirms whether the bump was needed" — that telemetry never landed, so the 4096 → 6144 bump on 2026-05-17 is again "vibes-based capacity planning."
+**Why:** Without RSS telemetry, every OOM is a surprise discovered by a user report. With it, we'd see the working-set trend over time and bump RAM (or apply structural fixes) preemptively.
+**How:** Wrap `subprocess.run(ffmpeg, ...)` in `single_pass.py` and `reframe.py` with `psutil`-based peak-RSS sampling (one thread polling `proc.memory_info().rss` every 100ms). Log peak alongside the existing `single_pass_start`/`single_pass_done` events. Optional: emit a Prometheus gauge or a Langfuse trace metric.
+**Effort:** S (human: ~2h / CC: ~30 min)
+**Priority:** P3
+
+## P0 — pre-existing test failures on main (noticed 2026-05-17)
+
+### Fix overlay-constants snapToNearestZone zone-boundary tests
+**What:** 5 failing tests in `src/apps/web/src/__tests__/admin/overlay-editor.test.tsx` under the `overlay-constants > snapToNearestZone` block. Expected `"center"` / `"top"` but got `"center-above"` at zone boundaries. Surfaced during `/ship` of the admin music Test tab branch on 2026-05-17.
+**Why:** The branch I shipped doesn't touch overlay code, but these failures are on origin/main right now. Whoever introduced `center-above` as a snap zone didn't update the boundary tests. CI will fail for everyone shipping until this is fixed.
+**How:** Either (a) update the tests to expect the new zone labels, or (b) revert the snap-zone change. Check `git log -p src/apps/web/src/lib/admin/overlay-constants.ts` to find the introducing commit.
+**Effort:** XS (human: ~30 min / CC: ~10 min)
+**Priority:** P0
+
+---
+
+## Music-only edits — quality gaps (added 2026-05-17)
+
+Discovered during the `/plan-eng-review` audit for the admin Music Test tab. The
+beat-sync path (`_run_music_job`) works today but has these soft edges. The Test
+tab itself shipped in the same PR — these items only matter once admins start
+producing real music-only edits at volume.
+
+### Authenticate `POST /music-jobs`
+**What:** Replace the `SYNTHETIC_USER_ID = 00000000-...-001` constant in `src/apps/api/app/routes/music_jobs.py:31` with `Depends(get_current_user)`. Right now any caller can POST a music job and burn Gemini quota.
+**Why:** The endpoint comment already calls this out as a known MVP gap. The admin test-job endpoint (added in this PR) is admin-token-gated, so this only blocks public exposure of `/music-jobs` — but it must land before /music goes back to public users.
+**How:** Mirror the `template_jobs.py` auth pattern when that lands. Single dependency swap.
+**Effort:** S (human: ~2h / CC: ~15 min)
+**Priority:** P2
+**Depends on:** "Sign-in / auth on the new header" (above)
+
+### Music-only output eval harness
+**What:** Extend `src/apps/api/tests/evals/` with `music_assembly_evals.py`. Structural checks: every produced slot's `cumulative_s` is within 0.05s of the nearest beat in `beat_timestamps_s`; no slot's actual duration deviates from `target_duration_s` by more than 0.1s; audio track length matches video length within 0.5s.
+**Why:** The Big-3 eval harness (`template_recipe`, `clip_metadata`, `creative_direction`) covers prompt agents. Music assembly is pure deterministic FFmpeg + math, but beat-snap regressions slip through every refactor of `_assemble_clips` / `_plan_slots`. A 5-min smoke job + ffprobe-based structural checks would catch them.
+**How:** Replay-mode fixture is a `(beat_timestamps, track_config, clip_durations)` tuple → assembled-slot ranges. Live mode renders a real video and probes the output. Reuse the `eval_mode` flag from existing harness.
+**Effort:** M (human: ~1d / CC: ~45 min)
+**Priority:** P2
+
+### End-to-end test for `_run_music_job`
+**What:** New pytest under `src/apps/api/tests/tasks/test_music_orchestrate_e2e.py` that walks a real beat-sync flow through `_run_music_job` with a fixture track (mocked Gemini, real FFmpeg, tmp clips). Asserts the job ends in `music_ready` and `assembly_plan.output_url` is a non-empty string.
+**Why:** Today the only coverage is route-level validators. A regression in `generate_music_recipe`, `match`, or `_assemble_clips` for the music path would only surface in prod or manual admin testing.
+**How:** Generate 3 short tone-clips via `ffmpeg lavfi` in the fixture, mock `_upload_clips_parallel` + `_analyze_clips_parallel` to return canned `clip_metas`, run the orchestrator end-to-end against a tmp GCS bucket.
+**Effort:** M (human: ~1d / CC: ~40 min)
+**Priority:** P2
+
+### Music recipe: transition vocabulary beyond `cut`
+**What:** `generate_music_recipe()` in `src/apps/api/app/pipeline/music_recipe.py:63` hardcodes `"transition_in": "cut"` for every slot. The infrastructure in `transitions.py` already supports whip-pan, flash-cut, zoom-in, dissolve — the recipe just never asks for them.
+**Why:** Most viral music edits punch transitions on the beat (whip on the snare, flash on the kick). Cut-only output looks flat next to organic refs.
+**How:** Add `transition_style` to `track_config` (one of `cut` | `whip` | `flash` | `mixed`) and let the recipe pick per-slot transitions based on the song's section labels (already on `MusicTrack.best_sections`).
+**Effort:** M (human: ~1d / CC: ~45 min)
+**Priority:** P3
+
+### Music recipe: speed ramps / slow-mo
+**What:** `speed_factor` in `_plan_slots` defaults to 1.0 for music recipes. No way to drop to 0.5x on a drop or 2x on a build.
+**Why:** Speed contrast is a core music-edit lever. Beat-sync without speed ramps reads as mechanical.
+**How:** Map `MusicTrack.best_sections[*].energy` ("peaks_high" / "high" / "medium" / "low") to a per-slot speed_factor curve in `generate_music_recipe`.
+**Effort:** M (human: ~1d / CC: ~45 min)
+**Priority:** P3
+
+### `_assemble_clips` Phase 3 short-circuit for music-only
+**What:** Add `skip_overlays: bool = False` parameter to `_assemble_clips()` in `src/apps/api/app/tasks/template_orchestrate.py:1663`. When `True`, skip the curtain-close, interstitial-insert, and overlay-merge loops (`music_orchestrate.py:425–426` already passes `interstitials=[]` and `user_subject=""`, so Phase 3 currently runs as a series of no-ops).
+**Why:** Marginal CPU win, much cleaner code. Makes the music-only path readable as a path rather than as a sequence of empty branches.
+**How:** Wrap lines 1758–1894 in `if not skip_overlays:` and add a fast-path collect of `reframed_paths` + `slot_durations`. Pass `skip_overlays=True` from both `_run_music_job` and `_run_templated_music_job`.
+**Effort:** S (human: ~3h / CC: ~25 min)
+**Priority:** P3
+
+### Clip-shorter-than-slot policy
+**What:** Document and test what happens when a clip is shorter than its assigned slot's `target_duration_s` — does `_plan_slots` loop the clip, freeze on the last frame, or trim the slot? Today this is implicit FFmpeg behavior.
+**Why:** Admin testing the Music tab will hit this with short test clips. Silent fallback = bad output without a clear failure.
+**How:** Probe each clip's actual duration in `_plan_slots` and either (a) reject with 422 at submit, (b) trim the slot to clip length and compensate elsewhere, or (c) loop the clip. Pick one policy, document it, test it.
+**Effort:** S (human: ~3h / CC: ~30 min)
+**Priority:** P2
+
+### Tighten `_validate_clip_count` for beat-sync tracks
+**What:** Today `_validate_clip_count` in `src/apps/api/app/routes/music_jobs.py:109` defaults `required_clips_min=1`, `required_clips_max=20` for beat-sync tracks. The "correct" count is `beat_count / slot_every_n_beats`, but the validator doesn't enforce it — so admins can submit any 1–20 clips and the assembler will silently truncate or repeat.
+**Why:** Wrong clip count → silently wrong output. Should surface at submit time, not playback time.
+**How:** During beat analysis, write `required_clips_min == required_clips_max == slot_count` into `MusicTrack.track_config`. Drop the 1/20 default fallback.
+**Effort:** S (human: ~2h / CC: ~20 min)
+**Priority:** P2
+
+### Cap music-only output at 60s
+**What:** Per CLAUDE.md domain context, target output is sub-60s. The beat-sync path doesn't enforce this — if a track's `best_section` is 75s, the output is 75s.
+**Why:** Over-spec videos are uploaded to TikTok/Reels and silently rejected or auto-trimmed by the platform. The pipeline should refuse to produce them.
+**How:** Clamp `best_end_s - best_start_s ≤ 60` in `_auto_best_section()` (`src/apps/api/app/services/audio_download.py`). Show a warning in the admin Config tab when the saved section exceeds 60s.
+**Effort:** S (human: ~2h / CC: ~15 min)
+**Priority:** P2
+
+### Programmatic audio-mix QA on music-only output
+**What:** After `_mix_template_audio` finishes in `_run_music_job`, run an ffprobe loudness measurement on a 1-second window every ~5 seconds of the output. If any window is silent (< -50 dBFS RMS), mark the job as `music_ready_warning` and surface the gap in the admin Test tab.
+**Why:** Silent-failure mode: if `_mix_template_audio` produces a video with the audio track muted, out-of-sync, or only partially looped, there is no automated check today — admins only catch it by ear, and the public viewer would ship a broken video.
+**How:** New helper `probe_audio_loudness(path)` in `app/pipeline/audio_qa.py`. Call after the mix step, write `assembly_plan.audio_qa = { peak_dbfs, silent_windows: [...] }`. Render a warning chip in `TestTab.tsx` when `silent_windows` is non-empty.
+**Effort:** M (human: ~1d / CC: ~45 min)
+**Priority:** P2
 
 ---
 

@@ -24,6 +24,7 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     # Migrated agents (existing LLM call sites consolidated under runtime)
     ("nova.video.clip_metadata", "app.agents.clip_metadata", "ClipMetadataAgent"),
     ("nova.compose.template_recipe", "app.agents.template_recipe", "TemplateRecipeAgent"),
+    ("nova.compose.template_text", "app.agents.template_text", "TemplateTextAgent"),
     ("nova.audio.transcript", "app.agents.transcript", "TranscriptAgent"),
     ("nova.audio.template_recipe", "app.agents.audio_template", "AudioTemplateAgent"),
     ("nova.audio.song_classifier", "app.agents.song_classifier", "SongClassifierAgent"),

@@ -164,11 +164,12 @@ function FontPicker({
 }) {
   const inferred = getInferredFontName(overlay);
   const current = overlay.font_family ?? "";
+  const unknownFont = !!current && !FONT_REGISTRY[current];
 
   return (
     <Field label="Font">
       <select
-        value={current}
+        value={unknownFont ? "" : current}
         onChange={(e) => onChange(e.target.value || null)}
         className={selectClass}
       >
@@ -189,6 +190,11 @@ function FontPicker({
           );
         })}
       </select>
+      {unknownFont && (
+        <span className="text-xs text-amber-400 mt-1 block">
+          Unknown font &quot;{current}&quot; — falling back to style default. Pick one above to fix.
+        </span>
+      )}
     </Field>
   );
 }

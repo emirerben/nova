@@ -102,16 +102,36 @@ def agentic_match(
             "or lack best_moments). Caller should fall back to greedy match."
         )
 
-    agent = ClipRouterAgent(default_client())
-    out = agent.run(
-        ClipRouterInput(
-            slots=slot_specs,
-            candidates=candidates,
-            copy_tone=getattr(recipe, "copy_tone", "") or "",
-            creative_direction=getattr(recipe, "creative_direction", "") or "",
-        ),
-        ctx=RunContext(job_id=job_id),
+    # Phase 4 perf: content-hash the ClipRouterInput and check Redis before
+    # the LLM call. Same-clips + same-recipe test-job reruns (e.g. operator
+    # iterating in the Test tab without changing clips or the recipe) skip the
+    # ~3-5s LLM hop. Cache falls open on any error so behavior on miss is
+    # identical to today.
+    from app.pipeline.clip_router_cache import (  # noqa: PLC0415
+        get_cached_assignments,
+        set_cached_assignments,
     )
+
+    router_input = ClipRouterInput(
+        slots=slot_specs,
+        candidates=candidates,
+        copy_tone=getattr(recipe, "copy_tone", "") or "",
+        creative_direction=getattr(recipe, "creative_direction", "") or "",
+    )
+
+    assignments = get_cached_assignments(router_input)
+    if assignments is not None:
+        log.info(
+            "agentic_match_clip_router_cache_hit",
+            job_id=job_id,
+            assignment_count=len(assignments),
+            slot_count=len(slot_specs),
+        )
+    else:
+        agent = ClipRouterAgent(default_client())
+        out = agent.run(router_input, ctx=RunContext(job_id=job_id))
+        assignments = out.assignments
+        set_cached_assignments(router_input, assignments)
 
     # Index clip_metas by id for O(1) lookup; same for slots.
     meta_by_id = {m.clip_id: m for m in clip_metas}
@@ -119,7 +139,7 @@ def agentic_match(
 
     steps: list[AssemblyStep] = []
     used_clip_ids: set[str] = set()
-    for assignment in out.assignments:
+    for assignment in assignments:
         slot = slot_by_pos.get(int(assignment.slot_position))
         meta = meta_by_id.get(str(assignment.candidate_id))
         if slot is None or meta is None:

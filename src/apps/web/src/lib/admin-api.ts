@@ -5,6 +5,8 @@
  * Token is stored in sessionStorage (clears on tab close).
  */
 
+import type { AgentRunPayload } from "@/lib/admin-jobs-api";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const TOKEN_KEY = "nova_admin_token";
 
@@ -134,6 +136,33 @@ export async function adminListTemplates(
 
 export async function adminGetTemplate(id: string): Promise<AdminTemplate> {
   const res = await adminFetch(`/admin/templates/${id}`);
+  return res.json();
+}
+
+export interface TemplateDebugSummary {
+  id: string;
+  name: string;
+  analysis_status: string;
+  template_type: string;
+  is_agentic: boolean;
+  gcs_path: string | null;
+  audio_gcs_path: string | null;
+  music_track_id: string | null;
+  error_detail: string | null;
+  recipe_cached_at: string | null;
+  created_at: string;
+}
+
+export interface TemplateDebugResponse {
+  template: TemplateDebugSummary;
+  template_agent_runs: AgentRunPayload[];
+  recipe_cached: Record<string, unknown> | null;
+}
+
+export async function adminGetTemplateDebug(
+  id: string,
+): Promise<TemplateDebugResponse> {
+  const res = await adminFetch(`/admin/templates/${id}/debug`);
   return res.json();
 }
 

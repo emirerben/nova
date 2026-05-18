@@ -27,7 +27,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
+from app.models import AgentRun, Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
+from app.routes._admin_schemas import AgentRunPayload, agent_run_to_payload
 from app.services.template_validation import (
     get_template_or_404,
     require_ready,
@@ -849,6 +850,77 @@ async def get_template(
     return _template_response(template)
 
 
+class TemplateDebugSummary(BaseModel):
+    id: str
+    name: str
+    analysis_status: str
+    template_type: str
+    is_agentic: bool
+    gcs_path: str | None
+    audio_gcs_path: str | None
+    music_track_id: str | None
+    error_detail: str | None
+    recipe_cached_at: datetime | None
+    created_at: datetime
+
+
+class TemplateDebugResponse(BaseModel):
+    template: TemplateDebugSummary
+    template_agent_runs: list[AgentRunPayload]
+    recipe_cached: dict | None
+
+
+# Cap so a template with hundreds of re-runs doesn't bloat the payload.
+# Job-debug doesn't cap because jobs are one-shot; templates get re-analyzed.
+_TEMPLATE_DEBUG_RUN_LIMIT = 100
+
+
+@router.get(
+    "/templates/{template_id}/debug",
+    response_model=TemplateDebugResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def get_template_debug(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateDebugResponse:
+    """Return template metadata + agent_runs that shaped its analysis.
+
+    Mirrors GET /admin/jobs/{id}/debug's Template-analysis section, but
+    scoped to one template — usable before any job has referenced it.
+    """
+    template = await get_template_or_404(template_id, db)
+
+    # DESC (newest-first) intentional: admins re-analyze templates frequently and
+    # want the latest attempt on top. Job-debug uses ASC for chronological flow;
+    # template-debug isn't chronological because each row is an independent run.
+    runs_res = await db.execute(
+        select(AgentRun)
+        .where(AgentRun.template_id == template_id)
+        .order_by(AgentRun.created_at.desc())
+        .limit(_TEMPLATE_DEBUG_RUN_LIMIT)
+    )
+    runs = list(runs_res.scalars().all())
+
+    return TemplateDebugResponse(
+        template=TemplateDebugSummary(
+            id=template.id,
+            name=template.name,
+            analysis_status=template.analysis_status,
+            template_type=template.template_type,
+            is_agentic=template.is_agentic,
+            gcs_path=template.gcs_path,
+            audio_gcs_path=template.audio_gcs_path,
+            music_track_id=template.music_track_id,
+            error_detail=template.error_detail,
+            recipe_cached_at=template.recipe_cached_at,
+            created_at=template.created_at,
+        ),
+        template_agent_runs=[agent_run_to_payload(r) for r in runs],
+        recipe_cached=template.recipe_cached,
+    )
+
+
 @router.patch(
     "/templates/{template_id}",
     response_model=TemplateResponse,
@@ -1086,7 +1158,8 @@ async def create_test_job(
     # so forcing single-pass here matches what the operator asked for.
     if req.preview_mode:
         orchestrate_template_job.apply_async(
-            args=[job_id], kwargs={"force_single_pass": True},
+            args=[job_id],
+            kwargs={"force_single_pass": True},
         )
     else:
         orchestrate_template_job.delay(job_id)
@@ -1596,10 +1669,7 @@ def _load_font_registry_families() -> list[str]:
     from pathlib import Path  # noqa: PLC0415
 
     registry_path = (
-        Path(__file__).resolve().parent.parent.parent
-        / "assets"
-        / "fonts"
-        / "font-registry.json"
+        Path(__file__).resolve().parent.parent.parent / "assets" / "fonts" / "font-registry.json"
     )
     try:
         with open(registry_path, encoding="utf-8") as f:
@@ -1705,7 +1775,9 @@ async def set_font_default(
         )
 
     updated = cascade_font_default_change(
-        recipe, req.font_default, old_default=old_default,
+        recipe,
+        req.font_default,
+        old_default=old_default,
     )
 
     version = TemplateRecipeVersion(
@@ -2157,6 +2229,59 @@ def _substitute_subject(overlays: list[dict], subject: str | None) -> list[dict]
     return out
 
 
+def _strip_unknown_font_families(overlays: list[dict]) -> list[dict]:
+    """Drop overlay/span `font_family` values that aren't in the backend registry.
+
+    The editor saves a `font_family` string and the pipeline looks it up in
+    `font-registry.json`. If a recipe carries a stale or hand-edited font
+    name the pipeline can't resolve, downstream renderers can raise instead of
+    falling back, which used to surface as a 500 from this endpoint. Strip
+    unknown names so rendering falls through to the legacy `font_style` path.
+    """
+    from app.pipeline.text_overlay import _FONT_REGISTRY  # noqa: PLC0415
+
+    known = set(_FONT_REGISTRY.get("fonts", {}).keys())
+    cleaned: list[dict] = []
+    for overlay in overlays:
+        copy = dict(overlay)
+        ff = copy.get("font_family")
+        if ff and ff not in known:
+            log.info("unknown_font_family_stripped", font_family=ff, where="overlay")
+            copy.pop("font_family", None)
+        spans = copy.get("spans")
+        if isinstance(spans, list):
+            new_spans = []
+            for span in spans:
+                span_copy = dict(span)
+                sf = span_copy.get("font_family")
+                if sf and sf not in known:
+                    log.info("unknown_font_family_stripped", font_family=sf, where="span")
+                    span_copy.pop("font_family", None)
+                new_spans.append(span_copy)
+            copy["spans"] = new_spans
+        cleaned.append(copy)
+    return cleaned
+
+
+def _blank_preview_png() -> bytes:
+    """Return a transparent 1080x1920 PNG (the editor's expected canvas).
+
+    Used as a degrade-gracefully fallback when overlay rendering raises, so
+    the admin editor doesn't surface a 500 to the user. The DOM preview is
+    still rendered client-side; the server PNG just goes blank for that frame.
+    """
+    import io  # noqa: PLC0415
+
+    from PIL import Image  # noqa: PLC0415
+
+    from app.pipeline.text_overlay import CANVAS_H, CANVAS_W  # noqa: PLC0415
+
+    img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
 @router.post(
     "/overlay-preview",
     dependencies=[Depends(_require_admin)],
@@ -2166,6 +2291,11 @@ async def overlay_preview(req: OverlayPreviewRequest):
 
     Used by OverlayPreview.tsx for WYSIWYG. Reuses the export pipeline's
     draw helpers so the preview is pixel-identical to the exported video.
+
+    On unexpected render errors, returns a transparent PNG with the failure
+    logged at exception level. The editor falls back to its DOM preview;
+    surfacing a 500 here used to break the entire editor on a single bad
+    overlay.
     """
     import os as _os  # noqa: PLC0415
     import shutil  # noqa: PLC0415
@@ -2175,11 +2305,15 @@ async def overlay_preview(req: OverlayPreviewRequest):
 
     from app.pipeline.text_overlay import render_overlays_at_time  # noqa: PLC0415
 
-    overlays = _substitute_subject(req.overlays, req.preview_subject)
-
-    tmp_dir = tempfile.mkdtemp(prefix="overlay_preview_route_")
-    png_path = _os.path.join(tmp_dir, "preview.png")
+    tmp_dir: str | None = None
+    data: bytes
+    overlays: list[dict] = []
     try:
+        overlays = _substitute_subject(req.overlays, req.preview_subject)
+        overlays = _strip_unknown_font_families(overlays)
+
+        tmp_dir = tempfile.mkdtemp(prefix="overlay_preview_route_")
+        png_path = _os.path.join(tmp_dir, "preview.png")
         render_overlays_at_time(
             overlays=overlays,
             slot_duration_s=req.slot_duration_s,
@@ -2189,13 +2323,19 @@ async def overlay_preview(req: OverlayPreviewRequest):
         with open(png_path, "rb") as f:
             data = f.read()
     except Exception as exc:
-        log.warning("overlay_preview_failed", error=str(exc))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"overlay preview render failed: {exc}",
-        ) from exc
+        log.exception(
+            "overlay_preview_failed",
+            error=str(exc),
+            overlay_count=len(overlays),
+            font_families=[o.get("font_family") for o in overlays],
+            effects=[o.get("effect") for o in overlays],
+            slot_duration_s=req.slot_duration_s,
+            time_in_slot_s=req.time_in_slot_s,
+        )
+        data = _blank_preview_png()
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if tmp_dir is not None:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return Response(
         content=data,

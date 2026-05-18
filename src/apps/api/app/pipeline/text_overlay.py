@@ -447,7 +447,12 @@ def render_overlays_at_time(
                 log.warning(
                     "overlay_preview_render_failed",
                     overlay_index=i,
+                    font_family=overlay.get("font_family"),
+                    font_style=overlay.get("font_style"),
+                    effect=overlay.get("effect"),
+                    has_spans=bool(overlay.get("spans")),
                     error=str(exc),
+                    error_type=type(exc).__name__,
                 )
                 continue
             if not layer_path or not os.path.exists(layer_path):

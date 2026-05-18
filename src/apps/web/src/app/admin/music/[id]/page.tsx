@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   adminGetMusicTrack,
   adminGetAudioUrl,
@@ -10,13 +10,45 @@ import {
   adminReanalyzeMusicTrack,
   adminArchiveMusicTrack,
   type MusicTrackDetail,
+  type SongSection,
   type TrackConfig,
 } from "@/lib/music-api";
 import { adminCreateTemplateFromMusicTrack } from "@/lib/admin-api";
+import { TestTab } from "./components/TestTab";
+
+type AdminMusicTabId = "config" | "test";
+
+const ADMIN_MUSIC_TABS: { id: AdminMusicTabId; label: string }[] = [
+  { id: "config", label: "Config" },
+  { id: "test", label: "Test" },
+];
 
 // ── Audio player with interactive waveform ────────────────────────────────────
 
 type SelectionMode = "start" | "end" | null;
+
+// Color tokens for the 3 ranked agent sections. Most-saturated = rank 1.
+// Stays in the page's violet/zinc/green/red palette.
+const RANK_COLORS: Record<1 | 2 | 3, { fill: string; stroke: string; text: string }> = {
+  1: { fill: "rgba(139,92,246,0.78)", stroke: "#a78bfa", text: "#ffffff" },
+  2: { fill: "rgba(139,92,246,0.45)", stroke: "#8b5cf6", text: "#ede9fe" },
+  3: { fill: "rgba(139,92,246,0.22)", stroke: "#7c3aed", text: "#ddd6fe" },
+};
+
+function pickTickInterval(duration: number): number {
+  if (duration <= 30) return 5;
+  if (duration <= 60) return 10;
+  if (duration <= 120) return 20;
+  if (duration <= 300) return 30;
+  return 60;
+}
+
+function formatTime(seconds: number): string {
+  const s = Math.max(0, seconds);
+  const m = Math.floor(s / 60);
+  const r = s - m * 60;
+  return `${m}:${r.toFixed(1).padStart(4, "0")}`;
+}
 
 function AudioPlayer({
   trackId,
@@ -24,6 +56,7 @@ function AudioPlayer({
   duration,
   start,
   end,
+  sections,
   onStartChange,
   onEndChange,
 }: {
@@ -32,6 +65,7 @@ function AudioPlayer({
   duration: number;
   start: number;
   end: number;
+  sections: SongSection[] | null;
   onStartChange: (s: number) => void;
   onEndChange: (s: number) => void;
 }) {
@@ -41,6 +75,7 @@ function AudioPlayer({
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrent] = useState(0);
   const [selectMode, setSelectMode] = useState<SelectionMode>(null);
+  const [hoverSection, setHoverSection] = useState<SongSection | null>(null);
   const rafRef = useRef<number>(0);
 
   // Fetch signed audio URL
@@ -71,7 +106,7 @@ function AudioPlayer({
     else { audio.pause(); setPlaying(false); }
   }, []);
 
-  // Play just the selected section
+  // Play the manually-configured section (existing config flow)
   const playSection = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -88,9 +123,44 @@ function AudioPlayer({
     audio.addEventListener("timeupdate", checkEnd);
   }, [start, end]);
 
+  // Play one of the agent's ranked sections — the core QA loop.
+  const playAgentSection = useCallback((s: SongSection) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = s.start_s;
+    audio.play();
+    setPlaying(true);
+    const checkEnd = () => {
+      if (audio.currentTime >= s.end_s) {
+        audio.pause();
+        setPlaying(false);
+        audio.removeEventListener("timeupdate", checkEnd);
+      }
+    };
+    audio.addEventListener("timeupdate", checkEnd);
+  }, []);
+
+  // SVG geometry. Ruler on top, optional band area in the middle, beat strip
+  // at the bottom. Beat strip height stays 56px so its internals are unchanged.
   const W = 700;
-  const H = 56;
   const barW = 2;
+  const RULER_H = 14;
+  const BAND_GAP_TOP = 4;
+  const BAND_ROW_H = 14;
+  const BAND_ROW_GAP = 2;
+  const bandRowCount = sections && sections.length > 0 ? Math.min(3, sections.length) : 0;
+  const BAND_AREA_H = bandRowCount > 0
+    ? bandRowCount * BAND_ROW_H + (bandRowCount - 1) * BAND_ROW_GAP
+    : 0;
+  const BAND_GAP_BOTTOM = bandRowCount > 0 ? 6 : 0;
+  const BEAT_TOP = RULER_H + BAND_GAP_TOP + BAND_AREA_H + BAND_GAP_BOTTOM;
+  const BEAT_H = 56;
+  const H = BEAT_TOP + BEAT_H;
+
+  function bandY(rank: 1 | 2 | 3): number {
+    // rank 1 stacks at the top so it visually dominates.
+    return RULER_H + BAND_GAP_TOP + (rank - 1) * (BAND_ROW_H + BAND_ROW_GAP);
+  }
 
   function handleWaveformClick(e: React.MouseEvent<SVGSVGElement>) {
     const svg = e.currentTarget;
@@ -119,6 +189,11 @@ function AudioPlayer({
   }
 
   const playheadX = duration > 0 ? (currentTime / duration) * W : 0;
+
+  // Time-ruler tick positions
+  const tickStep = pickTickInterval(duration);
+  const ticks: number[] = [];
+  for (let t = 0; t <= duration + 0.001; t += tickStep) ticks.push(t);
 
   return (
     <div>
@@ -152,16 +227,97 @@ function AudioPlayer({
       <svg
         width={W}
         height={H}
-        className={`bg-zinc-800 rounded cursor-${selectMode ? "crosshair" : "pointer"} block`}
+        className="bg-zinc-800 rounded block"
         style={{ cursor: selectMode ? "crosshair" : "pointer" }}
         onClick={handleWaveformClick}
       >
-        {/* Selected window highlight */}
+        {/* Time ruler */}
+        {ticks.map((t, i) => {
+          const x = (t / duration) * W;
+          return (
+            <g key={`tick-${i}`}>
+              <line x1={x} y1={RULER_H - 4} x2={x} y2={RULER_H} stroke="#52525b" strokeWidth={1} />
+              <text
+                x={Math.min(x + 2, W - 22)}
+                y={RULER_H - 5}
+                fontSize={9}
+                fill="#71717a"
+                fontFamily="ui-monospace, monospace"
+              >
+                {Math.round(t)}s
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Agent section bands (1-3 ranked, stacked rank-1 on top) */}
+        {sections?.map((s, i) => {
+          const rank = (s.rank in RANK_COLORS ? s.rank : 1) as 1 | 2 | 3;
+          const colors = RANK_COLORS[rank];
+          const xRaw = (s.start_s / duration) * W;
+          const wRaw = ((s.end_s - s.start_s) / duration) * W;
+          // Clamp inside SVG width in case stored end_s overran duration.
+          const x = Math.max(0, Math.min(W, xRaw));
+          const w = Math.max(2, Math.min(W - x, wRaw));
+          const y = bandY(rank);
+          const showLabel = w > 110;
+          const label = `#${rank} · ${s.label} · ${s.energy}`;
+          return (
+            // Key by array index — JSONB rows can theoretically duplicate ranks
+            // (write-time parse() guards but read path trusts the data); using
+            // rank as key would collide and break React identity tracking.
+            <g
+              key={`section-${i}`}
+              onMouseEnter={() => setHoverSection(s)}
+              onMouseLeave={() => setHoverSection((prev) => (prev === s ? null : prev))}
+              onClick={(e) => {
+                if (selectMode !== null) return; // let waveform handler claim it
+                e.stopPropagation();
+                playAgentSection(s);
+              }}
+              style={{ cursor: selectMode ? "crosshair" : "pointer" }}
+            >
+              <rect
+                x={x}
+                y={y}
+                width={w}
+                height={BAND_ROW_H}
+                rx={2}
+                fill={colors.fill}
+                stroke={colors.stroke}
+                strokeWidth={1}
+              />
+              {showLabel ? (
+                <text
+                  x={x + 4}
+                  y={y + BAND_ROW_H - 4}
+                  fontSize={10}
+                  fill={colors.text}
+                  fontFamily="ui-sans-serif, system-ui"
+                >
+                  {label}
+                </text>
+              ) : (
+                <text
+                  x={x + 2}
+                  y={y + BAND_ROW_H - 4}
+                  fontSize={10}
+                  fill={colors.text}
+                  fontFamily="ui-sans-serif, system-ui"
+                >
+                  {`#${rank}`}
+                </text>
+              )}
+            </g>
+          );
+        })}
+
+        {/* Manual-config selected window highlight (over beat strip) */}
         <rect
           x={(start / duration) * W}
-          y={0}
+          y={BEAT_TOP}
           width={Math.max(0, ((end - start) / duration) * W)}
-          height={H}
+          height={BEAT_H}
           fill="rgba(139,92,246,0.15)"
         />
 
@@ -173,19 +329,19 @@ function AudioPlayer({
             <rect
               key={i}
               x={x}
-              y={inWindow ? 4 : 14}
+              y={BEAT_TOP + (inWindow ? 4 : 14)}
               width={barW}
-              height={inWindow ? H - 8 : H - 28}
+              height={inWindow ? BEAT_H - 8 : BEAT_H - 28}
               fill={inWindow ? "#8b5cf6" : "#52525b"}
               rx={1}
             />
           );
         })}
 
-        {/* Start marker */}
+        {/* Start marker — spans bands + beat strip, skips the ruler */}
         <line
           x1={(start / duration) * W}
-          y1={0}
+          y1={RULER_H}
           x2={(start / duration) * W}
           y2={H}
           stroke="#22c55e"
@@ -194,14 +350,14 @@ function AudioPlayer({
         {/* End marker */}
         <line
           x1={(end / duration) * W}
-          y1={0}
+          y1={RULER_H}
           x2={(end / duration) * W}
           y2={H}
           stroke="#ef4444"
           strokeWidth={2}
         />
 
-        {/* Playhead */}
+        {/* Playhead — spans full height including ruler so timestamps stay readable */}
         <line
           x1={playheadX}
           y1={0}
@@ -212,6 +368,37 @@ function AudioPlayer({
           opacity={0.8}
         />
       </svg>
+
+      {/* Section hover detail card. Always render the slot so the layout
+          doesn't jump as the user moves between bands. */}
+      {bandRowCount > 0 && (
+        <div className="mt-2 min-h-[44px] text-xs">
+          {hoverSection ? (
+            <div className="bg-zinc-800/60 border border-zinc-700 rounded px-3 py-2 leading-snug">
+              <div className="flex items-center gap-2 mb-1">
+                <span
+                  className="inline-block w-2 h-2 rounded-sm"
+                  style={{ background: RANK_COLORS[(hoverSection.rank in RANK_COLORS ? hoverSection.rank : 1) as 1 | 2 | 3].fill }}
+                />
+                <span className="font-semibold text-zinc-100">
+                  Rank #{hoverSection.rank} · {hoverSection.label} · {hoverSection.energy}
+                </span>
+                <span className="text-zinc-500 font-mono">
+                  {formatTime(hoverSection.start_s)} – {formatTime(hoverSection.end_s)}
+                </span>
+                <span className="text-zinc-500">
+                  → use as: <span className="text-zinc-300">{hoverSection.suggested_use}</span>
+                </span>
+              </div>
+              <div className="text-zinc-400">{hoverSection.rationale}</div>
+            </div>
+          ) : (
+            <div className="text-zinc-500 px-1 py-2">
+              Hover an agent band for its rationale · click to play that section
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Section selection buttons */}
       <div className="flex items-center gap-3 mt-2">
@@ -259,6 +446,17 @@ export default function AdminMusicTrackPage({
 }) {
   const { id } = params;
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const activeTabRaw = (searchParams.get("tab") as AdminMusicTabId) || "config";
+  const activeTab: AdminMusicTabId = ADMIN_MUSIC_TABS.some((t) => t.id === activeTabRaw)
+    ? activeTabRaw
+    : "config";
+  const setTab = useCallback(
+    (tab: AdminMusicTabId) => {
+      router.replace(`/admin/music/${id}?tab=${tab}`);
+    },
+    [id, router],
+  );
   const [track, setTrack] = useState<MusicTrackDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -412,6 +610,96 @@ export default function AdminMusicTrackPage({
         </span>
       </div>
 
+      {/* Tabs */}
+      <div className="border-b border-zinc-800 mb-6">
+        <div className="flex gap-1">
+          {ADMIN_MUSIC_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setTab(tab.id)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === tab.id
+                  ? "border-white text-white"
+                  : "border-transparent text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeTab === "test" ? (
+        <TestTab trackId={id} track={track} />
+      ) : (
+        <ConfigTabContent
+          id={id}
+          track={track}
+          cfg={cfg}
+          bestStart={bestStart}
+          setBestStart={setBestStart}
+          bestEnd={bestEnd}
+          setBestEnd={setBestEnd}
+          slotEveryN={slotEveryN}
+          setSlotEveryN={setSlotEveryN}
+          saving={saving}
+          saveMsg={saveMsg}
+          reanalyzing={reanalyzing}
+          creatingTemplate={creatingTemplate}
+          handleSaveConfig={handleSaveConfig}
+          handleTogglePublish={handleTogglePublish}
+          handleReanalyze={handleReanalyze}
+          handleCreateTemplate={handleCreateTemplate}
+          handleArchive={handleArchive}
+        />
+      )}
+    </div>
+  );
+}
+
+interface ConfigTabContentProps {
+  id: string;
+  track: MusicTrackDetail;
+  cfg: TrackConfig;
+  bestStart: string;
+  setBestStart: (s: string) => void;
+  bestEnd: string;
+  setBestEnd: (s: string) => void;
+  slotEveryN: string;
+  setSlotEveryN: (s: string) => void;
+  saving: boolean;
+  saveMsg: string | null;
+  reanalyzing: boolean;
+  creatingTemplate: boolean;
+  handleSaveConfig: (e: React.FormEvent) => void;
+  handleTogglePublish: () => void;
+  handleReanalyze: () => void;
+  handleCreateTemplate: () => void;
+  handleArchive: () => void;
+}
+
+function ConfigTabContent({
+  id,
+  track,
+  cfg,
+  bestStart,
+  setBestStart,
+  bestEnd,
+  setBestEnd,
+  slotEveryN,
+  setSlotEveryN,
+  saving,
+  saveMsg,
+  reanalyzing,
+  creatingTemplate,
+  handleSaveConfig,
+  handleTogglePublish,
+  handleReanalyze,
+  handleCreateTemplate,
+  handleArchive,
+}: ConfigTabContentProps) {
+  return (
+    <>
       {/* Info card */}
       <div className="bg-zinc-900 rounded-xl border border-zinc-700 p-5 mb-6 grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
         <Row label="Artist" value={track.artist || "—"} />
@@ -452,21 +740,49 @@ export default function AdminMusicTrackPage({
         )}
       </div>
 
-      {/* Audio player + beat waveform */}
-      {track.analysis_status === "ready" && track.beat_timestamps_s && track.beat_timestamps_s.length > 0 && (
+      {/* Audio player + beat waveform. Require duration_s > 0 so the SVG
+          math (x = start_s / duration) doesn't produce Infinity coords when
+          beat detection succeeded but duration probing didn't. */}
+      {track.analysis_status === "ready" &&
+        track.duration_s != null && track.duration_s > 0 &&
+        track.beat_timestamps_s && track.beat_timestamps_s.length > 0 && (
         <div className="bg-zinc-900 rounded-xl border border-zinc-700 p-5 mb-6">
-          <h2 className="font-semibold mb-3 text-sm text-zinc-400 uppercase tracking-wide">
-            Audio · {track.beat_count} beats
-          </h2>
+          <div className="flex items-center gap-3 mb-3">
+            <h2 className="font-semibold text-sm text-zinc-400 uppercase tracking-wide flex-1">
+              Audio · {track.beat_count} beats
+            </h2>
+            {track.section_version ? (
+              <span
+                className="text-xs text-zinc-400 font-mono"
+                title="Prompt-version the agent scored this track under. Bump in song_sections.py forces re-section via the backfill script."
+              >
+                sections v{track.section_version}
+              </span>
+            ) : (
+              <span
+                className="text-xs text-amber-500"
+                title="No agent sections stored — either the song_sections agent has not run, or the track was analyzed before the agent shipped."
+              >
+                no agent sections
+              </span>
+            )}
+          </div>
           <AudioPlayer
             trackId={id}
             beats={track.beat_timestamps_s}
             duration={track.duration_s ?? 0}
             start={parseFloat(bestStart) || (cfg.best_start_s ?? 0)}
             end={parseFloat(bestEnd) || (cfg.best_end_s ?? 0)}
+            sections={track.best_sections}
             onStartChange={(s) => setBestStart(s.toString())}
             onEndChange={(s) => setBestEnd(s.toString())}
           />
+          {(!track.best_sections || track.best_sections.length === 0) && (
+            <p className="text-xs text-zinc-500 mt-3 italic">
+              The agent has not picked any sections for this track yet. Click <span className="text-zinc-300">Re-analyze beats</span>{" "}
+              below — section analysis runs as part of the same task.
+            </p>
+          )}
         </div>
       )}
 
@@ -569,7 +885,7 @@ export default function AdminMusicTrackPage({
           </button>
         )}
       </div>
-    </div>
+    </>
   );
 }
 

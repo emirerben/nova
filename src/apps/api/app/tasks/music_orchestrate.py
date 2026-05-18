@@ -285,15 +285,23 @@ def orchestrate_music_job(self, job_id: str) -> None:
     track's cached recipe declares typed slots; otherwise runs the legacy
     beat-sync pipeline that fills every slot from user clips.
     """
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
     log.info("music_job_start", job_id=job_id)
-    try:
-        if _job_uses_templated_recipe(job_id):
-            _run_templated_music_job(job_id)
-        else:
-            _run_music_job(job_id)
-    except Exception as exc:
-        log.error("music_job_failed", job_id=job_id, error=str(exc), exc_info=True)
-        _fail_job(job_id, str(exc))
+    # `pipeline_trace_for` binds job_id into a contextvar so every
+    # `record_pipeline_event` call downstream in app/pipeline/* attributes
+    # to this job. The finally-block in the context manager clears it on
+    # exit (including on exception) so the next Celery task on this worker
+    # doesn't inherit a stale job_id.
+    with pipeline_trace_for(job_id):
+        try:
+            if _job_uses_templated_recipe(job_id):
+                _run_templated_music_job(job_id)
+            else:
+                _run_music_job(job_id)
+        except Exception as exc:
+            log.error("music_job_failed", job_id=job_id, error=str(exc), exc_info=True)
+            _fail_job(job_id, str(exc))
 
 
 def _job_uses_templated_recipe(job_id: str) -> bool:
@@ -364,11 +372,13 @@ def _run_music_job(job_id: str) -> None:
     # [3] Generate recipe from beats
     recipe_dict = generate_music_recipe(track_data)
 
-    # Build a TemplateRecipe-compatible object (use the existing dataclass)
-    from app.pipeline.agents.gemini_analyzer import TemplateRecipe  # noqa: PLC0415
+    # Build a TemplateRecipe-compatible object (use the existing dataclass).
+    # `build_recipe` strips routing/validation-only keys (e.g. required_clips_min)
+    # that live on the recipe dict but are not TemplateRecipe constructor kwargs.
+    from app.pipeline.agents.gemini_analyzer import build_recipe  # noqa: PLC0415
 
     try:
-        recipe = TemplateRecipe(**recipe_dict)
+        recipe = build_recipe(recipe_dict)
     except (TypeError, ValueError, KeyError) as exc:
         raise ValueError(f"Failed to build TemplateRecipe from music recipe: {exc}") from exc
 
@@ -408,7 +418,7 @@ def _run_music_job(job_id: str) -> None:
             track_data["beat_timestamps_s"],
         )
         recipe_dict = {**recipe_dict, "slots": enriched_slots}
-        recipe = TemplateRecipe(**recipe_dict)
+        recipe = build_recipe(recipe_dict)
 
         # [8] Template match (slot consolidation + greedy assignment)
         log.info("template_match_start", job_id=job_id)
@@ -480,7 +490,11 @@ def _run_music_job(job_id: str) -> None:
         from app.storage import upload_public_read  # noqa: PLC0415
 
         output_gcs = f"music-jobs/{job_id}/output.mp4"
-        upload_public_read(final_path, output_gcs)
+        # Capture the signed URL — template_orchestrate stores the URL,
+        # so the public/admin viewers can use assembly_plan.output_url
+        # directly as a <video src>. Was previously discarding this and
+        # storing the relative GCS path, which broke direct playback.
+        output_url = upload_public_read(final_path, output_gcs)
         log.info("music_job_uploaded", job_id=job_id, gcs_path=output_gcs)
 
     # [12] Mark done
@@ -489,7 +503,7 @@ def _run_music_job(job_id: str) -> None:
         if job:
             job.status = "music_ready"
             existing_plan = job.assembly_plan or {}
-            job.assembly_plan = {**existing_plan, "output_url": output_gcs}
+            job.assembly_plan = {**existing_plan, "output_url": output_url}
             db.commit()
 
     log.info("music_job_done", job_id=job_id)
@@ -965,7 +979,7 @@ def _run_templated_music_job(job_id: str) -> None:
 
         # [8] Upload result
         output_gcs = f"music-jobs/{job_id}/output.mp4"
-        upload_public_read(final_path, output_gcs)
+        output_url = upload_public_read(final_path, output_gcs)
         log.info("templated_music_job_uploaded", job_id=job_id, gcs_path=output_gcs)
 
     # [9] Mark done
@@ -974,7 +988,7 @@ def _run_templated_music_job(job_id: str) -> None:
         if j:
             j.status = "music_ready"
             existing = j.assembly_plan or {}
-            j.assembly_plan = {**existing, "output_url": output_gcs}
+            j.assembly_plan = {**existing, "output_url": output_url}
             db.commit()
     log.info("templated_music_job_done", job_id=job_id)
 

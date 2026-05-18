@@ -8,8 +8,10 @@ from app.pipeline.agents.copy_writer import generate_copy
 def test_copy_fallback_on_double_api_failure():
     # Patch via the canonical _get_client (gemini_analyzer module). The agent
     # runtime resolves all gemini calls through this singleton.
-    with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client, \
-         patch("time.sleep"):  # don't sleep through the agent's retry backoff
+    with (
+        patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client,
+        patch("time.sleep"),
+    ):  # don't sleep through the agent's retry backoff
         mock_client = mock_get_client.return_value
         mock_client.models.generate_content.side_effect = Exception("API down")
         copy, status = generate_copy(
@@ -42,28 +44,3 @@ def test_copy_status_generated_on_success():
         copy, status = generate_copy("hook text", "transcript", ["instagram"])
 
     assert status == "generated"
-
-
-# ── Subject resolution from job.all_candidates ──────────────────────────────
-# These tests cover the read-side fallback for jobs created before the
-# subject → inputs.location rename. Delete after 2026-05-16 along with the
-# fallback in template_orchestrate._resolve_user_subject.
-
-
-def test_subject_resolved_from_new_inputs_shape():
-    from app.tasks.template_orchestrate import _resolve_user_subject
-
-    assert _resolve_user_subject({"inputs": {"location": "Tokyo"}}) == "Tokyo"
-
-
-def test_subject_fallback_to_legacy_field():
-    from app.tasks.template_orchestrate import _resolve_user_subject
-
-    assert _resolve_user_subject({"subject": "Peru"}) == "Peru"
-
-
-def test_subject_empty_when_neither_present():
-    from app.tasks.template_orchestrate import _resolve_user_subject
-
-    assert _resolve_user_subject({}) == ""
-    assert _resolve_user_subject(None) == ""

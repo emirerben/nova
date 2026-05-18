@@ -11,6 +11,7 @@ from app.config import settings
 from app.limiter import limiter
 from app.routes import (
     admin,
+    admin_jobs,
     admin_music,
     clips,
     music,
@@ -79,6 +80,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 app.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(admin_jobs.router, prefix="/admin/jobs", tags=["admin-jobs"])
 app.include_router(admin_music.router, prefix="/admin/music-tracks", tags=["admin-music"])
 app.include_router(template_jobs.router, prefix="/template-jobs", tags=["template-jobs"])
 app.include_router(music.router, prefix="/music-tracks", tags=["music"])

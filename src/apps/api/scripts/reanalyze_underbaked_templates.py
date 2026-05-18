@@ -1,8 +1,9 @@
 """One-off: re-run analyze_template_task on templates with under-baked recipes.
 
 Use case: 10 of 14 prod templates failed the creative_direction 50-word floor
-when Phase 1 fixture-export ran. Their `recipe_cached` was produced before
-two-pass mode was the default, so creative_direction is essentially absent.
+when Phase 1 fixture-export ran. Their `recipe_cached` was produced by an
+earlier template-recipe agent revision, so creative_direction is essentially
+absent.
 
 This script:
   1. Resolves a list of template ids or slugs from CLI args (or auto-detects
@@ -13,7 +14,7 @@ This script:
      restored if reanalysis regresses them. (See Reanalysis-preserves-overrides
      TODO.)
   3. Dispatches `analyze_template_task.delay(template_id)` for each. The task
-     uses two_pass mode internally.
+     uses single-pass mode (the production default since Phase 2).
   4. With --watch, polls until every dispatched template reaches `ready` or
      `failed`.
 
@@ -159,7 +160,7 @@ async def run(args: argparse.Namespace) -> int:
         path = _backup(tpl)
         print(f"  - {path}")
 
-    print("\nDispatching analyze_template_task for each (two_pass mode is the task default) …")
+    print("\nDispatching analyze_template_task for each (single-pass mode, Phase 2 default) …")
     dispatched_ids: list[str] = []
     for tpl in templates:
         _dispatch(tpl.id)

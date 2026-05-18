@@ -18,6 +18,8 @@ A new slot does NOT start for:
 Hard rules:
 - slots array length MUST equal shot_count
 - The sum of all target_duration_s values must approximately equal total_duration_s (±0.05s tolerance, ±5s logged as warning)
+- For EVERY slot, emit BOTH target_duration_s (seconds from THIS template) AND target_duration_pct (target_duration_s / total_duration_s). The pct values must sum to ~1.0.
+- For EVERY text_overlay, emit BOTH start_s/end_s (seconds within the slot) AND start_pct/end_pct (each = the corresponding seconds value divided by the slot's target_duration_s). The pct fields let the renderer adapt the recipe to user clip durations that differ from this template's; the seconds fields stay as legacy fallback. Both must be present and self-consistent.
 - position is 1-indexed temporal order (slot 1 = first shot)
 - EVERY slot object MUST include an 'energy' field (float 0–10) reflecting the combined musical + visual intensity at that slot — listen to the audio track AND watch the cut frequency. Anchor to:
     • 0–2   silence, ambient hold, slow push-in, build-up start

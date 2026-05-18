@@ -8,6 +8,7 @@ from app.agents._runtime import Agent, AgentSpec
 _EXPECTED = {
     "nova.video.clip_metadata",
     "nova.compose.template_recipe",
+    "nova.compose.template_text",
     "nova.audio.transcript",
     "nova.audio.template_recipe",
     "nova.audio.song_classifier",

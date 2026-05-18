@@ -6,8 +6,9 @@ Manual templates keep using `analyze_template_task`; the two never interact.
 Flow:
   1. download template video from GCS
   2. detect black segments (for interstitial placement)
-  3. upload to Gemini, run `analyze_template(two_pass)` — Big 3 produce the
-     structural recipe (slots, transitions, overlay placeholders)
+  3. upload to Gemini, run `analyze_template(analysis_mode="single")` — the
+     `TemplateRecipeAgent` produces the structural recipe (slots, transitions,
+     overlay placeholders) in a single Gemini call
   4. per slot, per label-like overlay, call `text_designer` and BAKE the
      returned styling into the overlay dict so the job-time pipeline reads
      it directly instead of falling back to the static _LABEL_CONFIG
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 
 import redis as redis_lib
@@ -43,6 +45,12 @@ from app.pipeline.agents.gemini_analyzer import (
     analyze_template,
     gemini_upload_and_wait,
 )
+from app.pipeline.template_cache import (
+    AGENT_SET_RECIPE_PLUS_TEXT,
+    compute_template_hash,
+    get_cached_recipe,
+    set_cached_recipe,
+)
 from app.services.template_poster import (
     PosterExtractionError,
 )
@@ -56,6 +64,9 @@ from app.tasks.template_orchestrate import (
     _extract_template_audio,
     _is_subject_placeholder,
     _merge_beat_sources,
+)
+from app.tasks.template_text_extraction import (
+    extract_template_text_overlays,
 )
 from app.worker import celery_app
 
@@ -92,14 +103,46 @@ def _bake_text_designer_into_overlay(
     These fields override anything template_recipe set, and the job-time
     pipeline's is_agentic branch will skip the _LABEL_CONFIG override block,
     so what the agent decides here is what ships.
+
+    Timing invariant: text_designer proposes a ``start_s`` (e.g. 3.0 for
+    subject labels on the first slot) without knowing the source text's
+    visible window. If the overlay's ``end_s`` is smaller than the proposed
+    ``start_s`` (e.g. end_s=0.9 from text-extraction, start_s=3.0 from
+    designer calibration), the write would produce an inverted overlay that
+    downstream renderers reject. We clamp ``start_s`` to ``end_s - 0.01``
+    after the write so the stored overlay always satisfies
+    ``0 <= start_s < end_s``.
+
+    Band-aid note: the underlying semantic gap is that "designer start_s" and
+    "source-extraction start_s" are different concepts sharing one field —
+    a proper refactor (separate fields, resolved at job time) is tracked as a
+    follow-up. This clamp matches the pattern in PR #198/#200
+    (template_text.parse) and PR #200 (unconditional sample_frame_t clamp).
     """
     overlay["text_size"] = designer_output.text_size
     overlay["font_style"] = designer_output.font_style
     overlay["text_color"] = designer_output.text_color
     overlay["effect"] = designer_output.effect
     overlay["start_s"] = float(designer_output.start_s)
+    # Clamp: designer's suggested start_s must not exceed (or equal) end_s.
+    # end_s comes from the text-extraction pass and reflects the actual visible
+    # window; text_designer doesn't know it, so inversion is possible.
+    end_s = float(overlay.get("end_s", overlay["start_s"] + 0.01))
+    if overlay["start_s"] >= end_s:
+        clamped_from = overlay["start_s"]
+        overlay["start_s"] = max(0.0, end_s - 0.01)
+        log.warning(
+            "text_designer_bake_start_s_clamped",
+            sample_text=overlay.get("sample_text"),
+            start_s_clamped_from=clamped_from,
+            start_s_clamped_to=overlay["start_s"],
+            end_s=end_s,
+        )
     if designer_output.accel_at_s is not None:
         overlay["font_cycle_accel_at_s"] = float(designer_output.accel_at_s)
+
+
+_TEXT_DESIGNER_PARALLEL_CAP = 8
 
 
 def _run_text_designer_on_slots(
@@ -110,8 +153,13 @@ def _run_text_designer_on_slots(
 ) -> int:
     """Call text_designer for every label-like overlay; bake results in place.
 
-    Returns the number of overlays styled. Sequential — N ≤ ~20 calls per
-    template, each ~2-5s. Parallelize later if it bites.
+    Returns the number of overlays styled. Parallelized across a bounded pool
+    (`_TEXT_DESIGNER_PARALLEL_CAP`) because on a 20-overlay template a sequential
+    loop spent ~60s of single-threaded LLM wait per agentic reanalyze. Workers
+    only issue the LLM call; the main thread mutates each overlay dict after
+    `future.result()` so there is no shared-state contention. Per-overlay
+    `TerminalError` is isolated: the overlay keeps whatever `template_recipe`
+    set, and the rest of the batch still bakes.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
@@ -122,8 +170,8 @@ def _run_text_designer_on_slots(
 
     agent = TextDesignerAgent(default_client())
     ctx = RunContext(job_id=job_id)
-    baked = 0
 
+    work_items: list[tuple[dict, int, str, str, TextDesignerInput]] = []
     for slot in slots:
         slot_position = int(slot.get("position", 0)) or 1  # text_designer needs ≥ 1
         slot_type = str(slot.get("slot_type", "broll"))
@@ -131,8 +179,12 @@ def _run_text_designer_on_slots(
             kind = _classify_overlay(overlay)
             if kind is None:
                 continue
-            try:
-                out = agent.run(
+            work_items.append(
+                (
+                    overlay,
+                    slot_position,
+                    slot_type,
+                    kind,
                     TextDesignerInput(
                         slot_position=slot_position,
                         slot_type=slot_type,
@@ -140,12 +192,25 @@ def _run_text_designer_on_slots(
                         copy_tone=copy_tone,
                         creative_direction=creative_direction,
                     ),
-                    ctx=ctx,
                 )
+            )
+
+    if not work_items:
+        return 0
+
+    def _call(agent_input: TextDesignerInput) -> object:
+        return agent.run(agent_input, ctx=ctx)
+
+    baked = 0
+    with ThreadPoolExecutor(
+        max_workers=min(len(work_items), _TEXT_DESIGNER_PARALLEL_CAP),
+    ) as pool:
+        futures = {pool.submit(_call, item[4]): item for item in work_items}
+        for future in as_completed(futures):
+            overlay, slot_position, _slot_type, kind, _agent_input = futures[future]
+            try:
+                out = future.result()
             except TerminalError as exc:
-                # One agent failure shouldn't kill the whole build — the
-                # overlay keeps whatever template_recipe set. Log loudly so
-                # evals can spot systematic regressions per slot.
                 log.warning(
                     "text_designer_failed",
                     job_id=job_id,
@@ -211,6 +276,10 @@ def agentic_template_build_task(self, template_id: str) -> None:
     Mirrors `analyze_template_task` so the manual path is unchanged; the only
     difference is the extra text_designer pass per slot before persistence.
     """
+    # Captured once at task entry and written to TemplateRecipeVersion.build_started_at
+    # at the end of the happy path. Paired with the DB-generated `created_at` (end),
+    # gives per-run wall-clock without relying on Langfuse trace aggregation.
+    build_started_at = datetime.now(UTC)
     log.info("agentic_template_build_start", template_id=template_id)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -287,13 +356,69 @@ def agentic_template_build_task(self, template_id: str) -> None:
             black_segments = detect_black_segments(local_path)
             black_segments = classify_black_segment_type(local_path, black_segments)
 
-            file_ref = gemini_upload_and_wait(local_path)
-            recipe = analyze_template(
-                file_ref,
-                analysis_mode="two_pass",
-                black_segments=black_segments,
-                job_id=f"template:{template_id}:agentic",
-            )
+            # Phase 3 perf: content-hash the source video and check Redis before
+            # uploading to the Gemini File API. On hit we skip both the upload
+            # (~30-60s for a 1080p template — ACTIVE-poll bound) and the actual
+            # `analyze_template` LLM call. identify_fonts, text_designer, poster,
+            # and audio extraction still run on the local copy.
+            _AGENTIC_ANALYSIS_MODE = "single"
+            template_hash = compute_template_hash(local_path)
+            recipe = None
+            if template_hash is not None:
+                cached = get_cached_recipe(
+                    template_hash,
+                    _AGENTIC_ANALYSIS_MODE,
+                    agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+                )
+                if cached is not None:
+                    log.info(
+                        "agentic_template_recipe_cache_hit",
+                        template_id=template_id,
+                        template_hash=template_hash[:12],
+                    )
+                    recipe = cached
+
+            if recipe is None:
+                file_ref = gemini_upload_and_wait(local_path)
+                # Phase 2 perf: single-pass skips the inline `_extract_creative_direction`
+                # Gemini call (Pass 1). `recipe.creative_direction` is still populated —
+                # it now comes from the structural JSON itself, set by `TemplateRecipeAgent`
+                # via `analyze_template_schema.txt` which requires the field. Downstream
+                # agents (text_designer, clip_router, shot_ranker) read a real
+                # model-generated creative_direction in both regimes; what changes is just
+                # the source (recipe-embedded vs separate Pass-1 paragraph). To restore the
+                # standalone Pass-1 call set "two_pass" here.
+                recipe = analyze_template(
+                    file_ref,
+                    analysis_mode=_AGENTIC_ANALYSIS_MODE,
+                    black_segments=black_segments,
+                    job_id=f"template:{template_id}:agentic",
+                )
+                # Focused text-extraction pass — overwrites recipe.slots[*].text_overlays
+                # with the dedicated text agent's output (every visible text, required
+                # bbox, font color). Runs in agentic build ONLY; manual templates and
+                # music jobs keep the recipe-agent overlays. Must run BEFORE the cache
+                # write so a future hit serves the merged overlays. Agentic builds use
+                # the `recipe+text` cache namespace so this never invalidates manual
+                # caches.
+                #
+                # text_success gates the cache write: a failed text-extraction pass
+                # leaves the recipe with recipe-agent overlays under a cache key that
+                # promises text-agent overlays. Caching that would pin stale data for
+                # the full TTL. Skip the cache on failure; the next reanalyze gets
+                # another shot at producing the proper merged recipe.
+                text_success, _text_count = extract_template_text_overlays(
+                    file_ref,
+                    recipe,
+                    job_id=f"template:{template_id}:agentic",
+                )
+                if template_hash is not None and text_success:
+                    set_cached_recipe(
+                        template_hash,
+                        _AGENTIC_ANALYSIS_MODE,
+                        recipe,
+                        agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+                    )
 
             # Font identification (PR2). Best-effort: a font-id failure must
             # not abort agentic build. Mutates `recipe.slots[*]["text_overlays"]
@@ -405,6 +530,7 @@ def agentic_template_build_task(self, template_id: str) -> None:
                     template_id=template_id,
                     recipe=recipe_dict,
                     trigger=trigger,
+                    build_started_at=build_started_at,
                 )
                 db.add(version)
 

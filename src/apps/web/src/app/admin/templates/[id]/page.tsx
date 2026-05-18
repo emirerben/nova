@@ -34,12 +34,13 @@ import {
   humanisePhase,
   splitPhaseLog,
 } from "@/lib/template-job-phases";
+import { DebugTab } from "./components/DebugTab";
 import { EditorTab } from "./components/EditorTab";
 import { MusicTab } from "./components/MusicTab";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type TabId = "recipe" | "editor" | "test" | "music" | "settings";
+type TabId = "recipe" | "editor" | "test" | "music" | "settings" | "debug";
 
 const ALL_TABS: { id: TabId; label: string }[] = [
   { id: "recipe", label: "Recipe" },
@@ -47,6 +48,7 @@ const ALL_TABS: { id: TabId; label: string }[] = [
   { id: "test", label: "Test" },
   { id: "music", label: "Music" },
   { id: "settings", label: "Settings" },
+  { id: "debug", label: "Debug" },
 ];
 
 function getVisibleTabs(templateType: string): { id: TabId; label: string }[] {
@@ -333,6 +335,7 @@ export default function TemplateDetailPage() {
         {resolvedTab === "settings" && (
           <SettingsTab template={template} onSave={setTemplate} />
         )}
+        {resolvedTab === "debug" && <DebugTab templateId={template.id} />}
       </div>
 
       {/* Sticky action bar */}

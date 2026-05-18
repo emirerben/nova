@@ -19,6 +19,7 @@ def _patch_admin_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ADMIN_API_KEY", ADMIN_TOKEN)
     # Patch settings directly since it's already loaded
     from app.config import settings
+
     settings.admin_api_key = ADMIN_TOKEN
 
 
@@ -156,3 +157,170 @@ def test_reanalyze_nonexistent_track(client: TestClient) -> None:
         headers=admin_headers(),
     )
     assert resp.status_code in (404, 500)
+
+
+# ── Admin response shape: best_sections + section_version ─────────────────────
+
+
+def test_to_response_round_trips_best_sections() -> None:
+    """Lock the admin detail response shape against accidental removal of the
+    song_sections agent fields. JSONB rows store sections as list[dict]; the
+    response model declares list[SongSection], so Pydantic must coerce them.
+    """
+    from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
+    from app.routes.admin_music import _to_response
+
+    sections_jsonb = [
+        {
+            "rank": 1,
+            "start_s": 30.0,
+            "end_s": 60.0,
+            "label": "chorus",
+            "energy": "peaks_high",
+            "suggested_use": "climax",
+            "rationale": "Strongest hook of the track.",
+        },
+        {
+            "rank": 2,
+            "start_s": 90.0,
+            "end_s": 120.0,
+            "label": "build",
+            "energy": "high",
+            "suggested_use": "build",
+            "rationale": "Pre-drop tension worth using as a runway.",
+        },
+    ]
+    track = MagicMock()
+    track.id = "track-xyz"
+    track.title = "Test"
+    track.artist = ""
+    track.source_url = "https://youtube.com/watch?v=xyz"
+    track.audio_gcs_path = "music/track-xyz/audio.m4a"
+    track.duration_s = 180.0
+    track.beat_timestamps_s = [1.0, 2.0, 3.0]
+    track.analysis_status = "ready"
+    track.error_detail = None
+    track.thumbnail_url = None
+    track.published_at = None
+    track.archived_at = None
+    track.track_config = {"best_start_s": 30.0, "best_end_s": 60.0}
+    track.best_sections = sections_jsonb
+    track.section_version = CURRENT_SECTION_VERSION
+    track.created_at = datetime.now(UTC)
+
+    resp = _to_response(track)
+    assert resp.section_version == CURRENT_SECTION_VERSION
+    assert resp.best_sections is not None
+    assert len(resp.best_sections) == 2
+    assert resp.best_sections[0].rank == 1
+    assert resp.best_sections[0].label == "chorus"
+    assert resp.best_sections[1].suggested_use == "build"
+
+
+def test_to_response_drops_invalid_section_rows() -> None:
+    """One bad row must not 500 the response. Strict Literal unions on
+    SongSection would otherwise cascade a single enum-drift through the
+    entire list endpoint and lock admin out of /admin/music.
+    """
+    from app.routes.admin_music import _to_response
+
+    sections_jsonb = [
+        {
+            "rank": 1,
+            "start_s": 30.0,
+            "end_s": 60.0,
+            "label": "chorus",
+            "energy": "peaks_high",
+            "suggested_use": "climax",
+            "rationale": "Valid row.",
+        },
+        {
+            "rank": 2,
+            "start_s": 90.0,
+            "end_s": 120.0,
+            "label": "chorus",
+            "energy": "extra_extra_high",  # drift: not in the Literal union
+            "suggested_use": "build",
+            "rationale": "Bad row with a drifted enum.",
+        },
+    ]
+    track = MagicMock()
+    track.id = "track-mixed"
+    track.title = "Mixed"
+    track.artist = ""
+    track.source_url = "https://youtube.com/watch?v=mixed"
+    track.audio_gcs_path = "music/track-mixed/audio.m4a"
+    track.duration_s = 180.0
+    track.beat_timestamps_s = []
+    track.analysis_status = "ready"
+    track.error_detail = None
+    track.thumbnail_url = None
+    track.published_at = None
+    track.archived_at = None
+    track.track_config = None
+    track.best_sections = sections_jsonb
+    track.section_version = "2026-05-15"
+    track.created_at = datetime.now(UTC)
+
+    resp = _to_response(track)
+    assert resp.best_sections is not None
+    assert len(resp.best_sections) == 1
+    assert resp.best_sections[0].rank == 1
+    assert resp.section_version == "2026-05-15"
+
+
+def test_to_response_drops_all_when_every_section_invalid() -> None:
+    """If every row is malformed, best_sections becomes None — the UI then
+    shows the "no agent sections" placeholder, matching the empty-list case.
+    """
+    from app.routes.admin_music import _to_response
+
+    track = MagicMock()
+    track.id = "track-all-bad"
+    track.title = "All bad"
+    track.artist = ""
+    track.source_url = "https://youtube.com/watch?v=allbad"
+    track.audio_gcs_path = "music/track-all-bad/audio.m4a"
+    track.duration_s = 180.0
+    track.beat_timestamps_s = []
+    track.analysis_status = "ready"
+    track.error_detail = None
+    track.thumbnail_url = None
+    track.published_at = None
+    track.archived_at = None
+    track.track_config = None
+    track.best_sections = [{"rank": "definitely_not_an_int"}]
+    track.section_version = "2026-05-15"
+    track.created_at = datetime.now(UTC)
+
+    resp = _to_response(track)
+    assert resp.best_sections is None
+
+
+def test_to_response_handles_null_best_sections() -> None:
+    """Tracks analyzed before song_sections shipped have NULL columns. The
+    admin UI tolerates null; the response model must too.
+    """
+    from app.routes.admin_music import _to_response
+
+    track = MagicMock()
+    track.id = "track-old"
+    track.title = "Old"
+    track.artist = ""
+    track.source_url = "https://youtube.com/watch?v=old"
+    track.audio_gcs_path = "music/track-old/audio.m4a"
+    track.duration_s = 120.0
+    track.beat_timestamps_s = []
+    track.analysis_status = "ready"
+    track.error_detail = None
+    track.thumbnail_url = None
+    track.published_at = None
+    track.archived_at = None
+    track.track_config = None
+    track.best_sections = None
+    track.section_version = None
+    track.created_at = datetime.now(UTC)
+
+    resp = _to_response(track)
+    assert resp.best_sections is None
+    assert resp.section_version is None

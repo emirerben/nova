@@ -424,11 +424,26 @@ def test_dual_output_filter_graph_forks_via_split_with_xfade():
     fc = _argv_filter_complex(build_single_pass_command(
         spec, "/tmp/out.mp4", base_output_path="/tmp/base.mp4",
     ))
+    # xfade chain must PRODUCE [base_pre] (not just have it appear as the
+    # split's consumer pad). A hardcoded "[vout]" sink on the last xfade
+    # node — the original M3+M6 bug — would leave [base_pre] as a consumer
+    # of nothing and ffmpeg rejects the graph at parse time. Assert the
+    # final xfade fragment ends in [base_pre] and no stray [vout] is
+    # emitted by the xfade chain.
     assert "xfade=transition=fade" in fc
-    # xfade emits [base_pre] in the dual-output mode.
-    assert "[base_pre]" in fc
     assert "[base_pre]split=2[base][base_for_overlay]" in fc
     assert "[base_for_overlay][2:v]overlay=" in fc
+    # The xfade fragment that produces the join output: must terminate in
+    # [base_pre], not [vout].
+    xfade_fragments = [f for f in fc.split(";") if "xfade=" in f]
+    assert xfade_fragments, "expected at least one xfade fragment"
+    assert xfade_fragments[-1].endswith("[base_pre]"), (
+        f"xfade chain must emit [base_pre] in dual-output mode; "
+        f"got: {xfade_fragments[-1]}"
+    )
+    assert "[vout]" not in ";".join(xfade_fragments), (
+        "xfade chain must not emit [vout] when final_label is base_pre"
+    )
 
 
 def test_dual_output_executes_real_ffmpeg(tmp_path):

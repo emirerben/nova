@@ -88,6 +88,15 @@ class Settings(BaseSettings):
     # orchestrate_template_job.
     single_pass_encode_enabled: bool = False
 
+    # Layer-2 text-overlay extraction pipeline. When False, the existing
+    # single-call `nova.compose.template_text` Gemini agent runs unchanged.
+    # When True, the OCR + grouping + transcript-alignment pipeline replaces
+    # the agent's body (same input/output schema, different implementation).
+    # Default OFF until PR 2 lands the pipeline behind the flag and PR 3
+    # validates output quality on staging templates. See
+    # plans/template-text-overlay-layer-2-architecture.md.
+    text_overlay_v2_enabled: bool = False
+
     # Auto-music mode (Phase 3 of the auto-music feature). When False, the
     # `orchestrate_auto_music_job` Celery task and the (yet-to-land Phase 4)
     # POST /auto-music-jobs route are unreachable from user input — the

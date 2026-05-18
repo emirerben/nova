@@ -69,6 +69,12 @@ def _encoding_args(
         - render_color_hold()            interstitials.py:121
         - drive_import thumbnailing      drive_import.py:74
 
+      INTERMEDIATE — does NOT route through _encoding_args (intentionally)
+        - normalize_orientation()        orientation.py — needs in-place
+          dimension preservation, so cannot use _encoding_args (which
+          force-rescales to 1080x1920). Inline ultrafast libx264 args
+          documented in orientation.py.
+
       FINAL OUTPUT (preset="fast" — banding-sensitive, must NOT regress)
         - _concat_demuxer fallback       template_orchestrate.py:2117
         - _pre_burn_curtain_slot_text    template_orchestrate.py:2558

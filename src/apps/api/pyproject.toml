@@ -57,6 +57,21 @@ dependencies = [
 local-whisper = [
     "faster-whisper>=1.0",
 ]
+# OCR backend for the Layer-2 text-overlay pipeline (Cloud Vision in prod).
+# Optional because the pipeline is gated by settings.text_overlay_v2_enabled
+# (default OFF) — the SDK + transitive grpc/protobuf deps stay out of the
+# default image until PR 3 flips the flag. The Dockerfile installs this
+# extra explicitly once we're ready to ship.
+ocr = [
+    "google-cloud-vision>=3.7",
+]
+# Local-dev OCR backend (macOS Vision via pyobjc). Cannot run on Fly's
+# Linux containers; pinned to a separate extra so prod builds never see it.
+# `pip install -e '.[dev-ocr]'` on macOS for eval / local debugging.
+dev-ocr = [
+    "pyobjc-framework-Vision>=10; platform_system == 'Darwin'",
+    "pyobjc-framework-Quartz>=10; platform_system == 'Darwin'",
+]
 observability = [
     # Langfuse traces every Agent.run() when LANGFUSE_PUBLIC_KEY +
     # LANGFUSE_SECRET_KEY are set. Optional — runtime fails open without it.

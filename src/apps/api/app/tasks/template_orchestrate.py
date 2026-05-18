@@ -26,12 +26,13 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from datetime import UTC
+from datetime import UTC, datetime
 
 import redis as redis_lib
 import structlog
@@ -50,14 +51,21 @@ from app.pipeline.agents.gemini_analyzer import (
     TemplateRecipe,
     analyze_clip,
     analyze_template,
+    build_recipe,
     gemini_upload_and_wait,
 )
+from app.pipeline.orientation import normalize_orientation
 from app.pipeline.reframe import ReframeError
 from app.pipeline.single_pass import (
     SinglePassInput,
     SinglePassSpec,
     SinglePassUnsupportedError,
     run_single_pass,
+)
+from app.pipeline.template_cache import (
+    compute_template_hash,
+    get_cached_recipe,
+    set_cached_recipe,
 )
 from app.pipeline.template_matcher import (
     TemplateMismatchError,
@@ -114,12 +122,6 @@ _LABEL_CONFIG: dict[str, dict] = {
 }
 
 
-# Routing-only keys that live on `recipe_cached` JSON but are NOT valid
-# TemplateRecipe constructor kwargs. Migration 0010 backfilled `template_kind`
-# onto every existing recipe; future routing/dispatch fields go here.
-_ROUTING_ONLY_RECIPE_KEYS: frozenset[str] = frozenset({"template_kind", "has_intro_slot"})
-
-
 # Failure-reason taxonomy. Persisted on Job.failure_reason for any
 # processing_failed job. The frontend maps these to user-friendly copy
 # instead of falling back to "Something went wrong".
@@ -171,24 +173,6 @@ def _clip_id_to_path_map(
     return {meta.clip_id: paths[i] for i, meta in enumerate(clip_metas_ordered) if meta is not None}
 
 
-# REMOVE AFTER 2026-05-16 — see TODOS.md#fallback-removal
-def _resolve_user_subject(all_candidates: dict | None) -> str:
-    """Pull the user's subject (location) from the new inputs shape.
-
-    Falls back to the legacy `subject` field for jobs created before the
-    rename. Delete this fallback (and the inline call sites' REMOVE AFTER
-    blocks) on 2026-05-16; an xfail test in tests/pipeline forces the
-    issue.
-    """
-    ac = all_candidates or {}
-    raw = (ac.get("inputs") or {}).get("location") or ac.get("subject", "") or ""
-    # Strip whitespace at the boundary so a user submitting "  " (single space,
-    # Unicode whitespace, etc.) doesn't pass the `if subject` truthiness check
-    # downstream — that would route a blank string into `_substitute_subject`
-    # and render an empty overlay where the literal placeholder belongs.
-    return raw.strip()
-
-
 @contextmanager
 def _stage(name: str, on_fail: str, *, job_id: str) -> Iterator[None]:
     """Time + log a pipeline stage; classify uncaught exceptions.
@@ -229,13 +213,6 @@ def _stage(name: str, on_fail: str, *, job_id: str) -> Iterator[None]:
         )
 
 
-def _build_recipe(recipe_data: dict) -> TemplateRecipe:
-    """Construct a TemplateRecipe from a DB `recipe_cached` blob, stripping
-    routing-only fields the dataclass doesn't accept as kwargs."""
-    kwargs = {k: v for k, v in recipe_data.items() if k not in _ROUTING_ONLY_RECIPE_KEYS}
-    return TemplateRecipe(**kwargs)
-
-
 # ── analyze_template_task ─────────────────────────────────────────────────────
 
 
@@ -248,6 +225,10 @@ def _build_recipe(recipe_data: dict) -> TemplateRecipe:
 )
 def analyze_template_task(self, template_id: str) -> None:
     """Download template video, analyze with Gemini, cache recipe in DB."""
+    # Captured once at task entry and written to TemplateRecipeVersion.build_started_at
+    # at the end of the happy path. Paired with the DB-generated `created_at` (end),
+    # gives per-run wall-clock for forward-looking perf baselines.
+    build_started_at = datetime.now(UTC)
     log.info("analyze_template_start", template_id=template_id)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -297,13 +278,39 @@ def analyze_template_task(self, template_id: str) -> None:
             black_segments = detect_black_segments(local_path)
             black_segments = classify_black_segment_type(local_path, black_segments)
 
-            file_ref = gemini_upload_and_wait(local_path)
-            recipe = analyze_template(
-                file_ref,
-                analysis_mode="two_pass",
-                black_segments=black_segments,
-                job_id=f"template:{template_id}",
-            )
+            # Phase 3 perf: content-hash the source and check Redis before
+            # uploading to Gemini. On hit we skip both the upload (~30-60s
+            # ACTIVE-poll on a 1080p template) and the analyze_template LLM
+            # call. Poster + audio + beat extraction below still run on the
+            # local copy.
+            _MANUAL_ANALYSIS_MODE = "single"
+            template_hash = compute_template_hash(local_path)
+            recipe = None
+            if template_hash is not None:
+                cached = get_cached_recipe(template_hash, _MANUAL_ANALYSIS_MODE)
+                if cached is not None:
+                    log.info(
+                        "manual_template_recipe_cache_hit",
+                        template_id=template_id,
+                        template_hash=template_hash[:12],
+                    )
+                    recipe = cached
+
+            if recipe is None:
+                file_ref = gemini_upload_and_wait(local_path)
+                # Phase 2 perf: single-pass skips the inline `_extract_creative_direction`
+                # Gemini call (Pass 1). `recipe.creative_direction` is still populated —
+                # it now comes from the structural JSON itself, set by `TemplateRecipeAgent`
+                # via `analyze_template_schema.txt` which requires the field. To restore
+                # the standalone Pass-1 call set "two_pass" here.
+                recipe = analyze_template(
+                    file_ref,
+                    analysis_mode=_MANUAL_ANALYSIS_MODE,
+                    black_segments=black_segments,
+                    job_id=f"template:{template_id}",
+                )
+                if template_hash is not None:
+                    set_cached_recipe(template_hash, _MANUAL_ANALYSIS_MODE, recipe)
 
             # Note: font identification (PR2, identify_fonts + font_alternatives
             # population) is intentionally scoped to the agentic analysis path
@@ -358,8 +365,6 @@ def analyze_template_task(self, template_id: str) -> None:
             with _sync_session() as db:
                 template = db.get(VideoTemplate, template_id)
                 if template:
-                    from datetime import datetime  # noqa: PLC0415
-
                     # Determine trigger: reanalysis if recipe already exists
                     is_reanalysis = template.recipe_cached is not None
                     trigger = "reanalysis" if is_reanalysis else "initial_analysis"
@@ -385,6 +390,7 @@ def analyze_template_task(self, template_id: str) -> None:
                         template_id=template_id,
                         recipe=recipe_dict,
                         trigger=trigger,
+                        build_started_at=build_started_at,
                     )
                     db.add(version)
 
@@ -458,6 +464,20 @@ def orchestrate_template_job(
         log.error("template_job_invalid_id", job_id=repr(job_id))
         return
 
+    # `pipeline_trace_for` binds job_id into a contextvar so every
+    # `record_pipeline_event` call inside the assembly pipeline attributes
+    # to this job. The finally inside the context manager clears it on
+    # exit (including on exception) — prevents leaking into the next
+    # Celery task on this worker process.
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    with pipeline_trace_for(job_id):
+        _orchestrate_template_job_inner(job_id, job_uuid, force_single_pass)
+
+
+def _orchestrate_template_job_inner(
+    job_id: str, job_uuid: uuid.UUID, force_single_pass: bool
+) -> None:
     try:
         _run_template_job(job_id, force_single_pass=force_single_pass)
     except _StageError as stage_err:
@@ -535,7 +555,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         template_id = job.template_id
         all_candidates = job.all_candidates or {}
         clip_paths_gcs = all_candidates.get("clip_paths", [])
-        user_subject = _resolve_user_subject(all_candidates)
+        user_subject = ((all_candidates.get("inputs") or {}).get("location") or "").strip()
         selected_platforms = job.selected_platforms or ["tiktok", "instagram", "youtube"]
         # Admin test-tab fast preview. Skips visually-expensive interstitials
         # (curtain-close) and the copy-generation LLM call. Set by admin.py's
@@ -604,14 +624,14 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         return
 
     try:
-        recipe = _build_recipe(recipe_data)
+        recipe = build_recipe(recipe_data)
     except (TypeError, ValueError, KeyError) as exc:
         raise ValueError(f"Template recipe in DB is malformed: {exc}") from exc
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # [2] Download all clip files in parallel
         _phase_t0 = time.monotonic()
-        local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
+        local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir, job_id=job_id)
         record_phase(
             job_id,
             PHASE_DOWNLOAD_CLIPS,
@@ -793,7 +813,8 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
 
         # [6] FFmpeg assemble.
         effective_single_pass = _resolve_effective_single_pass(
-            force_single_pass, template_single_pass,
+            force_single_pass,
+            template_single_pass,
         )
         _render_path = _resolve_render_path(effective_single_pass)
         log.info(
@@ -826,8 +847,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         assemble_interstitials = recipe.interstitials
         if preview_mode and assemble_interstitials:
             filtered = [
-                i for i in assemble_interstitials
-                if (i or {}).get("type") != "curtain-close"
+                i for i in assemble_interstitials if (i or {}).get("type") != "curtain-close"
             ]
             if len(filtered) != len(assemble_interstitials):
                 log.info(
@@ -904,6 +924,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             hook_text = _extract_hook_text(clip_metas, assembly_plan.steps)
             transcript_excerpt = _extract_transcript(clip_metas, assembly_plan.steps)
             from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
+
             platform_copy, copy_status = generate_copy(
                 hook_text=hook_text,
                 transcript_excerpt=transcript_excerpt,
@@ -974,7 +995,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
     steps_data = plan.get("steps", [])
     template_id = job.template_id
     selected_platforms = job.selected_platforms or ["tiktok", "instagram", "youtube"]
-    user_subject = _resolve_user_subject(job.all_candidates)
+    user_subject = (((job.all_candidates or {}).get("inputs") or {}).get("location") or "").strip()
 
     # Load current recipe from DB (reflects user edits)
     with _sync_session() as db:
@@ -991,9 +1012,14 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         # flag AND the env flag must both be true for a rerender to take
         # the single-pass path, unless force_single_pass overrides.
         template_single_pass = bool(template.single_pass_enabled)
+        # F1 fix: agentic flag must travel into _assemble_clips so the rerender
+        # path uses the same pct-vs-seconds dispatch as a fresh job. Without
+        # this, an admin recipe edit on an agentic template silently rendered
+        # via the legacy absolute-seconds path — same recipe, different output.
+        is_agentic = bool(template.is_agentic)
 
     try:
-        recipe = _build_recipe(recipe_data)
+        recipe = build_recipe(recipe_data)
     except (TypeError, ValueError, KeyError) as exc:
         raise ValueError(f"Template recipe in DB is malformed: {exc}") from exc
 
@@ -1008,7 +1034,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         gcs_paths_unique = list(dict.fromkeys(step["clip_gcs_path"] for step in steps_data))
 
         # Download only the used clips
-        local_clip_paths = _download_clips_parallel(gcs_paths_unique, tmpdir)
+        local_clip_paths = _download_clips_parallel(gcs_paths_unique, tmpdir, job_id=job_id)
         gcs_to_local = dict(zip(gcs_paths_unique, local_clip_paths))
 
         # Probe all clips
@@ -1047,7 +1073,8 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
 
         # FFmpeg assemble (clip_metas=None is safe — text comes from recipe)
         effective_single_pass = _resolve_effective_single_pass(
-            force_single_pass, template_single_pass,
+            force_single_pass,
+            template_single_pass,
         )
         _render_path = _resolve_render_path(effective_single_pass)
         log.info(
@@ -1077,6 +1104,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
             base_output_path=base_path,
             output_fit=getattr(recipe, "output_fit", None) or "crop",
             force_single_pass=effective_single_pass,
+            is_agentic=is_agentic,
         )
 
         # Mix template audio if available
@@ -1319,17 +1347,101 @@ def _add_locked_template_source(
         )
 
 
-def _download_clips_parallel(gcs_paths: list[str], tmpdir: str) -> list[str]:
-    """Download all clips from GCS in parallel. Returns local file paths."""
-    local_paths = [os.path.join(tmpdir, f"clip_{i}.mp4") for i in range(len(gcs_paths))]
+def _download_clips_parallel(
+    gcs_paths: list[str],
+    tmpdir: str,
+    *,
+    job_id: str | None = None,
+) -> list[str]:
+    """Download all clips from GCS in parallel. Returns local file paths.
 
-    def _download_one(args: tuple[str, str]) -> str:
-        gcs_path, local_path = args
+    Emits a `clip_download_timing` structlog event with per-clip wall-clock,
+    size, and bandwidth proxy. Two consumers in mind:
+
+    1. **Validating the P5 (worker-local clip cache) assumption.** P5's
+       projected 4-8s savings per rerender assumes cold GCS-fetch dominates
+       the wall-clock. If real numbers show per-clip download is ~1-2s,
+       P5 isn't worth building. Numbers go into Langfuse via the
+       `PHASE_DOWNLOAD_CLIPS` phase event already wired at the callers,
+       and into Fly logs for ad-hoc grepping.
+
+    2. **Future perf regressions.** A GCS region change, a network blip, or
+       a Fly machine swap that hits a slow NIC will be visible per-clip.
+       Without this, only the aggregate parallel-bound wall-clock is logged.
+
+    `job_id` is passed into the structured log event so a slow-job debug
+    session can grep by job_id and find both this event + the surrounding
+    `phase_done` events. Without it the event is correlatable only by
+    timestamp — fragile in a multi-worker Celery deployment where two jobs
+    can interleave on one machine. The codebase doesn't use
+    `structlog.contextvars`, so each log call carries its own context kwargs.
+
+    The instrumentation cost is ~50 microseconds of `time.monotonic()` calls
+    per clip — negligible vs the second-scale download itself.
+    """
+    local_paths = [os.path.join(tmpdir, f"clip_{i}.mp4") for i in range(len(gcs_paths))]
+    per_clip_stats: list[dict] = []
+    stats_lock = threading.Lock()
+
+    def _download_one(args: tuple[int, str, str]) -> str:
+        idx, gcs_path, local_path = args
+        t0 = time.monotonic()
         download_to_file(gcs_path, local_path)
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        # Strip Display-Matrix rotation if the file is a phone-recorded
+        # landscape-with-portrait-flag (iPhone HEVC etc). No-op for true
+        # landscape, true portrait, or any file without the metadata flag.
+        # Must run BEFORE probe + Gemini upload (which both happen in
+        # parallel after this function returns) so all downstream
+        # consumers agree on pixel orientation.
+        # See pipeline/orientation.py for the why.
+        normalize_t0 = time.monotonic()
+        normalize_orientation(local_path)
+        normalize_ms = int((time.monotonic() - normalize_t0) * 1000)
+        # Best-effort size read; failure to stat is non-fatal because the
+        # download already succeeded — we just lose the bytes-per-second
+        # signal for that clip.
+        try:
+            size_bytes = os.path.getsize(local_path)
+        except OSError:
+            size_bytes = -1
+        with stats_lock:
+            per_clip_stats.append(
+                {
+                    "idx": idx,
+                    "elapsed_ms": elapsed_ms,
+                    "normalize_ms": normalize_ms,
+                    "size_bytes": size_bytes,
+                }
+            )
         return local_path
 
+    work_items = [(i, g, p) for i, (g, p) in enumerate(zip(gcs_paths, local_paths))]
     with ThreadPoolExecutor(max_workers=min(len(gcs_paths), 8)) as pool:
-        list(pool.map(_download_one, zip(gcs_paths, local_paths)))
+        list(pool.map(_download_one, work_items))
+
+    # Aggregate stats for a single log line that's easy to grep in Fly logs.
+    elapsed_list = [s["elapsed_ms"] for s in per_clip_stats]
+    sizes_known = [s["size_bytes"] for s in per_clip_stats if s["size_bytes"] >= 0]
+    total_bytes = sum(sizes_known) if sizes_known else None
+    log.info(
+        "clip_download_timing",
+        job_id=job_id,
+        clip_count=len(gcs_paths),
+        max_workers=min(len(gcs_paths), 8),
+        per_clip_ms_max=max(elapsed_list) if elapsed_list else 0,
+        per_clip_ms_min=min(elapsed_list) if elapsed_list else 0,
+        per_clip_ms_mean=int(sum(elapsed_list) / len(elapsed_list)) if elapsed_list else 0,
+        total_ms_serial=sum(elapsed_list),
+        # `total_bytes_clip_count` is the number of clips contributing to
+        # `total_bytes`. When this is < clip_count, the size stat failed for
+        # some clips and `total_bytes` UNDER-counts the true total. Without
+        # this field a consumer doing `bytes/elapsed` math would silently
+        # report wildly low throughput. Adversarial review caught this.
+        total_bytes=total_bytes,
+        total_bytes_clip_count=len(sizes_known),
+        per_clip=per_clip_stats,
+    )
 
     return local_paths
 
@@ -1598,6 +1710,22 @@ def _analyze_clips_parallel(
             return meta, None
         except (GeminiRefusalError, GeminiAnalysisError, Exception) as exc:
             log.warning("clip_analysis_failed", clip_idx=idx, error=str(exc))
+            # phase_log diagnostic. Investigations were previously inferring
+            # clip-analysis failure from the absence of a `gemini_analyze` entry;
+            # this records the failure positively so post-mortems can see which
+            # clips fell through and why.
+            if record_sub_phases and job_id is not None:
+                record_sub_phase(
+                    job_id,
+                    PHASE_ANALYZE_CLIPS,
+                    "gemini_analyze_failed",
+                    elapsed_ms=int((time.monotonic() - t0) * 1000),
+                    detail={
+                        "clip_idx": idx,
+                        "clip_path": os.path.basename(path),
+                        "error": str(exc)[:200],
+                    },
+                )
             # Whisper heuristic fallback for failed clips
             from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
 
@@ -1801,15 +1929,64 @@ def _plan_slots(
     global_color_grade: str,
     tmpdir: str,
     output_fit: str = "crop",
+    *,
+    is_agentic: bool = False,
 ) -> tuple[list[SlotPlan], dict[str, float], float]:
     """Phase 1: sequential arithmetic to plan all slot renders.
 
     Returns (plans, clip_cursors, final_cumulative_s).
     No I/O — only cursor tracking, beat-snap, and speed ramp math.
+
+    When `is_agentic=True` and the recipe slots carry target_duration_pct,
+    per-slot target durations are computed from the sum of the user's clip
+    durations rather than the template's frozen seconds. See
+    app/pipeline/agentic_timing.resolve_slot_duration for the dispatch
+    matrix and lazy-migration fallback.
     """
+    from app.pipeline.agentic_timing import resolve_slot_duration  # noqa: PLC0415
+
     clip_cursors: dict[str, float] = {}
     cumulative_s = 0.0
     plans: list[SlotPlan] = []
+
+    # Agentic templates scale slot durations against the TOTAL user-clip
+    # duration (D4-B). Classic templates ignore this. We sum once up-front
+    # so resolve_slot_duration() is a pure dispatch.
+    #
+    # F2 fix: cap at the template's intended duration (sum of frozen
+    # target_duration_s across all slots = the template's analyzed length).
+    # Without the cap, 5 long user clips on a 24s TikTok template would
+    # blow the output to minutes; with the cap, the template's structural
+    # length is respected as a soft ceiling and shorter user content still
+    # scales down naturally.
+    user_total_dur_s = 0.0
+    if is_agentic:
+        seen_clip_paths: set[str] = set()
+        for step in steps:
+            local_path = clip_id_to_local.get(step.clip_id)
+            if not local_path or local_path in seen_clip_paths:
+                continue
+            seen_clip_paths.add(local_path)
+            probe = clip_probe_map.get(local_path)
+            if probe is not None and probe.duration_s > 0:
+                user_total_dur_s += float(probe.duration_s)
+
+        recipe_total_s = sum(
+            float(step.slot.get("target_duration_s", 0.0) or 0.0) for step in steps
+        )
+        capped = (
+            min(user_total_dur_s, recipe_total_s)
+            if recipe_total_s > 0 and user_total_dur_s > 0
+            else user_total_dur_s
+        )
+        log.info(
+            "agentic_plan_user_total_dur",
+            user_total_dur_s=round(user_total_dur_s, 2),
+            recipe_total_s=round(recipe_total_s, 2),
+            capped_at=round(capped, 2),
+            distinct_clips=len(seen_clip_paths),
+        )
+        user_total_dur_s = capped
 
     for i, step in enumerate(steps):
         clip_id = step.clip_id
@@ -1819,7 +1996,11 @@ def _plan_slots(
 
         probe = clip_probe_map.get(local_path)
         moment = step.moment
-        slot_target_dur = float(step.slot.get("target_duration_s", 5.0))
+        slot_target_dur = resolve_slot_duration(
+            step.slot,
+            is_agentic=is_agentic,
+            user_total_dur_s=user_total_dur_s,
+        )
         slot_target_dur = max(slot_target_dur, 0.5)
 
         is_locked = bool(step.slot.get("locked", False))
@@ -1842,7 +2023,26 @@ def _plan_slots(
             if beats:
                 expected_end = cumulative_s + slot_target_dur
                 snapped_end = _snap_to_beat(expected_end, beats)
+                drift_ms = int(round((snapped_end - expected_end) * 1000))
                 slot_target_dur = max(0.5, snapped_end - cumulative_s)
+                # Beat-snap drift is one of the most common "video looks
+                # off" causes — record per-slot offset so admins can spot
+                # which boundary drifted by how much.
+                from app.services.pipeline_trace import (  # noqa: PLC0415
+                    record_pipeline_event,
+                )
+
+                record_pipeline_event(
+                    stage="beat_snap",
+                    event="slot_snapped",
+                    data={
+                        "slot_index": i,
+                        "expected_end_s": round(expected_end, 3),
+                        "snapped_end_s": round(snapped_end, 3),
+                        "drift_ms": drift_ms,
+                        "final_duration_s": round(slot_target_dur, 3),
+                    },
+                )
                 cumulative_s = snapped_end
             else:
                 cumulative_s += slot_target_dur
@@ -1965,7 +2165,8 @@ def _resolve_render_path(force_single_pass: bool) -> str:
 
 
 def _resolve_effective_single_pass(
-    force_single_pass: bool, template_single_pass: bool,
+    force_single_pass: bool,
+    template_single_pass: bool,
 ) -> bool:
     """Compute the effective single-pass decision from three inputs.
 
@@ -1983,9 +2184,7 @@ def _resolve_effective_single_pass(
     Reads :data:`settings.single_pass_encode_enabled` at call time, so a
     runtime env flip takes effect on the next job without a reload.
     """
-    return force_single_pass or (
-        settings.single_pass_encode_enabled and template_single_pass
-    )
+    return force_single_pass or (settings.single_pass_encode_enabled and template_single_pass)
 
 
 # Sentinel values passed to generate_text_overlay_png /
@@ -2055,14 +2254,20 @@ def _generate_single_pass_overlays(
     # drift here would split the parity contract silently.
     abs_pngs = (
         generate_text_overlay_png(
-            static_overlays, ABS_PASS_TIME_S, tmpdir, slot_index=ABS_PASS_SLOT_INDEX,
+            static_overlays,
+            ABS_PASS_TIME_S,
+            tmpdir,
+            slot_index=ABS_PASS_SLOT_INDEX,
         )
         if static_overlays
         else []
     ) or []
     abs_ass_paths = (
         generate_animated_overlay_ass(
-            animated_overlays, ABS_PASS_TIME_S, tmpdir, slot_index=ABS_PASS_SLOT_INDEX,
+            animated_overlays,
+            ABS_PASS_TIME_S,
+            tmpdir,
+            slot_index=ABS_PASS_SLOT_INDEX,
         )
         if animated_overlays
         else []
@@ -2254,8 +2459,8 @@ def _assemble_clips(
     # substitution input via a majority-vote fallback caused job
     # a1091488-09f6-4ce0-b92e-b1cc52695c9c (Rule of Thirds, 2026-05-13) to
     # render "pilot in cockpit" in place of literal "The"/"Thirds". Templates
-    # that need a user subject must surface it through `inputs.location`
-    # (see _resolve_user_subject); templates with literal text render literal.
+    # that need a user subject must surface it through `inputs.location`;
+    # templates with literal text render literal.
     subject = user_subject
     if subject:
         log.info("subject_resolved", subject=subject, source="user")
@@ -2284,6 +2489,7 @@ def _assemble_clips(
         global_color_grade,
         tmpdir,
         output_fit=output_fit,
+        is_agentic=is_agentic,
     )
     _phase_done("plan", _phase_t0, job_id=job_id, slots=len(plans))
 
@@ -2979,16 +3185,37 @@ def _collect_absolute_overlays(
             ):
                 continue
 
-            # 1. Compute ov_start, ov_end from Gemini values
-            ov_start = cumulative_s + float(ov.get("start_s", 0.0))
-            ov_end = cumulative_s + float(ov.get("end_s", dur))
+            # 1. Compute ov_start, ov_end relative to the slot's start.
+            #
+            # For agentic templates with pct fields present, resolve_overlay_window
+            # scales the timings against the slot's actual rendered duration
+            # (which itself was computed from user clip durations in _plan_slots).
+            # For classic templates, or agentic recipes predating the pct schema,
+            # it returns the seconds fields unchanged.
+            from app.pipeline.agentic_timing import (  # noqa: PLC0415
+                resolve_overlay_window,
+            )
+
+            rel_start, rel_end = resolve_overlay_window(
+                ov,
+                dur,
+                is_agentic=is_agentic,
+            )
+            ov_start = cumulative_s + rel_start
+            ov_end = cumulative_s + rel_end
 
             # 2. Apply timing overrides — recipe can specify exact timestamps
-            # to correct Gemini's approximate timing (relative to slot start)
+            # to correct Gemini's approximate timing (relative to slot start).
+            # Overrides are always in seconds; they bypass the pct math
+            # because they exist precisely to bolt-on a manual correction
+            # the agent got wrong.
+            _clamped_by: str | None = None
             if ov.get("start_s_override") is not None:
                 ov_start = cumulative_s + float(ov["start_s_override"])
+                _clamped_by = "override"
             if ov.get("end_s_override") is not None:
                 ov_end = cumulative_s + float(ov["end_s_override"])
+                _clamped_by = "override"
             # Guard against negative timestamps from bad override values
             ov_start = max(0.0, ov_start)
             ov_end = max(ov_start + 0.01, ov_end)
@@ -3111,6 +3338,14 @@ def _collect_absolute_overlays(
                 slot_end_abs = cumulative_s + dur
                 if entry["end_s"] > slot_end_abs:
                     entry["end_s"] = slot_end_abs
+                    _clamped_by = "curtain_close"
+
+            # Internal-only bookkeeping for the admin timeline: which slot(s)
+            # this overlay originated from (becomes a list after dedup 1 merge)
+            # and what last touched its end time. Stripped before return so
+            # downstream renderers never see these keys.
+            entry["_origin_slots"] = [slot_position]
+            entry["_clamped_by"] = _clamped_by
 
             raw.append(entry)
 
@@ -3187,6 +3422,15 @@ def _collect_absolute_overlays(
                 # If current has accel, copy it to previous
                 if "font_cycle_accel_at_s" in ov:
                     prev["font_cycle_accel_at_s"] = ov["font_cycle_accel_at_s"]
+                # Union origin slot positions for the admin timeline
+                prev_slots = prev.get("_origin_slots") or []
+                ov_slots = ov.get("_origin_slots") or []
+                prev["_origin_slots"] = sorted(set(prev_slots) | set(ov_slots))
+                # Inherit clamp reason from the later overlay if it set one
+                # (curtain-close clamps fire per-slot; the merged result
+                # should reflect whether the *final* end was clamped).
+                if ov.get("_clamped_by"):
+                    prev["_clamped_by"] = ov["_clamped_by"]
                 merged = True
                 break
         if not merged:
@@ -3204,6 +3448,7 @@ def _collect_absolute_overlays(
         if _slot_key(unique[i]) == _slot_key(unique[i + 1]):
             if unique[i]["end_s"] > unique[i + 1]["start_s"]:
                 unique[i]["end_s"] = unique[i + 1]["start_s"] - 0.1
+                unique[i]["_clamped_by"] = "overlap_truncated"
                 # Keep font-cycle accel timestamp within the truncated range
                 accel = unique[i].get("font_cycle_accel_at_s")
                 if accel is not None and accel >= unique[i]["end_s"]:
@@ -3211,6 +3456,46 @@ def _collect_absolute_overlays(
 
     # Remove any that became invalid after truncation
     result = [o for o in unique if o["end_s"] > o["start_s"]]
+
+    # Emit one pipeline_trace event per surviving overlay so the admin
+    # timeline can show the exact post-merge / post-clamp / post-override
+    # window that will be burned into the rendered video. record_pipeline_event
+    # is a no-op when no job_id contextvar is bound (eval harness, tests
+    # that exercise this function in isolation), so this is safe outside
+    # the orchestrator.
+    try:
+        from app.services.pipeline_trace import (  # noqa: PLC0415
+            record_pipeline_event,
+        )
+
+        for o in result:
+            origin_slots = o.get("_origin_slots") or []
+            record_pipeline_event(
+                stage="overlay",
+                event="render_window",
+                data={
+                    "text": o.get("text", ""),
+                    "abs_start_s": round(float(o["start_s"]), 3),
+                    "abs_end_s": round(float(o["end_s"]), 3),
+                    "slot_index": origin_slots[0] if origin_slots else None,
+                    "merged_from_slots": origin_slots if len(origin_slots) > 1 else None,
+                    "position": o.get("position"),
+                    "position_y_frac": o.get("position_y_frac"),
+                    "effect": o.get("effect"),
+                    "text_size": o.get("text_size"),
+                    "text_color": o.get("text_color"),
+                    "font_cycle_accel_at_s": o.get("font_cycle_accel_at_s"),
+                    "clamped_by": o.get("_clamped_by"),
+                },
+            )
+    except Exception:  # noqa: BLE001 — trace write must never break a render
+        log.warning("overlay_trace_emit_failed", exc_info=True)
+
+    # Strip internal bookkeeping keys before returning so downstream
+    # renderers (PNG/ASS generators) never see them.
+    for o in result:
+        o.pop("_origin_slots", None)
+        o.pop("_clamped_by", None)
 
     log.info("text_overlays_collected", raw=len(raw), deduped=len(result))
     return result
@@ -3572,7 +3857,10 @@ def _burn_text_overlays(
 
     png_configs = (
         generate_text_overlay_png(
-            static_overlays, ABS_PASS_TIME_S, tmpdir, slot_index=ABS_PASS_SLOT_INDEX,
+            static_overlays,
+            ABS_PASS_TIME_S,
+            tmpdir,
+            slot_index=ABS_PASS_SLOT_INDEX,
         )
         if static_overlays
         else None
@@ -5256,6 +5544,7 @@ def _run_single_video_job(
         else:
             hook_text = "How do you enjoy your life?"
             from app.pipeline.agents.copy_writer import generate_copy  # noqa: PLC0415
+
             with _stage(
                 "generate_copy",
                 FAILURE_REASON_COPY_GENERATION_FAILED,
@@ -5410,7 +5699,7 @@ def _run_single_video_job_entry(job_id: str) -> None:
         template_id = job.template_id
         all_candidates = job.all_candidates or {}
         clip_paths_gcs = all_candidates.get("clip_paths", [])
-        user_subject = _resolve_user_subject(all_candidates)
+        user_subject = ((all_candidates.get("inputs") or {}).get("location") or "").strip()
         selected_platforms = job.selected_platforms or [
             "tiktok",
             "instagram",

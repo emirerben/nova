@@ -825,6 +825,106 @@ class TestAudioTemplateStructural:
         assert any("color_grade='rainbow'" in f for f in failures)
 
 
+class TestTemplateTextStructural:
+    """Cover check_template_text — the structural pass for the focused
+    text-extraction agent. Pydantic enforces per-field shape; this layer
+    covers cross-overlay invariants (slot_index bounds, sample_frame_t
+    inside window, coarse-hash duplicate detection)."""
+
+    @staticmethod
+    def _input(boundaries=None):
+        from app.agents.template_text import TemplateTextInput
+
+        return TemplateTextInput(
+            file_uri="files/t",
+            slot_boundaries_s=boundaries if boundaries is not None else [(0.0, 5.0)],
+        )
+
+    @staticmethod
+    def _overlay(
+        *,
+        slot_index=1,
+        text="Hello",
+        start_s=0.5,
+        end_s=2.0,
+        x=0.5,
+        y=0.5,
+        sample_frame_t=1.0,
+    ):
+        from app.agents._schemas.template_text import TextBBox
+        from app.agents.template_text import TemplateTextOverlay
+
+        return TemplateTextOverlay(
+            slot_index=slot_index,
+            sample_text=text,
+            start_s=start_s,
+            end_s=end_s,
+            bbox=TextBBox(
+                x_norm=x, y_norm=y, w_norm=0.4, h_norm=0.1, sample_frame_t=sample_frame_t
+            ),
+            font_color_hex="#FFFFFF",
+            effect="none",
+            role="label",
+            size_class="medium",
+        )
+
+    def test_valid_overlay_passes(self):
+        from app.agents.template_text import TemplateTextOutput
+        from tests.evals.runners.structural import check_template_text
+
+        out = TemplateTextOutput(overlays=[self._overlay()])
+        assert check_template_text(out, self._input()) == []
+
+    def test_empty_overlays_passes(self):
+        from app.agents.template_text import TemplateTextOutput
+        from tests.evals.runners.structural import check_template_text
+
+        # No overlays is a valid output (template has no text).
+        assert check_template_text(TemplateTextOutput(overlays=[]), self._input()) == []
+
+    def test_slot_index_above_max_flagged(self):
+        from app.agents.template_text import TemplateTextOutput
+        from tests.evals.runners.structural import check_template_text
+
+        # max_slot=1 (one boundary in input); slot_index=2 is out of range.
+        out = TemplateTextOutput(overlays=[self._overlay(slot_index=2)])
+        failures = check_template_text(out, self._input([(0.0, 5.0)]))
+        assert any("slot_index=2" in f for f in failures)
+
+    def test_bbox_sample_frame_t_outside_window_flagged(self):
+        from app.agents.template_text import TemplateTextOutput
+        from tests.evals.runners.structural import check_template_text
+
+        # window is [0.5, 2.0]; sample_frame_t=3.0 is outside.
+        out = TemplateTextOutput(
+            overlays=[self._overlay(start_s=0.5, end_s=2.0, sample_frame_t=3.0)]
+        )
+        failures = check_template_text(out, self._input())
+        assert any("sample_frame_t=3.0" in f for f in failures)
+
+    def test_duplicate_overlay_flagged(self):
+        from app.agents.template_text import TemplateTextOutput
+        from tests.evals.runners.structural import check_template_text
+
+        # Same text + same coarse position + same coarse time window = dup.
+        a = self._overlay(text="Same", x=0.5, y=0.5, start_s=0.5, end_s=2.0)
+        b = self._overlay(text="same", x=0.5, y=0.5, start_s=0.5, end_s=2.0)
+        out = TemplateTextOutput(overlays=[a, b])
+        failures = check_template_text(out, self._input())
+        assert any("duplicate" in f for f in failures)
+
+    def test_different_texts_at_same_position_not_dup(self):
+        from app.agents.template_text import TemplateTextOutput
+        from tests.evals.runners.structural import check_template_text
+
+        # Same position+time but different text = legitimately different.
+        a = self._overlay(text="Hello", x=0.5, y=0.5, start_s=0.5, end_s=2.0)
+        b = self._overlay(text="World", x=0.5, y=0.5, start_s=0.5, end_s=2.0)
+        out = TemplateTextOutput(overlays=[a, b])
+        failures = check_template_text(out, self._input())
+        assert not any("duplicate" in f for f in failures)
+
+
 class TestRunStructuralDispatch:
     def test_dispatches_template_recipe(self):
         assert run_structural("nova.compose.template_recipe", _good_recipe(), None) == []
@@ -856,6 +956,13 @@ class TestRunStructuralDispatch:
 
     def test_dispatches_audio_template(self):
         assert run_structural("nova.audio.template_recipe", _good_audio_template(), None) == []
+
+    def test_dispatches_template_text(self):
+        from app.agents.template_text import TemplateTextInput, TemplateTextOutput
+
+        out = TemplateTextOutput(overlays=[])
+        inp = TemplateTextInput(file_uri="files/t", slot_boundaries_s=[(0.0, 5.0)])
+        assert run_structural("nova.compose.template_text", out, inp) == []
 
     def test_unknown_agent_raises(self):
         with pytest.raises(ValueError):

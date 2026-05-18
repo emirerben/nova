@@ -1,0 +1,125 @@
+{
+  "shot_count": 2,
+  "total_duration_s": 24,
+  "hook_duration_s": 15,
+  "creative_direction": "This template establishes a serene and aspirational lifestyle mood through its s...",
+  "copy_tone": "calm",
+  "caption_style": "Centered white sans-serif text fading in and out with a subtle shadow.",
+  "transition_style": "hard-cut",
+  "color_grade": "desaturated",
+  "pacing_style": "slow-cinematic",
+  "sync_style": "freeform",
+  "subject_niche": "lifestyle-travel-friendship",
+  "has_talking_head": false,
+  "has_voiceover": false,
+  "has_permanent_letterbox": false,
+  "slots": [
+    {
+      "position": 1,
+      "target_duration_s": 15,
+      "priority": 8,
+      "slot_type": "hook",
+      "energy": 2,
+      "transition_in": "none",
+      "color_hint": "none",
+      "speed_factor": 1,
+      "camera_movement": "static",
+      "text_overlays": [
+        {
+          "role": "hook",
+          "start_s": 0,
+          "end_s": 6,
+          "position": "center",
+          "font_size_hint": "medium",
+          "effect": "fade-in",
+          "has_darkening": false,
+          "has_narrowing": false,
+          "sample_text": "this is what I call:",
+          "text_bbox": {
+            "x_norm": 0.5,
+            "y_norm": 0.5,
+            "w_norm": 0.35,
+            "h_norm": 0.08,
+            "sample_frame_t": 3
+          }
+        },
+        {
+          "role": "label",
+          "start_s": 6,
+          "end_s": 15,
+          "position": "center",
+          "font_size_hint": "medium",
+          "effect": "fade-in",
+          "has_darkening": false,
+          "has_narrowing": false,
+          "sample_text": "being rich in life",
+          "text_bbox": null
+        }
+      ]
+    },
+    {
+      "position": 2,
+      "target_duration_s": 7,
+      "priority": 7,
+      "slot_type": "outro",
+      "energy": 3,
+      "transition_in": "hard-cut",
+      "color_hint": "none",
+      "speed_factor": 1,
+      "camera_movement": "static",
+      "text_overlays": [
+        {
+          "role": "label",
+          "start_s": 0,
+          "end_s": 3,
+          "position": "center",
+          "font_size_hint": "medium",
+          "effect": "fade-in",
+          "has_darkening": false,
+          "has_narrowing": false,
+          "sample_text": "being rich in life",
+          "text_bbox": {
+            "x_norm": 0.5,
+            "y_norm": 0.5,
+            "w_norm": 0.3,
+            "h_norm": 0.08,
+            "sample_frame_t": 1
+          }
+        }
+      ]
+    }
+  ],
+  "interstitials": [
+    {
+      "after_slot": 1,
+      "type": "fade-black-hold",
+      "animate_s": 0,
+      "hold_s": 2,
+      "hold_color": "#000000"
+    }
+  ],
+  "beat_timestamps_s": [
+    0,
+    2,
+    5,
+    7,
+    9,
+    11,
+    14,
+    17,
+    19,
+    21
+  ],
+  "_test_meta": {
+    "origin": "langfuse trace 28f24609-492a-4529-b455-c0dce5cd3886",
+    "template_id": "24ac3408-993e-4341-a6bb-cfcc4f5ba41c",
+    "captured_at": "2026-05-15T16:35:05Z",
+    "prompt_version_at_capture": "2026-05-15",
+    "black_segments_at_capture": [],
+    "symptoms": [
+      "duplicate text \"being rich in life\" across slots 1 and 2",
+      "2-second fade-black-hold interstitial fabricated with no supporting black_segment",
+      "rendered video: appears to end and restart with same text"
+    ]
+  }
+}

@@ -109,6 +109,21 @@ def join_with_transitions(
             "visual transitions here. See _join_or_concat for the grouping."
         )
 
+    # Record the picked transition sequence so the admin debug view can
+    # show "which xfade ran at each slot boundary?" without parsing logs.
+    # No-op when no job context is bound.
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    record_pipeline_event(
+        stage="transition",
+        event="xfade_chain_picked",
+        data={
+            "slot_count": len(slot_paths),
+            "transitions": list(transitions),
+            "slot_durations_s": [round(d, 3) for d in slot_durations],
+        },
+    )
+
     cmd = ["ffmpeg"]
     for path in slot_paths:
         cmd.extend(["-i", path])
