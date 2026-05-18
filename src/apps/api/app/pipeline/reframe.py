@@ -620,13 +620,21 @@ def _build_video_filter(
         filters.append(f"scale=-2:{settings.output_height}")
         filters.append(f"crop={settings.output_width}:{settings.output_height}")
     else:
+        # Default crop mode: scale-fill the canvas (no bars), trim overflow.
+        # `force_original_aspect_ratio=increase` grows BOTH source dims until
+        # they cover the target, preserving aspect; `crop` center-trims the
+        # overflow to exact target dims. Mirrors the 16:9 branch above
+        # (`scale=-2:H,crop=W:H`) for non-16:9 sources — covers 3:4 portrait,
+        # 19.5:9 iPhone, square, slightly-off-9:16, etc. Callers that WANT
+        # black bars (e.g. locked 16:9 templates with baked-in hook text on
+        # the sides) MUST pass `output_fit="letterbox_black"` to hit the
+        # branch above; do not rely on this branch padding.
         filters.append(
             f"scale={settings.output_width}:{settings.output_height}"
-            f":force_original_aspect_ratio=decrease"
+            f":force_original_aspect_ratio=increase"
         )
         filters.append(
-            f"pad={settings.output_width}:{settings.output_height}"
-            f":(ow-iw)/2:(oh-ih)/2"
+            f"crop={settings.output_width}:{settings.output_height}"
         )
 
     # 2. Color grading (applied before darkening so darkened areas have the grade)

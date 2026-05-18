@@ -881,6 +881,57 @@ class TestAssembleClipsAspectRatio:
             )
             assert mock_reframe.call_args.kwargs["aspect_ratio"] == "16:9"
 
+    def test_locked_source_uses_letterbox_black_not_aspect_mutation(self, tmp_path):
+        """Locked-source slots (e.g. Morocco's 1024x576 template intro with
+        baked-in hook text on the sides) must opt into the explicit
+        `output_fit="letterbox_black"` branch instead of mutating
+        aspect_ratio to "9:16" to back-door the old pad-by-default behavior.
+
+        The non-16:9 default reframe branch now crops to fill the canvas
+        (job d1eaabd3 fix). If a locked 16:9 source still went through that
+        branch, the side-text would get chopped. This test pins:
+            (a) `aspect_ratio` is NOT mutated to "9:16" — the probe's real
+                value flows through (here "16:9").
+            (b) `output_fit="letterbox_black"` is threaded so the reframe
+                filter hits the intentional pad branch.
+        """
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "locked_clip.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1024, height=576,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = MagicMock()
+        step.clip_id = "locked_a"
+        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.slot = {"position": 1, "target_duration_s": 5.0, "locked": True}
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"locked_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            assert kwargs["aspect_ratio"] == "16:9", (
+                "Locked source must NOT mutate aspect_ratio to '9:16' — "
+                "the probe's real value must flow through so the reframe "
+                "filter can branch correctly."
+            )
+            assert kwargs["output_fit"] == "letterbox_black", (
+                "Locked source must opt into the explicit letterbox path "
+                "to preserve side-baked hook text."
+            )
+
     def test_probe_clips_happy_path(self, tmp_path):
         """_probe_clips returns one VideoProbe per path."""
         from app.pipeline.probe import VideoProbe
