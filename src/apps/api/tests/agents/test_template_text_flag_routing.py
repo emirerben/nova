@@ -280,3 +280,128 @@ def test_layer1_unchanged_when_flag_off(monkeypatch) -> None:
     assert ov.end_s == 3.0  # salvaged
     # sample_frame_t clamped into [1.0, 3.0]
     assert 1.0 <= ov.bbox.sample_frame_t <= 3.0
+
+
+# ── Per-request Layer-2 override tests (force_layer2 field) ──────────────────
+
+
+def test_run_uses_layer2_when_input_force_layer2_true_even_if_flag_off(
+    monkeypatch,
+) -> None:
+    """force_layer2=True on input routes to Layer-2 even when the global flag is False.
+
+    Asserts:
+    - _run_layer2() is called
+    - The Gemini client receives no invocations (Layer-1 bypassed)
+    - A structured log event ``text_overlay_layer2_forced_via_request`` is emitted
+    """
+    from unittest.mock import patch  # noqa: PLC0415
+
+    monkeypatch.setattr("app.config.settings.text_overlay_v2_enabled", False)
+
+    mock_client = MockModelClient()
+    # Queue a Layer-1 response — if consumed, the test fails.
+    mock_client.queue("gemini-2.5-flash", _valid_layer1_response())
+
+    layer2_output = TemplateTextOutput(
+        overlays=[_make_overlay(sample_text="layer2 forced overlay")]
+    )
+
+    agent = TemplateTextAgent(mock_client)
+    inp = _make_input(force_layer2=True)
+
+    layer2_calls: list[TemplateTextInput] = []
+
+    def _stub_layer2(input, *, ctx=None):  # noqa: A002
+        layer2_calls.append(input)
+        return layer2_output
+
+    agent._run_layer2 = _stub_layer2  # type: ignore[method-assign]
+
+    log_events: list[str] = []
+
+    import app.agents.template_text as _mod  # noqa: PLC0415
+
+    with patch.object(_mod.log, "info", side_effect=lambda event, **kw: log_events.append(event)):
+        result = agent.run(inp)
+
+    # Layer-2 ran.
+    assert len(layer2_calls) == 1
+    # Layer-1 Gemini client NOT called.
+    assert len(mock_client.invocations) == 0
+    # Output came from Layer-2 stub.
+    assert isinstance(result, TemplateTextOutput)
+    assert result.overlays[0].sample_text == "layer2 forced overlay"
+    # Audit log event was emitted.
+    assert "text_overlay_layer2_forced_via_request" in log_events, (
+        f"Expected structured log event text_overlay_layer2_forced_via_request; got {log_events}"
+    )
+
+
+def test_run_uses_layer2_when_flag_on_regardless_of_input_force_layer2(
+    monkeypatch,
+) -> None:
+    """Global flag=True routes to Layer-2 even when input.force_layer2=False.
+
+    The override is additive (OR logic): the flag alone is sufficient.
+    No duplicate log event should fire (override path only logs when the
+    global flag is off).
+    """
+    monkeypatch.setattr("app.config.settings.text_overlay_v2_enabled", True)
+
+    mock_client = MockModelClient()
+    mock_client.queue("gemini-2.5-flash", _valid_layer1_response())
+
+    layer2_output = TemplateTextOutput(overlays=[_make_overlay(sample_text="layer2 flag overlay")])
+
+    agent = TemplateTextAgent(mock_client)
+    # force_layer2 is False — global flag alone should trigger Layer-2.
+    inp = _make_input(force_layer2=False)
+
+    layer2_calls: list[TemplateTextInput] = []
+
+    def _stub_layer2(input, *, ctx=None):  # noqa: A002
+        layer2_calls.append(input)
+        return layer2_output
+
+    agent._run_layer2 = _stub_layer2  # type: ignore[method-assign]
+
+    result = agent.run(inp)
+
+    assert len(layer2_calls) == 1
+    assert len(mock_client.invocations) == 0
+    assert result.overlays[0].sample_text == "layer2 flag overlay"
+
+
+def test_run_uses_layer1_when_flag_off_and_input_force_layer2_false(
+    monkeypatch,
+) -> None:
+    """flag=False AND force_layer2=False → Layer-1 path (existing behavior).
+
+    This is a regression guard: the override must NOT accidentally activate
+    Layer-2 when both the flag and the per-request override are False.
+    """
+    monkeypatch.setattr("app.config.settings.text_overlay_v2_enabled", False)
+
+    mock_client = MockModelClient()
+    mock_client.queue("gemini-2.5-flash", _valid_layer1_response())
+
+    agent = TemplateTextAgent(mock_client)
+    inp = _make_input(force_layer2=False)
+
+    layer2_called = []
+    original_run_layer2 = agent._run_layer2
+
+    def _spy_layer2(input, *, ctx=None):  # noqa: A002
+        layer2_called.append(True)
+        return original_run_layer2(input, ctx=ctx)
+
+    agent._run_layer2 = _spy_layer2  # type: ignore[method-assign]
+
+    result = agent.run(inp)
+
+    # Layer-1 was used.
+    assert len(mock_client.invocations) == 1
+    assert layer2_called == []
+    assert isinstance(result, TemplateTextOutput)
+    assert result.overlays[0].sample_text == "layer1 overlay"

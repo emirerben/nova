@@ -94,7 +94,17 @@ class TemplateTextAgent(Agent[TemplateTextInput, TemplateTextOutput]):
         ctx = ctx or RunContext()
         validated = self._validate_input(input)
 
-        if settings.text_overlay_v2_enabled:
+        use_layer2 = settings.text_overlay_v2_enabled or validated.force_layer2
+        if validated.force_layer2 and not settings.text_overlay_v2_enabled:
+            log.info(
+                "text_overlay_layer2_forced_via_request",
+                template_id=getattr(ctx, "job_id", None),
+                job_id=ctx.job_id,
+                force_layer2=True,
+                global_flag=False,
+            )
+
+        if use_layer2:
             return self._run_layer2(validated, ctx=ctx)
 
         return super().run(validated, ctx=ctx)
