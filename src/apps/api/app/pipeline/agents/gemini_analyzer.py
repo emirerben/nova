@@ -315,8 +315,14 @@ def _check_refusal(response: Any, required_fields: list[str]) -> dict:
         raise GeminiRefusalError("Invalid JSON response") from exc
 
     for field_name in required_fields:
-        val = data.get(field_name)
-        if val is None or val == "" or val == []:
+        # Differentiate "key absent" (genuine refusal) from "key present, empty
+        # collection" (valid zero-result signal — e.g. Gemini saying a clip has
+        # no notable moments). Empty string still counts as missing because it's
+        # the shape of a degenerate text answer; empty list/dict is legitimate.
+        if field_name not in data:
+            raise GeminiRefusalError(f"Missing required field: {field_name}")
+        val = data[field_name]
+        if val is None or val == "":
             raise GeminiRefusalError(f"Missing required field: {field_name}")
 
     return data

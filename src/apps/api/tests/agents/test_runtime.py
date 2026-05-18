@@ -723,6 +723,59 @@ def test_clip_metadata_empty_hook_text_does_not_refuse(
     assert len(mock_client.invocations) == 1
 
 
+def test_clip_metadata_empty_best_moments_list_is_valid(
+    mock_client: MockModelClient,
+) -> None:
+    """Gemini explicitly returning `best_moments: []` is a valid zero-result
+    signal ("this clip has no notable moments"), NOT a refusal. The schema
+    validator must accept a present-but-empty list and the runtime must
+    succeed without raising RefusalError or triggering a clarification retry.
+
+    Regression: prod job 1b555c69-32e3-434b-8886-7e6f2494366a / agent_run
+    b4660de3 ("yellow tram on steep street") was mislabeled terminal_refusal
+    when Gemini returned a well-formed JSON with `best_moments=[]`.
+    """
+    from app.agents.clip_metadata import ClipMetadataAgent
+
+    agent = ClipMetadataAgent(mock_client)
+    mock_client.queue(
+        agent.spec.model,
+        {
+            "hook_text": "headline",
+            "hook_score": 5.0,
+            "best_moments": [],
+        },
+    )
+    out = agent.run({"file_uri": "gs://example/clip.mp4"})
+    assert out.best_moments == []
+    assert out.hook_score == 5.0
+    # Exactly one call — no clarification retry, no terminal failure.
+    assert len(mock_client.invocations) == 1
+
+
+def test_clip_metadata_absent_best_moments_key_still_refuses(
+    mock_client: MockModelClient,
+) -> None:
+    """Counterpart to the empty-list test: when `best_moments` is not present
+    in the response JSON at all (key absent, not just empty), the validator
+    must still raise RefusalError. This pins the distinction between
+    "key absent" (genuine refusal) and "key present, empty list" (valid)."""
+    from app.agents._runtime import TerminalError
+    from app.agents.clip_metadata import ClipMetadataAgent
+
+    agent = ClipMetadataAgent(mock_client)
+    # Queue two attempts: both omit best_moments entirely → RefusalError each
+    # time → terminal_refusal after retries exhaust.
+    for _ in range(4):
+        mock_client.queue(
+            agent.spec.model,
+            {"hook_text": "headline", "hook_score": 5.0},
+        )
+    with pytest.raises(TerminalError) as exc_info:
+        agent.run({"file_uri": "gs://example/clip.mp4"})
+    assert "best_moments" in str(exc_info.value)
+
+
 def test_run_stats_last_raw_text_captured_on_refusal(
     sample_agent: SampleAgent, mock_client: MockModelClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

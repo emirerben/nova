@@ -551,8 +551,15 @@ class Agent(ABC, Generic[InputT, OutputT]):
         if not isinstance(data, dict):
             raise RefusalError("Response is not a JSON object")
         for field_name in required:
-            val = data.get(field_name)
-            if val is None or val == "" or val == []:
+            # Differentiate "key absent" (genuine refusal) from "key present, empty
+            # collection" (valid signal — e.g. Gemini saying a clip has no notable
+            # moments). Empty string still counts as missing because it's the
+            # shape of a degenerate text answer; empty list/dict is a legitimate
+            # zero-result response.
+            if field_name not in data:
+                raise RefusalError(f"Missing required field: {field_name}")
+            val = data[field_name]
+            if val is None or val == "":
                 raise RefusalError(f"Missing required field: {field_name}")
 
     def _try_json_repair(
