@@ -45,6 +45,47 @@ pytest tests/evals/test_audio_template_evals.py -v --with-judge
 | `nova.audio.song_classifier` | ✓ | `rubrics/song_classifier.md` | exported + hand-authored golden | `MusicTrack.ai_labels` |
 | `nova.audio.music_matcher` | ✓ | `rubrics/music_matcher.md` | hand-authored golden only (not persisted) | — |
 
+## Layer-2 text-overlay pipeline eval
+
+`test_text_overlay_pipeline_evals.py` evaluates `run_full_pipeline()` from
+`app.pipeline.text_overlay_v2` (the OCR + grouping + alignment + classification
+pipeline shipped in PRs #204–#214). See the design doc at
+`~/.claude/plans/template-text-overlay-layer-2-architecture.md` for architecture
+details.
+
+Hard floors (design doc §Verification plan): **precision ≥ 0.95, recall ≥ 0.95,
+mean bbox IoU ≥ 0.85**. All three gates are overridable per-fixture via a
+`ground_truth/<stem>.thresholds.json` sidecar (same `.thresholds.json` pattern as
+Layer-1).
+
+The eval gate is currently **dormant** — all tests skip until two sidecars are added
+per fixture:
+
+1. `tests/fixtures/agent_evals/template_text/ground_truth/<stem>.json` — human-verified
+   ground-truth overlays (same format as Layer-1).
+2. `tests/fixtures/agent_evals/template_text/prod_snapshots/<stem>.transcript.json` — the
+   Whisper transcript for the template's audio.  Shape:
+   ```json
+   {
+       "transcript_words": [
+           {"text": "It's", "start_s": 0.08, "end_s": 0.42, "confidence": 0.99},
+           ...
+       ]
+   }
+   ```
+   Produce by running `nova.audio.transcript` on the template and serialising
+   `output.words`.
+
+Live mode (`--eval-mode=live --allow-cost`) downloads the source video from GCS,
+invokes the full pipeline, and scores the result. Estimated cost: **~$0.03/template**
+(Cloud Vision OCR @ 2 fps). Requires `STORAGE_BUCKET`, GCS credentials, and
+`GEMINI_API_KEY`.
+
+Next step (human-paced): capture transcripts for the three existing prod snapshots
+(`not_just_luck`, `rich_in_life`, `rich_in_life_v2`) and add at least 4 more
+hand-verified ground truths covering varied caption styles (typewriter, font-cycle,
+static label, subtitle).
+
 ## Adding fixtures
 
 ```bash
