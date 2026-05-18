@@ -27,6 +27,7 @@ dependencies = [
     "openai>=1.30",
     "google-genai>=1.0",
     "google-cloud-storage>=2.16",
+    "google-cloud-vision>=3.7",
     "scenedetect[opencv]>=0.6",
     "opencv-python-headless>=4.9",
     "cryptography>=42",
@@ -56,14 +57,6 @@ dependencies = [
 [project.optional-dependencies]
 local-whisper = [
     "faster-whisper>=1.0",
-]
-# OCR backend for the Layer-2 text-overlay pipeline (Cloud Vision in prod).
-# Optional because the pipeline is gated by settings.text_overlay_v2_enabled
-# (default OFF) — the SDK + transitive grpc/protobuf deps stay out of the
-# default image until PR 3 flips the flag. The Dockerfile installs this
-# extra explicitly once we're ready to ship.
-ocr = [
-    "google-cloud-vision>=3.7",
 ]
 # Local-dev OCR backend (macOS Vision via pyobjc). Cannot run on Fly's
 # Linux containers; pinned to a separate extra so prod builds never see it.
