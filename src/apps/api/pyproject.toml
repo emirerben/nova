@@ -52,6 +52,11 @@ dependencies = [
     # preprocess pipeline and silently misalign query embeddings from the
     # registry (the model_version check catches this but only at first call).
     "open-clip-torch>=3.3,<4",
+    # Lightweight JSON repair library used by the agent runtime to salvage
+    # malformed Gemini output (truncated braces, stray commas) BEFORE
+    # declaring `terminal_refusal`. Opted in per-agent via
+    # `AgentSpec.enable_json_repair`. Pure-Python, ~50KB, MIT.
+    "json-repair>=0.30",
 ]
 
 [project.optional-dependencies]

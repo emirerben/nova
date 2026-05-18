@@ -190,6 +190,15 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         # transcript+best_moments fields. Saves ~100s on the ~10-15% of
         # clips where Gemini's first attempt returns malformed JSON.
         enable_clarification_retries=False,
+        # On the longest clips (14k+ input tokens) Gemini truncates JSON
+        # output near the token ceiling — production job 1b555c69-…
+        # ("concert crowd") died with `Invalid JSON: Expecting property
+        # name…` on a missing closing brace + stray comma. Opt in to the
+        # runtime's one-shot json-repair pass so the punctuation-broken
+        # response is salvaged before falling through to terminal_refusal
+        # (which would force the slow Whisper fallback for a recoverable
+        # response).
+        enable_json_repair=True,
     )
     Input = ClipMetadataInput
     Output = ClipMetadataOutput

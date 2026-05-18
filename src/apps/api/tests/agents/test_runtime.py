@@ -925,3 +925,153 @@ def test_trace_agent_run_includes_raw_text_preview_in_metadata(
         outcome="ok",
     )
     assert "raw_text_preview" not in captured[0]["metadata"]
+
+
+# ── enable_json_repair (one-shot JSON salvage before terminal_refusal) ───────
+
+
+# Production-shape fixture: Gemini emitted a `best_moments` array with a
+# missing closing `}` on the first moment object followed by a stray comma.
+# This is the exact pattern from prod job 1b555c69-…/run 371782ff
+# ("concert crowd", 14,741 input tokens) that motivated the json-repair
+# retry. Content is bearable; only punctuation broken.
+BROKEN_JSON_FIXTURE = """
+{
+  "hook_score": 6.5,
+  "best_moments": [
+    {
+      "start_s": 0.0,
+      "end_s": 5.0,
+      "description": "crowd watching light show"
+    ,
+    {
+      "start_s": 10.0,
+      "end_s": 15.0,
+      "description": "stage lights"
+    }
+  ]
+}
+"""
+
+
+def _repair_agent(mock_client: MockModelClient) -> SampleAgent:
+    """SampleAgent variant with json-repair enabled AND clarification
+    retries disabled — mirrors ClipMetadataAgent's prod config exactly."""
+    import dataclasses  # noqa: PLC0415
+
+    class RepairAgent(SampleAgent):
+        spec = dataclasses.replace(
+            SampleAgent.spec,
+            enable_clarification_retries=False,
+            enable_json_repair=True,
+        )
+
+        def required_fields(self) -> list[str]:  # noqa: D401
+            # Force the runtime's `_check_refusal` json.loads path (the same
+            # one that fires for clip_metadata's `hook_score`+`best_moments`
+            # required-fields check, which is where the prod failure
+            # originated).
+            return ["hook_score", "best_moments"]
+
+        def parse(self, raw_text: str, input: SampleInput) -> SampleOutput:  # noqa: A002, ARG002
+            import json as _json  # noqa: PLC0415
+
+            data = _json.loads(raw_text)
+            # Squash repaired shape into SampleOutput fields so the runtime
+            # contract holds without us shipping a new schema.
+            return SampleOutput(answer="repaired", score=int(data["hook_score"] * 10))
+
+    return RepairAgent(mock_client)
+
+
+def test_json_repair_salvages_malformed_response(mock_client: MockModelClient) -> None:
+    """The prod-shape malformed payload (missing `}` + stray comma) is
+    repaired in place, the run succeeds, and NO second model call burns —
+    enable_clarification_retries=False is preserved."""
+    agent = _repair_agent(mock_client)
+    mock_client.queue("gemini-2.5-flash", BROKEN_JSON_FIXTURE)
+
+    out = agent.run(SampleInput(topic="x"))
+
+    assert out.answer == "repaired"
+    assert out.score == 65  # hook_score=6.5 × 10
+    # Critical: ONE invocation. Repair happens in-place; no retry.
+    assert len(mock_client.invocations) == 1
+
+
+def test_json_repair_logs_warning_and_increments_counter(
+    mock_client: MockModelClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repair surfaces (a) a structured warning for ops dashboards and
+    (b) a `json_repairs_applied` count on the agent_run log payload."""
+    captured: list[tuple[str, dict]] = []
+
+    from app.agents import _runtime as runtime_mod
+
+    def fake_info(event: str, **kwargs: object) -> None:
+        captured.append(("info", {"event": event, **kwargs}))
+
+    def fake_warning(event: str, **kwargs: object) -> None:
+        captured.append(("warning", {"event": event, **kwargs}))
+
+    monkeypatch.setattr(runtime_mod.log, "info", fake_info)
+    monkeypatch.setattr(runtime_mod.log, "warning", fake_warning)
+
+    agent = _repair_agent(mock_client)
+    mock_client.queue("gemini-2.5-flash", BROKEN_JSON_FIXTURE)
+    agent.run(SampleInput(topic="x"))
+
+    warns = [c for c in captured if c[0] == "warning"]
+    assert any(w[1]["event"] == "agent_json_repair_applied" for w in warns)
+
+    runs = [c for c in captured if c[1].get("event") == "agent_run"]
+    assert len(runs) == 1
+    assert runs[0][1]["outcome"] == "ok"
+    assert runs[0][1].get("json_repairs_applied") == 1
+
+
+def test_json_repair_unrecoverable_still_terminal_refusal(
+    mock_client: MockModelClient,
+) -> None:
+    """No regression on the genuine-refusal path: a payload that even
+    json-repair can't turn into a JSON object still raises terminal_refusal."""
+    agent = _repair_agent(mock_client)
+    # Garbage that json-repair will collapse to a non-dict (string / empty).
+    mock_client.queue("gemini-2.5-flash", "<<<broken>>>")
+
+    with pytest.raises(TerminalError) as exc_info:
+        agent.run(SampleInput(topic="x"))
+    assert "refusal" in str(exc_info.value).lower()
+    assert len(mock_client.invocations) == 1
+
+
+def test_json_repair_off_by_default(mock_client: MockModelClient) -> None:
+    """Default agents (enable_json_repair=False) do NOT swallow malformed
+    JSON — they still raise terminal_refusal so other agents keep their
+    existing failure semantics. SampleAgent has clarification retries ON,
+    so we queue the broken payload twice (initial + retry); both fail
+    parsing and the runtime terminates."""
+    sample = SampleAgent(mock_client)
+    mock_client.queue("gemini-2.5-flash", BROKEN_JSON_FIXTURE, BROKEN_JSON_FIXTURE)
+    # No fallback queue: the runtime falls through to gemini-2.5-pro after
+    # primary exhausts. Queue broken responses there too.
+    mock_client.queue("gemini-2.5-pro", BROKEN_JSON_FIXTURE, BROKEN_JSON_FIXTURE)
+    with pytest.raises(TerminalError) as exc_info:
+        sample.run(SampleInput(topic="x"))
+    assert "refusal" in str(exc_info.value).lower()
+
+
+def test_json_repair_library_handles_prod_fixture_shape() -> None:
+    """Sanity: the library itself parses the prod fixture into a structurally
+    valid dict that satisfies clip_metadata's required-fields contract.
+    Guards against silent library regressions."""
+    import json_repair  # noqa: PLC0415
+
+    parsed = json_repair.loads(BROKEN_JSON_FIXTURE)
+    assert isinstance(parsed, dict)
+    assert parsed.get("hook_score") == 6.5
+    moments = parsed.get("best_moments")
+    assert isinstance(moments, list) and len(moments) == 2
+    assert moments[0]["description"] == "crowd watching light show"
+    assert moments[1]["description"] == "stage lights"
