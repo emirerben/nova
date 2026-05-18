@@ -42,8 +42,18 @@ primary_region = "iad"
   protocol = "tcp"
   internal_port = 8000
   processes = ["api"]
-  auto_stop_machines = true
+  # auto_stop_machines + min_machines_running = 1 prevents the proxy's
+  # autostopper from racing rolling deploys. With a single api replica and
+  # no floor, the proxy autostops the machine ~10s after flyctl takes its
+  # lease — leaving a "stopped with new image" machine that nothing
+  # restarts until the orchestrator's 5m poll times out and red-marks an
+  # otherwise-successful deploy. Canonical trace:
+  # https://github.com/emirerben/nova/actions/runs/26036712549 (PR #217).
+  # Floor of 1 makes autostop a no-op for current single-replica prod and
+  # still trims to 1 if we ever add a second api machine.
+  auto_stop_machines = "stop"
   auto_start_machines = true
+  min_machines_running = 1
 
   [[services.ports]]
     port = 80
