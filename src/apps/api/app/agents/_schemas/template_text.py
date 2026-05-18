@@ -140,11 +140,24 @@ class TemplateTextInput(BaseModel):
     the recipe, in temporal order. The agent uses these to attribute each
     extracted overlay to the correct slot_index (1-indexed). Sourced from the
     `template_recipe` output's slots, summed cumulatively from 0.
+
+    `transcript_words` carries per-word timestamps from the audio transcript. It
+    is forwarded to stage E (transcript alignment) in the Layer-2 pipeline path
+    when `text_overlay_v2_enabled=True`. When empty (the default), stage E skips
+    alignment corrections and returns phrases as-is. The Layer-1 single-call path
+    ignores this field entirely — it is a no-op for existing callers.
     """
 
     file_uri: str
     file_mime: str = "video/mp4"
     slot_boundaries_s: list[tuple[float, float]] = Field(default_factory=list)
+    # Optional transcript for Layer-2 stage E (alignment). Empty list is valid
+    # and causes the alignment stage to pass through phrases unchanged.
+    # Layer-1 callers that don't set this field are unaffected.
+    transcript_words: list[dict] = Field(
+        default_factory=list,
+        description="Per-word transcript [{text, start_s, end_s}]. Optional; Layer-2 only.",
+    )
 
 
 class TemplateTextOutput(BaseModel):
