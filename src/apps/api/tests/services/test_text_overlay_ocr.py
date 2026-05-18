@@ -394,3 +394,110 @@ def test_default_backend_raises_with_install_hint_when_neither_available(monkeyp
 
     with pytest.raises(RuntimeError, match="No OCR backend available"):
         mod.default_backend()
+
+
+# ── CloudVisionBackend credential loading ─────────────────────────────────────
+
+
+def test_cloud_vision_init_loads_service_account_credentials(monkeypatch):
+    """CloudVisionBackend.__init__ passes creds from get_gcp_credentials to the client."""
+    from unittest.mock import MagicMock, patch
+
+    from google.oauth2 import service_account
+
+    from app.services import text_overlay_ocr as mod
+
+    fake_creds = MagicMock(spec=service_account.Credentials)
+
+    # Patch get_gcp_credentials in the ocr module's namespace (where it was imported).
+    with patch.object(mod, "get_gcp_credentials", return_value=fake_creds) as mock_get_creds:
+        fake_vision = MagicMock()
+        fake_client = MagicMock()
+        fake_vision.ImageAnnotatorClient.return_value = fake_client
+
+        with patch.dict("sys.modules", {"google.cloud.vision": fake_vision}):
+            # Patch the lazy import inside __init__ to return our fake module.
+            with patch("builtins.__import__", side_effect=_make_import_side_effect(fake_vision)):
+                backend = mod.CloudVisionBackend()
+
+        # get_gcp_credentials called with the cloud-platform scope.
+        mock_get_creds.assert_called_once_with(scopes=mod.CloudVisionBackend._VISION_SCOPES)
+        # ImageAnnotatorClient called with the returned fake creds.
+        fake_vision.ImageAnnotatorClient.assert_called_once_with(credentials=fake_creds)
+        assert backend._client is fake_client
+
+
+def test_cloud_vision_init_raises_when_credentials_unavailable(monkeypatch):
+    """CloudVisionBackend.__init__ propagates errors from get_gcp_credentials."""
+    from unittest.mock import MagicMock, patch
+
+    from app.services import text_overlay_ocr as mod
+
+    def _bad_creds(scopes=None):
+        raise RuntimeError(
+            "GOOGLE_SERVICE_ACCOUNT_JSON contains valid JSON but is not a "
+            "valid service account key (missing required fields)"
+        )
+
+    with patch.object(mod, "get_gcp_credentials", side_effect=_bad_creds):
+        fake_vision = MagicMock()
+        with patch("builtins.__import__", side_effect=_make_import_side_effect(fake_vision)):
+            with pytest.raises(RuntimeError, match="GOOGLE_SERVICE_ACCOUNT_JSON"):
+                mod.CloudVisionBackend()
+
+
+def test_default_backend_error_message_when_creds_missing(monkeypatch):
+    """When google-cloud-vision is installed but creds are absent, the error names the env var.
+
+    This is the Fly v272 canary failure mode: the package is present but
+    GOOGLE_SERVICE_ACCOUNT_JSON was not set, so ADC falls through and raises
+    DefaultCredentialsError. The old error said 'Install google-cloud-vision',
+    which was wrong and cost diagnostic time.
+    """
+    from app.services import text_overlay_ocr as mod
+
+    # SDK importable but no credential env vars set.
+    monkeypatch.setattr(mod, "_cloud_vision_importable", lambda: True)
+    monkeypatch.setattr(mod, "_cloud_vision_creds_present", lambda: False)
+    monkeypatch.setattr(mod, "_apple_vision_available", lambda: False)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        mod.default_backend()
+
+    msg = str(exc_info.value)
+    assert "GOOGLE_SERVICE_ACCOUNT_JSON" in msg, (
+        f"Error message should name the env var, got: {msg!r}"
+    )
+    assert "Install" not in msg, (
+        f"Error message must NOT say 'Install' when the package is present, got: {msg!r}"
+    )
+
+
+# ── helpers for credential tests ──────────────────────────────────────────────
+
+
+import builtins  # noqa: E402 — import at module level for the helper below
+
+
+def _make_import_side_effect(fake_vision_module):
+    """Return an __import__ side-effect that short-circuits `from google.cloud import vision`.
+
+    CloudVisionBackend.__init__ does:
+        from google.cloud import vision
+    Python translates that to a call like __import__("google.cloud", ..., fromlist=["vision"]).
+    We intercept that specific call and graft our fake module onto a stub package.
+    All other imports fall through to the real __import__.
+    """
+    _real = builtins.__import__
+
+    def _side_effect(name, *args, **kwargs):
+        fromlist = args[2] if len(args) > 2 else kwargs.get("fromlist", [])
+        if name == "google.cloud" and "vision" in (fromlist or []):
+            import types
+
+            pkg = types.ModuleType("google.cloud")
+            pkg.vision = fake_vision_module  # type: ignore[attr-defined]
+            return pkg
+        return _real(name, *args, **kwargs)
+
+    return _side_effect
