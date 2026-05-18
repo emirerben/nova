@@ -199,7 +199,15 @@ class TestThresholdConstant:
 
 @pytest.mark.parametrize("status,should_reap", [
     ("processing", True),
-    ("template_ready", True),
+    # template_ready is the SUCCESS terminal state for template jobs —
+    # set at the finalize step after assemble + audio mix + upload. The
+    # reaper must NOT touch it; doing so would flip every completed job
+    # to processing_failed after the 60-minute threshold (prod regression
+    # observed on job e3804f62).
+    ("template_ready", False),
+    ("music_ready", False),
+    ("clips_ready", False),
+    ("clips_ready_partial", False),
     ("completed", False),
     ("processing_failed", False),
     ("queued", False),
@@ -208,3 +216,23 @@ def test_non_terminal_statuses_constant_includes_correct_set(status, should_reap
     """Sanity-pin the status filter so a future schema change is caught."""
     from app.tasks.reaper import _NON_TERMINAL_STATUSES
     assert (status in _NON_TERMINAL_STATUSES) is should_reap
+
+
+def test_template_ready_jobs_are_not_reaped():
+    """Regression: a stale `template_ready` row must NOT be reaped.
+
+    Prod incident: job e3804f62 finished successfully at 21:28 (status set
+    to `template_ready` by the finalize step). At 22:31 the sweeper saw it
+    as stale + unowned and flipped it to `processing_failed` with
+    error_detail "Worker died with no recovery; reaped on worker startup."
+    The user then opened the job and saw it as failed even though it had
+    succeeded an hour earlier.
+
+    The fix is to keep `template_ready` out of `_NON_TERMINAL_STATUSES`.
+    This test pins the invariant.
+    """
+    from app.tasks.reaper import _NON_TERMINAL_STATUSES
+    assert "template_ready" not in _NON_TERMINAL_STATUSES, (
+        "template_ready is the success terminal state — reaping it flips "
+        "every completed template job to processing_failed after 60 minutes."
+    )

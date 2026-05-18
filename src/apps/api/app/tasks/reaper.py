@@ -1,7 +1,8 @@
 """Orphan-job reaper.
 
 Marks template jobs as `processing_failed` when:
-  1. status is non-terminal (`processing` or `template_ready`)
+  1. status is non-terminal (`processing` only — `template_ready` is the
+     finalize-step success state, not a mid-pipeline marker)
   2. updated_at is older than `THRESHOLD_MIN`
   3. no live Celery task references the job_id (cross-checked via
      `celery_app.control.inspect()`)
@@ -44,10 +45,16 @@ THRESHOLD_MIN = 60
 _INSPECT_TIMEOUT_S = 5
 
 # Status values that are non-terminal — eligible for reaping when stale.
-# `template_ready` is set immediately after the recipe is loaded (still
-# very early in the pipeline); `processing` is set as the job enters the
-# worker. Both can be "stuck" if the worker dies mid-flight.
-_NON_TERMINAL_STATUSES = ("processing", "template_ready")
+# `processing` is set as the job enters the worker; if the worker SIGKILL's
+# mid-flight, the row stays stuck in `processing` forever.
+#
+# Do NOT include `template_ready` here. It looks "intermediate" by name but
+# template_orchestrate.py sets it at the FINALIZE step (after assemble +
+# audio mix + upload). It is the SUCCESS terminal state — every successful
+# template job ends in `template_ready` and stays there. Reaping it would
+# silently flip every completed job to `processing_failed` after the
+# 60-minute threshold, which is what happened to prod job e3804f62.
+_NON_TERMINAL_STATUSES = ("processing",)
 
 
 def _live_job_ids(celery_app: Celery) -> set[str] | None:
