@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.32.0] - 2026-05-18
+
+### Changed
+- **Layer-2 text-overlay extraction now emits one overlay per WORD instead of one per multi-line phrase — the canonical word-by-word reveal that viral short-form templates use.** Behavior change for every template that runs through `run_full_pipeline`. Source TikTok-style templates introduce text one word at a time (each with its own pop-in), even when multiple words end up on the same line; the old phrase-based output stacked those words into one multi-line overlay and threw away the per-word introduction timing. On the canary template `fdaf3bbc-2f4f-43bc-ba7c-e5cd819de102` ("not just luck"), prod went from 12 muddled phrases (e.g. `"if you\nif you\nput\nput in"` from OCR detecting "if you" three times and the multi-line "if you\nput" once) to 31 atomic single-word overlays with correct cascading `start_s` timing (`It's` 0.0 → `not` 1.0 → `just` 1.5 → `if` 2.0 → `you` 3.0 → `put` 3.5 → `in` 4.0 → `The` 4.5 → `work` 5.0 → …). Same `TemplateTextOverlay` schema, just one row per word.
+
+### Added
+- **`app/pipeline/text_overlay_v2/tokenize.py`: stage B.5 word tokenization.** `tokenize_detections_into_words()` splits every multi-line + multi-word `FrameDetection` into one detection per word. Multi-line OCR blocks split by newline into per-line sub-detections (uniform vertical height per line), then each line splits by whitespace into per-word sub-detections (horizontal width proportional to char count). `frame_t_s` and `confidence` inherit unchanged. Single-word detections are identity-passed (no allocation). Locked by 12 unit tests in `tests/pipeline/text_overlay_v2/test_tokenize.py` covering single-word passthrough, multi-line splitting, char-proportional widths, empty/whitespace edge cases, and inheritance.
+- **`reconstruct_phrases(atomize_per_event=True)`: skip x-band clustering so each event becomes its own one-line phrase.** Required by the word-by-word path so same-line same-time words (e.g. `if` and `you` after tokenization of `if you`) don't get re-merged into a multi-line phrase. Default `False` preserves the old phrase-based behavior for any caller that wants it. Locked by 3 unit tests in `test_phrases.py` covering default-mode merging, atomize-mode separation, and the empty-input case.
+- **`run_full_pipeline(..., atomize_words=True)`: ties B.5 + atomize_per_event together.** Default `True` (word-by-word reveal). Set `False` to fall back to phrase-level overlays for templates with a single stable headline. The pipeline dumps an extra `stage_b5_words.json` to `--dump-stages` when atomization is on, so `scripts/debug_layer2.py` shows pre/post-tokenization detection counts.
+
 ## [0.4.31.3] - 2026-05-18
 
 ### Added
