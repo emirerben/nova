@@ -13,6 +13,15 @@ OCR-derived ground truth.
 
 Wired into `agentic_template_build` only — manual templates and music-job
 templates are out of scope.
+
+Flag-gated routing (slice G):
+  When `settings.text_overlay_v2_enabled=True`, `run()` calls `_run_layer2()`
+  which downloads the template video locally, runs the A→B→C→D→E→F→G pipeline,
+  and returns a `TemplateTextOutput` in the same schema as the Layer-1 path.
+  The Layer-1 single-call path is unchanged when the flag is False — all
+  existing callers are unaffected. See
+  `app/pipeline/text_overlay_v2/pipeline.py::run_full_pipeline` for the
+  implementation.
 """
 
 from __future__ import annotations
@@ -61,6 +70,112 @@ class TemplateTextAgent(Agent[TemplateTextInput, TemplateTextOutput]):
     )
     Input = TemplateTextInput
     Output = TemplateTextOutput
+
+    # ── Flag-gated run() override (slice G) ──────────────────────────────────
+
+    def run(  # type: ignore[override]
+        self,
+        input: TemplateTextInput | dict,  # noqa: A002
+        *,
+        ctx=None,
+    ) -> TemplateTextOutput:
+        """Run the agent, routing to the Layer-2 pipeline when the flag is on.
+
+        When `settings.text_overlay_v2_enabled=True`: delegates to
+        `_run_layer2()` which runs the full A→B→C→D→E→F→G pipeline.
+
+        When False: runs the existing Layer-1 single-Gemini-call path via
+        `super().run()`. The Layer-1 path is byte-for-byte identical to the
+        pre-slice-G code — no behavior change for existing callers.
+        """
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.config import settings  # noqa: PLC0415
+
+        ctx = ctx or RunContext()
+        validated = self._validate_input(input)
+
+        if settings.text_overlay_v2_enabled:
+            return self._run_layer2(validated, ctx=ctx)
+
+        return super().run(validated, ctx=ctx)
+
+    def _run_layer2(
+        self,
+        input: TemplateTextInput,  # noqa: A002
+        *,
+        ctx,
+    ) -> TemplateTextOutput:
+        """Layer-2 path: A→B→C→D→E→F→G pipeline on the template video.
+
+        The video is downloaded to a tempdir from GCS/S3 (via `download_to_file`).
+        The pipeline then runs frame extraction → OCR → grouping → phrase
+        reconstruction → transcript alignment → classification → output conversion.
+
+        The transcript_words field on the input is forwarded to stage E.
+        When empty (the default for existing callers), stage E passes phrases
+        through unchanged — a safe degraded mode.
+
+        On pipeline failure, surfaces a TerminalError so the caller's
+        error-handling logic (e.g. `extract_template_text_overlays` returning
+        success=False) works identically to the Layer-1 failure mode.
+        """
+        import os  # noqa: PLC0415
+        import tempfile  # noqa: PLC0415
+
+        from app.agents._runtime import TerminalError  # noqa: PLC0415
+        from app.agents._schemas.text_alignment import TranscriptWord  # noqa: PLC0415
+        from app.pipeline.text_overlay_v2.pipeline import run_full_pipeline  # noqa: PLC0415
+        from app.storage import download_to_file  # noqa: PLC0415
+
+        # Parse transcript_words from raw dicts to TranscriptWord objects.
+        transcript_words: list[TranscriptWord] = []
+        for w in input.transcript_words:
+            try:
+                transcript_words.append(TranscriptWord.model_validate(w))
+            except (ValueError, TypeError, ValidationError) as exc:
+                log.warning(
+                    "template_text_layer2_transcript_word_invalid",
+                    error=str(exc),
+                    word=repr(w)[:80],
+                )
+
+        log.info(
+            "template_text_layer2_start",
+            file_uri=input.file_uri,
+            n_transcript_words=len(transcript_words),
+            n_slots=len(input.slot_boundaries_s),
+            job_id=ctx.job_id,
+        )
+
+        # Download the template video from GCS/S3 to a local tempfile so
+        # ffmpeg (stage A) and the OCR backend (stage B) can access it.
+        with tempfile.TemporaryDirectory(prefix="nova-layer2-") as tmpdir:
+            local_video = os.path.join(tmpdir, "template.mp4")
+            try:
+                download_to_file(input.file_uri, local_video)
+            except Exception as exc:
+                raise TerminalError(f"template_text_layer2: download failed — {exc}") from exc
+
+            try:
+                output = run_full_pipeline(
+                    local_video,
+                    transcript_words=transcript_words,
+                    slot_boundaries_s=input.slot_boundaries_s,
+                    job_id=ctx.job_id,
+                )
+            except TerminalError:
+                raise
+            except Exception as exc:
+                raise TerminalError(f"template_text_layer2: pipeline failed — {exc}") from exc
+
+        log.info(
+            "template_text_layer2_done",
+            n_overlays=len(output.overlays),
+            job_id=ctx.job_id,
+        )
+        return output
+
+    # ── Layer-1 single-call path (unchanged) ──────────────────────────────────
 
     def media_uri(self, input: TemplateTextInput) -> str | None:  # noqa: A002
         return input.file_uri
