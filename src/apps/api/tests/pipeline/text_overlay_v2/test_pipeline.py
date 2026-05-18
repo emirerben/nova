@@ -11,6 +11,7 @@ the grouping/phrase logic.
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -18,6 +19,7 @@ import pytest
 from app.agents._schemas.text_overlay_ocr import FrameDetection, OcrPolygon
 from app.pipeline.text_overlay_v2.pipeline import (
     DEFAULT_OCR_CONCURRENCY,
+    _dump_stage,
     run_phrase_pipeline_from_frames,
 )
 from app.services.video_frames import ExtractedFrame
@@ -267,3 +269,43 @@ def test_backend_error_propagates_through_orchestrator():
     frames = [ExtractedFrame(path="/f/1.jpg", t_s=0.0)]
     with pytest.raises(RuntimeError, match="intentional failure"):
         run_phrase_pipeline_from_frames(frames, backend=_ExplodingBackend())
+
+
+# ── Stage-dump instrumentation ────────────────────────────────────────────────
+
+
+def test_dump_stage_noop_when_dir_is_none(tmp_path):
+    # Sanity: passing None must not touch the filesystem or raise.
+    _dump_stage(None, "stage_a", [_det(0.0, "x")])
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_dump_stage_writes_pydantic_list_as_json(tmp_path):
+    detections = [_det(0.0, "Hi"), _det(0.5, "There")]
+    _dump_stage(tmp_path, "stage_b", detections)
+    payload = json.loads((tmp_path / "stage_b.json").read_text())
+    assert isinstance(payload, list)
+    assert len(payload) == 2
+    assert payload[0]["text"] == "Hi"
+    assert payload[1]["text"] == "There"
+
+
+def test_dump_stage_writes_pydantic_model_as_json(tmp_path):
+    from app.agents._schemas.template_text import TemplateTextOutput
+
+    out = TemplateTextOutput(overlays=[])
+    _dump_stage(tmp_path, "stage_g", out)
+    payload = json.loads((tmp_path / "stage_g.json").read_text())
+    assert payload == {"overlays": []}
+
+
+def test_dump_stage_swallows_serialization_errors(tmp_path):
+    # Instrumentation must never break the pipeline.
+    class _BadDump:
+        def model_dump(self):
+            raise RuntimeError("boom")
+
+    _dump_stage(tmp_path, "stage_x", _BadDump())
+    # File is either absent or empty; what matters is no exception escaped.
+    f = tmp_path / "stage_x.json"
+    assert not f.exists() or f.read_text() in ("", "{}", "null")

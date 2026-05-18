@@ -33,10 +33,11 @@ Frame JPEG lifecycle:
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import shutil
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -88,6 +89,7 @@ def run_full_pipeline(
     job_id: str | None = None,
     alignment_client=None,
     classification_client=None,
+    dump_stages_dir: str | Path | None = None,
 ) -> TemplateTextOutput:
     """Run the full A→B→C→D→E→F→G pipeline on a local video file.
 
@@ -118,6 +120,12 @@ def run_full_pipeline(
     the template recipe. Each phrase is assigned to the slot whose window
     contains its `start_t_s`. Phrases before the first slot or after the
     last slot are assigned to slot 1 or the last slot respectively.
+
+    `dump_stages_dir` is a debugging hook. When set, the per-stage output of
+    A/B/C/D/E/F/G is written as JSON into that directory (`stage_a.json` …
+    `stage_g.json`). Stage E also writes `stage_e_dropped.txt` with the
+    alignment drop count. Used by `scripts/debug_layer2.py` to attribute
+    overlay errors to a specific stage; safe to leave None in production.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents._runtime import RunContext  # noqa: PLC0415
@@ -137,6 +145,11 @@ def run_full_pipeline(
     ctx = RunContext(job_id=job_id)
     alignment_agent = TextAlignmentAgent(alignment_client or default_client())
     classification_agent = TextClassificationAgent(classification_client or default_client())
+
+    dump_dir: Path | None = None
+    if dump_stages_dir is not None:
+        dump_dir = Path(dump_stages_dir)
+        dump_dir.mkdir(parents=True, exist_ok=True)
 
     log.info(
         "full_pipeline_start",
@@ -163,11 +176,13 @@ def run_full_pipeline(
         log.info("full_pipeline_stage_a_start", job_id=job_id)
         frames = extract_frames(video_path, out_dir=work_dir, fps=fps)
         log.info("full_pipeline_stage_a_done", n_frames=len(frames), job_id=job_id)
+        _dump_stage(dump_dir, "stage_a", [{"path": str(f.path), "t_s": f.t_s} for f in frames])
 
         # ── B: Per-frame OCR ──────────────────────────────────────────────
         log.info("full_pipeline_stage_b_start", n_frames=len(frames), job_id=job_id)
         detections = _ocr_frames(frames, backend=backend, max_workers=ocr_concurrency)
         log.info("full_pipeline_stage_b_done", n_detections=len(detections), job_id=job_id)
+        _dump_stage(dump_dir, "stage_b", detections)
 
         # ── C: Temporal grouping ──────────────────────────────────────────
         log.info("full_pipeline_stage_c_start", job_id=job_id)
@@ -177,11 +192,13 @@ def run_full_pipeline(
             jitter_max_gap_s=jitter_max_gap_s,
         )
         log.info("full_pipeline_stage_c_done", n_events=len(events), job_id=job_id)
+        _dump_stage(dump_dir, "stage_c", events)
 
         # ── D: Phrase reconstruction ──────────────────────────────────────
         log.info("full_pipeline_stage_d_start", job_id=job_id)
         phrases = reconstruct_phrases(events, x_band_threshold=x_band_threshold)
         log.info("full_pipeline_stage_d_done", n_phrases=len(phrases), job_id=job_id)
+        _dump_stage(dump_dir, "stage_d", phrases)
 
         if not phrases:
             log.info(
@@ -218,6 +235,11 @@ def run_full_pipeline(
             n_dropped=alignment_output.dropped_count,
             job_id=job_id,
         )
+        _dump_stage(dump_dir, "stage_e", aligned_phrases)
+        if dump_dir is not None:
+            (dump_dir / "stage_e_dropped.txt").write_text(
+                f"dropped_count={alignment_output.dropped_count}\n"
+            )
 
         if not aligned_phrases:
             log.info(
@@ -254,6 +276,7 @@ def run_full_pipeline(
             n_classified=len(classification_output.classified),
             job_id=job_id,
         )
+        _dump_stage(dump_dir, "stage_f", classification_output.classified)
 
         # ── G: Convert to TemplateTextOutput ─────────────────────────────
         log.info("full_pipeline_stage_g_start", job_id=job_id)
@@ -267,6 +290,7 @@ def run_full_pipeline(
             job_id=job_id,
             template_id=template_id,
         )
+        _dump_stage(dump_dir, "stage_g", output)
         return output
 
     finally:
@@ -365,6 +389,33 @@ def run_phrase_pipeline_from_frames(
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
+
+def _dump_stage(dir_path: Path | None, stage_name: str, payload: Any) -> None:
+    """Write one stage's output to `<dir>/<stage_name>.json`.
+
+    Pydantic models (and lists of them) are serialised via `model_dump()`;
+    dataclasses fall back to `__dict__`; everything else goes through
+    `default=str`. Dump failures are swallowed — instrumentation must never
+    break the pipeline.
+    """
+    if dir_path is None:
+        return
+
+    def _coerce(obj: Any) -> Any:
+        if isinstance(obj, list):
+            return [_coerce(x) for x in obj]
+        if hasattr(obj, "model_dump"):
+            return obj.model_dump()
+        if hasattr(obj, "__dict__"):
+            return obj.__dict__
+        return obj
+
+    try:
+        with (dir_path / f"{stage_name}.json").open("w") as fh:
+            json.dump(_coerce(payload), fh, indent=2, default=str)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("dump_stage_failed", stage=stage_name, error=str(exc))
 
 
 def _ocr_frames(
