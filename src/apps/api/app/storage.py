@@ -88,7 +88,9 @@ def upload_public_read(local_path: str, object_path: str, content_type: str = "v
     )
 
 
-def upload_bytes_public_read(data: bytes, object_path: str, content_type: str = "image/jpeg") -> str:  # noqa: E501
+def upload_bytes_public_read(
+    data: bytes, object_path: str, content_type: str = "image/jpeg"
+) -> str:  # noqa: E501
     """Upload raw bytes to GCS and return a signed URL valid for 1 day."""
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
@@ -107,9 +109,25 @@ def download_to_file(object_path: str, local_path: str) -> None:
     blob.download_to_filename(local_path)
 
 
-def copy_object_signed_url(
-    src_object_path: str, dst_object_path: str
-) -> str:
+def signed_get_url(object_path: str, expiration_minutes: int = 5) -> str:
+    """Generate a short-lived signed GET URL for the API to stream-probe a GCS
+    object without downloading it. ffmpeg/ffprobe accept https:// URLs and
+    range-request only the moov atom, so a 400 MB clip is probed in ~1-2s.
+
+    Default TTL is 5 minutes — long enough for a sequence of preflight probes
+    on a 20-clip upload, short enough that a leaked URL is useless almost
+    immediately.
+    """
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path)
+    return blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(minutes=expiration_minutes),
+        method="GET",
+    )
+
+
+def copy_object_signed_url(src_object_path: str, dst_object_path: str) -> str:
     """Server-side copy a GCS object to a new key, returns signed URL for the copy.
 
     Uses bucket.copy_blob (server-side rewrite) so we don't pay egress + re-upload
@@ -133,5 +151,3 @@ def object_exists(object_path: str) -> bool:
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     return blob.exists()
-
-

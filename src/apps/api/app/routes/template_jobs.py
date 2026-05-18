@@ -30,6 +30,7 @@ from app.services.template_validation import (
     require_ready,
     validate_clip_count,
     validate_clip_total_duration,
+    validate_clips_processable,
 )
 
 log = structlog.get_logger()
@@ -195,6 +196,11 @@ async def create_template_job(
     validate_clip_count(template, len(req.clip_gcs_paths))
     validate_clip_total_duration(template, req.clip_durations)
     _validate_inputs(req.inputs, template.required_inputs)
+    # Stream-probe each uploaded clip via signed GCS URL and reject 10-bit
+    # HDR uploads longer than the pipeline's empirical 60s cost budget
+    # BEFORE creating a job that would hang for 21 min on the worker before
+    # failing. See `validate_clips_processable` for the empirical record.
+    await validate_clips_processable(req.clip_gcs_paths)
 
     job = Job(
         user_id=SYNTHETIC_USER_ID,

@@ -23,6 +23,11 @@ class VideoProbe:
     file_size_bytes: int
     color_trc: str = "bt709"  # e.g. "arib-std-b67" (HLG), "smpte2084" (PQ/HDR10)
     color_transfer: str = ""  # raw container value; empty = unknown/SDR
+    # Pixel format from ffprobe (e.g. "yuv420p", "yuv420p10le"). Empty = unknown.
+    # Used by the upload-time pre-flight in routes/template_jobs.py to reject
+    # 10-bit HEVC clips longer than a hardware-cost ceiling — see the
+    # MAX_HDR_DURATION_S constant there for the empirical budget.
+    pix_fmt: str = ""
 
 
 class ProbeError(Exception):
@@ -36,14 +41,28 @@ class ProbeTimeout(ProbeError):
 def probe_video(file_path: str) -> VideoProbe:
     """Run ffprobe on file_path and return VideoProbe.
 
+    Accepts a local filesystem path OR an https:// URL (e.g. a signed GCS
+    URL). For URLs, ffprobe range-reads the moov atom (~1-2s for a 400 MB
+    clip) instead of streaming the whole file.
+
     Raises ProbeError on corrupt/unreadable file.
     Raises ProbeTimeout if ffprobe hangs beyond PROBE_TIMEOUT_S.
     Never uses shell=True.
     """
+    # -rw_timeout caps how long ffmpeg's HTTP demuxer waits on a single
+    # read/write before failing. Without it, a slow-stall TCP read can occupy
+    # this thread for the full PROBE_TIMEOUT_S (60s). 5s is enough headroom
+    # for typical GCS range requests (~200-500ms) while preventing a
+    # malicious or unhealthy URL from holding a worker indefinitely. No
+    # effect on local-file probes — they don't use the network demuxer.
     cmd = [
         "ffprobe",
-        "-v", "quiet",
-        "-print_format", "json",
+        "-v",
+        "quiet",
+        "-rw_timeout",
+        "5000000",  # microseconds — 5 seconds
+        "-print_format",
+        "json",
         "-show_streams",
         "-show_format",
         file_path,
@@ -105,14 +124,22 @@ def probe_video(file_path: str) -> VideoProbe:
         # report "smpte2084". SDR clips report "bt709", "bt470bg", or are
         # unset entirely. Empty string here means "unknown — treat as SDR".
         color_transfer = str(video_stream.get("color_transfer") or "").lower()
+        pix_fmt = str(video_stream.get("pix_fmt") or "").lower()
     except (KeyError, ValueError, ZeroDivisionError) as exc:
         raise ProbeError(f"Failed to parse probe metadata: {exc}") from exc
 
     aspect_ratio = _classify_aspect(width, height)
 
+    # Never log the full URL when probing a signed GCS URL — the v4 query
+    # string contains the time-limited signature, and even a 5-min TTL is
+    # long enough to be replayed after the URL hits Fly logs / shippers /
+    # error trackers. Strip the query for logging only; ffprobe already
+    # consumed the signed URL upstream.
+    log_path = file_path.split("?", 1)[0] if file_path.startswith("http") else file_path
+
     log.info(
         "probe_complete",
-        path=file_path,
+        path=log_path,
         duration_s=duration_s,
         resolution=f"{width}x{height}",
         aspect_ratio=aspect_ratio,
@@ -120,6 +147,7 @@ def probe_video(file_path: str) -> VideoProbe:
         codec=codec,
         color_trc=color_trc,
         color_transfer=color_transfer or "unknown",
+        pix_fmt=pix_fmt or "unknown",
     )
 
     return VideoProbe(
@@ -133,6 +161,7 @@ def probe_video(file_path: str) -> VideoProbe:
         file_size_bytes=file_size_bytes,
         color_trc=color_trc,
         color_transfer=color_transfer,
+        pix_fmt=pix_fmt,
     )
 
 
