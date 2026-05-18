@@ -40,6 +40,7 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     ("nova.video.clip_router", "app.agents.clip_router", "ClipRouterAgent"),
     ("nova.qa.output_validator", "app.agents.output_validator", "OutputValidatorAgent"),
     # Layer-2 text-overlay pipeline agents (slices E + F)
+    ("nova.compose.text_alignment", "app.agents.text_alignment", "TextAlignmentAgent"),
     (
         "nova.compose.text_classification",
         "app.agents.text_classification",
