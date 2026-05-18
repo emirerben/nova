@@ -37,6 +37,7 @@ from datetime import UTC, datetime
 import redis as redis_lib
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.config import settings
 from app.database import sync_session as _sync_session
@@ -219,7 +220,16 @@ def _stage(name: str, on_fail: str, *, job_id: str) -> Iterator[None]:
 @celery_app.task(
     name="tasks.analyze_template_task",
     bind=True,
-    max_retries=0,
+    # Retry on transient Postgres outages (incident 2026-05-18 07:45:57Z).
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,  # deterministic exp backoff — jitter halves avg budget
+    # 7 retries × deterministic exp backoff (1+2+4+8+16+32+60 = 123s).
+    # retry_jitter=False so the budget is predictable, not half on average.
+    # Covers the documented 65s nova-db VM stall (2026-05-18 07:45:57Z)
+    # with ~2× safety margin. retry_backoff_max=60 caps any single delay.
+    max_retries=7,
     soft_time_limit=840,
     time_limit=900,
 )
@@ -416,6 +426,19 @@ def analyze_template_task(self, template_id: str) -> None:
                     template.analysis_status = "failed"
                     template.error_detail = "Analysis timed out (exceeded 840s soft limit)"
                     db.commit()
+        except OperationalError as db_exc:
+            # Transient Postgres outage. Re-raise so Celery's autoretry_for
+            # handles it with backoff. Do NOT mark the template failed —
+            # that itself would hit the down DB and convert a recoverable
+            # failure into a permanent one (incident 2026-05-18 07:45:57Z).
+            log.warning(
+                "analyze_template_transient_db_error_retry",
+                template_id=template_id,
+                error=str(db_exc),
+                retry_count=self.request.retries,
+            )
+            _redis.close()
+            raise
         except Exception as exc:
             log.error(
                 "analyze_template_failed",
@@ -439,7 +462,18 @@ def analyze_template_task(self, template_id: str) -> None:
 @celery_app.task(
     name="tasks.orchestrate_template_job",
     bind=True,
-    max_retries=0,
+    # Retry on transient Postgres outages (incident 2026-05-18 07:45:57Z,
+    # job c13db8a3). Without this, a ~65s nova-db stall zombied the job at
+    # status=processing because _mark_failed itself hit the still-down DB.
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,  # deterministic exp backoff — jitter halves avg budget
+    # 7 retries × deterministic exp backoff (1+2+4+8+16+32+60 = 123s).
+    # retry_jitter=False so the budget is predictable, not half on average.
+    # Covers the documented 65s nova-db VM stall (2026-05-18 07:45:57Z)
+    # with ~2× safety margin. retry_backoff_max=60 caps any single delay.
+    max_retries=7,
     soft_time_limit=1740,
     time_limit=1800,
 )
@@ -556,6 +590,17 @@ def _orchestrate_template_job_inner(
             FAILURE_REASON_USER_CLIP_UNUSABLE,
             "Your video couldn't be processed — try a shorter clip or re-export it as 8-bit.",
         )
+    except OperationalError as db_exc:
+        # Transient Postgres outage. Re-raise so Celery's autoretry_for
+        # handles it with backoff. Do NOT call _mark_failed — that itself
+        # would hit the down DB and convert a recoverable failure into
+        # a permanent one. Incident 2026-05-18 07:45:57Z (job c13db8a3).
+        log.warning(
+            "template_job_transient_db_error_retry",
+            job_id=job_id,
+            error=str(db_exc),
+        )
+        raise
     except Exception as exc:
         log.exception("template_job_fatal", job_id=job_id, error=str(exc))
         _mark_failed(job_uuid, FAILURE_REASON_UNKNOWN, str(exc))
@@ -5666,7 +5711,17 @@ _SINGLE_VIDEO_HARD_TIMEOUT_S = 720
 @celery_app.task(
     name="tasks.orchestrate_single_video_job",
     bind=True,
-    max_retries=0,
+    # Retry on transient Postgres outages — same rationale as
+    # orchestrate_template_job's decorator (incident 2026-05-18 07:45:57Z).
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,  # deterministic exp backoff — jitter halves avg budget
+    # 7 retries × deterministic exp backoff (1+2+4+8+16+32+60 = 123s).
+    # retry_jitter=False so the budget is predictable, not half on average.
+    # Covers the documented 65s nova-db VM stall (2026-05-18 07:45:57Z)
+    # with ~2× safety margin. retry_backoff_max=60 caps any single delay.
+    max_retries=7,
     soft_time_limit=_SINGLE_VIDEO_SOFT_TIMEOUT_S,
     time_limit=_SINGLE_VIDEO_HARD_TIMEOUT_S,
 )
@@ -5709,6 +5764,17 @@ def orchestrate_single_video_job(self, job_id: str) -> None:
             FAILURE_REASON_USER_CLIP_UNUSABLE,
             f"{exc.code}: {exc.message}",
         )
+    except OperationalError as db_exc:
+        # Transient Postgres outage — re-raise for Celery autoretry. Same
+        # rationale as orchestrate_template_job (incident 2026-05-18 07:45:57Z).
+        log.warning(
+            "single_video_job_transient_db_error_retry",
+            job_id=job_id,
+            error=str(db_exc),
+            retry_count=self.request.retries,
+        )
+        raise
+
     except Exception as exc:
         # Note: no `except OrientationError` here on purpose —
         # `_run_single_video_job` downloads clips via raw `download_to_file`
@@ -5785,14 +5851,39 @@ def _run_single_video_job_entry(job_id: str) -> None:
 
 
 def _mark_failed(job_uuid: uuid.UUID, reason: str, message: str) -> None:
-    """Persist processing_failed + structured failure_reason in one place."""
-    with _sync_session() as db:
-        job = db.get(Job, job_uuid)
-        if job:
-            job.status = "processing_failed"
-            job.error_detail = message[:1000] if message else None
-            job.failure_reason = reason
-            db.commit()
-    # Clear current_phase and stamp finished_at so the progress UI shows a
-    # terminal state instead of frozen mid-phase. Best-effort and idempotent.
-    mark_failed_phase(job_uuid)
+    """Persist processing_failed + structured failure_reason in one place.
+
+    Hardened against transient DB outages: if the first write fails with
+    OperationalError, retry with short backoff. The terminal failure path
+    must itself be robust to the same DB blip that caused the failure —
+    otherwise the row is left at status=processing (zombie) and the user
+    sees a perpetual loading spinner. Incident 2026-05-18 07:45:57Z.
+
+    Best-effort: if the DB stays down for >~3s past the orchestrator's
+    autoretry budget, give up cleanly. The on-boot reaper (reaper.py) +
+    periodic sweeper (maintenance.py) will catch the row eventually.
+    """
+    for attempt in range(3):
+        try:
+            with _sync_session() as db:
+                job = db.get(Job, job_uuid)
+                if job:
+                    job.status = "processing_failed"
+                    job.error_detail = message[:1000] if message else None
+                    job.failure_reason = reason
+                    db.commit()
+            # Clear current_phase and stamp finished_at so the progress UI
+            # shows a terminal state instead of frozen mid-phase.
+            # Best-effort and idempotent.
+            mark_failed_phase(job_uuid)
+            return
+        except (OperationalError, DBAPIError) as exc:
+            if attempt == 2:
+                log.error(
+                    "mark_failed_db_unreachable",
+                    job_uuid=str(job_uuid),
+                    reason=reason,
+                    error=str(exc),
+                )
+                return  # don't re-raise — caller already gave up on the job
+            time.sleep(1 + attempt)  # 1s, 2s

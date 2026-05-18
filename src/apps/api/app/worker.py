@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.tasks.music_orchestrate",
         "app.tasks.auto_music_orchestrate",
         "app.tasks.online_eval",
+        "app.tasks.maintenance",
     ],
 )
 
@@ -35,6 +36,15 @@ celery_app.conf.update(
     # so re-delivery happens promptly without risking duplicate execution
     # while a real task is still running.
     broker_transport_options={"visibility_timeout": 1900},
+    # Beat schedule — picked up only when a `celery beat` process is
+    # running (see fly.toml [processes].beat). The worker process ignores
+    # this dict, so it's safe to define unconditionally.
+    beat_schedule={
+        "sweep-stale-jobs-every-5-min": {
+            "task": "tasks.sweep_stale_jobs",
+            "schedule": 300.0,  # seconds
+        },
+    },
 )
 
 

@@ -33,6 +33,12 @@ primary_region = "iad"
   # allocation. Trade-off: half the parallel throughput, but each render
   # completes in roughly a quarter of the wall-clock.
   worker = "celery -A app.worker worker --loglevel=info --concurrency=1"
+  # Celery Beat — single instance, drives the every-5-min stale-job
+  # sweeper (app/tasks/maintenance.py) that catches orphans created when
+  # autoretry budgets are exhausted AND _mark_failed itself failed.
+  # MUST remain a single process group with one machine — Beat doesn't
+  # de-duplicate across replicas. See [[vm]] below for the small VM.
+  beat = "celery -A app.worker beat --loglevel=info"
 
 # ---------------------------------------------------------------------------
 # HTTP service (api process only)
@@ -91,6 +97,15 @@ primary_region = "iad"
   cpus = 1
   memory_mb = 512
   kill_timeout = "30m"
+
+# Beat — tiny VM, schedules periodic tasks (no real CPU/memory needs).
+# Keep at 1 machine; Beat schedule de-duplication across replicas is not
+# trivial and we don't need it for a single 5-min sweeper.
+[[vm]]
+  processes = ["beat"]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256
 
 [[vm]]
   processes = ["worker"]

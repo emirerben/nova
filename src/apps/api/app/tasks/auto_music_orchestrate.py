@@ -90,6 +90,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION, MusicLabels
 from app.config import settings
@@ -148,7 +149,16 @@ _RENDER_PARALLELISM = DEFAULT_N_VARIANTS
 @celery_app.task(
     name="tasks.orchestrate_auto_music_job",
     bind=True,
-    max_retries=0,
+    # Retry on transient Postgres outages (incident 2026-05-18 07:45:57Z).
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,  # deterministic exp backoff — jitter halves avg budget
+    # 7 retries × deterministic exp backoff (1+2+4+8+16+32+60 = 123s).
+    # retry_jitter=False so the budget is predictable, not half on average.
+    # Covers the documented 65s nova-db VM stall (2026-05-18 07:45:57Z)
+    # with ~2× safety margin. retry_backoff_max=60 caps any single delay.
+    max_retries=7,
     soft_time_limit=1800,
     time_limit=2000,
 )
@@ -182,6 +192,16 @@ def orchestrate_auto_music_job(self, job_id: str) -> None:
     with pipeline_trace_for(job_id):
         try:
             _run_auto_music_job(job_id)
+        except OperationalError as db_exc:
+            # Transient Postgres outage — re-raise for Celery autoretry.
+            # See incident 2026-05-18 07:45:57Z (job c13db8a3).
+            log.warning(
+                "auto_music_job_transient_db_error_retry",
+                job_id=job_id,
+                error=str(db_exc),
+                retry_count=self.request.retries,
+            )
+            raise
         except Exception as exc:
             log.error(
                 "auto_music_job_failed",
@@ -933,14 +953,26 @@ def _fail_job(
     auto-music path supply a richer ``failure_reason`` (e.g.
     ``no_labeled_tracks`` or ``matching_failed``) for the future UI.
     """
-    try:
-        with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
-            if job:
-                job.status = status
-                job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
-                if failure_reason:
-                    job.failure_reason = failure_reason
-                db.commit()
-    except Exception as exc:
-        log.error("auto_music_fail_job_db_error", job_id=job_id, error=str(exc))
+    # Hardened against transient DB outages — retry the mark if the first
+    # attempt hits OperationalError. Incident 2026-05-18 07:45:57Z.
+    for attempt in range(3):
+        try:
+            with _sync_session() as db:
+                job = db.get(Job, uuid.UUID(job_id))
+                if job:
+                    job.status = status
+                    job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
+                    if failure_reason:
+                        job.failure_reason = failure_reason
+                    db.commit()
+            return
+        except (OperationalError, DBAPIError) as exc:
+            if attempt == 2:
+                log.error("auto_music_fail_job_db_unreachable", job_id=job_id, error=str(exc))
+                return
+            import time as _time  # noqa: PLC0415
+
+            _time.sleep(1 + attempt)
+        except Exception as exc:
+            log.error("auto_music_fail_job_db_error", job_id=job_id, error=str(exc))
+            return

@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 import redis as redis_lib
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy.exc import OperationalError
 
 from app.config import settings
 from app.database import sync_session as _sync_session
@@ -349,7 +350,16 @@ def _apply_font_default_to_overlays(recipe) -> int:
 @celery_app.task(
     name="tasks.agentic_template_build_task",
     bind=True,
-    max_retries=0,
+    # Retry on transient Postgres outages (incident 2026-05-18 07:45:57Z).
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,  # deterministic exp backoff — jitter halves avg budget
+    # 7 retries × deterministic exp backoff (1+2+4+8+16+32+60 = 123s).
+    # retry_jitter=False so the budget is predictable, not half on average.
+    # Covers the documented 65s nova-db VM stall (2026-05-18 07:45:57Z)
+    # with ~2× safety margin. retry_backoff_max=60 caps any single delay.
+    max_retries=7,
     soft_time_limit=1500,  # ~25 min — Big 3 + N text_designer calls
     time_limit=1560,
 )
@@ -693,6 +703,19 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
                     template.analysis_status = "failed"
                     template.error_detail = f"Agentic build failed: {exc}"
                     db.commit()
+
+        except OperationalError as db_exc:
+            # Transient Postgres outage — re-raise for Celery autoretry.
+            # Do NOT mark the template failed; that itself would hit the
+            # still-down DB. Incident 2026-05-18 07:45:57Z.
+            log.warning(
+                "agentic_template_build_transient_db_error_retry",
+                template_id=template_id,
+                error=str(db_exc),
+                retry_count=self.request.retries,
+            )
+            _redis.close()
+            raise
 
         except Exception as exc:
             log.exception(
