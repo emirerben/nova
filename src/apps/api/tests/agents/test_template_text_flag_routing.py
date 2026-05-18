@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from app.agents._schemas.template_text import (
     TemplateTextInput,
     TemplateTextOutput,
@@ -172,7 +174,7 @@ def test_run_layer2_passes_transcript_words_to_pipeline(monkeypatch) -> None:
         {"text": "hello", "start_s": 0.1, "end_s": 0.5},
         {"text": "world", "start_s": 0.6, "end_s": 1.0},
     ]
-    inp = _make_input(transcript_words=transcript)
+    inp = _make_input(transcript_words=transcript, gcs_path="templates/test/video.mp4")
 
     captured_kwargs: dict = {}
 
@@ -208,8 +210,8 @@ def test_run_layer2_backward_compat_no_transcript(monkeypatch) -> None:
     mock_client = MockModelClient()
     agent = TemplateTextAgent(mock_client)
 
-    # No transcript_words — should use empty default.
-    inp = _make_input()  # transcript_words defaults to []
+    # No transcript_words — should use empty default. gcs_path required for Layer-2.
+    inp = _make_input(gcs_path="templates/test/video.mp4")  # transcript_words defaults to []
 
     captured_kwargs: dict = {}
 
@@ -405,3 +407,179 @@ def test_run_uses_layer1_when_flag_off_and_input_force_layer2_false(
     assert layer2_called == []
     assert isinstance(result, TemplateTextOutput)
     assert result.overlays[0].sample_text == "layer1 overlay"
+
+
+# ── GCS path fix tests (canary 404, 2026-05-17) ───────────────────────────────
+
+
+def test_run_layer2_downloads_gcs_and_passes_local_path(monkeypatch) -> None:
+    """_run_layer2 must call download_to_file with gcs_path (not file_uri) and
+    pass the resulting local path to run_full_pipeline.
+
+    Root cause of the canary 404: download_to_file received the Gemini File API
+    URI (file_uri) which the GCS client URL-encoded and used as an object key,
+    producing "No such object: nova-videos-dev/https://generativelanguage..."
+    The fix: _run_layer2 now reads input.gcs_path, not input.file_uri.
+    """
+    monkeypatch.setattr("app.config.settings.text_overlay_v2_enabled", True)
+
+    mock_client = MockModelClient()
+    agent = TemplateTextAgent(mock_client)
+    inp = _make_input(
+        file_uri="https://generativelanguage.googleapis.com/v1beta/files/cd614j1u56br",
+        gcs_path="templates/fdaf3bbc/source.mp4",
+        force_layer2=True,
+    )
+
+    downloaded_paths: list[str] = []
+    pipeline_video_paths: list[object] = []
+
+    def _mock_download(object_path: str, local_path: str) -> None:
+        downloaded_paths.append(object_path)
+        # Write a sentinel so the tempdir cleanup can find the file.
+        import pathlib  # noqa: PLC0415
+
+        pathlib.Path(local_path).write_bytes(b"")
+
+    def _mock_run_full_pipeline(video_path, **_kwargs):
+        pipeline_video_paths.append(video_path)
+        return TemplateTextOutput(overlays=[])
+
+    with (
+        patch("app.storage.download_to_file", side_effect=_mock_download),
+        patch(
+            "app.pipeline.text_overlay_v2.pipeline.run_full_pipeline",
+            side_effect=_mock_run_full_pipeline,
+        ),
+    ):
+        result = agent.run(inp)
+
+    # download_to_file must have been called with the GCS path, not the Gemini URI.
+    assert len(downloaded_paths) == 1, "download_to_file should be called exactly once"
+    assert downloaded_paths[0] == "templates/fdaf3bbc/source.mp4", (
+        f"Expected gcs_path but got {downloaded_paths[0]!r}"
+    )
+    assert "generativelanguage.googleapis.com" not in downloaded_paths[0], (
+        "Gemini File API URI must NOT be passed to download_to_file"
+    )
+
+    # run_full_pipeline must receive a local filesystem path, not the Gemini URI.
+    assert len(pipeline_video_paths) == 1
+    pipeline_path_str = str(pipeline_video_paths[0])
+    assert "generativelanguage.googleapis.com" not in pipeline_path_str, (
+        "Gemini File API URI must NOT reach run_full_pipeline"
+    )
+
+    assert isinstance(result, TemplateTextOutput)
+
+
+def test_run_layer2_raises_when_gcs_path_missing(monkeypatch) -> None:
+    """When gcs_path is None and Layer-2 is active, _run_layer2 must raise
+    TerminalError and log template_text_layer2_missing_gcs_path.
+
+    The bridge's existing TerminalError handler catches this and returns
+    (False, 0), so recipe-agent overlays pass through unchanged — graceful
+    degradation without silent fallback hiding the misconfiguration.
+    """
+    from app.agents._runtime import TerminalError  # noqa: PLC0415
+
+    monkeypatch.setattr("app.config.settings.text_overlay_v2_enabled", True)
+
+    mock_client = MockModelClient()
+    agent = TemplateTextAgent(mock_client)
+    # gcs_path deliberately omitted (defaults to None).
+    inp = _make_input(force_layer2=True)
+    assert inp.gcs_path is None
+
+    import app.agents.template_text as _mod  # noqa: PLC0415
+    from app.agents._runtime import RunContext  # noqa: PLC0415
+
+    log_events: list[str] = []
+
+    with (
+        patch.object(_mod.log, "warning", side_effect=lambda event, **kw: log_events.append(event)),
+        pytest.raises(TerminalError, match="gcs_path is required"),
+    ):
+        agent._run_layer2(inp, ctx=RunContext(job_id="test-job"))
+
+    assert "template_text_layer2_missing_gcs_path" in log_events, (
+        f"Expected structured log event template_text_layer2_missing_gcs_path; got {log_events}"
+    )
+
+
+def test_run_layer2_cleans_up_tmpfile_on_success(monkeypatch) -> None:
+    """The TemporaryDirectory containing the downloaded video is removed after a
+    successful pipeline run (try/finally inside the `with tempfile.TemporaryDirectory`
+    context manager guarantees cleanup even on success).
+    """
+    import pathlib  # noqa: PLC0415
+
+    monkeypatch.setattr("app.config.settings.text_overlay_v2_enabled", True)
+
+    mock_client = MockModelClient()
+    agent = TemplateTextAgent(mock_client)
+    inp = _make_input(
+        gcs_path="templates/abc/video.mp4",
+        force_layer2=True,
+    )
+
+    created_tmpdir: list[str] = []
+
+    def _mock_download(object_path: str, local_path: str) -> None:
+        # Record the tmpdir so we can check it's gone after run().
+        created_tmpdir.append(str(pathlib.Path(local_path).parent))
+        pathlib.Path(local_path).write_bytes(b"sentinel")
+
+    with (
+        patch("app.storage.download_to_file", side_effect=_mock_download),
+        patch(
+            "app.pipeline.text_overlay_v2.pipeline.run_full_pipeline",
+            return_value=TemplateTextOutput(overlays=[]),
+        ),
+    ):
+        agent.run(inp)
+
+    assert len(created_tmpdir) == 1
+    assert not pathlib.Path(created_tmpdir[0]).exists(), (
+        f"Tmpdir {created_tmpdir[0]} should have been cleaned up after successful run"
+    )
+
+
+def test_run_layer2_cleans_up_tmpfile_on_failure(monkeypatch) -> None:
+    """The TemporaryDirectory is removed even when run_full_pipeline raises an
+    exception. The `with tempfile.TemporaryDirectory(...)` block acts as the
+    finally guard in this implementation.
+    """
+    import pathlib  # noqa: PLC0415
+
+    from app.agents._runtime import TerminalError  # noqa: PLC0415
+
+    monkeypatch.setattr("app.config.settings.text_overlay_v2_enabled", True)
+
+    mock_client = MockModelClient()
+    agent = TemplateTextAgent(mock_client)
+    inp = _make_input(
+        gcs_path="templates/abc/video.mp4",
+        force_layer2=True,
+    )
+
+    created_tmpdir: list[str] = []
+
+    def _mock_download(object_path: str, local_path: str) -> None:
+        created_tmpdir.append(str(pathlib.Path(local_path).parent))
+        pathlib.Path(local_path).write_bytes(b"sentinel")
+
+    with (
+        patch("app.storage.download_to_file", side_effect=_mock_download),
+        patch(
+            "app.pipeline.text_overlay_v2.pipeline.run_full_pipeline",
+            side_effect=RuntimeError("simulated pipeline crash"),
+        ),
+        pytest.raises(TerminalError, match="pipeline failed"),
+    ):
+        agent.run(inp)
+
+    assert len(created_tmpdir) == 1
+    assert not pathlib.Path(created_tmpdir[0]).exists(), (
+        f"Tmpdir {created_tmpdir[0]} should have been cleaned up even after pipeline failure"
+    )

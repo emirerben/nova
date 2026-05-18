@@ -437,6 +437,7 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
                     recipe,
                     job_id=f"template:{template_id}:agentic",
                     force_layer2=use_layer2,
+                    gcs_path=gcs_path,
                 )
                 if template_hash is not None and text_success:
                     set_cached_recipe(
