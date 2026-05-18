@@ -270,11 +270,17 @@ def _apply_font_default_to_overlays(recipe) -> int:
     soft_time_limit=1500,  # ~25 min — Big 3 + N text_designer calls
     time_limit=1560,
 )
-def agentic_template_build_task(self, template_id: str) -> None:
+def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = False) -> None:
     """Build a full recipe end-to-end using agents. No human edits.
 
     Mirrors `analyze_template_task` so the manual path is unchanged; the only
     difference is the extra text_designer pass per slot before persistence.
+
+    `use_layer2` is a per-request override forwarded from the
+    `reanalyze-agentic?use_layer2=true` admin endpoint. When True the
+    text-extraction pass routes through the Layer-2 pipeline regardless of
+    the global `text_overlay_v2_enabled` flag. Default False keeps existing
+    behavior; callers that omit the kwarg are unaffected.
     """
     # Captured once at task entry and written to TemplateRecipeVersion.build_started_at
     # at the end of the happy path. Paired with the DB-generated `created_at` (end),
@@ -411,6 +417,7 @@ def agentic_template_build_task(self, template_id: str) -> None:
                     file_ref,
                     recipe,
                     job_id=f"template:{template_id}:agentic",
+                    force_layer2=use_layer2,
                 )
                 if template_hash is not None and text_success:
                     set_cached_recipe(

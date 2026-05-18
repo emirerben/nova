@@ -53,9 +53,7 @@ def _make_overlay(
         sample_text=text,
         start_s=start_s,
         end_s=end_s,
-        bbox=TextBBox(
-            x_norm=x, y_norm=y, w_norm=0.4, h_norm=0.08, sample_frame_t=start_s + 0.1
-        ),
+        bbox=TextBBox(x_norm=x, y_norm=y, w_norm=0.4, h_norm=0.08, sample_frame_t=start_s + 0.1),
         font_color_hex=color,
         effect=effect,
         role=role,
@@ -131,9 +129,7 @@ def test_merge_overlays_overwrites_existing_text_overlays() -> None:
     # First slot: only the text-agent overlay survives, recipe-agent overlay is gone.
     assert len(slots[0]["text_overlays"]) == 1
     assert slots[0]["text_overlays"][0]["sample_text"] == "from text agent"
-    assert "STALE FROM RECIPE" not in {
-        ov.get("sample_text") for ov in slots[0]["text_overlays"]
-    }
+    assert "STALE FROM RECIPE" not in {ov.get("sample_text") for ov in slots[0]["text_overlays"]}
 
 
 def test_merge_overlays_converts_global_to_slot_relative_timing() -> None:
@@ -270,9 +266,7 @@ def test_extract_skips_when_no_slots() -> None:
 
 
 def test_extract_skips_when_all_slots_zero_duration() -> None:
-    recipe = _StubRecipe(
-        slots=[{"target_duration_s": 0.0, "text_overlays": []}]
-    )
+    recipe = _StubRecipe(slots=[{"target_duration_s": 0.0, "text_overlays": []}])
     assert extract_template_text_overlays(_StubFileRef(), recipe, job_id="t1") == (False, 0)
 
 
@@ -350,3 +344,63 @@ def test_extract_success_overwrites_overlays(monkeypatch: pytest.MonkeyPatch) ->
     assert s1_texts == ["agent-text-1"]
     assert s2_texts == ["agent-text-2"]
     assert "recipe-stale" not in s1_texts + s2_texts
+
+
+def test_extract_force_layer2_propagates_to_agent_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """force_layer2=True is forwarded into the TemplateTextInput the agent receives.
+
+    Verifies that the bridge kwarg reaches the agent's input schema so that
+    TemplateTextAgent.run() can read it and route accordingly.
+    """
+    from app.tasks import template_text_extraction as mod
+
+    captured_input: dict[str, Any] = {}
+
+    class _StubAgent:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, inp: TemplateTextInput, ctx=None):  # noqa: ARG002
+            captured_input["input"] = inp
+            return TemplateTextOutput(overlays=[])
+
+    monkeypatch.setattr(mod, "TemplateTextAgent", _StubAgent)
+    monkeypatch.setattr(mod, "default_client", lambda: object())
+
+    recipe = _StubRecipe(slots=[{"target_duration_s": 3.0, "text_overlays": []}])
+    success, _ = extract_template_text_overlays(
+        _StubFileRef(), recipe, job_id="t-force", force_layer2=True
+    )
+    assert success is True
+    # The force_layer2 flag must be present and True on the input the agent received.
+    assert captured_input["input"].force_layer2 is True
+
+
+def test_extract_force_layer2_defaults_to_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When force_layer2 is not passed, it defaults to False on the agent input.
+
+    Backward-compatibility guard: existing callers that don't pass force_layer2
+    must not inadvertently activate Layer-2.
+    """
+    from app.tasks import template_text_extraction as mod
+
+    captured_input: dict[str, Any] = {}
+
+    class _StubAgent:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, inp: TemplateTextInput, ctx=None):  # noqa: ARG002
+            captured_input["input"] = inp
+            return TemplateTextOutput(overlays=[])
+
+    monkeypatch.setattr(mod, "TemplateTextAgent", _StubAgent)
+    monkeypatch.setattr(mod, "default_client", lambda: object())
+
+    recipe = _StubRecipe(slots=[{"target_duration_s": 3.0, "text_overlays": []}])
+    extract_template_text_overlays(_StubFileRef(), recipe, job_id="t-default")
+    assert captured_input["input"].force_layer2 is False
