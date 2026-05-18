@@ -1120,6 +1120,121 @@ class TestTemplateAudio:
 
         mock_copy.assert_not_called()
 
+    def test_mix_audio_applies_audio_start_offset(self, tmp_path):
+        """audio_start_offset_s > 0 → ffmpeg cmd has -ss BEFORE the audio -i."""
+        from app.tasks.template_orchestrate import _mix_template_audio
+
+        ok_proc = MagicMock()
+        ok_proc.returncode = 0
+        captured: dict = {}
+
+        def _capture(cmd, *_args, **_kwargs):
+            captured["cmd"] = cmd
+            return ok_proc
+
+        with (
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch(
+                "app.tasks.template_orchestrate._probe_duration",
+                side_effect=[20.0, 60.0],  # video, audio
+            ),
+            patch(
+                "app.tasks.template_orchestrate.subprocess.run",
+                side_effect=_capture,
+            ),
+        ):
+            _mix_template_audio(
+                video_path="/tmp/assembled.mp4",
+                audio_gcs_path="templates/t1/audio.m4a",
+                output_path=str(tmp_path / "final.mp4"),
+                tmpdir=str(tmp_path),
+                audio_start_offset_s=12.5,
+            )
+
+        cmd = captured["cmd"]
+        audio_local = os.path.join(str(tmp_path), "template_audio.m4a")
+        # Find "-i audio_local" and check the two args before it are "-ss" + offset
+        i_audio = next(
+            i for i, a in enumerate(cmd)
+            if a == "-i" and i + 1 < len(cmd) and cmd[i + 1] == audio_local
+        )
+        assert cmd[i_audio - 2 : i_audio] == ["-ss", "12.500"], (
+            "Expected '-ss 12.500' immediately before audio input, got "
+            f"{cmd[i_audio - 2 : i_audio + 2]}"
+        )
+
+    def test_mix_audio_no_offset_preserves_existing_cmd(self, tmp_path):
+        """audio_start_offset_s=0.0 (default) → ffmpeg cmd has NO -ss flag."""
+        from app.tasks.template_orchestrate import _mix_template_audio
+
+        ok_proc = MagicMock()
+        ok_proc.returncode = 0
+        captured: dict = {}
+
+        def _capture(cmd, *_args, **_kwargs):
+            captured["cmd"] = cmd
+            return ok_proc
+
+        with (
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch(
+                "app.tasks.template_orchestrate._probe_duration",
+                side_effect=[20.0, 60.0],
+            ),
+            patch(
+                "app.tasks.template_orchestrate.subprocess.run",
+                side_effect=_capture,
+            ),
+        ):
+            _mix_template_audio(
+                video_path="/tmp/assembled.mp4",
+                audio_gcs_path="templates/t1/audio.m4a",
+                output_path=str(tmp_path / "final.mp4"),
+                tmpdir=str(tmp_path),
+            )
+
+        assert "-ss" not in captured["cmd"], (
+            "Default offset 0.0 must not emit -ss — regression risk for existing templates"
+        )
+
+    def test_mix_audio_offset_clamped_below_audio_duration(self, tmp_path):
+        """Offset close to / past EOF is clamped so ≥5s of audio remains."""
+        from app.tasks.template_orchestrate import _mix_template_audio
+
+        ok_proc = MagicMock()
+        ok_proc.returncode = 0
+        captured: dict = {}
+
+        def _capture(cmd, *_args, **_kwargs):
+            captured["cmd"] = cmd
+            return ok_proc
+
+        with (
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch(
+                "app.tasks.template_orchestrate._probe_duration",
+                side_effect=[20.0, 30.0],  # video=20s, audio=30s
+            ),
+            patch(
+                "app.tasks.template_orchestrate.subprocess.run",
+                side_effect=_capture,
+            ),
+        ):
+            _mix_template_audio(
+                video_path="/tmp/assembled.mp4",
+                audio_gcs_path="templates/t1/audio.m4a",
+                output_path=str(tmp_path / "final.mp4"),
+                tmpdir=str(tmp_path),
+                audio_start_offset_s=29.0,  # would leave only 1s — must clamp
+            )
+
+        cmd = captured["cmd"]
+        ss_idx = cmd.index("-ss")
+        # audio_dur=30, safe_offset = min(29.0, 30-5) = 25.0
+        assert cmd[ss_idx + 1] == "25.000", (
+            f"Expected offset clamped to 25.000 (audio_dur 30 - 5s tail), got {cmd[ss_idx + 1]}"
+        )
+
     def test_mix_audio_download_failure_fallback(self, tmp_path):
         """download_to_file raises → shutil.copy2 used, no exception raised."""
         from app.tasks.template_orchestrate import _mix_template_audio
@@ -1220,6 +1335,198 @@ class TestTemplateAudio:
 
         # Called twice: once for the final video, once for the base (editor preview)
         assert mock_mix.call_count == 2
+
+    def test_run_template_job_passes_music_track_best_start_s_to_mixer(self):
+        """audio_only template with linked MusicTrack → _mix_template_audio
+        receives audio_start_offset_s = track_config.best_start_s.
+        Regression: prior bug played intro instead of chorus on Bad Bunny - DtMF.
+        """
+        from app.models import MusicTrack
+        from app.tasks.template_orchestrate import _run_template_job
+
+        mock_job = MagicMock()
+        mock_job.status = "queued"
+        mock_job.template_id = "t1"
+        mock_job.all_candidates = {"clip_paths": ["gs://bucket/clip_0.mp4"]}
+        mock_job.selected_platforms = ["tiktok"]
+
+        mock_template = MagicMock()
+        mock_template.analysis_status = "ready"
+        mock_template.is_agentic = False
+        mock_template.recipe_cached = {
+            "shot_count": 1,
+            "total_duration_s": 5.0,
+            "hook_duration_s": 3.0,
+            "slots": [
+                {
+                    "position": 1,
+                    "target_duration_s": 5.0,
+                    "priority": 5,
+                    "slot_type": "hook",
+                },
+            ],
+            "copy_tone": "casual",
+            "caption_style": "bold",
+        }
+        mock_template.audio_gcs_path = "music/bb/audio.m4a"
+        mock_template.music_track_id = "track-bb-dtmf"
+
+        mock_track = MagicMock(spec=MusicTrack)
+        mock_track.track_config = {
+            "best_start_s": 69.02,
+            "best_end_s": 114.02,
+            "slot_every_n_beats": 8,
+        }
+
+        def _mock_ctx():
+            ctx = MagicMock()
+            ctx.__enter__ = MagicMock(return_value=session)
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        session = MagicMock()
+
+        def _session_get(model, pk):
+            if model is VideoTemplate:
+                return mock_template
+            if model is MusicTrack:
+                return mock_track
+            return mock_job
+
+        session.get.side_effect = _session_get
+
+        _orch = "app.tasks.template_orchestrate"
+        with (
+            patch(f"{_orch}._sync_session", side_effect=_mock_ctx),
+            patch(
+                f"{_orch}._download_clips_parallel",
+                return_value=["/tmp/clip_0.mp4"],
+            ),
+            patch(f"{_orch}._probe_clips", return_value={}),
+            patch(
+                f"{_orch}._upload_clips_parallel",
+                return_value=[MagicMock(name="clip_0")],
+            ),
+            patch(
+                f"{_orch}._analyze_clips_parallel",
+                return_value=([_make_clip_meta()], 0),
+            ),
+            patch(f"{_orch}.match") as mock_match,
+            patch(f"{_orch}._assemble_clips"),
+            patch(f"{_orch}._mix_template_audio") as mock_mix,
+            patch(f"{_orch}._extract_hook_text", return_value=""),
+            patch(f"{_orch}._extract_transcript", return_value=""),
+            patch(
+                f"{_orch}.upload_public_read", return_value="https://cdn/out.mp4"
+            ),
+        ):
+            from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep
+            step = AssemblyStep(
+                slot={"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "hook"},
+                clip_id="clip_0",
+                moment={"start_s": 0.0, "end_s": 5.0, "energy": 7.0},
+            )
+            mock_match.return_value = AssemblyPlan(steps=[step])
+
+            mock_platform_copy = MagicMock()
+            mock_platform_copy.model_dump.return_value = {}
+            with patch("app.pipeline.agents.copy_writer.generate_copy") as mock_copy:
+                mock_copy.return_value = (mock_platform_copy, "generated")
+                _run_template_job("12345678-1234-5678-1234-567812345678")
+
+        # Both calls (final + base) must receive the track's best_start_s offset.
+        assert mock_mix.call_count == 2
+        for call in mock_mix.call_args_list:
+            assert call.kwargs.get("audio_start_offset_s") == 69.02, (
+                f"Expected audio_start_offset_s=69.02 from track_config, got "
+                f"{call.kwargs.get('audio_start_offset_s')}"
+            )
+
+    def test_run_template_job_no_music_track_offset_zero(self):
+        """Regular template (music_track_id=None) → offset stays 0.0, default behaviour."""
+        from app.tasks.template_orchestrate import _run_template_job
+
+        mock_job = MagicMock()
+        mock_job.status = "queued"
+        mock_job.template_id = "t1"
+        mock_job.all_candidates = {"clip_paths": ["gs://bucket/clip_0.mp4"]}
+        mock_job.selected_platforms = ["tiktok"]
+
+        mock_template = MagicMock()
+        mock_template.analysis_status = "ready"
+        mock_template.is_agentic = False
+        mock_template.recipe_cached = {
+            "shot_count": 1,
+            "total_duration_s": 5.0,
+            "hook_duration_s": 3.0,
+            "slots": [
+                {
+                    "position": 1,
+                    "target_duration_s": 5.0,
+                    "priority": 5,
+                    "slot_type": "hook",
+                },
+            ],
+            "copy_tone": "casual",
+            "caption_style": "bold",
+        }
+        mock_template.audio_gcs_path = "templates/t1/audio.m4a"
+        mock_template.music_track_id = None
+
+        def _mock_ctx():
+            ctx = MagicMock()
+            ctx.__enter__ = MagicMock(return_value=session)
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        session = MagicMock()
+        session.get.side_effect = lambda model, pk: (
+            mock_template if model is VideoTemplate else mock_job
+        )
+
+        _orch = "app.tasks.template_orchestrate"
+        with (
+            patch(f"{_orch}._sync_session", side_effect=_mock_ctx),
+            patch(
+                f"{_orch}._download_clips_parallel",
+                return_value=["/tmp/clip_0.mp4"],
+            ),
+            patch(f"{_orch}._probe_clips", return_value={}),
+            patch(
+                f"{_orch}._upload_clips_parallel",
+                return_value=[MagicMock(name="clip_0")],
+            ),
+            patch(
+                f"{_orch}._analyze_clips_parallel",
+                return_value=([_make_clip_meta()], 0),
+            ),
+            patch(f"{_orch}.match") as mock_match,
+            patch(f"{_orch}._assemble_clips"),
+            patch(f"{_orch}._mix_template_audio") as mock_mix,
+            patch(f"{_orch}._extract_hook_text", return_value=""),
+            patch(f"{_orch}._extract_transcript", return_value=""),
+            patch(
+                f"{_orch}.upload_public_read", return_value="https://cdn/out.mp4"
+            ),
+        ):
+            from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep
+            step = AssemblyStep(
+                slot={"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "hook"},
+                clip_id="clip_0",
+                moment={"start_s": 0.0, "end_s": 5.0, "energy": 7.0},
+            )
+            mock_match.return_value = AssemblyPlan(steps=[step])
+
+            mock_platform_copy = MagicMock()
+            mock_platform_copy.model_dump.return_value = {}
+            with patch("app.pipeline.agents.copy_writer.generate_copy") as mock_copy:
+                mock_copy.return_value = (mock_platform_copy, "generated")
+                _run_template_job("12345678-1234-5678-1234-567812345678")
+
+        # Regular templates: offset must default to 0.0, no behaviour change.
+        assert mock_mix.call_count == 2
+        for call in mock_mix.call_args_list:
+            assert call.kwargs.get("audio_start_offset_s") == 0.0
 
 
 # ── template_matcher two-pass tolerance ───────────────────────────────────────
