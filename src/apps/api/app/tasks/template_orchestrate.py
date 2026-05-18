@@ -2090,11 +2090,6 @@ def _plan_slots(
             slot_target_dur = max(0.5, end_s - start_s)
             speed_factor = 1.0
             cumulative_s += slot_target_dur
-            # Force letterbox path for locked sources — the template video may be
-            # 16:9 (e.g. Morocco's 1024x576) and the default crop-to-fill chops
-            # the baked-in hook text on the sides. With aspect_ratio="9:16" the
-            # reframe filter scales-to-fit and pads black bars, preserving text.
-            locked_aspect_override = "9:16"
         else:
             # Beat-snap
             if beats:
@@ -2158,8 +2153,15 @@ def _plan_slots(
         # possibly audioless input → reframed slot has no audio track →
         # downstream concat-copy truncates at that slot.
         has_audio = probe.has_audio if probe else False
-        if is_locked:
-            aspect_ratio = locked_aspect_override
+        # Locked sources (e.g. Morocco's 1024x576 template with baked-in hook
+        # text on the sides) need a letterbox path so the side text isn't
+        # cropped. Route through the dedicated `letterbox_black` output_fit
+        # branch instead of mutating aspect_ratio — the prior implementation
+        # forced aspect_ratio="9:16" to hit the old letterbox-by-default
+        # behavior of the non-16:9 reframe branch. That branch now crops to
+        # fill (the desired default for user clips), so locked sources must
+        # opt in to bars explicitly.
+        slot_output_fit = "letterbox_black" if is_locked else output_fit
         slot_color = step.slot.get("color_hint") or global_color_grade or "none"
 
         log.debug(
@@ -2187,7 +2189,7 @@ def _plan_slots(
                 color_transfer=color_transfer,
                 color_trc=color_trc,
                 has_audio=has_audio,
-                output_fit=output_fit,
+                output_fit=slot_output_fit,
                 **grid_params,
             )
         )

@@ -23,11 +23,42 @@ class TestBuildVideoFilter:
         assert "scale" in joined
         assert "crop" in joined
 
-    def test_9_16_contains_scale_and_pad(self):
-        filters = _build_video_filter("9:16", None)
+    def test_letterbox_black_mode_contains_scale_and_pad(self):
+        """`output_fit="letterbox_black"` is the dedicated bars-on-top-and-bottom
+        path (used by locked-source templates like Morocco that have baked-in
+        hook text on the sides). Pin its scale+pad output so the locked-source
+        rewire in template_orchestrate.py keeps working.
+        """
+        filters = _build_video_filter("9:16", None, output_fit="letterbox_black")
         joined = ",".join(filters)
         assert "scale" in joined
         assert "pad" in joined
+
+    def test_9_16_default_crop_fills_canvas_no_pad(self):
+        """Default `output_fit="crop"` on a 9:16-bucket source must scale-fill +
+        crop overflow — NEVER pad with black bars. Regression guard for job
+        d1eaabd3 where the default branch letterbox-padded non-exact-9:16
+        portrait clips (3:4, 19.5:9 iPhone, etc.).
+        """
+        filters = _build_video_filter("9:16", None)
+        joined = ",".join(filters)
+        assert "scale" in joined
+        assert "crop" in joined
+        # No pad= filter anywhere — pad would re-introduce the bars.
+        assert "pad=" not in joined
+
+    def test_other_aspect_default_crop_fills_canvas_no_pad(self):
+        """Default `output_fit="crop"` on an `other` aspect (any source whose
+        ratio isn't in the 16:9 or 9:16 bucket — 3:4 portrait, square,
+        19.5:9 iPhone, slightly-off-9:16) must also scale-fill + crop. This
+        is the exact branch that produced the bars in job d1eaabd3 on the
+        Thai dancers / elephants / monkeys clips.
+        """
+        filters = _build_video_filter("other", None)
+        joined = ",".join(filters)
+        assert "scale" in joined
+        assert "crop" in joined
+        assert "pad=" not in joined
 
     def test_ass_path_appended_when_provided(self):
         with tempfile.NamedTemporaryFile(suffix=".ass", delete=False) as f:
