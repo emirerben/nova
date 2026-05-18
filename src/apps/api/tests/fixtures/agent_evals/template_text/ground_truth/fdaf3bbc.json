@@ -1,0 +1,3 @@
+{
+  "_comment": "PLACEHOLDER — DO NOT FILL IN EMPTY 'overlays'. Hand-label by watching the prod video for template fdaf3bbc-2f4f-43bc-ba7c-e5cd819de102 frame by frame. Mirror the shape of rich_in_life_v2.json. Every visible overlay needs slot_index, sample_text, start_s, end_s, bbox{x_norm,y_norm,w_norm,h_norm,sample_frame_t}, font_color_hex, effect, role, size_class. See scripts/build_text_ground_truth.py for a tesseract-based first pass; then hand-correct. The eval (_load_ground_truth) requires an 'overlays' list, so leaving this key out is INTENTIONAL — it makes the file fail loudly if anyone runs the eval against fdaf3bbc before the ground truth is real. Activated as ground truth automatically when prod_snapshots/fdaf3bbc.json exists."
+}
