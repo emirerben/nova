@@ -79,20 +79,58 @@ _ATTEMPT_TTL_S = 3600
 
 
 def _classify_overlay(overlay: dict) -> str | None:
-    """Return text_designer placeholder_kind for label-like overlays.
+    """Return text_designer placeholder_kind for overlays that need styling.
 
-    Mirrors the detection logic in template_orchestrate._collect_absolute_overlays
-    so an agentic build flags exactly the same overlays the manual path would
-    style via _LABEL_CONFIG. Returns None for overlays that are not labels
-    (text_designer doesn't apply to body text, captions, etc.).
+    Label-like overlays (role=label, subject placeholder, welcome prefix) map
+    to "subject" or "prefix" — same detection as template_orchestrate._collect_absolute_overlays.
+
+    Layer-2 body overlays (role in {hook, reaction, cta}) map to "body" so
+    text_designer can apply conservative size/effect defaults instead of
+    letting the renderer fall back to Playfair Bold at default size. The body
+    config is applied deterministically (no LLM call) in _run_text_designer_on_slots.
+
+    Role specificity: when a Layer-2 role (hook/reaction/cta) is explicitly set,
+    that classification wins over the subject/prefix heuristics. Short capitalized
+    Layer-2 phrases like "It's" would otherwise be mis-classified as subject
+    placeholders by _is_subject_placeholder, causing them to go through the LLM
+    path and lose stage F's classified effect. Explicit role beats heuristics.
+
+    Returns None for overlays that need no styling pass (e.g. raw captions).
     """
     role = overlay.get("role", "")
+    # Layer-2 explicit roles take priority — check before subject/prefix heuristics.
+    if role in {"hook", "reaction", "cta"}:
+        return "body"
     sample_text = overlay.get("sample_text") or overlay.get("text") or ""
     is_subject = _is_subject_placeholder(sample_text)
     is_label_like = role == "label" or is_subject or sample_text.lower().startswith("welcome")
-    if not is_label_like:
-        return None
-    return "subject" if is_subject else "prefix"
+    if is_label_like:
+        return "subject" if is_subject else "prefix"
+    return None
+
+
+# Deterministic styling defaults for Layer-2 body overlays (role=hook/reaction/cta).
+# Applied without an LLM call — mirrors the _LABEL_CONFIG pattern in template_orchestrate.py.
+# These are conservative defaults: stage F's classified `effect` and `font_color_hex` are
+# preserved (not overridden) because they reflect the agent's best-guess for that phrase.
+# Only `text_size` and `font_style` are set here since stage F does not classify those.
+_BODY_CONFIG: dict[str, dict] = {
+    # Hook phrases appear in the first 2-3 seconds; large + bold captures attention.
+    "hook": {
+        "text_size": "large",
+        "font_style": "sans",
+    },
+    # Reaction phrases are mid-template body text; medium keeps them readable not dominant.
+    "reaction": {
+        "text_size": "medium",
+        "font_style": "sans",
+    },
+    # CTA phrases close the video; large signals the call-to-action without mimicking hook.
+    "cta": {
+        "text_size": "large",
+        "font_style": "sans",
+    },
+}
 
 
 def _bake_text_designer_into_overlay(
@@ -146,21 +184,47 @@ def _bake_text_designer_into_overlay(
 _TEXT_DESIGNER_PARALLEL_CAP = 8
 
 
+def _apply_body_config_to_overlay(overlay: dict) -> None:
+    """Apply _BODY_CONFIG defaults to a Layer-2 body overlay in place.
+
+    Only sets fields that stage F (text_classification) does not already
+    classify: text_size and font_style. Preserves stage F's `effect` and
+    `font_color_hex` (stored as `text_color` on the overlay) so the agent's
+    best-guess for each phrase is respected.
+
+    No LLM call — deterministic, zero latency, consistent with how the manual
+    path applies _LABEL_CONFIG in template_orchestrate.py.
+    """
+    role = overlay.get("role", "reaction")
+    config = _BODY_CONFIG.get(role, _BODY_CONFIG["reaction"])
+    # Only fill fields stage F doesn't classify; do NOT clobber what it set.
+    overlay.setdefault("text_size", config["text_size"])
+    overlay.setdefault("font_style", config["font_style"])
+
+
 def _run_text_designer_on_slots(
     slots: list[dict],
     copy_tone: str,
     creative_direction: str,
     job_id: str,
 ) -> int:
-    """Call text_designer for every label-like overlay; bake results in place.
+    """Style every routable overlay; bake results in place.
 
-    Returns the number of overlays styled. Parallelized across a bounded pool
-    (`_TEXT_DESIGNER_PARALLEL_CAP`) because on a 20-overlay template a sequential
-    loop spent ~60s of single-threaded LLM wait per agentic reanalyze. Workers
-    only issue the LLM call; the main thread mutates each overlay dict after
-    `future.result()` so there is no shared-state contention. Per-overlay
-    `TerminalError` is isolated: the overlay keeps whatever `template_recipe`
-    set, and the rest of the batch still bakes.
+    Label-like overlays (kind="prefix"/"subject") go through the text_designer
+    LLM agent — typography decisions are nuanced and benefit from model judgment.
+    The LLM calls are parallelized across a bounded pool (`_TEXT_DESIGNER_PARALLEL_CAP`)
+    because on a 20-overlay template a sequential loop spent ~60s of single-threaded
+    LLM wait per agentic reanalyze. Workers only issue the LLM call; the main thread
+    mutates each overlay dict after `future.result()` so there is no shared-state
+    contention. Per-overlay `TerminalError` is isolated: the overlay keeps whatever
+    `template_recipe` set, and the rest of the batch still bakes.
+
+    Layer-2 body overlays (kind="body", role in {hook, reaction, cta}) get
+    deterministic styling via `_BODY_CONFIG` — no LLM call. Stage F already
+    classified `effect` and `font_color_hex` for these; _BODY_CONFIG fills
+    only `text_size` and `font_style` which stage F does not produce.
+
+    Returns the total number of overlays styled (LLM + deterministic).
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
@@ -172,7 +236,10 @@ def _run_text_designer_on_slots(
     agent = TextDesignerAgent(default_client())
     ctx = RunContext(job_id=job_id)
 
+    # Separate body overlays (deterministic) from label overlays (LLM).
+    body_overlays: list[dict] = []
     work_items: list[tuple[dict, int, str, str, TextDesignerInput]] = []
+
     for slot in slots:
         slot_position = int(slot.get("position", 0)) or 1  # text_designer needs ≥ 1
         slot_type = str(slot.get("slot_type", "broll"))
@@ -180,29 +247,44 @@ def _run_text_designer_on_slots(
             kind = _classify_overlay(overlay)
             if kind is None:
                 continue
-            work_items.append(
-                (
-                    overlay,
-                    slot_position,
-                    slot_type,
-                    kind,
-                    TextDesignerInput(
-                        slot_position=slot_position,
-                        slot_type=slot_type,
-                        placeholder_kind=kind,
-                        copy_tone=copy_tone,
-                        creative_direction=creative_direction,
-                    ),
+            if kind == "body":
+                body_overlays.append(overlay)
+            else:
+                work_items.append(
+                    (
+                        overlay,
+                        slot_position,
+                        slot_type,
+                        kind,
+                        TextDesignerInput(
+                            slot_position=slot_position,
+                            slot_type=slot_type,
+                            placeholder_kind=kind,
+                            copy_tone=copy_tone,
+                            creative_direction=creative_direction,
+                        ),
+                    )
                 )
-            )
+
+    # Apply deterministic body config first (no LLM, no latency).
+    baked = 0
+    for overlay in body_overlays:
+        _apply_body_config_to_overlay(overlay)
+        baked += 1
+
+    if baked:
+        log.debug(
+            "text_designer_body_overlays_styled",
+            job_id=job_id,
+            count=baked,
+        )
 
     if not work_items:
-        return 0
+        return baked
 
     def _call(agent_input: TextDesignerInput) -> object:
         return agent.run(agent_input, ctx=ctx)
 
-    baked = 0
     with ThreadPoolExecutor(
         max_workers=min(len(work_items), _TEXT_DESIGNER_PARALLEL_CAP),
     ) as pool:
@@ -474,10 +556,11 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
             # template-level field. Doing this AT BUILD TIME (before
             # text_designer runs) means: (1) text_designer is free to override
             # per overlay if it has a more nuanced choice, and (2) overlays
-            # text_designer skips (e.g. non-label content with role=hook) still
-            # get the CLIP-identified font instead of Playfair. Only baked when
-            # font_default is non-empty (font ID found at least one
-            # above-floor match across all overlays); otherwise the overlay
+            # that were previously skipped (role=hook/reaction/cta) now receive
+            # _BODY_CONFIG defaults via text_designer's body path, so they too
+            # get the CLIP-identified font first and body-config text_size/font_style
+            # second. Only baked when font_default is non-empty (font ID found at least
+            # one above-floor match across all overlays); otherwise the overlay
             # stays untouched and the renderer chain handles fallback.
             _apply_font_default_to_overlays(recipe)
 
