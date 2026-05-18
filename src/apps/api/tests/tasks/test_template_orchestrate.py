@@ -3903,3 +3903,179 @@ class TestNoGeminiTextLeaks:
         # Even with a subject set, empty overlay with no placeholder field
         # to interpolate into must NOT return hook_text.
         assert _resolve_overlay_text("hook", meta, {}, subject="Tokyo") == ""
+
+
+# ── Single-pass runtime failure fallback ──────────────────────────────────────
+#
+# Production job 1b555c69-… (Bad Bunny – DtMF Test) failed with
+# `single-pass ffmpeg failed (rc=-9)` — kernel OOM kill. Multi-pass for the
+# same template family has run in prod for months without an rc=-9 history.
+# This suite locks in that any SinglePassError (OOM, timeout, filter-graph
+# syntax error, missing output) falls back to multi-pass instead of failing
+# the job.
+class TestSinglePassRuntimeFallback:
+    """Wraps run_single_pass with a try/except so single-pass crashes route
+    back to the existing multi-pass branch."""
+
+    @staticmethod
+    def _make_step_and_probe(tmp_path, slot_idx: int = 1):
+        from app.pipeline.probe import VideoProbe
+
+        clip_file = tmp_path / f"clip_{slot_idx}.mp4"
+        clip_file.write_bytes(b"fake")
+        probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = MagicMock()
+        step.clip_id = f"clip_{slot_idx}"
+        step.moment = {"start_s": 0.0, "end_s": 3.0}
+        step.slot = {
+            "position": slot_idx,
+            "target_duration_s": 3.0,
+            "transition_in": "none",
+        }
+        return step, probe, clip_file
+
+    def test_single_pass_oom_falls_back_to_multipass(self, tmp_path):
+        """rc=-9 OOM kill → SinglePassError → multi-pass fallback → no job failure.
+
+        This is the exact production-incident reproducer for Bad Bunny – DtMF.
+        """
+        from app.pipeline.single_pass import SinglePassError
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        step, probe, clip_file = self._make_step_and_probe(tmp_path)
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.run_single_pass") as mock_single,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+            patch("app.tasks.template_orchestrate.log") as mock_log,
+        ):
+            mock_single.side_effect = SinglePassError(
+                "single-pass ffmpeg failed (rc=-9, output=/tmp/x):\n"
+            )
+            # Job must NOT raise — the SinglePassError is caught and the
+            # multi-pass branch (reframe_and_export) runs the assembly.
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={step.clip_id: str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                force_single_pass=True,
+            )
+            # Single-pass was attempted, then multi-pass took over.
+            mock_single.assert_called_once()
+            mock_reframe.assert_called_once()
+            # Canonical alert key must be emitted.
+            warning_events = [
+                call.args[0] for call in mock_log.warning.call_args_list
+            ]
+            assert "single_pass_failed_falling_back_multipass" in warning_events
+
+    def test_single_pass_filter_syntax_error_also_falls_back(self, tmp_path):
+        """rc=1 filter-graph syntax error → same fallback.
+
+        This PR does NOT differentiate rc=-9 from rc=1; every SinglePassError
+        falls back. A future PR may gate filter-graph errors to surface
+        (since they indicate a spec bug, not a resource issue).
+        """
+        from app.pipeline.single_pass import SinglePassError
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        step, probe, clip_file = self._make_step_and_probe(tmp_path)
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.run_single_pass") as mock_single,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+            patch("app.tasks.template_orchestrate.log") as mock_log,
+        ):
+            mock_single.side_effect = SinglePassError(
+                "single-pass ffmpeg failed (rc=1, output=/tmp/x):\n"
+                "Invalid filter graph: [bad]"
+            )
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={step.clip_id: str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                force_single_pass=True,
+            )
+            mock_single.assert_called_once()
+            mock_reframe.assert_called_once()
+            warning_events = [
+                call.args[0] for call in mock_log.warning.call_args_list
+            ]
+            assert "single_pass_failed_falling_back_multipass" in warning_events
+
+    def test_single_pass_unsupported_still_falls_back(self, tmp_path):
+        """Regression: the existing M4/M5 SinglePassUnsupportedError fallback
+        keeps working unchanged. Adding the SinglePassError arm must not
+        regress the pre-existing fallback path."""
+        from app.pipeline.single_pass import SinglePassUnsupportedError
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        step, probe, clip_file = self._make_step_and_probe(tmp_path)
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.run_single_pass") as mock_single,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+            patch("app.tasks.template_orchestrate.log") as mock_log,
+        ):
+            mock_single.side_effect = SinglePassUnsupportedError(
+                "curtain-close not yet implemented in single-pass"
+            )
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={step.clip_id: str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                force_single_pass=True,
+            )
+            mock_single.assert_called_once()
+            mock_reframe.assert_called_once()
+            warning_events = [
+                call.args[0] for call in mock_log.warning.call_args_list
+            ]
+            # The pre-existing alert key remains, NOT the new SinglePassError
+            # key — the two failure modes are still distinguishable in logs.
+            assert "single_pass_unsupported_fallback_to_multi" in warning_events
+            assert "single_pass_failed_falling_back_multipass" not in warning_events
+
+    def test_multipass_failure_after_single_pass_fallback_propagates(self, tmp_path):
+        """If multi-pass also fails after the single-pass fallback, the
+        multi-pass failure must surface — not the swallowed SinglePassError.
+
+        This guards against masking a deeper bug. If both paths fail, the
+        operator sees the more recent (multi-pass) failure with full context.
+        """
+        from app.pipeline.reframe import ReframeError
+        from app.pipeline.single_pass import SinglePassError
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        step, probe, clip_file = self._make_step_and_probe(tmp_path)
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.run_single_pass") as mock_single,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            mock_single.side_effect = SinglePassError(
+                "single-pass ffmpeg failed (rc=-9, output=/tmp/x):\n"
+            )
+            mock_reframe.side_effect = ReframeError("multi-pass also broken")
+            # The multi-pass failure surfaces — the SinglePassError does NOT
+            # mask it. Operators see the most recent, most informative error.
+            with pytest.raises(ReframeError, match="multi-pass also broken"):
+                _assemble_clips(
+                    steps=[step],
+                    clip_id_to_local={step.clip_id: str(clip_file)},
+                    clip_probe_map={str(clip_file): probe},
+                    output_path=str(tmp_path / "out.mp4"),
+                    tmpdir=str(tmp_path),
+                    force_single_pass=True,
+                )
+            mock_single.assert_called_once()
+            mock_reframe.assert_called_once()

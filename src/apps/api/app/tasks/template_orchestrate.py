@@ -2699,6 +2699,29 @@ def _assemble_clips(
                 slots=len(plans),
             )
             # Fall through to multi-pass.
+        except SinglePassError as exc:
+            # Runtime FFmpeg failure during single-pass: OOM (rc=-9), timeout,
+            # filter-graph syntax error, missing output, etc. Production job
+            # 1b555c69-… (Bad Bunny – DtMF) was killed by an rc=-9 OOM with
+            # no recovery path. Multi-pass has run the same template family
+            # in prod for months without this failure mode, so the safest
+            # recovery is to route any SinglePassError back to multi-pass.
+            #
+            # We do NOT differentiate rc=-9 from rc=1 (filter-graph syntax)
+            # in this PR — every SinglePassError falls back. A future PR may
+            # gate filter-graph errors to surface (since they indicate a
+            # spec bug, not a resource issue), but for now the conservative
+            # behavior is full fallback on any failure.
+            #
+            # ``single_pass_failed_falling_back_multipass`` is the canonical
+            # alert key operators grep for.
+            log.warning(
+                "single_pass_failed_falling_back_multipass",
+                job_id=job_id,
+                error=str(exc)[:500],
+                slots=len(plans),
+            )
+            # Fall through to multi-pass.
 
     # ── Phase 2: render all slots in parallel via FFmpeg ──────────────────
     _phase_t0 = time.monotonic()
