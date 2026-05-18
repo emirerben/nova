@@ -1,8 +1,12 @@
 name: Agent evals
 
-# Manual trigger only. Default CI already runs structural-only evals via the
-# main pytest job; this workflow is the live + judge run that costs real money
-# and shouldn't fire on every push.
+# Two triggers:
+#   - `pull_request` (paths-filtered): runs the structural-only suite on every
+#     PR that touches prompt files, agent code, or the eval harness itself.
+#     No secrets needed; ~30s. This is the prompt-regression guardrail.
+#   - `workflow_dispatch` (manual): runs live + judge evals against Gemini and
+#     the Claude-Sonnet judge. Costs real money, needs both API keys, ramp via
+#     `--allow-cost`.
 on:
   workflow_dispatch:
     inputs:
@@ -25,8 +29,40 @@ on:
         default: true
         type: boolean
 
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "src/apps/api/prompts/**"
+      - "src/apps/api/app/agents/**"
+      - "src/apps/api/tests/evals/**"
+      - "src/apps/api/tests/fixtures/agent_evals/**"
+      - ".github/workflows/agent-evals.yml"
+
 jobs:
+  structural:
+    name: Structural evals (PR guardrail)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install API dependencies
+        working-directory: src/apps/api
+        run: pip install -e ".[dev]"
+
+      - name: Run structural evals
+        working-directory: src/apps/api
+        # Default mode: replay + structural-only. No API keys needed.
+        # Fork PRs can run this — `secrets.*` are not referenced.
+        run: pytest tests/evals/ -v
+
   eval:
+    name: Live evals (manual)
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
