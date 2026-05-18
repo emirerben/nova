@@ -28,6 +28,7 @@ import uuid
 from typing import Any
 
 import structlog
+from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
@@ -145,7 +146,16 @@ def _detect_music_beats(audio_path: str, min_gap_s: float = 0.15) -> list[float]
 @celery_app.task(
     name="tasks.analyze_music_track_task",
     bind=True,
-    max_retries=0,
+    # Retry on transient Postgres outages (incident 2026-05-18 07:45:57Z).
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,  # deterministic exp backoff — jitter halves avg budget
+    # 7 retries × deterministic exp backoff (1+2+4+8+16+32+60 = 123s).
+    # retry_jitter=False so the budget is predictable, not half on average.
+    # Covers the documented 65s nova-db VM stall (2026-05-18 07:45:57Z)
+    # with ~2× safety margin. retry_backoff_max=60 caps any single delay.
+    max_retries=7,
     soft_time_limit=300,
     time_limit=360,
 )
@@ -263,6 +273,17 @@ def analyze_music_track_task(self, track_id: str) -> None:
             has_best_sections=sections_dict is not None,
         )
 
+    except OperationalError as db_exc:
+        # Transient Postgres outage — re-raise for Celery autoretry. Do NOT
+        # mark the track failed; that itself would hit the still-down DB
+        # and lock the track at status=failed permanently.
+        log.warning(
+            "analyze_music_track_transient_db_error_retry",
+            track_id=track_id,
+            error=str(db_exc),
+            retry_count=self.request.retries,
+        )
+        raise
     except Exception as exc:
         log.error("analyze_music_track_failed", track_id=track_id, error=str(exc))
         _fail_track(track_id, str(exc))
@@ -274,7 +295,16 @@ def analyze_music_track_task(self, track_id: str) -> None:
 @celery_app.task(
     name="tasks.orchestrate_music_job",
     bind=True,
-    max_retries=0,
+    # Retry on transient Postgres outages (incident 2026-05-18 07:45:57Z).
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,  # deterministic exp backoff — jitter halves avg budget
+    # 7 retries × deterministic exp backoff (1+2+4+8+16+32+60 = 123s).
+    # retry_jitter=False so the budget is predictable, not half on average.
+    # Covers the documented 65s nova-db VM stall (2026-05-18 07:45:57Z)
+    # with ~2× safety margin. retry_backoff_max=60 caps any single delay.
+    max_retries=7,
     soft_time_limit=1080,
     time_limit=1200,
 )
@@ -299,6 +329,16 @@ def orchestrate_music_job(self, job_id: str) -> None:
                 _run_templated_music_job(job_id)
             else:
                 _run_music_job(job_id)
+        except OperationalError as db_exc:
+            # Transient Postgres outage — re-raise for Celery autoretry.
+            # See incident 2026-05-18 07:45:57Z (job c13db8a3).
+            log.warning(
+                "music_job_transient_db_error_retry",
+                job_id=job_id,
+                error=str(db_exc),
+                retry_count=self.request.retries,
+            )
+            raise
         except Exception as exc:
             log.error("music_job_failed", job_id=job_id, error=str(exc), exc_info=True)
             _fail_job(job_id, str(exc))
@@ -1111,24 +1151,48 @@ def _ken_burns_from_slot(slot: dict, default=None):  # type: ignore[no-untyped-d
 
 
 def _fail_job(job_id: str, error_detail: str) -> None:
-    try:
-        with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
-            if job:
-                job.status = "processing_failed"
-                job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
-                db.commit()
-    except Exception as exc:
-        log.error("fail_job_db_error", job_id=job_id, error=str(exc))
+    # Hardened against transient DB outages: retry the mark if Postgres is
+    # briefly unreachable, so we don't leave the row at status=processing
+    # (zombie). Incident 2026-05-18 07:45:57Z.
+    for attempt in range(3):
+        try:
+            with _sync_session() as db:
+                job = db.get(Job, uuid.UUID(job_id))
+                if job:
+                    job.status = "processing_failed"
+                    job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
+                    db.commit()
+            return
+        except (OperationalError, DBAPIError) as exc:
+            if attempt == 2:
+                log.error("fail_job_db_unreachable", job_id=job_id, error=str(exc))
+                return
+            import time as _time  # noqa: PLC0415
+
+            _time.sleep(1 + attempt)
+        except Exception as exc:
+            log.error("fail_job_db_error", job_id=job_id, error=str(exc))
+            return
 
 
 def _fail_track(track_id: str, error_detail: str) -> None:
-    try:
-        with _sync_session() as db:
-            track = db.get(MusicTrack, track_id)
-            if track:
-                track.analysis_status = "failed"
-                track.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
-                db.commit()
-    except Exception as exc:
-        log.error("fail_track_db_error", track_id=track_id, error=str(exc))
+    # Hardened against transient DB outages — see _fail_job.
+    for attempt in range(3):
+        try:
+            with _sync_session() as db:
+                track = db.get(MusicTrack, track_id)
+                if track:
+                    track.analysis_status = "failed"
+                    track.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
+                    db.commit()
+            return
+        except (OperationalError, DBAPIError) as exc:
+            if attempt == 2:
+                log.error("fail_track_db_unreachable", track_id=track_id, error=str(exc))
+                return
+            import time as _time  # noqa: PLC0415
+
+            _time.sleep(1 + attempt)
+        except Exception as exc:
+            log.error("fail_track_db_error", track_id=track_id, error=str(exc))
+            return
