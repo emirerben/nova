@@ -47,6 +47,7 @@ from app.pipeline.agents.gemini_analyzer import (
 )
 from app.pipeline.template_cache import (
     AGENT_SET_RECIPE_PLUS_TEXT,
+    _resolve_text_overlay_version,
     compute_template_hash,
     get_cached_recipe,
     set_cached_recipe,
@@ -367,7 +368,16 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
             # (~30-60s for a 1080p template — ACTIVE-poll bound) and the actual
             # `analyze_template` LLM call. identify_fonts, text_designer, poster,
             # and audio extraction still run on the local copy.
+            #
+            # The cache is scoped by `text_overlay_version` so Layer-1 and Layer-2
+            # entries coexist without collision. A ?use_layer2=true request that hits
+            # a cached Layer-1 entry would otherwise short-circuit and silently
+            # discard the override — the namespace separation prevents that.
             _AGENTIC_ANALYSIS_MODE = "single"
+            text_overlay_version = _resolve_text_overlay_version(
+                force_layer2=use_layer2,
+                settings_flag=settings.text_overlay_v2_enabled,
+            )
             template_hash = compute_template_hash(local_path)
             recipe = None
             if template_hash is not None:
@@ -375,14 +385,23 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
                     template_hash,
                     _AGENTIC_ANALYSIS_MODE,
                     agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+                    text_overlay_version=text_overlay_version,
                 )
                 if cached is not None:
                     log.info(
                         "agentic_template_recipe_cache_hit",
                         template_id=template_id,
                         template_hash=template_hash[:12],
+                        text_overlay_version=text_overlay_version,
                     )
                     recipe = cached
+                else:
+                    log.info(
+                        "agentic_template_recipe_cache_miss",
+                        template_id=template_id,
+                        template_hash=template_hash[:12],
+                        text_overlay_version=text_overlay_version,
+                    )
 
             if recipe is None:
                 file_ref = gemini_upload_and_wait(local_path)
@@ -425,6 +444,7 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
                         _AGENTIC_ANALYSIS_MODE,
                         recipe,
                         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+                        text_overlay_version=text_overlay_version,
                     )
 
             # Font identification (PR2). Best-effort: a font-id failure must
