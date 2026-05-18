@@ -1043,6 +1043,23 @@ async def reanalyze_template(
             ),
         )
 
+    # Audio-only templates (template_type="audio_only", created at line 2450
+    # from a MusicTrack) have no source video — their recipe is generated
+    # from beat detection on the audio file. Running analyze_template_task
+    # on one would call download_to_file(None) and die deep inside
+    # google-cloud-storage with an opaque "None could not be converted to
+    # unicode" error. Reject here with a clear pointer to the right path.
+    if template.template_type == "audio_only":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Audio-only templates have no video analysis to re-run — "
+                "their recipe comes from beat detection. Use "
+                "POST /admin/music-tracks/{track_id}/reanalyze to "
+                "re-detect beats and regenerate the recipe."
+            ),
+        )
+
     template.analysis_status = "analyzing"
     template.error_detail = None  # clear stale error
     await db.commit()

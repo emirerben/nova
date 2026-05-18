@@ -573,3 +573,39 @@ class TestReanalyzeErrorDetail:
         assert res.status_code == 200
         data = res.json()
         assert data["error_detail"] == "API quota exceeded"
+
+    def test_reanalyze_audio_only_template_returns_409(self, client):
+        """Audio-only templates (template_type='audio_only', gcs_path=None,
+        recipe pre-generated from beat detection at admin.py:2450) have no
+        video to analyze. Routing one through analyze_template_task would
+        call download_to_file(None) and die deep in google-cloud-storage
+        with the opaque error 'None could not be converted to unicode'.
+
+        The route must reject with 409 + a clear pointer to the music-track
+        reanalyze endpoint. Mirrors the existing is_agentic guard.
+        """
+        template = _make_template(
+            template_type="audio_only",
+            gcs_path=None,
+            audio_gcs_path="music/some-track/audio.m4a",
+            analysis_status="ready",
+        )
+
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.post(
+                    f"/admin/templates/{template.id}/reanalyze",
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 409
+        detail = res.json()["detail"]
+        assert "audio-only" in detail.lower()
+        assert "music-tracks" in detail
+        # Template state untouched — error_detail not overwritten,
+        # analysis_status not flipped to "analyzing".
+        assert template.analysis_status == "ready"

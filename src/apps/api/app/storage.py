@@ -101,7 +101,21 @@ def upload_bytes_public_read(data: bytes, object_path: str, content_type: str = 
 
 
 def download_to_file(object_path: str, local_path: str) -> None:
-    """Download a GCS object to a local path (worker use only)."""
+    """Download a GCS object to a local path (worker use only).
+
+    ``object_path=None`` would pass through to ``bucket.blob(None)``, which
+    dies 8 frames deep in ``google.cloud._helpers._bytes_to_unicode`` with
+    the opaque ``ValueError("None could not be converted to unicode")``.
+    Catch it here with a message that names the caller's actual mistake
+    (forgetting to null-guard a nullable column like
+    ``VideoTemplate.gcs_path`` on audio-only templates).
+    """
+    if object_path is None:
+        raise ValueError(
+            "download_to_file: object_path is None — caller must null-guard "
+            "before calling (e.g. nullable VideoTemplate.gcs_path on "
+            "audio_only templates)."
+        )
     bucket = _get_client().bucket(settings.storage_bucket)
     blob = bucket.blob(object_path)
     blob.download_to_filename(local_path)

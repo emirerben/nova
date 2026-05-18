@@ -263,9 +263,43 @@ def analyze_template_task(self, template_id: str) -> None:
                     return
                 gcs_path = template.gcs_path
                 existing_audio_gcs = template.audio_gcs_path
+                template_type = template.template_type
                 # Clear stale error from prior failed run
                 template.error_detail = None
                 db.commit()
+
+            # Audio-only templates (music tracks promoted to templates at
+            # admin.py:2450) have gcs_path=None by design — their recipe
+            # comes from beat detection on the audio, not from Gemini video
+            # analysis. Reaching this task means someone clicked the manual
+            # /templates/{id}/reanalyze button on a row that doesn't support
+            # it. Before this guard the job died 8 frames deep inside
+            # google-cloud-storage's Blob() encoder with the opaque message
+            # "None could not be converted to unicode" — useless to triage.
+            # Fail fast here with an error_detail the admin UI can actually
+            # show, and point the operator at the right endpoint.
+            if template_type == "audio_only" or gcs_path is None:
+                msg = (
+                    "Cannot analyze audio-only template — it has no source "
+                    "video (gcs_path is null). Audio-only templates have "
+                    "their recipe pre-generated from beat detection. Use "
+                    "POST /admin/music-tracks/{track_id}/reanalyze to "
+                    "re-run beat detection instead."
+                )
+                log.error(
+                    "analyze_template_unsupported",
+                    template_id=template_id,
+                    template_type=template_type,
+                    gcs_path=gcs_path,
+                )
+                with _sync_session() as db:
+                    template = db.get(VideoTemplate, template_id)
+                    if template:
+                        template.analysis_status = "failed"
+                        template.error_detail = msg
+                        db.commit()
+                _redis.delete(attempt_key)
+                return
 
             download_to_file(gcs_path, local_path)
 

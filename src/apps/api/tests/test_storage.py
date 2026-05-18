@@ -98,3 +98,15 @@ def test_whitespace_only_json_falls_through_to_adc(mock_gcs_client):
         storage._get_client()
 
     mock_gcs_client.assert_called_once_with(project=None, credentials=None)
+
+
+def test_download_to_file_rejects_none_object_path():
+    """``download_to_file(None, ...)`` would die 8 frames deep in
+    ``google.cloud._helpers._bytes_to_unicode`` with ``ValueError("None
+    could not be converted to unicode")`` — an opaque message that took a
+    full investigation to attribute to a caller forgetting to null-guard a
+    nullable column (``VideoTemplate.gcs_path`` on audio-only templates).
+    Catch it at the storage boundary so the error names the actual mistake.
+    """
+    with pytest.raises(ValueError, match="object_path is None"):
+        storage.download_to_file(None, "/tmp/anywhere.mp4")
