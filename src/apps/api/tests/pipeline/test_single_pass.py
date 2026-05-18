@@ -123,6 +123,52 @@ def test_xfade_crossfade_emits_xfade_filter_node():
     assert "concat=n=2" not in fc
 
 
+def test_per_clip_chain_forces_cfr_before_xfade():
+    """Regression: every per-clip filter chain must include `fps=N` BEFORE
+    xfade references its output, so inputs with `avg_frame_rate=1/0`
+    (unparseable rate — some phone HEVC, HEIF-derived video, screen
+    recordings) get normalized to a constant rate before xfade configures.
+
+    Without this, xfade fails to configure with
+        "The inputs needs to be a constant frame rate; current rate of
+         1/0 is invalid"
+    and the whole single-pass ffmpeg run aborts with rc=234 — caught in
+    prod 2026-05-18 on a music-template job (BAD BUNNY "BAILE INOLVIDABLE")
+    where one user-uploaded clip reported 1/0. `_build_video_filter`
+    already emits `framerate=fps=N` at the head, but `framerate=`
+    interpolates against the source PTS clock and silently fails on
+    incoherent inputs; `fps=N` drops/duplicates and works on anything.
+    """
+    from app.config import settings  # noqa: PLC0415
+
+    spec = SinglePassSpec(
+        inputs=[_clip(), _clip()],
+        transitions=["crossfade"],
+    )
+    fc = _argv_filter_complex(build_single_pass_command(spec, "/tmp/out.mp4"))
+    fps_token = f"fps={settings.output_fps}"
+
+    # Every per-clip chain output (one per input clip) must include fps=.
+    fragments = fc.split(";")
+    clip_chain_fragments = [f for f in fragments if f.startswith(("[0:v]", "[1:v]"))]
+    assert len(clip_chain_fragments) == 2, (
+        f"expected 2 per-clip chains, got {len(clip_chain_fragments)}: {clip_chain_fragments}"
+    )
+    for frag in clip_chain_fragments:
+        assert fps_token in frag, (
+            f"per-clip chain missing CFR-before-xfade guard ({fps_token}): {frag}"
+        )
+
+    # The fps= filter must appear before any xfade node in the filtergraph
+    # — xfade consumes the per-clip chain outputs, so the normalization
+    # has to be upstream.
+    first_fps = fc.index(fps_token)
+    first_xfade = fc.index("xfade=")
+    assert first_fps < first_xfade, (
+        f"fps= ({first_fps}) must precede first xfade= ({first_xfade}) in filter_complex"
+    )
+
+
 def test_xfade_whip_pan_emits_wipeleft():
     """The transition.translate_transition map collapses whip-pan→wipe_left
     and xfade uses 'wipeleft' as the transition= parameter. Catches drift

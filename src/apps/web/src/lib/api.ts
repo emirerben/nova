@@ -174,6 +174,38 @@ export interface TemplateJobStatusResponse {
   updated_at: string;
 }
 
+/** Structured error detail returned by the upload-time pre-flight when one
+ * or more clips exceed the pipeline's empirical cost budget for 10-bit HDR
+ * footage. See `app/services/template_validation.py` for the empirical record. */
+export interface ClipTooLongFor10BitDetail {
+  code: "clip_too_long_for_10bit";
+  clip_index: number;
+  duration_s: number;
+  limit_s: number;
+  pix_fmt: string;
+  message: string;
+  offenders: { clip_index: number; duration_s: number; pix_fmt: string }[];
+}
+
+/** Thrown by createTemplateJob when the API returns a structured (dict) error
+ * detail. Lets callers inspect `code` and render a per-clip remediation UI
+ * instead of dumping `[object Object]` into the error banner. */
+export class TemplateJobCreateError extends Error {
+  detail: ClipTooLongFor10BitDetail | { code?: string; [k: string]: unknown } | string | null;
+  status: number;
+
+  constructor(
+    message: string,
+    detail: TemplateJobCreateError["detail"],
+    status: number,
+  ) {
+    super(message);
+    this.name = "TemplateJobCreateError";
+    this.detail = detail;
+    this.status = status;
+  }
+}
+
 export async function createTemplateJob(params: {
   template_id: string;
   clip_gcs_paths: string[];
@@ -195,8 +227,22 @@ export async function createTemplateJob(params: {
     throw new Error("Cannot reach the server. Make sure the API is running.");
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Template job creation failed: ${res.status}`);
+    const body = await res.json().catch(() => ({}));
+    const detail = body?.detail ?? null;
+    // Structured detail (FastAPI returns a dict for our pre-flight checks).
+    // Extract the user-visible message for `Error.message` but keep the full
+    // object on `.detail` so the caller can render per-clip UI.
+    if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+      const message =
+        (detail as { message?: string }).message ??
+        `Template job creation failed: ${res.status}`;
+      throw new TemplateJobCreateError(message, detail, res.status);
+    }
+    const message =
+      typeof detail === "string"
+        ? detail
+        : `Template job creation failed: ${res.status}`;
+    throw new TemplateJobCreateError(message, detail, res.status);
   }
   return res.json();
 }

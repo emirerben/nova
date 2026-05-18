@@ -55,7 +55,7 @@ from app.pipeline.agents.gemini_analyzer import (
     build_recipe,
     gemini_upload_and_wait,
 )
-from app.pipeline.orientation import normalize_orientation
+from app.pipeline.orientation import OrientationError, normalize_orientation
 from app.pipeline.reframe import ReframeError
 from app.pipeline.single_pass import (
     SinglePassInput,
@@ -563,6 +563,33 @@ def _orchestrate_template_job_inner(
         # the real failure class.
         log.error("template_job_reframe_failed", job_id=job_id, error=str(exc))
         _mark_failed(job_uuid, FAILURE_REASON_FFMPEG_FAILED, str(exc))
+    except OrientationError as exc:
+        # Orientation normalize failure — typically a timeout on a 10-bit HDR
+        # clip whose re-encode exceeds the subprocess budget. The API-side
+        # preflight in `routes/template_jobs.py` rejects the known offender
+        # pattern (10-bit + duration > 60s) at upload, so anything that
+        # reaches this clause is an unanticipated edge case (admin job,
+        # codec we didn't characterize, or noisy-neighbor blowing budget on
+        # a borderline clip). Surface as USER_CLIP_UNUSABLE rather than
+        # UNKNOWN so on-call has a real failure class instead of three
+        # `failure_reason=unknown` rows like 5f897cca / d1b9b9d8 / 71d22917
+        # (2026-05-17).
+        #
+        # IMPORTANT: do NOT pass `str(exc)` into _mark_failed. The raw
+        # OrientationError message contains the worker's internal /tmp path
+        # (e.g. "ffmpeg normalize timed out after 600s on
+        # /tmp/tmp8nwgap1h/clip_8.mp4") and up to 500 chars of ffmpeg stderr.
+        # That string is rendered VERBATIM to anonymous end users by the
+        # frontend's `failureMessage()` helper for the user_clip_unusable
+        # reason (template-jobs/[id]/page.tsx:52). Use a clean message
+        # instead — the raw exception still lands in the structlog event
+        # for on-call debugging.
+        log.error("template_job_orientation_failed", job_id=job_id, error=str(exc))
+        _mark_failed(
+            job_uuid,
+            FAILURE_REASON_USER_CLIP_UNUSABLE,
+            "Your video couldn't be processed — try a shorter clip or re-export it as 8-bit.",
+        )
     except OperationalError as db_exc:
         # Transient Postgres outage. Re-raise so Celery's autoretry_for
         # handles it with backoff. Do NOT call _mark_failed — that itself
@@ -5749,6 +5776,12 @@ def orchestrate_single_video_job(self, job_id: str) -> None:
         raise
 
     except Exception as exc:
+        # Note: no `except OrientationError` here on purpose —
+        # `_run_single_video_job` downloads clips via raw `download_to_file`
+        # and never calls `normalize_orientation`. The multi-video orchestrator
+        # (`_orchestrate_template_job_inner`) catches OrientationError because
+        # `_download_clips_parallel` is the only call site that runs the
+        # normalize step.
         log.exception("single_video_job_fatal", job_id=job_id, error=str(exc))
         _mark_failed(job_uuid, FAILURE_REASON_UNKNOWN, str(exc))
 

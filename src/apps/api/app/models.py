@@ -123,6 +123,13 @@ class VideoTemplate(Base):
     # Immutable after row creation; the two paths read/write recipe_cached
     # differently and flipping mid-life would orphan a hand-tuned recipe.
     is_agentic: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Per-template Layer-2 text-overlay default. Resolution priority when
+    # reanalyze-agentic fires:
+    #   1. ?use_layer2 query param (present → wins absolutely, true OR false)
+    #   2. this column, if not NULL → wins
+    #   3. settings.text_overlay_v2_enabled (global flag) → fallback
+    # NULL = fall through to the global flag (default for all existing rows).
+    use_layer2_default: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Per-template gate for the single-pass encode rollout. Default false
     # means every existing row stays on the multi-pass path until a
     # parity + benchmark run promotes it. Combined with the env-level

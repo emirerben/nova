@@ -193,12 +193,30 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
         *,
         ctx=None,
     ) -> TextAlignmentOutput:
-        """Skip the LLM call entirely when there are no phrases to align."""
+        """Skip the LLM call entirely when there are no phrases to align,
+        or when the transcript is empty (music-only / caption-only templates)."""
         from app.agents._runtime import RunContext  # noqa: PLC0415
 
         ctx = ctx or RunContext()
         validated = self._validate_input(input)
+
+        # ── 1. Empty-transcript early return ─────────────────────────────────
+        # Music-only and caption-only templates produce an empty Whisper
+        # transcript (no speech to align against).  Without this guard the LLM
+        # would receive transcript_words=[] and drop every phrase, producing
+        # zero overlays.  Apple Vision / Cloud Vision OCR is already accurate
+        # on these templates; pass phrases through unchanged.
+        if not validated.transcript_words and validated.phrases:
+            log.info(
+                "text_alignment_skipped_empty_transcript",
+                phrase_count=len(validated.phrases),
+                template_id=validated.template_id,
+            )
+            return TextAlignmentOutput(phrases=list(validated.phrases), dropped_count=0)
+
+        # ── 2. Empty-phrase early return ──────────────────────────────────────
         if not validated.phrases:
             log.info("text_alignment_skipped_empty_phrases", template_id=validated.template_id)
             return TextAlignmentOutput(phrases=[], dropped_count=0)
+
         return super().run(validated, ctx=ctx)

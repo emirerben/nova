@@ -17,6 +17,7 @@ import {
   adminReanalyzeAgentic,
   adminReanalyzeTemplate,
   adminSaveRecipe,
+  adminSetUseLayer2Default,
   adminUpdateTemplate,
 } from "@/lib/admin-api";
 import {
@@ -350,17 +351,21 @@ export default function TemplateDetailPage() {
           silently swallowed by the disabled DOM element.
         */}
         {template.is_agentic ? (
-          <ReanalyzeButton
-            onClick={handleReanalyzeAgentic}
-            disabled={actionLoading}
-            status={template.analysis_status}
-            errorDetail={template.error_detail}
-            analyzingStartMs={analyzingStartMs}
-            color="emerald"
-            idleLabel="Re-run agents"
-            busyLabel="Building"
-            title="Re-run creative_direction + template_recipe + text_designer"
-          />
+          <>
+            <ReanalyzeButton
+              onClick={handleReanalyzeAgentic}
+              disabled={actionLoading}
+              status={template.analysis_status}
+              errorDetail={template.error_detail}
+              analyzingStartMs={analyzingStartMs}
+              color="emerald"
+              idleLabel="Re-run agents"
+              busyLabel="Building"
+              title="Re-run creative_direction + template_recipe + text_designer"
+            />
+            {/* Effective Layer-2 mode badge — shows what the next reanalyze will use */}
+            <Layer2ModeBadge useLayer2Default={template.use_layer2_default} />
+          </>
         ) : (
           <ReanalyzeButton
             onClick={handleReanalyze}
@@ -1341,6 +1346,7 @@ function SettingsTab({
   const [saved, setSaved] = useState(false);
   const [togglingMusic, setTogglingMusic] = useState(false);
   const [togglingIntroSlot, setTogglingIntroSlot] = useState(false);
+  const [togglingLayer2, setTogglingLayer2] = useState(false);
 
   const isMusicParent = (template.template_type ?? "standard") === "music_parent";
   const isMusicChild = (template.template_type ?? "standard") === "music_child";
@@ -1395,6 +1401,26 @@ function SettingsTab({
       alert(err instanceof Error ? err.message : "Toggle failed");
     } finally {
       setTogglingIntroSlot(false);
+    }
+  };
+
+  /**
+   * Cycle use_layer2_default: null → true → false → null.
+   * Three-state toggle so operators can explicitly pin Layer-1 (false) as well
+   * as pin Layer-2 (true) or defer to the global flag (null).
+   */
+  const handleCycleLayer2Default = async () => {
+    const current = template.use_layer2_default;
+    // null → true → false → null
+    const next = current === null ? true : current === true ? false : null;
+    setTogglingLayer2(true);
+    try {
+      const updated = await adminSetUseLayer2Default(template.id, next);
+      onSave(updated);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Toggle failed");
+    } finally {
+      setTogglingLayer2(false);
     }
   };
 
@@ -1492,6 +1518,56 @@ function SettingsTab({
         </div>
       )}
 
+      {/* Layer-2 default toggle — agentic templates only */}
+      {template.is_agentic && (
+        <div className="border-t border-zinc-800 pt-5 mt-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-white font-medium">Layer-2 default</p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                {template.use_layer2_default === true
+                  ? "ON — reanalyses always use the Layer-2 text-overlay pipeline"
+                  : template.use_layer2_default === false
+                    ? "OFF — reanalyses always use the Layer-1 pipeline"
+                    : "Unset — falls through to the global text_overlay_v2_enabled flag"}
+              </p>
+              <p className="text-xs text-zinc-600 mt-1">
+                Click to cycle: null → true → false → null. Override per-run
+                via ?use_layer2=true/false on the reanalyze-agentic endpoint.
+              </p>
+            </div>
+            <button
+              onClick={handleCycleLayer2Default}
+              disabled={togglingLayer2}
+              role="switch"
+              aria-checked={template.use_layer2_default === true}
+              title={
+                template.use_layer2_default === null
+                  ? "Unset (global flag decides) — click to pin to Layer-2"
+                  : template.use_layer2_default === true
+                    ? "Pinned to Layer-2 — click to pin to Layer-1"
+                    : "Pinned to Layer-1 — click to clear (global flag decides)"
+              }
+              className={`relative w-11 h-6 rounded-full transition-colors ${
+                template.use_layer2_default === true
+                  ? "bg-violet-600"
+                  : template.use_layer2_default === false
+                    ? "bg-red-900/70"
+                    : "bg-zinc-700"
+              } ${togglingLayer2 ? "opacity-50" : ""}`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                  template.use_layer2_default === true
+                    ? "translate-x-5"
+                    : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Music Variants toggle — only for standard/music_parent (not children or audio_only) */}
       {!isMusicChild && !isAudioOnly && (
         <div className="border-t border-zinc-800 pt-5 mt-6">
@@ -1535,6 +1611,38 @@ function SettingsTab({
       </div>
     </div>
   );
+}
+
+// ── Layer-2 mode badge (action bar) ───────────────────────────────────────────
+
+/**
+ * Shows the effective Layer-2 mode that the next reanalyze-agentic will use.
+ * Only queries template.use_layer2_default — the global flag is not shown
+ * here because the badge is only rendered for agentic templates.
+ */
+function Layer2ModeBadge({ useLayer2Default }: { useLayer2Default: boolean | null }) {
+  if (useLayer2Default === true) {
+    return (
+      <span
+        title="This template has use_layer2_default=true. Reanalyses will always use the Layer-2 pipeline (override via ?use_layer2=false)."
+        className="text-xs bg-violet-900/40 text-violet-300 border border-violet-800/60 px-2 py-0.5 rounded cursor-help"
+      >
+        Layer-2: ON (template default)
+      </span>
+    );
+  }
+  if (useLayer2Default === false) {
+    return (
+      <span
+        title="This template has use_layer2_default=false. Reanalyses will always use Layer-1 (override via ?use_layer2=true)."
+        className="text-xs bg-zinc-800 text-zinc-400 border border-zinc-700 px-2 py-0.5 rounded cursor-help"
+      >
+        Layer-2: OFF (template default)
+      </span>
+    );
+  }
+  // null → falls through to global flag; don't clutter UI with global-flag state
+  return null;
 }
 
 // ── Shared Components ──────────────────────────────────────────────────────────

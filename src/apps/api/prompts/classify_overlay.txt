@@ -19,10 +19,51 @@ Your job is to classify each phrase along four dimensions.
 - none: no effect detected or effect is ambiguous; use this as a safe fallback
 
 ### role  (semantic purpose in the video)
-- hook: opening statement or question designed to stop the viewer from scrolling
-- reaction: commentary, emotion, or response layered over the main action
-- cta: call-to-action directing the viewer to follow, share, link in bio, etc.
-- label: factual annotation, location tag, lower-third, name, title, or watermark
+
+**hook** — The opening title, question, or declarative statement that stops the viewer
+from scrolling and establishes the video's premise. Hook text:
+- Appears in the first 0–3 seconds (start_t_s < 3.0), usually phrase_index=0
+- Is a large/jumbo headline — not a small caption or lower-third
+- Contains a provocative statement, incomplete thought, or direct address
+
+Examples:
+  "It's not / just luck"          → hook  (opening title, slot 1, t ≈ 0–2 s)
+  "The #1 mistake beginners make" → hook  (large headline at t=0.5 s)
+  "I didn't believe this either"  → hook  (first-slot declarative)
+
+**reaction** — Mid-video commentary, progressive captions, or emotional response
+layered over the main action. Appears after the hook (start_t_s ≥ 3.0).
+
+Examples:
+  "if you put in / the work"    → reaction  (continues the hook, t > 3 s)
+  "this is what changed for me" → reaction  (mid-video narration)
+  "↑ that's the secret"         → reaction  (emphasis over action, later slot)
+
+**cta** — Call-to-action directing the viewer outside the video. Typically the last
+3–5 seconds. Key signals: "follow", "subscribe", "link in bio", "save this",
+"share", "comment below".
+
+Examples:
+  "Follow for more tips like this" → cta
+  "Save this before you forget"    → cta
+
+**label** — Static factual annotation: lower-third, location stamp, name/title, or
+watermark that identifies rather than narrates.
+
+Examples:
+  "New York City, 2024"  → label  (location stamp)
+  "Sarah Chen — Founder" → label  (lower-third)
+  "@nova.video"          → label  (watermark)
+
+## Ambiguity heuristic: hook vs reaction
+
+1. If start_t_s < 3.0 AND the text is headline-sized (large or jumbo), classify
+   as **hook** — not reaction.
+2. phrase_index=0 with start_t_s < 2.0 is almost always a hook.
+3. A hook creates a premise; a reaction answers or continues it. Incomplete or
+   provocative statements early in the video = hook.
+
+**Default rule: when start_t_s < 3.0 and unsure, choose hook over reaction.**
 
 ### size_class  (visual weight relative to frame height)
 - small: text height < 5% of frame height (fine print, small watermarks)

@@ -9,7 +9,17 @@ Fingerprint the source once, look up Redis, skip the Gemini round-trip on
 hits.
 
 Cache key shape:
-    template_analysis:{prompt_version}:{schema_version}:{analysis_mode}:{fingerprint}
+    template_analysis:{prompt_version}:{schema_version}:{agent_set}:{analysis_mode}:{fingerprint}
+
+For agentic builds that run TemplateTextAgent, the key additionally encodes
+`text_overlay_version` so Layer-1 (single Gemini call) and Layer-2 (multi-stage
+OCR pipeline) results coexist as separate cache entries and never collide:
+
+    template_analysis:{prompt_version}:{schema_version}:recipe+text:{analysis_mode}:{fingerprint}:v2
+
+This is the "v1/v2 namespace". `text_overlay_version` is only appended for the
+`recipe+text` agent_set; `recipe-only` (manual templates) is unaffected because
+those builds never run the text agent.
 
 Bump:
   - PROMPT_VERSION when `analyze_template` / `TemplateRecipeAgent` prompts
@@ -74,6 +84,22 @@ CACHE_SCHEMA_VERSION = "s1"
 AGENT_SET_RECIPE_ONLY = "recipe-only"
 AGENT_SET_RECIPE_PLUS_TEXT = "recipe+text"
 
+# Text-overlay pipeline version dimensions for agentic builds (recipe+text).
+# "v1" = original single Gemini call via TemplateTextAgent.
+# "v2" = multi-stage Layer-2 OCR pipeline (stages A–G) behind the
+#         `text_overlay_v2_enabled` flag or `?use_layer2=true` override.
+#
+# These two versions produce different overlays for the same template video,
+# so they must live in separate cache namespaces. Existing entries written
+# before this PR have no version suffix and are treated as "v1" (the default)
+# — they remain valid for Layer-1 builds with no migration needed.
+#
+# `recipe-only` builds (manual templates) never run the text agent and
+# therefore have no v1/v2 distinction — `text_overlay_version` is ignored for
+# that agent_set so their cache keys stay unchanged.
+TEXT_OVERLAY_VERSION_V1 = "v1"
+TEXT_OVERLAY_VERSION_V2 = "v2"
+
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.
 CACHE_TTL_S = 30 * 24 * 60 * 60
@@ -113,15 +139,56 @@ def compute_template_hash(path: str) -> str | None:
     return h.hexdigest()
 
 
+def _resolve_text_overlay_version(
+    force_layer2: bool,
+    settings_flag: bool,
+) -> str:
+    """Derive the text_overlay_version cache dimension from the per-request
+    override and the global feature flag.
+
+    Single source of truth so every call site uses identical routing logic.
+
+    Args:
+        force_layer2: per-request override from `?use_layer2=true` (PR #220).
+        settings_flag: `settings.text_overlay_v2_enabled` global flag.
+
+    Returns "v2" when either input signals Layer-2; "v1" otherwise.
+    """
+    return TEXT_OVERLAY_VERSION_V2 if (force_layer2 or settings_flag) else TEXT_OVERLAY_VERSION_V1
+
+
 def _cache_key(
     template_hash: str,
     analysis_mode: str,
     agent_set: str = AGENT_SET_RECIPE_ONLY,
+    text_overlay_version: str = TEXT_OVERLAY_VERSION_V1,
 ) -> str:
-    return (
+    """Build the Redis cache key.
+
+    For ``agent_set="recipe+text"`` (agentic builds), ``text_overlay_version``
+    is appended as an additional namespace dimension so Layer-1 and Layer-2
+    results coexist:
+
+        template_analysis:v1:s1:recipe+text:single:<hash>:v1   ← Layer-1
+        template_analysis:v1:s1:recipe+text:single:<hash>:v2   ← Layer-2
+
+    For ``agent_set="recipe-only"`` (manual templates) the version suffix is
+    omitted — text_overlay_version is irrelevant for builds that never run the
+    text agent, and appending it would force a cache miss on every existing
+    manual-template entry.
+
+    Backward-compat: existing v1 entries written before this PR have no
+    version suffix, so callers requesting v1 would miss them. To preserve
+    those entries we only append the suffix for v2 — v1 uses the pre-existing
+    key shape (no suffix) so prior cache entries continue to hit.
+    """
+    base = (
         f"template_analysis:{TEMPLATE_PROMPT_VERSION}:{CACHE_SCHEMA_VERSION}"
         f":{agent_set}:{analysis_mode}:{template_hash}"
     )
+    if agent_set == AGENT_SET_RECIPE_PLUS_TEXT and text_overlay_version != TEXT_OVERLAY_VERSION_V1:
+        return f"{base}:{text_overlay_version}"
+    return base
 
 
 # Module-level pooled client. Same rationale as clip_cache — reusing the
@@ -155,6 +222,7 @@ def get_cached_recipe(
     template_hash: str,
     analysis_mode: str,
     agent_set: str = AGENT_SET_RECIPE_ONLY,
+    text_overlay_version: str = TEXT_OVERLAY_VERSION_V1,
 ) -> TemplateRecipe | None:
     """Return cached TemplateRecipe or None on miss / Redis failure / corrupt entry.
 
@@ -162,11 +230,17 @@ def get_cached_recipe(
     Manual builds (analyze_template_task) use the default ("recipe-only");
     agentic builds (agentic_template_build_task) pass "recipe+text" so the
     two paths don't collide.
+
+    `text_overlay_version` scopes agentic builds further by the text-overlay
+    pipeline version ("v1" = Layer-1 single Gemini call, "v2" = Layer-2
+    multi-stage OCR pipeline). Ignored for "recipe-only" agent_set. Use
+    `_resolve_text_overlay_version()` to derive this from the per-request
+    override and global flag rather than hardcoding it at call sites.
     """
     r = _get_redis()
     if r is None:
         return None
-    key = _cache_key(template_hash, analysis_mode, agent_set)
+    key = _cache_key(template_hash, analysis_mode, agent_set, text_overlay_version)
     try:
         raw = r.get(key)
     except Exception as exc:
@@ -201,11 +275,16 @@ def set_cached_recipe(
     analysis_mode: str,
     recipe: TemplateRecipe,
     agent_set: str = AGENT_SET_RECIPE_ONLY,
+    text_overlay_version: str = TEXT_OVERLAY_VERSION_V1,
 ) -> None:
     """Write TemplateRecipe to cache. Best-effort — failures are logged, not raised.
 
     `agent_set` selects which build path's cache namespace to write to.
     Mirrors `get_cached_recipe`'s parameter exactly so the two stay paired.
+
+    `text_overlay_version` is forwarded to `_cache_key`; see `get_cached_recipe`
+    for the full semantics. Both get and set must receive the same version so
+    a future hit returns the entry written by this call.
     """
     if _is_degraded_recipe(recipe):
         log.warning(
@@ -220,7 +299,7 @@ def set_cached_recipe(
     r = _get_redis()
     if r is None:
         return
-    key = _cache_key(template_hash, analysis_mode, agent_set)
+    key = _cache_key(template_hash, analysis_mode, agent_set, text_overlay_version)
     try:
         payload = dataclasses.asdict(recipe)
         r.setex(key, CACHE_TTL_S, json.dumps(payload))

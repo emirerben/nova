@@ -94,7 +94,17 @@ class TemplateTextAgent(Agent[TemplateTextInput, TemplateTextOutput]):
         ctx = ctx or RunContext()
         validated = self._validate_input(input)
 
-        if settings.text_overlay_v2_enabled:
+        use_layer2 = settings.text_overlay_v2_enabled or validated.force_layer2
+        if validated.force_layer2 and not settings.text_overlay_v2_enabled:
+            log.info(
+                "text_overlay_layer2_forced_via_request",
+                template_id=getattr(ctx, "job_id", None),
+                job_id=ctx.job_id,
+                force_layer2=True,
+                global_flag=False,
+            )
+
+        if use_layer2:
             return self._run_layer2(validated, ctx=ctx)
 
         return super().run(validated, ctx=ctx)
@@ -147,12 +157,31 @@ class TemplateTextAgent(Agent[TemplateTextInput, TemplateTextOutput]):
             job_id=ctx.job_id,
         )
 
-        # Download the template video from GCS/S3 to a local tempfile so
-        # ffmpeg (stage A) and the OCR backend (stage B) can access it.
+        # Require the GCS path — `file_uri` is the Gemini File API reference
+        # and is NOT a valid GCS object key. Passing it to download_to_file()
+        # causes a 404 because the GCS client URL-encodes it and queries the
+        # bucket for a key that looks like the full Gemini API URL (canary
+        # evidence: 2026-05-17 fdaf3bbc, "No such object: nova-videos-dev/
+        # https://generativelanguage.googleapis.com/..."). Fail loud here so
+        # the bridge's TerminalError handler returns (False, 0) and recipe-
+        # agent overlays pass through — identical to the pre-Layer-2 behavior.
+        if not input.gcs_path:
+            log.warning(
+                "template_text_layer2_missing_gcs_path",
+                file_uri=input.file_uri,
+                job_id=ctx.job_id,
+            )
+            raise TerminalError(
+                "template_text_layer2: gcs_path is required for Layer-2 but was not provided. "
+                "Pass gcs_path=template.gcs_path from the agentic build task."
+            )
+
+        # Download the template video from GCS to a local tempfile so ffmpeg
+        # (stage A) and the OCR backend (stage B) can access raw video bytes.
         with tempfile.TemporaryDirectory(prefix="nova-layer2-") as tmpdir:
             local_video = os.path.join(tmpdir, "template.mp4")
             try:
-                download_to_file(input.file_uri, local_video)
+                download_to_file(input.gcs_path, local_video)
             except Exception as exc:
                 raise TerminalError(f"template_text_layer2: download failed — {exc}") from exc
 

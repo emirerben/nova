@@ -79,7 +79,7 @@ class TextClassificationAgent(Agent[TextClassificationInput, TextClassificationO
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.text_classification",
         prompt_id="classify_overlay",
-        prompt_version="2026-05-18",
+        prompt_version="2026-05-18.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,

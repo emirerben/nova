@@ -40,7 +40,9 @@ def test_json_credentials_used_when_set(mock_from_info, mock_gcs_client):
          patch.object(storage.settings, "gcloud_project", "nova-test"):
         storage._get_client()
 
-    mock_from_info.assert_called_once_with(_FAKE_SA_INFO)
+    # The new get_gcp_credentials() helper (PR #224) forwards `scopes` to
+    # from_service_account_info() — GCS callers pass None.
+    mock_from_info.assert_called_once_with(_FAKE_SA_INFO, scopes=None)
     mock_gcs_client.assert_called_once_with(project="nova-test", credentials=fake_creds)
 
 
