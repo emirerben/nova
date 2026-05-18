@@ -52,6 +52,14 @@ async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+export interface RequiredInput {
+  key: string;
+  label: string;
+  placeholder?: string;
+  max_length?: number;
+  required?: boolean;
+}
+
 export interface AdminTemplate {
   id: string;
   name: string;
@@ -59,6 +67,7 @@ export interface AdminTemplate {
   analysis_status: string;
   required_clips_min: number;
   required_clips_max: number;
+  required_inputs: RequiredInput[];
   published_at: string | null;
   archived_at: string | null;
   description: string | null;
@@ -176,6 +185,7 @@ export async function adminUpdateTemplate(
     source_url?: string;
     required_clips_min?: number;
     required_clips_max?: number;
+    required_inputs?: RequiredInput[];
     publish?: boolean;
     archive?: boolean;
     template_type?: string;
