@@ -95,7 +95,18 @@ primary_region = "iad"
   processes = ["api"]
   cpu_kind = "shared"
   cpus = 1
-  memory_mb = 512
+  # 2026-05-18: 512 → 2048. Kernel OOM-killed uvicorn during a 4-concurrent
+  # clip_prefetch burst (template 7b4a98d5…, batch-9774726a9e3d). Log:
+  #   "Out of memory: Killed process 636 (uvicorn) total-vm:900984kB"
+  # The Semaphore(4) in app/services/clip_prefetch.py was sized against
+  # the 512MB budget but didn't account for /tmp being tmpfs on Firecracker
+  # — each in-flight clip's tempfile.TemporaryDirectory() counts against
+  # RAM. 2048MB covers the observed ~900MB peak with ~1.1GB headroom so
+  # larger clip batches (longer/higher-bitrate footage, future workloads)
+  # don't push us back into OOM territory. If we ever see OOMs at 2048
+  # the structural fix is moving clip_prefetch off the api process onto
+  # the worker pool (which has 6144MB).
+  memory_mb = 2048
   kill_timeout = "30m"
 
 # Beat — tiny VM, schedules periodic tasks (no real CPU/memory needs).
