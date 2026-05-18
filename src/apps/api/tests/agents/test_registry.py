@@ -22,6 +22,8 @@ _EXPECTED = {
     "nova.audio.beat_aligner",
     "nova.video.clip_router",
     "nova.qa.output_validator",
+    # Layer-2 text-overlay pipeline agents
+    "nova.compose.text_alignment",
     "nova.compose.text_classification",
 }
 
