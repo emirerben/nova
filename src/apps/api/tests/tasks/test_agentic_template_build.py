@@ -19,6 +19,7 @@ import pytest
 from app.tasks.agentic_template_build import (
     _TEXT_DESIGNER_PARALLEL_CAP,
     _bake_text_designer_into_overlay,
+    _classify_overlay,
     _run_text_designer_on_slots,
 )
 
@@ -490,4 +491,140 @@ def test_bake_no_clamp_when_start_s_inside_window(
     clamped_events = [ev for ev, _ in warnings if ev == "text_designer_bake_start_s_clamped"]
     assert not clamped_events, (
         f"No clamp expected when start_s is inside window, but got: {clamped_events}"
+    )
+
+
+# ── _classify_overlay: body kind for Layer-2 roles ───────────────────────────
+
+
+def test_classify_overlay_returns_body_for_hook_role() -> None:
+    """Layer-2 role=hook overlays must route to kind='body', not be skipped."""
+    overlay = {"role": "hook", "sample_text": "It's", "start_s": 0.0, "end_s": 0.9}
+    assert _classify_overlay(overlay) == "body"
+
+
+def test_classify_overlay_returns_body_for_reaction_role() -> None:
+    """Layer-2 role=reaction overlays must route to kind='body', not be skipped."""
+    overlay = {
+        "role": "reaction",
+        "sample_text": "if you / put in",
+        "start_s": 1.0,
+        "end_s": 3.0,
+    }
+    assert _classify_overlay(overlay) == "body"
+
+
+def test_classify_overlay_returns_body_for_cta_role() -> None:
+    """Layer-2 role=cta overlays must route to kind='body', not be skipped."""
+    overlay = {"role": "cta", "sample_text": "Follow for more", "start_s": 8.0, "end_s": 10.0}
+    assert _classify_overlay(overlay) == "body"
+
+
+def test_classify_overlay_still_returns_label_for_label_role() -> None:
+    """Backward-compat: role=label overlays still route to 'prefix', not 'body'."""
+    overlay = {"role": "label", "sample_text": "Welcome to", "start_s": 0.0, "end_s": 2.0}
+    result = _classify_overlay(overlay)
+    assert result in {"prefix", "subject"}, (
+        f"role=label must still return a label kind, got {result!r}"
+    )
+
+
+def test_classify_overlay_subject_placeholder_still_label() -> None:
+    """Backward-compat: all-caps subject placeholders still return 'subject'."""
+    overlay = {"role": "label", "sample_text": "PERU", "start_s": 0.0, "end_s": 5.0}
+    assert _classify_overlay(overlay) == "subject"
+
+
+def test_classify_overlay_returns_none_for_unknown_role() -> None:
+    """Overlays with roles we don't recognize are skipped (None)."""
+    overlay = {"role": "caption", "sample_text": "some caption text"}
+    assert _classify_overlay(overlay) is None
+
+
+# ── _run_text_designer_on_slots: body overlays styled deterministically ───────
+
+
+def test_run_text_designer_styles_body_overlays() -> None:
+    """Layer-2 body overlays (hook/reaction) must be styled without LLM calls.
+
+    1 label overlay -> LLM call (1 agent.run invocation).
+    2 body overlays (hook + reaction) -> deterministic _BODY_CONFIG, no agent.run.
+    All 3 must be styled (baked == 3).
+    """
+    sleeping = _SleepingAgent(per_call_s=0.0)
+    slots = [
+        {
+            "position": 1,
+            "slot_type": "hook",
+            "text_overlays": [
+                _make_subject_overlay(),  # label -> LLM
+                {
+                    "role": "hook",
+                    "sample_text": "It's",
+                    "start_s": 0.0,
+                    "end_s": 0.9,
+                    "effect": "pop-in",
+                    "text_color": "#FFFFFF",
+                },
+                {
+                    "role": "reaction",
+                    "sample_text": "if you / put in",
+                    "start_s": 1.0,
+                    "end_s": 3.0,
+                    "effect": "fade-in",
+                    "text_color": "#CCCCCC",
+                },
+            ],
+        }
+    ]
+
+    with (
+        patch(
+            "app.agents.text_designer.TextDesignerAgent",
+            return_value=sleeping,
+        ),
+        patch("app.agents._model_client.default_client", return_value=None),
+    ):
+        baked = _run_text_designer_on_slots(
+            slots,
+            copy_tone="punchy",
+            creative_direction="bold and clean",
+            job_id="test-body-styling",
+        )
+
+    # All 3 overlays styled.
+    assert baked == 3, f"expected 3 overlays styled, got {baked}"
+
+    # Label overlay got the LLM path (sleeping agent provides _StubDesignerOutput).
+    label_ov = slots[0]["text_overlays"][0]
+    assert "text_size" in label_ov, "label overlay should have text_size from LLM path"
+
+    # Hook overlay got deterministic body config (text_size set, effect preserved).
+    hook_ov = slots[0]["text_overlays"][1]
+    assert hook_ov.get("text_size") == "large", (
+        f"hook overlay should have text_size='large' from _BODY_CONFIG, "
+        f"got {hook_ov.get('text_size')!r}"
+    )
+    assert hook_ov.get("effect") == "pop-in", (
+        "hook overlay effect must be preserved from stage F, not overridden"
+    )
+    assert hook_ov.get("text_color") == "#FFFFFF", (
+        "hook overlay text_color must be preserved from stage F"
+    )
+
+    # Reaction overlay got deterministic body config.
+    reaction_ov = slots[0]["text_overlays"][2]
+    assert reaction_ov.get("text_size") == "medium", (
+        f"reaction overlay should have text_size='medium', got {reaction_ov.get('text_size')!r}"
+    )
+    assert reaction_ov.get("effect") == "fade-in", (
+        "reaction overlay effect must be preserved from stage F"
+    )
+    assert reaction_ov.get("text_color") == "#CCCCCC", (
+        "reaction overlay text_color must be preserved from stage F"
+    )
+
+    # LLM was only called once (for the label overlay, not the 2 body overlays).
+    assert sleeping.calls == 1, (
+        f"LLM agent should be called exactly once (label only), got {sleeping.calls}"
     )

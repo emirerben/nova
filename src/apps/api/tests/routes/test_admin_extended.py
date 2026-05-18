@@ -355,8 +355,10 @@ class TestUploadPresigned:
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
 
-        with patch("app.routes.admin.settings") as s, \
-             patch("app.storage._get_client", return_value=mock_client):
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch("app.storage._get_client", return_value=mock_client),
+        ):
             s.admin_api_key = VALID_TOKEN
             s.storage_bucket = "nova-test"
             res = client.post(
@@ -446,9 +448,7 @@ class TestSharedValidation:
             "total_duration_s": 8.0,
         }
         # min/max are deliberately wider — the photo branch must override them
-        template = _make_template(
-            required_clips_min=1, required_clips_max=20, recipe_cached=recipe
-        )
+        template = _make_template(required_clips_min=1, required_clips_max=20, recipe_cached=recipe)
 
         with pytest.raises(Exception) as exc_info:
             validate_clip_count(template, 1)
@@ -573,3 +573,70 @@ class TestReanalyzeErrorDetail:
         assert res.status_code == 200
         data = res.json()
         assert data["error_detail"] == "API quota exceeded"
+
+
+# ── reanalyze-agentic ?use_layer2 query param ─────────────────────────────────
+
+
+class TestReanalyzeAgenticLayer2Param:
+    """Verify that the ?use_layer2=true query param is accepted and forwarded."""
+
+    def test_reanalyze_agentic_use_layer2_true_enqueues_with_kwarg(self, client):
+        """`POST /admin/templates/{id}/reanalyze-agentic?use_layer2=true` must
+        enqueue agentic_template_build_task with use_layer2=True.
+        """
+        template = _make_template(is_agentic=True, analysis_status="ready")
+        mock_redis_instance = MagicMock()
+        mock_task = MagicMock()
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch("redis.from_url", return_value=mock_redis_instance),
+            patch(
+                "app.tasks.agentic_template_build.agentic_template_build_task",
+                mock_task,
+            ),
+        ):
+            s.admin_api_key = VALID_TOKEN
+            s.redis_url = "redis://localhost:6379"
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.post(
+                    f"/admin/templates/{template.id}/reanalyze-agentic?use_layer2=true",
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        mock_task.delay.assert_called_once_with(template.id, use_layer2=True)
+
+    def test_reanalyze_agentic_use_layer2_false_enqueues_without_override(self, client):
+        """`POST /admin/templates/{id}/reanalyze-agentic` (no param) must
+        enqueue with use_layer2=False — existing behavior unchanged.
+        """
+        template = _make_template(is_agentic=True, analysis_status="ready")
+        mock_redis_instance = MagicMock()
+        mock_task = MagicMock()
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch("redis.from_url", return_value=mock_redis_instance),
+            patch(
+                "app.tasks.agentic_template_build.agentic_template_build_task",
+                mock_task,
+            ),
+        ):
+            s.admin_api_key = VALID_TOKEN
+            s.redis_url = "redis://localhost:6379"
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.post(
+                    f"/admin/templates/{template.id}/reanalyze-agentic",
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        mock_task.delay.assert_called_once_with(template.id, use_layer2=False)

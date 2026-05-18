@@ -43,7 +43,7 @@ _VALID_EFFECTS = (
 class TextDesignerInput(BaseModel):
     slot_position: int = Field(..., ge=1)
     slot_type: str = "broll"
-    placeholder_kind: Literal["prefix", "subject", "other"] = "other"
+    placeholder_kind: Literal["prefix", "subject", "other", "body"] = "other"
     copy_tone: str = ""
     creative_direction: str = ""
 

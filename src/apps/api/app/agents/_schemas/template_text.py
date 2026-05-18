@@ -146,6 +146,12 @@ class TemplateTextInput(BaseModel):
     when `text_overlay_v2_enabled=True`. When empty (the default), stage E skips
     alignment corrections and returns phrases as-is. The Layer-1 single-call path
     ignores this field entirely — it is a no-op for existing callers.
+
+    `force_layer2` is a per-request override that routes this specific build
+    through the Layer-2 pipeline even when the global `text_overlay_v2_enabled`
+    flag is False. Default False preserves existing behavior for all callers.
+    Used by the admin `?use_layer2=true` query param for canary/A-B testing
+    without flipping the global flag.
     """
 
     file_uri: str
@@ -157,6 +163,24 @@ class TemplateTextInput(BaseModel):
     transcript_words: list[dict] = Field(
         default_factory=list,
         description="Per-word transcript [{text, start_s, end_s}]. Optional; Layer-2 only.",
+    )
+    # Per-request Layer-2 override. When True, routes through the Layer-2
+    # pipeline regardless of the global text_overlay_v2_enabled setting.
+    # Existing callers that omit this field default to False (no change).
+    force_layer2: bool = False
+    # GCS object path for the Layer-2 video download. Layer-2's ffmpeg-based
+    # frame extraction (stage A) needs raw bytes from GCS; `file_uri` is the
+    # Gemini File API reference — a different contract. If None when Layer-2
+    # is active, _run_layer2 raises TerminalError so the bridge's existing
+    # fallback returns (False, 0) and recipe-agent overlays pass through
+    # unchanged (loud failure, graceful degradation). Layer-1 callers are
+    # unaffected — this field is ignored when the Layer-2 path is not taken.
+    gcs_path: str | None = Field(
+        default=None,
+        description=(
+            "GCS object path for Layer-2 video download. "
+            "None disables Layer-2 routing (raises TerminalError if Layer-2 is requested)."
+        ),
     )
 
 

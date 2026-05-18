@@ -31,6 +31,7 @@ from typing import Protocol
 import structlog
 
 from app.agents._schemas.text_overlay_ocr import FrameDetection, OcrPolygon
+from app.storage import get_gcp_credentials
 
 log = structlog.get_logger()
 
@@ -57,6 +58,10 @@ class OcrBackend(Protocol):
 class CloudVisionBackend:
     name = "cloud-vision"
 
+    # Cloud Vision needs the cloud-platform scope when credentials are loaded
+    # explicitly (the SDK doesn't add it automatically with service-account creds).
+    _VISION_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
+
     def __init__(self) -> None:
         # Import inside __init__ so unrelated callers (e.g. config loaders,
         # the runtime registry import scan) don't pay the SDK + grpc import
@@ -64,7 +69,13 @@ class CloudVisionBackend:
         from google.cloud import vision  # type: ignore[import]  # noqa: PLC0415
 
         self._vision = vision
-        self._client = vision.ImageAnnotatorClient()
+        # Mirror the GCS credential chain from app.storage.get_gcp_credentials:
+        #   1. GOOGLE_APPLICATION_CREDENTIALS file path
+        #   2. GOOGLE_SERVICE_ACCOUNT_JSON string (Fly.io secret)
+        #   3. None → ADC (GCE / GKE / Cloud Run)
+        # Raises RuntimeError (from get_gcp_credentials) if the JSON is invalid.
+        creds = get_gcp_credentials(scopes=self._VISION_SCOPES)
+        self._client = vision.ImageAnnotatorClient(credentials=creds)
 
     def detect(self, image_path: str, *, frame_t_s: float) -> list[FrameDetection]:
         from PIL import Image  # noqa: PLC0415
@@ -241,9 +252,11 @@ def default_backend() -> OcrBackend:
       1. Cloud Vision — `google-cloud-vision` installed AND a GCS-style
          credential env var present.
       2. Apple Vision — `pyobjc-framework-Vision` installed (macOS only).
-      3. Raise RuntimeError with an install hint.
+      3. Raise RuntimeError with an actionable install/config hint.
     """
-    if _cloud_vision_available():
+    cloud_import_ok = _cloud_vision_importable()
+
+    if cloud_import_ok and _cloud_vision_creds_present():
         try:
             return CloudVisionBackend()
         except Exception as exc:  # pragma: no cover — defensive
@@ -255,6 +268,15 @@ def default_backend() -> OcrBackend:
         except Exception as exc:  # pragma: no cover — defensive
             log.warning("apple_vision_init_failed", err=str(exc))
 
+    # Produce an actionable error: distinguish "package missing" from "creds missing"
+    # so future diagnostics don't say "install google-cloud-vision" when it's already
+    # installed (the canary failure mode that cost real debugging time on Fly v272).
+    if cloud_import_ok:
+        raise RuntimeError(
+            "No OCR backend available: google-cloud-vision is installed but "
+            "credentials are not configured. Set GOOGLE_SERVICE_ACCOUNT_JSON "
+            "(Fly.io secret) or GOOGLE_APPLICATION_CREDENTIALS (local dev file path)."
+        )
     raise RuntimeError(
         "No OCR backend available. Install `google-cloud-vision` (prod) "
         "or `pyobjc-framework-Vision` (macOS dev). See "
@@ -262,15 +284,26 @@ def default_backend() -> OcrBackend:
     )
 
 
-def _cloud_vision_available() -> bool:
+def _cloud_vision_importable() -> bool:
+    """Return True if the google-cloud-vision SDK is installed."""
     try:
         from google.cloud import vision  # type: ignore[import]  # noqa: F401, PLC0415
     except ImportError:
         return False
+    return True
+
+
+def _cloud_vision_creds_present() -> bool:
+    """Return True if at least one GCP credential env var is set."""
     return bool(
         os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
         or os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
     )
+
+
+def _cloud_vision_available() -> bool:
+    """Return True if Cloud Vision is importable AND credentials are present."""
+    return _cloud_vision_importable() and _cloud_vision_creds_present()
 
 
 def _apple_vision_available() -> bool:

@@ -480,6 +480,100 @@ class TestPartialCoverage:
         assert out.classified[2].effect == "fade-in"
 
 
+# ── Regression: canary template fdaf3bbc hook mis-classified as reaction ─────
+
+
+class TestHookRoleRegression:
+    """Regression guard for the canary smoke-test failure (2026-05-18).
+
+    Template fdaf3bbc-2f4f-43bc-ba7c-e5cd819de102 ("not just luck") had all 13
+    overlays classified as role=reaction including the opening title hook
+    "It's not / just luck" (slot 1, t ≈ 0.0–1.5 s).
+
+    These tests exercise the parser path: given a Gemini response that returns
+    role="hook", the agent must accept and propagate it correctly.  The prompt
+    tuning that produces role="hook" from the real LLM is validated by the live
+    eval run (see PR description), not by this unit test.
+    """
+
+    def test_first_slot_early_phrase_classified_as_hook(self) -> None:
+        """Opening title phrase (slot 1, t=0.0–1.5 s) must survive as role=hook.
+
+        Verifies that parse() correctly propagates role="hook" for the canary's
+        first overlay shape and that the assertion FAILS if the role is anything
+        else (e.g. "reaction").
+        """
+        # Mirror the canary's first overlay: "It's not" / "just luck", early timing.
+        phrase = _phrase(["It's not", "just luck"], start=0.0, end=1.5)
+        raw = json.dumps(
+            {
+                "classifications": [
+                    {
+                        "phrase_index": 0,
+                        "effect": "font-cycle",
+                        "role": "hook",
+                        "size_class": "large",
+                        "font_color_hex": "#FFFFFF",
+                    }
+                ]
+            }
+        )
+        out = _agent().parse(raw, _make_input(phrases=[phrase]))
+
+        assert len(out.classified) == 1
+        assert out.classified[0].role == "hook", (
+            "Opening title phrase must be classified as role=hook, "
+            f"got role={out.classified[0].role!r}"
+        )
+
+    def test_hook_role_not_clamped_to_label(self) -> None:
+        """role='hook' is a valid enum value and must NOT be clamped.
+
+        Regression check: if _DEFAULT_ROLE ('label') were incorrectly applied to
+        valid hook responses, this test would catch it.
+        """
+        phrase = _phrase(["It's not just luck"], start=0.3, end=2.0)
+        raw = json.dumps(
+            {
+                "classifications": [
+                    {
+                        "phrase_index": 0,
+                        "effect": "scale-up",
+                        "role": "hook",
+                        "size_class": "jumbo",
+                        "font_color_hex": "#F4D03F",
+                    }
+                ]
+            }
+        )
+        out = _agent().parse(raw, _make_input(phrases=[phrase]))
+
+        assert out.classified[0].role == "hook"
+        # Confirm the phrase text is preserved intact.
+        assert out.classified[0].phrase.sample_text == "It's not just luck"
+
+    def test_run_with_mock_client_returns_hook_for_opening_phrase(self) -> None:
+        """End-to-end run() path: MockModelClient returns hook, agent propagates it."""
+        phrase = _phrase(["It's not", "just luck"], start=0.0, end=1.5)
+        response = {
+            "classifications": [
+                {
+                    "phrase_index": 0,
+                    "effect": "font-cycle",
+                    "role": "hook",
+                    "size_class": "large",
+                    "font_color_hex": "#FFFFFF",
+                }
+            ]
+        }
+        client = MockModelClient()
+        client.queue("gemini-2.5-flash", response)
+        agent = TextClassificationAgent(client)
+        out = agent.run(_make_input(phrases=[phrase]))
+
+        assert out.classified[0].role == "hook"
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 
 

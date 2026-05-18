@@ -1071,8 +1071,23 @@ async def reanalyze_template(
 async def reanalyze_template_agentic(
     template_id: str,
     db: AsyncSession = Depends(get_db),
+    use_layer2: bool = Query(
+        default=False,
+        description=(
+            "Force the Layer-2 text-overlay pipeline for this build, "
+            "overriding the global text_overlay_v2_enabled flag. "
+            "Use for per-template A/B testing without flipping the global flag. "
+            "Default False = existing behavior."
+        ),
+    ),
 ) -> TemplateResponse:
-    """Re-run the full agent stack on an agentic template."""
+    """Re-run the full agent stack on an agentic template.
+
+    Pass ``?use_layer2=true`` to force the Layer-2 text-overlay pipeline for
+    this specific build regardless of the global ``text_overlay_v2_enabled``
+    setting. Useful for canary testing Layer-2 against a single template in
+    production without affecting other builds.
+    """
     template = await get_template_or_404(template_id, db)
 
     if not template.is_agentic:
@@ -1098,9 +1113,13 @@ async def reanalyze_template_agentic(
         agentic_template_build_task,
     )
 
-    agentic_template_build_task.delay(template_id)
+    agentic_template_build_task.delay(template_id, use_layer2=use_layer2)
 
-    log.info("template_reanalyzed_agentic", template_id=template_id)
+    log.info(
+        "template_reanalyzed_agentic",
+        template_id=template_id,
+        use_layer2=use_layer2,
+    )
     return _template_response(template)
 
 

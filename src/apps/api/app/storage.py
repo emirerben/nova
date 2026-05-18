@@ -11,37 +11,50 @@ from app.config import settings
 _client: gcs.Client | None = None
 
 
-def _get_client() -> gcs.Client:
-    """Build a GCS client with a 3-tier credential chain:
+def get_gcp_credentials(
+    scopes: list[str] | None = None,
+) -> service_account.Credentials | None:
+    """Return GCP service-account credentials using the project-wide 3-tier chain:
 
     1. File path  (GOOGLE_APPLICATION_CREDENTIALS) — local dev
     2. JSON string (GOOGLE_SERVICE_ACCOUNT_JSON)   — Fly.io / containers
-    3. Application Default Credentials              — GCE / GKE / Cloud Run
+    3. Returns None                                 — caller falls through to ADC
+
+    Pass ``scopes`` when the calling SDK does not add them automatically.  The
+    Cloud Vision gRPC client needs ``https://www.googleapis.com/auth/cloud-platform``
+    explicitly; GCS manages its own scopes internally, so pass ``None`` there.
     """
+    if settings.google_application_credentials:
+        creds = service_account.Credentials.from_service_account_file(
+            settings.google_application_credentials
+        )
+        return creds.with_scopes(scopes) if scopes else creds
+    elif settings.google_service_account_json.strip():
+        raw = settings.google_service_account_json.strip()
+        try:
+            info = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "GOOGLE_SERVICE_ACCOUNT_JSON is set but contains invalid JSON"
+            ) from exc
+        try:
+            creds = service_account.Credentials.from_service_account_info(info, scopes=scopes)
+        except (ValueError, KeyError) as exc:
+            raise RuntimeError(
+                "GOOGLE_SERVICE_ACCOUNT_JSON contains valid JSON but is not a "
+                "valid service account key (missing required fields)"
+            ) from exc
+        return creds
+    else:
+        return None  # caller falls through to ADC
+
+
+def _get_client() -> gcs.Client:
+    """Build a GCS client using the project-wide credential chain (see get_gcp_credentials)."""
     global _client
     if _client is None:
         project = settings.gcloud_project or None
-        if settings.google_application_credentials:
-            creds = service_account.Credentials.from_service_account_file(
-                settings.google_application_credentials
-            )
-        elif settings.google_service_account_json.strip():
-            raw = settings.google_service_account_json.strip()
-            try:
-                info = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(
-                    "GOOGLE_SERVICE_ACCOUNT_JSON is set but contains invalid JSON"
-                ) from exc
-            try:
-                creds = service_account.Credentials.from_service_account_info(info)
-            except (ValueError, KeyError) as exc:
-                raise RuntimeError(
-                    "GOOGLE_SERVICE_ACCOUNT_JSON contains valid JSON but is not a "
-                    "valid service account key (missing required fields)"
-                ) from exc
-        else:
-            creds = None  # triggers ADC inside gcs.Client
+        creds = get_gcp_credentials()  # GCS SDK manages its own scopes
         _client = gcs.Client(project=project, credentials=creds)
     return _client
 

@@ -144,6 +144,13 @@ def probe_video(file_path: str) -> VideoProbe:
         resolution=f"{width}x{height}",
         aspect_ratio=aspect_ratio,
         fps=fps,
+        # Raw rate strings catch inputs where `fps` was defaulted to 30 because
+        # the source reports unparseable rates ("1/0", "0/0"). Without this,
+        # downstream xfade-rejects-1/0 failures look like normal 30fps clips
+        # in the logs. Added 2026-05-18 after prod job 856daa32-… (BAD BUNNY
+        # music template) crashed on `xfade rate 1/0`.
+        r_frame_rate=video_stream.get("r_frame_rate"),
+        avg_frame_rate=video_stream.get("avg_frame_rate"),
         codec=codec,
         color_trc=color_trc,
         color_transfer=color_transfer or "unknown",

@@ -155,9 +155,7 @@ def _merge_overlays_into_slots(
             # with sample_frame_t outside its own [start_s, end_s], breaking
             # the existing _validate_text_bbox invariant.
             slot_relative_t = max(0.0, ov.bbox.sample_frame_t - cursor)
-            d["text_bbox"]["sample_frame_t"] = min(
-                max(slot_relative_t, d["start_s"]), d["end_s"]
-            )
+            d["text_bbox"]["sample_frame_t"] = min(max(slot_relative_t, d["start_s"]), d["end_s"])
             rendered.append(d)
 
         slot["text_overlays"] = rendered
@@ -173,6 +171,8 @@ def extract_template_text_overlays(
     recipe: Any,
     *,
     job_id: str | None = None,
+    force_layer2: bool = False,
+    gcs_path: str | None = None,
 ) -> tuple[bool, int]:
     """Run TemplateTextAgent and merge results into recipe.slots in place.
 
@@ -221,6 +221,8 @@ def extract_template_text_overlays(
         file_uri=file_ref.uri,
         file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
         slot_boundaries_s=boundaries,
+        force_layer2=force_layer2,
+        gcs_path=gcs_path,
     )
 
     try:

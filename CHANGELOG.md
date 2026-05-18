@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.31.2] - 2026-05-18
+
+### Fixed
+- **Music-template jobs no longer crash on clips with unparseable frame rates.** Uploading clips to a music template (the BAD BUNNY "BAILE INOLVIDABLE" track was the first repro on prod job `856daa32-…`) failed partway through assembly with `xfade: current rate of 1/0 is invalid` whenever even one input clip reported `avg_frame_rate=1/0` — common on some phone HEVC, HEIF-derived video, and screen recordings. The single-pass per-clip filter chain in `app/pipeline/single_pass.py` already ran `framerate=fps=N` at the head via `_build_video_filter`, but `framerate=` interpolates against the source PTS clock and silently fails to coerce inputs without a coherent rate. Added a second normalization with the simpler `fps=N` filter at the end of `_per_clip_filter_chain` (after `format=yuv420p`, before `setpts/settb`) — `fps=` drops/duplicates frames independent of PTS coherence so it succeeds where `framerate=` couldn't. The xfade filter now always sees constant-frame-rate streams regardless of source. Locked by `test_per_clip_chain_forces_cfr_before_xfade` so a future refactor that removes the filter fails CI.
+- **Probe log now surfaces raw frame-rate strings for triage.** `probe_complete` log line in `app/pipeline/probe.py` previously emitted only the parsed `fps` float, which defaulted to 30.0 when `r_frame_rate=1/0`. The next FPS-shaped failure looked like a normal 30fps clip in the logs and required ssh-ing into the API container to run a hand-crafted `psycopg2` query against `jobs.error_detail`. Added `r_frame_rate` and `avg_frame_rate` raw strings to the log; the next time something in this class fires, one `fly logs | grep probe_complete` lands on the culprit clip. Zero behavioral change.
+
 ## [0.4.31.1] - 2026-05-18
 
 ### Fixed
