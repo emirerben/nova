@@ -417,7 +417,12 @@ def analyze_template_task(self, template_id: str) -> None:
                     template.error_detail = "Analysis timed out (exceeded 840s soft limit)"
                     db.commit()
         except Exception as exc:
-            log.error("analyze_template_failed", template_id=template_id, error=str(exc))
+            log.error(
+                "analyze_template_failed",
+                template_id=template_id,
+                error=str(exc),
+                exc_info=True,
+            )
             with _sync_session() as db:
                 template = db.get(VideoTemplate, template_id)
                 if template:

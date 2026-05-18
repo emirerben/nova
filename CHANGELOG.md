@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.31.1] - 2026-05-18
+
+### Fixed
+- **`analyze_template_task` failures now emit a real traceback.** The outer `except Exception` handler at `template_orchestrate.py:419` was logging only `error=str(exc)` with no `exc_info`. When a re-analyze failed in prod (live error `analyze_template_failed error='None could not be converted to unicode'` on multiple templates), the worker logged a single sanitized string and Celery swallowed the rest — no traceback, no file, no line, no exception type. The template row got `analysis_status="failed"` with a 1000-char truncated message and the operator had no way to triage. Adds `exc_info=True` to the structlog call so the next failure ships the full stack to Fly logs. UI behavior unchanged (`template.error_detail` still gets the truncated `str(exc)`). Pure diagnostic improvement — no functional changes, no migrations, no schema. Sibling pattern repeats at 16 other call sites in this file (lines 356, 504, 525, 1340, 1468, 1712, 2576, 2648, 2695, 2857, 2984, 3075, 3985, 4256, 4423, 5448); deliberately out of scope for this PR — fix the one that's actively blocking a live debug first.
+
 ## [0.4.31.0] - 2026-05-18
 
 ### Added
