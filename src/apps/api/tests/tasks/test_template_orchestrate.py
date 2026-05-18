@@ -822,6 +822,145 @@ class TestAssembleClipsTiming:
             assert kwargs["end_s"] == 5.0
 
 
+class TestClipFootageExhausted:
+    """Lock the no-freeze invariant for slots whose source is shorter than the
+    slot's target duration.
+
+    Background: job 5282cab7-3914-4779-937f-dc2364e8f9d6 slot 5 had a 2.97s
+    source filling a 5.5s "Welcome to THAILAND" hook slot. The orchestrator
+    used to clamp `end_s = min(start_s + source_duration, clip_dur)` (= 2.97)
+    and let FFmpeg's CFR muxer (`-r 30` in `_encoding_args`) pad the gap with
+    the held last frame, producing a 2.53s frozen-frame tail before the
+    curtain bars even started. Empirically confirmed via per-frame MAD on
+    the rendered output: from t≈8.07s onward the background-only MAD (text
+    region masked out) drops to 0.17–0.52 — pixels are essentially identical.
+
+    Fix: when the planned window overruns the source, slow the available
+    footage down via `speed_factor` so the slot still spans
+    `slot_target_dur` of output time with continuous motion across it.
+    """
+
+    def _make_step(
+        self, clip_id: str, start_s: float,
+        end_s: float, target_dur: float,
+    ) -> MagicMock:
+        step = MagicMock()
+        step.clip_id = clip_id
+        step.moment = {"start_s": start_s, "end_s": end_s}
+        step.slot = {"position": 5, "target_duration_s": target_dur}
+        return step
+
+    def test_short_source_slows_down_to_fill_slot(self, tmp_path):
+        """Source 2.97s in a 5.5s slot → speed_factor ≈ 0.54, end_s = 2.97
+        (clip_dur). reframe.py applies `setpts=PTS/0.54` + motion-blended
+        `framerate=fps=30`, so the slot has 5.5s of continuous motion.
+
+        Without this fix, end_s would still be 2.97 (clamped) but
+        speed_factor would stay 1.0; the slot would render as 2.97s of
+        real footage + 2.53s of held last frame (the freeze)."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+        # Real probe says the clip is 2.97s — the exact value from job
+        # 5282cab7's slot 5 (sharks swimming).
+        probe = VideoProbe(
+            duration_s=2.97, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = self._make_step("clip_a", start_s=0.0, end_s=3.9, target_dur=5.5)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            # Speed factor slowed to fill the slot
+            expected_speed = 2.97 / 5.5
+            assert kwargs["speed_factor"] == pytest.approx(expected_speed, rel=0.01), (
+                f"expected speed_factor ≈ {expected_speed:.3f}, got "
+                f"{kwargs['speed_factor']}"
+            )
+            # Window covers ALL available footage from start
+            assert kwargs["start_s"] == 0.0
+            assert kwargs["end_s"] == pytest.approx(2.97, abs=0.01)
+
+    def test_severely_short_source_falls_back_to_clamp(self, tmp_path):
+        """When the slowdown would drop below 0.4× (source < 40% of slot),
+        fall back to the original clamp behavior. The slot will still have
+        a frozen tail under FFmpeg's CFR padding, but extreme slow-motion
+        reads as "broken" rather than stylistic — clamping is the lesser
+        evil. Eliminating this severity case requires a re-pick from the
+        matcher (out of scope here)."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+        # Clip 1.0s in a 5.5s slot → would need speed_factor 0.18, well
+        # below the 0.4 floor.
+        probe = VideoProbe(
+            duration_s=1.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = self._make_step("clip_a", start_s=0.0, end_s=1.0, target_dur=5.5)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            # Speed factor unchanged from recipe default
+            assert kwargs["speed_factor"] == 1.0
+            # Window clamped to clip_dur
+            assert kwargs["end_s"] == pytest.approx(1.0, abs=0.01)
+
+    def test_source_long_enough_no_slowdown(self, tmp_path):
+        """Sanity: when the source has enough footage, speed_factor stays
+        at the recipe default and the window covers exactly slot_target_dur.
+        Locks the no-regression on the common case."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+        probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = self._make_step("clip_a", start_s=0.0, end_s=10.0, target_dur=5.5)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            assert kwargs["speed_factor"] == 1.0
+            assert kwargs["end_s"] == pytest.approx(5.5, abs=0.01)
+
+
 # ── _assemble_clips aspect ratio ──────────────────────────────────────────────
 
 

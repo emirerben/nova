@@ -2222,7 +2222,79 @@ def _plan_slots(
                 start_s = clip_cursors[clip_id]
 
             clip_dur = probe.duration_s if probe else 30.0
-            if start_s + source_duration > clip_dur:
+            # When the planned window (`start_s + source_duration`) overruns
+            # the actual clip, the previous behavior was to clamp `start_s`
+            # back to fit and let `end_s = min(start_s + source_duration,
+            # clip_dur)` produce a shorter window. That clamp prevented an
+            # `Invalid Duration` from FFmpeg, but it left the slot's RENDERED
+            # output shorter than `slot_target_dur` — and FFmpeg's CFR muxer
+            # (`-r 30` in `_encoding_args`) padded the gap with the held last
+            # frame. Visible to the viewer as the underlying video freezing
+            # while overlays (font-cycle title, curtain bars) keep animating.
+            #
+            # Caught empirically on 2026-05-18 in job 5282cab7-… slot 5: a
+            # 2.97s source filling a 5.5s "Welcome to THAILAND" hero slot
+            # produced a 1.6s frozen-frame tail before the curtain bars even
+            # started. See `tests/tasks/test_template_orchestrate.py
+            # ::TestClipFootageExhausted` for the regression lock.
+            #
+            # Fix: instead of clamping the window, slow the playback via
+            # `speed_factor` so the available footage stretches to fill the
+            # slot. `reframe.py`'s filter chain already applies
+            # `setpts=PTS/speed_factor` plus `framerate=fps=30` motion
+            # blending, so the rendered slot has continuous motion across
+            # the entire duration instead of a frozen tail.
+            #
+            # Cap at 0.4× — below that the playback reads "broken" rather
+            # than "stylistic slow-motion". For sources severely shorter
+            # than the slot (< 40% of `slot_target_dur`) we fall back to
+            # the original clamp-and-pad. Those slots were already broken
+            # under the prior behavior; eliminating that severity case
+            # requires a re-pick from the matcher, which is out of scope.
+            _MIN_SPEED_FACTOR_FOR_FILL = 0.4
+            available_at_start = max(0.0, clip_dur - start_s)
+            slowdown_speed = (
+                available_at_start / slot_target_dur if slot_target_dur > 0 else 1.0
+            )
+            footage_exhausted = start_s + source_duration > clip_dur
+            if (
+                footage_exhausted
+                and probe is not None  # only act on a real probe, not the 30s fallback
+                and available_at_start > 0.0
+                and slowdown_speed >= _MIN_SPEED_FACTOR_FOR_FILL
+                and slowdown_speed < speed_factor  # only slow further, never speed up
+            ):
+                speed_factor = slowdown_speed
+                source_duration = available_at_start
+                from app.services.pipeline_trace import (  # noqa: PLC0415
+                    record_pipeline_event,
+                )
+
+                record_pipeline_event(
+                    stage="reframe",
+                    event="clip_footage_exhausted_slowed_down",
+                    data={
+                        "slot_index": i,
+                        "clip_id": clip_id,
+                        "clip_dur_s": round(clip_dur, 3),
+                        "slot_target_dur_s": round(slot_target_dur, 3),
+                        "available_at_start_s": round(available_at_start, 3),
+                        "applied_speed_factor": round(speed_factor, 3),
+                    },
+                )
+                log.warning(
+                    "clip_footage_exhausted_slowed_down",
+                    clip_id=clip_id,
+                    position=step.slot.get("position"),
+                    clip_dur=round(clip_dur, 3),
+                    slot_target_dur=round(slot_target_dur, 3),
+                    applied_speed_factor=round(speed_factor, 3),
+                )
+            elif footage_exhausted:
+                # Slowdown would be too extreme, or probe wasn't available
+                # to confirm clip_dur. Preserve the original clamp-and-warn
+                # behavior — a too-short slot is the lesser evil versus a
+                # missing slot.
                 start_s = max(0.0, clip_dur - source_duration)
                 log.warning(
                     "clip_footage_exhausted",
