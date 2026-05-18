@@ -172,6 +172,7 @@ def extract_template_text_overlays(
     *,
     job_id: str | None = None,
     force_layer2: bool = False,
+    gcs_path: str | None = None,
 ) -> tuple[bool, int]:
     """Run TemplateTextAgent and merge results into recipe.slots in place.
 
@@ -221,6 +222,7 @@ def extract_template_text_overlays(
         file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
         slot_boundaries_s=boundaries,
         force_layer2=force_layer2,
+        gcs_path=gcs_path,
     )
 
     try:

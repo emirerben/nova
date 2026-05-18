@@ -404,3 +404,68 @@ def test_extract_force_layer2_defaults_to_false(
     recipe = _StubRecipe(slots=[{"target_duration_s": 3.0, "text_overlays": []}])
     extract_template_text_overlays(_StubFileRef(), recipe, job_id="t-default")
     assert captured_input["input"].force_layer2 is False
+
+
+def test_extract_gcs_path_propagates_to_agent_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """gcs_path is forwarded into the TemplateTextInput the agent receives.
+
+    Verifies the plumbing added in the canary-404 fix: the agentic build task
+    passes template.gcs_path to extract_template_text_overlays, which in turn
+    sets it on the TemplateTextInput so _run_layer2 can call download_to_file
+    with the correct GCS object path instead of the Gemini File API URI.
+    """
+    from app.tasks import template_text_extraction as mod
+
+    captured_input: dict[str, Any] = {}
+
+    class _StubAgent:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, inp: TemplateTextInput, ctx=None):  # noqa: ARG002
+            captured_input["input"] = inp
+            return TemplateTextOutput(overlays=[])
+
+    monkeypatch.setattr(mod, "TemplateTextAgent", _StubAgent)
+    monkeypatch.setattr(mod, "default_client", lambda: object())
+
+    recipe = _StubRecipe(slots=[{"target_duration_s": 3.0, "text_overlays": []}])
+    success, _ = extract_template_text_overlays(
+        _StubFileRef(),
+        recipe,
+        job_id="t-gcs",
+        gcs_path="templates/abc/video.mp4",
+    )
+    assert success is True
+    assert captured_input["input"].gcs_path == "templates/abc/video.mp4"
+
+
+def test_extract_gcs_path_defaults_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When gcs_path is not passed, it defaults to None on the agent input.
+
+    Backward-compatibility guard: existing callers that don't pass gcs_path
+    must not break. _run_layer2 handles None by raising TerminalError if
+    Layer-2 is active; the bridge catches that and returns (False, 0).
+    """
+    from app.tasks import template_text_extraction as mod
+
+    captured_input: dict[str, Any] = {}
+
+    class _StubAgent:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, inp: TemplateTextInput, ctx=None):  # noqa: ARG002
+            captured_input["input"] = inp
+            return TemplateTextOutput(overlays=[])
+
+    monkeypatch.setattr(mod, "TemplateTextAgent", _StubAgent)
+    monkeypatch.setattr(mod, "default_client", lambda: object())
+
+    recipe = _StubRecipe(slots=[{"target_duration_s": 3.0, "text_overlays": []}])
+    extract_template_text_overlays(_StubFileRef(), recipe, job_id="t-gcs-default")
+    assert captured_input["input"].gcs_path is None
