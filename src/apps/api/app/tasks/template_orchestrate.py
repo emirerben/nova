@@ -58,6 +58,7 @@ from app.pipeline.agents.gemini_analyzer import (
 from app.pipeline.orientation import OrientationError, normalize_orientation
 from app.pipeline.reframe import ReframeError
 from app.pipeline.single_pass import (
+    SinglePassError,
     SinglePassInput,
     SinglePassSpec,
     SinglePassUnsupportedError,
@@ -135,7 +136,34 @@ FAILURE_REASON_GEMINI_ANALYSIS_FAILED = "gemini_analysis_failed"
 FAILURE_REASON_COPY_GENERATION_FAILED = "copy_generation_failed"
 FAILURE_REASON_OUTPUT_UPLOAD_FAILED = "output_upload_failed"
 FAILURE_REASON_TIMEOUT = "timeout"
+FAILURE_REASON_OOM = "render_oom"
 FAILURE_REASON_UNKNOWN = "unknown"
+
+
+# subprocess.run returns the negated signal number on signal-kill. On a
+# Fly.io worker with `2 shared CPUs / 2048 MB` and `--concurrency=1`,
+# SIGKILL (rc=-9) is the kernel OOM-killer with near-certainty (no other
+# producer of SIGKILL is plausible). SIGTERM (rc=-15) is also OOM-adjacent
+# (Fly drain / OOM-soft). Treat any negative `rc=-N` as an OOM signal so
+# dashboards, alerts, and customer-facing copy can distinguish memory
+# pressure from a generic UNKNOWN bucket.
+#
+# Prod fingerprint: job 1b555c69-32e3-434b-8886-7e6f2494366a — failure_reason
+# was "unknown" with error_detail ending in `rc=-9, output=/tmp/.../assembled.mp4):`
+# (trailing colon, empty stderr).
+_RC_NEG_RE = re.compile(r"rc=-(\d+)")
+
+
+def _classify_single_pass_failure(message: str) -> str:
+    """Classify a SinglePassError / ReframeError message by `rc=` signature.
+
+    Returns FAILURE_REASON_OOM when the message contains `rc=-N` with N>0
+    (subprocess signal-kill fingerprint); FAILURE_REASON_UNKNOWN otherwise.
+    """
+    m = _RC_NEG_RE.search(message or "")
+    if m and int(m.group(1)) > 0:
+        return FAILURE_REASON_OOM
+    return FAILURE_REASON_UNKNOWN
 
 
 class _StageError(Exception):
@@ -561,8 +589,38 @@ def _orchestrate_template_job_inner(
         # a photo-converted mp4 with primaries=unknown crashed the colorspace
         # filter (rc=234 / EINVAL). Surface as FFMPEG_FAILED so on-call sees
         # the real failure class.
-        log.error("template_job_reframe_failed", job_id=job_id, error=str(exc))
-        _mark_failed(job_uuid, FAILURE_REASON_FFMPEG_FAILED, str(exc))
+        #
+        # Special case: an OOM-kill (rc=-9) also surfaces here when the
+        # reframe subprocess is the one the kernel pulls the trigger on.
+        # Classify those as render_oom instead of the generic ffmpeg_failed
+        # label so memory-pressure incidents stand out in dashboards.
+        msg = str(exc)
+        reason = (
+            FAILURE_REASON_OOM
+            if _classify_single_pass_failure(msg) == FAILURE_REASON_OOM
+            else FAILURE_REASON_FFMPEG_FAILED
+        )
+        log.error("template_job_reframe_failed", job_id=job_id, error=msg, failure_reason=reason)
+        _mark_failed(job_uuid, reason, msg)
+    except SinglePassError as exc:
+        # FFmpeg failure during single-pass encode. Mirror the ReframeError
+        # arm: classify rc=-N as render_oom (kernel OOM-killer on the
+        # `2 shared CPUs / 2048 MB` Fly worker), otherwise ffmpeg_failed.
+        # Without this explicit arm, the error falls into `except Exception`
+        # and is bucketed as UNKNOWN — observed in prod on job
+        # 1b555c69-32e3-434b-8886-7e6f2494366a (rc=-9, empty stderr,
+        # SIGKILL fingerprint).
+        msg = str(exc)
+        reason = _classify_single_pass_failure(msg)
+        if reason == FAILURE_REASON_UNKNOWN:
+            reason = FAILURE_REASON_FFMPEG_FAILED
+        log.error(
+            "template_job_single_pass_failed",
+            job_id=job_id,
+            error=msg,
+            failure_reason=reason,
+        )
+        _mark_failed(job_uuid, reason, msg)
     except OrientationError as exc:
         # Orientation normalize failure — typically a timeout on a 10-bit HDR
         # clip whose re-encode exceeds the subprocess budget. The API-side

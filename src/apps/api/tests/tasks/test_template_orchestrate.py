@@ -1447,6 +1447,66 @@ class TestOrchestrateTemplateJobErrors:
         assert "rc=234" in mock_job.error_detail
 
 
+class TestClassifySinglePassFailure:
+    """Unit tests for `_classify_single_pass_failure`.
+
+    Prod incident: job 1b555c69-32e3-434b-8886-7e6f2494366a failed with
+    failure_reason="unknown" and error_detail ending in
+    `rc=-9, output=/tmp/.../assembled.mp4):` — the SIGKILL fingerprint from
+    a kernel OOM-kill on a 2 GB Fly.io worker. This classifier exists so
+    that signal-killed renders get bucketed as `render_oom` instead of the
+    meaningless `unknown` reason.
+    """
+
+    def test_classify_single_pass_failure_rc_neg_9_is_oom(self):
+        from app.tasks.template_orchestrate import (
+            FAILURE_REASON_OOM,
+            _classify_single_pass_failure,
+        )
+
+        msg = "single-pass ffmpeg failed (rc=-9, output=/tmp/x/assembled.mp4):\n"
+        assert _classify_single_pass_failure(msg) == FAILURE_REASON_OOM
+
+    def test_classify_single_pass_failure_rc_neg_15_is_oom(self):
+        """SIGTERM (rc=-15) is also OOM-adjacent (Fly drain / OOM-soft)."""
+        from app.tasks.template_orchestrate import (
+            FAILURE_REASON_OOM,
+            _classify_single_pass_failure,
+        )
+
+        msg = "single-pass ffmpeg failed (rc=-15, output=/tmp/x/assembled.mp4):\n"
+        assert _classify_single_pass_failure(msg) == FAILURE_REASON_OOM
+
+    def test_classify_single_pass_failure_rc_1_is_unknown(self):
+        from app.tasks.template_orchestrate import (
+            FAILURE_REASON_UNKNOWN,
+            _classify_single_pass_failure,
+        )
+
+        msg = (
+            "single-pass ffmpeg failed (rc=1, output=/tmp/x/assembled.mp4):\n"
+            "Invalid filter"
+        )
+        assert _classify_single_pass_failure(msg) == FAILURE_REASON_UNKNOWN
+
+    def test_classify_single_pass_failure_no_rc_is_unknown(self):
+        from app.tasks.template_orchestrate import (
+            FAILURE_REASON_UNKNOWN,
+            _classify_single_pass_failure,
+        )
+
+        msg = "single-pass ffmpeg timed out after 1500s"
+        assert _classify_single_pass_failure(msg) == FAILURE_REASON_UNKNOWN
+
+    def test_classify_single_pass_failure_empty_message_is_unknown(self):
+        from app.tasks.template_orchestrate import (
+            FAILURE_REASON_UNKNOWN,
+            _classify_single_pass_failure,
+        )
+
+        assert _classify_single_pass_failure("") == FAILURE_REASON_UNKNOWN
+
+
 # ── Beat detection tests ─────────────────────────────────────────────────────
 
 
