@@ -122,6 +122,24 @@ def download_to_file(object_path: str, local_path: str) -> None:
     blob.download_to_filename(local_path)
 
 
+def signed_get_url(object_path: str, expiration_minutes: int = 5) -> str:
+    """Generate a short-lived signed GET URL for the API to stream-probe a GCS
+    object without downloading it. ffmpeg/ffprobe accept https:// URLs and
+    range-request only the moov atom, so a 400 MB clip is probed in ~1-2s.
+
+    Default TTL is 5 minutes — long enough for a sequence of preflight probes
+    on a 20-clip upload, short enough that a leaked URL is useless almost
+    immediately.
+    """
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path)
+    return blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(minutes=expiration_minutes),
+        method="GET",
+    )
+
+
 def copy_object_signed_url(src_object_path: str, dst_object_path: str) -> str:
     """Server-side copy a GCS object to a new key, returns signed URL for the copy.
 
