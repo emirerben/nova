@@ -144,6 +144,7 @@ class TemplateResponse(BaseModel):
     music_track_id: str | None = None
     has_intro_slot: bool = False
     is_agentic: bool = False
+    use_layer2_default: bool | None = None
     created_at: datetime
 
 
@@ -618,7 +619,27 @@ class SaveRecipeRequest(BaseModel):
     base_version_id: str | None = None
 
 
-# ── Helper ─────────────────────────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+
+def resolve_use_layer2(
+    *,
+    query_param: bool | None,
+    template_default: bool | None,
+    global_flag: bool,
+) -> bool:
+    """Resolve the effective use_layer2 value for a reanalyze-agentic build.
+
+    Priority (highest → lowest):
+      1. ``query_param`` — if present (True *or* False) it wins absolutely.
+      2. ``template_default`` — per-template sticky default, if not None.
+      3. ``global_flag`` — ``settings.text_overlay_v2_enabled`` fallback.
+    """
+    if query_param is not None:
+        return query_param
+    if template_default is not None:
+        return template_default
+    return global_flag
 
 
 def _template_response(t: VideoTemplate) -> TemplateResponse:
@@ -643,6 +664,7 @@ def _template_response(t: VideoTemplate) -> TemplateResponse:
         music_track_id=t.music_track_id,
         has_intro_slot=has_intro_slot,
         is_agentic=t.is_agentic,
+        use_layer2_default=t.use_layer2_default,
         created_at=t.created_at,
     )
 
@@ -1071,22 +1093,27 @@ async def reanalyze_template(
 async def reanalyze_template_agentic(
     template_id: str,
     db: AsyncSession = Depends(get_db),
-    use_layer2: bool = Query(
-        default=False,
+    use_layer2: bool | None = Query(
+        default=None,
         description=(
-            "Force the Layer-2 text-overlay pipeline for this build, "
-            "overriding the global text_overlay_v2_enabled flag. "
-            "Use for per-template A/B testing without flipping the global flag. "
-            "Default False = existing behavior."
+            "Override the Layer-2 text-overlay pipeline decision for this build. "
+            "true → force Layer-2; false → force Layer-1. "
+            "When omitted, falls back to template.use_layer2_default, then "
+            "settings.text_overlay_v2_enabled. "
+            "Passing an explicit value always wins, regardless of per-template or global flags."
         ),
     ),
 ) -> TemplateResponse:
     """Re-run the full agent stack on an agentic template.
 
-    Pass ``?use_layer2=true`` to force the Layer-2 text-overlay pipeline for
-    this specific build regardless of the global ``text_overlay_v2_enabled``
-    setting. Useful for canary testing Layer-2 against a single template in
-    production without affecting other builds.
+    Layer-2 resolution priority:
+      1. ``?use_layer2`` query param (present → wins absolutely, true OR false).
+      2. ``template.use_layer2_default`` (per-template sticky default, if set).
+      3. ``settings.text_overlay_v2_enabled`` (global flag fallback).
+
+    Pass ``?use_layer2=true`` to force Layer-2 for this build regardless of all
+    other settings. Pass ``?use_layer2=false`` to force Layer-1. Omit the param
+    entirely to let the per-template default or global flag decide.
     """
     template = await get_template_or_404(template_id, db)
 
@@ -1097,6 +1124,12 @@ async def reanalyze_template_agentic(
                 "This template is manually built. Use POST /admin/templates/{id}/reanalyze instead."
             ),
         )
+
+    effective_layer2 = resolve_use_layer2(
+        query_param=use_layer2,
+        template_default=template.use_layer2_default,
+        global_flag=settings.text_overlay_v2_enabled,
+    )
 
     template.analysis_status = "analyzing"
     template.error_detail = None
@@ -1113,12 +1146,63 @@ async def reanalyze_template_agentic(
         agentic_template_build_task,
     )
 
-    agentic_template_build_task.delay(template_id, use_layer2=use_layer2)
+    agentic_template_build_task.delay(template_id, use_layer2=effective_layer2)
 
     log.info(
         "template_reanalyzed_agentic",
         template_id=template_id,
-        use_layer2=use_layer2,
+        use_layer2_param=use_layer2,
+        effective_layer2=effective_layer2,
+    )
+    return _template_response(template)
+
+
+# ── Per-template Layer-2 default endpoint ─────────────────────────────────────
+
+
+class Layer2DefaultRequest(BaseModel):
+    """Body for PUT /admin/templates/{id}/use-layer2-default.
+
+    Pass ``use_layer2_default=true`` or ``false`` to set a sticky per-template
+    default. Pass ``null`` to clear it — reanalysis will then fall through to
+    the global ``settings.text_overlay_v2_enabled`` flag.
+    """
+
+    use_layer2_default: bool | None
+
+
+@router.put(
+    "/templates/{template_id}/use-layer2-default",
+    response_model=TemplateResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def set_use_layer2_default(
+    template_id: str,
+    req: Layer2DefaultRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateResponse:
+    """Set or clear the per-template Layer-2 text-overlay default.
+
+    Layer-2 resolution priority for reanalyze-agentic:
+      1. ``?use_layer2`` query param (present → wins absolutely).
+      2. ``template.use_layer2_default`` (this field, if not null).
+      3. ``settings.text_overlay_v2_enabled`` (global flag fallback).
+
+    Body: ``{"use_layer2_default": true|false|null}``
+
+    - ``true``  → this template always reanalyzes with Layer-2.
+    - ``false`` → this template always reanalyzes with Layer-1.
+    - ``null``  → clear; falls through to the global flag.
+    """
+    template = await get_template_or_404(template_id, db)
+    template.use_layer2_default = req.use_layer2_default
+    await db.commit()
+    await db.refresh(template)
+
+    log.info(
+        "template_use_layer2_default_updated",
+        template_id=template_id,
+        use_layer2_default=req.use_layer2_default,
     )
     return _template_response(template)
 

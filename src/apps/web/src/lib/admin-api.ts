@@ -69,6 +69,8 @@ export interface AdminTemplate {
   music_track_id: string | null;
   has_intro_slot: boolean;
   is_agentic: boolean;
+  /** Per-template Layer-2 sticky default. null = fall through to the global flag. */
+  use_layer2_default: boolean | null;
   error_detail: string | null;
   created_at: string;
 }
@@ -228,6 +230,27 @@ export async function adminReanalyzeTemplate(id: string): Promise<AdminTemplate>
 export async function adminReanalyzeAgentic(id: string): Promise<AdminTemplate> {
   const res = await adminFetch(`/admin/templates/${id}/reanalyze-agentic`, {
     method: "POST",
+  });
+  return res.json();
+}
+
+/**
+ * Set or clear the per-template Layer-2 text-overlay sticky default.
+ *
+ * Resolution priority for reanalyze-agentic:
+ *   1. ?use_layer2 query param (if present, wins absolutely)
+ *   2. use_layer2_default (this field, if not null)
+ *   3. global settings.text_overlay_v2_enabled flag
+ *
+ * Pass null to clear — reanalysis will fall through to the global flag.
+ */
+export async function adminSetUseLayer2Default(
+  id: string,
+  use_layer2_default: boolean | null,
+): Promise<AdminTemplate> {
+  const res = await adminFetch(`/admin/templates/${id}/use-layer2-default`, {
+    method: "PUT",
+    body: JSON.stringify({ use_layer2_default }),
   });
   return res.json();
 }
