@@ -13,6 +13,7 @@ import {
   OVERLAY_EFFECT_OPTIONS,
   OVERLAY_POSITION_OPTIONS,
   OVERLAY_ROLE_OPTIONS,
+  OVERLAY_SUBJECT_PART_OPTIONS,
   MEDIA_TYPE_OPTIONS,
   SLOT_TYPE_OPTIONS,
   SYNC_STYLE_OPTIONS,
@@ -387,6 +388,15 @@ function OverlayListItem({
         <FontPicker
           overlay={overlay}
           onChange={(fontName) => set("font_family", fontName || undefined)}
+        />
+      </div>
+
+      <div className="grid grid-cols-3 gap-2">
+        <SelectInput
+          label="Subject Part"
+          value={overlay.subject_part ?? "none"}
+          options={OVERLAY_SUBJECT_PART_OPTIONS}
+          onChange={(v) => set("subject_part", v === "none" ? null : v)}
         />
       </div>
 
