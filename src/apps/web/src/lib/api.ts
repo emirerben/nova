@@ -216,15 +216,32 @@ export async function createTemplateJob(params: {
   selected_platforms: string[];
   inputs?: Record<string, string>;
 }): Promise<TemplateJobCreateResponse> {
+  const init: RequestInit = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  };
   let res: Response;
   try {
-    res = await fetch(`${API_URL}/template-jobs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
-    });
+    res = await fetch(`${API_URL}/template-jobs`, init);
   } catch {
-    throw new Error("Cannot reach the server. Make sure the API is running.");
+    // One retry: covers brief api unavailability (deploys, crash-restarts).
+    // 2s gives Fly time to route past a momentarily-unhealthy instance.
+    //
+    // Trade-off: POST /template-jobs has no idempotency key, so if the
+    // first attempt actually reached the server but the response was lost
+    // (rare: connection reset mid-response), the retry creates a second
+    // job. The dominant failure mode is CORS-preflight failure / connect
+    // refused during a Firecracker reboot, where the POST never reaches
+    // the server — safe to retry. To close the duplicate-job window,
+    // add an idempotency key to CreateTemplateJobRequest in
+    // app/routes/template_jobs.py.
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      res = await fetch(`${API_URL}/template-jobs`, init);
+    } catch {
+      throw new Error("Cannot reach the server. Make sure the API is running.");
+    }
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
