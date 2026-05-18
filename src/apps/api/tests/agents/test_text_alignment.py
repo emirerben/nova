@@ -316,6 +316,81 @@ def test_line_count_mismatch_falls_back_to_ocr(
     assert out.phrases[0].lines == ["line one", "line two"]
 
 
+# ── Empty-transcript passthrough tests (music-only / caption-only templates) ──
+
+
+def test_empty_transcript_passthrough_non_empty_phrases(
+    agent: TextAlignmentAgent,
+    mock_client: MockModelClient,
+) -> None:
+    """Input has phrases but transcript_words is empty (music-only template).
+    All phrases are returned unchanged, no LLM call is made, dropped_count=0.
+    This is the canary-template scenario: fdaf3bbc-2f4f-43bc-ba7c-e5cd819de102.
+    """
+    phrases = [
+        _make_phrase(["it's", "not", "just luck"], 0.3, 2.0),
+        _make_phrase(["it's", "not", "just luck\nit's", "not", "just luck"], 2.3, 4.5),
+    ]
+    out = agent.run(
+        TextAlignmentInput(
+            phrases=phrases,
+            transcript_words=[],  # empty — music-only, no speech
+            template_id="fdaf3bbc-2f4f-43bc-ba7c-e5cd819de102",
+        )
+    )
+
+    # All phrases pass through unchanged
+    assert out.dropped_count == 0
+    assert len(out.phrases) == 2
+    assert out.phrases[0].lines == ["it's", "not", "just luck"]
+    assert out.phrases[1].lines == ["it's", "not", "just luck\nit's", "not", "just luck"]
+    # Timing and bbox unchanged
+    assert out.phrases[0].start_t_s == 0.3
+    assert out.phrases[0].end_t_s == 2.0
+    # No LLM call was made
+    assert len(mock_client.invocations) == 0
+
+
+def test_empty_transcript_and_empty_phrases_returns_empty(
+    agent: TextAlignmentAgent,
+    mock_client: MockModelClient,
+) -> None:
+    """Both phrases and transcript_words are empty.
+    Output is empty and no LLM call is made (existing behaviour unchanged).
+    """
+    out = agent.run(TextAlignmentInput(phrases=[], transcript_words=[]))
+
+    assert out.phrases == []
+    assert out.dropped_count == 0
+    assert len(mock_client.invocations) == 0
+
+
+def test_non_empty_transcript_still_calls_llm(
+    agent: TextAlignmentAgent,
+    mock_client: MockModelClient,
+) -> None:
+    """When transcript_words is non-empty the LLM call path is taken as before."""
+    phrases = [_make_phrase(["hello world"])]
+    transcript_words = [_make_word("hello", 0.1, 0.3), _make_word("world", 0.4, 0.6)]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response([{"index": 0, "lines": ["hello world"]}]),
+    )
+    out = agent.run(
+        TextAlignmentInput(
+            phrases=phrases,
+            transcript_words=transcript_words,
+            template_id="test-llm-path",
+        )
+    )
+
+    assert len(out.phrases) == 1
+    assert out.dropped_count == 0
+    # LLM was called exactly once
+    assert len(mock_client.invocations) == 1
+    assert mock_client.invocations[0]["model"] == "gemini-2.5-flash"
+
+
 def test_registry_registration() -> None:
     """TextAlignmentAgent is reachable via the registry under the expected name."""
     from app.agents._registry import get_agent
