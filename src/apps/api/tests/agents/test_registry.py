@@ -22,6 +22,7 @@ _EXPECTED = {
     "nova.audio.beat_aligner",
     "nova.video.clip_router",
     "nova.qa.output_validator",
+    "nova.compose.text_classification",
 }
 
 
