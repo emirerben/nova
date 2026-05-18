@@ -3,6 +3,8 @@
 The cache must:
   - Hash files via fingerprint (size + first/last 4MB), tolerate missing files.
   - Scope keys by prompt + schema version + analysis_mode.
+  - Scope agentic (recipe+text) keys by text_overlay_version (v1/v2).
+  - Keep recipe-only (manual template) keys unchanged by text_overlay_version.
   - Round-trip a real TemplateRecipe through serialize/deserialize.
   - Fall open on Redis errors (return None instead of raising).
   - Singleton its Redis client (one TCP handshake per worker).
@@ -14,6 +16,13 @@ import pytest
 
 from app.pipeline import template_cache
 from app.pipeline.agents.gemini_analyzer import TemplateRecipe
+from app.pipeline.template_cache import (
+    AGENT_SET_RECIPE_ONLY,
+    AGENT_SET_RECIPE_PLUS_TEXT,
+    TEXT_OVERLAY_VERSION_V1,
+    TEXT_OVERLAY_VERSION_V2,
+    _resolve_text_overlay_version,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -390,3 +399,154 @@ def test_get_redis_returns_singleton(monkeypatch):
     c = template_cache._get_redis()
     assert a is b is c
     assert construction_count["n"] == 1
+
+
+# ── text_overlay_version namespace (v1/v2) ──────────────────────────────────
+
+
+def test_v1_and_v2_keys_are_distinct():
+    """Layer-1 and Layer-2 cache entries must never collide.
+
+    Real-world evidence (2026-05-18 canary): ?use_layer2=true was silently
+    discarded on cache-hit because the cache check ran before the override was
+    consulted. Same template_hash + agent_set, different version → different key.
+    """
+    v1_key = template_cache._cache_key(
+        "abc123", "single", AGENT_SET_RECIPE_PLUS_TEXT, TEXT_OVERLAY_VERSION_V1
+    )
+    v2_key = template_cache._cache_key(
+        "abc123", "single", AGENT_SET_RECIPE_PLUS_TEXT, TEXT_OVERLAY_VERSION_V2
+    )
+    assert v1_key != v2_key
+
+
+def test_v1_write_does_not_satisfy_v2_read(fake_redis):
+    """Write v1, read v2 → cache miss. The namespaces are independent."""
+    template_cache.set_cached_recipe(
+        "hash1",
+        "single",
+        _recipe(),
+        agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+        text_overlay_version=TEXT_OVERLAY_VERSION_V1,
+    )
+    result = template_cache.get_cached_recipe(
+        "hash1",
+        "single",
+        agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+        text_overlay_version=TEXT_OVERLAY_VERSION_V2,
+    )
+    assert result is None, "v1 cache entry must not be returned for a v2 lookup"
+
+
+def test_v2_write_does_not_satisfy_v1_read(fake_redis):
+    """Write v2, read v1 → cache miss. The namespaces are independent."""
+    template_cache.set_cached_recipe(
+        "hash1",
+        "single",
+        _recipe(),
+        agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+        text_overlay_version=TEXT_OVERLAY_VERSION_V2,
+    )
+    result = template_cache.get_cached_recipe(
+        "hash1",
+        "single",
+        agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+        text_overlay_version=TEXT_OVERLAY_VERSION_V1,
+    )
+    assert result is None, "v2 cache entry must not be returned for a v1 lookup"
+
+
+def test_v2_write_satisfies_v2_read(fake_redis):
+    """Write v2, read v2 → cache hit with the correct recipe."""
+    template_cache.set_cached_recipe(
+        "hash1",
+        "single",
+        _recipe(shot_count=12),
+        agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+        text_overlay_version=TEXT_OVERLAY_VERSION_V2,
+    )
+    result = template_cache.get_cached_recipe(
+        "hash1",
+        "single",
+        agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+        text_overlay_version=TEXT_OVERLAY_VERSION_V2,
+    )
+    assert result is not None
+    assert result.shot_count == 12
+
+
+def test_v1_is_default_when_version_not_specified(fake_redis):
+    """Legacy call signature (no text_overlay_version kwarg) must still work
+    and use the v1 key — preserving backward-compat for existing cache entries
+    written before this PR."""
+    # Write using explicit v1.
+    template_cache.set_cached_recipe(
+        "hash1",
+        "single",
+        _recipe(shot_count=7),
+        agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+        text_overlay_version=TEXT_OVERLAY_VERSION_V1,
+    )
+    # Read without specifying version (legacy call site).
+    result = template_cache.get_cached_recipe(
+        "hash1",
+        "single",
+        agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+    )
+    assert result is not None
+    assert result.shot_count == 7
+
+
+def test_recipe_only_unaffected_by_version(fake_redis):
+    """Manual templates (recipe-only agent_set) must not have their cache key
+    changed by text_overlay_version — the text agent never runs for them.
+
+    Concretely: write without version, read with explicit v2 → same key.
+    """
+    template_cache.set_cached_recipe("hash1", "single", _recipe(shot_count=3))
+    # recipe-only has no v1/v2 dimension — v2 kwarg is ignored.
+    result = template_cache.get_cached_recipe(
+        "hash1",
+        "single",
+        agent_set=AGENT_SET_RECIPE_ONLY,
+        text_overlay_version=TEXT_OVERLAY_VERSION_V2,
+    )
+    # Should still find the entry because recipe-only ignores the version dimension.
+    assert result is not None
+    assert result.shot_count == 3
+
+
+def test_recipe_only_keys_are_identical_regardless_of_version():
+    """The cache key for recipe-only must be the same regardless of which
+    text_overlay_version is passed — ensures no silent key drift for manual
+    templates after this PR."""
+    key_default = template_cache._cache_key("abc", "single", AGENT_SET_RECIPE_ONLY)
+    key_v1 = template_cache._cache_key(
+        "abc", "single", AGENT_SET_RECIPE_ONLY, TEXT_OVERLAY_VERSION_V1
+    )
+    key_v2 = template_cache._cache_key(
+        "abc", "single", AGENT_SET_RECIPE_ONLY, TEXT_OVERLAY_VERSION_V2
+    )
+    assert key_default == key_v1 == key_v2, (
+        "recipe-only cache key must be identical regardless of text_overlay_version — "
+        f"got default={key_default!r}, v1={key_v1!r}, v2={key_v2!r}"
+    )
+
+
+# ── _resolve_text_overlay_version ───────────────────────────────────────────
+
+
+def test_resolve_v2_when_force_layer2_true():
+    assert _resolve_text_overlay_version(force_layer2=True, settings_flag=False) == "v2"
+
+
+def test_resolve_v2_when_settings_flag_true():
+    assert _resolve_text_overlay_version(force_layer2=False, settings_flag=True) == "v2"
+
+
+def test_resolve_v2_when_both_true():
+    assert _resolve_text_overlay_version(force_layer2=True, settings_flag=True) == "v2"
+
+
+def test_resolve_v1_when_both_false():
+    assert _resolve_text_overlay_version(force_layer2=False, settings_flag=False) == "v1"
