@@ -6,6 +6,7 @@ import {
   type AdminTemplate,
   type LatestTestJob,
   type RecipeVersionItem,
+  type RequiredInput,
   type TemplateMetrics,
   adminCreateTestJob,
   adminGetLatestTestJob,
@@ -38,6 +39,7 @@ import {
 import { DebugTab } from "./components/DebugTab";
 import { EditorTab } from "./components/EditorTab";
 import { MusicTab } from "./components/MusicTab";
+import { RequiredInputsEditor } from "./components/RequiredInputsEditor";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -1342,6 +1344,9 @@ function SettingsTab({
   const [sourceUrl, setSourceUrl] = useState(template.source_url ?? "");
   const [clipsMin, setClipsMin] = useState(template.required_clips_min);
   const [clipsMax, setClipsMax] = useState(template.required_clips_max);
+  const [requiredInputs, setRequiredInputs] = useState<RequiredInput[]>(
+    template.required_inputs ?? [],
+  );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [togglingMusic, setTogglingMusic] = useState(false);
@@ -1363,6 +1368,7 @@ function SettingsTab({
         source_url: sourceUrl || undefined,
         required_clips_min: clipsMin,
         required_clips_max: clipsMax,
+        required_inputs: requiredInputs,
       });
       onSave(updated);
       setSaved(true);
@@ -1473,6 +1479,14 @@ function SettingsTab({
             className="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-zinc-500"
           />
         </Field>
+      </div>
+
+      <div className="border-t border-zinc-800 pt-5">
+        <RequiredInputsEditor
+          value={requiredInputs}
+          onChange={setRequiredInputs}
+          disabled={saving}
+        />
       </div>
 
       <div className="flex items-center gap-3">

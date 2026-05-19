@@ -29,6 +29,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import AgentRun, Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
 from app.routes._admin_schemas import AgentRunPayload, agent_run_to_payload
+from app.routes.templates import RequiredInput
 from app.services.template_validation import (
     get_template_or_404,
     require_ready,
@@ -133,6 +134,7 @@ class TemplateResponse(BaseModel):
     analysis_status: str
     required_clips_min: int
     required_clips_max: int
+    required_inputs: list[RequiredInput] = []
     published_at: datetime | None
     archived_at: datetime | None
     description: str | None
@@ -154,6 +156,7 @@ class UpdateTemplateRequest(BaseModel):
     source_url: str | None = None
     required_clips_min: int | None = None
     required_clips_max: int | None = None
+    required_inputs: list[RequiredInput] | None = None  # full replace; None = unchanged
     publish: bool | None = None  # set True to publish (sets published_at)
     archive: bool | None = None  # set True to archive (sets archived_at)
     template_type: str | None = None  # "standard" | "music_parent"
@@ -164,6 +167,23 @@ class UpdateTemplateRequest(BaseModel):
     def validate_template_type(cls, v: str | None) -> str | None:
         if v is not None and v not in ("standard", "music_parent"):
             raise ValueError("template_type must be 'standard' or 'music_parent'")
+        return v
+
+    @field_validator("required_inputs")
+    @classmethod
+    def validate_required_inputs(cls, v: list[RequiredInput] | None) -> list[RequiredInput] | None:
+        if v is None:
+            return v
+        seen_keys: set[str] = set()
+        for idx, entry in enumerate(v):
+            stripped_key = entry.key.strip()
+            if not stripped_key:
+                raise ValueError(f"required_inputs[{idx}].key must be non-empty")
+            if not entry.label.strip():
+                raise ValueError(f"required_inputs[{idx}].label must be non-empty")
+            if stripped_key in seen_keys:
+                raise ValueError(f"duplicate required_inputs key: {stripped_key!r}")
+            seen_keys.add(stripped_key)
         return v
 
 
@@ -653,6 +673,7 @@ def _template_response(t: VideoTemplate) -> TemplateResponse:
         analysis_status=t.analysis_status,
         required_clips_min=t.required_clips_min,
         required_clips_max=t.required_clips_max,
+        required_inputs=[RequiredInput(**r) for r in (t.required_inputs or [])],
         published_at=t.published_at,
         archived_at=t.archived_at,
         description=t.description,
@@ -972,6 +993,9 @@ async def update_template(
         template.required_clips_min = req.required_clips_min
     if req.required_clips_max is not None:
         template.required_clips_max = req.required_clips_max
+    if req.required_inputs is not None:
+        # Full replace — caller sends the complete ordered list.
+        template.required_inputs = [entry.model_dump() for entry in req.required_inputs]
 
     # Validate min <= max after applying partial updates
     if template.required_clips_min > template.required_clips_max:
