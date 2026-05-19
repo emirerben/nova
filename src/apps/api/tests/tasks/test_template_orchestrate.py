@@ -653,6 +653,42 @@ class TestAnalyzeTemplateTask:
 
         assert mock_template.analysis_status == "failed"
 
+    def test_audio_only_template_skips_download_and_marks_ready(self):
+        """Regression: audio_only templates have gcs_path=None.
+
+        Pre-fix: analyze_template_task called download_to_file(None) which
+        crashed inside google-cloud-storage with "None could not be converted
+        to unicode" — the symptom the user saw clicking Reanalyze on the
+        Bad Bunny - DtMF Letra template.
+        """
+        from app.tasks.template_orchestrate import analyze_template_task
+
+        mock_template = MagicMock()
+        mock_template.gcs_path = None  # audio_only invariant
+        mock_template.template_type = "audio_only"
+        mock_template.music_track_id = "track-bb-dtmf"
+        mock_template.analysis_status = "ready"
+
+        _orch = "app.tasks.template_orchestrate"
+        with (
+            patch(f"{_orch}._sync_session") as mock_session_ctx,
+            patch(f"{_orch}.download_to_file") as mock_download,
+            patch(f"{_orch}.gemini_upload_and_wait") as mock_upload,
+        ):
+            session = MagicMock()
+            mock_session_ctx.return_value.__enter__ = MagicMock(return_value=session)
+            mock_session_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            session.get.return_value = mock_template
+
+            analyze_template_task("template-audio-only")
+
+        # The critical invariant: download_to_file must NOT be called with
+        # None. The early return path skips it entirely.
+        mock_download.assert_not_called()
+        mock_upload.assert_not_called()
+        assert mock_template.analysis_status == "ready"
+        assert mock_template.error_detail is None
+
 
 # ── Regression anchors — fail on the old broken code, pass after fix ──────────
 

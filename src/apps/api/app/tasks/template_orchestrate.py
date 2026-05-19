@@ -299,6 +299,24 @@ def analyze_template_task(self, template_id: str) -> None:
                 if template is None:
                     log.error("template_not_found", template_id=template_id)
                     return
+                # audio_only templates are derived from a linked MusicTrack at
+                # creation time (see admin.create_template_from_music_track —
+                # they have gcs_path=None and recipe_cached pre-populated).
+                # There is no source video to re-analyze; passing gcs_path=None
+                # downstream crashes google-cloud-storage with "None could not
+                # be converted to unicode". Mark ready and bail.
+                if template.template_type == "audio_only":
+                    template.analysis_status = "ready"
+                    template.error_detail = None
+                    db.commit()
+                    log.info(
+                        "analyze_template_skipped_audio_only",
+                        template_id=template_id,
+                        music_track_id=template.music_track_id,
+                    )
+                    _redis.delete(attempt_key)
+                    _redis.close()
+                    return
                 gcs_path = template.gcs_path
                 existing_audio_gcs = template.audio_gcs_path
                 # Clear stale error from prior failed run

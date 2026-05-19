@@ -22,7 +22,7 @@ from typing import Literal
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, field_validator, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -1535,12 +1535,24 @@ async def get_latest_test_job(
     """Return the most recent completed test job for a template."""
     await get_template_or_404(template_id, db)
 
+    # Accept either template_ready jobs OR processing_failed jobs that have
+    # an output_url in assembly_plan. The latter covers the window where the
+    # pre-#243 reaper falsely flipped successful template_ready jobs to
+    # processing_failed (see admin_jobs.un_reap endpoint for the canonical
+    # restore). Without this, the editor's Test Job button silently no-ops
+    # when every prior job for the template was reaped before #243 deployed.
     result = await db.execute(
         select(Job)
         .where(
             Job.template_id == template_id,
             Job.job_type == "template",
-            Job.status == "template_ready",
+            or_(
+                Job.status == "template_ready",
+                and_(
+                    Job.status == "processing_failed",
+                    Job.assembly_plan.op("?")("output_url"),
+                ),
+            ),
         )
         .order_by(Job.created_at.desc())
         .limit(1)

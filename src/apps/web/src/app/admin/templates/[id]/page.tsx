@@ -352,7 +352,19 @@ export default function TemplateDetailPage() {
           broken — "nothing happens when I click" — because the click was
           silently swallowed by the disabled DOM element.
         */}
-        {template.is_agentic ? (
+        {/*
+          audio_only templates are derived from a linked MusicTrack at
+          creation time (gcs_path is null). They have no source video to
+          re-analyze; the backend short-circuits the task but the button is
+          still hidden here as the user-facing signal that there's nothing
+          to do. To regenerate the recipe, edit the linked MusicTrack and
+          recreate the template.
+        */}
+        {template.template_type === "audio_only" ? (
+          <span className="text-xs text-zinc-500">
+            Audio-only template — recipe is derived from the linked music track at creation time.
+          </span>
+        ) : template.is_agentic ? (
           <>
             <ReanalyzeButton
               onClick={handleReanalyzeAgentic}
