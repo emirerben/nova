@@ -63,6 +63,49 @@ _LYRICS_CONTAINER = re.compile(
 # Catch-all: any remaining HTML tag.
 _HTML_TAG = re.compile(r"<[^>]+>")
 
+# YouTube titles arrive as "Artist - Title (Official Video)" / "[Official Audio]"
+# / "(HD)" / "[Lyrics]" etc. yt-dlp does not strip these — they get passed
+# straight into Genius and tank the search ranking (the literal title
+# "The Weeknd - Can't Feel My Face (Official Video) The Weeknd" returns
+# unrelated hits like "The Weeknd Rolling Stones Interview"). Strip the
+# common noise tags before the query.
+_YOUTUBE_NOISE_TAGS = re.compile(
+    r"[\(\[\{][^\)\]\}]*?(?:official|lyric|audio|video|hd|hq|4k|mv|"
+    r"music|edit|remix|live|version|explicit|clean|color\s*coded|"
+    r"extended|radio|album|single|cover|karaoke|instrumental|"
+    r"reupload|reaction|tribute|demo)[^\)\]\}]*?[\)\]\}]",
+    flags=re.IGNORECASE,
+)
+
+
+def _build_search_query(title: str, artist: str) -> str:
+    """Clean YouTube-style title noise + dedupe redundant artist token.
+
+    yt-dlp passes the raw video title through, so titles routinely look like
+    "Artist Name - Song Title (Official Video)". Building a Genius query as
+    `f"{title} {artist}"` then yields "Artist Name - Song Title (Official
+    Video) Artist Name" — three copies of the artist and the noise tag
+    poison the search relevance. Clean both before querying.
+    """
+    title = (title or "").strip()
+    artist = (artist or "").strip()
+
+    # Strip "Artist - " prefix when it duplicates the artist field.
+    if artist and title.lower().startswith(f"{artist.lower()} - "):
+        title = title[len(artist) + 3 :].lstrip()
+    # Strip "Artist -" with no following space too (rare but seen).
+    elif artist and title.lower().startswith(f"{artist.lower()}-"):
+        title = title[len(artist) + 1 :].lstrip()
+
+    # Drop parenthetical / bracketed noise like "(Official Video)".
+    title = _YOUTUBE_NOISE_TAGS.sub("", title)
+    # Collapse repeated whitespace + leading/trailing hyphens left behind.
+    title = re.sub(r"\s+", " ", title).strip(" -–—")
+
+    if artist and title:
+        return f"{title} {artist}"
+    return title or artist
+
 
 def search_lyrics(title: str, artist: str = "") -> GeniusLyrics:
     """Look up canonical lyrics on Genius.
@@ -75,7 +118,7 @@ def search_lyrics(title: str, artist: str = "") -> GeniusLyrics:
     if not token:
         raise GeniusError("GENIUS_ACCESS_TOKEN not configured — set it to enable Genius lookup")
 
-    query = f"{title} {artist}".strip() or title.strip()
+    query = _build_search_query(title, artist)
     if not query:
         raise GeniusNotFound("empty title — nothing to search")
 
