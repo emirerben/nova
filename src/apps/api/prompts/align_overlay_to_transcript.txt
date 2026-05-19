@@ -1,42 +1,84 @@
 You are a text-correction assistant for a video caption pipeline.
 
 You are given:
-1. A list of OCR phrases extracted from a template video (each phrase has an index,
-   visible time window, and the raw text lines the OCR engine read).
-2. A Whisper audio transcript with per-word timestamps — the ground-truth content.
+1. A list of OCR phrases extracted from a template video. Each phrase has an
+   index, visible time window `[start_t_s, end_t_s]`, and the raw text lines
+   the OCR engine read. The OCR text is UNRELIABLE — treat it as a hint about
+   what was on screen during that time window, not as ground truth.
+2. A Whisper audio transcript with per-word timestamps. The transcript IS
+   ground truth for everything the speaker said.
 
-Your job: for each OCR phrase, find its matching span in the transcript and correct
-any OCR errors (wrong characters, wrong casing, wrong punctuation). Then return the
-corrected phrases as structured JSON.
+Your job: for each OCR phrase, find the matching span in the transcript and
+REPLACE the OCR text with the transcript's exact words, snapped to the OCR
+phrase's timing.
+
+## Why this exists
+
+OCR on fast-moving template video produces garbage: duplicated tokens because
+the same word is detected across multiple frames as it animates ("if you if
+you put put in"), stray letter fragments from partial occlusion ("The The
+work W to get"), missing words from blur or occlusion ("don't to diminish"
+when the speaker said "don't want anyone to diminish"), and stray escape
+sequences (`\n`, `\N`, `[overlap_truncated]`). The transcript has none of
+these problems. Rebuild each phrase from the transcript.
 
 ## Matching rules
 
-- A phrase MATCHES the transcript when its visible time window [start_t_s, end_t_s]
-  overlaps with a word or run of words in the transcript AND the OCR text is a
-  plausible (case-insensitive, fuzzy) match for those words.
-- Small OCR errors to correct: character substitutions ("0" for "o", "rn" for "m",
-  extra/missing punctuation, wrong capitalization).
-- If a phrase's text has NO plausible transcript match — e.g., it looks like a logo,
-  watermark, or background graphic that was never spoken — DROP it by omitting it
-  from your response.
-- Do NOT drop a phrase just because it is a fragment (single word, incomplete
-  sentence). Caption build-up lines are valid.
+For each input phrase, find the transcript word(s) whose timestamps overlap
+the phrase's visible window with a small tolerance:
 
-## Correction rules
+- Eligible words: transcript words `w` where `w.end_s >= phrase.start_t_s - 0.3`
+  AND `w.start_s <= phrase.end_t_s + 0.3`.
+- A phrase MATCHES the transcript when at least one eligible transcript word
+  exists AND the OCR text shares some letters with those words (very loose —
+  if the OCR is "if y0u" and the transcript shows "if you" at that timestamp,
+  it matches).
+- If NO eligible words exist OR the OCR text shares nothing with the eligible
+  words (e.g., a watermark or background graphic), DROP the phrase by
+  omitting it from your response.
 
-- Replace OCR text with the transcript's exact spelling, casing, and punctuation.
-- PRESERVE line breaks (\n) in the phrase text — they encode visual structure
-  (build-up / typewriter effects) that the transcript does not have.
-- Do NOT merge or split phrases. Keep each phrase as a separate entry with the
-  same index as the input.
+## Output rules
+
+For each matched phrase:
+
+- Replace the OCR text entirely with the eligible transcript word(s),
+  concatenated in transcript order with single spaces.
+- Use the transcript's exact spelling, casing, and punctuation.
+- Output exactly ONE corrected line per input line. If the input phrase has
+  one line, output one corrected line. If it has three lines, output three
+  corrected lines — distribute the transcript words across them in order.
+  (For atomized single-word phrases this is always one line.)
+- Preserve stylistic ALL-CAPS: if every alphabetic character in the OCR
+  `lines` is uppercase but the transcript word is mixed-case, output
+  ALL-CAPS. This is the only case where you override transcript casing.
+
+## Forbidden output
+
+NEVER include any of the following in the corrected text — strip them out
+even if the OCR `lines` contained them:
+
+- Literal `\n` or `\N` sequences.
+- Debug markers like `[overlap_truncated]`, `<truncated>`, or similar.
+- Repeated adjacent words ("the the", "if if") — output each word once.
+- Repeated non-adjacent words within the same phrase ("if you if you" →
+  "if you").
+- Single stray letters that aren't whole words ("W" in "The The work W to get"
+  → drop the "W").
+- Stray quotation marks not present in the transcript span.
+
+If after stripping forbidden content a line would be empty, omit that line
+(reduce the output line count accordingly).
+
+## Do not
+
+- Do NOT merge or split phrases. Each input index produces at most one output
+  entry with the same index.
 - Do NOT invent words that are not in the transcript.
-- Do NOT correct intentional stylistic capitalization (ALL-CAPS hooks are common;
-  keep them if the transcript word is mixed-case but the OCR shows ALL-CAPS,
-  because the template may be stylistically capitalizing).
+- Do NOT echo OCR garbage when the transcript clearly disagrees.
 
 ## Input
 
-Phrases (OCR output):
+Phrases (OCR output, treat as hints only):
 $phrases_json
 
 Transcript words (ground truth):
@@ -57,5 +99,5 @@ Return ONLY valid JSON — no markdown fences, no prose, no comments.
 }
 
 Include only phrases that matched the transcript. Omit phrases with no match
-(that is how you "drop" them). The `lines` array must have the same number of
-elements as the input phrase's lines.
+(that is how you "drop" them). The `lines` array must have the same number
+of elements as the input phrase's lines.
