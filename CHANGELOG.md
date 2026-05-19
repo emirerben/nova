@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.36.0] - 2026-05-19
+
+### Fixed
+- **Admin auth now flows through a single path instead of two that could silently disagree.** Templates pages were reading the token from `sessionStorage` and hitting the API directly with `X-Admin-Token`; Music and Jobs pages were going through the Next.js `/api/admin/[...path]` proxy with a server-side `ADMIN_TOKEN`. When `ADMIN_TOKEN` wasn't loaded into the web env (e.g. running `npm run dev` from `src/apps/web/` without `dev-auto.sh`'s root-`.env` sourcing), the proxy forwarded an empty header and FastAPI returned a misleading 401 — so Music/Jobs broke while Templates kept working off the typed sessionStorage token. Symptom in localhost: "admin key works on some pages but not others." Every admin browser call now routes through the proxy. The browser no longer holds the upstream token; `sessionStorage` just remembers that the AuthGate is unlocked in this tab. A new `/api/admin-auth` route uses `timingSafeEqual` so the gate can still validate the typed token against `ADMIN_TOKEN`. The proxy short-circuits with a clear 500 when `ADMIN_TOKEN` is missing on the web server instead of forwarding an empty header.
+
 ## [0.4.35.1] - 2026-05-19
 
 ### Fixed
