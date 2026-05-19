@@ -14,6 +14,7 @@ import {
   type TrackConfig,
 } from "@/lib/music-api";
 import { adminCreateTemplateFromMusicTrack } from "@/lib/admin-api";
+import LyricsSection from "./LyricsSection";
 import { TestTab } from "./components/TestTab";
 
 type AdminMusicTabId = "config" | "test";
@@ -472,16 +473,27 @@ export default function AdminMusicTrackPage({
   // Reanalyze
   const [reanalyzing, setReanalyzing] = useState(false);
 
-  // Poll while analyzing
+  // Poll while analyzing OR extracting lyrics. Lyrics extraction runs after
+  // beat analysis, so we keep polling until both are out of an in-flight state.
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
-    if (track?.analysis_status === "analyzing" || track?.analysis_status === "queued") {
+    const inflight =
+      track?.analysis_status === "analyzing" ||
+      track?.analysis_status === "queued" ||
+      track?.lyrics_status === "extracting" ||
+      track?.lyrics_status === "pending";
+    if (inflight) {
       interval = setInterval(async () => {
         try {
           const fresh = await adminGetMusicTrack(id);
           setTrack(fresh);
           syncFormFromTrack(fresh);
-          if (fresh.analysis_status === "ready" || fresh.analysis_status === "failed") {
+          const stillInflight =
+            fresh.analysis_status === "analyzing" ||
+            fresh.analysis_status === "queued" ||
+            fresh.lyrics_status === "extracting" ||
+            fresh.lyrics_status === "pending";
+          if (!stillInflight) {
             clearInterval(interval);
           }
         } catch {
@@ -490,7 +502,7 @@ export default function AdminMusicTrackPage({
       }, 3000);
     }
     return () => clearInterval(interval);
-  }, [id, track?.analysis_status]);
+  }, [id, track?.analysis_status, track?.lyrics_status]);
 
   function syncFormFromTrack(t: MusicTrackDetail) {
     const cfg = t.track_config;
@@ -635,6 +647,7 @@ export default function AdminMusicTrackPage({
         <ConfigTabContent
           id={id}
           track={track}
+          setTrack={setTrack}
           cfg={cfg}
           bestStart={bestStart}
           setBestStart={setBestStart}
@@ -660,6 +673,7 @@ export default function AdminMusicTrackPage({
 interface ConfigTabContentProps {
   id: string;
   track: MusicTrackDetail;
+  setTrack: (t: MusicTrackDetail) => void;
   cfg: TrackConfig;
   bestStart: string;
   setBestStart: (s: string) => void;
@@ -681,6 +695,7 @@ interface ConfigTabContentProps {
 function ConfigTabContent({
   id,
   track,
+  setTrack,
   cfg,
   bestStart,
   setBestStart,
@@ -844,6 +859,9 @@ function ConfigTabContent({
           </button>
         </form>
       </div>
+
+      {/* Lyrics section */}
+      <LyricsSection track={track} onTrackUpdated={setTrack as (t: MusicTrackDetail) => void} />
 
       {/* Actions */}
       <div className="flex flex-wrap gap-3">

@@ -85,7 +85,8 @@ MONTSERRAT_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "Montserrat-Ex
 
 # Effects that produce animated .ass files instead of static PNGs
 ASS_ANIMATED_EFFECTS = frozenset(
-    {"fade-in", "typewriter", "slide-up", "slide-down", "pop-in", "bounce"}
+    {"fade-in", "typewriter", "slide-up", "slide-down", "pop-in", "bounce",
+     "karaoke-line"}
 )
 
 # Animation keyframe timings (ms from overlay start). At runtime, each timestamp
@@ -202,6 +203,23 @@ def _hex_to_rgba(hex_color: str) -> tuple[int, int, int, int]:
     if len(h) == 6:
         return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 255)
     return (255, 255, 255, 255)  # default white
+
+
+def _hex_to_ass_bgr(hex_color: str) -> str:
+    """Convert '#RRGGBB' to ASS's BGR hex literal (no '&H' wrapper).
+
+    ASS color tags use `&HBBGGRR&` byte order (little-endian within the
+    24-bit value). This helper does only the byte-swap; the caller wraps
+    with `&H...&`.
+    """
+    h = (hex_color or "").lstrip("#")
+    if len(h) != 6:
+        return "FFFFFF"
+    try:
+        r, g, b = h[0:2], h[2:4], h[4:6]
+    except ValueError:
+        return "FFFFFF"
+    return f"{b}{g}{r}".upper()
 
 
 # Position -> ASS alignment + MarginV
@@ -379,6 +397,12 @@ def generate_animated_overlay_ass(
                 position_x_frac=overlay.get("position_x_frac"),
                 position_y_frac=overlay.get("position_y_frac"),
                 outline_px=overlay.get("outline_px"),
+                # Karaoke needs per-word timings (relative to overlay start)
+                # plus the highlight color used for "already sung" words. The
+                # primary color stays the overlay's text_color.
+                word_timings=overlay.get("word_timings"),
+                highlight_color=overlay.get("highlight_color"),
+                text_color=overlay.get("text_color"),
             )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
@@ -649,6 +673,12 @@ def _write_animated_ass(
     position_x_frac: float | None = None,
     position_y_frac: float | None = None,
     outline_px: int | None = None,
+    # Karaoke-only: per-word timings relative to overlay start, and the
+    # highlight color used for "already sung" words. None for non-karaoke
+    # effects.
+    word_timings: list[dict] | None = None,
+    highlight_color: str | None = None,
+    text_color: str | None = None,
 ) -> None:
     """Write an ASS file with animation tags for the given effect.
 
@@ -741,6 +771,45 @@ def _write_animated_ass(
             f"\\t({k1},{k2},\\fscx{s2}\\fscy{s2})"
             f"}}{wrapped}"
         )
+
+    elif effect == "karaoke-line":
+        # Sing-along: the full line is visible for the overlay duration. Each
+        # word is wrapped in ASS karaoke timing tags `{\kf<centiseconds>}`,
+        # which fade the word's fill from SecondaryColour to PrimaryColour
+        # over the word's duration. The result is a smooth left-to-right
+        # color sweep that follows the vocal — the canonical karaoke effect.
+        # `\kf` (fill) is preferred over `\k` (sharp swap) because it looks
+        # less jarring at typical sub-second word durations.
+        timings = word_timings or []
+        if not timings:
+            # No per-word data — fall back to a simple no-animation render so
+            # the line at least appears on screen. The caller already logs
+            # this as a degraded path.
+            pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
+            dialogue_text = f"{{{pos_or_align}{outline_tag}}}{text}"
+        else:
+            # ASS color encoding is &HBBGGRR& (note byte order). The
+            # PrimaryColour (sung) is `text_color`; SecondaryColour
+            # (unsung baseline) is `highlight_color` if supplied, otherwise
+            # a dim version of the primary so unsung text stays readable
+            # without dominating the highlight contrast.
+            primary_bgr = _hex_to_ass_bgr(text_color or "#FFFFFF")
+            secondary_bgr = _hex_to_ass_bgr(highlight_color or "#888888")
+            pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
+            parts = [
+                f"{{{pos_or_align}{outline_tag}"
+                f"\\1c&H{primary_bgr}&\\2c&H{secondary_bgr}&}}"
+            ]
+            # `\kf` durations are in centiseconds. We clamp each word to at
+            # least 5cs (50ms) so karaoke never emits a zero-length token
+            # which libass renders as an immediate primary-color flash.
+            for w in timings:
+                word_text = str(w.get("text", "")).strip()
+                if not word_text:
+                    continue
+                dur_cs = max(5, int(round(float(w.get("duration_cs", 30)))))
+                parts.append(f"{{\\kf{dur_cs}}}{word_text} ")
+            dialogue_text = "".join(parts).rstrip()
 
     elif effect == "bounce":
         # Squash-and-stretch: 100 → 125 (stretch) → 90 (squash) → 100 (settle).

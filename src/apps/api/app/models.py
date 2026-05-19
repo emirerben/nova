@@ -216,6 +216,16 @@ class MusicTrack(Base):
     # Gemini audio analysis → cached recipe for audio-only template creation
     recipe_cached: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     recipe_cached_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # Lyrics extraction (Genius lyric text + Whisper word timings, aligned).
+    # See app.agents.lyrics for the producer and app.pipeline.lyric_injector for
+    # how this gets baked into music-job text overlays.
+    # "pending" | "extracting" | "ready" | "failed" | "unavailable"
+    lyrics_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    lyrics_cached: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    lyrics_error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lyrics_extracted_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # "genius+whisper" | "whisper_only" | "manual" — null until extraction runs
+    lyrics_source: Mapped[str | None] = mapped_column(Text, nullable=True)
     # song_classifier creative labels (vibe, genre, mood, copy_tone, ...).
     # See app/agents/_schemas/music_labels.py — MusicLabels Pydantic shape.
     # Nullable until backfill runs; the matcher filters out NULL-labeled tracks.
@@ -236,6 +246,7 @@ class MusicTrack(Base):
     __table_args__ = (
         Index("idx_music_tracks_status", "analysis_status"),
         Index("idx_music_tracks_published", "published_at"),
+        Index("idx_music_tracks_lyrics_status", "lyrics_status"),
     )
 
 

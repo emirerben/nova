@@ -804,9 +804,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         if template.music_track_id:
             track = db.get(MusicTrack, template.music_track_id)
             if track and track.track_config:
-                audio_start_offset_s = float(
-                    track.track_config.get("best_start_s", 0.0) or 0.0
-                )
+                audio_start_offset_s = float(track.track_config.get("best_start_s", 0.0) or 0.0)
 
     # Route on template_kind discriminator. Existing rows without template_kind
     # are backfilled to "multiple_videos" by migration 0012, so .get() with
@@ -1105,14 +1103,20 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         if audio_gcs_path:
             final_path = os.path.join(tmpdir, "final.mp4")
             _mix_template_audio(
-                assembled_path, audio_gcs_path, final_path, tmpdir,
+                assembled_path,
+                audio_gcs_path,
+                final_path,
+                tmpdir,
                 audio_start_offset_s=audio_start_offset_s,
             )
             output_path = final_path
             # Also mix audio into the base video for editor preview
             base_final = os.path.join(tmpdir, "base_final.mp4")
             _mix_template_audio(
-                base_path, audio_gcs_path, base_final, tmpdir,
+                base_path,
+                audio_gcs_path,
+                base_final,
+                tmpdir,
                 audio_start_offset_s=audio_start_offset_s,
             )
             base_path = base_final
@@ -1247,9 +1251,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         if template.music_track_id:
             track = db.get(MusicTrack, template.music_track_id)
             if track and track.track_config:
-                audio_start_offset_s = float(
-                    track.track_config.get("best_start_s", 0.0) or 0.0
-                )
+                audio_start_offset_s = float(track.track_config.get("best_start_s", 0.0) or 0.0)
 
     try:
         recipe = build_recipe(recipe_data)
@@ -1344,13 +1346,19 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         if audio_gcs_path:
             final_path = os.path.join(tmpdir, "final.mp4")
             _mix_template_audio(
-                assembled_path, audio_gcs_path, final_path, tmpdir,
+                assembled_path,
+                audio_gcs_path,
+                final_path,
+                tmpdir,
                 audio_start_offset_s=audio_start_offset_s,
             )
             output_path = final_path
             base_final = os.path.join(tmpdir, "base_final.mp4")
             _mix_template_audio(
-                base_path, audio_gcs_path, base_final, tmpdir,
+                base_path,
+                audio_gcs_path,
+                base_final,
+                tmpdir,
                 audio_start_offset_s=audio_start_offset_s,
             )
             base_path = base_final
@@ -2323,9 +2331,7 @@ def _plan_slots(
             # requires a re-pick from the matcher, which is out of scope.
             _MIN_SPEED_FACTOR_FOR_FILL = 0.4
             available_at_start = max(0.0, clip_dur - start_s)
-            slowdown_speed = (
-                available_at_start / slot_target_dur if slot_target_dur > 0 else 1.0
-            )
+            slowdown_speed = available_at_start / slot_target_dur if slot_target_dur > 0 else 1.0
             footage_exhausted = start_s + source_duration > clip_dur
             if (
                 footage_exhausted
@@ -3586,6 +3592,13 @@ def _collect_absolute_overlays(
             # Pass through spans for rich inline formatting
             if ov.get("spans"):
                 entry["spans"] = ov["spans"]
+            # Pass through karaoke-line word timings + highlight color. Word
+            # timings are stored relative to the overlay's start (NOT the
+            # video timeline), so cumulative_s offset does not apply here.
+            if ov.get("word_timings"):
+                entry["word_timings"] = ov["word_timings"]
+            if ov.get("highlight_color"):
+                entry["highlight_color"] = ov["highlight_color"]
             # Pass through player-card fields so the renderer receives
             # jersey_no + player_name (the special-effect path needs both).
             if ov.get("jersey_no"):
@@ -3748,6 +3761,13 @@ def _collect_absolute_overlays(
                 and prev.get("text_color") == ov.get("text_color")
                 and not prev.get("spans")
                 and not ov.get("spans")
+                # Karaoke lines carry per-overlay word timings tied to a
+                # specific [start_s, end_s] window; merging two karaoke
+                # overlays would invalidate the word timings on whichever
+                # one got absorbed. Lyric injector already places each line
+                # at its own timestamp, so dedup never applies here.
+                and ov.get("effect") != "karaoke-line"
+                and prev.get("effect") != "karaoke-line"
                 and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
             ):
                 # Merge: extend previous overlay's end time

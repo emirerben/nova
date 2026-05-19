@@ -206,6 +206,11 @@ def test_to_response_round_trips_best_sections() -> None:
     track.track_config = {"best_start_s": 30.0, "best_end_s": 60.0}
     track.best_sections = sections_jsonb
     track.section_version = CURRENT_SECTION_VERSION
+    track.lyrics_status = "pending"
+    track.lyrics_source = None
+    track.lyrics_error_detail = None
+    track.lyrics_cached = None
+    track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 
     resp = _to_response(track)
@@ -260,6 +265,11 @@ def test_to_response_drops_invalid_section_rows() -> None:
     track.track_config = None
     track.best_sections = sections_jsonb
     track.section_version = "2026-05-15"
+    track.lyrics_status = "pending"
+    track.lyrics_source = None
+    track.lyrics_error_detail = None
+    track.lyrics_cached = None
+    track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 
     resp = _to_response(track)
@@ -291,6 +301,11 @@ def test_to_response_drops_all_when_every_section_invalid() -> None:
     track.track_config = None
     track.best_sections = [{"rank": "definitely_not_an_int"}]
     track.section_version = "2026-05-15"
+    track.lyrics_status = "pending"
+    track.lyrics_source = None
+    track.lyrics_error_detail = None
+    track.lyrics_cached = None
+    track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 
     resp = _to_response(track)
@@ -319,6 +334,11 @@ def test_to_response_handles_null_best_sections() -> None:
     track.track_config = None
     track.best_sections = None
     track.section_version = None
+    track.lyrics_status = "pending"
+    track.lyrics_source = None
+    track.lyrics_error_detail = None
+    track.lyrics_cached = None
+    track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 
     resp = _to_response(track)
