@@ -527,6 +527,11 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
             )
             template_hash = compute_template_hash(local_path)
             recipe = None
+            # Tracks whether the recipe was produced by a fresh agent run this
+            # invocation. On cache hit the recipe came from a prior run whose
+            # `prompt_version` values are unknown to us — see the
+            # `recipe_cached_versions` write below for the staleness rationale.
+            agents_ran = False
             if template_hash is not None:
                 cached = get_cached_recipe(
                     template_hash,
@@ -599,6 +604,7 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
                         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
                         text_overlay_version=text_overlay_version,
                     )
+                agents_ran = True
 
             # Font identification (PR2). Best-effort: a font-id failure must
             # not abort agentic build. Mutates `recipe.slots[*]["text_overlays"]
@@ -717,14 +723,20 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
 
                 template.recipe_cached = recipe_dict
                 template.recipe_cached_at = datetime.now(UTC)
-                # Persist the live AgentSpec.prompt_version map so the admin UI
-                # can flag this row as STALE if any agent's prompt rotates later.
-                # See app/services/template_staleness.py for the rationale.
-                from app.services.template_staleness import (  # noqa: PLC0415
-                    capture_recipe_versions,
-                )
+                # Only refresh the per-agent prompt_version snapshot when the
+                # agents actually ran this invocation. On cache hit the recipe
+                # came from an earlier run whose prompts may already be stale
+                # — overwriting the snapshot with the current live values
+                # would falsely clear the admin STALE badge and tell the
+                # operator their reanalyze produced fresh output when in fact
+                # Redis served the prior recipe untouched. See
+                # app/services/template_staleness.py for the rationale.
+                if agents_ran:
+                    from app.services.template_staleness import (  # noqa: PLC0415
+                        capture_recipe_versions,
+                    )
 
-                template.recipe_cached_versions = capture_recipe_versions(is_agentic=True)
+                    template.recipe_cached_versions = capture_recipe_versions(is_agentic=True)
                 template.analysis_status = "ready"
                 if audio_gcs and not template.audio_gcs_path:
                     template.audio_gcs_path = audio_gcs

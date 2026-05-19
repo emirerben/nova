@@ -399,6 +399,11 @@ def analyze_template_task(self, template_id: str) -> None:
             _MANUAL_ANALYSIS_MODE = "single"
             template_hash = compute_template_hash(local_path)
             recipe = None
+            # Tracks whether the recipe was produced by a fresh agent run this
+            # invocation. On cache hit the recipe came from a prior run whose
+            # `prompt_version` is unknown to us — see the
+            # `recipe_cached_versions` write below for the staleness rationale.
+            agents_ran = False
             if template_hash is not None:
                 cached = get_cached_recipe(template_hash, _MANUAL_ANALYSIS_MODE)
                 if cached is not None:
@@ -424,6 +429,7 @@ def analyze_template_task(self, template_id: str) -> None:
                 )
                 if template_hash is not None:
                     set_cached_recipe(template_hash, _MANUAL_ANALYSIS_MODE, recipe)
+                agents_ran = True
 
             # Note: font identification (PR2, identify_fonts + font_alternatives
             # population) is intentionally scoped to the agentic analysis path
@@ -509,14 +515,18 @@ def analyze_template_task(self, template_id: str) -> None:
 
                     template.recipe_cached = recipe_dict
                     template.recipe_cached_at = datetime.now(UTC)
-                    # Persist the live AgentSpec.prompt_version map so the admin UI
-                    # can flag this row as STALE if any agent's prompt rotates later.
+                    # Only refresh the per-agent prompt_version snapshot when
+                    # the agent actually ran this invocation. On cache hit the
+                    # recipe came from an earlier run whose prompt may already
+                    # be stale — overwriting the snapshot with the current
+                    # live value would falsely clear the admin STALE badge.
                     # See app/services/template_staleness.py for the rationale.
-                    from app.services.template_staleness import (  # noqa: PLC0415
-                        capture_recipe_versions,
-                    )
+                    if agents_ran:
+                        from app.services.template_staleness import (  # noqa: PLC0415
+                            capture_recipe_versions,
+                        )
 
-                    template.recipe_cached_versions = capture_recipe_versions(is_agentic=False)
+                        template.recipe_cached_versions = capture_recipe_versions(is_agentic=False)
                     template.analysis_status = "ready"
                     if audio_gcs and not template.audio_gcs_path:
                         template.audio_gcs_path = audio_gcs
