@@ -39,6 +39,59 @@ from .structural import run_structural
 EVAL_FIXTURES_ROOT = Path(__file__).parent.parent.parent / "fixtures" / "agent_evals"
 RUBRIC_ROOT = Path(__file__).parent.parent / "rubrics"
 
+# Per-pytest-process cache: absolute local path -> Gemini File API URI.
+# Prevents re-uploading the same golden audio for every fixture that references it.
+_LIVE_UPLOAD_CACHE: dict[str, str] = {}
+
+
+def _resolve_fixture_uri(file_uri: str, *, fixture_dir: Path, model_client: ModelClient) -> str:
+    """Translate a fixture `file_uri` into something Gemini's Part.from_uri accepts.
+
+    - `gs://...` / `files/...`: pass through.
+    - `./relative.wav` (or similar local path under the fixture dir): upload to
+      Gemini File API on first sight, cache the resulting `files/...` URI.
+    - Anything else (bare bucket-relative like `templates/<id>/video.mp4`): prefix
+      with `gs://{STORAGE_BUCKET}/`. Gemini reads gs:// server-side via the
+      caller's service account (GOOGLE_SERVICE_ACCOUNT_JSON in CI).
+    """
+    if file_uri.startswith(("gs://", "files/")):
+        return file_uri
+
+    if (
+        file_uri.startswith("./")
+        or file_uri.startswith("../")
+        or not _looks_like_bucket_path(file_uri)
+    ):
+        local = (fixture_dir / file_uri).resolve()
+        if local.exists() and local.is_file():
+            key = str(local)
+            cached = _LIVE_UPLOAD_CACHE.get(key)
+            if cached is not None:
+                return cached
+            # `upload_media` lives on the dispatcher; surfaced here so we don't
+            # care which provider client owns it.
+            ref = model_client.upload_media(key)  # type: ignore[attr-defined]
+            _LIVE_UPLOAD_CACHE[key] = ref.uri
+            return ref.uri
+
+    # Bucket-relative path. Resolve against the configured storage bucket.
+    from app.config import settings  # noqa: PLC0415 — defer import for test collection
+
+    bucket = (settings.storage_bucket or "").strip()
+    if not bucket:
+        raise TerminalError(f"cannot resolve fixture URI {file_uri!r}: STORAGE_BUCKET not set")
+    return f"gs://{bucket}/{file_uri.lstrip('/')}"
+
+
+def _looks_like_bucket_path(value: str) -> bool:
+    """Heuristic: a/b/c.mp4 with a media extension and no scheme is a bucket key."""
+    if "/" not in value:
+        return False
+    lower = value.lower()
+    return lower.endswith(
+        (".mp4", ".mov", ".m4v", ".webm", ".mkv", ".mp3", ".wav", ".m4a", ".aac", ".flac")
+    )
+
 
 # ── Fixture loading ──────────────────────────────────────────────────────────
 
@@ -259,6 +312,28 @@ def run_eval(
     agent_cls = _build_agent_class_for(fixture.agent)
     client = model_client or CassetteModelClient(fixture.raw_text)
     agent = agent_cls(client)
+
+    # Live mode: translate fixture `file_uri` (golden local-path / bucket-relative)
+    # into something Gemini accepts. Replay never touches the wire, so skip there —
+    # the cassette returns `fixture.raw_text` regardless of input.
+    if model_client is not None and isinstance(fixture.input, dict):
+        raw_uri = fixture.input.get("file_uri")
+        if isinstance(raw_uri, str) and raw_uri:
+            try:
+                resolved = _resolve_fixture_uri(
+                    raw_uri,
+                    fixture_dir=fixture.path.parent,
+                    model_client=model_client,
+                )
+            except Exception as exc:  # noqa: BLE001 — surface as per-fixture error, don't crash run
+                return EvalResult(
+                    fixture_id=fixture.fixture_id,
+                    agent=fixture.agent,
+                    prompt_version=fixture.prompt_version,
+                    error=f"fixture URI resolution failed: {exc}",
+                )
+            if resolved != raw_uri:
+                fixture.input["file_uri"] = resolved
     # Eval runs post their own Langfuse trace (with source:eval) at the end
     # of run_eval. Suppress the inner per-Agent.run() trace so we don't
     # double-post replay-mode evals as if they were prod traffic.

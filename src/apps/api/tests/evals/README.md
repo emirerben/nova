@@ -17,7 +17,17 @@ ANTHROPIC_API_KEY=… pytest tests/evals/ -v --with-judge
 
 # 3) Live mode — actually call Gemini for each fixture. Slow and costs money.
 #    The harness pre-flights estimated cost; pass --allow-cost after reviewing.
-NOVA_EVAL_MODE=live GEMINI_API_KEY=… ANTHROPIC_API_KEY=… \
+#    Also needs GCS read access:
+#      - GOOGLE_SERVICE_ACCOUNT_JSON (or GOOGLE_APPLICATION_CREDENTIALS) so the
+#        harness can rewrite bucket-relative `prod_snapshots` URIs to `gs://`
+#        and Gemini can fetch them server-side.
+#      - STORAGE_BUCKET names the bucket prefix.
+#    Transcript golden fixtures point at local .wav files (under
+#    fixtures/agent_evals/transcript/golden/) and upload-on-demand to the
+#    Gemini File API on first sight — no stale `files/...` URIs to maintain.
+NOVA_EVAL_MODE=live \
+  GEMINI_API_KEY=… ANTHROPIC_API_KEY=… \
+  GOOGLE_SERVICE_ACCOUNT_JSON=… STORAGE_BUCKET=… \
   pytest tests/evals/ -v --eval-mode=live --with-judge --allow-cost
 
 # 4) Single agent

@@ -74,5 +74,11 @@ jobs:
           NOVA_EVAL_MODE: live
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Required for prod_snapshot fixtures whose file_uri is a bucket-relative
+          # GCS path — the eval harness rewrites to gs:// and Gemini reads it
+          # server-side under this service account. See tests/evals/runners/eval_runner.py
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          STORAGE_BUCKET: ${{ secrets.STORAGE_BUCKET }}
+          STORAGE_PROVIDER: gcs
         run: |
           pytest ${{ steps.target.outputs.path }} -v ${{ steps.judge.outputs.flag }} --eval-mode=live --allow-cost

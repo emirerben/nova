@@ -2,8 +2,8 @@
   "agent": "nova.audio.transcript",
   "prompt_version": "2026-05-09",
   "input": {
-    "file_uri": "files/golden-transcript-noisy",
-    "file_mime": "video/mp4"
+    "file_uri": "./noisy.wav",
+    "file_mime": "audio/wav"
   },
   "raw_text": "{\"words\": [{\"text\": \"crowd\", \"start_s\": 0.1, \"end_s\": 0.5}, {\"text\": \"noise\", \"start_s\": 0.6, \"end_s\": 1.05}, {\"text\": \"makes\", \"start_s\": 1.15, \"end_s\": 1.5}, {\"text\": \"this\", \"start_s\": 1.55, \"end_s\": 1.8}, {\"text\": \"hard\", \"start_s\": 1.85, \"end_s\": 2.2}], \"full_text\": \"crowd noise makes this hard\", \"low_confidence\": true}",
   "output": {
