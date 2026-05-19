@@ -217,6 +217,66 @@ async def list_jobs(
     return AdminJobListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
+# ── un-reap ──────────────────────────────────────────────────────────────────
+
+
+class UnReapResponse(BaseModel):
+    restored: int
+    ids: list[str]
+
+
+@router.post(
+    "/un-reap",
+    response_model=UnReapResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def un_reap_falsely_failed_jobs(
+    db: AsyncSession = Depends(get_db),
+) -> UnReapResponse:
+    """Restore jobs that the pre-#243 reaper falsely flipped to processing_failed.
+
+    Matches the exact reaper UPDATE fingerprint at
+    `src/apps/api/app/tasks/reaper.py:120-127` (status=processing_failed +
+    failure_reason=unknown + error_detail beginning with "Worker died with no
+    recovery" + assembly_plan carries an output_url proving the run actually
+    succeeded). For template jobs the status is restored to template_ready;
+    for music jobs to music_ready.
+
+    Idempotent: re-running returns {"restored": 0, "ids": []} because the
+    restored rows no longer match the fingerprint.
+    """
+    from sqlalchemy import case, update  # noqa: PLC0415
+
+    # Use a JSONB existence check (assembly_plan ? 'output_url') so we only
+    # restore rows that actually have a usable output. SQLAlchemy renders this
+    # via the .has_key() / op("?") accessor.
+    stmt = (
+        update(Job)
+        .where(
+            Job.status == "processing_failed",
+            Job.failure_reason == "unknown",
+            Job.error_detail.like("Worker died with no recovery%"),
+            Job.assembly_plan.op("?")("output_url"),
+        )
+        .values(
+            status=case(
+                (Job.job_type == "template", "template_ready"),
+                (Job.job_type == "music", "music_ready"),
+                else_=Job.status,
+            ),
+            failure_reason=None,
+            error_detail=None,
+        )
+        .returning(Job.id)
+    )
+    result = await db.execute(stmt)
+    restored_ids = [str(row[0]) for row in result.fetchall()]
+    await db.commit()
+
+    log.info("admin_un_reap", restored=len(restored_ids))
+    return UnReapResponse(restored=len(restored_ids), ids=restored_ids)
+
+
 @router.get("/{job_id}/debug", response_model=JobDebugResponse)
 async def get_job_debug(
     job_id: str,

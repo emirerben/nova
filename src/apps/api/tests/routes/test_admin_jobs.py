@@ -143,6 +143,122 @@ class TestListJobs:
         assert item["failure_count"] == 2
 
 
+# ── Un-reap endpoint ─────────────────────────────────────────────────────────
+
+
+class TestUnReapJobs:
+    """POST /admin/jobs/un-reap restores jobs the pre-#243 reaper falsely failed.
+
+    Empirical fingerprint (from src/apps/api/app/tasks/reaper.py:120-127):
+      status='processing_failed' AND failure_reason='unknown'
+      AND error_detail LIKE 'Worker died with no recovery%'
+      AND assembly_plan ? 'output_url'   (JSONB key existence — proves success)
+    """
+
+    def test_requires_admin_token(self, client):
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            res = client.post("/admin/jobs/un-reap")
+        assert res.status_code in (401, 422)
+
+    def test_returns_restored_ids_from_returning_clause(self, client):
+        """The UPDATE ... RETURNING id surfaces every row touched."""
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+
+            restored = [uuid.uuid4() for _ in range(3)]
+
+            async def _gen():
+                db = AsyncMock()
+                result = MagicMock()
+                result.fetchall.return_value = [(rid,) for rid in restored]
+                db.execute = AsyncMock(return_value=result)
+                db.commit = AsyncMock()
+                yield db
+
+            app.dependency_overrides[get_db] = _gen
+            try:
+                res = client.post(
+                    "/admin/jobs/un-reap",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["restored"] == 3
+        assert set(body["ids"]) == {str(rid) for rid in restored}
+
+    def test_zero_matches_returns_empty_list_idempotent(self, client):
+        """Re-running after the first call: WHERE clause excludes already-restored rows."""
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+
+            async def _gen():
+                db = AsyncMock()
+                result = MagicMock()
+                result.fetchall.return_value = []
+                db.execute = AsyncMock(return_value=result)
+                db.commit = AsyncMock()
+                yield db
+
+            app.dependency_overrides[get_db] = _gen
+            try:
+                res = client.post(
+                    "/admin/jobs/un-reap",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["restored"] == 0
+        assert body["ids"] == []
+
+    def test_sql_carries_reaper_fingerprint_filters(self, client):
+        """Compile the UPDATE statement and verify it includes every WHERE clause
+        from the reaper fingerprint. Without these, the endpoint would
+        retroactively restore jobs that genuinely failed.
+        """
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+
+            captured: dict = {}
+
+            async def _gen():
+                db = AsyncMock()
+                result = MagicMock()
+                result.fetchall.return_value = []
+
+                async def _exec(stmt, *args, **kwargs):
+                    captured["stmt"] = stmt
+                    return result
+
+                db.execute = _exec
+                db.commit = AsyncMock()
+                yield db
+
+            app.dependency_overrides[get_db] = _gen
+            try:
+                res = client.post(
+                    "/admin/jobs/un-reap",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        sql_str = str(captured["stmt"].compile()).lower()
+        # Every reaper-fingerprint filter must be present in the UPDATE.
+        assert "status" in sql_str
+        assert "failure_reason" in sql_str
+        assert "error_detail" in sql_str
+        assert "like" in sql_str  # error_detail LIKE 'Worker died...%'
+        assert "assembly_plan" in sql_str  # JSONB ? 'output_url' existence check
+
+
 # ── Detail endpoint ──────────────────────────────────────────────────────────
 
 
