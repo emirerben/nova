@@ -356,6 +356,11 @@ def analyze_template_task(self, template_id: str) -> None:
                                     f"Recipe regen from music track failed: {exc}"
                                 )[:1000]
                     template.analysis_status = "ready"
+                    # Audio-only recipes are regenerated from beat timestamps
+                    # — no LLM agents contributed. Empty dict signals "staleness
+                    # check is N/A" so the admin UI doesn't show a permanent
+                    # STALE badge on these rows.
+                    template.recipe_cached_versions = {}
                     if template.error_detail is None or "Recipe regen" not in (
                         template.error_detail or ""
                     ):
@@ -504,6 +509,14 @@ def analyze_template_task(self, template_id: str) -> None:
 
                     template.recipe_cached = recipe_dict
                     template.recipe_cached_at = datetime.now(UTC)
+                    # Persist the live AgentSpec.prompt_version map so the admin UI
+                    # can flag this row as STALE if any agent's prompt rotates later.
+                    # See app/services/template_staleness.py for the rationale.
+                    from app.services.template_staleness import (  # noqa: PLC0415
+                        capture_recipe_versions,
+                    )
+
+                    template.recipe_cached_versions = capture_recipe_versions(is_agentic=False)
                     template.analysis_status = "ready"
                     if audio_gcs and not template.audio_gcs_path:
                         template.audio_gcs_path = audio_gcs

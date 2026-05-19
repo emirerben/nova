@@ -94,6 +94,11 @@ class VideoTemplate(Base):
     gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     recipe_cached: Mapped[dict | None] = mapped_column(JSONB)
     recipe_cached_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    # {agent_name: prompt_version} captured when recipe_cached was written.
+    # The admin staleness check compares this against live AgentSpec.prompt_version
+    # values. NULL = unknown (pre-migration row) → treated as stale so existing
+    # templates surface for reanalysis on first deploy.
+    recipe_cached_versions: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # "analyzing" → Gemini analysis in progress; "ready" → recipe_cached populated
     analysis_status: Mapped[str] = mapped_column(Text, nullable=False, default="analyzing")
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)

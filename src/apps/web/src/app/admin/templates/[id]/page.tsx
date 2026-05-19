@@ -276,6 +276,19 @@ export default function TemplateDetailPage() {
                   Agentic
                 </span>
               )}
+              {(template.recipe_stale_agents ?? []).length > 0 && !template.archived_at && (
+                <span
+                  className="text-xs bg-amber-900/40 text-amber-300 border border-amber-800/60 px-2 py-0.5 rounded"
+                  title={
+                    `Recipe was materialized under older prompt versions for: ` +
+                    `${(template.recipe_stale_agents ?? [])
+                      .map((a) => a.split(".").slice(-1)[0])
+                      .join(", ")}. Click Reanalyze to rebuild.`
+                  }
+                >
+                  Stale recipe
+                </span>
+              )}
               {template.published_at && !template.archived_at && (
                 <span className="text-xs bg-green-900/40 text-green-400 px-2 py-0.5 rounded">Published</span>
               )}
