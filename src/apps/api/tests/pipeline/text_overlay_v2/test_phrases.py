@@ -349,3 +349,57 @@ def test_full_pipeline_on_not_just_luck_ocr_ground_truth():
     # Phrases are temporally ordered.
     for a, b in zip(phrases, phrases[1:]):
         assert a.start_t_s <= b.start_t_s
+
+
+# ── atomize_per_event mode (used by the word-by-word pipeline) ────────────────
+
+
+def test_atomize_per_event_produces_one_phrase_per_event():
+    # Two events that overlap in time AND share an x-band. Default mode merges
+    # them into one two-line phrase; atomize_per_event keeps them separate.
+    # "if" lives 0.0-1.0 (3 frames); "you" appears at 0.5 while "if" is still up.
+    detections = [
+        make_detection(0.0, "if", x_center=0.5, y_center=0.45),
+        make_detection(0.5, "if", x_center=0.5, y_center=0.45),
+        make_detection(1.0, "if", x_center=0.5, y_center=0.45),
+        make_detection(0.5, "you", x_center=0.5, y_center=0.50),
+        make_detection(1.0, "you", x_center=0.5, y_center=0.50),
+    ]
+    events = group_detections_into_events(detections)
+    assert len(events) == 2
+
+    # Default mode: time-overlapping same-x-band events merge into one phrase.
+    default_phrases = reconstruct_phrases(events)
+    assert len(default_phrases) == 1
+    assert default_phrases[0].sample_text == "if\nyou"
+
+    # Atomize mode keeps each event as its own one-line phrase.
+    atomic_phrases = reconstruct_phrases(events, atomize_per_event=True)
+    assert len(atomic_phrases) == 2
+    assert [p.sample_text for p in atomic_phrases] == ["if", "you"]
+    # Each phrase preserves its event's own start/end times — no merging.
+    assert atomic_phrases[0].start_t_s == 0.0
+    assert atomic_phrases[0].end_t_s == 1.0
+    assert atomic_phrases[1].start_t_s == 0.5
+    assert atomic_phrases[1].end_t_s == 1.0
+
+
+def test_atomize_per_event_keeps_same_line_words_separate():
+    # Same-line same-time words (e.g. "if you" appearing as two word events at
+    # the same frame) would normally cluster into one multi-line phrase by
+    # x-band. Atomize keeps them separate so each word has its own overlay.
+    detections = [
+        # Two events at t=1.0, same y, different x — same horizontal line.
+        make_detection(1.0, "if", x_center=0.42, y_center=0.5),
+        make_detection(1.0, "you", x_center=0.58, y_center=0.5),
+    ]
+    events = group_detections_into_events(detections)
+    atomic_phrases = reconstruct_phrases(events, atomize_per_event=True)
+    assert len(atomic_phrases) == 2
+    assert {p.sample_text for p in atomic_phrases} == {"if", "you"}
+    # Both start at the same time (same frame appearance).
+    assert all(p.start_t_s == 1.0 for p in atomic_phrases)
+
+
+def test_atomize_per_event_empty_input_returns_empty():
+    assert reconstruct_phrases([], atomize_per_event=True) == []

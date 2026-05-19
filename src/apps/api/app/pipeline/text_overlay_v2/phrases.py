@@ -45,6 +45,7 @@ def reconstruct_phrases(
     events: list[TextEvent],
     *,
     x_band_threshold: float = DEFAULT_X_BAND_THRESHOLD,
+    atomize_per_event: bool = False,
 ) -> list[Phrase]:
     """Cluster `TextEvent`s into visually coherent phrases.
 
@@ -57,9 +58,21 @@ def reconstruct_phrases(
     Multiple eligible phrases are broken by picking the spatially-closest
     one. This matters when two phrases briefly overlap in time but at
     different X positions — each event lands in its own.
+
+    `atomize_per_event=True` skips clustering entirely — each input event
+    becomes its own one-line phrase. Used by the word-by-word pipeline
+    (after `tokenize_detections_into_words`) where each event already
+    represents a single word and same-line same-time words must NOT be
+    re-merged into a multi-line phrase.
     """
     if not events:
         return []
+
+    if atomize_per_event:
+        return [
+            _finalize([ev])
+            for ev in sorted(events, key=lambda e: (e.start_t_s, e.aabb[1]))
+        ]
 
     events_sorted = sorted(events, key=lambda e: (e.start_t_s, e.aabb[1]))
     open_phrases: list[list[TextEvent]] = []
