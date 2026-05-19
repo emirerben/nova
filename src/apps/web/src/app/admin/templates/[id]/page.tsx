@@ -8,6 +8,7 @@ import {
   type RecipeVersionItem,
   type RequiredInput,
   type TemplateMetrics,
+  adminCreateRerenderJob,
   adminCreateTestJob,
   adminGetLatestTestJob,
   adminGetMetrics,
@@ -621,37 +622,33 @@ function TestTab({
     intervalMs: 2000,
   });
 
-  // Rerun: rerender with updated recipe (no Gemini needed)
+  // Rerun: rerender with updated recipe (no Gemini needed). Falls back to
+  // reroll if the slot layout has drifted from the source job — reroll is a
+  // public endpoint, so it bypasses the admin proxy.
   const handleRerun = useCallback(async () => {
     const sourceId = latestJob?.job_id || testJobId;
     if (!sourceId) return;
     setRerolling(true);
     setTestError(null);
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const token = typeof window !== "undefined" ? sessionStorage.getItem("nova_admin_token") : null;
     try {
-      // Try rerender first (no Gemini, uses locked slots)
-      let res = await fetch(`${apiUrl}/admin/templates/${template.id}/rerender-job`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { "X-Admin-Token": token } : {}),
-        },
-        body: JSON.stringify({ source_job_id: sourceId }),
-      });
-      if (!res.ok) {
-        // Fallback to reroll if rerender fails (slot mismatch etc.)
-        res = await fetch(`${apiUrl}/template-jobs/${sourceId}/reroll`, {
+      let newJobId: string;
+      try {
+        const data = await adminCreateRerenderJob(template.id, sourceId);
+        newJobId = data.job_id;
+      } catch {
+        const fallback = await fetch(`${apiUrl}/template-jobs/${sourceId}/reroll`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
         });
+        if (!fallback.ok) {
+          const detail = await fallback.json().catch(() => ({}));
+          throw new Error(detail.detail || `Rerun failed (${fallback.status})`);
+        }
+        const data = await fallback.json();
+        newJobId = data.job_id;
       }
-      if (!res.ok) {
-        const detail = await res.json().catch(() => ({}));
-        throw new Error(detail.detail || `Rerun failed (${res.status})`);
-      }
-      const data = await res.json();
-      setTestJobId(data.job_id);
+      setTestJobId(newJobId);
     } catch (err) {
       setTestError(err instanceof Error ? err.message : "Rerun failed");
     } finally {
