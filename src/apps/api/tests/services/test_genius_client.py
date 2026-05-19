@@ -10,6 +10,7 @@ from app.services.genius_client import (
     GeniusError,
     GeniusLyrics,
     GeniusNotFound,
+    _build_search_query,
     _extract_lyric_lines,
     _pick_best_hit,
     search_lyrics,
@@ -33,6 +34,46 @@ def test_pick_best_hit_prefers_artist_match() -> None:
         _hit("Hello", "Lionel Richie"),
     ]
     assert _pick_best_hit(hits, "Hello", "Adele")["result"]["primary_artist"]["name"] == "Adele"
+
+
+def test_build_search_query_strips_youtube_artist_prefix() -> None:
+    """yt-dlp passes 'Artist - Title' as the title field. Strip that prefix when
+    the artist is already known so the query is just 'Title Artist', not
+    'Artist - Title Artist'."""
+    q = _build_search_query("The Weeknd - Can't Feel My Face", "The Weeknd")
+    assert q == "Can't Feel My Face The Weeknd"
+
+
+def test_build_search_query_strips_official_video_tag() -> None:
+    """Parenthetical noise like '(Official Video)' tanks Genius relevance."""
+    q = _build_search_query(
+        "The Weeknd - Can't Feel My Face (Official Video)", "The Weeknd"
+    )
+    assert q == "Can't Feel My Face The Weeknd"
+
+
+def test_build_search_query_strips_brackets_and_multiple_tags() -> None:
+    q = _build_search_query("Blinding Lights [Official Music Video] (HD)", "The Weeknd")
+    assert q == "Blinding Lights The Weeknd"
+
+
+def test_build_search_query_keeps_legitimate_parens() -> None:
+    """'(feat. ...)' is part of the canonical title — don't strip it."""
+    q = _build_search_query("Save Your Tears (feat. Ariana Grande)", "The Weeknd")
+    assert "feat. Ariana Grande" in q
+    assert "The Weeknd" in q
+
+
+def test_build_search_query_handles_missing_artist() -> None:
+    assert _build_search_query("Bohemian Rhapsody", "") == "Bohemian Rhapsody"
+    assert _build_search_query("", "Queen") == "Queen"
+    assert _build_search_query("", "") == ""
+
+
+def test_build_search_query_handles_case_mismatch_in_prefix() -> None:
+    """Title from YouTube may use different capitalization than the stored artist."""
+    q = _build_search_query("THE WEEKND - Can't Feel My Face", "The Weeknd")
+    assert q == "Can't Feel My Face The Weeknd"
 
 
 def test_pick_best_hit_no_artist_returns_first() -> None:
