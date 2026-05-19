@@ -55,7 +55,56 @@ export interface MusicTrackDetail {
   published_at: string | null;
   archived_at: string | null;
   track_config: TrackConfig | null;
+  lyrics_status: LyricsStatus;
+  lyrics_source: string | null;
+  lyrics_error_detail: string | null;
+  lyrics_cached: LyricsCache | null;
+  lyrics_extracted_at: string | null;
   created_at: string;
+}
+
+export type LyricsStatus =
+  | "pending"
+  | "extracting"
+  | "ready"
+  | "failed"
+  | "unavailable";
+
+export type LyricsStyle = "karaoke" | "per-word-pop";
+
+/** Per-template visual config. Stored nested under `track_config.lyrics_config`. */
+export interface LyricsConfig {
+  enabled: boolean;
+  style: LyricsStyle;
+  position?: string;
+  text_color?: string;
+  highlight_color?: string; // karaoke only
+  font_style?: "display" | "sans" | "serif";
+  text_size?: "small" | "medium" | "large" | "xlarge";
+  outline_px?: number;
+}
+
+export interface LyricsCacheWord {
+  text: string;
+  start_s: number;
+  end_s: number;
+}
+
+export interface LyricsCacheLine {
+  text: string;
+  start_s: number;
+  end_s: number;
+  words: LyricsCacheWord[];
+}
+
+export interface LyricsCache {
+  source: string;
+  language: string;
+  track_title_matched: string;
+  artist_matched: string;
+  genius_url: string;
+  confidence: number;
+  lines: LyricsCacheLine[];
 }
 
 export interface TrackConfig {
@@ -64,6 +113,8 @@ export interface TrackConfig {
   slot_every_n_beats: number;
   required_clips_min: number;
   required_clips_max: number;
+  /** Lives nested in the same JSONB column to avoid an extra round trip. */
+  lyrics_config?: LyricsConfig;
 }
 
 export interface AdminMusicListResponse {
@@ -198,6 +249,19 @@ export async function adminReanalyzeMusicTrack(
     method: "POST",
   });
   if (!res.ok) throw new Error(`Reanalyze failed: ${res.status}`);
+  return res.json();
+}
+
+export async function adminExtractLyrics(
+  id: string,
+): Promise<{ track_id: string; analysis_status: string }> {
+  const res = await fetch(`${ADMIN_PROXY}/music-tracks/${id}/extract-lyrics`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? `Extract lyrics failed: ${res.status}`);
+  }
   return res.json();
 }
 

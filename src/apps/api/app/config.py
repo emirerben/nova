@@ -69,6 +69,15 @@ class Settings(BaseSettings):
     whisper_backend: str = "openai-api"  # "openai-api" | "local"
     whisper_model: str = "base.en"
 
+    # Genius API (lyric text source for the lyrics agent). Free tier — get a
+    # client access token at https://genius.com/api-clients. Leave empty to
+    # fall back to Whisper-only transcription (no canonical text).
+    genius_access_token: str = ""
+    # Hard ceiling on lyric extraction wall time (Genius search + Whisper
+    # transcription + alignment). Beat analysis caps at 300s; the lyric task
+    # runs after it so we keep a tight budget.
+    lyrics_extraction_timeout_s: float = 90.0
+
     # CORS — JSON array in env: ALLOWED_ORIGINS='["https://nova.io","http://localhost:3000"]'
     allowed_origins: list[str] = ["http://localhost:3000"]
 

@@ -30,6 +30,7 @@ import structlog
 
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
+from app.pipeline.lyric_injector import inject_lyric_overlays
 from app.pipeline.music_recipe import (
     DEFAULT_WINDOW_S,
     auto_best_section,
@@ -40,6 +41,8 @@ from app.storage import download_to_file
 from app.tasks.template_orchestrate import (
     _analyze_clips_parallel,
     _assemble_clips,
+    _burn_text_overlays,
+    _collect_absolute_overlays,
     _download_clips_parallel,
     _enrich_slots_with_energy,
     _mix_template_audio,
@@ -214,6 +217,17 @@ def analyze_music_track_task(self, track_id: str) -> None:
                     track_id,
                 )
 
+            # ── Lyric extraction (new, fail-open) ────────────────────────
+            # Runs INSIDE the same temp dir so we reuse the already-downloaded
+            # audio file instead of re-downloading from GCS. Any failure here
+            # never blocks the track from being marked `analysis_status=ready`.
+            lyrics_result = _run_lyrics_extraction(
+                local_audio,
+                track_id,
+                best_start_s=new_config["best_start_s"],
+                best_end_s=new_config["best_end_s"],
+            )
+
         with _sync_session() as db:
             track = db.get(MusicTrack, track_id)
             if track:
@@ -223,6 +237,7 @@ def analyze_music_track_task(self, track_id: str) -> None:
                     from datetime import UTC, datetime  # noqa: PLC0415
                     track.recipe_cached = recipe_cached
                     track.recipe_cached_at = datetime.now(UTC)
+                _apply_lyrics_result(track, lyrics_result)
                 track.analysis_status = "ready"
                 db.commit()
 
@@ -234,6 +249,7 @@ def analyze_music_track_task(self, track_id: str) -> None:
             best_end=best_end,
             n_slots=n_slots,
             has_gemini_recipe=recipe_cached is not None,
+            lyrics_status=lyrics_result.get("status") if lyrics_result else "skipped",
         )
 
     except Exception as exc:
@@ -242,6 +258,72 @@ def analyze_music_track_task(self, track_id: str) -> None:
 
 
 # ── orchestrate_music_job ─────────────────────────────────────────────────────
+
+
+@celery_app.task(
+    name="tasks.extract_track_lyrics_task",
+    bind=True,
+    max_retries=0,
+    soft_time_limit=180,
+    time_limit=240,
+)
+def extract_track_lyrics_task(self, track_id: str) -> None:
+    """Re-run lyric extraction on an already-analyzed track.
+
+    Distinct from `analyze_music_track_task` so the admin can re-extract
+    lyrics without re-running beat detection (which is the expensive part
+    and rarely needs to change). The audio file is downloaded from GCS into
+    a temp dir, exactly the same shape the analyze task uses.
+    """
+    log.info("extract_track_lyrics_start", track_id=track_id)
+
+    with _sync_session() as db:
+        track = db.get(MusicTrack, track_id)
+        if track is None:
+            log.error("track_not_found_for_lyrics", track_id=track_id)
+            return
+        if not track.audio_gcs_path:
+            with _sync_session() as db2:
+                t2 = db2.get(MusicTrack, track_id)
+                if t2:
+                    t2.lyrics_status = "failed"
+                    t2.lyrics_error_detail = "no audio file"
+                    db2.commit()
+            return
+        audio_gcs = track.audio_gcs_path
+        cfg = track.track_config or {}
+        track.lyrics_status = "extracting"
+        track.lyrics_error_detail = None
+        db.commit()
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="nova_lyrics_extract_") as tmpdir:
+            local_audio = os.path.join(tmpdir, "audio.m4a")
+            download_to_file(audio_gcs, local_audio)
+            result = _run_lyrics_extraction(
+                local_audio,
+                track_id,
+                best_start_s=float(cfg.get("best_start_s", 0.0)),
+                best_end_s=float(cfg.get("best_end_s", 0.0)),
+            )
+        with _sync_session() as db:
+            track = db.get(MusicTrack, track_id)
+            if track:
+                _apply_lyrics_result(track, result)
+                db.commit()
+        log.info(
+            "extract_track_lyrics_done",
+            track_id=track_id,
+            status=result.get("status") if result else "unknown",
+        )
+    except Exception as exc:
+        log.error("extract_track_lyrics_failed", track_id=track_id, error=str(exc))
+        with _sync_session() as db:
+            t = db.get(MusicTrack, track_id)
+            if t:
+                t.lyrics_status = "failed"
+                t.lyrics_error_detail = str(exc)[:MAX_ERROR_DETAIL_LEN]
+                db.commit()
 
 
 @celery_app.task(
@@ -333,9 +415,26 @@ def _run_music_job(job_id: str) -> None:
             "duration_s": track.duration_s,
         }
         audio_gcs_path = track.audio_gcs_path
+        lyrics_cached = track.lyrics_cached
+        # Lyrics config lives next to the rest of the per-track admin tuning
+        # (best_start_s, slot_every_n_beats, etc) so admins can edit
+        # everything in one place. See app.routes.admin_music.update_music_track.
+        lyrics_config = (track.track_config or {}).get("lyrics_config") or {}
 
     # [3] Generate recipe from beats
     recipe_dict = generate_music_recipe(track_data)
+
+    # [3a] Inject lyric overlays (no-op when lyrics_config.enabled=False or
+    # track has no cached lyrics). Done BEFORE TemplateRecipe is built so the
+    # overlays flow through `_assemble_clips` like any other text overlay.
+    cfg = track_data["track_config"]
+    recipe_dict = inject_lyric_overlays(
+        recipe_dict,
+        lyrics_cached,
+        best_start_s=float(cfg.get("best_start_s", 0.0)),
+        best_end_s=float(cfg.get("best_end_s", 0.0)),
+        lyrics_config=lyrics_config,
+    )
 
     # Build a TemplateRecipe-compatible object (use the existing dataclass)
     from app.pipeline.agents.gemini_analyzer import TemplateRecipe  # noqa: PLC0415
@@ -454,6 +553,111 @@ def _run_music_job(job_id: str) -> None:
     log.info("music_job_done", job_id=job_id)
 
 
+# ── Lyric extraction helper ───────────────────────────────────────────────────
+
+
+def _run_lyrics_extraction(
+    local_audio: str,
+    track_id: str,
+    *,
+    best_start_s: float,
+    best_end_s: float,
+) -> dict:
+    """Call LyricsExtractionAgent and return a status-tagged result.
+
+    Returns one of:
+      {"status": "ready",       "output": <LyricsOutput.model_dump()>, "source": "..."}
+      {"status": "unavailable", "error": "<short str>"}   # no usable output (e.g. instrumental)
+      {"status": "failed",      "error": "<short str>"}   # whisper/network error
+      {"status": "skipped",     "reason": "..."}          # OPENAI_API_KEY missing, etc.
+
+    Never raises — caller is expected to slot whatever is returned into the
+    DB via `_apply_lyrics_result`.
+    """
+    from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
+    from app.agents.lyrics import LyricsExtractionAgent, LyricsInput  # noqa: PLC0415
+    from app.config import settings  # noqa: PLC0415
+
+    # Whisper is required; without it we can't produce timing data. Bail fast.
+    if not settings.openai_api_key:
+        log.info("lyrics_extract_skipped", reason="OPENAI_API_KEY missing")
+        return {"status": "skipped", "reason": "openai_api_key_missing"}
+
+    # Look up the most recent track metadata for the agent input (title/artist
+    # may have been edited since dispatch).
+    try:
+        with _sync_session() as db:
+            track = db.get(MusicTrack, track_id)
+            if track is None:
+                return {"status": "failed", "error": "track_not_found"}
+            title = (track.title or "").strip()
+            artist = (track.artist or "").strip()
+    except Exception as exc:
+        return {"status": "failed", "error": f"db_lookup_failed: {exc}"}
+
+    # Rule-based agents bypass the model client; passing None is safe because
+    # Agent.__init__ stores it without calling any methods on it.
+    agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
+
+    try:
+        output = agent.run(
+            LyricsInput(
+                audio_path=local_audio,
+                track_title=title,
+                artist=artist,
+                best_start_s=float(best_start_s or 0.0),
+                best_end_s=float(best_end_s or 0.0),
+            ),
+            ctx=RunContext(job_id=f"track:{track_id}"),
+        )
+    except TerminalError as exc:
+        msg = str(exc)
+        # "whisper returned zero words" → instrumental; surface as unavailable
+        # so the admin UI can show "no lyrics" instead of "extraction failed".
+        if "zero words" in msg or "instrumental" in msg:
+            return {"status": "unavailable", "error": msg[:500]}
+        return {"status": "failed", "error": msg[:500]}
+    except Exception as exc:  # safety net — agent runtime should already wrap
+        return {"status": "failed", "error": str(exc)[:500]}
+
+    if output.is_empty:
+        return {"status": "unavailable", "error": "no_lines_after_alignment"}
+
+    return {
+        "status": "ready",
+        "source": output.source,
+        "output": output.model_dump(),
+    }
+
+
+def _apply_lyrics_result(track: MusicTrack, result: dict | None) -> None:
+    """Persist the result of `_run_lyrics_extraction` onto the track row."""
+    if not result:
+        return
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    status = result.get("status") or "failed"
+    if status == "ready":
+        track.lyrics_status = "ready"
+        track.lyrics_cached = result.get("output")
+        track.lyrics_source = result.get("source") or "genius+whisper"
+        track.lyrics_error_detail = None
+        track.lyrics_extracted_at = datetime.now(UTC)
+    elif status == "unavailable":
+        track.lyrics_status = "unavailable"
+        track.lyrics_cached = None
+        track.lyrics_error_detail = (result.get("error") or "")[:MAX_ERROR_DETAIL_LEN]
+        track.lyrics_extracted_at = datetime.now(UTC)
+    elif status == "skipped":
+        # Don't overwrite a previous successful extraction just because the
+        # current run was skipped (e.g. OPENAI_API_KEY temporarily unset).
+        if track.lyrics_status not in ("ready", "unavailable"):
+            track.lyrics_status = "pending"
+    else:  # failed
+        track.lyrics_status = "failed"
+        track.lyrics_error_detail = (result.get("error") or "")[:MAX_ERROR_DETAIL_LEN]
+
+
 # ── Gemini audio analysis helper ──────────────────────────────────────────────
 
 
@@ -568,6 +772,25 @@ def _run_templated_music_job(job_id: str) -> None:
             )
         recipe_dict: dict = dict(track.recipe_cached)
         audio_gcs_path = track.audio_gcs_path
+        lyrics_cached_tmpl = track.lyrics_cached
+        track_cfg_tmpl = track.track_config or {}
+        lyrics_config_tmpl = track_cfg_tmpl.get("lyrics_config") or {}
+
+    # Inject lyric overlays for templated tracks. `best_start_s` defaults to 0
+    # for templated tracks (slot times already start at the beginning of the
+    # audio file).
+    recipe_dict = inject_lyric_overlays(
+        recipe_dict,
+        lyrics_cached_tmpl,
+        best_start_s=float(track_cfg_tmpl.get("best_start_s", 0.0)),
+        best_end_s=float(
+            track_cfg_tmpl.get("best_end_s", 0.0)
+        ) or sum(
+            float(s.get("target_duration_s", 0.0))
+            for s in recipe_dict.get("slots", [])
+        ),
+        lyrics_config=lyrics_config_tmpl,
+    )
 
     slots: list[dict] = recipe_dict.get("slots", []) or []
     if not slots:
@@ -802,6 +1025,31 @@ def _run_templated_music_job(job_id: str) -> None:
             assembled_path,
             tmpdir,
         )
+
+        # [6a] Burn lyric overlays (templated jobs don't otherwise hit
+        # _burn_text_overlays — only lyric overlays survive the templated
+        # path; admin-authored text on templated tracks is rare and is
+        # tracked as v2). Skipped when injection produced nothing.
+        slot_durations = [
+            float(step.slot.get("target_duration_s", 0.0)) for step in steps
+        ]
+        abs_overlays = _collect_absolute_overlays(
+            [{"slot": step.slot, "clip_id": step.clip_id} for step in steps],
+            slot_durations,
+            clip_metas=None,
+            subject="",
+        )
+        if abs_overlays:
+            burned_path = os.path.join(tmpdir, "burned.mp4")
+            _burn_text_overlays(assembled_path, abs_overlays, burned_path, tmpdir)
+            if os.path.exists(burned_path) and os.path.getsize(burned_path) > 0:
+                assembled_path = burned_path
+            else:
+                log.warning(
+                    "templated_lyric_burn_empty",
+                    job_id=job_id,
+                    overlays=len(abs_overlays),
+                )
 
         # [7] Mix in template audio
         log.info("templated_mix_audio_start", job_id=job_id)

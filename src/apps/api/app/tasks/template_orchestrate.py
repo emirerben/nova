@@ -2226,6 +2226,13 @@ def _collect_absolute_overlays(
             # Pass through spans for rich inline formatting
             if ov.get("spans"):
                 entry["spans"] = ov["spans"]
+            # Pass through karaoke-line word timings + highlight color. Word
+            # timings are stored relative to the overlay's start (NOT the
+            # video timeline), so cumulative_s offset does not apply here.
+            if ov.get("word_timings"):
+                entry["word_timings"] = ov["word_timings"]
+            if ov.get("highlight_color"):
+                entry["highlight_color"] = ov["highlight_color"]
             # Pass through player-card fields so the renderer receives
             # jersey_no + player_name (the special-effect path needs both).
             if ov.get("jersey_no"):
@@ -2373,6 +2380,13 @@ def _collect_absolute_overlays(
                 # over the red, and the renderer never gets the red value.
                 and prev.get("text_color") == ov.get("text_color")
                 and not prev.get("spans") and not ov.get("spans")
+                # Karaoke lines carry per-overlay word timings tied to a
+                # specific [start_s, end_s] window; merging two karaoke
+                # overlays would invalidate the word timings on whichever
+                # one got absorbed. Lyric injector already places each line
+                # at its own timestamp, so dedup never applies here.
+                and ov.get("effect") != "karaoke-line"
+                and prev.get("effect") != "karaoke-line"
                 and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
             ):
                 # Merge: extend previous overlay's end time

@@ -84,6 +84,12 @@ class CreateMusicTrackRequest(BaseModel):
         return v.strip()
 
 
+_LYRICS_STYLES = {"karaoke", "per-word-pop"}
+_LYRICS_POSITIONS = {
+    "top", "bottom", "center", "center-above", "center-below", "center-label",
+}
+
+
 class UpdateMusicTrackRequest(BaseModel):
     title: str | None = None
     artist: str | None = None
@@ -100,7 +106,44 @@ class UpdateMusicTrackRequest(BaseModel):
         if "best_end_s" in cfg and "best_start_s" in cfg:
             if float(cfg["best_end_s"]) <= float(cfg["best_start_s"]):
                 raise ValueError("best_end_s must be greater than best_start_s")
+
+        # Lyrics config is nested under track_config (one JSON column for all
+        # per-song admin tuning).
+        lyrics_cfg = cfg.get("lyrics_config")
+        if lyrics_cfg is not None:
+            if not isinstance(lyrics_cfg, dict):
+                raise ValueError("lyrics_config must be an object")
+            if "style" in lyrics_cfg and lyrics_cfg["style"] not in _LYRICS_STYLES:
+                raise ValueError(
+                    f"lyrics_config.style must be one of {sorted(_LYRICS_STYLES)}"
+                )
+            if (
+                "position" in lyrics_cfg
+                and lyrics_cfg["position"] not in _LYRICS_POSITIONS
+            ):
+                raise ValueError(
+                    f"lyrics_config.position must be one of {sorted(_LYRICS_POSITIONS)}"
+                )
+            for hex_key in ("text_color", "highlight_color"):
+                v = lyrics_cfg.get(hex_key)
+                if v is not None and not _is_valid_hex(v):
+                    raise ValueError(
+                        f"lyrics_config.{hex_key} must be a #RRGGBB hex string"
+                    )
         return self
+
+
+def _is_valid_hex(s: object) -> bool:
+    if not isinstance(s, str):
+        return False
+    candidate = s.strip().lstrip("#")
+    if len(candidate) != 6:
+        return False
+    try:
+        int(candidate, 16)
+    except ValueError:
+        return False
+    return True
 
 
 class MusicTrackResponse(BaseModel):
@@ -118,6 +161,14 @@ class MusicTrackResponse(BaseModel):
     published_at: datetime | None
     archived_at: datetime | None
     track_config: dict | None
+    # Lyrics fields — see app.agents.lyrics + app.models.MusicTrack for shape.
+    # `lyrics_cached` is full per-line + per-word JSON; in list responses we
+    # still surface it so the frontend can preview without an extra fetch.
+    lyrics_status: str
+    lyrics_source: str | None
+    lyrics_error_detail: str | None
+    lyrics_cached: dict | None
+    lyrics_extracted_at: datetime | None
     created_at: datetime
 
 
@@ -156,6 +207,11 @@ def _to_response(t: MusicTrack) -> MusicTrackResponse:
         published_at=t.published_at,
         archived_at=t.archived_at,
         track_config=t.track_config,
+        lyrics_status=t.lyrics_status,
+        lyrics_source=t.lyrics_source,
+        lyrics_error_detail=t.lyrics_error_detail,
+        lyrics_cached=t.lyrics_cached,
+        lyrics_extracted_at=t.lyrics_extracted_at,
         created_at=t.created_at,
     )
 
@@ -583,6 +639,45 @@ async def update_music_track(
     await db.refresh(track)
     log.info("music_track_updated", track_id=track_id)
     return _to_response(track)
+
+
+@router.post(
+    "/{track_id}/extract-lyrics",
+    response_model=ReanalyzeResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def extract_track_lyrics(
+    track_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> ReanalyzeResponse:
+    """Re-run lyric extraction without touching beat detection.
+
+    Useful when the admin updates the title/artist (so Genius can find a
+    better match) or when the Whisper / Genius services were down at the
+    original analyze time.
+    """
+    track = await _get_track_or_404(track_id, db)
+
+    if not track.audio_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Track has no audio file — re-upload the track first.",
+        )
+    if track.lyrics_status == "extracting":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Lyric extraction is already in progress for this track.",
+        )
+
+    track.lyrics_status = "extracting"
+    track.lyrics_error_detail = None
+    await db.commit()
+
+    from app.tasks.music_orchestrate import extract_track_lyrics_task  # noqa: PLC0415
+    extract_track_lyrics_task.delay(track_id)
+
+    log.info("music_track_lyrics_dispatched", track_id=track_id)
+    return ReanalyzeResponse(track_id=track_id, analysis_status="extracting")
 
 
 @router.post(
