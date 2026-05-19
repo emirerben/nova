@@ -173,6 +173,7 @@ def extract_template_text_overlays(
     job_id: str | None = None,
     force_layer2: bool = False,
     gcs_path: str | None = None,
+    transcript_words: list[dict] | None = None,
 ) -> tuple[bool, int]:
     """Run TemplateTextAgent and merge results into recipe.slots in place.
 
@@ -217,12 +218,19 @@ def extract_template_text_overlays(
 
     agent = TemplateTextAgent(default_client())
     ctx = RunContext(job_id=job_id)
+    # `transcript_words` is what makes Stage E of the Layer-2 pipeline actually
+    # run. Without it the alignment LLM short-circuits via its empty-transcript
+    # early return and OCR garbage (duplicated tokens, stray characters)
+    # passes through unchanged. Caller (agentic_template_build) is responsible
+    # for sourcing the transcript; we default to [] so non-Layer-2 callers and
+    # tests are unaffected.
     inp = TemplateTextInput(
         file_uri=file_ref.uri,
         file_mime=getattr(file_ref, "mime_type", None) or "video/mp4",
         slot_boundaries_s=boundaries,
         force_layer2=force_layer2,
         gcs_path=gcs_path,
+        transcript_words=transcript_words or [],
     )
 
     try:

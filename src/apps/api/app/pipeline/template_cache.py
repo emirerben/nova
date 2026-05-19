@@ -98,7 +98,13 @@ AGENT_SET_RECIPE_PLUS_TEXT = "recipe+text"
 # therefore have no v1/v2 distinction — `text_overlay_version` is ignored for
 # that agent_set so their cache keys stay unchanged.
 TEXT_OVERLAY_VERSION_V1 = "v1"
-TEXT_OVERLAY_VERSION_V2 = "v2"
+# Bumped 2026-05-19: Stage E (text_alignment) prompt rewrite + Stage D dedup
+# + Stage G newline normalize + transcript wiring all changed the Layer-2
+# output semantics. Pre-fix cached recipes contain garbage like "if you if
+# you put put in" (prod job 87b7292b). Orphaning the v2 namespace forces
+# the next force_layer2 access on each template to re-analyze with the
+# fixed pipeline. Manual templates are unaffected.
+TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-19"
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.

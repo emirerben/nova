@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -202,9 +203,7 @@ def run_full_pipeline(
         # "if" and "if you" as different events that stage D then stacks as
         # redundant lines. See tokenize.py docstring for the full rationale.
         if atomize_words:
-            log.info(
-                "full_pipeline_stage_b5_start", n_detections=len(detections), job_id=job_id
-            )
+            log.info("full_pipeline_stage_b5_start", n_detections=len(detections), job_id=job_id)
             detections = tokenize_detections_into_words(detections)
             log.info(
                 "full_pipeline_stage_b5_done",
@@ -562,6 +561,31 @@ def _assign_slot_index(
     return best_slot
 
 
+_OVERLAY_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalize_overlay_text(text: str) -> str:
+    """Collapse internal whitespace and strip literal escape sequences.
+
+    `Phrase.sample_text` joins lines with `\\n`. When that string reaches the
+    overlay renderer (drawtext/ASS) the literal `\\n` was rendering as on-screen
+    text (`/N`) instead of a line break, because the downstream escaping path
+    treats it as a control sequence in the font's glyph table. Layer-2's target
+    is viral-template overlays where each phrase is one visible block — joining
+    lines with a single space gives the right rendered output for the 99% case
+    (single-word atomized phrases get unchanged single-word output).
+
+    Also strips known debug-marker suffixes that occasionally leak from
+    upstream OCR snippets (`[overlap_truncated]`, stray `\\N`).
+    """
+    if not text:
+        return text
+    cleaned = text.replace("[overlap_truncated]", "")
+    cleaned = cleaned.replace("\\N", " ").replace("\\n", " ")
+    cleaned = _OVERLAY_WHITESPACE_RE.sub(" ", cleaned).strip()
+    return cleaned
+
+
 def _classified_phrases_to_output(
     classified: list,
     *,
@@ -571,14 +595,18 @@ def _classified_phrases_to_output(
 
     Each `ClassifiedPhrase` is mapped to a `TemplateTextOverlay` with:
       - `slot_index` derived from `phrase.start_t_s` + `slot_boundaries_s`
-      - `sample_text` = phrase.sample_text (newline-joined lines)
+      - `sample_text` = phrase.sample_text, with embedded newlines + known
+        debug markers normalized to a single-line form via
+        `_normalize_overlay_text` (literal `\\n` was rendering as `/N` on
+        screen in prod job 87b7292b)
       - `start_s` / `end_s` from phrase timing
       - `bbox` from phrase aabb (converted: aabb is (x_min, y_min, x_max, y_max)
         in normalised coords; TextBBox wants center + extent)
       - `font_color_hex`, `effect`, `role`, `size_class` from classification
       - `bbox.sample_frame_t` = phrase.start_t_s (closest frame we have)
 
-    Invalid overlays (e.g. zero-area bbox) are skipped with a warning.
+    Invalid overlays (e.g. zero-area bbox, empty text post-normalize) are
+    skipped with a warning.
     """
     from pydantic import ValidationError  # noqa: PLC0415
 
@@ -591,6 +619,14 @@ def _classified_phrases_to_output(
     overlays: list[TemplateTextOverlay] = []
     for i, cp in enumerate(classified):
         phrase = cp.phrase
+        normalized_text = _normalize_overlay_text(phrase.sample_text)
+        if not normalized_text:
+            log.warning(
+                "full_pipeline_empty_text_after_normalize_skipped",
+                phrase_index=i,
+                raw_sample_text=phrase.sample_text[:60],
+            )
+            continue
         x_min, y_min, x_max, y_max = phrase.aabb
 
         # Convert axis-aligned bbox to center + extent.
@@ -604,7 +640,7 @@ def _classified_phrases_to_output(
             log.warning(
                 "full_pipeline_degenerate_bbox_skipped",
                 phrase_index=i,
-                sample_text=phrase.sample_text[:60],
+                sample_text=normalized_text[:60],
                 aabb=phrase.aabb,
             )
             continue
@@ -624,7 +660,7 @@ def _classified_phrases_to_output(
         try:
             overlay = TemplateTextOverlay(
                 slot_index=slot_index,
-                sample_text=phrase.sample_text,
+                sample_text=normalized_text,
                 start_s=start_s,
                 end_s=end_s,
                 bbox=TextBBox(
@@ -643,7 +679,7 @@ def _classified_phrases_to_output(
             log.warning(
                 "full_pipeline_overlay_validation_failed",
                 phrase_index=i,
-                sample_text=phrase.sample_text[:60],
+                sample_text=normalized_text[:60],
                 error=str(exc),
             )
             continue

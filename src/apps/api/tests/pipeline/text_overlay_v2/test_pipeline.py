@@ -20,6 +20,7 @@ from app.agents._schemas.text_overlay_ocr import FrameDetection, OcrPolygon
 from app.pipeline.text_overlay_v2.pipeline import (
     DEFAULT_OCR_CONCURRENCY,
     _dump_stage,
+    _normalize_overlay_text,
     run_phrase_pipeline_from_frames,
 )
 from app.services.video_frames import ExtractedFrame
@@ -309,3 +310,42 @@ def test_dump_stage_swallows_serialization_errors(tmp_path):
     # File is either absent or empty; what matters is no exception escaped.
     f = tmp_path / "stage_x.json"
     assert not f.exists() or f.read_text() in ("", "{}", "null")
+
+
+# ── Stage G text normalization (regression: prod job 87b7292b) ────────────────
+
+
+def test_normalize_overlay_text_collapses_embedded_newlines():
+    # Phrase.sample_text joins lines with "\n". Layer-1 renderer was emitting
+    # the literal "\n" as on-screen "/N" instead of an ASS line break.
+    # Normalizer collapses to a single space.
+    assert _normalize_overlay_text("if\nyou\nput in") == "if you put in"
+
+
+def test_normalize_overlay_text_strips_truncation_marker():
+    assert (
+        _normalize_overlay_text("the work to get there[overlap_truncated]")
+        == "the work to get there"
+    )
+
+
+def test_normalize_overlay_text_strips_literal_escape_sequences():
+    # If alignment or upstream stages leaked a literal "\\N" or "\\n" string
+    # into the text, strip it rather than echoing it to the renderer.
+    assert _normalize_overlay_text("line1\\Nline2") == "line1 line2"
+    assert _normalize_overlay_text("a\\nb") == "a b"
+
+
+def test_normalize_overlay_text_collapses_internal_whitespace():
+    assert _normalize_overlay_text("  the   quick   brown  ") == "the quick brown"
+
+
+def test_normalize_overlay_text_passthrough_for_clean_input():
+    assert _normalize_overlay_text("if") == "if"
+    assert _normalize_overlay_text("hello world") == "hello world"
+
+
+def test_normalize_overlay_text_handles_empty_and_whitespace_only():
+    assert _normalize_overlay_text("") == ""
+    assert _normalize_overlay_text("   ") == ""
+    assert _normalize_overlay_text("\\N\\n") == ""
