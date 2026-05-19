@@ -58,6 +58,33 @@ def test_parse_owner_rejects_none_and_empty():
     assert _parse_owner("") == (None, None, None)
 
 
+def test_parse_owner_accepts_template_with_suffix():
+    """`agentic_template_build_task` passes `f"template:{uuid}:agentic"` so
+    the agentic build path is distinguishable from the manual one in logs.
+    Without suffix tolerance, `uuid.UUID("<uuid>:agentic")` raises and the
+    row gets dropped — which broke agent_run persistence for every agentic
+    template since the suffix was introduced. Caught on prod template
+    `fdaf3bbc-2f4f-43bc-ba7c-e5cd819de102` (zero agent_run rows after
+    multiple reanalyzes)."""
+    j = uuid.uuid4()
+    assert _parse_owner(f"template:{j}:agentic") == (None, j, None)
+
+
+def test_parse_owner_accepts_track_with_suffix():
+    """Same tolerance for the track prefix so future per-flow labels on
+    music tracks (e.g. `track:<id>:classify`) don't silently drop rows."""
+    j = uuid.uuid4()
+    assert _parse_owner(f"track:{j}:classify") == (None, None, j)
+
+
+def test_parse_owner_rejects_template_with_suffix_but_bad_uuid():
+    """The suffix is just a label, not a healer. A malformed UUID before
+    the suffix still drops the row — we don't want to silently attribute
+    runs to the wrong template."""
+    assert _parse_owner("template:not-a-uuid:agentic") == (None, None, None)
+    assert _parse_owner("template::agentic") == (None, None, None)
+
+
 def test_truncate_raw_text_passthrough_under_cap():
     s = "x" * 100
     assert _truncate_raw_text(s) == s
@@ -399,6 +426,7 @@ def test_agent_run_refusal_persisted(sample_agent: SampleAgent, mock_client: Moc
 
     engine, captured = _fake_engine_capturing()
     j = uuid.uuid4()
+
     # SAFETY finish_reason raises RefusalError. The runtime tries one
     # clarification retry (refusal_retries 0→1), so queue TWO safety
     # responses; the second one exhausts the retry budget → terminal_refusal.

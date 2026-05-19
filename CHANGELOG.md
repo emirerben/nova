@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.35.2] - 2026-05-19
+
+### Fixed
+- **`agent_run` rows for every agentic template build were being silently dropped from the audit log.** `agentic_template_build_task` passes `f"template:{template_id}:agentic"` as the agent `job_id` so log lines can be distinguished from the manual `analyze_template_task` path's plain `f"template:{template_id}"`. `_persistence._parse_owner` was stripping the `template:` prefix and then calling `uuid.UUID()` on the remainder — which got `<uuid>:agentic`, not a valid UUID — causing the parse to fail and the row to be dropped. Result: the admin Debug tab showed zero agent runs for every agentic template, the v0.4.35.0 STALE badge couldn't distinguish "never ran" from "ran with the right prompts", and operators had no way to verify which agents fired during a reanalyze. The parser now tolerates an optional `:<label>` suffix after the UUID for both `template:` and `track:` prefixes; the suffix is preserved in log lines for trace separation but ignored for persistence routing. Caught on prod template `fdaf3bbc-2f4f-43bc-ba7c-e5cd819de102` after multiple reanalyzes produced identical output and the Debug tab was empty.
+
 ## [0.4.35.1] - 2026-05-19
 
 ### Fixed
