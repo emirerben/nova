@@ -7,11 +7,13 @@ from sqlalchemy import (
     ARRAY,
     TIMESTAMP,
     BigInteger,
+    Boolean,
     CheckConstraint,
     Float,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -43,14 +45,10 @@ class WaitlistSignup(Base):
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     name: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     jobs: Mapped[list["Job"]] = relationship(back_populates="user")
     oauth_tokens: Mapped[list["OAuthToken"]] = relationship(back_populates="user")
@@ -59,9 +57,7 @@ class User(Base):
 class OAuthToken(Base):
     __tablename__ = "oauth_tokens"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
@@ -70,9 +66,7 @@ class OAuthToken(Base):
     refresh_token: Mapped[bytes | None] = mapped_column(BYTEA)
     expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="active")
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
     )
@@ -109,9 +103,7 @@ class VideoTemplate(Base):
     required_clips_max: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     # User inputs the upload UI collects per-template (e.g. location).
     # Shape: list[{key, label, placeholder, max_length, required}].
-    required_inputs: Mapped[list] = mapped_column(
-        JSONB, nullable=False, server_default="[]"
-    )
+    required_inputs: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # Admin lifecycle columns (nullable for backward compat)
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
@@ -119,19 +111,36 @@ class VideoTemplate(Base):
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     thumbnail_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Music variant columns
-    template_type: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="standard"
-    )
+    template_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="standard")
     parent_template_id: Mapped[str | None] = mapped_column(
         Text, ForeignKey("video_templates.id"), nullable=True
     )
     music_track_id: Mapped[str | None] = mapped_column(
         Text, ForeignKey("music_tracks.id"), nullable=True
     )
-
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
+    # True = recipe is generated end-to-end by agents (no manual editor edits).
+    # False = manually built/edited template (the historical path).
+    # Immutable after row creation; the two paths read/write recipe_cached
+    # differently and flipping mid-life would orphan a hand-tuned recipe.
+    is_agentic: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Per-template Layer-2 text-overlay default. Resolution priority when
+    # reanalyze-agentic fires:
+    #   1. ?use_layer2 query param (present → wins absolutely, true OR false)
+    #   2. this column, if not NULL → wins
+    #   3. settings.text_overlay_v2_enabled (global flag) → fallback
+    # NULL = fall through to the global flag (default for all existing rows).
+    use_layer2_default: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Per-template gate for the single-pass encode rollout. Default false
+    # means every existing row stays on the multi-pass path until a
+    # parity + benchmark run promotes it. Combined with the env-level
+    # ``settings.single_pass_encode_enabled`` via AND — flipping either
+    # alone has zero render impact (see _run_template_job's effective
+    # render-path resolution).
+    single_pass_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
     )
+
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     recipe_versions: Mapped[list["TemplateRecipeVersion"]] = relationship(
         back_populates="template", cascade="all, delete-orphan"
@@ -155,18 +164,22 @@ class TemplateRecipeVersion(Base):
 
     __tablename__ = "template_recipe_versions"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     template_id: Mapped[str] = mapped_column(
         Text, ForeignKey("video_templates.id", ondelete="CASCADE"), nullable=False
     )
     recipe: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    # initial_analysis | reanalysis | manual_edit | remerge
+    # initial_analysis | reanalysis | manual_edit | remerge | admin_font_override
+    # Constrained by ck_recipe_version_trigger — keep in sync with migrations
+    # 0010 (added remerge) and 0025 (added admin_font_override).
     trigger: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    # Build wall-clock start, captured at WORKER pickup (not at button-click
+    # time — Celery queue-wait is excluded). Paired with `created_at` (end),
+    # gives per-run compute latency without relying on Langfuse trace
+    # aggregation. NULL for rows written before migration 0023 (or by an
+    # orchestrator that crashed before setting it).
+    build_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
 
     template: Mapped["VideoTemplate"] = relationship(back_populates="recipe_versions")
 
@@ -207,19 +220,28 @@ class MusicTrack(Base):
     # See app.agents.lyrics for the producer and app.pipeline.lyric_injector for
     # how this gets baked into music-job text overlays.
     # "pending" | "extracting" | "ready" | "failed" | "unavailable"
-    lyrics_status: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="pending"
-    )
+    lyrics_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     lyrics_cached: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     lyrics_error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-    lyrics_extracted_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMPTZ, nullable=True
-    )
+    lyrics_extracted_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     # "genius+whisper" | "whisper_only" | "manual" — null until extraction runs
     lyrics_source: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
+    # song_classifier creative labels (vibe, genre, mood, copy_tone, ...).
+    # See app/agents/_schemas/music_labels.py — MusicLabels Pydantic shape.
+    # Nullable until backfill runs; the matcher filters out NULL-labeled tracks.
+    ai_labels: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Mirrors MusicLabels.label_version so the matcher can refuse stale rows
+    # without parsing the JSONB.
+    label_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # song_sections agent output: ordered list of 1-3 ranked SongSection blobs
+    # (rank 1 = best). See app/agents/_schemas/song_sections.py for the
+    # Pydantic shape. NULL until the song_sections agent succeeds; the matcher
+    # filters NULL-sectioned tracks out of auto-mode.
+    best_sections: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Mirrors CURRENT_SECTION_VERSION so the matcher can refuse stale rows
+    # without parsing the JSONB.
+    section_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     __table_args__ = (
         Index("idx_music_tracks_status", "analysis_status"),
@@ -231,20 +253,27 @@ class MusicTrack(Base):
 class Job(Base):
     __tablename__ = "jobs"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     # importing|queued|processing|clips_ready|clips_ready_partial|
-    # posting|posting_partial|done|posting_failed|processing_failed
+    # posting|posting_partial|done|posting_failed|processing_failed|
+    # cancelled (admin cancel via /admin/jobs/{id}/cancel)
     # drive import: importing → queued → processing → ...
     # template jobs: queued → processing → template_ready | processing_failed
     # music jobs:   queued → processing → music_ready   | processing_failed
+    # auto-music: queued → processing → matching → rendering →
+    #             variants_ready | variants_ready_partial |
+    #             matching_failed | no_labeled_tracks | variants_failed
     status: Mapped[str] = mapped_column(Text, nullable=False, default="queued")
-    # "default" | "template" | "music"
+    # "default" | "template" | "music" | "auto_music"
     job_type: Mapped[str] = mapped_column(Text, nullable=False, default="default")
+    # Phase 3 (auto-music): the orchestrator-level mode discriminator.
+    # Currently only set to "auto_music" by orchestrate_auto_music_job.
+    # NULL for every pre-Phase-3 row — routing still uses job_type. Kept
+    # nullable so the column stays one-way / rollback safe.
+    mode: Mapped[str | None] = mapped_column(Text, nullable=True)
     template_id: Mapped[str | None] = mapped_column(
         Text, ForeignKey("video_templates.id"), nullable=True
     )
@@ -264,9 +293,28 @@ class Job(Base):
     # of a generic "Something went wrong". See FAILURE_REASON in
     # tasks/template_orchestrate.py for the canonical set.
     failure_reason: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
-    )
+    # Live pipeline phase name (e.g. "download_clips", "analyze_clips",
+    # "assemble", "upload"). Cleared on success/failure terminal state but
+    # phase_log retains history. Drives the live progress UI on /template-jobs/[id].
+    current_phase: Mapped[str | None] = mapped_column(Text)
+    # Append-only history of completed phases:
+    # [{name, elapsed_ms, t_offset_ms, ts}, ...]. Written by services/job_phases.
+    phase_log: Mapped[list | None] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # Append-only log of non-LLM pipeline decisions written by services/pipeline_trace.
+    # Each entry: {ts, stage, event, data}. Drives the admin job-debug view's
+    # pipeline-trace tab. NULL on legacy/pre-feature jobs — the UI handles that.
+    pipeline_trace: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Celery task_id of the orchestrator task dispatched for this job. By
+    # convention str(job.id) — set by app.services.job_dispatch.enqueue_orchestrator
+    # on every orchestrator dispatch site. NULL on legacy rows (pre-0027)
+    # and on rows whose orchestrator was never dispatched. Used by the
+    # admin debug UI to call celery_app.control.{inspect,revoke}.
+    celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # True pipeline-wall-time anchors. Distinct from created_at (queue insert)
+    # and updated_at (any column write).
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
     )
@@ -286,9 +334,7 @@ class Job(Base):
 class JobClip(Base):
     __tablename__ = "job_clips"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=False
     )
@@ -313,13 +359,77 @@ class JobClip(Base):
     download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     storage_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
     error_detail: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMPTZ, server_default=func.now()
+    # Phase 3 (auto-music): set on rows produced by orchestrate_auto_music_job.
+    # NULL for template-mode + manual music-mode rows. The FK lets us answer
+    # "which jobs used this track" for the admin music page.
+    music_track_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("music_tracks.id"), nullable=True
     )
+    # Matcher's 0-10 score for this track on this clip-set. Surfaced on the
+    # variant tile so the user knows how confident the pick was.
+    match_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Matcher's editor's-voice rationale (1-2 sentences). Rendered as
+    # "we picked X because..." copy on the variant tile.
+    match_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     job: Mapped["Job"] = relationship(back_populates="clips")
 
     __table_args__ = (
         Index("idx_job_clips_job_id", "job_id"),
         Index("idx_job_clips_rank", "job_id", "rank"),
+        Index("idx_job_clips_music_track_id", "music_track_id"),
+    )
+
+
+class AgentRun(Base):
+    """One row per agent invocation. Captures full input + raw LLM response +
+    parsed output so the admin job-debug view can show exactly what each
+    agent saw and produced for a given job. job_id is nullable so off-job
+    calls (track-level analysis, eval harness) can also be persisted without
+    inventing a fake job UUID.
+    """
+
+    __tablename__ = "agent_run"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    # video_templates.id and music_tracks.id are Text (not UUID) so the FK
+    # columns must also be Text. ondelete=CASCADE mirrors job_id and avoids
+    # a check-constraint violation on parent-delete (see migration 0024).
+    template_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("video_templates.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    music_track_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("music_tracks.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    segment_idx: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    agent_name: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    input_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_agent_run_job_id_created", "job_id", "created_at"),
+        Index("idx_agent_run_agent_name", "agent_name"),
+        Index("idx_agent_run_template_id_created", "template_id", "created_at"),
+        Index("idx_agent_run_music_track_id_created", "music_track_id", "created_at"),
     )

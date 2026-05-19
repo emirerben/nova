@@ -65,8 +65,8 @@ REFERENCE_GCS_PATH = "templates/dimplespassport-travel-vlog.mp4"
 EDIT_MUSIC_GCS_PATH = "templates/dimplespassport-edit-music.m4a"
 
 # User-facing input that drives the "Welcome to <X>" hook overlay. Key MUST
-# be "location" — _resolve_user_subject() in template_orchestrate.py reads
-# inputs.location to populate the placeholder substitution. max_length 30
+# be "location" — the user_subject resolver in template_orchestrate.py reads
+# all_candidates.inputs.location to populate the placeholder substitution. max_length 30
 # accommodates long country names ("Democratic Republic of the Congo" wraps).
 REQUIRED_INPUTS = [
     {

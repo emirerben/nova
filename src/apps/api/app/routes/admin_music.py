@@ -1,13 +1,17 @@
 """Admin endpoints for managing music tracks.
 
-POST   /admin/music-tracks              — add track from YouTube/SoundCloud URL
-POST   /admin/music-tracks/upload       — add track from direct audio file upload
-POST   /admin/music-tracks/templated    — create templated track (typed-slot recipe)
-GET    /admin/music-tracks              — list all tracks (including unpublished)
-GET    /admin/music-tracks/{id}         — full track detail + beat count
-PATCH  /admin/music-tracks/{id}         — update config, title, artist, publish/archive
-POST   /admin/music-tracks/{id}/reanalyze — re-run beat detection
-DELETE /admin/music-tracks/{id}         — soft-archive only
+POST   /admin/music-tracks                  — add track from YouTube/SoundCloud URL
+POST   /admin/music-tracks/upload           — add track from direct audio file upload
+POST   /admin/music-tracks/templated        — create templated track (typed-slot recipe)
+GET    /admin/music-tracks                  — list all tracks (including unpublished)
+GET    /admin/music-tracks/{id}             — full track detail + beat count
+PATCH  /admin/music-tracks/{id}             — update config, title, artist, publish/archive
+POST   /admin/music-tracks/{id}/reanalyze   — re-run beat detection
+DELETE /admin/music-tracks/{id}             — soft-archive only
+POST   /admin/music-tracks/{id}/test-job    — render a beat-sync job (skips publish gates)
+POST   /admin/music-tracks/{id}/rerender-job — re-render a prior job's clips against current config
+GET    /admin/music-tracks/{id}/test-jobs   — list recent admin test jobs for this track
+GET    /admin/music-tracks/{id}/jobs/{job_id}/status — admin-gated status poll
 
 Auth: X-Admin-Token header (same as admin.py).
 """
@@ -36,9 +40,16 @@ from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents._schemas.song_sections import SongSection
 from app.config import settings
 from app.database import get_db
-from app.models import MusicTrack
+from app.models import Job, MusicTrack
+from app.routes.music_jobs import (
+    SYNTHETIC_USER_ID,
+    MusicJobResponse,
+    MusicJobStatusResponse,
+    validate_clip_count,
+)
 from app.services.audio_download import (
     DownloadError,
     download_audio_and_upload,
@@ -86,7 +97,12 @@ class CreateMusicTrackRequest(BaseModel):
 
 _LYRICS_STYLES = {"karaoke", "per-word-pop"}
 _LYRICS_POSITIONS = {
-    "top", "bottom", "center", "center-above", "center-below", "center-label",
+    "top",
+    "bottom",
+    "center",
+    "center-above",
+    "center-below",
+    "center-label",
 }
 
 
@@ -114,22 +130,15 @@ class UpdateMusicTrackRequest(BaseModel):
             if not isinstance(lyrics_cfg, dict):
                 raise ValueError("lyrics_config must be an object")
             if "style" in lyrics_cfg and lyrics_cfg["style"] not in _LYRICS_STYLES:
-                raise ValueError(
-                    f"lyrics_config.style must be one of {sorted(_LYRICS_STYLES)}"
-                )
-            if (
-                "position" in lyrics_cfg
-                and lyrics_cfg["position"] not in _LYRICS_POSITIONS
-            ):
+                raise ValueError(f"lyrics_config.style must be one of {sorted(_LYRICS_STYLES)}")
+            if "position" in lyrics_cfg and lyrics_cfg["position"] not in _LYRICS_POSITIONS:
                 raise ValueError(
                     f"lyrics_config.position must be one of {sorted(_LYRICS_POSITIONS)}"
                 )
             for hex_key in ("text_color", "highlight_color"):
                 v = lyrics_cfg.get(hex_key)
                 if v is not None and not _is_valid_hex(v):
-                    raise ValueError(
-                        f"lyrics_config.{hex_key} must be a #RRGGBB hex string"
-                    )
+                    raise ValueError(f"lyrics_config.{hex_key} must be a #RRGGBB hex string")
         return self
 
 
@@ -169,6 +178,11 @@ class MusicTrackResponse(BaseModel):
     lyrics_error_detail: str | None
     lyrics_cached: dict | None
     lyrics_extracted_at: datetime | None
+    # Output of the song_sections agent — 1-3 ranked edit-worthy windows.
+    # `section_version` mirrors CURRENT_SECTION_VERSION so the admin UI can
+    # spot stale rows scored under an older prompt version at a glance.
+    best_sections: list[SongSection] | None
+    section_version: str | None
     created_at: datetime
 
 
@@ -192,6 +206,25 @@ class ReanalyzeResponse(BaseModel):
 
 def _to_response(t: MusicTrack) -> MusicTrackResponse:
     beats = t.beat_timestamps_s or []
+    # Coerce best_sections per-row. SongSection has strict Literal unions; one
+    # row with a drifted enum (agent retry, manual psql edit, post-bump stale
+    # row) would otherwise raise ValidationError and 500 the entire list
+    # endpoint, locking admin out of /admin/music. Bad rows are dropped and
+    # logged; the frontend's "no agent sections" placeholder surfaces the gap.
+    coerced_sections: list[SongSection] | None = None
+    if t.best_sections:
+        coerced_sections = []
+        for raw in t.best_sections:
+            try:
+                coerced_sections.append(SongSection.model_validate(raw))
+            except Exception as exc:
+                log.warning(
+                    "invalid_song_section_dropped",
+                    track_id=t.id,
+                    error=str(exc),
+                )
+        if not coerced_sections:
+            coerced_sections = None
     return MusicTrackResponse(
         id=t.id,
         title=t.title,
@@ -212,6 +245,8 @@ def _to_response(t: MusicTrack) -> MusicTrackResponse:
         lyrics_error_detail=t.lyrics_error_detail,
         lyrics_cached=t.lyrics_cached,
         lyrics_extracted_at=t.lyrics_extracted_at,
+        best_sections=coerced_sections,
+        section_version=t.section_version,
         created_at=t.created_at,
     )
 
@@ -268,6 +303,7 @@ async def create_music_track(
 
     # Dispatch analysis task
     from app.tasks.music_orchestrate import analyze_music_track_task  # noqa: PLC0415
+
     analyze_music_track_task.delay(track_id)
 
     log.info("music_track_created", track_id=track_id, source_url=req.source_url)
@@ -288,8 +324,15 @@ async def upload_music_track(
 ) -> CreateMusicTrackResponse:
     """Upload an audio file directly (bypasses yt-dlp). Accepts m4a, mp3, wav, ogg, aac."""
     allowed = {
-        "audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg", "audio/aac",
-        "audio/x-m4a", "audio/m4a", "audio/mp3", "audio/x-wav",
+        "audio/mp4",
+        "audio/mpeg",
+        "audio/wav",
+        "audio/ogg",
+        "audio/aac",
+        "audio/x-m4a",
+        "audio/m4a",
+        "audio/mp3",
+        "audio/x-wav",
         "video/mp4",  # some browsers report m4a as video/mp4
     }
     ct = (file.content_type or "").lower()
@@ -316,10 +359,12 @@ async def upload_music_track(
 
         # Probe duration via ffprobe
         from app.services.audio_download import _probe_duration  # noqa: PLC0415
+
         duration_s = _probe_duration(tmp.name)
 
         # Upload to GCS
         from app.storage import _get_client  # noqa: PLC0415
+
         bucket = _get_client().bucket(settings.storage_bucket)
         blob = bucket.blob(gcs_path)
         blob.upload_from_filename(tmp.name, content_type=ct or "audio/mp4")
@@ -338,6 +383,7 @@ async def upload_music_track(
     await db.refresh(track)
 
     from app.tasks.music_orchestrate import analyze_music_track_task  # noqa: PLC0415
+
     analyze_music_track_task.delay(track_id)
 
     log.info("music_track_uploaded", track_id=track_id, filename=file.filename)
@@ -348,7 +394,12 @@ async def upload_music_track(
 
 
 _IMAGE_CT = {
-    "image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif",
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
 }
 _IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 
@@ -483,9 +534,11 @@ async def create_templated_music_track(
         tmp.flush()
 
         from app.services.audio_download import _probe_duration  # noqa: PLC0415
+
         duration_s = _probe_duration(tmp.name)
 
         from app.storage import _get_client  # noqa: PLC0415
+
         bucket = _get_client().bucket(settings.storage_bucket)
         bucket.blob(audio_gcs).upload_from_filename(
             tmp.name, content_type=audio.content_type or "audio/mp4"
@@ -501,8 +554,7 @@ async def create_templated_music_track(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
-                    f"Slot {position} asset must be an image "
-                    f"(got content_type={ct!r}, ext={ext!r})"
+                    f"Slot {position} asset must be an image (got content_type={ct!r}, ext={ext!r})"
                 ),
             )
         ext = ext or ".jpg"
@@ -517,10 +569,9 @@ async def create_templated_music_track(
             tmp.write(data)
             tmp.flush()
             from app.storage import _get_client  # noqa: PLC0415
+
             bucket = _get_client().bucket(settings.storage_bucket)
-            bucket.blob(asset_gcs).upload_from_filename(
-                tmp.name, content_type=ct or "image/jpeg"
-            )
+            bucket.blob(asset_gcs).upload_from_filename(tmp.name, content_type=ct or "image/jpeg")
         slot["asset_gcs_path"] = asset_gcs
         slot.setdefault("asset_kind", "image")
 
@@ -567,9 +618,7 @@ async def list_music_tracks(
     """List all music tracks (including unpublished and archived)."""
     base_query = select(MusicTrack)
 
-    count_result = await db.execute(
-        select(func.count()).select_from(base_query.subquery())
-    )
+    count_result = await db.execute(select(func.count()).select_from(base_query.subquery()))
     total = count_result.scalar() or 0
 
     result = await db.execute(
@@ -674,6 +723,7 @@ async def extract_track_lyrics(
     await db.commit()
 
     from app.tasks.music_orchestrate import extract_track_lyrics_task  # noqa: PLC0415
+
     extract_track_lyrics_task.delay(track_id)
 
     log.info("music_track_lyrics_dispatched", track_id=track_id)
@@ -703,6 +753,7 @@ async def reanalyze_music_track(
     await db.commit()
 
     from app.tasks.music_orchestrate import analyze_music_track_task  # noqa: PLC0415
+
     analyze_music_track_task.delay(track_id)
 
     log.info("music_track_reanalyze_dispatched", track_id=track_id)
@@ -752,3 +803,307 @@ async def archive_music_track(
     track.archived_at = datetime.now(UTC)
     await db.commit()
     log.info("music_track_archived", track_id=track_id)
+
+
+# ── Admin test jobs ───────────────────────────────────────────────────────────
+#
+# Mirrors POST /music-jobs but lets admins target unpublished / archived tracks
+# so a track can be smoke-tested before it appears in the public gallery.
+# Still requires analysis_status == "ready" and a non-null audio_gcs_path —
+# without those, the orchestrator has nothing to render against.
+
+
+# Prefixes that the upload endpoints write to. Anything else (raw bucket paths,
+# /clips/, processed outputs, internal artifacts) is rejected so an attacker
+# can't smuggle an arbitrary object key into the render pipeline and exfiltrate
+# it through the signed assembly_plan.output_url.
+_ALLOWED_CLIP_PREFIXES = ("music-uploads/", "slot-uploads/")
+
+
+def _validate_clip_path_prefixes(paths: list[str]) -> list[str]:
+    for p in paths:
+        if not isinstance(p, str) or ".." in p or p.startswith("/"):
+            raise ValueError(f"Invalid clip path: {p!r}")
+        if not any(p.startswith(prefix) for prefix in _ALLOWED_CLIP_PREFIXES):
+            allowed = ", ".join(_ALLOWED_CLIP_PREFIXES)
+            raise ValueError(f"Clip path must start with one of: {allowed}. Got: {p!r}")
+    return paths
+
+
+class CreateAdminMusicJobRequest(BaseModel):
+    clip_gcs_paths: list[str]
+    selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
+
+    @field_validator("clip_gcs_paths")
+    @classmethod
+    def validate_clips(cls, v: list[str]) -> list[str]:
+        if len(v) < 1:
+            raise ValueError("At least 1 clip is required")
+        if len(v) > 20:
+            raise ValueError("Maximum 20 clips allowed")
+        return _validate_clip_path_prefixes(v)
+
+    @field_validator("selected_platforms")
+    @classmethod
+    def validate_platforms(cls, v: list[str]) -> list[str]:
+        valid = {"tiktok", "instagram", "youtube"}
+        for p in v:
+            if p not in valid:
+                raise ValueError(f"Unknown platform: {p}")
+        return v
+
+
+class RerenderMusicJobRequest(BaseModel):
+    source_job_id: str
+
+
+class AdminMusicJobSummary(BaseModel):
+    job_id: str
+    status: str
+    error_detail: str | None
+    output_url: str | None
+    clip_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminMusicJobListResponse(BaseModel):
+    jobs: list[AdminMusicJobSummary]
+
+
+def _require_ready_track_for_admin(track: MusicTrack) -> None:
+    """Admin-side gate: skips publish/archive checks, still requires audio + ready analysis."""
+    if track.analysis_status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Music track analysis is not complete (status: {track.analysis_status}).",
+        )
+    if not track.audio_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Music track has no audio file — re-analyze the track first.",
+        )
+
+
+@router.post(
+    "/{track_id}/test-job",
+    response_model=MusicJobResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_admin)],
+)
+async def create_admin_music_test_job(
+    track_id: str,
+    req: CreateAdminMusicJobRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MusicJobResponse:
+    """Create a music beat-sync job against any ready track (skips publish gates)."""
+    track = await _get_track_or_404(track_id, db)
+    _require_ready_track_for_admin(track)
+    validate_clip_count(track, len(req.clip_gcs_paths))
+
+    job = Job(
+        user_id=SYNTHETIC_USER_ID,
+        job_type="music",
+        music_track_id=track_id,
+        raw_storage_path=req.clip_gcs_paths[0],
+        selected_platforms=req.selected_platforms,
+        all_candidates={"clip_paths": req.clip_gcs_paths},
+        status="queued",
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    job_id = str(job.id)
+
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
+    from app.tasks.music_orchestrate import orchestrate_music_job  # noqa: PLC0415
+
+    await enqueue_orchestrator(orchestrate_music_job, job.id, db)
+
+    log.info(
+        "admin_music_test_job_created",
+        job_id=job_id,
+        track_id=track_id,
+        clips=len(req.clip_gcs_paths),
+    )
+    return MusicJobResponse(job_id=job_id, status="queued", music_track_id=track_id)
+
+
+@router.post(
+    "/{track_id}/rerender-job",
+    response_model=MusicJobResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_admin)],
+)
+async def create_admin_music_rerender_job(
+    track_id: str,
+    req: RerenderMusicJobRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MusicJobResponse:
+    """Re-render a prior music job's clips against the current track config.
+
+    Beat-sync recipes are regenerated from `track_config` on every run (see
+    `_run_music_job` → `generate_music_recipe`), so changing best_start_s /
+    slot_every_n_beats on the track and then hitting this endpoint is enough
+    to produce a fresh cut. No recipe-cache invalidation needed for the
+    beat-sync path; the cache is only load-bearing for templated tracks.
+    """
+    track = await _get_track_or_404(track_id, db)
+    _require_ready_track_for_admin(track)
+
+    try:
+        source_uuid = uuid.UUID(req.source_job_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source job not found",
+        )
+
+    source_result = await db.execute(select(Job).where(Job.id == source_uuid))
+    source = source_result.scalar_one_or_none()
+    if source is None or source.job_type != "music" or source.music_track_id != track_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source job not found for this track",
+        )
+
+    clip_paths: list[str] = (source.all_candidates or {}).get("clip_paths", [])
+    if not clip_paths:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Source job has no clip paths to re-use. Upload clips and create a fresh test job."
+            ),
+        )
+
+    # Re-apply prefix gating: a source job from a pre-validator era could carry
+    # arbitrary GCS paths; we still refuse to re-render anything outside the
+    # upload allowlist.
+    try:
+        _validate_clip_path_prefixes(clip_paths)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Source job clip path is not allowlisted: {exc}",
+        )
+
+    validate_clip_count(track, len(clip_paths))
+
+    new_job = Job(
+        user_id=SYNTHETIC_USER_ID,
+        job_type="music",
+        music_track_id=track_id,
+        raw_storage_path=clip_paths[0],
+        selected_platforms=source.selected_platforms or ["tiktok", "instagram", "youtube"],
+        all_candidates={"clip_paths": clip_paths},
+        status="queued",
+    )
+    db.add(new_job)
+    await db.commit()
+    await db.refresh(new_job)
+
+    job_id = str(new_job.id)
+
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
+    from app.tasks.music_orchestrate import orchestrate_music_job  # noqa: PLC0415
+
+    await enqueue_orchestrator(orchestrate_music_job, new_job.id, db)
+
+    log.info(
+        "admin_music_rerender_job_created",
+        job_id=job_id,
+        track_id=track_id,
+        source_job_id=req.source_job_id,
+        clips=len(clip_paths),
+    )
+    return MusicJobResponse(job_id=job_id, status="queued", music_track_id=track_id)
+
+
+@router.get(
+    "/{track_id}/jobs/{job_id}/status",
+    response_model=MusicJobStatusResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def get_admin_music_job_status(
+    track_id: str,
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> MusicJobStatusResponse:
+    """Admin-gated status poll for a music job belonging to this track.
+
+    The public GET /music-jobs/{id}/status has no auth — admin-created job IDs
+    leaked through it would expose status + signed output URLs to anyone with
+    the UUID. This endpoint requires the admin token and scopes the lookup to
+    the track, so a stray admin job_id can't be mixed with public jobs.
+    """
+    await _get_track_or_404(track_id, db)
+
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    result = await db.execute(select(Job).where(Job.id == job_uuid))
+    job = result.scalar_one_or_none()
+    if job is None or job.job_type != "music" or job.music_track_id != track_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    return MusicJobStatusResponse(
+        job_id=str(job.id),
+        status=job.status,
+        music_track_id=job.music_track_id,
+        assembly_plan=job.assembly_plan,
+        error_detail=job.error_detail,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
+
+
+@router.get(
+    "/{track_id}/test-jobs",
+    response_model=AdminMusicJobListResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def list_admin_music_test_jobs(
+    track_id: str,
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=10, ge=1, le=50),
+) -> AdminMusicJobListResponse:
+    """List recent music jobs against this track (admin testing history)."""
+    await _get_track_or_404(track_id, db)
+
+    result = await db.execute(
+        select(Job)
+        .where(Job.music_track_id == track_id)
+        .where(Job.job_type == "music")
+        .order_by(Job.created_at.desc())
+        .limit(limit)
+    )
+    jobs = result.scalars().all()
+
+    summaries: list[AdminMusicJobSummary] = []
+    for j in jobs:
+        plan = j.assembly_plan or {}
+        clip_paths = (j.all_candidates or {}).get("clip_paths", [])
+        # Pre-fix rows stored a relative GCS path here instead of a signed URL.
+        # If we passed that through, the admin UI would render a broken
+        # `<video src="music-jobs/.../output.mp4">`. Only forward http(s) URLs;
+        # legacy rows show up in the list with output_url=null so the UI
+        # surfaces them as "rerender to view" rather than a dead link.
+        raw_url = plan.get("output_url")
+        is_http = isinstance(raw_url, str) and raw_url.startswith(("http://", "https://"))
+        safe_url = raw_url if is_http else None
+        summaries.append(
+            AdminMusicJobSummary(
+                job_id=str(j.id),
+                status=j.status,
+                error_detail=j.error_detail,
+                output_url=safe_url,
+                clip_count=len(clip_paths),
+                created_at=j.created_at,
+                updated_at=j.updated_at,
+            )
+        )
+
+    return AdminMusicJobListResponse(jobs=summaries)

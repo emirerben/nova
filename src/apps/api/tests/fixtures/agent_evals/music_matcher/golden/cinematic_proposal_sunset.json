@@ -1,0 +1,224 @@
+{
+  "agent": "nova.audio.music_matcher",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "clip_summaries": [
+      {
+        "clip_id": "clip_001",
+        "media_type": "video",
+        "duration_s": 10.0,
+        "subject": "couple walking along a cliff overlook toward camera",
+        "hook_text": "i didn't know it was tonight",
+        "hook_score": 8.0,
+        "energy": 4.5,
+        "description": "wide tracking, golden hour, ocean below, slow steps"
+      },
+      {
+        "clip_id": "clip_002",
+        "media_type": "video",
+        "duration_s": 8.5,
+        "subject": "partner kneeling with ring box open",
+        "hook_text": "",
+        "hook_score": 9.0,
+        "energy": 7.0,
+        "description": "medium close-up, lens flare, candid emotional reaction"
+      },
+      {
+        "clip_id": "clip_003",
+        "media_type": "video",
+        "duration_s": 9.0,
+        "subject": "wide reveal of the cliff and couple silhouette as sun sets",
+        "hook_text": "",
+        "hook_score": 7.5,
+        "energy": 5.0,
+        "description": "wide drone pull, dramatic skyline, slow reveal"
+      },
+      {
+        "clip_id": "clip_004",
+        "media_type": "video",
+        "duration_s": 7.0,
+        "subject": "tearful embrace after the yes",
+        "hook_text": "",
+        "hook_score": 8.5,
+        "energy": 6.5,
+        "description": "medium handheld, candid emotional embrace"
+      }
+    ],
+    "available_tracks": [
+      {
+        "track_id": "track_cinematic_proposal",
+        "title": "The Question Suite",
+        "duration_s": 120.0,
+        "slot_count": 6,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "cinematic",
+          "vibe_tags": ["sweeping", "tender", "reverent", "epic"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "life-pivot moment",
+          "ideal_content_profile": "Big emotional life-moment storytelling — proposals, weddings, reunions; wide landscape reveals into intimate reaction close-ups.",
+          "copy_tone": "cinematic",
+          "transition_style": "dissolve",
+          "color_grade": "warm amber"
+        }
+      },
+      {
+        "track_id": "track_cinematic_drone",
+        "title": "Coastline Air",
+        "duration_s": 115.0,
+        "slot_count": 5,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "cinematic",
+          "vibe_tags": ["sweeping", "patient", "spacious"],
+          "energy": "medium",
+          "pacing": "slow",
+          "mood": "open-sky stillness",
+          "ideal_content_profile": "Drone landscape reveals, slow coastal b-roll, wide ambient shots.",
+          "copy_tone": "cinematic",
+          "transition_style": "dissolve",
+          "color_grade": "warm amber"
+        }
+      },
+      {
+        "track_id": "track_acoustic_vows",
+        "title": "Two Names",
+        "duration_s": 105.0,
+        "slot_count": 8,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "acoustic",
+          "vibe_tags": ["tender", "intimate", "wistful"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "intimate vow",
+          "ideal_content_profile": "Slow handheld emotional moments — couples, candid embraces, intimate hand details.",
+          "copy_tone": "sentimental",
+          "transition_style": "dissolve",
+          "color_grade": "warm golden hour"
+        }
+      },
+      {
+        "track_id": "track_pop_anthem",
+        "title": "Forever Today",
+        "duration_s": 100.0,
+        "slot_count": 11,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "pop",
+          "vibe_tags": ["anthemic", "hopeful", "warm"],
+          "energy": "high",
+          "pacing": "medium",
+          "mood": "wedding-day joy",
+          "ideal_content_profile": "Wedding-day montages — getting ready, first looks, reception celebrations.",
+          "copy_tone": "high_energy",
+          "transition_style": "dissolve",
+          "color_grade": "warm golden hour"
+        }
+      },
+      {
+        "track_id": "track_electronic_calm",
+        "title": "Atmosphere Drift",
+        "duration_s": 108.0,
+        "slot_count": 9,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "electronic",
+          "vibe_tags": ["ambient", "ethereal", "patient"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "atmospheric drift",
+          "ideal_content_profile": "Drone footage with rhythmic synth pulses; landscape b-roll with cool atmospherics.",
+          "copy_tone": "cinematic",
+          "transition_style": "dissolve",
+          "color_grade": "cool blue hour"
+        }
+      },
+      {
+        "track_id": "track_hiphop_swagger",
+        "title": "Block Heat",
+        "duration_s": 80.0,
+        "slot_count": 11,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "hip_hop",
+          "vibe_tags": ["swagger", "punchy", "confident"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "street attitude",
+          "ideal_content_profile": "Street fashion, swagger walks, fast cuts.",
+          "copy_tone": "punchy",
+          "transition_style": "hard_cut",
+          "color_grade": "saturated street"
+        }
+      }
+    ],
+    "n_variants": 3
+  },
+  "raw_text": "{\"ranked\": [{\"track_id\": \"track_cinematic_proposal\", \"score\": 9.5, \"rationale\": \"Life-pivot proposal at golden-hour cliff with drone reveal and tearful embrace is the literal content this orchestral cinematic track's profile names; 6 slots over 4 long clips lets each beat breathe.\", \"predicted_strengths\": [\"warm amber grade matches the golden-hour cliff footage\", \"sweeping vibe lifts the drone reveal clip\", \"dissolve transitions support 7-10s long-take clips\"]}, {\"track_id\": \"track_acoustic_vows\", \"score\": 8.4, \"rationale\": \"Intimate-vow acoustic frames the same proposal as a tender personal memory rather than an epic moment; works especially for the kneel and embrace clips.\", \"predicted_strengths\": [\"distinct vibe from cinematic top — adds top-K variety\", \"tender mood serves the candid embrace\", \"warm golden hour grade aligns with the footage\"]}, {\"track_id\": \"track_cinematic_drone\", \"score\": 8.0, \"rationale\": \"Drone-coastal cinematic flatters the cliff-reveal clip specifically; lower than the proposal-suite top pick because its slow pacing under-serves the kneel and embrace beats.\", \"predicted_strengths\": [\"drone reveal clip lives inside this profile\", \"5 slots fits 4 long clips cleanly\", \"warm amber grade aligns with footage\"]}, {\"track_id\": \"track_pop_anthem\", \"score\": 6.8, \"rationale\": \"Wedding-day anthemic pop is celebratory but premature — the proposal beat asks for emotional weight first, celebration second; 11 slots also fights the slow pacing.\", \"predicted_strengths\": [\"hopeful warmth aligns with the post-yes embrace\", \"warm golden hour grade still matches\"]}, {\"track_id\": \"track_electronic_calm\", \"score\": 6.5, \"rationale\": \"Atmospheric ambient electronic works for the drone reveal but the cool-blue grade fights the warm golden-hour footage.\", \"predicted_strengths\": [\"drone reveal pairs with synth ambience\", \"ambient vibe still serves long-take pacing\"]}, {\"track_id\": \"track_hiphop_swagger\", \"score\": 1.5, \"rationale\": \"Street swagger has nothing to do with an intimate cliff-top proposal; wrong vibe across every dimension.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "output": {
+    "ranked": [
+      {
+        "track_id": "track_cinematic_proposal",
+        "score": 9.5,
+        "rationale": "Life-pivot proposal at golden-hour cliff with drone reveal and tearful embrace is the literal content this orchestral cinematic track's profile names; 6 slots over 4 long clips lets each beat breathe.",
+        "predicted_strengths": [
+          "warm amber grade matches the golden-hour cliff footage",
+          "sweeping vibe lifts the drone reveal clip",
+          "dissolve transitions support 7-10s long-take clips"
+        ]
+      },
+      {
+        "track_id": "track_acoustic_vows",
+        "score": 8.4,
+        "rationale": "Intimate-vow acoustic frames the same proposal as a tender personal memory rather than an epic moment; works especially for the kneel and embrace clips.",
+        "predicted_strengths": [
+          "distinct vibe from cinematic top — adds top-K variety",
+          "tender mood serves the candid embrace",
+          "warm golden hour grade aligns with the footage"
+        ]
+      },
+      {
+        "track_id": "track_cinematic_drone",
+        "score": 8.0,
+        "rationale": "Drone-coastal cinematic flatters the cliff-reveal clip specifically; lower than the proposal-suite top pick because its slow pacing under-serves the kneel and embrace beats.",
+        "predicted_strengths": [
+          "drone reveal clip lives inside this profile",
+          "5 slots fits 4 long clips cleanly",
+          "warm amber grade aligns with footage"
+        ]
+      },
+      {
+        "track_id": "track_pop_anthem",
+        "score": 6.8,
+        "rationale": "Wedding-day anthemic pop is celebratory but premature — the proposal beat asks for emotional weight first, celebration second; 11 slots also fights the slow pacing.",
+        "predicted_strengths": [
+          "hopeful warmth aligns with the post-yes embrace",
+          "warm golden hour grade still matches"
+        ]
+      },
+      {
+        "track_id": "track_electronic_calm",
+        "score": 6.5,
+        "rationale": "Atmospheric ambient electronic works for the drone reveal but the cool-blue grade fights the warm golden-hour footage.",
+        "predicted_strengths": [
+          "drone reveal pairs with synth ambience",
+          "ambient vibe still serves long-take pacing"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_swagger",
+        "score": 1.5,
+        "rationale": "Street swagger has nothing to do with an intimate cliff-top proposal; wrong vibe across every dimension.",
+        "predicted_strengths": [
+          "no real fit"
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "cinematic proposal sunset — second cinematic case, acoustic for diversity"
+  }
+}

@@ -32,6 +32,7 @@ def test_template_recipe_eval(
     with_judge: bool,
     judge_for,
     live_model_client,
+    live_input_normalizer,
     shadow_prompts_dir,
 ) -> None:
     fixture = load_fixture(fixture_path)
@@ -46,6 +47,7 @@ def test_template_recipe_eval(
         model_client=client,
         judge=judge,
         shadow_prompts_dir=shadow_prompts_dir,
+        live_input_normalizer=live_input_normalizer,
     )
 
     assert result.passed, (

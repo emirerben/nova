@@ -1,0 +1,40 @@
+{
+  "agent": "nova.video.clip_metadata",
+  "prompt_version": "2026-05-13",
+  "input": {
+    "file_uri": "clips/04022f9ef641.mp4",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "{\"clip_id\": \"files/c1kndfg60vzl\", \"transcript\": \"O campeão! O campeão! O campeão!\", \"hook_text\": \"The stadium roof lights snap from red to white as the entire crowd chants 'O campeão!' in unison.\", \"hook_score\": 8.5, \"best_moments\": [{\"start_s\": 0.5, \"end_s\": 4.0, \"energy\": 7.0, \"description\": \"Stadium roof lights flip from red to white in a synchronized cue\"}, {\"start_s\": 7.5, \"end_s\": 13.0, \"energy\": 9.5, \"description\": \"Crowd raises scarves and chants O campeão in unison as confetti falls\"}, {\"start_s\": 16.0, \"end_s\": 21.5, \"energy\": 6.0, \"description\": \"Camera pans across packed stands during the steady chant\"}], \"detected_subject\": \"stadium crowd\"}",
+  "output": {
+    "clip_id": "files/c1kndfg60vzl",
+    "transcript": "O campeão! O campeão! O campeão!",
+    "hook_text": "The stadium roof lights snap from red to white as the entire crowd chants 'O campeão!' in unison.",
+    "hook_score": 8.5,
+    "best_moments": [
+      {
+        "start_s": 0.5,
+        "end_s": 4.0,
+        "energy": 7.0,
+        "description": "Stadium roof lights flip from red to white in a synchronized cue"
+      },
+      {
+        "start_s": 7.5,
+        "end_s": 13.0,
+        "energy": 9.5,
+        "description": "Crowd raises scarves and chants O campeão in unison as confetti falls"
+      },
+      {
+        "start_s": 16.0,
+        "end_s": 21.5,
+        "energy": 6.0,
+        "description": "Camera pans across packed stands during the steady chant"
+      }
+    ],
+    "detected_subject": "stadium crowd"
+  },
+  "meta": {
+    "source": "hand-authored golden",
+    "purpose": "Demonstrates the same scene re-imagined under the new prompt rules: span ~21s, energy spread 6.0-9.5 (3.5), concrete actions, no fractional-second windows."
+  }
+}

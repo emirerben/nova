@@ -22,8 +22,13 @@ Score each output on these dimensions, **integer 1-5**:
    - 3: at least 3 of 5 are specific
    - 1: empty strings, generic words ("nice"), or contradictions
 
-Pass threshold: avg ≥ 3.5
+5. **text_bbox_plausibility** — When the template has visible burned-in text, does each overlay's `text_bbox` plausibly identify the text region? Score `null` (skip this dimension) if no overlay in the recipe has burned-in text or no overlay emits a bbox. When scoring:
+   - 5: bbox is present for every visible-text overlay, coordinates look tight around the glyphs (not full frame, not zero area), `sample_frame_t` falls within the overlay's `[start_s, end_s]` window, and bbox is absent (`null`) for overlays whose `sample_text` was clearly inferred from vibe rather than read off the screen
+   - 3: most bboxes look plausible; one or two are loose, off-position, or missing
+   - 1: bboxes are wildly wrong (covering whole frame, zero area, far from text), or emitted on overlays with no visible burned-in text
+
+Pass threshold: avg ≥ 3.5 across the dimensions that were scored (skip dimensions return `null` and are excluded from the average).
 
 Return ONLY:
 
-    {"scores": {"slot_design": 4, "transition_appropriateness": 3, "interstitials_fidelity": 5, "style_metadata": 4}, "reasoning": "<one sentence>"}
+    {"scores": {"slot_design": 4, "transition_appropriateness": 3, "interstitials_fidelity": 5, "style_metadata": 4, "text_bbox_plausibility": null}, "reasoning": "<one sentence>"}

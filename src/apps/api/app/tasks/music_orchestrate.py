@@ -25,8 +25,10 @@ import re
 import subprocess
 import tempfile
 import uuid
+from typing import Any
 
 import structlog
+from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
@@ -82,11 +84,14 @@ def _detect_music_beats(audio_path: str, min_gap_s: float = 0.15) -> list[float]
     Returns sorted list of beat timestamps in seconds.
     """
     cmd = [
-        "ffmpeg", "-i", audio_path,
+        "ffmpeg",
+        "-i",
+        audio_path,
         "-af",
-        "astats=metadata=1:reset=1,"
-        "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
-        "-f", "null", "-",
+        "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+        "-f",
+        "null",
+        "-",
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
@@ -144,7 +149,16 @@ def _detect_music_beats(audio_path: str, min_gap_s: float = 0.15) -> list[float]
 @celery_app.task(
     name="tasks.analyze_music_track_task",
     bind=True,
-    max_retries=0,
+    # Retry on transient Postgres outages (incident 2026-05-18 07:45:57Z).
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,  # deterministic exp backoff — jitter halves avg budget
+    # 7 retries × deterministic exp backoff (1+2+4+8+16+32+60 = 123s).
+    # retry_jitter=False so the budget is predictable, not half on average.
+    # Covers the documented 65s nova-db VM stall (2026-05-18 07:45:57Z)
+    # with ~2× safety margin. retry_backoff_max=60 caps any single delay.
+    max_retries=7,
     soft_time_limit=300,
     time_limit=360,
 )
@@ -211,9 +225,14 @@ def analyze_music_track_task(self, track_id: str) -> None:
 
             # ── Gemini audio analysis (new) ──────────────────────────────
             recipe_cached = None
+            ai_labels_dict: dict | None = None
+            sections_dict: dict | None = None
             if gemini_upload_and_wait is not None and analyze_audio_template is not None:
-                recipe_cached = _run_gemini_audio_analysis(
-                    local_audio, beats, new_config, float(duration_s or 0.0),
+                recipe_cached, ai_labels_dict, sections_dict = _run_gemini_audio_analysis(
+                    local_audio,
+                    beats,
+                    new_config,
+                    float(duration_s or 0.0),
                     track_id,
                 )
 
@@ -235,9 +254,25 @@ def analyze_music_track_task(self, track_id: str) -> None:
                 track.track_config = new_config
                 if recipe_cached is not None:
                     from datetime import UTC, datetime  # noqa: PLC0415
+
                     track.recipe_cached = recipe_cached
                     track.recipe_cached_at = datetime.now(UTC)
                 _apply_lyrics_result(track, lyrics_result)
+                if ai_labels_dict is not None:
+                    # Phase 1 (auto-music): song_classifier labels feed the
+                    # matcher's stale-row filter via label_version. See
+                    # app/agents/_schemas/music_labels.py.
+                    track.ai_labels = ai_labels_dict
+                    track.label_version = (
+                        str(ai_labels_dict.get("labels", {}).get("label_version", "")) or None
+                    )
+                if sections_dict is not None:
+                    # Phase 2 (auto-music, library side): song_sections picks
+                    # top-3 edit-worthy sections. NULL means the agent failed —
+                    # matcher excludes the track from auto-mode until backfill
+                    # re-runs. See app/agents/_schemas/song_sections.py.
+                    track.best_sections = sections_dict.get("sections")
+                    track.section_version = sections_dict.get("section_version") or None
                 track.analysis_status = "ready"
                 db.commit()
 
@@ -250,8 +285,21 @@ def analyze_music_track_task(self, track_id: str) -> None:
             n_slots=n_slots,
             has_gemini_recipe=recipe_cached is not None,
             lyrics_status=lyrics_result.get("status") if lyrics_result else "skipped",
+            has_ai_labels=ai_labels_dict is not None,
+            has_best_sections=sections_dict is not None,
         )
 
+    except OperationalError as db_exc:
+        # Transient Postgres outage — re-raise for Celery autoretry. Do NOT
+        # mark the track failed; that itself would hit the still-down DB
+        # and lock the track at status=failed permanently.
+        log.warning(
+            "analyze_music_track_transient_db_error_retry",
+            track_id=track_id,
+            error=str(db_exc),
+            retry_count=self.request.retries,
+        )
+        raise
     except Exception as exc:
         log.error("analyze_music_track_failed", track_id=track_id, error=str(exc))
         _fail_track(track_id, str(exc))
@@ -329,7 +377,16 @@ def extract_track_lyrics_task(self, track_id: str) -> None:
 @celery_app.task(
     name="tasks.orchestrate_music_job",
     bind=True,
-    max_retries=0,
+    # Retry on transient Postgres outages (incident 2026-05-18 07:45:57Z).
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,  # deterministic exp backoff — jitter halves avg budget
+    # 7 retries × deterministic exp backoff (1+2+4+8+16+32+60 = 123s).
+    # retry_jitter=False so the budget is predictable, not half on average.
+    # Covers the documented 65s nova-db VM stall (2026-05-18 07:45:57Z)
+    # with ~2× safety margin. retry_backoff_max=60 caps any single delay.
+    max_retries=7,
     soft_time_limit=1080,
     time_limit=1200,
 )
@@ -340,15 +397,33 @@ def orchestrate_music_job(self, job_id: str) -> None:
     track's cached recipe declares typed slots; otherwise runs the legacy
     beat-sync pipeline that fills every slot from user clips.
     """
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
     log.info("music_job_start", job_id=job_id)
-    try:
-        if _job_uses_templated_recipe(job_id):
-            _run_templated_music_job(job_id)
-        else:
-            _run_music_job(job_id)
-    except Exception as exc:
-        log.error("music_job_failed", job_id=job_id, error=str(exc), exc_info=True)
-        _fail_job(job_id, str(exc))
+    # `pipeline_trace_for` binds job_id into a contextvar so every
+    # `record_pipeline_event` call downstream in app/pipeline/* attributes
+    # to this job. The finally-block in the context manager clears it on
+    # exit (including on exception) so the next Celery task on this worker
+    # doesn't inherit a stale job_id.
+    with pipeline_trace_for(job_id):
+        try:
+            if _job_uses_templated_recipe(job_id):
+                _run_templated_music_job(job_id)
+            else:
+                _run_music_job(job_id)
+        except OperationalError as db_exc:
+            # Transient Postgres outage — re-raise for Celery autoretry.
+            # See incident 2026-05-18 07:45:57Z (job c13db8a3).
+            log.warning(
+                "music_job_transient_db_error_retry",
+                job_id=job_id,
+                error=str(db_exc),
+                retry_count=self.request.retries,
+            )
+            raise
+        except Exception as exc:
+            log.error("music_job_failed", job_id=job_id, error=str(exc), exc_info=True)
+            _fail_job(job_id, str(exc))
 
 
 def _job_uses_templated_recipe(job_id: str) -> bool:
@@ -436,10 +511,13 @@ def _run_music_job(job_id: str) -> None:
         lyrics_config=lyrics_config,
     )
 
-    # Build a TemplateRecipe-compatible object (use the existing dataclass)
-    from app.pipeline.agents.gemini_analyzer import TemplateRecipe  # noqa: PLC0415
+    # Build a TemplateRecipe-compatible object (use the existing dataclass).
+    # `build_recipe` strips routing/validation-only keys (e.g. required_clips_min)
+    # that live on the recipe dict but are not TemplateRecipe constructor kwargs.
+    from app.pipeline.agents.gemini_analyzer import build_recipe  # noqa: PLC0415
+
     try:
-        recipe = TemplateRecipe(**recipe_dict)
+        recipe = build_recipe(recipe_dict)
     except (TypeError, ValueError, KeyError) as exc:
         raise ValueError(f"Failed to build TemplateRecipe from music recipe: {exc}") from exc
 
@@ -457,14 +535,15 @@ def _run_music_job(job_id: str) -> None:
 
         log.info("gemini_analyze_clips_start", job_id=job_id)
         clip_metas, failed_count = _analyze_clips_parallel(
-            file_refs, local_clip_paths, probe_map, job_id=job_id,
+            file_refs,
+            local_clip_paths,
+            probe_map,
+            job_id=job_id,
         )
 
         total = len(clip_metas) + failed_count
         if failed_count > total * 0.5:
-            raise GeminiAnalysisError(
-                f"{failed_count}/{total} clips failed Gemini analysis"
-            )
+            raise GeminiAnalysisError(f"{failed_count}/{total} clips failed Gemini analysis")
         log.info(
             "gemini_analyze_clips_done",
             job_id=job_id,
@@ -474,10 +553,11 @@ def _run_music_job(job_id: str) -> None:
 
         # [7] Enrich slots with energy from beats
         enriched_slots = _enrich_slots_with_energy(
-            recipe_dict["slots"], track_data["beat_timestamps_s"],
+            recipe_dict["slots"],
+            track_data["beat_timestamps_s"],
         )
         recipe_dict = {**recipe_dict, "slots": enriched_slots}
-        recipe = TemplateRecipe(**recipe_dict)
+        recipe = build_recipe(recipe_dict)
 
         # [8] Template match (slot consolidation + greedy assignment)
         log.info("template_match_start", job_id=job_id)
@@ -508,9 +588,18 @@ def _run_music_job(job_id: str) -> None:
         # [9] FFmpeg assemble
         log.info("ffmpeg_assemble_start", job_id=job_id)
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
-        clip_id_to_local = {
-            ref.name: path for ref, path in zip(file_refs, local_clip_paths)
-        }
+        clip_id_to_local = {ref.name: path for ref, path in zip(file_refs, local_clip_paths)}
+        # Music jobs always take the multi-pass path for Phase 1 of the
+        # single-pass rollout (env flag + video_templates.single_pass_enabled).
+        # MusicTrack has no equivalent per-track allow-list flag, and music
+        # recipes have a different shape (beat-snapped slots, no
+        # text_overlays / interstitials) that hasn't been parity-tested
+        # against single-pass. The explicit force_single_pass=False here is
+        # documentation, not a behavior change — _assemble_clips's gate is
+        # now force-only and defaults to False, so omitting the kwarg
+        # produces the same routing. Add a MusicTrack.single_pass_enabled
+        # flag and lift this explicit-False if/when music joins the
+        # single-pass rollout.
         _assemble_clips(
             assembly_plan.steps,
             clip_id_to_local,
@@ -523,6 +612,7 @@ def _run_music_job(job_id: str) -> None:
             job_id=job_id,
             user_subject="",
             interstitials=[],
+            force_single_pass=False,
         )
 
         # [10] Mix in music track audio
@@ -537,8 +627,13 @@ def _run_music_job(job_id: str) -> None:
 
         # [11] Upload final video
         from app.storage import upload_public_read  # noqa: PLC0415
+
         output_gcs = f"music-jobs/{job_id}/output.mp4"
-        upload_public_read(final_path, output_gcs)
+        # Capture the signed URL — template_orchestrate stores the URL,
+        # so the public/admin viewers can use assembly_plan.output_url
+        # directly as a <video src>. Was previously discarding this and
+        # storing the relative GCS path, which broke direct playback.
+        output_url = upload_public_read(final_path, output_gcs)
         log.info("music_job_uploaded", job_id=job_id, gcs_path=output_gcs)
 
     # [12] Mark done
@@ -547,7 +642,7 @@ def _run_music_job(job_id: str) -> None:
         if job:
             job.status = "music_ready"
             existing_plan = job.assembly_plan or {}
-            job.assembly_plan = {**existing_plan, "output_url": output_gcs}
+            job.assembly_plan = {**existing_plan, "output_url": output_url}
             db.commit()
 
     log.info("music_job_done", job_id=job_id)
@@ -667,8 +762,16 @@ def _run_gemini_audio_analysis(
     track_config: dict,
     duration_s: float,
     track_id: str,
-) -> dict | None:
-    """Upload audio to Gemini and get a visual recipe. Falls back to beat-only on failure."""
+) -> tuple[dict | None, dict | None, dict | None]:
+    """Upload audio to Gemini, run structural analysis + song classifier + song sections.
+
+    Returns ``(recipe_cached, ai_labels, best_sections)``. Each side can
+    be ``None`` independently — a Gemini-recipe failure does not block
+    label generation, a classifier failure does not block recipe
+    caching, and a sections failure does not block either. On a total
+    upload failure all three are ``None`` (falls back to beat-only
+    recipe, no labels, no sections).
+    """
     try:
         log.info("gemini_audio_analysis_start", track_id=track_id)
         file_ref = gemini_upload_and_wait(local_audio, timeout=120)
@@ -690,13 +793,25 @@ def _run_gemini_audio_analysis(
         beat_recipe = generate_music_recipe(track_data)
         merged = merge_audio_recipe(beat_recipe, gemini_recipe)
 
+        # Phase 1 (auto-music): classify the song while we still have
+        # the file_ref + audio_template output. Best-effort — the
+        # recipe path doesn't depend on labels.
+        ai_labels = _run_song_classifier(file_ref, gemini_recipe, track_id)
+
+        # Phase 2 (auto-music, library side): pick top-3 edit-worthy
+        # sections. Reuses the same file_ref — no second Gemini upload.
+        # Best-effort: matcher's NULL-section filter handles failure.
+        sections = _run_song_sections(file_ref, gemini_recipe, beats, duration_s, track_id)
+
         log.info(
             "gemini_audio_analysis_done",
             track_id=track_id,
             gemini_slots=len(gemini_recipe.get("slots", [])),
             merged_slots=len(merged.get("slots", [])),
+            has_ai_labels=ai_labels is not None,
+            has_best_sections=sections is not None,
         )
-        return merged
+        return merged, ai_labels, sections
 
     except Exception as exc:
         # Gemini failure is non-fatal: fall back to beat-only recipe
@@ -705,16 +820,113 @@ def _run_gemini_audio_analysis(
             track_id=track_id,
             error=str(exc),
         )
-        # Return beat-only recipe as fallback
+        # Return beat-only recipe as fallback. Labels and sections
+        # can't be produced without the file_ref, so they stay None.
         try:
             track_data = {
                 "beat_timestamps_s": beats,
                 "track_config": track_config,
                 "duration_s": duration_s,
             }
-            return generate_music_recipe(track_data)
+            return generate_music_recipe(track_data), None, None
         except Exception:
-            return None
+            return None, None, None
+
+
+def _run_song_sections(
+    file_ref: Any,
+    audio_template_output: dict,
+    beats: list[float],
+    duration_s: float,
+    track_id: str,
+) -> dict | None:
+    """Best-effort: pick top-3 edit-worthy sections. Never raises.
+
+    Failure is logged and returns ``None``; the matcher will treat the
+    track as unsectioned (filtered out of auto-music selection until
+    the backfill script reruns).
+    """
+    if duration_s <= 0.0:
+        # SongSectionsInput requires duration_s > 0. A track with no
+        # known duration cannot be sectioned — skip silently.
+        log.debug("song_sections_skip_no_duration", track_id=track_id)
+        return None
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.song_sections import (  # noqa: PLC0415
+            SongSectionsAgent,
+            SongSectionsInput,
+        )
+
+        inp = SongSectionsInput(
+            file_uri=file_ref.uri,
+            file_mime=getattr(file_ref, "mime_type", None) or "audio/mp4",
+            duration_s=float(duration_s),
+            beat_timestamps_s=beats,
+            audio_template_output=audio_template_output or {},
+        )
+        out = SongSectionsAgent(default_client()).run(
+            inp, ctx=RunContext(job_id=f"track:{track_id}")
+        )
+        log.info(
+            "song_sections_done",
+            track_id=track_id,
+            section_count=len(out.sections),
+            ranks=[s.rank for s in out.sections],
+        )
+        return out.to_dict()
+    except Exception as exc:
+        log.warning(
+            "song_sections_failed",
+            track_id=track_id,
+            error=str(exc),
+        )
+        return None
+
+
+def _run_song_classifier(
+    file_ref: Any,
+    audio_template_output: dict,
+    track_id: str,
+) -> dict | None:
+    """Best-effort: produce MusicLabels for the track. Never raises.
+
+    Failure is logged and returns ``None``; the matcher will treat the
+    track as unlabeled (filtered out of auto-music selection until the
+    backfill script reruns).
+    """
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.song_classifier import (  # noqa: PLC0415
+            SongClassifierAgent,
+            SongClassifierInput,
+        )
+
+        inp = SongClassifierInput(
+            file_uri=file_ref.uri,
+            file_mime=getattr(file_ref, "mime_type", None) or "audio/mp4",
+            audio_template_output=audio_template_output or {},
+        )
+        out = SongClassifierAgent(default_client()).run(
+            inp, ctx=RunContext(job_id=f"track:{track_id}")
+        )
+        log.info(
+            "song_classifier_done",
+            track_id=track_id,
+            genre=out.labels.genre,
+            energy=out.labels.energy,
+            vibe_tags=out.labels.vibe_tags,
+        )
+        return out.to_dict()
+    except Exception as exc:
+        log.warning(
+            "song_classifier_failed",
+            track_id=track_id,
+            error=str(exc),
+        )
+        return None
 
 
 # ── Templated music jobs (fixed-asset + user-upload slots) ────────────────────
@@ -767,8 +979,7 @@ def _run_templated_music_job(job_id: str) -> None:
             raise ValueError("MusicTrack has no audio_gcs_path")
         if not track.recipe_cached:
             raise ValueError(
-                "Templated music job requires track.recipe_cached "
-                "(slot_type per slot)"
+                "Templated music job requires track.recipe_cached (slot_type per slot)"
             )
         recipe_dict: dict = dict(track.recipe_cached)
         audio_gcs_path = track.audio_gcs_path
@@ -783,12 +994,8 @@ def _run_templated_music_job(job_id: str) -> None:
         recipe_dict,
         lyrics_cached_tmpl,
         best_start_s=float(track_cfg_tmpl.get("best_start_s", 0.0)),
-        best_end_s=float(
-            track_cfg_tmpl.get("best_end_s", 0.0)
-        ) or sum(
-            float(s.get("target_duration_s", 0.0))
-            for s in recipe_dict.get("slots", [])
-        ),
+        best_end_s=float(track_cfg_tmpl.get("best_end_s", 0.0))
+        or sum(float(s.get("target_duration_s", 0.0)) for s in recipe_dict.get("slots", [])),
         lyrics_config=lyrics_config_tmpl,
     )
 
@@ -820,9 +1027,7 @@ def _run_templated_music_job(job_id: str) -> None:
             position = int(slot.get("position", 0))
             asset_gcs = slot.get("asset_gcs_path")
             if not asset_gcs:
-                raise ValueError(
-                    f"fixed_asset slot {position} missing asset_gcs_path"
-                )
+                raise ValueError(f"fixed_asset slot {position} missing asset_gcs_path")
             asset_local = os.path.join(tmpdir, f"asset_{position}_src")
             try:
                 download_to_file(asset_gcs, asset_local)
@@ -853,6 +1058,7 @@ def _run_templated_music_job(job_id: str) -> None:
                 # Re-encode to output spec by passing through reframe.
                 # (Not used for LFM but kept for future templates.)
                 from app.pipeline.reframe import reframe_and_export  # noqa: PLC0415
+
                 reframe_and_export(
                     input_path=asset_local,
                     start_s=0.0,
@@ -862,9 +1068,7 @@ def _run_templated_music_job(job_id: str) -> None:
                     output_path=slot_clip,
                 )
             else:
-                raise ValueError(
-                    f"Unknown asset_kind {asset_kind!r} for fixed slot {position}"
-                )
+                raise ValueError(f"Unknown asset_kind {asset_kind!r} for fixed slot {position}")
 
             clip_id = f"fixed:slot{position}"
             slot_position_to_clip[position] = (clip_id, slot_clip)
@@ -919,6 +1123,7 @@ def _run_templated_music_job(job_id: str) -> None:
                 # because reframe's colorspace filter rejects "unknown" or
                 # arib-std-b67 inputs that are common from iPhones / web exports.
                 from app.pipeline.probe import probe_video  # noqa: PLC0415
+
                 try:
                     probe = probe_video(user_path)
                     video_dur = float(probe.duration_s or 0.0)
@@ -970,9 +1175,7 @@ def _run_templated_music_job(job_id: str) -> None:
             position = int(slot.get("position", 0))
             entry = slot_position_to_clip.get(position)
             if entry is None:
-                raise RuntimeError(
-                    f"Slot {position} not bound to any clip — assembly aborted"
-                )
+                raise RuntimeError(f"Slot {position} not bound to any clip — assembly aborted")
             clip_id, local_path = entry
             clip_id_to_local[clip_id] = local_path
             slot_dur = float(slot.get("target_duration_s", 5.0))
@@ -1030,9 +1233,7 @@ def _run_templated_music_job(job_id: str) -> None:
         # _burn_text_overlays — only lyric overlays survive the templated
         # path; admin-authored text on templated tracks is rare and is
         # tracked as v2). Skipped when injection produced nothing.
-        slot_durations = [
-            float(step.slot.get("target_duration_s", 0.0)) for step in steps
-        ]
+        slot_durations = [float(step.slot.get("target_duration_s", 0.0)) for step in steps]
         abs_overlays = _collect_absolute_overlays(
             [{"slot": step.slot, "clip_id": step.clip_id} for step in steps],
             slot_durations,
@@ -1060,7 +1261,7 @@ def _run_templated_music_job(job_id: str) -> None:
 
         # [8] Upload result
         output_gcs = f"music-jobs/{job_id}/output.mp4"
-        upload_public_read(final_path, output_gcs)
+        output_url = upload_public_read(final_path, output_gcs)
         log.info("templated_music_job_uploaded", job_id=job_id, gcs_path=output_gcs)
 
     # [9] Mark done
@@ -1069,13 +1270,15 @@ def _run_templated_music_job(job_id: str) -> None:
         if j:
             j.status = "music_ready"
             existing = j.assembly_plan or {}
-            j.assembly_plan = {**existing, "output_url": output_gcs}
+            j.assembly_plan = {**existing, "output_url": output_url}
             db.commit()
     log.info("templated_music_job_done", job_id=job_id)
 
 
 def _concat_pre_rendered_clips(
-    clip_paths: list[str], output_path: str, tmpdir: str,
+    clip_paths: list[str],
+    output_path: str,
+    tmpdir: str,
 ) -> None:
     """Concatenate clips that are already at the output spec into one mp4.
 
@@ -1102,11 +1305,16 @@ def _concat_pre_rendered_clips(
 
     cmd = [
         "ffmpeg",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", list_file,
-        "-c", "copy",
-        "-movflags", "+faststart",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        list_file,
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
         "-y",
         output_path,
     ]
@@ -1122,24 +1330,30 @@ def _concat_pre_rendered_clips(
         )
         cmd = [
             "ffmpeg",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", list_file,
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "18",
-            "-pix_fmt", "yuv420p",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            list_file,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
             "-an",
-            "-movflags", "+faststart",
+            "-movflags",
+            "+faststart",
             "-y",
             output_path,
         ]
         result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
         if result.returncode != 0:
             stderr_tail2 = result.stderr.decode("utf-8", errors="replace")[-800:]
-            raise RuntimeError(
-                f"concat re-encode failed (rc={result.returncode}): {stderr_tail2}"
-            )
+            raise RuntimeError(f"concat re-encode failed (rc={result.returncode}): {stderr_tail2}")
 
     if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
         raise RuntimeError(f"concat produced empty output: {output_path}")
@@ -1179,24 +1393,48 @@ def _ken_burns_from_slot(slot: dict, default=None):  # type: ignore[no-untyped-d
 
 
 def _fail_job(job_id: str, error_detail: str) -> None:
-    try:
-        with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
-            if job:
-                job.status = "processing_failed"
-                job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
-                db.commit()
-    except Exception as exc:
-        log.error("fail_job_db_error", job_id=job_id, error=str(exc))
+    # Hardened against transient DB outages: retry the mark if Postgres is
+    # briefly unreachable, so we don't leave the row at status=processing
+    # (zombie). Incident 2026-05-18 07:45:57Z.
+    for attempt in range(3):
+        try:
+            with _sync_session() as db:
+                job = db.get(Job, uuid.UUID(job_id))
+                if job:
+                    job.status = "processing_failed"
+                    job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
+                    db.commit()
+            return
+        except (OperationalError, DBAPIError) as exc:
+            if attempt == 2:
+                log.error("fail_job_db_unreachable", job_id=job_id, error=str(exc))
+                return
+            import time as _time  # noqa: PLC0415
+
+            _time.sleep(1 + attempt)
+        except Exception as exc:
+            log.error("fail_job_db_error", job_id=job_id, error=str(exc))
+            return
 
 
 def _fail_track(track_id: str, error_detail: str) -> None:
-    try:
-        with _sync_session() as db:
-            track = db.get(MusicTrack, track_id)
-            if track:
-                track.analysis_status = "failed"
-                track.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
-                db.commit()
-    except Exception as exc:
-        log.error("fail_track_db_error", track_id=track_id, error=str(exc))
+    # Hardened against transient DB outages — see _fail_job.
+    for attempt in range(3):
+        try:
+            with _sync_session() as db:
+                track = db.get(MusicTrack, track_id)
+                if track:
+                    track.analysis_status = "failed"
+                    track.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
+                    db.commit()
+            return
+        except (OperationalError, DBAPIError) as exc:
+            if attempt == 2:
+                log.error("fail_track_db_unreachable", track_id=track_id, error=str(exc))
+                return
+            import time as _time  # noqa: PLC0415
+
+            _time.sleep(1 + attempt)
+        except Exception as exc:
+            log.error("fail_track_db_error", track_id=track_id, error=str(exc))
+            return

@@ -22,12 +22,14 @@ from typing import Literal
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, field_validator, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
+from app.models import AgentRun, Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
+from app.routes._admin_schemas import AgentRunPayload, agent_run_to_payload
+from app.routes.templates import RequiredInput
 from app.services.template_validation import (
     get_template_or_404,
     require_ready,
@@ -69,6 +71,7 @@ class CreateTemplateRequest(BaseModel):
     required_clips_max: int = 10
     description: str | None = None
     source_url: str | None = None
+    is_agentic: bool = False
 
     @field_validator("gcs_path")
     @classmethod
@@ -98,6 +101,7 @@ class CreateTemplateFromUrlRequest(BaseModel):
     required_clips_min: int = 5
     required_clips_max: int = 10
     description: str | None = None
+    is_agentic: bool = False
 
     @field_validator("url")
     @classmethod
@@ -105,9 +109,7 @@ class CreateTemplateFromUrlRequest(BaseModel):
         from app.services.url_download import is_supported_url  # noqa: PLC0415
 
         if not is_supported_url(v):
-            raise ValueError(
-                "URL must be a TikTok, Instagram, or YouTube link"
-            )
+            raise ValueError("URL must be a TikTok, Instagram, or YouTube link")
         return v.strip()
 
     @field_validator("required_clips_min")
@@ -132,6 +134,7 @@ class TemplateResponse(BaseModel):
     analysis_status: str
     required_clips_min: int
     required_clips_max: int
+    required_inputs: list[RequiredInput] = []
     published_at: datetime | None
     archived_at: datetime | None
     description: str | None
@@ -142,6 +145,8 @@ class TemplateResponse(BaseModel):
     parent_template_id: str | None = None
     music_track_id: str | None = None
     has_intro_slot: bool = False
+    is_agentic: bool = False
+    use_layer2_default: bool | None = None
     created_at: datetime
 
 
@@ -151,8 +156,9 @@ class UpdateTemplateRequest(BaseModel):
     source_url: str | None = None
     required_clips_min: int | None = None
     required_clips_max: int | None = None
-    publish: bool | None = None   # set True to publish (sets published_at)
-    archive: bool | None = None   # set True to archive (sets archived_at)
+    required_inputs: list[RequiredInput] | None = None  # full replace; None = unchanged
+    publish: bool | None = None  # set True to publish (sets published_at)
+    archive: bool | None = None  # set True to archive (sets archived_at)
     template_type: str | None = None  # "standard" | "music_parent"
     has_intro_slot: bool | None = None
 
@@ -161,6 +167,23 @@ class UpdateTemplateRequest(BaseModel):
     def validate_template_type(cls, v: str | None) -> str | None:
         if v is not None and v not in ("standard", "music_parent"):
             raise ValueError("template_type must be 'standard' or 'music_parent'")
+        return v
+
+    @field_validator("required_inputs")
+    @classmethod
+    def validate_required_inputs(cls, v: list[RequiredInput] | None) -> list[RequiredInput] | None:
+        if v is None:
+            return v
+        seen_keys: set[str] = set()
+        for idx, entry in enumerate(v):
+            stripped_key = entry.key.strip()
+            if not stripped_key:
+                raise ValueError(f"required_inputs[{idx}].key must be non-empty")
+            if not entry.label.strip():
+                raise ValueError(f"required_inputs[{idx}].label must be non-empty")
+            if stripped_key in seen_keys:
+                raise ValueError(f"duplicate required_inputs key: {stripped_key!r}")
+            seen_keys.add(stripped_key)
         return v
 
 
@@ -174,6 +197,7 @@ class TemplateListItem(BaseModel):
     thumbnail_gcs_path: str | None
     error_detail: str | None = None
     template_type: str = "standard"
+    is_agentic: bool = False
     job_count: int
     created_at: datetime
 
@@ -218,6 +242,13 @@ class TestJobRequest(BaseModel):
     clip_durations: list[float] | None = None
     selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
     subject: str = ""
+    # Fast-preview toggle for the admin test tab. When true, the orchestrator
+    # skips curtain-close, skips generate_copy, and uses lower-quality
+    # intermediate encodes — final-output encode policy is untouched, so
+    # picture quality of the rendered video is the same. Cuts a 5-clip test
+    # from ~3 min cold to ~30-60s. Default false to preserve external API
+    # behaviour; the admin UI sets it to true.
+    preview_mode: bool = False
 
     @field_validator("clip_gcs_paths")
     @classmethod
@@ -230,12 +261,8 @@ class TestJobRequest(BaseModel):
 
     @model_validator(mode="after")
     def _check_duration_alignment(self) -> "TestJobRequest":
-        if self.clip_durations is not None and len(self.clip_durations) != len(
-            self.clip_gcs_paths
-        ):
-            raise ValueError(
-                "clip_durations length must match clip_gcs_paths length"
-            )
+        if self.clip_durations is not None and len(self.clip_durations) != len(self.clip_gcs_paths):
+            raise ValueError("clip_durations length must match clip_gcs_paths length")
         return self
 
 
@@ -278,26 +305,29 @@ class RecipeHistoryResponse(BaseModel):
 
 # ── Recipe editor schemas (strict validation) ────────────────────────────────
 
-TransitionIn = Literal[
-    "hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none"
-]
-ColorHint = Literal[
-    "warm", "cool", "high-contrast", "desaturated", "vintage", "none"
-]
+TransitionIn = Literal["hard-cut", "whip-pan", "zoom-in", "dissolve", "curtain-close", "none"]
+ColorHint = Literal["warm", "cool", "high-contrast", "desaturated", "vintage", "none"]
 SlotType = Literal["hook", "broll", "outro"]
 MediaType = Literal["video", "photo"]
 OverlayEffect = Literal[
-    "pop-in", "fade-in", "scale-up", "font-cycle", "typewriter",
-    "glitch", "bounce", "slide-in", "slide-up", "static", "none",
+    "pop-in",
+    "fade-in",
+    "scale-up",
+    "font-cycle",
+    "typewriter",
+    "glitch",
+    "bounce",
+    "slide-in",
+    "slide-up",
+    "static",
+    "none",
     "player-card",  # giant kit number + italic red name overlay
 ]
 OverlayPosition = Literal["top", "center", "center-above", "center-label", "center-below", "bottom"]
 FontStyle = Literal["display", "sans", "serif", "serif_italic", "script"]
 TextSize = Literal["small", "medium", "large", "xlarge", "xxlarge", "jumbo"]
 OverlayRole = Literal["hook", "reaction", "cta", "label"]
-SyncStyle = Literal[
-    "cut-on-beat", "transition-on-beat", "energy-match", "freeform"
-]
+SyncStyle = Literal["cut-on-beat", "transition-on-beat", "energy-match", "freeform"]
 InterstitialType = Literal["curtain-close", "fade-black-hold", "flash-white"]
 
 
@@ -371,9 +401,7 @@ class RecipeTextOverlaySchema(BaseModel):
     @model_validator(mode="after")
     def validate_timing(self) -> "RecipeTextOverlaySchema":
         if self.end_s <= self.start_s:
-            raise ValueError(
-                f"Overlay end_s ({self.end_s}) must be > start_s ({self.start_s})"
-            )
+            raise ValueError(f"Overlay end_s ({self.end_s}) must be > start_s ({self.start_s})")
         return self
 
 
@@ -525,7 +553,8 @@ class RecipeSlotSchema(BaseModel):
     @field_validator("grid_highlight_windows")
     @classmethod
     def validate_grid_highlight_windows(
-        cls, v: list[tuple[float, float]] | None,
+        cls,
+        v: list[tuple[float, float]] | None,
     ) -> list[tuple[float, float]] | None:
         if v is None:
             return None
@@ -539,6 +568,7 @@ class RecipeSlotSchema(BaseModel):
 
 class RecipeSchema(BaseModel):
     """Full recipe structure — used for PUT validation."""
+
     shot_count: int
     total_duration_s: float
     hook_duration_s: float = 0.0
@@ -559,7 +589,7 @@ class RecipeSchema(BaseModel):
     #   "letterbox" / "letterbox_blur" (preserve full frame, blurred bg),
     #   "letterbox_black" (preserve full frame, black bars).
     output_fit: Literal["crop", "letterbox", "letterbox_blur", "letterbox_black"] = "crop"
-    clip_filter_hint: str = ""          # natural-language Gemini bias for best_moments
+    clip_filter_hint: str = ""  # natural-language Gemini bias for best_moments
 
     @field_validator("slots")
     @classmethod
@@ -609,7 +639,27 @@ class SaveRecipeRequest(BaseModel):
     base_version_id: str | None = None
 
 
-# ── Helper ─────────────────────────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+
+def resolve_use_layer2(
+    *,
+    query_param: bool | None,
+    template_default: bool | None,
+    global_flag: bool,
+) -> bool:
+    """Resolve the effective use_layer2 value for a reanalyze-agentic build.
+
+    Priority (highest → lowest):
+      1. ``query_param`` — if present (True *or* False) it wins absolutely.
+      2. ``template_default`` — per-template sticky default, if not None.
+      3. ``global_flag`` — ``settings.text_overlay_v2_enabled`` fallback.
+    """
+    if query_param is not None:
+        return query_param
+    if template_default is not None:
+        return template_default
+    return global_flag
 
 
 def _template_response(t: VideoTemplate) -> TemplateResponse:
@@ -623,6 +673,7 @@ def _template_response(t: VideoTemplate) -> TemplateResponse:
         analysis_status=t.analysis_status,
         required_clips_min=t.required_clips_min,
         required_clips_max=t.required_clips_max,
+        required_inputs=[RequiredInput(**r) for r in (t.required_inputs or [])],
         published_at=t.published_at,
         archived_at=t.archived_at,
         description=t.description,
@@ -633,6 +684,8 @@ def _template_response(t: VideoTemplate) -> TemplateResponse:
         parent_template_id=t.parent_template_id,
         music_track_id=t.music_track_id,
         has_intro_slot=has_intro_slot,
+        is_agentic=t.is_agentic,
+        use_layer2_default=t.use_layer2_default,
         created_at=t.created_at,
     )
 
@@ -700,6 +753,7 @@ async def list_templates(
                 thumbnail_gcs_path=t.thumbnail_gcs_path,
                 error_detail=t.error_detail,
                 template_type=t.template_type,
+                is_agentic=t.is_agentic,
                 job_count=job_count,
                 created_at=t.created_at,
             )
@@ -738,15 +792,31 @@ async def create_template(
         required_clips_max=req.required_clips_max,
         description=req.description,
         source_url=req.source_url,
+        is_agentic=req.is_agentic,
     )
     db.add(template)
     await db.commit()
     await db.refresh(template)
 
-    from app.tasks.template_orchestrate import analyze_template_task  # noqa: PLC0415
-    analyze_template_task.delay(template_id)
+    if req.is_agentic:
+        from app.tasks.agentic_template_build import (  # noqa: PLC0415
+            agentic_template_build_task,
+        )
 
-    log.info("template_created", template_id=template_id, name=req.name)
+        agentic_template_build_task.delay(template_id)
+    else:
+        from app.tasks.template_orchestrate import (  # noqa: PLC0415
+            analyze_template_task,
+        )
+
+        analyze_template_task.delay(template_id)
+
+    log.info(
+        "template_created",
+        template_id=template_id,
+        name=req.name,
+        is_agentic=req.is_agentic,
+    )
     return _template_response(template)
 
 
@@ -781,15 +851,31 @@ async def create_template_from_url(
         required_clips_max=req.required_clips_max,
         description=req.description,
         source_url=req.url,
+        is_agentic=req.is_agentic,
     )
     db.add(template)
     await db.commit()
     await db.refresh(template)
 
-    from app.tasks.template_orchestrate import analyze_template_task  # noqa: PLC0415
-    analyze_template_task.delay(template_id)
+    if req.is_agentic:
+        from app.tasks.agentic_template_build import (  # noqa: PLC0415
+            agentic_template_build_task,
+        )
 
-    log.info("template_created_from_url", template_id=template_id, url=req.url)
+        agentic_template_build_task.delay(template_id)
+    else:
+        from app.tasks.template_orchestrate import (  # noqa: PLC0415
+            analyze_template_task,
+        )
+
+        analyze_template_task.delay(template_id)
+
+    log.info(
+        "template_created_from_url",
+        template_id=template_id,
+        url=req.url,
+        is_agentic=req.is_agentic,
+    )
     return _template_response(template)
 
 
@@ -805,6 +891,77 @@ async def get_template(
     """Get template status and metadata."""
     template = await get_template_or_404(template_id, db)
     return _template_response(template)
+
+
+class TemplateDebugSummary(BaseModel):
+    id: str
+    name: str
+    analysis_status: str
+    template_type: str
+    is_agentic: bool
+    gcs_path: str | None
+    audio_gcs_path: str | None
+    music_track_id: str | None
+    error_detail: str | None
+    recipe_cached_at: datetime | None
+    created_at: datetime
+
+
+class TemplateDebugResponse(BaseModel):
+    template: TemplateDebugSummary
+    template_agent_runs: list[AgentRunPayload]
+    recipe_cached: dict | None
+
+
+# Cap so a template with hundreds of re-runs doesn't bloat the payload.
+# Job-debug doesn't cap because jobs are one-shot; templates get re-analyzed.
+_TEMPLATE_DEBUG_RUN_LIMIT = 100
+
+
+@router.get(
+    "/templates/{template_id}/debug",
+    response_model=TemplateDebugResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def get_template_debug(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateDebugResponse:
+    """Return template metadata + agent_runs that shaped its analysis.
+
+    Mirrors GET /admin/jobs/{id}/debug's Template-analysis section, but
+    scoped to one template — usable before any job has referenced it.
+    """
+    template = await get_template_or_404(template_id, db)
+
+    # DESC (newest-first) intentional: admins re-analyze templates frequently and
+    # want the latest attempt on top. Job-debug uses ASC for chronological flow;
+    # template-debug isn't chronological because each row is an independent run.
+    runs_res = await db.execute(
+        select(AgentRun)
+        .where(AgentRun.template_id == template_id)
+        .order_by(AgentRun.created_at.desc())
+        .limit(_TEMPLATE_DEBUG_RUN_LIMIT)
+    )
+    runs = list(runs_res.scalars().all())
+
+    return TemplateDebugResponse(
+        template=TemplateDebugSummary(
+            id=template.id,
+            name=template.name,
+            analysis_status=template.analysis_status,
+            template_type=template.template_type,
+            is_agentic=template.is_agentic,
+            gcs_path=template.gcs_path,
+            audio_gcs_path=template.audio_gcs_path,
+            music_track_id=template.music_track_id,
+            error_detail=template.error_detail,
+            recipe_cached_at=template.recipe_cached_at,
+            created_at=template.created_at,
+        ),
+        template_agent_runs=[agent_run_to_payload(r) for r in runs],
+        recipe_cached=template.recipe_cached,
+    )
 
 
 @router.patch(
@@ -836,6 +993,9 @@ async def update_template(
         template.required_clips_min = req.required_clips_min
     if req.required_clips_max is not None:
         template.required_clips_max = req.required_clips_max
+    if req.required_inputs is not None:
+        # Full replace — caller sends the complete ordered list.
+        template.required_inputs = [entry.model_dump() for entry in req.required_inputs]
 
     # Validate min <= max after applying partial updates
     if template.required_clips_min > template.required_clips_max:
@@ -914,8 +1074,20 @@ async def reanalyze_template(
     template_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> TemplateResponse:
-    """Re-run Gemini analysis on an existing template."""
+    """Re-run Gemini analysis on an existing manual template."""
     template = await get_template_or_404(template_id, db)
+
+    # Agentic templates have their own build pipeline; routing one through
+    # the manual reanalyze path would produce a single-pass recipe with no
+    # text_designer styling and silently drift from the agentic contract.
+    if template.is_agentic:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This template is agent-built. Use "
+                "POST /admin/templates/{id}/reanalyze-agentic instead."
+            ),
+        )
 
     template.analysis_status = "analyzing"
     template.error_detail = None  # clear stale error
@@ -930,9 +1102,132 @@ async def reanalyze_template(
     _redis.close()
 
     from app.tasks.template_orchestrate import analyze_template_task  # noqa: PLC0415
+
     analyze_template_task.delay(template_id)
 
     log.info("template_reanalyzed", template_id=template_id)
+    return _template_response(template)
+
+
+@router.post(
+    "/templates/{template_id}/reanalyze-agentic",
+    response_model=TemplateResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def reanalyze_template_agentic(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+    use_layer2: bool | None = Query(
+        default=None,
+        description=(
+            "Override the Layer-2 text-overlay pipeline decision for this build. "
+            "true → force Layer-2; false → force Layer-1. "
+            "When omitted, falls back to template.use_layer2_default, then "
+            "settings.text_overlay_v2_enabled. "
+            "Passing an explicit value always wins, regardless of per-template or global flags."
+        ),
+    ),
+) -> TemplateResponse:
+    """Re-run the full agent stack on an agentic template.
+
+    Layer-2 resolution priority:
+      1. ``?use_layer2`` query param (present → wins absolutely, true OR false).
+      2. ``template.use_layer2_default`` (per-template sticky default, if set).
+      3. ``settings.text_overlay_v2_enabled`` (global flag fallback).
+
+    Pass ``?use_layer2=true`` to force Layer-2 for this build regardless of all
+    other settings. Pass ``?use_layer2=false`` to force Layer-1. Omit the param
+    entirely to let the per-template default or global flag decide.
+    """
+    template = await get_template_or_404(template_id, db)
+
+    if not template.is_agentic:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This template is manually built. Use POST /admin/templates/{id}/reanalyze instead."
+            ),
+        )
+
+    effective_layer2 = resolve_use_layer2(
+        query_param=use_layer2,
+        template_default=template.use_layer2_default,
+        global_flag=settings.text_overlay_v2_enabled,
+    )
+
+    template.analysis_status = "analyzing"
+    template.error_detail = None
+    await db.commit()
+    await db.refresh(template)
+
+    import redis as redis_lib  # noqa: PLC0415
+
+    _redis = redis_lib.from_url(settings.redis_url)
+    _redis.delete(f"analyze_attempts:{template_id}")
+    _redis.close()
+
+    from app.tasks.agentic_template_build import (  # noqa: PLC0415
+        agentic_template_build_task,
+    )
+
+    agentic_template_build_task.delay(template_id, use_layer2=effective_layer2)
+
+    log.info(
+        "template_reanalyzed_agentic",
+        template_id=template_id,
+        use_layer2_param=use_layer2,
+        effective_layer2=effective_layer2,
+    )
+    return _template_response(template)
+
+
+# ── Per-template Layer-2 default endpoint ─────────────────────────────────────
+
+
+class Layer2DefaultRequest(BaseModel):
+    """Body for PUT /admin/templates/{id}/use-layer2-default.
+
+    Pass ``use_layer2_default=true`` or ``false`` to set a sticky per-template
+    default. Pass ``null`` to clear it — reanalysis will then fall through to
+    the global ``settings.text_overlay_v2_enabled`` flag.
+    """
+
+    use_layer2_default: bool | None
+
+
+@router.put(
+    "/templates/{template_id}/use-layer2-default",
+    response_model=TemplateResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def set_use_layer2_default(
+    template_id: str,
+    req: Layer2DefaultRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateResponse:
+    """Set or clear the per-template Layer-2 text-overlay default.
+
+    Layer-2 resolution priority for reanalyze-agentic:
+      1. ``?use_layer2`` query param (present → wins absolutely).
+      2. ``template.use_layer2_default`` (this field, if not null).
+      3. ``settings.text_overlay_v2_enabled`` (global flag fallback).
+
+    Body: ``{"use_layer2_default": true|false|null}``
+
+    - ``true``  → this template always reanalyzes with Layer-2.
+    - ``false`` → this template always reanalyzes with Layer-1.
+    - ``null``  → clear; falls through to the global flag.
+    """
+    template = await get_template_or_404(template_id, db)
+    template.use_layer2_default = req.use_layer2_default
+    await db.commit()
+    await db.refresh(template)
+
+    log.info(
+        "template_use_layer2_default_updated",
+        template_id=template_id,
+        use_layer2_default=req.use_layer2_default,
+    )
     return _template_response(template)
 
 
@@ -956,13 +1251,20 @@ async def create_test_job(
     validate_clip_count(template, len(req.clip_gcs_paths))
     validate_clip_total_duration(template, req.clip_durations)
 
+    all_candidates: dict = {
+        "clip_paths": req.clip_gcs_paths,
+        "subject": req.subject,
+    }
+    if req.preview_mode:
+        all_candidates["preview_mode"] = True
+
     job = Job(
         user_id=SYNTHETIC_USER_ID,
         job_type="template",
         template_id=template_id,
         raw_storage_path=req.clip_gcs_paths[0],
         selected_platforms=req.selected_platforms,
-        all_candidates={"clip_paths": req.clip_gcs_paths, "subject": req.subject},
+        all_candidates=all_candidates,
         status="queued",
     )
     db.add(job)
@@ -971,10 +1273,34 @@ async def create_test_job(
 
     job_id = str(job.id)
 
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
     from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
-    orchestrate_template_job.delay(job_id)
 
-    log.info("test_job_created", job_id=job_id, template_id=template_id)
+    # Preview-mode test jobs force the single-pass encode path regardless of
+    # the per-template allow-list (template_orchestrate.py:1980 documents this
+    # as the engineer-debug escape hatch). Prod templates that have completed
+    # parity testing get single_pass_enabled=true and hit single-pass naturally;
+    # an admin's not-yet-promoted test template otherwise falls through to the
+    # multi-pass path, which is what made assemble feel slow. Preview mode is
+    # admin-only and explicitly opt-in for "fast at the cost of some fidelity,"
+    # so forcing single-pass here matches what the operator asked for.
+    if req.preview_mode:
+        await enqueue_orchestrator(
+            orchestrate_template_job,
+            job.id,
+            db,
+            kwargs={"force_single_pass": True},
+        )
+    else:
+        await enqueue_orchestrator(orchestrate_template_job, job.id, db)
+
+    log.info(
+        "test_job_created",
+        job_id=job_id,
+        template_id=template_id,
+        preview_mode=req.preview_mode,
+        force_single_pass=req.preview_mode,
+    )
     return TestJobResponse(job_id=job_id, status="queued", template_id=template_id)
 
 
@@ -1068,11 +1394,17 @@ async def create_rerender_job(
 
     job_id = str(job.id)
 
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
     from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
-    orchestrate_template_job.delay(job_id)
 
-    log.info("rerender_job_created", job_id=job_id, template_id=template_id,
-             source_job_id=req.source_job_id)
+    await enqueue_orchestrator(orchestrate_template_job, job.id, db)
+
+    log.info(
+        "rerender_job_created",
+        job_id=job_id,
+        template_id=template_id,
+        source_job_id=req.source_job_id,
+    )
     return TestJobResponse(job_id=job_id, status="queued", template_id=template_id)
 
 
@@ -1162,9 +1494,7 @@ async def get_template_health(
             # No path means the template doesn't reference an asset of this
             # role. That's only a problem for required assets — currently
             # only `reference_video` is required for every template kind.
-            assets.append(
-                TemplateAssetHealth(role=role, gcs_path=None, exists=False)
-            )
+            assets.append(TemplateAssetHealth(role=role, gcs_path=None, exists=False))
             if role == "reference_video":
                 healthy = False
             continue
@@ -1209,12 +1539,24 @@ async def get_latest_test_job(
     """Return the most recent completed test job for a template."""
     await get_template_or_404(template_id, db)
 
+    # Accept either template_ready jobs OR processing_failed jobs that have
+    # an output_url in assembly_plan. The latter covers the window where the
+    # pre-#243 reaper falsely flipped successful template_ready jobs to
+    # processing_failed (see admin_jobs.un_reap endpoint for the canonical
+    # restore). Without this, the editor's Test Job button silently no-ops
+    # when every prior job for the template was reaped before #243 deployed.
     result = await db.execute(
         select(Job)
         .where(
             Job.template_id == template_id,
             Job.job_type == "template",
-            Job.status == "template_ready",
+            or_(
+                Job.status == "template_ready",
+                and_(
+                    Job.status == "processing_failed",
+                    Job.assembly_plan.op("?")("output_url"),
+                ),
+            ),
         )
         .order_by(Job.created_at.desc())
         .limit(1)
@@ -1228,28 +1570,20 @@ async def get_latest_test_job(
         )
 
     output_url = (
-        job.assembly_plan.get("output_url")
-        if isinstance(job.assembly_plan, dict)
-        else None
+        job.assembly_plan.get("output_url") if isinstance(job.assembly_plan, dict) else None
     )
     clip_paths = (
-        job.all_candidates.get("clip_paths", [])
-        if isinstance(job.all_candidates, dict)
-        else []
+        job.all_candidates.get("clip_paths", []) if isinstance(job.all_candidates, dict) else []
     )
 
     # Check if assembly plan has clip_gcs_path in all steps (needed for re-render)
     has_rerender = False
     if isinstance(job.assembly_plan, dict):
         steps = job.assembly_plan.get("steps", [])
-        has_rerender = bool(steps) and all(
-            s.get("clip_gcs_path") for s in steps
-        )
+        has_rerender = bool(steps) and all(s.get("clip_gcs_path") for s in steps)
 
     base_output_url = (
-        job.assembly_plan.get("base_output_url")
-        if isinstance(job.assembly_plan, dict)
-        else None
+        job.assembly_plan.get("base_output_url") if isinstance(job.assembly_plan, dict) else None
     )
 
     return LatestTestJobResponse(
@@ -1279,19 +1613,13 @@ async def get_recipe_history(
     """Paginated list of recipe versions for a template."""
     await get_template_or_404(template_id, db)
 
-    base = select(TemplateRecipeVersion).where(
-        TemplateRecipeVersion.template_id == template_id
-    )
+    base = select(TemplateRecipeVersion).where(TemplateRecipeVersion.template_id == template_id)
 
-    count_result = await db.execute(
-        select(func.count()).select_from(base.subquery())
-    )
+    count_result = await db.execute(select(func.count()).select_from(base.subquery()))
     total = count_result.scalar() or 0
 
     result = await db.execute(
-        base.order_by(TemplateRecipeVersion.created_at.desc())
-        .offset(offset)
-        .limit(limit)
+        base.order_by(TemplateRecipeVersion.created_at.desc()).offset(offset).limit(limit)
     )
     versions = result.scalars().all()
 
@@ -1301,13 +1629,9 @@ async def get_recipe_history(
                 id=str(v.id),
                 trigger=v.trigger,
                 created_at=v.created_at,
-                slot_count=(
-                    len(v.recipe.get("slots", []))
-                    if isinstance(v.recipe, dict) else 0
-                ),
+                slot_count=(len(v.recipe.get("slots", [])) if isinstance(v.recipe, dict) else 0),
                 total_duration_s=(
-                    float(v.recipe.get("total_duration_s", 0))
-                    if isinstance(v.recipe, dict) else 0
+                    float(v.recipe.get("total_duration_s", 0)) if isinstance(v.recipe, dict) else 0
                 ),
             )
             for v in versions
@@ -1378,6 +1702,17 @@ async def save_recipe(
     template = await get_template_or_404(template_id, db)
     require_ready(template)
 
+    # Agentic templates are regen-only — manual recipe writes are rejected so a
+    # stale browser tab can't silently overwrite an agent-built recipe.
+    if template.is_agentic:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This template is agent-built. Recipe edits are disabled. "
+                "Use 'Re-run agents' to regenerate."
+            ),
+        )
+
     # Optimistic lock: reject if a newer version exists
     if req.base_version_id:
         result = await db.execute(
@@ -1434,6 +1769,191 @@ async def save_recipe(
 
     return RecipeResponse(
         recipe=recipe_dict,
+        version_id=str(version.id),
+        version_number=version_count,
+    )
+
+
+# ── Font override (agentic) ───────────────────────────────────────────────────
+
+
+class FontAlternativeItem(BaseModel):
+    family: str
+    similarity: float
+
+
+class FontDefaultResponse(BaseModel):
+    """Snapshot of font state for the agentic font-override picker."""
+
+    font_default: str | None
+    alternatives: list[FontAlternativeItem]
+    registry_families: list[str]
+
+
+class FontDefaultUpdate(BaseModel):
+    font_default: str
+
+    @field_validator("font_default")
+    @classmethod
+    def non_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("font_default cannot be empty")
+        return v.strip()
+
+
+def _load_font_registry_families() -> list[str]:
+    """Return the list of font families from font-registry.json.
+
+    Used to validate font-default override requests (anything outside the
+    registry would fail to render). Reads at request time — the registry is
+    tiny (~20 fonts) and admin font picks are infrequent.
+    """
+    import json  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    registry_path = (
+        Path(__file__).resolve().parent.parent.parent / "assets" / "fonts" / "font-registry.json"
+    )
+    try:
+        with open(registry_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        log.error("font_registry_load_failed", error=str(exc), path=str(registry_path))
+        return []
+    fonts = data.get("fonts") or {}
+    return sorted(fonts.keys())
+
+
+@router.get(
+    "/templates/{template_id}/font-default",
+    response_model=FontDefaultResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def get_font_default(
+    template_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> FontDefaultResponse:
+    """Return current font_default + aggregated alternatives for the admin
+    font-override picker.
+
+    Surfaced for agentic templates (whose editor is otherwise locked) so the
+    admin has a single narrow control: pick the template-level font.
+    `alternatives` is the deduped union of every overlay's `font_alternatives`
+    sorted by similarity descending. `registry_families` is the full font
+    catalogue so the UI can offer "pick any registered font" as a fallback
+    when alternatives is empty (e.g. template analyzed before PR #154).
+    """
+    from app.pipeline.font_identification import aggregate_font_alternatives  # noqa: PLC0415
+
+    template = await get_template_or_404(template_id, db)
+    require_ready(template)
+
+    recipe = template.recipe_cached if isinstance(template.recipe_cached, dict) else {}
+    alternatives = aggregate_font_alternatives(recipe)
+    return FontDefaultResponse(
+        font_default=recipe.get("font_default") or None,
+        alternatives=[FontAlternativeItem(**a) for a in alternatives],
+        registry_families=_load_font_registry_families(),
+    )
+
+
+@router.post(
+    "/templates/{template_id}/font-default",
+    response_model=RecipeResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def set_font_default(
+    template_id: str,
+    req: FontDefaultUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> RecipeResponse:
+    """Set recipe.font_default and cascade to overlays that inherited it.
+
+    Admin override for agentic templates. The full recipe editor stays
+    locked; this is a single-field write that lets an operator pick from
+    the CLIP-suggested font alternatives (or any registry font) without
+    re-running the agent stack.
+
+    Cascade behaviour: every overlay whose font_family is empty OR equals
+    the OLD font_default is updated to the new value. Overlays where
+    text_designer (or a prior admin override) set a deliberately different
+    font are left alone — that's the contract `cascade_font_default_change`
+    promises.
+
+    Persists a new TemplateRecipeVersion with trigger="admin_font_override"
+    so /recipe-history shows the change.
+    """
+    from app.pipeline.font_identification import cascade_font_default_change  # noqa: PLC0415
+
+    template = await get_template_or_404(template_id, db)
+    require_ready(template)
+
+    if not isinstance(template.recipe_cached, dict):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Template has no cached recipe; re-run analysis first.",
+        )
+
+    registry_families = _load_font_registry_families()
+    if registry_families and req.font_default not in registry_families:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"font_default '{req.font_default}' is not in the font registry. "
+                f"Pick one of: {', '.join(registry_families[:8])}..."
+            ),
+        )
+
+    # SQLAlchemy JSONB change detection needs a fresh dict reference, not
+    # mutation-in-place. Same pattern as save_recipe / record_phase.
+    recipe = dict(template.recipe_cached)
+    old_default = (recipe.get("font_default") or "").strip()
+
+    if old_default == req.font_default:
+        # No-op write — return current state without a new version row.
+        return RecipeResponse(
+            recipe=recipe,
+            version_id="",
+            version_number=0,
+        )
+
+    updated = cascade_font_default_change(
+        recipe,
+        req.font_default,
+        old_default=old_default,
+    )
+
+    version = TemplateRecipeVersion(
+        template_id=template_id,
+        recipe=recipe,
+        trigger="admin_font_override",
+    )
+    db.add(version)
+    template.recipe_cached = recipe
+    template.recipe_cached_at = datetime.now(UTC)
+    await db.commit()
+    await db.refresh(version)
+
+    count_result = await db.execute(
+        select(func.count()).select_from(
+            select(TemplateRecipeVersion)
+            .where(TemplateRecipeVersion.template_id == template_id)
+            .subquery()
+        )
+    )
+    version_count = count_result.scalar() or 0
+
+    log.info(
+        "font_default_override",
+        template_id=template_id,
+        old_font_default=old_default or None,
+        new_font_default=req.font_default,
+        overlays_updated=updated,
+        version_id=str(version.id),
+    )
+
+    return RecipeResponse(
+        recipe=recipe,
         version_id=str(version.id),
         version_number=version_count,
     )
@@ -1500,9 +2020,7 @@ async def create_child_template(
         )
 
     # Load music track
-    result = await db.execute(
-        select(MusicTrack).where(MusicTrack.id == req.music_track_id)
-    )
+    result = await db.execute(select(MusicTrack).where(MusicTrack.id == req.music_track_id))
     track = result.scalar_one_or_none()
     if track is None:
         raise HTTPException(
@@ -1703,6 +2221,7 @@ async def remerge_children(
 
 class TextPreviewRequest(BaseModel):
     """Parameters for rendering a text overlay preview image."""
+
     subject_text: str = "PERU"
     subject_size_px: int = 199
     subject_y_frac: float = 0.45
@@ -1853,6 +2372,59 @@ def _substitute_subject(overlays: list[dict], subject: str | None) -> list[dict]
     return out
 
 
+def _strip_unknown_font_families(overlays: list[dict]) -> list[dict]:
+    """Drop overlay/span `font_family` values that aren't in the backend registry.
+
+    The editor saves a `font_family` string and the pipeline looks it up in
+    `font-registry.json`. If a recipe carries a stale or hand-edited font
+    name the pipeline can't resolve, downstream renderers can raise instead of
+    falling back, which used to surface as a 500 from this endpoint. Strip
+    unknown names so rendering falls through to the legacy `font_style` path.
+    """
+    from app.pipeline.text_overlay import _FONT_REGISTRY  # noqa: PLC0415
+
+    known = set(_FONT_REGISTRY.get("fonts", {}).keys())
+    cleaned: list[dict] = []
+    for overlay in overlays:
+        copy = dict(overlay)
+        ff = copy.get("font_family")
+        if ff and ff not in known:
+            log.info("unknown_font_family_stripped", font_family=ff, where="overlay")
+            copy.pop("font_family", None)
+        spans = copy.get("spans")
+        if isinstance(spans, list):
+            new_spans = []
+            for span in spans:
+                span_copy = dict(span)
+                sf = span_copy.get("font_family")
+                if sf and sf not in known:
+                    log.info("unknown_font_family_stripped", font_family=sf, where="span")
+                    span_copy.pop("font_family", None)
+                new_spans.append(span_copy)
+            copy["spans"] = new_spans
+        cleaned.append(copy)
+    return cleaned
+
+
+def _blank_preview_png() -> bytes:
+    """Return a transparent 1080x1920 PNG (the editor's expected canvas).
+
+    Used as a degrade-gracefully fallback when overlay rendering raises, so
+    the admin editor doesn't surface a 500 to the user. The DOM preview is
+    still rendered client-side; the server PNG just goes blank for that frame.
+    """
+    import io  # noqa: PLC0415
+
+    from PIL import Image  # noqa: PLC0415
+
+    from app.pipeline.text_overlay import CANVAS_H, CANVAS_W  # noqa: PLC0415
+
+    img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()
+
+
 @router.post(
     "/overlay-preview",
     dependencies=[Depends(_require_admin)],
@@ -1862,6 +2434,11 @@ async def overlay_preview(req: OverlayPreviewRequest):
 
     Used by OverlayPreview.tsx for WYSIWYG. Reuses the export pipeline's
     draw helpers so the preview is pixel-identical to the exported video.
+
+    On unexpected render errors, returns a transparent PNG with the failure
+    logged at exception level. The editor falls back to its DOM preview;
+    surfacing a 500 here used to break the entire editor on a single bad
+    overlay.
     """
     import os as _os  # noqa: PLC0415
     import shutil  # noqa: PLC0415
@@ -1871,11 +2448,15 @@ async def overlay_preview(req: OverlayPreviewRequest):
 
     from app.pipeline.text_overlay import render_overlays_at_time  # noqa: PLC0415
 
-    overlays = _substitute_subject(req.overlays, req.preview_subject)
-
-    tmp_dir = tempfile.mkdtemp(prefix="overlay_preview_route_")
-    png_path = _os.path.join(tmp_dir, "preview.png")
+    tmp_dir: str | None = None
+    data: bytes
+    overlays: list[dict] = []
     try:
+        overlays = _substitute_subject(req.overlays, req.preview_subject)
+        overlays = _strip_unknown_font_families(overlays)
+
+        tmp_dir = tempfile.mkdtemp(prefix="overlay_preview_route_")
+        png_path = _os.path.join(tmp_dir, "preview.png")
         render_overlays_at_time(
             overlays=overlays,
             slot_duration_s=req.slot_duration_s,
@@ -1885,13 +2466,19 @@ async def overlay_preview(req: OverlayPreviewRequest):
         with open(png_path, "rb") as f:
             data = f.read()
     except Exception as exc:
-        log.warning("overlay_preview_failed", error=str(exc))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"overlay preview render failed: {exc}",
-        ) from exc
+        log.exception(
+            "overlay_preview_failed",
+            error=str(exc),
+            overlay_count=len(overlays),
+            font_families=[o.get("font_family") for o in overlays],
+            effects=[o.get("effect") for o in overlays],
+            slot_duration_s=req.slot_duration_s,
+            time_in_slot_s=req.time_in_slot_s,
+        )
+        data = _blank_preview_png()
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if tmp_dir is not None:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return Response(
         content=data,

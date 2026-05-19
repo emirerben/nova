@@ -1,0 +1,31 @@
+{
+  "agent": "nova.video.clip_router",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "slots": [
+      {"position": 1, "target_duration_s": 2.5, "slot_type": "hook", "energy": 8.5},
+      {"position": 2, "target_duration_s": 3.0, "slot_type": "broll", "energy": 5.0},
+      {"position": 3, "target_duration_s": 2.5, "slot_type": "punchline", "energy": 9.0}
+    ],
+    "candidates": [
+      {"id": "clip-A", "duration_s": 6.0, "energy": 8.5, "hook_score": 9.2, "description": "subject slams hand on table after winning hand of poker"},
+      {"id": "clip-B", "duration_s": 4.0, "energy": 5.2, "hook_score": 5.5, "description": "wide establishing shot of casino floor at dusk"},
+      {"id": "clip-C", "duration_s": 3.5, "energy": 9.0, "hook_score": 8.0, "description": "subject leaps from chair fists raised in celebration"},
+      {"id": "clip-D", "duration_s": 5.0, "energy": 4.5, "hook_score": 4.0, "description": "dealer shuffles deck under warm overhead lighting"}
+    ],
+    "copy_tone": "energetic",
+    "creative_direction": "high-stakes poker reaction reel with peaks at start and end"
+  },
+  "raw_text": "{\"assignments\": [{\"slot_position\": 1, \"candidate_id\": \"clip-A\", \"rationale\": \"hook_score 9.2 — highest in pool, action-verb description (slams), fits hook role\"}, {\"slot_position\": 2, \"candidate_id\": \"clip-D\", \"rationale\": \"energy 4.5 within \\u00b11.5 of slot target 5.0; description (dealer shuffles) breaks up the two reaction peaks at slots 1 and 3\"}, {\"slot_position\": 3, \"candidate_id\": \"clip-C\", \"rationale\": \"energy 9.0 matches slot target 9.0; description (leaps, fists raised) names a clear payoff beat for the punchline role\"}]}",
+  "output": {
+    "assignments": [
+      {"slot_position": 1, "candidate_id": "clip-A", "rationale": "hook_score 9.2 — highest in pool, action-verb description (slams), fits hook role"},
+      {"slot_position": 2, "candidate_id": "clip-D", "rationale": "energy 4.5 within ±1.5 of slot target 5.0; description (dealer shuffles) breaks up the two reaction peaks at slots 1 and 3"},
+      {"slot_position": 3, "candidate_id": "clip-C", "rationale": "energy 9.0 matches slot target 9.0; description (leaps, fists raised) names a clear payoff beat for the punchline role"}
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "Hook→broll→punchline alternation. The 'wide casino floor' clip (B) is intentionally LEFT UNUSED — it's a defensible alternative for slot 2 but D's description fits better against the human action beats. The strict 'highest hook_score → hook slot' rule is also tested here (clip-A wins slot 1 over clip-C despite C's higher energy)."
+  }
+}

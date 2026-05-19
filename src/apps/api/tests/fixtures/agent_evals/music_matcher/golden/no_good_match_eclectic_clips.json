@@ -1,0 +1,194 @@
+{
+  "agent": "nova.audio.music_matcher",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "clip_summaries": [
+      {
+        "clip_id": "clip_001",
+        "media_type": "video",
+        "duration_s": 6.0,
+        "subject": "tax forms spread across a kitchen table",
+        "hook_text": "this is what i did with my saturday",
+        "hook_score": 5.5,
+        "energy": 3.0,
+        "description": "static overhead shot, fluorescent kitchen light, no music"
+      },
+      {
+        "clip_id": "clip_002",
+        "media_type": "video",
+        "duration_s": 4.5,
+        "subject": "person stretching in the morning in pajamas",
+        "hook_text": "",
+        "hook_score": 4.5,
+        "energy": 4.0,
+        "description": "wide static, daylight from window, casual"
+      },
+      {
+        "clip_id": "clip_003",
+        "media_type": "video",
+        "duration_s": 5.5,
+        "subject": "rain falling steadily on a parked car",
+        "hook_text": "",
+        "hook_score": 4.0,
+        "energy": 3.5,
+        "description": "static close-up through window, gray light, ambient"
+      },
+      {
+        "clip_id": "clip_004",
+        "media_type": "video",
+        "duration_s": 4.8,
+        "subject": "child eating cereal at a kitchen table",
+        "hook_text": "",
+        "hook_score": 4.5,
+        "energy": 4.5,
+        "description": "static side shot, fluorescent light, mundane"
+      }
+    ],
+    "available_tracks": [
+      {
+        "track_id": "track_pop_party",
+        "title": "Saturday Out Loud",
+        "duration_s": 90.0,
+        "slot_count": 12,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "pop",
+          "vibe_tags": ["glossy", "anthemic", "upbeat"],
+          "energy": "peaks_high",
+          "pacing": "fast",
+          "mood": "weekend night-out",
+          "ideal_content_profile": "Friend-group montages, nightlife, fast-cut faces.",
+          "copy_tone": "high_energy",
+          "transition_style": "whip_pan",
+          "color_grade": "high-contrast neon"
+        }
+      },
+      {
+        "track_id": "track_hiphop_swagger",
+        "title": "Block Heat",
+        "duration_s": 78.0,
+        "slot_count": 11,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "hip_hop",
+          "vibe_tags": ["swagger", "confident", "punchy"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "street attitude",
+          "ideal_content_profile": "Street fashion, swagger walks, fast cuts.",
+          "copy_tone": "punchy",
+          "transition_style": "hard_cut",
+          "color_grade": "saturated street"
+        }
+      },
+      {
+        "track_id": "track_cinematic_epic",
+        "title": "Final Charge",
+        "duration_s": 115.0,
+        "slot_count": 7,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "cinematic",
+          "vibe_tags": ["sweeping", "epic", "heroic"],
+          "energy": "high",
+          "pacing": "medium",
+          "mood": "trailer-grade triumph",
+          "ideal_content_profile": "Wide landscapes, heroic close-ups, trailer storytelling.",
+          "copy_tone": "cinematic",
+          "transition_style": "dissolve",
+          "color_grade": "warm amber"
+        }
+      },
+      {
+        "track_id": "track_acoustic_nostalgic",
+        "title": "Old Letters",
+        "duration_s": 105.0,
+        "slot_count": 7,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "acoustic",
+          "vibe_tags": ["wistful", "nostalgic", "tender"],
+          "energy": "low",
+          "pacing": "slow",
+          "mood": "memory-lane longing",
+          "ideal_content_profile": "Old photos, family memory b-roll, candid emotional moments.",
+          "copy_tone": "sentimental",
+          "transition_style": "dissolve",
+          "color_grade": "warm golden hour"
+        }
+      },
+      {
+        "track_id": "track_comedy_quirky",
+        "title": "Whistle Walk",
+        "duration_s": 70.0,
+        "slot_count": 9,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "comedy",
+          "vibe_tags": ["quirky", "playful", "deadpan"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "mockumentary deadpan",
+          "ideal_content_profile": "Sight-gag b-roll with deadpan reactions and awkward pauses.",
+          "copy_tone": "comedic",
+          "transition_style": "hard_cut",
+          "color_grade": "none"
+        }
+      }
+    ],
+    "n_variants": 3
+  },
+  "raw_text": "{\"ranked\": [{\"track_id\": \"track_comedy_quirky\", \"score\": 5.8, \"rationale\": \"Deadpan mockumentary framing is the only honest fit for taxes + cereal + rain mundanity — it lets the boring content become a sight-gag rather than pretending it's heroic; no track scores higher because no track actually fits this content well.\", \"predicted_strengths\": [\"deadpan vibe transforms mundane b-roll into intentional sight-gag\", \"medium pacing matches the static, undynamic clips\", \"comedic copy_tone fits the self-deprecating 'this is what i did with my saturday' hook\"]}, {\"track_id\": \"track_acoustic_nostalgic\", \"score\": 5.5, \"rationale\": \"Slow nostalgic acoustic frames the rainy day and cereal child as quiet domestic memory — it works tonally but the tax forms shot can't carry sentimental weight without feeling forced.\", \"predicted_strengths\": [\"slow pacing matches static low-energy clips\", \"warm acoustic could lift the cereal/morning clips\", \"distinct vibe from comedy pick — adds variety\"]}, {\"track_id\": \"track_cinematic_epic\", \"score\": 4.0, \"rationale\": \"Heroic-trailer cinematic over taxes is ironic-comedy territory but not a real recommendation; the clips don't have the visual scale this track wants.\", \"predicted_strengths\": [\"ironic-contrast option if user goes for self-deprecating epic framing\"]}, {\"track_id\": \"track_pop_party\", \"score\": 3.0, \"rationale\": \"Peaks_high nightlife pop is the wrong tonal universe for a domestic mundane reel; 12 slots over 4 static clips would shred the pacing.\", \"predicted_strengths\": [\"no real fit\"]}, {\"track_id\": \"track_hiphop_swagger\", \"score\": 2.8, \"rationale\": \"Street swagger and saturated grade have no relationship to fluorescent-kitchen tax-prep footage; pacing fights the static clips.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "output": {
+    "ranked": [
+      {
+        "track_id": "track_comedy_quirky",
+        "score": 5.8,
+        "rationale": "Deadpan mockumentary framing is the only honest fit for taxes + cereal + rain mundanity — it lets the boring content become a sight-gag rather than pretending it's heroic; no track scores higher because no track actually fits this content well.",
+        "predicted_strengths": [
+          "deadpan vibe transforms mundane b-roll into intentional sight-gag",
+          "medium pacing matches the static, undynamic clips",
+          "comedic copy_tone fits the self-deprecating 'this is what i did with my saturday' hook"
+        ]
+      },
+      {
+        "track_id": "track_acoustic_nostalgic",
+        "score": 5.5,
+        "rationale": "Slow nostalgic acoustic frames the rainy day and cereal child as quiet domestic memory — it works tonally but the tax forms shot can't carry sentimental weight without feeling forced.",
+        "predicted_strengths": [
+          "slow pacing matches static low-energy clips",
+          "warm acoustic could lift the cereal/morning clips",
+          "distinct vibe from comedy pick — adds variety"
+        ]
+      },
+      {
+        "track_id": "track_cinematic_epic",
+        "score": 4.0,
+        "rationale": "Heroic-trailer cinematic over taxes is ironic-comedy territory but not a real recommendation; the clips don't have the visual scale this track wants.",
+        "predicted_strengths": [
+          "ironic-contrast option if user goes for self-deprecating epic framing"
+        ]
+      },
+      {
+        "track_id": "track_pop_party",
+        "score": 3.0,
+        "rationale": "Peaks_high nightlife pop is the wrong tonal universe for a domestic mundane reel; 12 slots over 4 static clips would shred the pacing.",
+        "predicted_strengths": [
+          "no real fit"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_swagger",
+        "score": 2.8,
+        "rationale": "Street swagger and saturated grade have no relationship to fluorescent-kitchen tax-prep footage; pacing fights the static clips.",
+        "predicted_strengths": [
+          "no real fit"
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "no good match — eclectic mundane clip set with no track scoring above 5.8 (case a: modest top score, score calibration)"
+  }
+}

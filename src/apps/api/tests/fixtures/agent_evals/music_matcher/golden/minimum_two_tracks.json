@@ -1,0 +1,106 @@
+{
+  "agent": "nova.audio.music_matcher",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "clip_summaries": [
+      {
+        "clip_id": "clip_001",
+        "media_type": "video",
+        "duration_s": 5.5,
+        "subject": "trail runner cresting a ridge in the morning",
+        "hook_text": "first run of summer",
+        "hook_score": 7.5,
+        "energy": 7.0,
+        "description": "wide tracking, warm morning light, steady stride"
+      },
+      {
+        "clip_id": "clip_002",
+        "media_type": "video",
+        "duration_s": 5.0,
+        "subject": "close-up of running shoes hitting dirt trail",
+        "hook_text": "",
+        "hook_score": 6.0,
+        "energy": 7.5,
+        "description": "low-angle close-up, motion blur, dust kick"
+      },
+      {
+        "clip_id": "clip_003",
+        "media_type": "video",
+        "duration_s": 6.0,
+        "subject": "runner wiping sweat at summit overlook",
+        "hook_text": "",
+        "hook_score": 7.0,
+        "energy": 6.5,
+        "description": "medium shot, sunrise behind, panting breath"
+      }
+    ],
+    "available_tracks": [
+      {
+        "track_id": "track_electronic_run",
+        "title": "Trail Pulse",
+        "duration_s": 88.0,
+        "slot_count": 10,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "electronic",
+          "vibe_tags": ["driving", "uplifting", "pulsing"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "morning-run momentum",
+          "ideal_content_profile": "Trail-running and training b-roll, rhythmic motion, sunrise summit reveals.",
+          "copy_tone": "high_energy",
+          "transition_style": "beat_pulse",
+          "color_grade": "warm golden hour"
+        }
+      },
+      {
+        "track_id": "track_cinematic_uplift",
+        "title": "Summit Arc",
+        "duration_s": 105.0,
+        "slot_count": 6,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "cinematic",
+          "vibe_tags": ["sweeping", "heroic", "hopeful"],
+          "energy": "high",
+          "pacing": "medium",
+          "mood": "underdog triumph",
+          "ideal_content_profile": "Athletes against landscapes, sunrise reveals, slow heroic payoffs.",
+          "copy_tone": "cinematic",
+          "transition_style": "dissolve",
+          "color_grade": "warm amber"
+        }
+      }
+    ],
+    "n_variants": 2
+  },
+  "raw_text": "{\"ranked\": [{\"track_id\": \"track_electronic_run\", \"score\": 8.7, \"rationale\": \"Trail-run momentum profile names sunrise summit reveals and rhythmic motion directly; warm golden-hour grade aligns with the morning footage.\", \"predicted_strengths\": [\"warm golden hour grade matches the morning light\", \"beat_pulse transitions sync to the running shoes on dirt clip\", \"driving energy supports the steady stride pacing\"]}, {\"track_id\": \"track_cinematic_uplift\", \"score\": 8.3, \"rationale\": \"Underdog-triumph cinematic frames the same trail run as a hero arc — distinct enough from the electronic top pick to be a real second variant; 6 slots over 3 long clips supports each beat landing.\", \"predicted_strengths\": [\"distinct vibe from top pick — both variants will feel different\", \"sweeping mood elevates the ridge-crest and summit-overlook clips\", \"warm amber grade aligns with sunrise footage\"]}]}",
+  "output": {
+    "ranked": [
+      {
+        "track_id": "track_electronic_run",
+        "score": 8.7,
+        "rationale": "Trail-run momentum profile names sunrise summit reveals and rhythmic motion directly; warm golden-hour grade aligns with the morning footage.",
+        "predicted_strengths": [
+          "warm golden hour grade matches the morning light",
+          "beat_pulse transitions sync to the running shoes on dirt clip",
+          "driving energy supports the steady stride pacing"
+        ]
+      },
+      {
+        "track_id": "track_cinematic_uplift",
+        "score": 8.3,
+        "rationale": "Underdog-triumph cinematic frames the same trail run as a hero arc — distinct enough from the electronic top pick to be a real second variant; 6 slots over 3 long clips supports each beat landing.",
+        "predicted_strengths": [
+          "distinct vibe from top pick — both variants will feel different",
+          "sweeping mood elevates the ridge-crest and summit-overlook clips",
+          "warm amber grade aligns with sunrise footage"
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "minimum library — only 2 candidate tracks, n_variants=2 (track count edge)"
+  }
+}

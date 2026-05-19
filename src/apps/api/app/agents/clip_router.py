@@ -56,7 +56,7 @@ class ClipRouterAgent(Agent[ClipRouterInput, ClipRouterOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.video.clip_router",
         prompt_id="_inline",
-        prompt_version="2026-05-09",
+        prompt_version="2026-05-15",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -80,35 +80,71 @@ class ClipRouterAgent(Agent[ClipRouterInput, ClipRouterOutput]):
             f'"description": "{c.description}"}}'
             for c in input.candidates
         )
-        tone_block = (
-            f'\nTemplate copy tone: "{input.copy_tone}"' if input.copy_tone else ""
-        )
+        tone_block = f'\nTemplate copy tone: "{input.copy_tone}"' if input.copy_tone else ""
         direction_block = (
             f'\nCreative direction: "{input.creative_direction}"'
             if input.creative_direction
             else ""
         )
         return (
-            f"Assign exactly one candidate clip to each of the {len(input.slots)} "
-            "slots below. Optimize for:\n"
-            "  1. Slot-type fit — hook slots get high-hook-score moments, "
-            "broll slots get visual variety, punchline slots get high-energy peaks\n"
-            "  2. Variety across slots — avoid placing two near-identical moments adjacent\n"
-            "  3. Energy match — slot's energy_target should align with candidate's energy\n\n"
+            "You are routing candidate clips to template slots for a short-form "
+            "video. Each slot has a role; each candidate has a measured energy, a "
+            "hook_score, and a description of what's happening. Your job is to "
+            "produce an assignment that lands the strongest moments in the "
+            "slots that need them most, varies the visual texture across the "
+            "video, and leaves an audit trail (rationale) that names the "
+            "dimension that decided each pick.\n\n"
+            "Make decisions, not suggestions. A wrong assignment is invisible to "
+            '"looks sane" eyeballing — a swap between two roughly-similar '
+            "candidates can quietly degrade the whole narrative.\n\n"
+            "DECISION PRINCIPLES (in priority order):\n\n"
+            "  1. SLOT-TYPE FIT — the slot's role dictates what kind of "
+            "candidate belongs there. Use this table:\n"
+            "       hook         → highest hook_score in the candidate pool\n"
+            "       punchline    → highest energy peak\n"
+            "       outro        → high energy OR a strong closing beat (descriptor mentions "
+            "result/payoff)\n"
+            "       reaction     → mid-to-high energy with a clear emotional beat in description\n"
+            "       face         → candidate with subject visible / talking-head framing\n"
+            "       broll        → mid energy, visual interest, varied from adjacent slots\n"
+            "       content      → mid energy, supports the narrative without competing\n"
+            "     Other slot_type values: treat as 'content' but flag in rationale.\n\n"
+            "  2. ENERGY MATCH — pair each slot's `energy_target` with a "
+            "candidate whose `energy` lands within ±1.5. Going outside that band is "
+            "allowed, but the rationale must justify it (e.g. 'no candidate at "
+            "target 8.0; picked 6.5 over 9.5 because description matches outro beat').\n\n"
+            "  3. SEQUENCE VARIETY — adjacent slots must NOT use near-duplicate "
+            "candidates when alternatives exist. Two candidates are 'near-duplicate' "
+            "if their descriptions share the same action verb (run/run, slam/slam) "
+            "or the same scene noun (crowd/crowd, sky/sky). If the candidate pool "
+            "is too thin to avoid a duplicate, pick the higher hook_score and flag "
+            "it.\n\n"
+            "  4. ONE CANDIDATE PER SLOT — every candidate appears at most once "
+            "across the full assignment. If candidates < slots, repeat the "
+            "strongest and FLAG the repeat in the rationale. Never pad with weak "
+            "picks.\n\n"
+            "RATIONALE FORMAT — every rationale must name the dimension that "
+            "decided the pick:\n"
+            "  Good:  'hook_score 8.5 — highest in pool, fits hook role'\n"
+            "  Good:  'energy 7.2 matches slot target 7.0; description mentions "
+            "ball-strike'\n"
+            "  Good:  'only candidate with reaction-shot description; energy "
+            "gap (5 vs target 7.5) accepted for slot role'\n"
+            "  Bad:   'best fit' / 'good match' / 'fits well' — these are "
+            "rejected by the eval suite as boilerplate.\n\n"
+            f"INPUT — {len(input.slots)} slots, {len(input.candidates)} "
+            "candidates:\n\n"
             f"Slots:\n{slots_block}\n\n"
             f"Candidates:\n{candidates_block}"
             f"{tone_block}{direction_block}\n\n"
-            'Return JSON: {"assignments": [{"slot_position": int, "candidate_id": str, '
-            '"rationale": short explanation}, ...]}\n'
-            "One assignment per slot. Each candidate may appear at most once. "
-            "If you have fewer strong candidates than slots, repeat the strongest "
-            "rather than padding with weak ones — but flag the repeat in the rationale. "
-            "Return ONLY valid JSON, no markdown."
+            "OUTPUT — return ONLY valid JSON, no markdown:\n"
+            '  {"assignments": [{"slot_position": int, "candidate_id": str, '
+            '"rationale": "<dimension that decided + concrete value>"}, ...]}\n\n'
+            "One assignment per slot. Candidates appear at most once unless "
+            "explicitly flagged as a forced repeat in the rationale."
         )
 
-    def parse(
-        self, raw_text: str, input: ClipRouterInput
-    ) -> ClipRouterOutput:  # noqa: A002
+    def parse(self, raw_text: str, input: ClipRouterInput) -> ClipRouterOutput:  # noqa: A002
         try:
             data = json.loads(raw_text)
         except (ValueError, TypeError) as exc:

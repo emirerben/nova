@@ -41,6 +41,15 @@ from pydantic import BaseModel, ValidationError
 log = structlog.get_logger()
 
 
+# Success outcomes for agent_run rows. A run lands here when the agent
+# returned a parsed Output the caller can use, on either the primary model
+# (``ok``) or a fallback (``ok_fallback``). Any other outcome is a failure
+# for the admin job-debug view's "failures" counter. Imported by SQL filter
+# code in app/routes/admin_jobs.py — keep this set as the single source of
+# truth so adding a new success outcome doesn't silently miscount.
+SUCCESS_OUTCOMES: frozenset[str] = frozenset({"ok", "ok_fallback"})
+
+
 # ── Errors ────────────────────────────────────────────────────────────────────
 
 
@@ -87,6 +96,16 @@ class AgentSpec:
     # like ClipMetadataAgent where a Whisper fallback is faster than burning
     # a second 100-second Gemini call that's likely to fail the same way.
     enable_clarification_retries: bool = True
+    # When True: on a JSONDecodeError during refusal/parse, attempt ONE
+    # in-place repair via `json_repair.loads()` before falling through to
+    # RefusalError. Production-observed pattern (job 1b555c69…, 14k-token
+    # clip): Gemini truncates JSON near the output-token ceiling — emits a
+    # missing closing brace or stray comma but otherwise valid content.
+    # Repair fixes punctuation only; if the result is still not a JSON
+    # object, the original RefusalError is raised. Opt-in per agent to
+    # avoid masking genuine refusals on agents whose downstream consumers
+    # need terminal_refusal to fire.
+    enable_json_repair: bool = False
 
 
 @dataclass(slots=True)
@@ -137,6 +156,18 @@ class _RunStats:
     # model actually said. Kept short (500 chars) — enough to see the JSON
     # shape and any partial fields, not enough to blow up Langfuse payloads.
     last_raw_text: str | None = None
+    # Full untruncated raw_text from the most recent invocation. Used by the
+    # admin debug-view persistence layer (`agent_run.raw_text`) so the admin
+    # can read exactly what the model returned, not a 500-char preview.
+    # Kept separate from `last_raw_text` because the Langfuse trace + log
+    # payload still want the short preview.
+    last_full_raw_text: str | None = None
+    # Count of times json-repair successfully salvaged a malformed Gemini
+    # response in this run. Surfaced into the agent_run log + Langfuse trace
+    # so operator dashboards can count "saved by repair" events without
+    # parsing raw_text. Only incremented for agents opting in via
+    # `AgentSpec.enable_json_repair`.
+    json_repairs_applied: int = 0
 
 
 # ── Model client interface ────────────────────────────────────────────────────
@@ -406,10 +437,14 @@ class Agent(ABC, Generic[InputT, OutputT]):
             # the Langfuse trace. Without this, refusal traces look like
             # `output: None` and the diagnostic signal is lost.
             stats.last_raw_text = (inv.raw_text or "")[:500]
+            # Full text (untruncated) for the admin debug-view persistence
+            # layer. Truncation happens in `_persistence.persist_agent_run`
+            # at a much higher cap (100KB) than the Langfuse preview.
+            stats.last_full_raw_text = inv.raw_text or ""
 
             # Refusal check (safety + required fields)
             try:
-                self._check_refusal(inv)
+                self._check_refusal(inv, stats=stats, ctx=ctx)
             except RefusalError:
                 # Skip clarification retry for agents that have a faster
                 # backup path (e.g. ClipMetadataAgent → Whisper fallback).
@@ -461,7 +496,13 @@ class Agent(ABC, Generic[InputT, OutputT]):
             return input  # type: ignore[return-value]
         return self.Input.model_validate(input)  # type: ignore[return-value]
 
-    def _check_refusal(self, inv: ModelInvocation) -> None:
+    def _check_refusal(
+        self,
+        inv: ModelInvocation,
+        *,
+        stats: _RunStats | None = None,
+        ctx: RunContext | None = None,
+    ) -> None:
         # Provider-specific finish_reason check (Gemini-flavored, but tolerant)
         raw = inv.raw_response
         if raw is not None:
@@ -491,13 +532,77 @@ class Agent(ABC, Generic[InputT, OutputT]):
         try:
             data = json.loads(inv.raw_text)
         except (ValueError, TypeError) as exc:
-            raise RefusalError(f"Invalid JSON: {exc}") from exc
+            # Last-chance recovery: if this agent opts in to json-repair, try
+            # to salvage the punctuation-broken response (truncated brace,
+            # stray comma) in place. On success, mutate `inv.raw_text` so the
+            # subsequent `self.parse(inv.raw_text, …)` call sees repaired text.
+            # On failure (or non-dict result), fall through to RefusalError so
+            # genuine refusals still terminate.
+            if self.spec.enable_json_repair:
+                repaired = self._try_json_repair(inv, original_error=exc, ctx=ctx)
+                if repaired is not None:
+                    if stats is not None:
+                        stats.json_repairs_applied += 1
+                    data = repaired
+                else:
+                    raise RefusalError(f"Invalid JSON: {exc}") from exc
+            else:
+                raise RefusalError(f"Invalid JSON: {exc}") from exc
         if not isinstance(data, dict):
             raise RefusalError("Response is not a JSON object")
         for field_name in required:
-            val = data.get(field_name)
-            if val is None or val == "" or val == []:
+            # Differentiate "key absent" (genuine refusal) from "key present, empty
+            # collection" (valid signal — e.g. Gemini saying a clip has no notable
+            # moments). Empty string still counts as missing because it's the
+            # shape of a degenerate text answer; empty list/dict is a legitimate
+            # zero-result response.
+            if field_name not in data:
                 raise RefusalError(f"Missing required field: {field_name}")
+            val = data[field_name]
+            if val is None or val == "":
+                raise RefusalError(f"Missing required field: {field_name}")
+
+    def _try_json_repair(
+        self,
+        inv: ModelInvocation,
+        *,
+        original_error: BaseException,
+        ctx: RunContext | None,
+    ) -> dict[str, Any] | None:
+        """One-shot in-place JSON repair. Returns the parsed dict on success,
+        None if repair fails or yields a non-object.
+
+        Mutates `inv.raw_text` to the repaired JSON string so the downstream
+        `self.parse(inv.raw_text, …)` call sees the same salvaged bytes the
+        refusal check accepted. The ORIGINAL broken raw_text is preserved in
+        `stats.last_raw_text` / `last_full_raw_text` (captured before this
+        runs) so forensics still see what Gemini actually emitted.
+        """
+        try:
+            import json_repair  # noqa: PLC0415
+        except ImportError:
+            return None
+        try:
+            repaired = json_repair.loads(inv.raw_text or "")
+        except Exception:  # noqa: BLE001 — defensive: lib should not raise but be safe
+            return None
+        if not isinstance(repaired, dict):
+            return None
+        # Serialize back so `self.parse(inv.raw_text, …)` re-decodes a clean
+        # string. Cheaper than threading a parsed-dict shortcut through parse.
+        try:
+            repaired_text = json.dumps(repaired)
+        except (TypeError, ValueError):
+            return None
+        inv.raw_text = repaired_text
+        log.warning(
+            "agent_json_repair_applied",
+            agent=self.spec.name,
+            error=str(original_error)[:200],
+            job_id=ctx.job_id if ctx else None,
+            segment_idx=ctx.segment_idx if ctx else None,
+        )
+        return repaired
 
     def _log_outcome(
         self,
@@ -534,12 +639,41 @@ class Agent(ABC, Generic[InputT, OutputT]):
         }
         if error is not None:
             payload["error"] = error
+        if stats.json_repairs_applied:
+            payload["json_repairs_applied"] = stats.json_repairs_applied
         # On refusal / schema failures the agent's `output_dict` is None;
         # surface the captured raw-text preview so plain-text logs are
         # diagnosable without round-tripping through Langfuse.
         if stats.last_raw_text is not None and outcome not in ("ok", "ok_fallback"):
             payload["raw_text_preview"] = stats.last_raw_text
         log.info("agent_run", **payload)
+
+        # Persist one row to the agent_run table for the admin job-debug
+        # view. Skipped silently when ctx.job_id is missing or not a UUID
+        # (track-level analysis, eval harness). Errors are swallowed inside
+        # persist_agent_run — a DB hiccup never breaks an in-flight job.
+        # Caller can opt out via ctx.extra["skip_agent_run_persist"]=True
+        # (eval harness uses this to keep test runs out of prod tables).
+        if not ctx.extra.get("skip_agent_run_persist"):
+            from app.agents._persistence import persist_agent_run  # noqa: PLC0415
+
+            persist_agent_run(
+                job_id=ctx.job_id,
+                segment_idx=ctx.segment_idx,
+                agent_name=self.spec.name,
+                prompt_version=self.spec.prompt_version,
+                model=model,
+                outcome=outcome,
+                attempts=stats.attempts,
+                tokens_in=stats.tokens_in,
+                tokens_out=stats.tokens_out,
+                cost_usd=cost_usd,
+                latency_ms=latency_ms,
+                input_dict=input_dict,
+                output_dict=output_dict,
+                raw_text=stats.last_full_raw_text,
+                error=error,
+            )
 
         # Optional Langfuse trace (no-op unless LANGFUSE_PUBLIC_KEY/SECRET_KEY
         # set + langfuse SDK installed). Fails open: never breaks agent work.

@@ -1,0 +1,208 @@
+{
+  "agent": "nova.audio.music_matcher",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "clip_summaries": [
+      {
+        "clip_id": "clip_001",
+        "media_type": "video",
+        "duration_s": 5.0,
+        "subject": "four friends piling into a convertible with bags",
+        "hook_text": "we said yes to this road trip",
+        "hook_score": 7.5,
+        "energy": 7.0,
+        "description": "wide static, daytime, sun overhead, laughter"
+      },
+      {
+        "clip_id": "clip_002",
+        "media_type": "video",
+        "duration_s": 4.2,
+        "subject": "hands holding road-trip snacks out of car window",
+        "hook_text": "",
+        "hook_score": 6.0,
+        "energy": 6.5,
+        "description": "side close-up, wind in hair, motion of moving car"
+      },
+      {
+        "clip_id": "clip_003",
+        "media_type": "video",
+        "duration_s": 5.5,
+        "subject": "POV driving down a desert highway",
+        "hook_text": "",
+        "hook_score": 6.5,
+        "energy": 7.0,
+        "description": "dashboard POV, motion forward, warm afternoon light"
+      },
+      {
+        "clip_id": "clip_004",
+        "media_type": "video",
+        "duration_s": 4.8,
+        "subject": "friends dancing at a roadside diner parking lot",
+        "hook_text": "",
+        "hook_score": 7.0,
+        "energy": 8.0,
+        "description": "wide tracking, candid joy, warm sun"
+      },
+      {
+        "clip_id": "clip_005",
+        "media_type": "video",
+        "duration_s": 5.0,
+        "subject": "group selfie at a scenic overlook at sunset",
+        "hook_text": "",
+        "hook_score": 7.2,
+        "energy": 6.5,
+        "description": "wide shot, golden hour, group framing"
+      }
+    ],
+    "available_tracks": [
+      {
+        "track_id": "track_pop_road",
+        "title": "Open Top Summer",
+        "duration_s": 92.0,
+        "slot_count": 10,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "pop",
+          "vibe_tags": ["upbeat", "hopeful", "anthemic"],
+          "energy": "high",
+          "pacing": "medium",
+          "mood": "open-road optimism",
+          "ideal_content_profile": "Friend-group road trips, convertible POVs, daytime adventures, sunset overlooks.",
+          "copy_tone": "high_energy",
+          "transition_style": "dissolve",
+          "color_grade": "warm golden hour"
+        }
+      },
+      {
+        "track_id": "track_pop_indie",
+        "title": "Glove Compartment",
+        "duration_s": 88.0,
+        "slot_count": 9,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "pop",
+          "vibe_tags": ["wistful", "warm", "playful"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "easy afternoon",
+          "ideal_content_profile": "Lo-fi road trip b-roll, hands out windows, casual diner-stop scenes.",
+          "copy_tone": "casual",
+          "transition_style": "dissolve",
+          "color_grade": "warm golden hour"
+        }
+      },
+      {
+        "track_id": "track_acoustic_trip",
+        "title": "West of Anywhere",
+        "duration_s": 100.0,
+        "slot_count": 8,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "acoustic",
+          "vibe_tags": ["wistful", "nostalgic", "patient"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "memory-lane drive",
+          "ideal_content_profile": "Road-trip b-roll with reflective acoustic warmth — overlooks, desert highways, candid friend moments.",
+          "copy_tone": "sentimental",
+          "transition_style": "dissolve",
+          "color_grade": "warm golden hour"
+        }
+      },
+      {
+        "track_id": "track_hiphop_drive",
+        "title": "Rolling Down",
+        "duration_s": 82.0,
+        "slot_count": 11,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "hip_hop",
+          "vibe_tags": ["swagger", "confident", "playful"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "city-arrival cool",
+          "ideal_content_profile": "Street and car-culture lifestyle, fast cuts, swagger walks.",
+          "copy_tone": "punchy",
+          "transition_style": "hard_cut",
+          "color_grade": "saturated street"
+        }
+      },
+      {
+        "track_id": "track_cinematic_grand",
+        "title": "Horizon Suite",
+        "duration_s": 110.0,
+        "slot_count": 6,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "cinematic",
+          "vibe_tags": ["sweeping", "reverent", "heroic"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "quiet awe",
+          "ideal_content_profile": "Wide landscapes, slow drone pulls, emotional epic storytelling.",
+          "copy_tone": "cinematic",
+          "transition_style": "dissolve",
+          "color_grade": "warm amber"
+        }
+      }
+    ],
+    "n_variants": 3
+  },
+  "raw_text": "{\"ranked\": [{\"track_id\": \"track_pop_road\", \"score\": 9.1, \"rationale\": \"Open-road optimistic pop is the textbook fit — friend-group convertible road trip with overlook payoff lives inside this track's profile word for word.\", \"predicted_strengths\": [\"warm golden hour grade matches the overlook and diner clips\", \"anthemic hopeful mood reads against 'said yes' hook\", \"10 slots over 5 clips supports clean montage pacing\"]}, {\"track_id\": \"track_acoustic_trip\", \"score\": 8.5, \"rationale\": \"Reflective acoustic trip narrative gives the same content a memory-lane variant; distinct enough from the pop top pick to make a real top-K alternative.\", \"predicted_strengths\": [\"distinct vibe from pop top pick — adds top-K variety\", \"warm golden hour grade still aligns\", \"medium pacing supports 5s clip lengths\"]}, {\"track_id\": \"track_pop_indie\", \"score\": 7.6, \"rationale\": \"Lo-fi indie pop frames the trip as easy-afternoon hangout — solid fallback variant, slightly redundant with the road-trip pop top pick on vibe overlap.\", \"predicted_strengths\": [\"hands-out-windows clip lands inside this profile\", \"casual copy_tone reads naturally over diner-lot dancing\", \"warm grade still aligns\"]}, {\"track_id\": \"track_cinematic_grand\", \"score\": 6.5, \"rationale\": \"Sweeping cinematic gives the sunset overlook epic weight but is oversized for the casual snack/dance/diner clips.\", \"predicted_strengths\": [\"sunset overlook clip lands inside this profile\", \"warm amber grade aligns with golden hour footage\"]}, {\"track_id\": \"track_hiphop_drive\", \"score\": 5.5, \"rationale\": \"Hip-hop swagger plays for the car-culture POV driving clip but loses the candid friend warmth the other clips depend on; serviceable fallback.\", \"predicted_strengths\": [\"POV driving clip works with this track\", \"high energy supports the dancing clip\"]}]}",
+  "output": {
+    "ranked": [
+      {
+        "track_id": "track_pop_road",
+        "score": 9.1,
+        "rationale": "Open-road optimistic pop is the textbook fit — friend-group convertible road trip with overlook payoff lives inside this track's profile word for word.",
+        "predicted_strengths": [
+          "warm golden hour grade matches the overlook and diner clips",
+          "anthemic hopeful mood reads against 'said yes' hook",
+          "10 slots over 5 clips supports clean montage pacing"
+        ]
+      },
+      {
+        "track_id": "track_acoustic_trip",
+        "score": 8.5,
+        "rationale": "Reflective acoustic trip narrative gives the same content a memory-lane variant; distinct enough from the pop top pick to make a real top-K alternative.",
+        "predicted_strengths": [
+          "distinct vibe from pop top pick — adds top-K variety",
+          "warm golden hour grade still aligns",
+          "medium pacing supports 5s clip lengths"
+        ]
+      },
+      {
+        "track_id": "track_pop_indie",
+        "score": 7.6,
+        "rationale": "Lo-fi indie pop frames the trip as easy-afternoon hangout — solid fallback variant, slightly redundant with the road-trip pop top pick on vibe overlap.",
+        "predicted_strengths": [
+          "hands-out-windows clip lands inside this profile",
+          "casual copy_tone reads naturally over diner-lot dancing",
+          "warm grade still aligns"
+        ]
+      },
+      {
+        "track_id": "track_cinematic_grand",
+        "score": 6.5,
+        "rationale": "Sweeping cinematic gives the sunset overlook epic weight but is oversized for the casual snack/dance/diner clips.",
+        "predicted_strengths": [
+          "sunset overlook clip lands inside this profile",
+          "warm amber grade aligns with golden hour footage"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_drive",
+        "score": 5.5,
+        "rationale": "Hip-hop swagger plays for the car-culture POV driving clip but loses the candid friend warmth the other clips depend on; serviceable fallback.",
+        "predicted_strengths": [
+          "POV driving clip works with this track",
+          "high energy supports the dancing clip"
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "pop friends road trip — second pop case, acoustic fills variety"
+  }
+}

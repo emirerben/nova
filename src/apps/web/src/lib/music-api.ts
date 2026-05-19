@@ -40,6 +40,30 @@ export interface MusicTrackListResponse {
 
 // ── Admin types ───────────────────────────────────────────────────────────────
 
+/**
+ * One ranked edit-worthy section from the `song_sections` agent.
+ * Source of truth: src/apps/api/app/agents/_schemas/song_sections.py.
+ * Keep the literal unions in sync manually when that schema changes.
+ */
+export interface SongSection {
+  rank: 1 | 2 | 3;
+  start_s: number;
+  end_s: number;
+  label:
+    | "intro"
+    | "verse"
+    | "pre_chorus"
+    | "chorus"
+    | "drop"
+    | "bridge"
+    | "outro"
+    | "hook"
+    | "build";
+  energy: "low" | "medium" | "high" | "peaks_high";
+  suggested_use: "hook" | "build" | "climax" | "ambient" | "transition";
+  rationale: string;
+}
+
 export interface MusicTrackDetail {
   id: string;
   title: string;
@@ -60,6 +84,8 @@ export interface MusicTrackDetail {
   lyrics_error_detail: string | null;
   lyrics_cached: LyricsCache | null;
   lyrics_extracted_at: string | null;
+  best_sections: SongSection[] | null;
+  section_version: string | null;
   created_at: string;
 }
 
@@ -299,4 +325,74 @@ export async function adminArchiveMusicTrack(id: string): Promise<void> {
   if (!res.ok && res.status !== 204) {
     throw new Error(`Archive failed: ${res.status}`);
   }
+}
+
+// ── Admin music test jobs ─────────────────────────────────────────────────────
+
+/** A music job rendered from the admin Test tab (any analysis_status=ready track). */
+export interface AdminMusicTestJobSummary {
+  job_id: string;
+  status: string;
+  error_detail: string | null;
+  output_url: string | null;
+  clip_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function adminCreateMusicTestJob(
+  trackId: string,
+  clipGcsPaths: string[],
+): Promise<MusicJobResponse> {
+  const res = await fetch(`${ADMIN_PROXY}/music-tracks/${trackId}/test-job`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ clip_gcs_paths: clipGcsPaths }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? "Failed to create test job");
+  }
+  return res.json();
+}
+
+export async function adminRerenderMusicJob(
+  trackId: string,
+  sourceJobId: string,
+): Promise<MusicJobResponse> {
+  const res = await fetch(`${ADMIN_PROXY}/music-tracks/${trackId}/rerender-job`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ source_job_id: sourceJobId }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? "Failed to re-render job");
+  }
+  return res.json();
+}
+
+export async function adminListMusicTestJobs(
+  trackId: string,
+  limit = 10,
+): Promise<AdminMusicTestJobSummary[]> {
+  const res = await fetch(
+    `${ADMIN_PROXY}/music-tracks/${trackId}/test-jobs?limit=${limit}`,
+  );
+  if (!res.ok) throw new Error(`Admin list test jobs failed: ${res.status}`);
+  const data = await res.json();
+  return data.jobs;
+}
+
+/** Admin-gated status poll. Use this from admin UIs instead of the public
+ *  GET /music-jobs/{id}/status, which has no auth. */
+export async function adminGetMusicJobStatus(
+  trackId: string,
+  jobId: string,
+): Promise<MusicJobStatus> {
+  const res = await fetch(
+    `${ADMIN_PROXY}/music-tracks/${trackId}/jobs/${jobId}/status`,
+  );
+  if (!res.ok) throw new Error(`Admin job status failed: ${res.status}`);
+  return res.json();
 }

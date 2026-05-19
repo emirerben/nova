@@ -24,6 +24,7 @@ import uuid
 import httpx
 import structlog
 from cryptography.fernet import Fernet, InvalidToken
+from sqlalchemy.exc import OperationalError
 
 from app.config import settings
 from app.database import sync_session as _sync_session
@@ -69,12 +70,25 @@ def _compress_for_testing(input_path: str, output_path: str) -> None:
     """Transcode video to 720p for faster testing. ~10x smaller files."""
     result = subprocess.run(
         [
-            "ffmpeg", "-i", input_path,
-            "-vf", "scale=-2:720",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-            "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart",
-            "-y", output_path,
+            "ffmpeg",
+            "-i",
+            input_path,
+            "-vf",
+            "scale=-2:720",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "28",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            "-y",
+            output_path,
         ],
         capture_output=True,
         text=True,
@@ -169,8 +183,7 @@ def _stream_download(
                 time.sleep(RETRY_DELAY_S)
                 continue
             raise ValueError(
-                "Google Drive download timed out. "
-                "File may be too large or connection too slow."
+                "Google Drive download timed out. File may be too large or connection too slow."
             )
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code >= 500 and attempt < MAX_RETRIES:
@@ -205,7 +218,16 @@ def _cleanup_gcs_blob(gcs_path: str) -> None:
 
 
 @celery_app.task(
-    name="tasks.import_from_drive", bind=True, max_retries=0, time_limit=1200, soft_time_limit=1140
+    name="tasks.import_from_drive",
+    bind=True,
+    # Retry on transient Postgres outages (incident 2026-05-18 07:45:57Z).
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,  # deterministic exp backoff — jitter halves avg budget
+    max_retries=7,
+    time_limit=1200,
+    soft_time_limit=1140,
 )
 def import_from_drive(
     self,
@@ -268,12 +290,16 @@ def import_from_drive(
             log.info("drive_import_uploading_gcs", job_id=job_id, gcs_path=gcs_path)
             _upload_to_gcs(local_path, gcs_path)
 
-            # Atomic handoff: set status + enqueue orchestrate in one try block
+            # Atomic handoff: set status + celery_task_id + enqueue orchestrate.
+            # task_id=job_id is the convention enforced by
+            # app/services/job_dispatch.py — drive_import predates that helper
+            # and runs in sync context, so it sets celery_task_id inline here.
             with _sync_session() as db:
                 job = db.get(Job, uuid.UUID(job_id))
                 if job is None:
                     return
                 job.status = "queued"
+                job.celery_task_id = job_id
                 db.commit()
 
                 from app.tasks.orchestrate import orchestrate_job
@@ -282,6 +308,16 @@ def import_from_drive(
 
             log.info("drive_import_complete", job_id=job_id)
 
+        except OperationalError as db_exc:
+            # Transient Postgres outage — re-raise for Celery autoretry. The
+            # GCS blob will be re-uploaded on retry (idempotent at gcs_path).
+            log.warning(
+                "drive_import_transient_db_error_retry",
+                job_id=job_id,
+                error=str(db_exc),
+                retry_count=self.request.retries,
+            )
+            raise
         except Exception as exc:
             log.error("drive_import_failed", job_id=job_id, error=str(exc))
             _cleanup_gcs_blob(gcs_path)
@@ -303,7 +339,12 @@ def import_from_drive(
 @celery_app.task(
     name="tasks.batch_import_from_drive",
     bind=True,
-    max_retries=0,
+    # Retry on transient Postgres outages (incident 2026-05-18 07:45:57Z).
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,  # deterministic exp backoff — jitter halves avg budget
+    max_retries=7,
     time_limit=2400,
     soft_time_limit=2340,
 )

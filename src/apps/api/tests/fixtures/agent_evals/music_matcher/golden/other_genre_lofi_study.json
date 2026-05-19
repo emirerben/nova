@@ -1,0 +1,177 @@
+{
+  "agent": "nova.audio.music_matcher",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "clip_summaries": [
+      {
+        "clip_id": "clip_001",
+        "media_type": "video",
+        "duration_s": 8.0,
+        "subject": "student writing notes by hand under a desk lamp",
+        "hook_text": "two more chapters tonight",
+        "hook_score": 5.5,
+        "energy": 3.5,
+        "description": "close-up, warm desk-lamp tungsten, slow pen motion"
+      },
+      {
+        "clip_id": "clip_002",
+        "media_type": "video",
+        "duration_s": 7.5,
+        "subject": "rain on a window with a stack of textbooks in foreground",
+        "hook_text": "",
+        "hook_score": 4.5,
+        "energy": 3.0,
+        "description": "static medium, soft cool light through glass, ambient rain"
+      }
+    ],
+    "available_tracks": [
+      {
+        "track_id": "track_other_lofi_study",
+        "title": "Late Bookmark",
+        "duration_s": 88.0,
+        "slot_count": 6,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "other",
+          "vibe_tags": ["mellow", "patient", "warm", "ambient"],
+          "energy": "low",
+          "pacing": "medium",
+          "mood": "study-with-me focus",
+          "ideal_content_profile": "Study b-roll, desk-lamp scenes, rain-on-windows, slow hand motions of writing or page-turning.",
+          "copy_tone": "casual",
+          "transition_style": "dissolve",
+          "color_grade": "warm tungsten"
+        }
+      },
+      {
+        "track_id": "track_acoustic_intimate",
+        "title": "Slow Saturday",
+        "duration_s": 100.0,
+        "slot_count": 6,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "acoustic",
+          "vibe_tags": ["patient", "warm", "intimate"],
+          "energy": "low",
+          "pacing": "slow",
+          "mood": "morning calm",
+          "ideal_content_profile": "Quiet routines — coffee, reading, candid pet b-roll.",
+          "copy_tone": "casual",
+          "transition_style": "dissolve",
+          "color_grade": "warm tungsten"
+        }
+      },
+      {
+        "track_id": "track_hiphop_lofi",
+        "title": "Loop Tape",
+        "duration_s": 78.0,
+        "slot_count": 9,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "hip_hop",
+          "vibe_tags": ["mellow", "warm", "patient"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "bedroom-studio calm",
+          "ideal_content_profile": "Lofi cafe/study b-roll, slow craft motion, candid quiet moments.",
+          "copy_tone": "casual",
+          "transition_style": "dissolve",
+          "color_grade": "warm tungsten"
+        }
+      },
+      {
+        "track_id": "track_electronic_ambient",
+        "title": "Quiet Field",
+        "duration_s": 105.0,
+        "slot_count": 8,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "electronic",
+          "vibe_tags": ["ambient", "ethereal", "patient"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "atmospheric drift",
+          "ideal_content_profile": "Slow ambient b-roll with synth atmospherics, rain windows, dim interiors.",
+          "copy_tone": "cinematic",
+          "transition_style": "dissolve",
+          "color_grade": "cool blue hour"
+        }
+      },
+      {
+        "track_id": "track_pop_anthem",
+        "title": "Spotlight On",
+        "duration_s": 90.0,
+        "slot_count": 11,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "pop",
+          "vibe_tags": ["glossy", "anthemic", "celebratory"],
+          "energy": "peaks_high",
+          "pacing": "fast",
+          "mood": "stage-show triumph",
+          "ideal_content_profile": "Stage performances and music-video edits with bright color.",
+          "copy_tone": "high_energy",
+          "transition_style": "whip_pan",
+          "color_grade": "high-contrast neon"
+        }
+      }
+    ],
+    "n_variants": 3
+  },
+  "raw_text": "{\"ranked\": [{\"track_id\": \"track_other_lofi_study\", \"score\": 9.2, \"rationale\": \"Study-with-me profile names this exact content — desk lamp writing, rain-on-window, slow hand motion; the warm tungsten grade matches and 6 slots fits 2 long-take clips with comfortable intercutting.\", \"predicted_strengths\": [\"warm tungsten grade matches the desk lamp lighting\", \"casual copy_tone reads naturally over the 'two more chapters' hook\", \"6 slots over 2 long clips supports detail intercutting without micro-cuts\"]}, {\"track_id\": \"track_hiphop_lofi\", \"score\": 8.6, \"rationale\": \"Lofi hip-hop is the textbook genre-mate for study b-roll; mellow vibe and warm tungsten grade align tightly, and the genre is distinct enough from 'other' to add real top-K variety.\", \"predicted_strengths\": [\"distinct genre from top pick — adds top-K variety\", \"same warm tungsten grade alignment\", \"mellow vibe lifts the rain-window clip\"]}, {\"track_id\": \"track_acoustic_intimate\", \"score\": 8.2, \"rationale\": \"Slow patient acoustic with the same warm tungsten grade is a real alternative variant — quieter than lofi hip-hop, more emotional than ambient electronic.\", \"predicted_strengths\": [\"warm tungsten grade aligns\", \"slow patient pacing supports 7-8s long-take clips\", \"casual copy_tone reads naturally over study content\"]}, {\"track_id\": \"track_electronic_ambient\", \"score\": 6.8, \"rationale\": \"Ambient electronic frames the same study content with a cool-blue atmospheric feel; viable but the grade fights the warm tungsten desk-lamp light.\", \"predicted_strengths\": [\"ambient vibe supports the rain-window clip\", \"medium pacing matches long-take clips\"]}, {\"track_id\": \"track_pop_anthem\", \"score\": 1.5, \"rationale\": \"Peaks_high stage-show pop over quiet study b-roll is the wrong energy band and the wrong tonal universe entirely.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "output": {
+    "ranked": [
+      {
+        "track_id": "track_other_lofi_study",
+        "score": 9.2,
+        "rationale": "Study-with-me profile names this exact content — desk lamp writing, rain-on-window, slow hand motion; the warm tungsten grade matches and 6 slots fits 2 long-take clips with comfortable intercutting.",
+        "predicted_strengths": [
+          "warm tungsten grade matches the desk lamp lighting",
+          "casual copy_tone reads naturally over the 'two more chapters' hook",
+          "6 slots over 2 long clips supports detail intercutting without micro-cuts"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_lofi",
+        "score": 8.6,
+        "rationale": "Lofi hip-hop is the textbook genre-mate for study b-roll; mellow vibe and warm tungsten grade align tightly, and the genre is distinct enough from 'other' to add real top-K variety.",
+        "predicted_strengths": [
+          "distinct genre from top pick — adds top-K variety",
+          "same warm tungsten grade alignment",
+          "mellow vibe lifts the rain-window clip"
+        ]
+      },
+      {
+        "track_id": "track_acoustic_intimate",
+        "score": 8.2,
+        "rationale": "Slow patient acoustic with the same warm tungsten grade is a real alternative variant — quieter than lofi hip-hop, more emotional than ambient electronic.",
+        "predicted_strengths": [
+          "warm tungsten grade aligns",
+          "slow patient pacing supports 7-8s long-take clips",
+          "casual copy_tone reads naturally over study content"
+        ]
+      },
+      {
+        "track_id": "track_electronic_ambient",
+        "score": 6.8,
+        "rationale": "Ambient electronic frames the same study content with a cool-blue atmospheric feel; viable but the grade fights the warm tungsten desk-lamp light.",
+        "predicted_strengths": [
+          "ambient vibe supports the rain-window clip",
+          "medium pacing matches long-take clips"
+        ]
+      },
+      {
+        "track_id": "track_pop_anthem",
+        "score": 1.5,
+        "rationale": "Peaks_high stage-show pop over quiet study b-roll is the wrong energy band and the wrong tonal universe entirely.",
+        "predicted_strengths": [
+          "no real fit"
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "other genre — lofi study b-roll, N=2 clips, 'other' genre tops"
+  }
+}

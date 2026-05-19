@@ -6,7 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.routes.admin import _substitute_subject
+from app.pipeline.text_overlay import _FONT_REGISTRY
+from app.routes.admin import _strip_unknown_font_families, _substitute_subject
 
 VALID_TOKEN = "test-admin-token"
 
@@ -161,3 +162,103 @@ class TestSubjectSubstitution:
         original = [{"text": "Hi {{subject}}"}]
         _substitute_subject(original, "EARTH")
         assert original[0]["text"] == "Hi {{subject}}"
+
+
+class TestFontFamilyCoverage:
+    """Every font name in the registry must render without 500ing."""
+
+    @pytest.mark.parametrize("font_name", list(_FONT_REGISTRY.get("fonts", {}).keys()))
+    def test_each_registry_font_renders(self, client, font_name):
+        overlay = {
+            **_basic_overlay(text=f"{font_name} sample"),
+            "font_family": font_name,
+        }
+        with _patch_settings():
+            res = client.post(
+                "/admin/overlay-preview",
+                json={
+                    "overlays": [overlay],
+                    "slot_duration_s": 5.0,
+                    "time_in_slot_s": 1.0,
+                },
+                headers={"X-Admin-Token": VALID_TOKEN},
+            )
+        assert res.status_code == 200, f"{font_name}: {res.status_code} {res.text}"
+        assert res.content[:8] == b"\x89PNG\r\n\x1a\n", f"{font_name}: not a PNG"
+
+    def test_unknown_font_returns_200_blank_or_fallback(self, client):
+        """Unknown font_family is stripped server-side; render falls back to font_style.
+
+        The endpoint must NEVER 500 on a payload with an unknown font name —
+        that's the regression that broke the editor.
+        """
+        overlay = {
+            **_basic_overlay(text="Unknown font test"),
+            "font_family": "NotARealFont 9000",
+        }
+        with _patch_settings():
+            res = client.post(
+                "/admin/overlay-preview",
+                json={
+                    "overlays": [overlay],
+                    "slot_duration_s": 5.0,
+                    "time_in_slot_s": 1.0,
+                },
+                headers={"X-Admin-Token": VALID_TOKEN},
+            )
+        assert res.status_code == 200
+        assert res.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    def test_unknown_span_font_returns_200(self, client):
+        overlay = {
+            **_basic_overlay(text="Span font test"),
+            "spans": [
+                {"text": "Hi ", "font_family": "Montserrat"},
+                {"text": "world", "font_family": "DoesNotExist"},
+            ],
+        }
+        with _patch_settings():
+            res = client.post(
+                "/admin/overlay-preview",
+                json={
+                    "overlays": [overlay],
+                    "slot_duration_s": 5.0,
+                    "time_in_slot_s": 1.0,
+                },
+                headers={"X-Admin-Token": VALID_TOKEN},
+            )
+        assert res.status_code == 200
+        assert res.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+class TestStripUnknownFontFamilies:
+    def test_strips_overlay_unknown_font(self):
+        out = _strip_unknown_font_families([
+            {"text": "x", "font_family": "DoesNotExist"},
+        ])
+        assert "font_family" not in out[0]
+
+    def test_keeps_known_font(self):
+        first_known = next(iter(_FONT_REGISTRY.get("fonts", {}).keys()))
+        out = _strip_unknown_font_families([
+            {"text": "x", "font_family": first_known},
+        ])
+        assert out[0]["font_family"] == first_known
+
+    def test_strips_span_unknown_font(self):
+        out = _strip_unknown_font_families([
+            {
+                "text": "x",
+                "spans": [
+                    {"text": "a", "font_family": "DoesNotExist"},
+                    {"text": "b"},
+                ],
+            },
+        ])
+        assert "font_family" not in out[0]["spans"][0]
+        assert "font_family" not in out[0]["spans"][1]
+
+    def test_does_not_mutate_input(self):
+        original = [{"text": "x", "font_family": "DoesNotExist"}]
+        _strip_unknown_font_families(original)
+        assert original[0]["font_family"] == "DoesNotExist"

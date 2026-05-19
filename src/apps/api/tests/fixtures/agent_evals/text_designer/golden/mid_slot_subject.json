@@ -1,0 +1,24 @@
+{
+  "agent": "nova.layout.text_designer",
+  "prompt_version": "2026-05-14",
+  "input": {
+    "slot_position": 3,
+    "slot_type": "content",
+    "placeholder_kind": "subject",
+    "copy_tone": "energetic",
+    "creative_direction": "high-stakes reveal hook; brand gold dominant"
+  },
+  "raw_text": "{\"text_size\": \"large\", \"font_style\": \"sans\", \"text_color\": \"#F4D03F\", \"start_s\": 0.5, \"effect\": \"fade-in\", \"accel_at_s\": null}",
+  "output": {
+    "text_size": "large",
+    "font_style": "sans",
+    "text_color": "#F4D03F",
+    "start_s": 0.5,
+    "effect": "fade-in",
+    "accel_at_s": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "Subject placeholder on a mid-slot. Tests slot_position_awareness — same template, same subject, same tone, but the typography drops one size band (xxlarge → large), drops the signature effect (font-cycle → fade-in), and clears accel_at_s. Sans + gold preserved (family consistency with slot 1's anchor); start_s drops to 0.5s because mid-slots are shorter than the hook slot."
+  }
+}

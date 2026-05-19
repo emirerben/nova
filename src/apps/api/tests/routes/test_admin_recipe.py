@@ -94,7 +94,7 @@ def _make_recipe(**overrides):
     return base
 
 
-def _mock_template(recipe_cached=None, analysis_status="ready"):
+def _mock_template(recipe_cached=None, analysis_status="ready", is_agentic=False):
     """Create a mock VideoTemplate."""
     t = MagicMock()
     t.id = "tmpl-123"
@@ -102,6 +102,7 @@ def _mock_template(recipe_cached=None, analysis_status="ready"):
     t.analysis_status = analysis_status
     t.recipe_cached = recipe_cached
     t.recipe_cached_at = datetime.now(UTC) if recipe_cached else None
+    t.is_agentic = is_agentic
     return t
 
 
@@ -267,6 +268,34 @@ class TestSaveRecipe:
         data = res.json()
         assert data["recipe"]["copy_tone"] == "exciting"
         assert data["version_number"] == 3
+
+    def test_rejects_agentic_template(self, client):
+        """Agentic templates are regen-only — PUT /recipe must return 409."""
+        recipe = _make_recipe()
+        template = _mock_template(recipe_cached=recipe, is_agentic=True)
+
+        mock_db = AsyncMock()
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+        mock_db.execute.side_effect = [template_result]
+
+        def _override_db():
+            yield mock_db
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.put(
+                    "/admin/templates/tmpl-123/recipe",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                    json={"recipe": recipe, "base_version_id": None},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 409
+        assert "agent-built" in res.json()["detail"].lower()
 
     def test_rejects_invalid_transition(self, client):
         """Invalid enum values should be rejected by Pydantic."""
@@ -525,10 +554,13 @@ class TestCreateRerenderJob:
 
         with (
             patch("app.routes.admin.settings") as mock_settings,
-            patch("app.routes.admin.orchestrate_template_job", create=True) as mock_task,
+            patch(
+                "app.services.job_dispatch.enqueue_orchestrator",
+                new_callable=AsyncMock,
+            ) as mock_enqueue,
         ):
             mock_settings.admin_api_key = VALID_TOKEN
-            mock_task.delay = MagicMock()
+            mock_enqueue.return_value = "stubbed-task-id"
             app.dependency_overrides[get_db] = _override_db
             try:
                 res = client.post(
@@ -543,6 +575,7 @@ class TestCreateRerenderJob:
         data = res.json()
         assert data["status"] == "queued"
         assert data["template_id"] == "tmpl-123"
+        mock_enqueue.assert_awaited_once()
 
     def test_404_for_wrong_template(self, client):
         """Source job belongs to a different template."""
@@ -886,6 +919,67 @@ class TestLatestTestJob:
             mock_settings.admin_api_key = VALID_TOKEN
             res = client.get("/admin/templates/tmpl-123/latest-test-job")
         assert res.status_code in (401, 422)
+
+    def test_query_filter_accepts_reaped_with_output_url(self, client):
+        """Regression: pre-#243 reaper falsely flipped successful template_ready
+        jobs to processing_failed. The latest-test-job filter must accept
+        those reaped rows when they carry an output_url, otherwise the
+        editor's Test Job button silently no-ops on every DtMF run.
+        """
+        template = _mock_template(recipe_cached=_make_recipe())
+
+        reaped_job = MagicMock()
+        reaped_job.id = uuid.uuid4()
+        reaped_job.status = "processing_failed"
+        reaped_job.assembly_plan = {"output_url": "https://storage/output.mp4", "steps": []}
+        reaped_job.all_candidates = {"clip_paths": ["clips/a.mp4"]}
+        reaped_job.created_at = datetime.now(UTC)
+
+        captured: dict = {}
+        mock_db = AsyncMock()
+
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+        job_result = MagicMock()
+        job_result.scalar_one_or_none.return_value = reaped_job
+
+        call_count = [0]
+
+        async def _exec(stmt, *args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return template_result
+            # Second execute is the latest-test-job SELECT.
+            captured["stmt"] = stmt
+            return job_result
+
+        mock_db.execute = _exec
+
+        def _override_db():
+            yield mock_db
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.get(
+                    "/admin/templates/tmpl-123/latest-test-job",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        assert res.json()["output_url"] == "https://storage/output.mp4"
+        # And the SQL must include the processing_failed + assembly_plan ?
+        # 'output_url' branch (otherwise reaped rows would be excluded).
+        compiled = captured["stmt"].compile()
+        sql_str = str(compiled).lower()
+        param_values = {str(v) for v in compiled.params.values()}
+        assert "processing_failed" in param_values
+        assert "template_ready" in param_values  # original branch still works
+        assert "output_url" in param_values  # JSONB key check for the reaped branch
+        assert "assembly_plan" in sql_str  # WHERE clause references the column
 
 
 # ── RecipeInterstitialSchema hold_s validation ──────────────────────────────

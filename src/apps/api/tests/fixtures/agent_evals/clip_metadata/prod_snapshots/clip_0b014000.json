@@ -1,0 +1,43 @@
+{
+  "agent": "nova.video.clip_metadata",
+  "prompt_version": "exported",
+  "input": {
+    "file_uri": "clips/0b0140009812.mp4",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "{\"clip_id\": \"files/g8r6got91ihz\", \"transcript\": \"Woo! Bazaarriba!\", \"hook_text\": \"Woo!\", \"hook_score\": 9.0, \"best_moments\": [{\"start_s\": 0.0, \"end_s\": 3.0, \"energy\": 9.0, \"description\": \"Crowd cheering loudly with 'Woo!'\"}, {\"start_s\": 3.0, \"end_s\": 5.0, \"energy\": 8.5, \"description\": \"Performer engages crowd with a call-out\"}, {\"start_s\": 5.0, \"end_s\": 11.0, \"energy\": 9.0, \"description\": \"Performer raising hands to engage cheering crowd\"}], \"detected_subject\": \"\"}",
+  "output": {
+    "clip_id": "files/g8r6got91ihz",
+    "transcript": "Woo! Bazaarriba!",
+    "hook_text": "Woo!",
+    "hook_score": 9.0,
+    "best_moments": [
+      {
+        "start_s": 0.0,
+        "end_s": 3.0,
+        "energy": 9.0,
+        "description": "Crowd cheering loudly with 'Woo!'"
+      },
+      {
+        "start_s": 3.0,
+        "end_s": 5.0,
+        "energy": 8.5,
+        "description": "Performer engages crowd with a call-out"
+      },
+      {
+        "start_s": 5.0,
+        "end_s": 11.0,
+        "energy": 9.0,
+        "description": "Performer raising hands to engage cheering crowd"
+      }
+    ],
+    "detected_subject": ""
+  },
+  "meta": {
+    "source": "Redis clip_analysis cache",
+    "clip_hash": "0b01400098124f8e7e04cbe2875acbb373a96605f03c4b0630c1fccc64fb5046",
+    "moment_count": 3,
+    "transcript_len": 16,
+    "exported_at": "2026-05-13T04:32:29.354558+00:00"
+  }
+}

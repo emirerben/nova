@@ -1,0 +1,37 @@
+{
+  "agent": "nova.video.clip_router",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "slots": [
+      {"position": 1, "target_duration_s": 2.0, "slot_type": "hook", "energy": 7.0},
+      {"position": 2, "target_duration_s": 4.0, "slot_type": "broll", "energy": 5.0},
+      {"position": 3, "target_duration_s": 4.0, "slot_type": "broll", "energy": 5.0},
+      {"position": 4, "target_duration_s": 4.0, "slot_type": "broll", "energy": 5.0},
+      {"position": 5, "target_duration_s": 2.5, "slot_type": "outro", "energy": 6.5}
+    ],
+    "candidates": [
+      {"id": "shot-1", "duration_s": 3.0, "energy": 7.2, "hook_score": 7.8, "description": "drone reveal over mountain ridge at sunrise"},
+      {"id": "shot-2", "duration_s": 5.0, "energy": 5.0, "hook_score": 4.0, "description": "subject walks along trail through pine forest"},
+      {"id": "shot-3", "duration_s": 4.5, "energy": 5.2, "hook_score": 4.5, "description": "wave breaks over coastal rocks at sunset"},
+      {"id": "shot-4", "duration_s": 5.0, "energy": 4.8, "hook_score": 4.2, "description": "subject pours coffee from thermos at campsite"},
+      {"id": "shot-5", "duration_s": 6.0, "energy": 5.0, "hook_score": 4.0, "description": "subject sets up tripod camera on rocky outcrop"},
+      {"id": "shot-6", "duration_s": 3.5, "energy": 6.5, "hook_score": 6.0, "description": "subject hoists backpack at summit silhouetted against sky"}
+    ],
+    "copy_tone": "calm",
+    "creative_direction": "solo travel diary; rhythm of motion alternating with reflection"
+  },
+  "raw_text": "{\"assignments\": [{\"slot_position\": 1, \"candidate_id\": \"shot-1\", \"rationale\": \"hook_score 7.8 — highest in pool, drone reveal opens with curiosity, energy 7.2 matches slot target 7.0\"}, {\"slot_position\": 2, \"candidate_id\": \"shot-2\", \"rationale\": \"energy 5.0 matches slot target 5.0; description (walks through forest) introduces motion before the static beats at slots 3 and 4\"}, {\"slot_position\": 3, \"candidate_id\": \"shot-3\", \"rationale\": \"energy 5.2 within \\u00b11.5 of target 5.0; coastal description varies texture from the forest in slot 2 (different scene noun)\"}, {\"slot_position\": 4, \"candidate_id\": \"shot-4\", \"rationale\": \"energy 4.8 within \\u00b11.5 of target 5.0; reflective beat (pours coffee) sits between motion and the summit outro\"}, {\"slot_position\": 5, \"candidate_id\": \"shot-6\", \"rationale\": \"hook_score 6.0 — highest among remaining; description (summit silhouette) names a clear payoff beat for the outro role\"}]}",
+  "output": {
+    "assignments": [
+      {"slot_position": 1, "candidate_id": "shot-1", "rationale": "hook_score 7.8 — highest in pool, drone reveal opens with curiosity, energy 7.2 matches slot target 7.0"},
+      {"slot_position": 2, "candidate_id": "shot-2", "rationale": "energy 5.0 matches slot target 5.0; description (walks through forest) introduces motion before the static beats at slots 3 and 4"},
+      {"slot_position": 3, "candidate_id": "shot-3", "rationale": "energy 5.2 within ±1.5 of target 5.0; coastal description varies texture from the forest in slot 2 (different scene noun)"},
+      {"slot_position": 4, "candidate_id": "shot-4", "rationale": "energy 4.8 within ±1.5 of target 5.0; reflective beat (pours coffee) sits between motion and the summit outro"},
+      {"slot_position": 5, "candidate_id": "shot-6", "rationale": "hook_score 6.0 — highest among remaining; description (summit silhouette) names a clear payoff beat for the outro role"}
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "Five-slot variety stress test. shot-5 (tripod) is LEFT UNUSED — it's a defensible broll alternative but its description duplicates the framing motion of shot-1 (both involve camera-as-subject). Tests adjacent-slot variety (forest → coast → coffee, no scene-noun duplicates) and the rank-1 rule (shot-1's 7.8 hook beats shot-6's 6.0 for the hook slot, even though shot-6's energy is closer)."
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "agent": "nova.layout.transition_picker",
+  "prompt_version": "2026-05-14",
+  "input": {
+    "outgoing": {
+      "description": "camera whips right following sprinter across track",
+      "energy": 8.5,
+      "camera_movement": "pan-right"
+    },
+    "incoming": {
+      "description": "second sprinter enters frame from right side",
+      "energy": 8.7,
+      "camera_movement": "pan-right"
+    },
+    "template_default": "hard-cut",
+    "pacing_style": "high-energy-edm"
+  },
+  "raw_text": "{\"transition\": \"whip-pan\", \"duration_s\": 0.3, \"rationale\": \"both clips pan right; whip-pan reads as continuous motion across the cut\"}",
+  "output": {
+    "transition": "whip-pan",
+    "duration_s": 0.3,
+    "rationale": "both clips pan right; whip-pan reads as continuous motion across the cut"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "Override path: template default is hard-cut but the camera-movement contradicts it (both clips pan right with compatible direction). Picks whip-pan with duration 0.3s (mid-range of [0.20, 0.40]). Tests camera_movement_compatibility (whip-pan requires matching lateral movement — satisfied) and pacing_style_modulation (high-energy → short duration, 0.3s lands at the short end)."
+  }
+}

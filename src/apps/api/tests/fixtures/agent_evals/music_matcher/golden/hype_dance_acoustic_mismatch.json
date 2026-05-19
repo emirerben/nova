@@ -1,0 +1,196 @@
+{
+  "agent": "nova.audio.music_matcher",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "clip_summaries": [
+      {
+        "clip_id": "clip_001",
+        "media_type": "video",
+        "duration_s": 3.0,
+        "subject": "dancer hitting a sharp pose under strobe lights",
+        "hook_text": "watch this drop",
+        "hook_score": 9.0,
+        "energy": 9.5,
+        "description": "wide shot, strobe flicker, sharp body lines"
+      },
+      {
+        "clip_id": "clip_002",
+        "media_type": "video",
+        "duration_s": 2.8,
+        "subject": "crew of four hitting a synchronized move on the beat",
+        "hook_text": "",
+        "hook_score": 8.5,
+        "energy": 9.5,
+        "description": "wide static, beat-locked motion, hard-contrast lighting"
+      },
+      {
+        "clip_id": "clip_003",
+        "media_type": "video",
+        "duration_s": 3.2,
+        "subject": "close-up of feet stomping in time on a studio floor",
+        "hook_text": "",
+        "hook_score": 7.5,
+        "energy": 9.0,
+        "description": "low-angle close-up, fast cuts on stomps, motion blur"
+      },
+      {
+        "clip_id": "clip_004",
+        "media_type": "video",
+        "duration_s": 3.5,
+        "subject": "dancer spinning then freezing in final pose",
+        "hook_text": "",
+        "hook_score": 8.0,
+        "energy": 9.0,
+        "description": "medium shot, fast spin, sharp stop"
+      }
+    ],
+    "available_tracks": [
+      {
+        "track_id": "track_electronic_dance_hype",
+        "title": "Strobe Hit",
+        "duration_s": 92.0,
+        "slot_count": 13,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "electronic",
+          "vibe_tags": ["pulsing", "anthemic", "frantic", "euphoric"],
+          "energy": "peaks_high",
+          "pacing": "frantic",
+          "mood": "dance-floor peak",
+          "ideal_content_profile": "Choreography clips with sharp beat-locked moves, strobe-lit crew formations, beat-drop freezes.",
+          "copy_tone": "high_energy",
+          "transition_style": "beat_pulse",
+          "color_grade": "high-contrast neon"
+        }
+      },
+      {
+        "track_id": "track_hiphop_choreo",
+        "title": "Crew Cut",
+        "duration_s": 84.0,
+        "slot_count": 12,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "hip_hop",
+          "vibe_tags": ["punchy", "swagger", "confident"],
+          "energy": "peaks_high",
+          "pacing": "fast",
+          "mood": "dance-crew battle",
+          "ideal_content_profile": "Choreography crew-shot edits, freeze poses, sharp footwork close-ups, beat-locked hits.",
+          "copy_tone": "punchy",
+          "transition_style": "hard_cut",
+          "color_grade": "saturated street"
+        }
+      },
+      {
+        "track_id": "track_pop_anthem",
+        "title": "Spotlight On",
+        "duration_s": 90.0,
+        "slot_count": 11,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "pop",
+          "vibe_tags": ["glossy", "anthemic", "celebratory"],
+          "energy": "peaks_high",
+          "pacing": "fast",
+          "mood": "stage-show triumph",
+          "ideal_content_profile": "Stage performances, choreography, music-video-style edits with bright high-contrast color.",
+          "copy_tone": "high_energy",
+          "transition_style": "whip_pan",
+          "color_grade": "high-contrast neon"
+        }
+      },
+      {
+        "track_id": "track_cinematic_calm",
+        "title": "Slow Evening Theme",
+        "duration_s": 105.0,
+        "slot_count": 6,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "cinematic",
+          "vibe_tags": ["tender", "patient", "reverent"],
+          "energy": "low",
+          "pacing": "slow",
+          "mood": "hushed reverence",
+          "ideal_content_profile": "Quiet emotional storytelling — slow handheld intimate b-roll.",
+          "copy_tone": "cinematic",
+          "transition_style": "dissolve",
+          "color_grade": "warm amber"
+        }
+      },
+      {
+        "track_id": "track_acoustic_slow_ballad",
+        "title": "Half-Empty Tide",
+        "duration_s": 102.0,
+        "slot_count": 7,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "acoustic",
+          "vibe_tags": ["wistful", "tender", "nostalgic"],
+          "energy": "low",
+          "pacing": "slow",
+          "mood": "bittersweet memory",
+          "ideal_content_profile": "Couples at golden hour, slow handheld b-roll, candid moments at slow energy.",
+          "copy_tone": "sentimental",
+          "transition_style": "dissolve",
+          "color_grade": "warm golden hour"
+        }
+      }
+    ],
+    "n_variants": 3
+  },
+  "raw_text": "{\"ranked\": [{\"track_id\": \"track_electronic_dance_hype\", \"score\": 9.5, \"rationale\": \"Frantic peaks_high electronic with beat-locked freezes is the literal content of these clips — strobe poses and crew synch hits land on a track whose profile names them directly.\", \"predicted_strengths\": [\"peaks_high + frantic pacing matches avg clip energy of 9.25\", \"beat_pulse transitions land on the freeze and stomp clips\", \"13 slots over 4 short clips supports rapid intercutting\"]}, {\"track_id\": \"track_hiphop_choreo\", \"score\": 9.0, \"rationale\": \"Dance-crew choreography is named in this track's ideal profile word for word; hard-cut transitions punch the synchronized formation hits and freeze poses.\", \"predicted_strengths\": [\"hard-cut transitions land each freeze pose\", \"distinct vibe from electronic top — adds top-K variety\", \"swagger vibe reads against 'watch this drop' hook\"]}, {\"track_id\": \"track_pop_anthem\", \"score\": 8.6, \"rationale\": \"Stage-show triumph pop frames the same choreography as a music-video performance edit; rounds out the top-K with a third genre band that still serves the content.\", \"predicted_strengths\": [\"third distinct genre completes diverse top-K\", \"glossy mood lifts the strobe lighting\", \"whip_pan transitions fit the spinning dancer clip\"]}, {\"track_id\": \"track_cinematic_calm\", \"score\": 1.8, \"rationale\": \"Hushed reverent cinematic is the wrong band for frantic strobe-lit choreography — drains every clip's energy.\", \"predicted_strengths\": [\"no real fit\"]}, {\"track_id\": \"track_acoustic_slow_ballad\", \"score\": 1.5, \"rationale\": \"Slow wistful acoustic ballad over a hype dance reel is the textbook example of the wrong call — wrong energy, wrong pacing, wrong copy_tone, wrong grade.\", \"predicted_strengths\": [\"no real fit — flagged as canonical mismatch case\"]}]}",
+  "output": {
+    "ranked": [
+      {
+        "track_id": "track_electronic_dance_hype",
+        "score": 9.5,
+        "rationale": "Frantic peaks_high electronic with beat-locked freezes is the literal content of these clips — strobe poses and crew synch hits land on a track whose profile names them directly.",
+        "predicted_strengths": [
+          "peaks_high + frantic pacing matches avg clip energy of 9.25",
+          "beat_pulse transitions land on the freeze and stomp clips",
+          "13 slots over 4 short clips supports rapid intercutting"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_choreo",
+        "score": 9.0,
+        "rationale": "Dance-crew choreography is named in this track's ideal profile word for word; hard-cut transitions punch the synchronized formation hits and freeze poses.",
+        "predicted_strengths": [
+          "hard-cut transitions land each freeze pose",
+          "distinct vibe from electronic top — adds top-K variety",
+          "swagger vibe reads against 'watch this drop' hook"
+        ]
+      },
+      {
+        "track_id": "track_pop_anthem",
+        "score": 8.6,
+        "rationale": "Stage-show triumph pop frames the same choreography as a music-video performance edit; rounds out the top-K with a third genre band that still serves the content.",
+        "predicted_strengths": [
+          "third distinct genre completes diverse top-K",
+          "glossy mood lifts the strobe lighting",
+          "whip_pan transitions fit the spinning dancer clip"
+        ]
+      },
+      {
+        "track_id": "track_cinematic_calm",
+        "score": 1.8,
+        "rationale": "Hushed reverent cinematic is the wrong band for frantic strobe-lit choreography — drains every clip's energy.",
+        "predicted_strengths": [
+          "no real fit"
+        ]
+      },
+      {
+        "track_id": "track_acoustic_slow_ballad",
+        "score": 1.5,
+        "rationale": "Slow wistful acoustic ballad over a hype dance reel is the textbook example of the wrong call — wrong energy, wrong pacing, wrong copy_tone, wrong grade.",
+        "predicted_strengths": [
+          "no real fit — flagged as canonical mismatch case"
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "hype dance reel — peaks_high+frantic; slow acoustic explicitly ranked very low (case d)"
+  }
+}

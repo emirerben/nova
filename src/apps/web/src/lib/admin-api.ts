@@ -5,6 +5,8 @@
  * Token is stored in sessionStorage (clears on tab close).
  */
 
+import type { AgentRunPayload } from "@/lib/admin-jobs-api";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const TOKEN_KEY = "nova_admin_token";
 
@@ -50,6 +52,14 @@ async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+export interface RequiredInput {
+  key: string;
+  label: string;
+  placeholder?: string;
+  max_length?: number;
+  required?: boolean;
+}
+
 export interface AdminTemplate {
   id: string;
   name: string;
@@ -57,6 +67,7 @@ export interface AdminTemplate {
   analysis_status: string;
   required_clips_min: number;
   required_clips_max: number;
+  required_inputs: RequiredInput[];
   published_at: string | null;
   archived_at: string | null;
   description: string | null;
@@ -66,6 +77,10 @@ export interface AdminTemplate {
   parent_template_id: string | null;
   music_track_id: string | null;
   has_intro_slot: boolean;
+  is_agentic: boolean;
+  /** Per-template Layer-2 sticky default. null = fall through to the global flag. */
+  use_layer2_default: boolean | null;
+  error_detail: string | null;
   created_at: string;
 }
 
@@ -77,6 +92,8 @@ export interface AdminTemplateListItem {
   archived_at: string | null;
   description: string | null;
   thumbnail_gcs_path: string | null;
+  template_type?: string;
+  is_agentic: boolean;
   job_count: number;
   created_at: string;
 }
@@ -133,6 +150,33 @@ export async function adminGetTemplate(id: string): Promise<AdminTemplate> {
   return res.json();
 }
 
+export interface TemplateDebugSummary {
+  id: string;
+  name: string;
+  analysis_status: string;
+  template_type: string;
+  is_agentic: boolean;
+  gcs_path: string | null;
+  audio_gcs_path: string | null;
+  music_track_id: string | null;
+  error_detail: string | null;
+  recipe_cached_at: string | null;
+  created_at: string;
+}
+
+export interface TemplateDebugResponse {
+  template: TemplateDebugSummary;
+  template_agent_runs: AgentRunPayload[];
+  recipe_cached: Record<string, unknown> | null;
+}
+
+export async function adminGetTemplateDebug(
+  id: string,
+): Promise<TemplateDebugResponse> {
+  const res = await adminFetch(`/admin/templates/${id}/debug`);
+  return res.json();
+}
+
 export async function adminUpdateTemplate(
   id: string,
   data: {
@@ -141,6 +185,7 @@ export async function adminUpdateTemplate(
     source_url?: string;
     required_clips_min?: number;
     required_clips_max?: number;
+    required_inputs?: RequiredInput[];
     publish?: boolean;
     archive?: boolean;
     template_type?: string;
@@ -161,6 +206,7 @@ export async function adminCreateTemplate(data: {
   required_clips_max?: number;
   description?: string;
   source_url?: string;
+  is_agentic?: boolean;
 }): Promise<AdminTemplate> {
   const res = await adminFetch("/admin/templates", {
     method: "POST",
@@ -175,6 +221,7 @@ export async function adminCreateTemplateFromUrl(data: {
   required_clips_min?: number;
   required_clips_max?: number;
   description?: string;
+  is_agentic?: boolean;
 }): Promise<AdminTemplate> {
   const res = await adminFetch("/admin/templates/from-url", {
     method: "POST",
@@ -186,6 +233,34 @@ export async function adminCreateTemplateFromUrl(data: {
 export async function adminReanalyzeTemplate(id: string): Promise<AdminTemplate> {
   const res = await adminFetch(`/admin/templates/${id}/reanalyze`, {
     method: "POST",
+  });
+  return res.json();
+}
+
+export async function adminReanalyzeAgentic(id: string): Promise<AdminTemplate> {
+  const res = await adminFetch(`/admin/templates/${id}/reanalyze-agentic`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
+/**
+ * Set or clear the per-template Layer-2 text-overlay sticky default.
+ *
+ * Resolution priority for reanalyze-agentic:
+ *   1. ?use_layer2 query param (if present, wins absolutely)
+ *   2. use_layer2_default (this field, if not null)
+ *   3. global settings.text_overlay_v2_enabled flag
+ *
+ * Pass null to clear — reanalysis will fall through to the global flag.
+ */
+export async function adminSetUseLayer2Default(
+  id: string,
+  use_layer2_default: boolean | null,
+): Promise<AdminTemplate> {
+  const res = await adminFetch(`/admin/templates/${id}/use-layer2-default`, {
+    method: "PUT",
+    body: JSON.stringify({ use_layer2_default }),
   });
   return res.json();
 }
@@ -212,6 +287,9 @@ export async function adminCreateTestJob(
     clip_gcs_paths: string[];
     selected_platforms?: string[];
     subject?: string;
+    // When true the orchestrator skips curtain-close interstitials and
+    // generate_copy. Backend default is false; admin test tab passes true.
+    preview_mode?: boolean;
   },
 ): Promise<TestJobResponse> {
   const res = await adminFetch(`/admin/templates/${templateId}/test-job`, {
@@ -230,6 +308,42 @@ export async function adminGetPresignedUpload(
     body: JSON.stringify({ filename, content_type: contentType }),
   });
   return res.json();
+}
+
+// ── Font default override (agentic templates) ─────────────────────────────────
+//
+// Agentic templates lock the full recipe editor — this is the one narrow
+// override admins have: pick the template-level `font_default` from the
+// CLIP-suggested alternatives (or any registry font). Backend cascades the
+// pick to every overlay that inherited the old default; text_designer's
+// deliberate per-overlay choices stay.
+
+export interface FontAlternativeItem {
+  family: string;
+  similarity: number;
+}
+
+export interface FontDefaultResponse {
+  font_default: string | null;
+  alternatives: FontAlternativeItem[];
+  registry_families: string[];
+}
+
+export async function adminGetFontDefault(
+  templateId: string,
+): Promise<FontDefaultResponse> {
+  const res = await adminFetch(`/admin/templates/${templateId}/font-default`);
+  return res.json();
+}
+
+export async function adminSetFontDefault(
+  templateId: string,
+  fontDefault: string,
+): Promise<void> {
+  await adminFetch(`/admin/templates/${templateId}/font-default`, {
+    method: "POST",
+    body: JSON.stringify({ font_default: fontDefault }),
+  });
 }
 
 // ── Latest test job API ───────────────────────────────────────────────────────

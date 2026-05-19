@@ -1,0 +1,24 @@
+{
+  "agent": "nova.layout.text_designer",
+  "prompt_version": "2026-05-14",
+  "input": {
+    "slot_position": 1,
+    "slot_type": "hook",
+    "placeholder_kind": "prefix",
+    "copy_tone": "energetic",
+    "creative_direction": "high-stakes reveal hook; brand gold dominant"
+  },
+  "raw_text": "{\"text_size\": \"small\", \"font_style\": \"serif\", \"text_color\": \"#FFFFFF\", \"start_s\": 2.0, \"effect\": \"none\", \"accel_at_s\": null}",
+  "output": {
+    "text_size": "small",
+    "font_style": "serif",
+    "text_color": "#FFFFFF",
+    "start_s": 2.0,
+    "effect": "none",
+    "accel_at_s": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "The lead-in companion to subject_first_slot. Tests the inverse hierarchy rule (prefix must be QUIETER than its subject — small/serif/white/no-effect/null-accel even when copy_tone=energetic would pull a subject to bold-sans-gold-font-cycle). The structural check explicitly fires if a prefix placeholder comes back at 'large' or above; this fixture's 'small' is the canonical baseline."
+  }
+}

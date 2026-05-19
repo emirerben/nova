@@ -11,9 +11,12 @@ celery_app = Celery(
     include=[
         "app.tasks.orchestrate",
         "app.tasks.template_orchestrate",
+        "app.tasks.agentic_template_build",
         "app.tasks.drive_import",
         "app.tasks.music_orchestrate",
+        "app.tasks.auto_music_orchestrate",
         "app.tasks.online_eval",
+        "app.tasks.maintenance",
     ],
 )
 
@@ -33,6 +36,15 @@ celery_app.conf.update(
     # so re-delivery happens promptly without risking duplicate execution
     # while a real task is still running.
     broker_transport_options={"visibility_timeout": 1900},
+    # Beat schedule — picked up only when a `celery beat` process is
+    # running (see fly.toml [processes].beat). The worker process ignores
+    # this dict, so it's safe to define unconditionally.
+    beat_schedule={
+        "sweep-stale-jobs-every-5-min": {
+            "task": "tasks.sweep_stale_jobs",
+            "schedule": 300.0,  # seconds
+        },
+    },
 )
 
 
@@ -70,3 +82,32 @@ def _reap_orphans_on_startup(sender, **kwargs):  # pragma: no cover (signal wiri
             print(f"[worker_ready] orphan reap failed (non-fatal): {exc!r}")
 
     threading.Thread(target=_run, daemon=True, name="orphan-reaper").start()
+
+
+@worker_ready.connect
+def _prewarm_clip_font_matcher(sender, **kwargs):  # pragma: no cover (signal wiring)
+    """Load the CLIP font matcher singleton at worker boot.
+
+    Lazy init on first call costs ~3-5s of model-load latency on the
+    user-visible critical path. This signal handler pays that cost during
+    worker startup so the first template-analysis job after a deploy
+    completes promptly. Memory residency is unchanged — the singleton was
+    going to load eventually; we just shift the timing.
+
+    Runs in a background thread so a slow first-time weights download
+    can't block worker readiness.
+    """
+    import threading  # noqa: PLC0415
+
+    def _run():
+        try:
+            from app.services.clip_font_matcher import get_matcher  # noqa: PLC0415
+
+            get_matcher()
+            print("[worker_ready] CLIP font matcher prewarmed")
+        except Exception as exc:  # noqa: BLE001
+            # Non-fatal: lazy load retries on first real call, and template
+            # analysis wraps font_identification in its own try/except.
+            print(f"[worker_ready] CLIP matcher prewarm failed (non-fatal): {exc!r}")
+
+    threading.Thread(target=_run, daemon=True, name="clip-prewarm").start()

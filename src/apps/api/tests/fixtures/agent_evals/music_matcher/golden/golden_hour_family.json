@@ -1,0 +1,168 @@
+{
+  "agent": "nova.audio.music_matcher",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "clip_summaries": [
+      {
+        "clip_id": "clip_001",
+        "media_type": "video",
+        "duration_s": 8.4,
+        "subject": "father and toddler walking on a grassy hill at sunset",
+        "hook_text": "look who's finally catching up",
+        "hook_score": 6.5,
+        "energy": 4.0,
+        "description": "slow handheld follow shot, golden-hour backlight, candid laughter"
+      },
+      {
+        "clip_id": "clip_002",
+        "media_type": "video",
+        "duration_s": 6.1,
+        "subject": "close-up of toddler giggling and reaching for a flower",
+        "hook_text": "",
+        "hook_score": 5.0,
+        "energy": 5.5,
+        "description": "close-up, shallow depth of field, warm tones"
+      },
+      {
+        "clip_id": "clip_003",
+        "media_type": "video",
+        "duration_s": 9.2,
+        "subject": "wide shot of family silhouette walking toward the sun",
+        "hook_text": "",
+        "hook_score": 5.5,
+        "energy": 4.5,
+        "description": "wide silhouette shot, lens flare, slow-paced"
+      },
+      {
+        "clip_id": "clip_004",
+        "media_type": "video",
+        "duration_s": 5.7,
+        "subject": "hands holding a small wildflower",
+        "hook_text": "",
+        "hook_score": 4.5,
+        "energy": 3.5,
+        "description": "macro shot, soft warm light"
+      }
+    ],
+    "available_tracks": [
+      {
+        "track_id": "track_acoustic_001",
+        "title": "Fields of Last Light",
+        "duration_s": 92.0,
+        "slot_count": 8,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "acoustic",
+          "vibe_tags": ["wistful", "intimate", "nostalgic"],
+          "energy": "low",
+          "pacing": "slow",
+          "mood": "bittersweet but hopeful",
+          "ideal_content_profile": "Close-up shots of family or a couple at golden hour. Slow motion candid laughs, hand-held b-roll, lingering eye contact.",
+          "copy_tone": "sentimental",
+          "transition_style": "dissolve",
+          "color_grade": "warm golden hour"
+        }
+      },
+      {
+        "track_id": "track_pop_001",
+        "title": "City Lights High",
+        "duration_s": 88.0,
+        "slot_count": 14,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "pop",
+          "vibe_tags": ["upbeat", "glossy", "anthemic"],
+          "energy": "peaks_high",
+          "pacing": "fast",
+          "mood": "shiny weekend energy",
+          "ideal_content_profile": "Fast-cut friend group montages with bright neon nightlife or daytime city b-roll. High motion, lots of faces.",
+          "copy_tone": "high_energy",
+          "transition_style": "whip_pan",
+          "color_grade": "high-contrast neon"
+        }
+      },
+      {
+        "track_id": "track_cinematic_001",
+        "title": "First Light Suite",
+        "duration_s": 95.0,
+        "slot_count": 6,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "cinematic",
+          "vibe_tags": ["sweeping", "tender", "reverent"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "quiet awe",
+          "ideal_content_profile": "Wide landscape shots, slow drone pulls, intimate close-ups intercut with sky and horizon. Emotional storytelling.",
+          "copy_tone": "cinematic",
+          "transition_style": "dissolve",
+          "color_grade": "warm amber"
+        }
+      },
+      {
+        "track_id": "track_hiphop_001",
+        "title": "Block Party Heat",
+        "duration_s": 75.0,
+        "slot_count": 12,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "hip_hop",
+          "vibe_tags": ["swagger", "punchy", "playful"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "confident summer attitude",
+          "ideal_content_profile": "Street-level lifestyle, fashion close-ups, choreographed reactions, fast cuts that hit on the beat.",
+          "copy_tone": "punchy",
+          "transition_style": "hard_cut",
+          "color_grade": "saturated street"
+        }
+      }
+    ],
+    "n_variants": 3
+  },
+  "raw_text": "{\"ranked\": [{\"track_id\": \"track_acoustic_001\", \"score\": 9.0, \"rationale\": \"Wistful acoustic ballad lines up directly with the warm golden-hour family b-roll and the slow handheld pacing of the uploaded clips.\", \"predicted_strengths\": [\"mood matches bittersweet family moment\", \"slow pacing fits 5-10s handheld shots\", \"warm color grade aligns with golden-hour footage\"]}, {\"track_id\": \"track_cinematic_001\", \"score\": 8.0, \"rationale\": \"Cinematic suite gives the same family content a more sweeping storytelling frame; the wide silhouette and macro shots can carry a reverent edit.\", \"predicted_strengths\": [\"different vibe from acoustic pick adds variety\", \"slot count of 6 fits a 4-clip set well\", \"cinematic copy_tone reads against silhouettes\"]}, {\"track_id\": \"track_hiphop_001\", \"score\": 3.5, \"rationale\": \"Hip-hop swagger does not serve sentimental golden-hour family content; offered as third only to satisfy the ranking contract.\", \"predicted_strengths\": [\"high-energy contrast variant if user wants chaos\"]}, {\"track_id\": \"track_pop_001\", \"score\": 2.5, \"rationale\": \"Glossy neon pop is mismatched with mellow family b-roll; 14 slots also fight a 4-clip set.\", \"predicted_strengths\": [\"only useful if user expands clip count later\"]}]}",
+  "output": {
+    "ranked": [
+      {
+        "track_id": "track_acoustic_001",
+        "score": 9.0,
+        "rationale": "Wistful acoustic ballad lines up directly with the warm golden-hour family b-roll and the slow handheld pacing of the uploaded clips.",
+        "predicted_strengths": [
+          "mood matches bittersweet family moment",
+          "slow pacing fits 5-10s handheld shots",
+          "warm color grade aligns with golden-hour footage"
+        ]
+      },
+      {
+        "track_id": "track_cinematic_001",
+        "score": 8.0,
+        "rationale": "Cinematic suite gives the same family content a more sweeping storytelling frame; the wide silhouette and macro shots can carry a reverent edit.",
+        "predicted_strengths": [
+          "different vibe from acoustic pick adds variety",
+          "slot count of 6 fits a 4-clip set well",
+          "cinematic copy_tone reads against silhouettes"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_001",
+        "score": 3.5,
+        "rationale": "Hip-hop swagger does not serve sentimental golden-hour family content; offered as third only to satisfy the ranking contract.",
+        "predicted_strengths": [
+          "high-energy contrast variant if user wants chaos"
+        ]
+      },
+      {
+        "track_id": "track_pop_001",
+        "score": 2.5,
+        "rationale": "Glossy neon pop is mismatched with mellow family b-roll; 14 slots also fight a 4-clip set.",
+        "predicted_strengths": [
+          "only useful if user expands clip count later"
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "golden-hour family b-roll — acoustic top pick, cinematic for diversity, pop/hip-hop ranked low"
+  }
+}

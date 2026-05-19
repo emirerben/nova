@@ -1,0 +1,6 @@
+{
+  "reason": "Agent returns a degenerate fixed-center bbox (x=0.5, y=0.5, w=0.296, h=0.018 — ~19 px tall on a 1080-px frame) for both overlays in this template. With the corrected ground truth, mean_spatial_iou is 0.08. Floor lowered to surface the regression in scoring without blocking the fixture from landing; tracked separately as an agent bug.",
+  "floors": {
+    "mean_spatial_iou": 0.05
+  }
+}

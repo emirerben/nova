@@ -45,6 +45,8 @@ def _make_template(**kwargs):
         template_type="standard",
         parent_template_id=None,
         music_track_id=None,
+        is_agentic=False,
+        use_layer2_default=None,
         created_at=datetime.now(UTC),
         recipe_cached={"slots": [{"position": 1}], "total_duration_s": 30.0},
         recipe_cached_at=datetime.now(UTC),
@@ -354,8 +356,10 @@ class TestUploadPresigned:
         mock_client = MagicMock()
         mock_client.bucket.return_value = mock_bucket
 
-        with patch("app.routes.admin.settings") as s, \
-             patch("app.storage._get_client", return_value=mock_client):
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch("app.storage._get_client", return_value=mock_client),
+        ):
             s.admin_api_key = VALID_TOKEN
             s.storage_bucket = "nova-test"
             res = client.post(
@@ -445,9 +449,7 @@ class TestSharedValidation:
             "total_duration_s": 8.0,
         }
         # min/max are deliberately wider — the photo branch must override them
-        template = _make_template(
-            required_clips_min=1, required_clips_max=20, recipe_cached=recipe
-        )
+        template = _make_template(required_clips_min=1, required_clips_max=20, recipe_cached=recipe)
 
         with pytest.raises(Exception) as exc_info:
             validate_clip_count(template, 1)
@@ -572,3 +574,266 @@ class TestReanalyzeErrorDetail:
         assert res.status_code == 200
         data = res.json()
         assert data["error_detail"] == "API quota exceeded"
+
+
+# ── reanalyze-agentic ?use_layer2 query param ─────────────────────────────────
+
+
+class TestReanalyzeAgenticLayer2Param:
+    """Verify that the ?use_layer2=true query param is accepted and forwarded."""
+
+    def test_reanalyze_agentic_use_layer2_true_enqueues_with_kwarg(self, client):
+        """`POST /admin/templates/{id}/reanalyze-agentic?use_layer2=true` must
+        enqueue agentic_template_build_task with use_layer2=True, even when
+        template.use_layer2_default is None and global flag is False.
+        Query param wins absolutely.
+        """
+        template = _make_template(is_agentic=True, analysis_status="ready", use_layer2_default=None)
+        mock_redis_instance = MagicMock()
+        mock_task = MagicMock()
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch("redis.from_url", return_value=mock_redis_instance),
+            patch(
+                "app.tasks.agentic_template_build.agentic_template_build_task",
+                mock_task,
+            ),
+        ):
+            s.admin_api_key = VALID_TOKEN
+            s.redis_url = "redis://localhost:6379"
+            s.text_overlay_v2_enabled = False
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.post(
+                    f"/admin/templates/{template.id}/reanalyze-agentic?use_layer2=true",
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        mock_task.delay.assert_called_once_with(template.id, use_layer2=True)
+
+    def test_reanalyze_agentic_use_layer2_false_enqueues_without_override(self, client):
+        """`POST /admin/templates/{id}/reanalyze-agentic` (no param) must
+        enqueue with use_layer2=False when template_default=None and global flag=False.
+        """
+        template = _make_template(is_agentic=True, analysis_status="ready", use_layer2_default=None)
+        mock_redis_instance = MagicMock()
+        mock_task = MagicMock()
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch("redis.from_url", return_value=mock_redis_instance),
+            patch(
+                "app.tasks.agentic_template_build.agentic_template_build_task",
+                mock_task,
+            ),
+        ):
+            s.admin_api_key = VALID_TOKEN
+            s.redis_url = "redis://localhost:6379"
+            s.text_overlay_v2_enabled = False
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.post(
+                    f"/admin/templates/{template.id}/reanalyze-agentic",
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        mock_task.delay.assert_called_once_with(template.id, use_layer2=False)
+
+
+# ── resolve_use_layer2 pure-function tests ────────────────────────────────────
+
+
+from app.routes.admin import resolve_use_layer2  # noqa: E402
+
+
+class TestResolveUseLayer2:
+    """Unit tests for the resolve_use_layer2 priority helper."""
+
+    def test_query_param_true_wins_over_false_template_default(self):
+        """param=True, template_default=False, global=False → True (param wins)."""
+        result = resolve_use_layer2(query_param=True, template_default=False, global_flag=False)
+        assert result is True
+
+    def test_query_param_false_wins_over_true_template_default(self):
+        """param=False, template_default=True, global=True → False (param wins)."""
+        result = resolve_use_layer2(query_param=False, template_default=True, global_flag=True)
+        assert result is False
+
+    def test_template_default_true_when_no_param(self):
+        """param=None, template_default=True, global=False → True (template default wins)."""
+        result = resolve_use_layer2(query_param=None, template_default=True, global_flag=False)
+        assert result is True
+
+    def test_template_default_false_when_no_param(self):
+        """param=None, template_default=False, global=True → False (template default wins)."""
+        result = resolve_use_layer2(query_param=None, template_default=False, global_flag=True)
+        assert result is False
+
+    def test_global_flag_true_when_both_unset(self):
+        """param=None, template_default=None, global=True → True (global flag wins)."""
+        result = resolve_use_layer2(query_param=None, template_default=None, global_flag=True)
+        assert result is True
+
+    def test_global_flag_false_when_both_unset(self):
+        """param=None, template_default=None, global=False → False (global flag wins)."""
+        result = resolve_use_layer2(query_param=None, template_default=None, global_flag=False)
+        assert result is False
+
+
+# ── reanalyze-agentic resolution via template.use_layer2_default ──────────────
+
+
+class TestReanalyzeAgenticTemplateDefault:
+    """Verify per-template use_layer2_default is used when no query param is sent."""
+
+    def test_uses_template_default_true_when_no_query_param(self, client):
+        """template.use_layer2_default=True + no query param → task gets use_layer2=True."""
+        template = _make_template(is_agentic=True, analysis_status="ready", use_layer2_default=True)
+        mock_redis_instance = MagicMock()
+        mock_task = MagicMock()
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch("redis.from_url", return_value=mock_redis_instance),
+            patch(
+                "app.tasks.agentic_template_build.agentic_template_build_task",
+                mock_task,
+            ),
+        ):
+            s.admin_api_key = VALID_TOKEN
+            s.redis_url = "redis://localhost:6379"
+            s.text_overlay_v2_enabled = False  # global flag is off
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.post(
+                    f"/admin/templates/{template.id}/reanalyze-agentic",
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        # template default overrides global flag
+        mock_task.delay.assert_called_once_with(template.id, use_layer2=True)
+
+    def test_query_param_false_beats_template_default_true(self, client):
+        """?use_layer2=false wins even when template.use_layer2_default=True."""
+        template = _make_template(is_agentic=True, analysis_status="ready", use_layer2_default=True)
+        mock_redis_instance = MagicMock()
+        mock_task = MagicMock()
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch("redis.from_url", return_value=mock_redis_instance),
+            patch(
+                "app.tasks.agentic_template_build.agentic_template_build_task",
+                mock_task,
+            ),
+        ):
+            s.admin_api_key = VALID_TOKEN
+            s.redis_url = "redis://localhost:6379"
+            s.text_overlay_v2_enabled = True
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.post(
+                    f"/admin/templates/{template.id}/reanalyze-agentic?use_layer2=false",
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        # query param=false wins over template_default=True and global=True
+        mock_task.delay.assert_called_once_with(template.id, use_layer2=False)
+
+
+# ── PUT /admin/templates/{id}/use-layer2-default ──────────────────────────────
+
+
+class TestSetUseLayer2Default:
+    """Verify the PUT /admin/templates/{id}/use-layer2-default endpoint."""
+
+    def test_set_use_layer2_default_true(self, client):
+        """PUT with {use_layer2_default: true} stores True on the template row."""
+        template = _make_template(use_layer2_default=None)
+
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.put(
+                    f"/admin/templates/{template.id}/use-layer2-default",
+                    json={"use_layer2_default": True},
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        data = res.json()
+        assert data["use_layer2_default"] is True
+
+    def test_set_use_layer2_default_false(self, client):
+        """PUT with {use_layer2_default: false} stores False on the template row."""
+        template = _make_template(use_layer2_default=True)
+
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.put(
+                    f"/admin/templates/{template.id}/use-layer2-default",
+                    json={"use_layer2_default": False},
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        data = res.json()
+        assert data["use_layer2_default"] is False
+
+    def test_clear_use_layer2_default_to_null(self, client):
+        """PUT with {use_layer2_default: null} clears the field (fall through to global)."""
+        template = _make_template(use_layer2_default=True)
+
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.put(
+                    f"/admin/templates/{template.id}/use-layer2-default",
+                    json={"use_layer2_default": None},
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        data = res.json()
+        assert data["use_layer2_default"] is None
+
+    def test_missing_field_returns_422(self, client):
+        """PUT without the required use_layer2_default field returns 422."""
+        template = _make_template(use_layer2_default=None)
+
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.put(
+                    f"/admin/templates/{template.id}/use-layer2-default",
+                    json={},  # missing required field
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 422

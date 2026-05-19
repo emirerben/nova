@@ -1,7 +1,8 @@
 """Orphan-job reaper.
 
 Marks template jobs as `processing_failed` when:
-  1. status is non-terminal (`processing` or `template_ready`)
+  1. status is non-terminal (`processing` only — `template_ready` is the
+     finalize-step success state, not a mid-pipeline marker)
   2. updated_at is older than `THRESHOLD_MIN`
   3. no live Celery task references the job_id (cross-checked via
      `celery_app.control.inspect()`)
@@ -21,6 +22,7 @@ A legitimately slow task at the boundary (e.g. 35 min in) will not be
 reaped — it gets to finish or fail naturally. Only truly abandoned jobs
 trip the sweep.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -31,6 +33,7 @@ from sqlalchemy import update
 
 from app.database import sync_session
 from app.models import Job
+from app.services.queue_state import get_live_job_index
 
 log = structlog.get_logger()
 
@@ -39,41 +42,31 @@ log = structlog.get_logger()
 # a legitimately slow finisher always wins the race against the reaper.
 THRESHOLD_MIN = 60
 
-# Celery inspect() timeout in seconds. Generous because the broker can
-# be slow under load; we'd rather wait than skip a sweep.
-_INSPECT_TIMEOUT_S = 5
-
 # Status values that are non-terminal — eligible for reaping when stale.
-# `template_ready` is set immediately after the recipe is loaded (still
-# very early in the pipeline); `processing` is set as the job enters the
-# worker. Both can be "stuck" if the worker dies mid-flight.
-_NON_TERMINAL_STATUSES = ("processing", "template_ready")
+# `processing` is set as the job enters the worker; if the worker SIGKILL's
+# mid-flight, the row stays stuck in `processing` forever.
+#
+# Do NOT include `template_ready` here. It looks "intermediate" by name but
+# template_orchestrate.py sets it at the FINALIZE step (after assemble +
+# audio mix + upload). It is the SUCCESS terminal state — every successful
+# template job ends in `template_ready` and stays there. Reaping it would
+# silently flip every completed job to `processing_failed` after the
+# 60-minute threshold, which is what happened to prod job e3804f62.
+_NON_TERMINAL_STATUSES = ("processing",)
 
 
 def _live_job_ids(celery_app: Celery) -> set[str] | None:
     """Return job_ids currently held by live Celery workers, or None on failure.
 
+    Thin wrapper over `app.services.queue_state.get_live_job_index` so the
+    reaper and the admin job-debug UI use the same definition of "live".
     None means inspect() didn't return — the safe interpretation is "I don't
     know, don't reap anything" rather than "no jobs are live, reap them all".
-
-    A job_id is the first positional arg of every orchestrate-style task,
-    e.g. `orchestrate_template_job.delay(job_id)`.
     """
-    try:
-        inspector = celery_app.control.inspect(timeout=_INSPECT_TIMEOUT_S)
-        active = inspector.active() or {}
-        reserved = inspector.reserved() or {}
-    except Exception as exc:  # noqa: BLE001
-        log.warning("reaper_inspect_failed", error=str(exc))
+    index = get_live_job_index(celery_app)
+    if not index.ok:
         return None
-
-    live: set[str] = set()
-    for tasks in (*active.values(), *reserved.values()):
-        for task in tasks:
-            args = task.get("args") or []
-            if args:
-                live.add(str(args[0]))
-    return live
+    return index.all_job_ids()
 
 
 def reap_orphans(
@@ -120,8 +113,7 @@ def reap_orphans(
                 status="processing_failed",
                 failure_reason="unknown",
                 error_detail=(
-                    "Worker died with no recovery; reaped on worker startup. "
-                    "Resubmit your job."
+                    "Worker died with no recovery; reaped on worker startup. Resubmit your job."
                 ),
             )
         )

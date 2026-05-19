@@ -1,0 +1,196 @@
+{
+  "agent": "nova.audio.music_matcher",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "clip_summaries": [
+      {
+        "clip_id": "clip_001",
+        "media_type": "video",
+        "duration_s": 3.5,
+        "subject": "man slipping on a wet floor while carrying a stack of pizzas",
+        "hook_text": "wait for it",
+        "hook_score": 9.0,
+        "energy": 7.5,
+        "description": "wide static shot, comedic timing, pizza boxes flying"
+      },
+      {
+        "clip_id": "clip_002",
+        "media_type": "video",
+        "duration_s": 4.0,
+        "subject": "dog stealing a sock and running across the room",
+        "hook_text": "",
+        "hook_score": 7.5,
+        "energy": 8.0,
+        "description": "handheld follow shot, frenetic, comedic reaction"
+      },
+      {
+        "clip_id": "clip_003",
+        "media_type": "video",
+        "duration_s": 3.0,
+        "subject": "guy zooming in on his own surprised face after dropping his phone in soup",
+        "hook_text": "",
+        "hook_score": 8.5,
+        "energy": 8.0,
+        "description": "front-camera selfie, fast zoom-in, exaggerated reaction"
+      },
+      {
+        "clip_id": "clip_004",
+        "media_type": "video",
+        "duration_s": 3.8,
+        "subject": "toddler pulling a cat's tail then getting boxed back",
+        "hook_text": "",
+        "hook_score": 8.0,
+        "energy": 7.5,
+        "description": "wide static shot, comedic timing, cat swat at end"
+      }
+    ],
+    "available_tracks": [
+      {
+        "track_id": "track_comedy_silly",
+        "title": "Cartoon Logic",
+        "duration_s": 75.0,
+        "slot_count": 10,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "comedy",
+          "vibe_tags": ["silly", "bouncy", "playful"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "cartoon mischief",
+          "ideal_content_profile": "Slapstick fails, pet chaos, exaggerated reaction faces — timing-driven comedic beats.",
+          "copy_tone": "comedic",
+          "transition_style": "hard_cut",
+          "color_grade": "saturated street"
+        }
+      },
+      {
+        "track_id": "track_comedy_quirky",
+        "title": "Whistle Walk",
+        "duration_s": 70.0,
+        "slot_count": 9,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "comedy",
+          "vibe_tags": ["quirky", "playful", "bouncy"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "mockumentary deadpan",
+          "ideal_content_profile": "Sight-gag b-roll with deadpan reactions; mockumentary cuts and awkward pauses.",
+          "copy_tone": "comedic",
+          "transition_style": "hard_cut",
+          "color_grade": "none"
+        }
+      },
+      {
+        "track_id": "track_pop_upbeat",
+        "title": "Sunshine Roll",
+        "duration_s": 88.0,
+        "slot_count": 11,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "pop",
+          "vibe_tags": ["upbeat", "playful", "glossy"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "good-mood roll",
+          "ideal_content_profile": "Friend-group antics, daytime b-roll with playful energy, fast cuts.",
+          "copy_tone": "high_energy",
+          "transition_style": "whip_pan",
+          "color_grade": "high-contrast neon"
+        }
+      },
+      {
+        "track_id": "track_acoustic_tender",
+        "title": "Letters Home",
+        "duration_s": 100.0,
+        "slot_count": 6,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "acoustic",
+          "vibe_tags": ["wistful", "tender", "sentimental"],
+          "energy": "low",
+          "pacing": "slow",
+          "mood": "missing-you longing",
+          "ideal_content_profile": "Quiet emotional b-roll — letters, hands, candid family laughter at golden hour.",
+          "copy_tone": "sentimental",
+          "transition_style": "dissolve",
+          "color_grade": "warm golden hour"
+        }
+      },
+      {
+        "track_id": "track_cinematic_epic",
+        "title": "Final Charge",
+        "duration_s": 115.0,
+        "slot_count": 7,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "cinematic",
+          "vibe_tags": ["sweeping", "epic", "heroic"],
+          "energy": "high",
+          "pacing": "medium",
+          "mood": "trailer-grade triumph",
+          "ideal_content_profile": "Wide landscapes, heroic close-ups, trailer-style storytelling.",
+          "copy_tone": "cinematic",
+          "transition_style": "dissolve",
+          "color_grade": "warm amber"
+        }
+      }
+    ],
+    "n_variants": 3
+  },
+  "raw_text": "{\"ranked\": [{\"track_id\": \"track_comedy_silly\", \"score\": 9.0, \"rationale\": \"Slapstick fails (pizza slip, soup phone, cat-swat) and pet chaos (sock dog) are literally what this track's ideal profile names; comedic copy_tone and hard-cut timing line up with the gags.\", \"predicted_strengths\": [\"comedic copy_tone matches the 'wait for it' hook framing\", \"hard-cut transitions land each gag punchline\", \"high energy + fast pacing fits the 3-4s clip lengths\"]}, {\"track_id\": \"track_comedy_quirky\", \"score\": 7.8, \"rationale\": \"Mockumentary-quirky variant gives the same gags a deadpan-pause framing — works especially for the surprised-face selfie clip; slightly lower because the dog-chase and pizza-slip want faster pacing than 'medium'.\", \"predicted_strengths\": [\"deadpan framing flatters the soup-phone reaction\", \"distinct mood from top pick — adds top-K variety within comedy\", \"hard_cut transitions still serve the punchlines\"]}, {\"track_id\": \"track_pop_upbeat\", \"score\": 7.0, \"rationale\": \"Playful upbeat pop works as a non-comedy variant — same daytime antics framing, glossier reading; useful diversity option against two comedy tracks above.\", \"predicted_strengths\": [\"distinct genre from comedy picks — adds variety\", \"playful vibe still serves the gag content\", \"11 slots over 4 clips supports gag-double-cuts\"]}, {\"track_id\": \"track_cinematic_epic\", \"score\": 3.0, \"rationale\": \"Trailer-grade triumphant cinematic frames slapstick gags as heroic — the joke evaporates, the cinematic copy_tone fights the comedic hooks.\", \"predicted_strengths\": [\"only useful as ironic-contrast variant, not a real recommendation\"]}, {\"track_id\": \"track_acoustic_tender\", \"score\": 1.5, \"rationale\": \"Sentimental wistful acoustic over a slapstick reel is the textbook wrong call — it would read either tone-deaf or accidentally cruel against pet chaos and pratfalls.\", \"predicted_strengths\": [\"no real fit — flagged as a known mismatch\"]}]}",
+  "output": {
+    "ranked": [
+      {
+        "track_id": "track_comedy_silly",
+        "score": 9.0,
+        "rationale": "Slapstick fails (pizza slip, soup phone, cat-swat) and pet chaos (sock dog) are literally what this track's ideal profile names; comedic copy_tone and hard-cut timing line up with the gags.",
+        "predicted_strengths": [
+          "comedic copy_tone matches the 'wait for it' hook framing",
+          "hard-cut transitions land each gag punchline",
+          "high energy + fast pacing fits the 3-4s clip lengths"
+        ]
+      },
+      {
+        "track_id": "track_comedy_quirky",
+        "score": 7.8,
+        "rationale": "Mockumentary-quirky variant gives the same gags a deadpan-pause framing — works especially for the surprised-face selfie clip; slightly lower because the dog-chase and pizza-slip want faster pacing than 'medium'.",
+        "predicted_strengths": [
+          "deadpan framing flatters the soup-phone reaction",
+          "distinct mood from top pick — adds top-K variety within comedy",
+          "hard_cut transitions still serve the punchlines"
+        ]
+      },
+      {
+        "track_id": "track_pop_upbeat",
+        "score": 7.0,
+        "rationale": "Playful upbeat pop works as a non-comedy variant — same daytime antics framing, glossier reading; useful diversity option against two comedy tracks above.",
+        "predicted_strengths": [
+          "distinct genre from comedy picks — adds variety",
+          "playful vibe still serves the gag content",
+          "11 slots over 4 clips supports gag-double-cuts"
+        ]
+      },
+      {
+        "track_id": "track_cinematic_epic",
+        "score": 3.0,
+        "rationale": "Trailer-grade triumphant cinematic frames slapstick gags as heroic — the joke evaporates, the cinematic copy_tone fights the comedic hooks.",
+        "predicted_strengths": [
+          "only useful as ironic-contrast variant, not a real recommendation"
+        ]
+      },
+      {
+        "track_id": "track_acoustic_tender",
+        "score": 1.5,
+        "rationale": "Sentimental wistful acoustic over a slapstick reel is the textbook wrong call — it would read either tone-deaf or accidentally cruel against pet chaos and pratfalls.",
+        "predicted_strengths": [
+          "no real fit — flagged as a known mismatch"
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "comedy slapstick reel — comedy tops, sentimental acoustic explicitly ranked very low (case c)"
+  }
+}

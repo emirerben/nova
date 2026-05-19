@@ -8,7 +8,7 @@ from app.agents.audio_template import AudioTemplateOutput
 from app.agents.clip_metadata import ClipMetadataInput, ClipMetadataOutput, Moment, TimeRange
 from app.agents.creative_direction import CreativeDirectionOutput
 from app.agents.platform_copy import PlatformCopyOutput
-from app.agents.template_recipe import TemplateRecipeOutput
+from app.agents.template_recipe import TemplateRecipeOutput, _validate_slots, _validate_text_bbox
 from app.agents.transcript import TranscriptOutput, Word
 from app.pipeline.agents.copy_writer import (
     InstagramCopy,
@@ -186,6 +186,297 @@ class TestTemplateRecipeStructural:
         )
         failures = check_template_recipe(out)
         assert any("type='barn-door'" in f for f in failures)
+
+    def _slot_with_bbox(self, bbox):
+        return {
+            "position": 1,
+            "target_duration_s": 4.0,
+            "slot_type": "hook",
+            "energy": 8.0,
+            "transition_in": "hard-cut",
+            "color_hint": "warm",
+            "speed_factor": 1.0,
+            "text_overlays": [
+                {
+                    "role": "hook",
+                    "start_s": 0.0,
+                    "end_s": 2.0,
+                    "text": "hi",
+                    "text_bbox": bbox,
+                }
+            ],
+        }
+
+    def test_overlay_bbox_valid_accepted(self):
+        slots = [
+            self._slot_with_bbox(
+                {
+                    "x_norm": 0.5,
+                    "y_norm": 0.5,
+                    "w_norm": 0.4,
+                    "h_norm": 0.1,
+                    "sample_frame_t": 1.0,
+                }
+            ),
+            {
+                "position": 2,
+                "target_duration_s": 6.0,
+                "slot_type": "broll",
+                "energy": 5.0,
+                "transition_in": "dissolve",
+                "color_hint": "warm",
+                "speed_factor": 1.0,
+                "text_overlays": [],
+            },
+        ]
+        failures = check_template_recipe(_good_recipe(slots=slots))
+        assert not any("text_bbox" in f for f in failures)
+
+    def test_overlay_bbox_null_accepted(self):
+        slots = [
+            self._slot_with_bbox(None),
+            {
+                "position": 2,
+                "target_duration_s": 6.0,
+                "slot_type": "broll",
+                "energy": 5.0,
+                "transition_in": "dissolve",
+                "color_hint": "warm",
+                "speed_factor": 1.0,
+                "text_overlays": [],
+            },
+        ]
+        failures = check_template_recipe(_good_recipe(slots=slots))
+        assert not any("text_bbox" in f for f in failures)
+
+    def test_overlay_bbox_center_out_of_range_caught(self):
+        slots = [
+            self._slot_with_bbox(
+                {
+                    "x_norm": 1.5,
+                    "y_norm": 0.5,
+                    "w_norm": 0.1,
+                    "h_norm": 0.1,
+                    "sample_frame_t": 1.0,
+                }
+            ),
+            {
+                "position": 2,
+                "target_duration_s": 6.0,
+                "slot_type": "broll",
+                "energy": 5.0,
+                "transition_in": "dissolve",
+                "color_hint": "warm",
+                "speed_factor": 1.0,
+                "text_overlays": [],
+            },
+        ]
+        failures = check_template_recipe(_good_recipe(slots=slots))
+        assert any("text_bbox center" in f for f in failures)
+
+    def test_overlay_bbox_sample_frame_outside_window_caught(self):
+        slots = [
+            self._slot_with_bbox(
+                {
+                    "x_norm": 0.5,
+                    "y_norm": 0.5,
+                    "w_norm": 0.1,
+                    "h_norm": 0.1,
+                    "sample_frame_t": 5.0,  # window is [0, 2]
+                }
+            ),
+            {
+                "position": 2,
+                "target_duration_s": 6.0,
+                "slot_type": "broll",
+                "energy": 5.0,
+                "transition_in": "dissolve",
+                "color_hint": "warm",
+                "speed_factor": 1.0,
+                "text_overlays": [],
+            },
+        ]
+        failures = check_template_recipe(_good_recipe(slots=slots))
+        assert any("sample_frame_t" in f for f in failures)
+
+
+class TestTextBboxValidation:
+    """Unit tests for _validate_text_bbox — gates the new optional bbox field."""
+
+    _OVERLAY_START = 0.0
+    _OVERLAY_END = 4.0
+    _VALID = {
+        "x_norm": 0.5,
+        "y_norm": 0.42,
+        "w_norm": 0.6,
+        "h_norm": 0.08,
+        "sample_frame_t": 2.0,
+    }
+
+    def _v(self, raw):
+        return _validate_text_bbox(raw, self._OVERLAY_START, self._OVERLAY_END)
+
+    def test_none_returns_none(self):
+        assert self._v(None) is None
+
+    def test_missing_returns_none(self):
+        # absent field == None; same path
+        assert self._v(None) is None
+
+    def test_valid_passes_through(self):
+        result = self._v(dict(self._VALID))
+        assert result == self._VALID
+
+    def test_non_dict_dropped(self):
+        assert self._v("not-a-bbox") is None
+
+    def test_non_numeric_dropped(self):
+        bad = {**self._VALID, "x_norm": "not-a-number"}
+        assert self._v(bad) is None
+
+    def test_x_out_of_range_high(self):
+        bad = {**self._VALID, "x_norm": 1.5}
+        assert self._v(bad) is None
+
+    def test_x_out_of_range_low(self):
+        bad = {**self._VALID, "x_norm": -0.1}
+        assert self._v(bad) is None
+
+    def test_zero_width_dropped(self):
+        bad = {**self._VALID, "w_norm": 0.0}
+        assert self._v(bad) is None
+
+    def test_negative_height_dropped(self):
+        bad = {**self._VALID, "h_norm": -0.5}
+        assert self._v(bad) is None
+
+    def test_oversize_width_dropped(self):
+        bad = {**self._VALID, "w_norm": 1.2}
+        assert self._v(bad) is None
+
+    def test_horizontal_overflow_dropped(self):
+        # center at 0.9, width 0.4 → extends to 1.1
+        bad = {**self._VALID, "x_norm": 0.9, "w_norm": 0.4}
+        assert self._v(bad) is None
+
+    def test_vertical_overflow_dropped(self):
+        # center at 0.05, height 0.2 → extends to -0.05
+        bad = {**self._VALID, "y_norm": 0.05, "h_norm": 0.2}
+        assert self._v(bad) is None
+
+    def test_sample_frame_before_overlay_start(self):
+        bad = {**self._VALID, "sample_frame_t": -0.5}
+        assert self._v(bad) is None
+
+    def test_sample_frame_after_overlay_end(self):
+        bad = {**self._VALID, "sample_frame_t": 10.0}
+        assert self._v(bad) is None
+
+    def test_sample_frame_at_boundaries_allowed(self):
+        at_start = {**self._VALID, "sample_frame_t": self._OVERLAY_START}
+        at_end = {**self._VALID, "sample_frame_t": self._OVERLAY_END}
+        assert self._v(at_start) is not None
+        assert self._v(at_end) is not None
+
+    def test_nan_dropped(self):
+        bad = {**self._VALID, "x_norm": float("nan")}
+        assert self._v(bad) is None
+
+    def test_infinity_dropped(self):
+        bad = {**self._VALID, "w_norm": float("inf")}
+        assert self._v(bad) is None
+
+
+class TestSlotBboxIntegration:
+    """End-to-end: bbox passes through _validate_slots without breaking overlays.
+
+    Locks in PR1's contract: overlay survives, bbox is normalized to dict-or-None,
+    and the `text_bbox` key is always present after parsing (even when absent in
+    the raw input) so downstream consumers can rely on its shape.
+    """
+
+    def _slot_with_overlay_bbox(self, bbox):
+        overlay = {
+            "role": "hook",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "sample_text": "hi",
+        }
+        if bbox is not _ABSENT:
+            overlay["text_bbox"] = bbox
+        return {
+            "position": 1,
+            "target_duration_s": 4.0,
+            "slot_type": "hook",
+            "text_overlays": [overlay],
+        }
+
+    def test_valid_bbox_preserved(self):
+        slot = self._slot_with_overlay_bbox(
+            {
+                "x_norm": 0.5,
+                "y_norm": 0.5,
+                "w_norm": 0.4,
+                "h_norm": 0.1,
+                "sample_frame_t": 1.0,
+            }
+        )
+        _validate_slots([slot], global_color_grade="none")
+        ov = slot["text_overlays"][0]
+        assert ov["text_bbox"] == {
+            "x_norm": 0.5,
+            "y_norm": 0.5,
+            "w_norm": 0.4,
+            "h_norm": 0.1,
+            "sample_frame_t": 1.0,
+        }
+
+    def test_bad_bbox_dropped_but_overlay_survives(self):
+        slot = self._slot_with_overlay_bbox(
+            {
+                "x_norm": 2.0,  # out of range
+                "y_norm": 0.5,
+                "w_norm": 0.4,
+                "h_norm": 0.1,
+                "sample_frame_t": 1.0,
+            }
+        )
+        _validate_slots([slot], global_color_grade="none")
+        overlays = slot["text_overlays"]
+        assert len(overlays) == 1, "overlay must survive even if bbox is invalid"
+        assert overlays[0]["text_bbox"] is None
+        # Other overlay fields untouched
+        assert overlays[0]["role"] == "hook"
+        assert overlays[0]["sample_text"] == "hi"
+
+    def test_absent_bbox_becomes_none(self):
+        slot = self._slot_with_overlay_bbox(_ABSENT)
+        _validate_slots([slot], global_color_grade="none")
+        ov = slot["text_overlays"][0]
+        # PR1 contract: text_bbox key is always present after parsing
+        assert "text_bbox" in ov
+        assert ov["text_bbox"] is None
+
+    def test_explicit_null_bbox_stays_none(self):
+        slot = self._slot_with_overlay_bbox(None)
+        _validate_slots([slot], global_color_grade="none")
+        assert slot["text_overlays"][0]["text_bbox"] is None
+
+    def test_sample_frame_outside_window_dropped(self):
+        slot = self._slot_with_overlay_bbox(
+            {
+                "x_norm": 0.5,
+                "y_norm": 0.5,
+                "w_norm": 0.4,
+                "h_norm": 0.1,
+                "sample_frame_t": 99.0,  # overlay window is [0, 2]
+            }
+        )
+        _validate_slots([slot], global_color_grade="none")
+        assert slot["text_overlays"][0]["text_bbox"] is None
+
+
+_ABSENT = object()  # sentinel: distinguishes "key missing" from "key=None"
 
 
 def _good_clip_metadata(**overrides) -> ClipMetadataOutput:
@@ -534,6 +825,106 @@ class TestAudioTemplateStructural:
         assert any("color_grade='rainbow'" in f for f in failures)
 
 
+class TestTemplateTextStructural:
+    """Cover check_template_text — the structural pass for the focused
+    text-extraction agent. Pydantic enforces per-field shape; this layer
+    covers cross-overlay invariants (slot_index bounds, sample_frame_t
+    inside window, coarse-hash duplicate detection)."""
+
+    @staticmethod
+    def _input(boundaries=None):
+        from app.agents.template_text import TemplateTextInput
+
+        return TemplateTextInput(
+            file_uri="files/t",
+            slot_boundaries_s=boundaries if boundaries is not None else [(0.0, 5.0)],
+        )
+
+    @staticmethod
+    def _overlay(
+        *,
+        slot_index=1,
+        text="Hello",
+        start_s=0.5,
+        end_s=2.0,
+        x=0.5,
+        y=0.5,
+        sample_frame_t=1.0,
+    ):
+        from app.agents._schemas.template_text import TextBBox
+        from app.agents.template_text import TemplateTextOverlay
+
+        return TemplateTextOverlay(
+            slot_index=slot_index,
+            sample_text=text,
+            start_s=start_s,
+            end_s=end_s,
+            bbox=TextBBox(
+                x_norm=x, y_norm=y, w_norm=0.4, h_norm=0.1, sample_frame_t=sample_frame_t
+            ),
+            font_color_hex="#FFFFFF",
+            effect="none",
+            role="label",
+            size_class="medium",
+        )
+
+    def test_valid_overlay_passes(self):
+        from app.agents.template_text import TemplateTextOutput
+        from tests.evals.runners.structural import check_template_text
+
+        out = TemplateTextOutput(overlays=[self._overlay()])
+        assert check_template_text(out, self._input()) == []
+
+    def test_empty_overlays_passes(self):
+        from app.agents.template_text import TemplateTextOutput
+        from tests.evals.runners.structural import check_template_text
+
+        # No overlays is a valid output (template has no text).
+        assert check_template_text(TemplateTextOutput(overlays=[]), self._input()) == []
+
+    def test_slot_index_above_max_flagged(self):
+        from app.agents.template_text import TemplateTextOutput
+        from tests.evals.runners.structural import check_template_text
+
+        # max_slot=1 (one boundary in input); slot_index=2 is out of range.
+        out = TemplateTextOutput(overlays=[self._overlay(slot_index=2)])
+        failures = check_template_text(out, self._input([(0.0, 5.0)]))
+        assert any("slot_index=2" in f for f in failures)
+
+    def test_bbox_sample_frame_t_outside_window_flagged(self):
+        from app.agents.template_text import TemplateTextOutput
+        from tests.evals.runners.structural import check_template_text
+
+        # window is [0.5, 2.0]; sample_frame_t=3.0 is outside.
+        out = TemplateTextOutput(
+            overlays=[self._overlay(start_s=0.5, end_s=2.0, sample_frame_t=3.0)]
+        )
+        failures = check_template_text(out, self._input())
+        assert any("sample_frame_t=3.0" in f for f in failures)
+
+    def test_duplicate_overlay_flagged(self):
+        from app.agents.template_text import TemplateTextOutput
+        from tests.evals.runners.structural import check_template_text
+
+        # Same text + same coarse position + same coarse time window = dup.
+        a = self._overlay(text="Same", x=0.5, y=0.5, start_s=0.5, end_s=2.0)
+        b = self._overlay(text="same", x=0.5, y=0.5, start_s=0.5, end_s=2.0)
+        out = TemplateTextOutput(overlays=[a, b])
+        failures = check_template_text(out, self._input())
+        assert any("duplicate" in f for f in failures)
+
+    def test_different_texts_at_same_position_not_dup(self):
+        from app.agents.template_text import TemplateTextOutput
+        from tests.evals.runners.structural import check_template_text
+
+        # Same position+time but different text = legitimately different.
+        a = self._overlay(text="Hello", x=0.5, y=0.5, start_s=0.5, end_s=2.0)
+        b = self._overlay(text="World", x=0.5, y=0.5, start_s=0.5, end_s=2.0)
+        out = TemplateTextOutput(overlays=[a, b])
+        failures = check_template_text(out, self._input())
+        assert not any("duplicate" in f for f in failures)
+
+
 class TestRunStructuralDispatch:
     def test_dispatches_template_recipe(self):
         assert run_structural("nova.compose.template_recipe", _good_recipe(), None) == []
@@ -565,6 +956,13 @@ class TestRunStructuralDispatch:
 
     def test_dispatches_audio_template(self):
         assert run_structural("nova.audio.template_recipe", _good_audio_template(), None) == []
+
+    def test_dispatches_template_text(self):
+        from app.agents.template_text import TemplateTextInput, TemplateTextOutput
+
+        out = TemplateTextOutput(overlays=[])
+        inp = TemplateTextInput(file_uri="files/t", slot_boundaries_s=[(0.0, 5.0)])
+        assert run_structural("nova.compose.template_text", out, inp) == []
 
     def test_unknown_agent_raises(self):
         with pytest.raises(ValueError):

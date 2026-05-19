@@ -8,9 +8,13 @@ from app.agents._runtime import Agent, AgentSpec
 _EXPECTED = {
     "nova.video.clip_metadata",
     "nova.compose.template_recipe",
+    "nova.compose.template_text",
     "nova.audio.transcript",
     "nova.audio.lyrics",
     "nova.audio.template_recipe",
+    "nova.audio.song_classifier",
+    "nova.audio.song_sections",
+    "nova.audio.music_matcher",
     "nova.compose.platform_copy",
     "nova.compose.creative_direction",
     "nova.layout.text_designer",
@@ -19,6 +23,9 @@ _EXPECTED = {
     "nova.audio.beat_aligner",
     "nova.video.clip_router",
     "nova.qa.output_validator",
+    # Layer-2 text-overlay pipeline agents
+    "nova.compose.text_alignment",
+    "nova.compose.text_classification",
 }
 
 

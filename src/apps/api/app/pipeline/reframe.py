@@ -59,6 +59,43 @@ def _encoding_args(
     Color handling: HDR/HLG sources (bt2020, arib-std-b67) are converted
     to SDR (bt709) via the colorspace filter in _build_video_filter. This
     function tags the output as bt709 so players render colors correctly.
+
+    Preset policy (locked by tests/test_encoder_policy.py — audit before
+    flipping any of these):
+
+      INTERMEDIATE  (preset="ultrafast" — fine, re-encoded downstream)
+        - reframe_and_export()           reframe.py:228, 376
+        - image_clip rendering           image_clip.py:111, 217
+        - render_color_hold()            interstitials.py:121
+        - drive_import thumbnailing      drive_import.py:74
+
+      INTERMEDIATE — does NOT route through _encoding_args (intentionally)
+        - normalize_orientation()        orientation.py — needs in-place
+          dimension preservation, so cannot use _encoding_args (which
+          force-rescales to 1080x1920). Inline ultrafast libx264 args
+          documented in orientation.py.
+
+      FINAL OUTPUT (preset="fast" — banding-sensitive, must NOT regress)
+        - _concat_demuxer fallback       template_orchestrate.py:2117
+        - _pre_burn_curtain_slot_text    template_orchestrate.py:2558
+        - apply_curtain_close_tail       interstitials.py:250 (+ tune=film)
+        - join_with_transitions          transitions.py:110
+        - _burn_text_overlays            template_orchestrate.py:2671
+
+    Why this matters: libx264 preset=ultrafast disables mb-tree, psy-rd,
+    B-frames and trellis quant. On smooth gradients (sky, dark canopy)
+    those losses are visible as 16×16 macroblocking. CRF does NOT save
+    you — CRF controls the rate target; preset controls which encoder
+    features run. ultrafast at CRF 18 still produces blocky output.
+
+    History of the same bug:
+      - PR #102: curtain-close ultrafast → medium      (banding fix)
+      - PR #105: curtain-close medium → fast +         (perf)
+                  --concurrency=1 (fly.toml) +
+                  PNG-overlay (10× faster than geq)
+      - Brazil pixelation PR: propagated preset=fast   (this fix)
+                  to the three template_orchestrate.py
+                  sites that PR #102/#105 missed.
     """
     args = [
         "-c:v", "libx264",
@@ -235,7 +272,16 @@ def reframe_and_export(
         ass_overlays=len(ass_overlay_paths or []),
     )
 
-    result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
+    # 1500s caps a single-slot ffmpeg invocation just below the parent Celery
+    # soft time limit (1740s on orchestrate_template_job — see template_orchestrate.py).
+    # Prior cap was 600s, which fired twice in a row on 4K iPhone HDR sources
+    # (jobs 4551074a + 343af2dc, template 77151144, 2026-05-15) while
+    # format=gbrpf32le was burning bandwidth at native 4K. With PR2's filter
+    # reorder a 24s 4K HLG clip lands in ~4-5 min; this raised cap is a safety
+    # net for older HDR fixtures (longer clips, 60fps HDR, multi-overlay slots)
+    # where the prior 600s had no head-room and the parent orchestrator was
+    # silently swallowing TimeoutExpired and marking the whole job failed.
+    result = subprocess.run(cmd, capture_output=True, timeout=1500, check=False)
 
     if result.returncode != 0 and ass_overlay_paths:
         # ASS overlays may fail if FFmpeg lacks libass -- retry with PNGs only
@@ -394,8 +440,32 @@ _HDR10_TRANSFER = "smpte2084"
 # tonemap=mobius: smooth shoulder rolloff for values approaching 1.0,
 #   preserves midtone contrast better than reinhard, less aggressive than
 #   hable. Specular highlights compressed gracefully instead of clipped.
+#
+# Pre-downscale BEFORE format=gbrpf32le, in linear-light 10-bit YUV space. The
+# `format=gbrpf32le` step is a 6.4× memory expansion (10-bit YUV → 32-bit float
+# planar) — for a 4K iPhone HDR source that's ~95MB/frame of bandwidth. PR #152
+# put the scale AFTER format=gbrpf32le, which still left the heavy float upconvert
+# running on 4K frames; reframe_and_export hit the 600s subprocess timeout again
+# on job 343af2dc... (template 77151144..., 2026-05-15, 10m43s elapsed) even
+# with the new scale in place. Moving scale ABOVE format=gbrpf32le means the
+# float upconvert only runs on already-downscaled 1080p frames (~24MB/frame,
+# 4× less bandwidth, 4× less CPU). `scale` operates fine on 10-bit YUV — only
+# `tonemap` requires float input, and `tonemap` still sits AFTER format=gbrpf32le.
+#
+# Scaling in linear-light is also the physically correct HDR-aware order:
+# averaging gamma-encoded HDR luminance biases bright values; averaging linear
+# light averages physical luminance. `force_original_aspect_ratio=decrease`
+# makes this a strict downscale — a 1080×1920 HDR source passes through
+# unchanged. lanczos preserves highlight detail across the downscale (bilinear,
+# the scale default, blurs specular highlights). Expected wall-clock breakdown
+# for a 24s 4K HLG clip on shared-cpu-2x: HEVC decode ~60s, zscale=t=linear at
+# 4K ~30s, scale 4K→1080p YUV ~20s, format=gbrpf32le at 1080p ~75s, gamut +
+# tonemap + transfer at 1080p ~50s, libx264 ultrafast encode at 1080p ~30s =
+# ~4-5 min total, well under the 600s subprocess cap.
 _ZSCALE_SDR_PIPELINE = (
     "zscale=t=linear:npl=400"
+    f",scale={settings.output_height}:{settings.output_height}"
+    ":force_original_aspect_ratio=decrease:flags=lanczos"
     ",format=gbrpf32le"
     ",zscale=p=bt709"
     ",tonemap=tonemap=mobius"
@@ -550,13 +620,21 @@ def _build_video_filter(
         filters.append(f"scale=-2:{settings.output_height}")
         filters.append(f"crop={settings.output_width}:{settings.output_height}")
     else:
+        # Default crop mode: scale-fill the canvas (no bars), trim overflow.
+        # `force_original_aspect_ratio=increase` grows BOTH source dims until
+        # they cover the target, preserving aspect; `crop` center-trims the
+        # overflow to exact target dims. Mirrors the 16:9 branch above
+        # (`scale=-2:H,crop=W:H`) for non-16:9 sources — covers 3:4 portrait,
+        # 19.5:9 iPhone, square, slightly-off-9:16, etc. Callers that WANT
+        # black bars (e.g. locked 16:9 templates with baked-in hook text on
+        # the sides) MUST pass `output_fit="letterbox_black"` to hit the
+        # branch above; do not rely on this branch padding.
         filters.append(
             f"scale={settings.output_width}:{settings.output_height}"
-            f":force_original_aspect_ratio=decrease"
+            f":force_original_aspect_ratio=increase"
         )
         filters.append(
-            f"pad={settings.output_width}:{settings.output_height}"
-            f":(ow-iw)/2:(oh-ih)/2"
+            f"crop={settings.output_width}:{settings.output_height}"
         )
 
     # 2. Color grading (applied before darkening so darkened areas have the grade)

@@ -137,13 +137,13 @@ class TestCreateTemplateJobInputs:
     """Tests for the per-template `inputs` payload + required_inputs validation."""
 
     def _post(self, client, template, body_inputs: dict | None = None, mocker=None):
-        # Stub Celery dispatch so the test never tries to broker tasks.
+        # Stub the dispatch helper so the test never tries to broker tasks.
+        # All orchestrator dispatch now routes through enqueue_orchestrator
+        # (app/services/job_dispatch.py).
         if mocker is not None:
             mocker.patch(
-                "app.tasks.template_orchestrate.orchestrate_template_job.delay"
-            )
-            mocker.patch(
-                "app.tasks.template_orchestrate.orchestrate_single_video_job.delay"
+                "app.services.job_dispatch.enqueue_orchestrator",
+                new=AsyncMock(return_value="stubbed-task-id"),
             )
         body = {
             "template_id": "template-123",
@@ -240,8 +240,10 @@ class TestCreateTemplateJobInputs:
         assert res.status_code == 422
 
         # In range — happy path
-        mocker.patch("app.tasks.template_orchestrate.orchestrate_template_job.delay")
-        mocker.patch("app.tasks.template_orchestrate.orchestrate_single_video_job.delay")
+        mocker.patch(
+            "app.services.job_dispatch.enqueue_orchestrator",
+            new=AsyncMock(return_value="stubbed-task-id"),
+        )
         tpl = _make_template(min_clips=2, max_clips=10)
         app.dependency_overrides[get_db] = _db_with_template(tpl)
         try:

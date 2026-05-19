@@ -51,7 +51,7 @@ class ShotRankerAgent(Agent[ShotRankerInput, ShotRankerOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.video.shot_ranker",
         prompt_id="_inline",
-        prompt_version="2026-05-09",
+        prompt_version="2026-05-15",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -69,33 +69,77 @@ class ShotRankerAgent(Agent[ShotRankerInput, ShotRankerOutput]):
             f'"description": "{c.description}"}}'
             for c in input.candidates
         )
-        tone_block = (
-            f'\nTemplate copy tone: "{input.copy_tone}"' if input.copy_tone else ""
-        )
+        tone_block = f'\nTemplate copy tone: "{input.copy_tone}"' if input.copy_tone else ""
         direction_block = (
             f'\nCreative direction: "{input.creative_direction}"'
             if input.creative_direction
             else ""
         )
         return (
-            f"You are picking the BEST {input.target_count} moments for a "
-            f"short-form video from the candidates below. Optimize for three "
-            f"things in order:\n"
-            "  1. Hook strength — first impression that creates curiosity\n"
-            "  2. Variety — pick moments that differ in description / action / pace\n"
-            "  3. Thematic fit — alignment with the template's stated tone\n\n"
-            f"Candidates ({len(input.candidates)}):\n{candidates_block}"
+            f"You are ranking the top {input.target_count} moments for a "
+            "short-form video. Rank 1 is the hook — the moment that earns the "
+            "viewer's first three seconds. Getting it wrong wastes the swipe.\n\n"
+            "Make decisions, not suggestions. The downstream matcher trusts "
+            "this ordering verbatim — there is no second pass to recover from "
+            "a soft rank-1 pick.\n\n"
+            "DECISION PRINCIPLES (in priority order):\n\n"
+            "  1. RANK-1 HOOK STRENGTH — the rank-1 pick must be the strongest "
+            "hook in the candidate set. Use this calibration table:\n"
+            "       hook_score 9-10 → instant-curiosity moment, must be ranked 1 "
+            "if it exists\n"
+            "       hook_score 7-8  → strong; rank 1 only if no 9-10 exists\n"
+            "       hook_score 5-6  → middle; rank 2-4 territory\n"
+            "       hook_score 3-4  → weak; rank toward the bottom\n"
+            "       hook_score <3   → do not rank unless candidate pool forces it\n"
+            "     Two candidates tied on hook_score: prefer the one whose "
+            "description names a specific action verb (slam, strike, react, "
+            "drop) over scene labels (crowd shot, venue interior).\n\n"
+            "  2. SET VARIETY — across the top-K, descriptions and energy "
+            "levels must span distinct beats:\n"
+            "       energy span across the ranked set should be ≥ 2.0 when "
+            "the pool allows (don't rank three 7.0-energy moments adjacent "
+            "if a 4.5 alternative exists)\n"
+            "       no two ranked moments should share the same action verb "
+            "or scene noun (run/run, sky/sky) when alternatives exist\n"
+            "     If a near-duplicate is forced, prefer the higher hook_score "
+            "and flag the duplication in the rationale.\n\n"
+            "  3. DESCRIPTION QUALITY — only rank moments whose descriptions "
+            "are concrete action verbs, not vague labels. If a candidate's "
+            "description is a scene label ('player on field', 'venue interior'), "
+            "drop it down the ranking unless its hook_score is so high it "
+            "carries the pick alone.\n\n"
+            "  4. THEMATIC FIT — when `copy_tone` or `creative_direction` is "
+            "provided, the ranking must honor it:\n"
+            "       copy_tone=calm    → composed shots, low-mid energy "
+            "rank higher than chaos peaks\n"
+            "       copy_tone=energetic → high-energy peaks rank higher\n"
+            "       copy_tone=formal  → talking-head / composed framing wins ties\n"
+            "       copy_tone=casual  → reaction shots / handheld energy wins ties\n"
+            "     A pick that contradicts the stated tone must explain itself "
+            "in the rationale.\n\n"
+            f"  5. TARGET COUNT — return EXACTLY {input.target_count} ranked "
+            "entries OR FEWER if the candidate pool is too thin. Returning "
+            f"more than {input.target_count} is a contract violation. Padding "
+            "with weak picks (hook_score <3) is worse than under-returning.\n\n"
+            "RATIONALE FORMAT — every rationale must name the dimension that "
+            "decided the rank:\n"
+            "  Good:  'hook_score 9.5 — clear winner, action-verb description'\n"
+            "  Good:  'energy 8 fits energetic tone; rank 2 over the 9 pick "
+            "because description names a specific outcome'\n"
+            "  Good:  'rank 4 forced duplicate of rank 2 description; only "
+            "alternative was hook_score 2.0'\n"
+            "  Bad:   'best moment' / 'good pick' / 'great hook' — boilerplate "
+            "rationales are rejected by the eval suite.\n\n"
+            f"INPUT — {len(input.candidates)} candidates, target {input.target_count}:\n\n"
+            f"Candidates:\n{candidates_block}"
             f"{tone_block}{direction_block}\n\n"
-            'Return JSON: {"ranked": [{"id": str, "rank": int (1=best), '
-            '"rationale": short explanation}, ...]}\n'
-            f"Return EXACTLY {input.target_count} entries. "
-            "Do not pad with weak picks; if fewer than the target are strong, "
-            "rank only the strong ones. Return ONLY valid JSON, no markdown."
+            "OUTPUT — return ONLY valid JSON, no markdown:\n"
+            '  {"ranked": [{"id": str, "rank": int (1=best), '
+            '"rationale": "<dimension that decided + concrete value>"}, ...]}\n\n'
+            "Ranks must be dense from 1. No gaps, no duplicates."
         )
 
-    def parse(
-        self, raw_text: str, input: ShotRankerInput
-    ) -> ShotRankerOutput:  # noqa: A002
+    def parse(self, raw_text: str, input: ShotRankerInput) -> ShotRankerOutput:  # noqa: A002
         try:
             data = json.loads(raw_text)
         except (ValueError, TypeError) as exc:

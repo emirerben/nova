@@ -5,9 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   type BatchPresignedFile,
+  type ClipTooLongFor10BitDetail,
   type DriveImportBatchStatusResponse,
   type RequiredInput,
   type TemplateListItem,
+  TemplateJobCreateError,
   TemplateNotFoundError,
   createTemplateJob,
   getDriveImportBatchStatus,
@@ -15,6 +17,7 @@ import {
   getTemplate,
   importBatchFromDrive,
   normaliseMimeType,
+  prefetchClipAnalyze,
   uploadFileToGcs,
 } from "@/lib/api";
 import { trackRecentJob } from "@/hooks/useArchitectureData";
@@ -159,12 +162,24 @@ export default function TemplateDetailPage() {
     const minClips = requiredClipsMin;
     const maxRetries = 3;
     let consecutiveErrors = 0;
+    // Track which GCS paths we've already prefetched. The Drive batch task
+    // appends to `status.gcs_paths` as each file finishes uploading; we
+    // fire prefetch for new entries every poll so analysis starts before
+    // the LAST file even arrives. Saves the most time on slow batches.
+    const prefetched = new Set<string>();
 
     async function pollOnce() {
       try {
         const status = await getDriveImportBatchStatus(batchId);
         consecutiveErrors = 0;
         setDriveImportStatus(status);
+
+        for (const p of status.gcs_paths) {
+          if (!prefetched.has(p)) {
+            prefetched.add(p);
+            prefetchClipAnalyze(p, tplId);
+          }
+        }
 
         if (status.status === "complete") {
           clearBatchStorage();
@@ -340,6 +355,12 @@ export default function TemplateDetailPage() {
             setClips((prev) =>
               prev.map((c) => (c.id === clip.id ? { ...c, progress: 100 } : c)),
             );
+            // Kick off pre-emptive Gemini analysis for THIS clip while the
+            // other clips are still uploading. By the time the user-visible
+            // POST /template-jobs fires below, the orchestrator's Redis
+            // cache lookup hits and skips the Gemini round-trip entirely.
+            // Fire-and-forget — errors are swallowed (see prefetchClipAnalyze).
+            prefetchClipAnalyze(urls[i].gcs_path, template.id);
           } catch (err) {
             const m = err instanceof Error ? err.message : "Upload failed";
             setClips((prev) =>
@@ -368,6 +389,32 @@ export default function TemplateDetailPage() {
       router.push(`/template-jobs/${job_id}`);
     } catch (err) {
       setPhase("error");
+      // Pre-flight 10-bit HDR reject: attach the per-clip remediation to the
+      // offending clips so the user sees exactly which uploads to trim or
+      // re-export. Without this, the headline error talks about "Clip N" but
+      // the user has to count through the upload list to find it.
+      if (
+        err instanceof TemplateJobCreateError &&
+        err.detail &&
+        typeof err.detail === "object" &&
+        (err.detail as { code?: string }).code === "clip_too_long_for_10bit"
+      ) {
+        const detail = err.detail as ClipTooLongFor10BitDetail;
+        const offendingIndices = new Set(detail.offenders.map((o) => o.clip_index));
+        setClips((prev) =>
+          prev.map((c, i) =>
+            offendingIndices.has(i)
+              ? {
+                  ...c,
+                  error:
+                    `${c.file.name} is 10-bit HDR (${Math.round(
+                      detail.offenders.find((o) => o.clip_index === i)?.duration_s ?? 0,
+                    )}s). Trim to under ${detail.limit_s}s or re-export as 8-bit.`,
+                }
+              : c,
+          ),
+        );
+      }
       setErrorMsg(err instanceof Error ? err.message : "Something went wrong.");
     }
   }
@@ -663,7 +710,12 @@ export default function TemplateDetailPage() {
                       {(c.file.size / 1024 / 1024).toFixed(1)} MB
                     </span>
                     {c.error ? (
-                      <span className="text-red-400 text-xs mr-3">Failed</span>
+                      <span
+                        className="text-red-400 text-xs mr-3 max-w-[20rem] truncate"
+                        title={c.error}
+                      >
+                        {c.error}
+                      </span>
                     ) : c.progress > 0 && c.progress < 100 ? (
                       <span className="text-blue-400 text-xs mr-3">{c.progress}%</span>
                     ) : c.progress === 100 ? (

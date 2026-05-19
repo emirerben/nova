@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from celery import chord, group
 from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -44,8 +45,18 @@ log = structlog.get_logger()
 
 
 @celery_app.task(
-    name="tasks.orchestrate_job", bind=True, max_retries=0,
-    soft_time_limit=1080, time_limit=1200,
+    name="tasks.orchestrate_job",
+    bind=True,
+    # Retry on transient Postgres outages (incident 2026-05-18 07:45:57Z).
+    # 7 retries × deterministic exp backoff (123s budget). retry_jitter=False
+    # so the budget is predictable, not halved on average.
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,  # deterministic exp backoff — jitter halves avg budget
+    max_retries=7,
+    soft_time_limit=1080,
+    time_limit=1200,
 )
 def orchestrate_job(self, job_id: str) -> None:
     log.info("orchestrate_start", job_id=job_id)
@@ -95,7 +106,9 @@ def orchestrate_job(self, job_id: str) -> None:
 
             # [2] Transcribe (Gemini primary when source_ref available, else Whisper)
             transcript = transcribe_mod.transcribe(
-                raw_local, file_ref=source_ref, job_id=job_id,
+                raw_local,
+                file_ref=source_ref,
+                job_id=job_id,
             )
             with _sync_session() as db:
                 job = db.get(Job, uuid.UUID(job_id))
@@ -103,8 +116,12 @@ def orchestrate_job(self, job_id: str) -> None:
                     "full_text": transcript.full_text,
                     "low_confidence": transcript.low_confidence,
                     "words": [
-                        {"text": w.text, "start_s": w.start_s, "end_s": w.end_s,
-                         "confidence": w.confidence}
+                        {
+                            "text": w.text,
+                            "start_s": w.start_s,
+                            "end_s": w.end_s,
+                            "confidence": w.confidence,
+                        }
                         for w in transcript.words
                     ],
                 }
@@ -119,7 +136,11 @@ def orchestrate_job(self, job_id: str) -> None:
 
             # [4] Score candidates (Gemini analyzes each segment via source_ref)
             candidates = select_candidates(
-                video_probe, transcript, cuts, source_ref=source_ref, job_id=job_id,
+                video_probe,
+                transcript,
+                cuts,
+                source_ref=source_ref,
+                job_id=job_id,
             )
             top3 = candidates[:TOP_N]
             held = candidates[TOP_N:]
@@ -183,6 +204,16 @@ def orchestrate_job(self, job_id: str) -> None:
                     job.error_detail = "Job timed out (exceeded 1080s soft limit)"
                     db.commit()
             return
+        except OperationalError as db_exc:
+            # Transient Postgres outage — re-raise for Celery autoretry.
+            # See incident 2026-05-18 07:45:57Z.
+            log.warning(
+                "orchestrate_transient_db_error_retry",
+                job_id=job_id,
+                error=str(db_exc),
+                retry_count=self.request.retries,
+            )
+            raise
         except Exception as exc:
             log.error("orchestrate_failed", job_id=job_id, error=str(exc))
             with _sync_session() as db:
@@ -203,16 +234,22 @@ def orchestrate_job(self, job_id: str) -> None:
                 db.commit()
         return
 
-    render_tasks = group(
-        render_clip.s(job_id, clip_id) for clip_id in clip_db_ids
-    )
+    render_tasks = group(render_clip.s(job_id, clip_id) for clip_id in clip_db_ids)
     workflow = chord(render_tasks, finalize_job.s(job_id))
     workflow.apply_async()
 
 
 @celery_app.task(
-    name="tasks.render_clip", bind=True, max_retries=0,
-    soft_time_limit=540, time_limit=600,
+    name="tasks.render_clip",
+    bind=True,
+    # Retry on transient Postgres outages (incident 2026-05-18 07:45:57Z).
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,  # deterministic exp backoff — jitter halves avg budget
+    max_retries=7,
+    soft_time_limit=540,
+    time_limit=600,
 )
 def render_clip(self, job_id: str, clip_db_id: str) -> dict:
     """Render a single clip. Returns {clip_id, success, error}.
@@ -244,9 +281,7 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
         transcript_data = job.transcript or {}
         has_transcript = not transcript_data.get("low_confidence", True)
         transcript_excerpt = _extract_excerpt(transcript_data, start_s, end_s)
-        scene_cut_timestamps = [
-            c["timestamp_s"] for c in (job.scene_cuts or [])
-        ]
+        scene_cut_timestamps = [c["timestamp_s"] for c in (job.scene_cuts or [])]
 
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
@@ -256,6 +291,7 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
             # [5+6 parallel] generate_copy + select_thumbnail concurrently
             # These are sync calls here (Celery worker thread); parallelism via threads
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 copy_future = pool.submit(
                     generate_copy,
@@ -307,7 +343,10 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
 
             file_size = os.path.getsize(output_path)
             duration_s = end_s - start_s
-            expires_at = datetime.now(UTC) + timedelta(days=30)
+            # Matches the GCS lifecycle rule in infra/gcs-lifecycle.json (age=1 day
+            # on dev-user/*). The column is informational today (no sweeper reads
+            # it); keeping it truthful so a future sweeper isn't surprised.
+            expires_at = datetime.now(UTC) + timedelta(days=1)
 
             with _sync_session() as db:
                 clip = db.get(JobClip, uuid.UUID(clip_db_id))
@@ -333,6 +372,18 @@ def render_clip(self, job_id: str, clip_db_id: str) -> dict:
                     clip.error_detail = "Clip render timed out (exceeded 540s soft limit)"
                     db.commit()
             return {"clip_id": clip_db_id, "success": False, "error": "render timeout"}
+        except OperationalError as db_exc:
+            # Transient Postgres outage — re-raise for Celery autoretry. The
+            # chord callback (finalize_job) sees the eventual retry result;
+            # if all retries are exhausted, Celery will mark the task FAILED
+            # and the on-boot reaper + Beat sweeper will catch the row.
+            log.warning(
+                "render_clip_transient_db_error_retry",
+                clip_id=clip_db_id,
+                error=str(db_exc),
+                retry_count=self.request.retries,
+            )
+            raise
         except Exception as exc:
             log.error("render_clip_failed", clip_id=clip_db_id, error=str(exc))
             with _sync_session() as db:
@@ -381,6 +432,7 @@ def finalize_job(render_results: list[dict], job_id: str) -> None:
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+
 def _set_job_status(db: Session, job: Job, status: str) -> None:
     job.status = status
     db.commit()
@@ -401,6 +453,7 @@ def _generate_captions(
     transcript_data: dict, start_s: float, end_s: float, output_path: str
 ) -> None:
     from app.pipeline.transcribe import Transcript, Word
+
     words = [
         Word(
             text=w["text"],

@@ -749,7 +749,32 @@ def match(
             if clip_use_count[meta.clip_id] < max_uses
         ]
 
-        # Fall back to any candidate if all clips under cap are exhausted
+        # Variety-first fallback: if no clip-under-cap satisfies the duration
+        # tolerance, but unused clips still exist in the pool, pull ALL moments
+        # from those unused clips regardless of duration. The assembler trims
+        # to slot.target_duration_s downstream (see the same insight at the
+        # last-resort duration block above), so duration-fit on the matcher
+        # side is advisory. Reusing a clip while unused clips sit idle is
+        # surprising to users when they uploaded enough material to cover
+        # every slot uniquely.
+        if not capped_candidates:
+            relaxed_unused = [
+                (meta, moment)
+                for meta in greedy_metas
+                if clip_use_count[meta.clip_id] < max_uses
+                for moment in meta.best_moments
+                if isinstance(moment, dict)
+            ]
+            if relaxed_unused:
+                log.info(
+                    "matcher_relaxed_duration_for_variety",
+                    slot_position=slot_position,
+                    target_dur=target_dur,
+                    n_unused=len({m.clip_id for m, _ in relaxed_unused}),
+                )
+                capped_candidates = relaxed_unused
+
+        # Final fallback: reuse only when truly no unused clip remains
         candidates = capped_candidates if capped_candidates else loose_candidates
 
         # Scoring (highest tuple wins):

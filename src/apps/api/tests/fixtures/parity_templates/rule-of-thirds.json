@@ -1,0 +1,49 @@
+{
+  "name": "rule-of-thirds",
+  "kind": "heavy",
+  "_note": "M6 fixture — exercises the absolute-timestamp overlay path. Production Rule of Thirds uses grid_highlight_windows at fixed timestamps (e.g. [1.4-1.7s], [2.4-2.7s]); this stripped fixture is 3 slots hard-cut with two text_overlays carrying absolute start/end so the abs PNG/ASS generation pipeline fires. The actual highlight rendering relies on real clip metadata via _resolve_overlay_text; until the orchestrator integration tests stub that out, parity coverage depends on a real clip set staged in PARITY_CLIPS_DIR.",
+  "slots": [
+    {
+      "position": 1,
+      "target_duration_s": 3.0,
+      "transition_in": "none",
+      "text_overlays": [
+        {
+          "role": "label",
+          "sample_text": "The",
+          "start_s": 0.5,
+          "end_s": 2.5,
+          "effect": "fade-in"
+        }
+      ]
+    },
+    {
+      "position": 2,
+      "target_duration_s": 3.0,
+      "transition_in": "none",
+      "text_overlays": [
+        {
+          "role": "label",
+          "sample_text": "Thirds",
+          "start_s": 0.5,
+          "end_s": 2.5,
+          "effect": "fade-in"
+        }
+      ]
+    },
+    {
+      "position": 3,
+      "target_duration_s": 3.0,
+      "transition_in": "none",
+      "text_overlays": [
+        {
+          "role": "label",
+          "sample_text": "STATIC",
+          "start_s": 0.0,
+          "end_s": 3.0
+        }
+      ]
+    }
+  ],
+  "interstitials": []
+}

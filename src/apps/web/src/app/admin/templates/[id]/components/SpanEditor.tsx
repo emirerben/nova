@@ -166,9 +166,14 @@ function SpanRow({
       <div className="grid grid-cols-4 gap-1.5">
         {/* Font */}
         <select
-          value={span.font_family ?? ""}
+          value={span.font_family && FONT_REGISTRY[span.font_family] ? span.font_family : ""}
           onChange={(e) => onUpdate({ font_family: e.target.value || undefined })}
           className={selectClass}
+          title={
+            span.font_family && !FONT_REGISTRY[span.font_family]
+              ? `Unknown font "${span.font_family}" — falling back to overlay default`
+              : undefined
+          }
         >
           <option value="">Inherit</option>
           {FONT_NAMES.map((name) => {

@@ -1,6 +1,6 @@
 # Agent evals
 
-Per-agent quality eval harness. Phase 1 covers the Big 3 (`template_recipe`, `clip_metadata`, `creative_direction`); Phase 2 extends to the three additional in-pipeline agents (`transcript`, `platform_copy`, `audio_template`).
+Per-agent quality eval harness. Phase 1 covers the original Big 3 (`template_recipe`, `clip_metadata`, `creative_direction`); Phase 2 extends to the three additional in-pipeline agents (`transcript`, `platform_copy`, `audio_template`); the auto-music work then adds `song_classifier` (Phase 1 of auto-music) and `music_matcher` (Phase 2 of auto-music), taking the eval-covered Big set to 5.
 
 The other Phase 2 agent classes that exist in `app/agents/` (`text_designer`, `transition_picker`, `clip_router`, `shot_ranker`) are not yet wired into the pipeline — their evals will land alongside the PR that wires each into the runtime.
 
@@ -42,6 +42,49 @@ pytest tests/evals/test_audio_template_evals.py -v --with-judge
 | `nova.audio.transcript` | ✓ | `rubrics/transcript.md` | exported | `Job.transcript` |
 | `nova.compose.platform_copy` | ✓ | `rubrics/platform_copy.md` | exported | `JobClip.platform_copy` |
 | `nova.audio.template_recipe` (audio_template) | ✓ | `rubrics/audio_template.md` | exported | `MusicTrack.recipe_cached` |
+| `nova.audio.song_classifier` | ✓ | `rubrics/song_classifier.md` | exported + hand-authored golden | `MusicTrack.ai_labels` |
+| `nova.audio.music_matcher` | ✓ | `rubrics/music_matcher.md` | hand-authored golden only (not persisted) | — |
+
+## Layer-2 text-overlay pipeline eval
+
+`test_text_overlay_pipeline_evals.py` evaluates `run_full_pipeline()` from
+`app.pipeline.text_overlay_v2` (the OCR + grouping + alignment + classification
+pipeline shipped in PRs #204–#214). See the design doc at
+`~/.claude/plans/template-text-overlay-layer-2-architecture.md` for architecture
+details.
+
+Hard floors (design doc §Verification plan): **precision ≥ 0.95, recall ≥ 0.95,
+mean bbox IoU ≥ 0.85**. All three gates are overridable per-fixture via a
+`ground_truth/<stem>.thresholds.json` sidecar (same `.thresholds.json` pattern as
+Layer-1).
+
+The eval gate is currently **dormant** — all tests skip until two sidecars are added
+per fixture:
+
+1. `tests/fixtures/agent_evals/template_text/ground_truth/<stem>.json` — human-verified
+   ground-truth overlays (same format as Layer-1).
+2. `tests/fixtures/agent_evals/template_text/prod_snapshots/<stem>.transcript.json` — the
+   Whisper transcript for the template's audio.  Shape:
+   ```json
+   {
+       "transcript_words": [
+           {"text": "It's", "start_s": 0.08, "end_s": 0.42, "confidence": 0.99},
+           ...
+       ]
+   }
+   ```
+   Produce by running `nova.audio.transcript` on the template and serialising
+   `output.words`.
+
+Live mode (`--eval-mode=live --allow-cost`) downloads the source video from GCS,
+invokes the full pipeline, and scores the result. Estimated cost: **~$0.03/template**
+(Cloud Vision OCR @ 2 fps). Requires `STORAGE_BUCKET`, GCS credentials, and
+`GEMINI_API_KEY`.
+
+Next step (human-paced): capture transcripts for the three existing prod snapshots
+(`not_just_luck`, `rich_in_life`, `rich_in_life_v2`) and add at least 4 more
+hand-verified ground truths covering varied caption styles (typewriter, font-cycle,
+static label, subtitle).
 
 ## Adding fixtures
 
@@ -144,6 +187,6 @@ The estimate is intentionally pessimistic: input tokens ≈ chars/3 of (input pa
 
 - `tests/quality/eval_scoring.py` — the original recall@3 launch gate for hook scoring.
 - `app/agents/_runtime.py` — runtime that this harness relies on (`ModelClient`, `Agent`, `run_with_shadow`).
-- `app/agents/{template_recipe,clip_metadata,creative_direction,transcript,platform_copy,audio_template}.py` — the six agents under test.
+- `app/agents/{template_recipe,clip_metadata,creative_direction,transcript,platform_copy,audio_template,song_classifier,music_matcher}.py` — the eight agents under test.
 - `scripts/export_eval_fixtures.py` — DB → fixture exporter.
 - `scripts/reanalyze_underbaked_templates.py` — one-off to re-run two-pass analysis on templates with under-baked `creative_direction`.

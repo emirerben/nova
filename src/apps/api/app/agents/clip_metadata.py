@@ -178,7 +178,7 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.video.clip_metadata",
         prompt_id="analyze_clip",
-        prompt_version="2026-05-09",
+        prompt_version="2026-05-14",
         model="gemini-2.5-flash",
         # Gemini pricing as of 2026 — input ~$0.075/M, output ~$0.30/M (2.5 Flash).
         cost_per_1k_input_usd=0.000075,
@@ -190,6 +190,15 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         # transcript+best_moments fields. Saves ~100s on the ~10-15% of
         # clips where Gemini's first attempt returns malformed JSON.
         enable_clarification_retries=False,
+        # On the longest clips (14k+ input tokens) Gemini truncates JSON
+        # output near the token ceiling — production job 1b555c69-…
+        # ("concert crowd") died with `Invalid JSON: Expecting property
+        # name…` on a missing closing brace + stray comma. Opt in to the
+        # runtime's one-shot json-repair pass so the punctuation-broken
+        # response is salvaged before falling through to terminal_refusal
+        # (which would force the slow Whisper fallback for a recoverable
+        # response).
+        enable_json_repair=True,
     )
     Input = ClipMetadataInput
     Output = ClipMetadataOutput

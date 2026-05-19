@@ -544,14 +544,18 @@ class TestCurtainSurvivesConsolidation:
         This would have caught the prior bug where slot 5's animate_s clamp
         (1.638s) fell below _MIN_CURTAIN_ANIMATE_S (4.0s), silently dropping
         the curtain during consolidation."""
-        from app.pipeline.agents.gemini_analyzer import ClipMeta, TemplateRecipe
+        from app.pipeline.agents.gemini_analyzer import (
+            ClipMeta,
+        )
+        from app.pipeline.agents.gemini_analyzer import (
+            build_recipe as build_template_recipe,
+        )
         from app.pipeline.template_matcher import consolidate_slots
 
         recipe_dict = build_recipe()
-        # Strip routing-only keys (matches _build_recipe in orchestrator)
-        ROUTING_ONLY = {"template_kind", "has_intro_slot"}
-        kwargs = {k: v for k, v in recipe_dict.items() if k not in ROUTING_ONLY}
-        recipe = TemplateRecipe(**kwargs)
+        # Use the shared helper so we stay in sync with what the orchestrators
+        # actually do (strips template_kind / has_intro_slot / required_clips_*).
+        recipe = build_template_recipe(recipe_dict)
 
         # Simulate the minimum (5) clips a user can upload — only fields
         # consolidate_slots reads (clip_id for uniqueness count) need real
@@ -647,7 +651,7 @@ class TestSubjectSubstitutionContract:
         upload form collects it and the resolver finds it."""
         keys = [spec["key"] for spec in _seed.REQUIRED_INPUTS]
         assert "location" in keys, (
-            "Required-input key 'location' is the contract _resolve_user_subject "
+            "Required-input key 'location' is the contract user_subject resolver "
             "depends on; renaming it breaks substitution silently"
         )
 
@@ -655,13 +659,13 @@ class TestSubjectSubstitutionContract:
 class TestRequiredInputs:
     """The seed must declare a `location` input so the template page renders
     a country/city field. The key name MUST match what
-    _resolve_user_subject() in template_orchestrate.py reads."""
+    user_subject resolver() in template_orchestrate.py reads."""
 
     def test_declares_single_location_input(self):
         assert len(_seed.REQUIRED_INPUTS) == 1
         spec = _seed.REQUIRED_INPUTS[0]
         assert spec["key"] == "location", (
-            "key must be 'location' — _resolve_user_subject reads inputs.location"
+            "key must be 'location' — user_subject resolver reads inputs.location"
         )
 
     def test_location_is_required(self):

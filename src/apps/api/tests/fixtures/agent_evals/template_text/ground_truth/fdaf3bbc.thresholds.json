@@ -1,0 +1,8 @@
+{
+  "reason": "Initial floors for template fdaf3bbc-2f4f-43bc-ba7c-e5cd819de102 — user reported failures across all four categories (missing overlays, wrong text, wrong classification, wrong timing/position). Start loose so the fixture lands; tighten in the same PR that fixes the underlying stages. Match rich_in_life_v2.thresholds.json's posture: surface the regression in scoring without hard-blocking the fixture from being committed.",
+  "floors": {
+    "completeness": 0.50,
+    "mean_temporal_iou": 0.30,
+    "mean_spatial_iou": 0.05
+  }
+}

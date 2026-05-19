@@ -1,0 +1,207 @@
+{
+  "agent": "nova.audio.music_matcher",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "clip_summaries": [
+      {
+        "clip_id": "clip_001",
+        "media_type": "video",
+        "duration_s": 5.0,
+        "subject": "producer's hands on a midi keyboard with screen waveforms behind",
+        "hook_text": "build the beat from scratch",
+        "hook_score": 7.5,
+        "energy": 7.0,
+        "description": "close-up, magenta key light, rhythmic finger motion"
+      },
+      {
+        "clip_id": "clip_002",
+        "media_type": "video",
+        "duration_s": 4.0,
+        "subject": "studio monitor screen showing audio waveforms",
+        "hook_text": "",
+        "hook_score": 6.0,
+        "energy": 6.5,
+        "description": "screen close-up, cyan glow, scrolling waveform"
+      },
+      {
+        "clip_id": "clip_003",
+        "media_type": "video",
+        "duration_s": 4.5,
+        "subject": "producer nodding to playback in headphones",
+        "hook_text": "",
+        "hook_score": 7.0,
+        "energy": 7.5,
+        "description": "medium shot, low-key magenta lighting, rhythmic head nod"
+      },
+      {
+        "clip_id": "clip_004",
+        "media_type": "video",
+        "duration_s": 5.2,
+        "subject": "hand sliding faders on an analog mixer",
+        "hook_text": "",
+        "hook_score": 6.5,
+        "energy": 7.0,
+        "description": "low-angle close-up, cyan rim light, mechanical motion"
+      },
+      {
+        "clip_id": "clip_005",
+        "media_type": "video",
+        "duration_s": 4.8,
+        "subject": "vinyl spinning on a turntable",
+        "hook_text": "",
+        "hook_score": 6.0,
+        "energy": 6.5,
+        "description": "top-down close-up, dust particles in side light, steady rotation"
+      }
+    ],
+    "available_tracks": [
+      {
+        "track_id": "track_electronic_studio",
+        "title": "Patch Bay Pulse",
+        "duration_s": 92.0,
+        "slot_count": 11,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "electronic",
+          "vibe_tags": ["driving", "focused", "pulsing"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "late-night flow state",
+          "ideal_content_profile": "Process montages — studio work, sketching, mechanical hand motions synced to a steady pulse.",
+          "copy_tone": "high_energy",
+          "transition_style": "beat_pulse",
+          "color_grade": "cool magenta"
+        }
+      },
+      {
+        "track_id": "track_electronic_techno",
+        "title": "Mixdown Floor",
+        "duration_s": 96.0,
+        "slot_count": 13,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "electronic",
+          "vibe_tags": ["pulsing", "driving", "industrial"],
+          "energy": "peaks_high",
+          "pacing": "fast",
+          "mood": "warehouse 3am",
+          "ideal_content_profile": "Club-floor crowds and high-intensity studio sessions; mechanical motion, rapid beat-locked cuts.",
+          "copy_tone": "high_energy",
+          "transition_style": "beat_pulse",
+          "color_grade": "high-contrast neon"
+        }
+      },
+      {
+        "track_id": "track_hiphop_lofi",
+        "title": "Loop Tape",
+        "duration_s": 78.0,
+        "slot_count": 9,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "hip_hop",
+          "vibe_tags": ["mellow", "patient", "warm"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "bedroom-studio calm",
+          "ideal_content_profile": "Lofi beatmaking, vinyl spins, slow hand motions on faders or pads.",
+          "copy_tone": "casual",
+          "transition_style": "dissolve",
+          "color_grade": "warm tungsten"
+        }
+      },
+      {
+        "track_id": "track_cinematic_arc",
+        "title": "Composer Hours",
+        "duration_s": 105.0,
+        "slot_count": 6,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "cinematic",
+          "vibe_tags": ["reverent", "patient", "tender"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "craft reverence",
+          "ideal_content_profile": "Slow process storytelling — composer at desk, candid creative struggle, emotional payoffs.",
+          "copy_tone": "cinematic",
+          "transition_style": "dissolve",
+          "color_grade": "warm amber"
+        }
+      },
+      {
+        "track_id": "track_acoustic_porch",
+        "title": "Porch Light",
+        "duration_s": 100.0,
+        "slot_count": 7,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "acoustic",
+          "vibe_tags": ["wistful", "intimate", "patient"],
+          "energy": "low",
+          "pacing": "slow",
+          "mood": "introspective evening",
+          "ideal_content_profile": "Quiet outdoor moments, family b-roll, slow handheld pacing.",
+          "copy_tone": "sentimental",
+          "transition_style": "dissolve",
+          "color_grade": "warm golden hour"
+        }
+      }
+    ],
+    "n_variants": 3
+  },
+  "raw_text": "{\"ranked\": [{\"track_id\": \"track_electronic_studio\", \"score\": 9.1, \"rationale\": \"Studio-process clips with magenta/cyan key lighting and rhythmic mechanical motion are the textbook content this track's profile names — fader pulls, midi-key presses, head-nods to playback.\", \"predicted_strengths\": [\"cool magenta grade matches the studio lighting one-to-one\", \"beat_pulse transitions sync to fader/midi hand motions\", \"11 slots over 5 clips supports detail intercutting\"]}, {\"track_id\": \"track_electronic_techno\", \"score\": 8.0, \"rationale\": \"Same genre at a higher intensity — peaks_high techno gives the same studio content a warehouse-floor variant that hits the head-nod clip harder.\", \"predicted_strengths\": [\"peaks_high energy elevates the head-nod and fader-slide moments\", \"beat_pulse transitions match the rhythmic finger motion\", \"distinct mood from top pick — adds variety even within electronic\"]}, {\"track_id\": \"track_hiphop_lofi\", \"score\": 7.6, \"rationale\": \"Lofi beatmaking profile names vinyl spins and slow fader hand motions directly — adds a warm tungsten lofi variant against the cool magenta picks above.\", \"predicted_strengths\": [\"vinyl-spin clip lands inside this track's profile\", \"distinct vibe and grade from electronic picks — genuine top-K diversity\", \"medium pacing supports a slower-edit alternative\"]}, {\"track_id\": \"track_cinematic_arc\", \"score\": 5.0, \"rationale\": \"Reverent composer-arc cinematic could carry a slow craft-narrative cut but misses the modern electronic production vibe the clips foreground.\", \"predicted_strengths\": [\"could work for a story-driven 'making of' edit\", \"6 slots over 5 clips is comfortable\"]}, {\"track_id\": \"track_acoustic_porch\", \"score\": 2.2, \"rationale\": \"Outdoor wistful folk has no relationship to indoor studio process; slow acoustic would deflate the rhythmic motion in every clip.\", \"predicted_strengths\": [\"no real fit\"]}]}",
+  "output": {
+    "ranked": [
+      {
+        "track_id": "track_electronic_studio",
+        "score": 9.1,
+        "rationale": "Studio-process clips with magenta/cyan key lighting and rhythmic mechanical motion are the textbook content this track's profile names — fader pulls, midi-key presses, head-nods to playback.",
+        "predicted_strengths": [
+          "cool magenta grade matches the studio lighting one-to-one",
+          "beat_pulse transitions sync to fader/midi hand motions",
+          "11 slots over 5 clips supports detail intercutting"
+        ]
+      },
+      {
+        "track_id": "track_electronic_techno",
+        "score": 8.0,
+        "rationale": "Same genre at a higher intensity — peaks_high techno gives the same studio content a warehouse-floor variant that hits the head-nod clip harder.",
+        "predicted_strengths": [
+          "peaks_high energy elevates the head-nod and fader-slide moments",
+          "beat_pulse transitions match the rhythmic finger motion",
+          "distinct mood from top pick — adds variety even within electronic"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_lofi",
+        "score": 7.6,
+        "rationale": "Lofi beatmaking profile names vinyl spins and slow fader hand motions directly — adds a warm tungsten lofi variant against the cool magenta picks above.",
+        "predicted_strengths": [
+          "vinyl-spin clip lands inside this track's profile",
+          "distinct vibe and grade from electronic picks — genuine top-K diversity",
+          "medium pacing supports a slower-edit alternative"
+        ]
+      },
+      {
+        "track_id": "track_cinematic_arc",
+        "score": 5.0,
+        "rationale": "Reverent composer-arc cinematic could carry a slow craft-narrative cut but misses the modern electronic production vibe the clips foreground.",
+        "predicted_strengths": [
+          "could work for a story-driven 'making of' edit",
+          "6 slots over 5 clips is comfortable"
+        ]
+      },
+      {
+        "track_id": "track_acoustic_porch",
+        "score": 2.2,
+        "rationale": "Outdoor wistful folk has no relationship to indoor studio process; slow acoustic would deflate the rhythmic motion in every clip.",
+        "predicted_strengths": [
+          "no real fit"
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "electronic studio process — two electronic tracks compete, lofi hip-hop fills variety slot"
+  }
+}

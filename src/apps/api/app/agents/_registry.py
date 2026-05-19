@@ -22,20 +22,31 @@ if TYPE_CHECKING:
 # (agent_name, module_path, class_name)
 _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     # Migrated agents (existing LLM call sites consolidated under runtime)
-    ("nova.video.clip_metadata",       "app.agents.clip_metadata",      "ClipMetadataAgent"),
-    ("nova.compose.template_recipe",   "app.agents.template_recipe",    "TemplateRecipeAgent"),
-    ("nova.audio.transcript",          "app.agents.transcript",         "TranscriptAgent"),
-    ("nova.audio.lyrics",              "app.agents.lyrics",             "LyricsExtractionAgent"),
-    ("nova.audio.template_recipe",     "app.agents.audio_template",     "AudioTemplateAgent"),
-    ("nova.compose.platform_copy",     "app.agents.platform_copy",      "PlatformCopyAgent"),
-    ("nova.compose.creative_direction","app.agents.creative_direction", "CreativeDirectionAgent"),
+    ("nova.video.clip_metadata", "app.agents.clip_metadata", "ClipMetadataAgent"),
+    ("nova.compose.template_recipe", "app.agents.template_recipe", "TemplateRecipeAgent"),
+    ("nova.compose.template_text", "app.agents.template_text", "TemplateTextAgent"),
+    ("nova.audio.transcript", "app.agents.transcript", "TranscriptAgent"),
+    ("nova.audio.lyrics", "app.agents.lyrics", "LyricsExtractionAgent"),
+    ("nova.audio.template_recipe", "app.agents.audio_template", "AudioTemplateAgent"),
+    ("nova.audio.song_classifier", "app.agents.song_classifier", "SongClassifierAgent"),
+    ("nova.audio.song_sections", "app.agents.song_sections", "SongSectionsAgent"),
+    ("nova.audio.music_matcher", "app.agents.music_matcher", "MusicMatcherAgent"),
+    ("nova.compose.platform_copy", "app.agents.platform_copy", "PlatformCopyAgent"),
+    ("nova.compose.creative_direction", "app.agents.creative_direction", "CreativeDirectionAgent"),
     # New agents (built on the runtime; no platform plumbing)
-    ("nova.layout.text_designer",      "app.agents.text_designer",      "TextDesignerAgent"),
-    ("nova.video.shot_ranker",         "app.agents.shot_ranker",        "ShotRankerAgent"),
-    ("nova.layout.transition_picker",  "app.agents.transition_picker",  "TransitionPickerAgent"),
-    ("nova.audio.beat_aligner",        "app.agents.beat_aligner",       "BeatAlignerAgent"),
-    ("nova.video.clip_router",         "app.agents.clip_router",        "ClipRouterAgent"),
-    ("nova.qa.output_validator",       "app.agents.output_validator",   "OutputValidatorAgent"),
+    ("nova.layout.text_designer", "app.agents.text_designer", "TextDesignerAgent"),
+    ("nova.video.shot_ranker", "app.agents.shot_ranker", "ShotRankerAgent"),
+    ("nova.layout.transition_picker", "app.agents.transition_picker", "TransitionPickerAgent"),
+    ("nova.audio.beat_aligner", "app.agents.beat_aligner", "BeatAlignerAgent"),
+    ("nova.video.clip_router", "app.agents.clip_router", "ClipRouterAgent"),
+    ("nova.qa.output_validator", "app.agents.output_validator", "OutputValidatorAgent"),
+    # Layer-2 text-overlay pipeline agents (slices E + F)
+    ("nova.compose.text_alignment", "app.agents.text_alignment", "TextAlignmentAgent"),
+    (
+        "nova.compose.text_classification",
+        "app.agents.text_classification",
+        "TextClassificationAgent",
+    ),
 )
 
 

@@ -1,0 +1,197 @@
+{
+  "agent": "nova.audio.music_matcher",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "clip_summaries": [
+      {
+        "clip_id": "clip_001",
+        "media_type": "video",
+        "duration_s": 8.0,
+        "subject": "barista pulling an espresso shot with focused attention",
+        "hook_text": "the perfect pull",
+        "hook_score": 6.5,
+        "energy": 5.5,
+        "description": "close-up, warm tungsten, steam rising, deliberate hand motion"
+      },
+      {
+        "clip_id": "clip_002",
+        "media_type": "video",
+        "duration_s": 7.5,
+        "subject": "milk pouring into espresso creating latte art",
+        "hook_text": "",
+        "hook_score": 7.0,
+        "energy": 6.0,
+        "description": "macro close-up, slow careful pour, leaf-pattern reveal"
+      },
+      {
+        "clip_id": "clip_003",
+        "media_type": "video",
+        "duration_s": 6.5,
+        "subject": "customer reaching for the finished latte from counter",
+        "hook_text": "",
+        "hook_score": 5.5,
+        "energy": 5.0,
+        "description": "medium shot, warm cafe lighting, slow reach"
+      },
+      {
+        "clip_id": "clip_004",
+        "media_type": "video",
+        "duration_s": 7.0,
+        "subject": "barista wiping the counter and turning to next order",
+        "hook_text": "",
+        "hook_score": 5.0,
+        "energy": 5.5,
+        "description": "wide shot, steady pacing, cafe interior visible"
+      }
+    ],
+    "available_tracks": [
+      {
+        "track_id": "track_acoustic_cafe",
+        "title": "Morning Espresso",
+        "duration_s": 95.0,
+        "slot_count": 6,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "acoustic",
+          "vibe_tags": ["warm", "patient", "intimate"],
+          "energy": "low",
+          "pacing": "medium",
+          "mood": "neighborhood cafe morning",
+          "ideal_content_profile": "Slow craft b-roll — barista pours, hand details, candid cafe rhythm.",
+          "copy_tone": "casual",
+          "transition_style": "dissolve",
+          "color_grade": "warm tungsten"
+        }
+      },
+      {
+        "track_id": "track_electronic_dense",
+        "title": "Workshop Drive",
+        "duration_s": 102.0,
+        "slot_count": 14,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "electronic",
+          "vibe_tags": ["driving", "pulsing", "focused"],
+          "energy": "high",
+          "pacing": "fast",
+          "mood": "process-montage flow",
+          "ideal_content_profile": "Process montages — barista pulls, mechanical fader/key motions, fast rhythmic cuts on craft details.",
+          "copy_tone": "high_energy",
+          "transition_style": "beat_pulse",
+          "color_grade": "warm tungsten"
+        }
+      },
+      {
+        "track_id": "track_cinematic_craft",
+        "title": "Slow Pour",
+        "duration_s": 105.0,
+        "slot_count": 7,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "cinematic",
+          "vibe_tags": ["reverent", "patient", "tender"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "craft reverence",
+          "ideal_content_profile": "Craft b-roll with emotional weight — slow pours, focused artisans, intimate process shots.",
+          "copy_tone": "cinematic",
+          "transition_style": "dissolve",
+          "color_grade": "warm amber"
+        }
+      },
+      {
+        "track_id": "track_hiphop_lofi",
+        "title": "Loop Tape",
+        "duration_s": 80.0,
+        "slot_count": 9,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "hip_hop",
+          "vibe_tags": ["mellow", "patient", "warm"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "bedroom-studio calm",
+          "ideal_content_profile": "Lofi cafe and process b-roll, slow hand motions, candid daily rhythm.",
+          "copy_tone": "casual",
+          "transition_style": "dissolve",
+          "color_grade": "warm tungsten"
+        }
+      },
+      {
+        "track_id": "track_pop_morning",
+        "title": "Sunny Bell",
+        "duration_s": 88.0,
+        "slot_count": 9,
+        "labels": {
+          "label_version": "2026-05-15",
+          "genre": "pop",
+          "vibe_tags": ["upbeat", "playful", "warm"],
+          "energy": "medium",
+          "pacing": "medium",
+          "mood": "morning-routine cheer",
+          "ideal_content_profile": "Morning lifestyle b-roll — coffee, journaling, sunlight through windows.",
+          "copy_tone": "casual",
+          "transition_style": "dissolve",
+          "color_grade": "warm golden hour"
+        }
+      }
+    ],
+    "n_variants": 3
+  },
+  "raw_text": "{\"ranked\": [{\"track_id\": \"track_acoustic_cafe\", \"score\": 9.0, \"rationale\": \"Warm patient acoustic with tungsten grade is exactly this cafe-craft content; slot count of 6 maps cleanly to the 4 clips with room for a couple double-cuts on the latte-art pour.\", \"predicted_strengths\": [\"warm tungsten grade matches the cafe lighting\", \"slow medium pacing supports 6-8s craft shots\", \"casual copy_tone reads naturally over 'the perfect pull' hook\"]}, {\"track_id\": \"track_cinematic_craft\", \"score\": 8.4, \"rationale\": \"Reverent craft cinematic frames the espresso pull and latte art as artisan ritual; 7 slots over 4 long clips lets each step breathe.\", \"predicted_strengths\": [\"distinct vibe from acoustic pick — adds top-K variety\", \"reverent mood elevates the slow pour\", \"medium pacing matches the deliberate hand motion\"]}, {\"track_id\": \"track_hiphop_lofi\", \"score\": 7.6, \"rationale\": \"Lofi cafe profile names this exact content; warm tungsten grade aligns too — adds a third distinct genre to the top-K without forcing a bad fit.\", \"predicted_strengths\": [\"lofi vibe is a third genuine variant\", \"slot count of 9 still fits 4 clips with deliberate intercutting\", \"same warm tungsten grade as the footage\"]}, {\"track_id\": \"track_pop_morning\", \"score\": 6.5, \"rationale\": \"Morning-cheer pop is plausible for cafe b-roll but pushes the energy higher than the clips actually carry; viable fallback, not a top pick.\", \"predicted_strengths\": [\"playful morning vibe fits cafe setting\", \"slot count of 9 is manageable\"]}, {\"track_id\": \"track_electronic_dense\", \"score\": 3.5, \"rationale\": \"Driving electronic with 14 slots is the textbook slot-feasibility mismatch on a 4-clip set — would force each clip into 3-4 micro-segments and lose the slow craft quality the footage depends on.\", \"predicted_strengths\": [\"slot mismatch flagged — only useful if user adds 6+ more process clips\"]}]}",
+  "output": {
+    "ranked": [
+      {
+        "track_id": "track_acoustic_cafe",
+        "score": 9.0,
+        "rationale": "Warm patient acoustic with tungsten grade is exactly this cafe-craft content; slot count of 6 maps cleanly to the 4 clips with room for a couple double-cuts on the latte-art pour.",
+        "predicted_strengths": [
+          "warm tungsten grade matches the cafe lighting",
+          "slow medium pacing supports 6-8s craft shots",
+          "casual copy_tone reads naturally over 'the perfect pull' hook"
+        ]
+      },
+      {
+        "track_id": "track_cinematic_craft",
+        "score": 8.4,
+        "rationale": "Reverent craft cinematic frames the espresso pull and latte art as artisan ritual; 7 slots over 4 long clips lets each step breathe.",
+        "predicted_strengths": [
+          "distinct vibe from acoustic pick — adds top-K variety",
+          "reverent mood elevates the slow pour",
+          "medium pacing matches the deliberate hand motion"
+        ]
+      },
+      {
+        "track_id": "track_hiphop_lofi",
+        "score": 7.6,
+        "rationale": "Lofi cafe profile names this exact content; warm tungsten grade aligns too — adds a third distinct genre to the top-K without forcing a bad fit.",
+        "predicted_strengths": [
+          "lofi vibe is a third genuine variant",
+          "slot count of 9 still fits 4 clips with deliberate intercutting",
+          "same warm tungsten grade as the footage"
+        ]
+      },
+      {
+        "track_id": "track_pop_morning",
+        "score": 6.5,
+        "rationale": "Morning-cheer pop is plausible for cafe b-roll but pushes the energy higher than the clips actually carry; viable fallback, not a top pick.",
+        "predicted_strengths": [
+          "playful morning vibe fits cafe setting",
+          "slot count of 9 is manageable"
+        ]
+      },
+      {
+        "track_id": "track_electronic_dense",
+        "score": 3.5,
+        "rationale": "Driving electronic with 14 slots is the textbook slot-feasibility mismatch on a 4-clip set — would force each clip into 3-4 micro-segments and lose the slow craft quality the footage depends on.",
+        "predicted_strengths": [
+          "slot mismatch flagged — only useful if user adds 6+ more process clips"
+        ]
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "slot feasibility — electronic with 14 slots ranked low despite plausible warm-process vibe because n_clips=4"
+  }
+}

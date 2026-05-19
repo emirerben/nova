@@ -338,7 +338,14 @@ class TestAnalyzeTemplate:
         assert result.slots[0].get("text_overlays", []) == []
 
     def test_invalid_overlays_stripped(self):
-        """Bad role/timing removed from list."""
+        """Bad role / unsalvageable timing removed from list.
+
+        Note: overlays with merely inverted (start, end) — where both values
+        are in slot range — are NOT stripped anymore. They get swapped by
+        the salvage path in _validate_slots. Coverage for that lives in
+        tests/agents/test_template_recipe_overlay_salvage.py. Here we keep
+        the stripping case (negative end, definitely not salvageable).
+        """
         file_ref = _make_file_ref()
         data = {
             "shot_count": 1,
@@ -353,7 +360,7 @@ class TestAnalyzeTemplate:
                     "text_overlays": [
                         {"role": "invalid_role", "start_s": 0.0, "end_s": 2.0,
                          "position": "center", "effect": "none", "sample_text": "x"},
-                        {"role": "hook", "start_s": 3.0, "end_s": 1.0,  # bad timing
+                        {"role": "hook", "start_s": 3.0, "end_s": -1.0,  # unsalvageable
                          "position": "center", "effect": "none", "sample_text": "y"},
                         {"role": "hook", "start_s": 0.0, "end_s": 2.0,  # valid
                          "position": "center", "effect": "fade-in", "sample_text": "z"},

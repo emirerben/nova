@@ -37,41 +37,48 @@ class ImageConversionError(Exception):
 
 
 def _normalize_to_9x16(raw: bytes) -> bytes:
-    """Decode, EXIF-correct, center-crop/pad to 1080x1920, return PNG bytes."""
+    """Decode, EXIF-correct, center-crop/pad to 1080x1920, return PNG bytes.
+
+    PIL decodes pixel data lazily — Image.open() only reads the header. The
+    actual decode happens later (in exif_transpose, resize, save), which is
+    where truncated or corrupt streams raise OSError. Wrap the whole pipeline
+    so any decode/encode failure surfaces as a clean ImageConversionError
+    (caught by the route as 422), not an uncaught 500.
+    """
     try:
         img = Image.open(io.BytesIO(raw))
-    except Exception as exc:
+
+        # Apply EXIF orientation (iPhones store rotation as a tag, not pixels)
+        img = ImageOps.exif_transpose(img)
+
+        # Convert to RGB (drops alpha; FFmpeg yuv420p needs no alpha anyway)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+
+        # Cover-fit to 9:16: scale so the shorter axis fills, then center-crop
+        src_w, src_h = img.size
+        target_ratio = TARGET_W / TARGET_H  # 0.5625
+        src_ratio = src_w / src_h
+        if src_ratio > target_ratio:
+            # Source wider than 9:16 — scale by height, crop sides
+            new_h = TARGET_H
+            new_w = round(src_w * (TARGET_H / src_h))
+        else:
+            # Source taller (or equal) than 9:16 — scale by width, crop top/bottom
+            new_w = TARGET_W
+            new_h = round(src_h * (TARGET_W / src_w))
+        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+        # Center crop
+        left = (new_w - TARGET_W) // 2
+        top = (new_h - TARGET_H) // 2
+        img = img.crop((left, top, left + TARGET_W, top + TARGET_H))
+
+        out = io.BytesIO()
+        img.save(out, format="PNG", optimize=False)
+        return out.getvalue()
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
         raise ImageConversionError(f"Could not decode image: {exc}") from exc
-
-    # Apply EXIF orientation (iPhones store rotation as a tag, not pixels)
-    img = ImageOps.exif_transpose(img)
-
-    # Convert to RGB (drops alpha; FFmpeg yuv420p needs no alpha anyway)
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-
-    # Cover-fit to 9:16: scale so the shorter axis fills, then center-crop
-    src_w, src_h = img.size
-    target_ratio = TARGET_W / TARGET_H  # 0.5625
-    src_ratio = src_w / src_h
-    if src_ratio > target_ratio:
-        # Source wider than 9:16 — scale by height, crop sides
-        new_h = TARGET_H
-        new_w = round(src_w * (TARGET_H / src_h))
-    else:
-        # Source taller (or equal) than 9:16 — scale by width, crop top/bottom
-        new_w = TARGET_W
-        new_h = round(src_h * (TARGET_W / src_w))
-    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-
-    # Center crop
-    left = (new_w - TARGET_W) // 2
-    top = (new_h - TARGET_H) // 2
-    img = img.crop((left, top, left + TARGET_W, top + TARGET_H))
-
-    out = io.BytesIO()
-    img.save(out, format="PNG", optimize=False)
-    return out.getvalue()
 
 
 def image_bytes_to_mp4(
@@ -98,6 +105,17 @@ def image_bytes_to_mp4(
 
         cmd = [
             "ffmpeg", "-y",
+            # -loglevel warning + -nostats: drop the per-frame progress stream
+            # from stderr so that `proc.stderr` on a non-zero exit contains
+            # the actual error line(s), not `frame=N fps=… size=…` noise.
+            # Without this, the tail-slice we surface to the user was always
+            # progress and the real error was truncated off the front.
+            # `warning` (rather than `error`) keeps libx264 deprecation /
+            # pixel-format / SAR-mismatch warnings visible — useful for
+            # diagnosing the next class of failure without waiting for
+            # ffmpeg to exit non-zero.
+            "-loglevel", "warning",
+            "-nostats",
             "-loop", "1",
             "-framerate", str(FPS),
             "-i", str(png_path),
@@ -123,10 +141,24 @@ def image_bytes_to_mp4(
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:
-            log.error("ffmpeg_image_to_mp4_failed", stderr=proc.stderr[-500:])
-            raise ImageConversionError(
-                f"FFmpeg failed converting image to mp4: {proc.stderr[-200:]}"
+            stderr = proc.stderr.strip()
+            log.error(
+                "ffmpeg_image_to_mp4_failed",
+                returncode=proc.returncode,
+                stderr=stderr,
+                stdout=proc.stdout.strip(),
+                out_path=out_path,
+                duration_s=duration_s,
+                png_bytes=len(png_bytes),
             )
+            # Surface the last 3 non-empty stderr lines, not just the final
+            # one. ffmpeg/libx264 typically emits the diagnostic message
+            # FIRST (e.g. "[libx264 @ 0x55] Error initializing output…")
+            # then a generic "Conversion failed!" trailer. Taking only the
+            # last line drops the actual cause.
+            non_empty = [ln for ln in stderr.splitlines() if ln.strip()]
+            tail = " | ".join(non_empty[-3:]) if non_empty else f"ffmpeg exited {proc.returncode}"
+            raise ImageConversionError(f"Could not encode image: {tail}")
 
     log.info(
         "image_to_mp4_done",

@@ -13,6 +13,7 @@ import {
   OVERLAY_EFFECT_OPTIONS,
   OVERLAY_POSITION_OPTIONS,
   OVERLAY_ROLE_OPTIONS,
+  OVERLAY_SUBJECT_PART_OPTIONS,
   MEDIA_TYPE_OPTIONS,
   SLOT_TYPE_OPTIONS,
   SYNC_STYLE_OPTIONS,
@@ -27,6 +28,7 @@ import {
   resolveOverlayPreview,
 } from "./overlay-constants";
 import { SpanEditor } from "./SpanEditor";
+import { FontAlternatives } from "./FontAlternatives";
 
 // ── Shared field components ─────────────────────────────────────────────────
 
@@ -163,11 +165,12 @@ function FontPicker({
 }) {
   const inferred = getInferredFontName(overlay);
   const current = overlay.font_family ?? "";
+  const unknownFont = !!current && !FONT_REGISTRY[current];
 
   return (
     <Field label="Font">
       <select
-        value={current}
+        value={unknownFont ? "" : current}
         onChange={(e) => onChange(e.target.value || null)}
         className={selectClass}
       >
@@ -188,6 +191,11 @@ function FontPicker({
           );
         })}
       </select>
+      {unknownFont && (
+        <span className="text-xs text-amber-400 mt-1 block">
+          Unknown font &quot;{current}&quot; — falling back to style default. Pick one above to fix.
+        </span>
+      )}
     </Field>
   );
 }
@@ -382,6 +390,22 @@ function OverlayListItem({
           onChange={(fontName) => set("font_family", fontName || undefined)}
         />
       </div>
+
+      <div className="grid grid-cols-3 gap-2">
+        <SelectInput
+          label="Subject Part"
+          value={overlay.subject_part ?? "none"}
+          options={OVERLAY_SUBJECT_PART_OPTIONS}
+          onChange={(v) => set("subject_part", v === "none" ? null : v)}
+        />
+      </div>
+
+      <FontAlternatives
+        overlay={overlay}
+        slotIndex={slotIndex}
+        overlayIndex={overlayIndex}
+        dispatch={dispatch}
+      />
 
       <div className="grid grid-cols-3 gap-2">
         <SelectInput

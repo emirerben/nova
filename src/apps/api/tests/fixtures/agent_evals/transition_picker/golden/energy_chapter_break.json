@@ -1,0 +1,28 @@
+{
+  "agent": "nova.layout.transition_picker",
+  "prompt_version": "2026-05-14",
+  "input": {
+    "outgoing": {
+      "description": "subject screams and pumps fist after winning race",
+      "energy": 9.5,
+      "camera_movement": "handheld"
+    },
+    "incoming": {
+      "description": "subject sits quietly at desk reviewing race photos",
+      "energy": 3.0,
+      "camera_movement": "static"
+    },
+    "template_default": "hard-cut",
+    "pacing_style": ""
+  },
+  "raw_text": "{\"transition\": \"curtain-close\", \"duration_s\": 0.8, \"rationale\": \"energy 9.5 \\u2192 3.0 (delta 6.5) is a chapter break; curtain-close marks the section change\"}",
+  "output": {
+    "transition": "curtain-close",
+    "duration_s": 0.8,
+    "rationale": "energy 9.5 → 3.0 (delta 6.5) is a chapter break; curtain-close marks the section change"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "Override path on energy delta alone. Template default is hard-cut, but energy delta 6.5 lands in the 5+ chapter-break band (must be curtain-close or none). Duration 0.8s is inside curtain-close's [0.60, 1.00] envelope. pacing_style is empty — the rubric scores that dimension as 3 (neutral). Tests the chapter-break override path and the duration envelope for curtain-close."
+  }
+}

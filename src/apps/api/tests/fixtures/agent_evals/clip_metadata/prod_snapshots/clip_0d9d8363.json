@@ -1,0 +1,43 @@
+{
+  "agent": "nova.video.clip_metadata",
+  "prompt_version": "exported",
+  "input": {
+    "file_uri": "clips/0d9d836351a4.mp4",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "{\"clip_id\": \"files/0eupfrxs40w7\", \"transcript\": \"uma galera falando l\\u00e1. daqui a pouco uma galera falando. \\u00c9 banda, bateria 2023. \\u00c9 banda.\", \"hook_text\": \"A vibrant street festival kicks off with a powerful drum performance.\", \"hook_score\": 8.0, \"best_moments\": [{\"start_s\": 0.0, \"end_s\": 18.0, \"energy\": 9.0, \"description\": \"Drummers performing continuously at a vibrant street festival\"}, {\"start_s\": 3.0, \"end_s\": 8.0, \"energy\": 9.0, \"description\": \"Focused shot on drummers beating their instruments\"}, {\"start_s\": 10.0, \"end_s\": 15.0, \"energy\": 8.0, \"description\": \"Multiple drummers playing in synchronization\"}], \"detected_subject\": \"\"}",
+  "output": {
+    "clip_id": "files/0eupfrxs40w7",
+    "transcript": "uma galera falando l\u00e1. daqui a pouco uma galera falando. \u00c9 banda, bateria 2023. \u00c9 banda.",
+    "hook_text": "A vibrant street festival kicks off with a powerful drum performance.",
+    "hook_score": 8.0,
+    "best_moments": [
+      {
+        "start_s": 0.0,
+        "end_s": 18.0,
+        "energy": 9.0,
+        "description": "Drummers performing continuously at a vibrant street festival"
+      },
+      {
+        "start_s": 3.0,
+        "end_s": 8.0,
+        "energy": 9.0,
+        "description": "Focused shot on drummers beating their instruments"
+      },
+      {
+        "start_s": 10.0,
+        "end_s": 15.0,
+        "energy": 8.0,
+        "description": "Multiple drummers playing in synchronization"
+      }
+    ],
+    "detected_subject": ""
+  },
+  "meta": {
+    "source": "Redis clip_analysis cache",
+    "clip_hash": "0d9d836351a4e729816cceb83e3e934a7b39cae9c13d0389d271751607cf4dda",
+    "moment_count": 3,
+    "transcript_len": 88,
+    "exported_at": "2026-05-13T04:32:29.354641+00:00"
+  }
+}

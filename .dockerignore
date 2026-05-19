@@ -47,6 +47,16 @@ src/apps/web/
 # ── Tests (save image size) ──
 tests/
 **/tests/
+# Exception: eval rubrics are read at runtime by app/agents/_online_eval.py
+# (Loop B online judge). Must be present in the prod image even though they
+# live under tests/. Keep this negation in sync with the Dockerfile COPY at
+# the corresponding path.
+!src/apps/api/tests/
+src/apps/api/tests/*
+!src/apps/api/tests/evals/
+src/apps/api/tests/evals/*
+!src/apps/api/tests/evals/rubrics/
+!src/apps/api/tests/evals/rubrics/**
 
 # ── Docker Compose (not used in Fly.io deploy) ──
 docker-compose.yml

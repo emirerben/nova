@@ -1,0 +1,29 @@
+{
+  "agent": "nova.video.shot_ranker",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "candidates": [
+      {"id": "a", "start_s": 0.0, "end_s": 3.0, "energy": 8.0, "description": "surfer drops into wave from peak", "hook_score": 8.5},
+      {"id": "b", "start_s": 5.0, "end_s": 8.0, "energy": 8.2, "description": "surfer drops into wave from peak", "hook_score": 8.5},
+      {"id": "c", "start_s": 10.0, "end_s": 13.0, "energy": 5.0, "description": "surfer walks across beach with board", "hook_score": 5.5},
+      {"id": "d", "start_s": 15.0, "end_s": 18.0, "energy": 7.5, "description": "wave breaks over surfer covering them in spray", "hook_score": 8.0},
+      {"id": "e", "start_s": 20.0, "end_s": 23.0, "energy": 6.0, "description": "drone reveal of empty bay at sunrise", "hook_score": 7.0}
+    ],
+    "target_count": 4,
+    "copy_tone": "calm",
+    "creative_direction": "surf travelogue, motion alternating with stillness"
+  },
+  "raw_text": "{\"ranked\": [{\"id\": \"a\", \"rank\": 1, \"rationale\": \"hook_score 8.5 — tied for top; chosen over b because copy_tone=calm favors a single peak rather than two duplicate drops; action verb (drops into wave) fits the hook role\"}, {\"id\": \"e\", \"rank\": 2, \"rationale\": \"hook_score 7.0; drone reveal description varies scene noun (bay) from the surf shots and honors copy_tone=calm with composed framing\"}, {\"id\": \"d\", \"rank\": 3, \"rationale\": \"hook_score 8.0; wave-breaks-over-surfer description introduces a payoff beat distinct from the drop action in rank 1\"}, {\"id\": \"c\", \"rank\": 4, \"rationale\": \"hook_score 5.5 — lowest ranked; description (walks across beach) anchors the reflective beat that copy_tone=calm calls for\"}]}",
+  "output": {
+    "ranked": [
+      {"id": "a", "rank": 1, "rationale": "hook_score 8.5 — tied for top; chosen over b because copy_tone=calm favors a single peak rather than two duplicate drops; action verb (drops into wave) fits the hook role"},
+      {"id": "e", "rank": 2, "rationale": "hook_score 7.0; drone reveal description varies scene noun (bay) from the surf shots and honors copy_tone=calm with composed framing"},
+      {"id": "d", "rank": 3, "rationale": "hook_score 8.0; wave-breaks-over-surfer description introduces a payoff beat distinct from the drop action in rank 1"},
+      {"id": "c", "rank": 4, "rationale": "hook_score 5.5 — lowest ranked; description (walks across beach) anchors the reflective beat that copy_tone=calm calls for"}
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "Variety + thematic stress test. Candidates a AND b are near-duplicates (same description, same hook_score). The correct ranking PICKS ONE and drops the other, preferring lower-ranked variety (energy span across ranked: 5.0-8.5; scene nouns: wave/bay/surfer/beach — distinct). Also tests thematic_fit: copy_tone=calm down-ranks the higher-energy d below the calmer e."
+  }
+}

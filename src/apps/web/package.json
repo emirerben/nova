@@ -1,13 +1,15 @@
 {
   "name": "nova-web",
-  "version": "0.4.6.0",
+  "version": "0.4.21.1",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "node scripts/sync-font-registry.mjs && next dev",
+    "build": "node scripts/sync-font-registry.mjs --check && next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "jest"
+    "test": "jest",
+    "sync:fonts": "node scripts/sync-font-registry.mjs",
+    "check:fonts": "node scripts/sync-font-registry.mjs --check"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.0.5",

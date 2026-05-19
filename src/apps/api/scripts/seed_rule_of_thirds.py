@@ -59,19 +59,45 @@ def build_recipe() -> dict:
     """
     slots = []
 
-    # Slot 1: Hook with 3-line title that arrives together, then beats red.
+    # Slot 1: Hook with a 3-line title stacked inside the center cell of the
+    # rule-of-thirds grid. "Thirds" snaps in red on the beat, line-synced
+    # with the grid red L.
     #
-    # Match the reference TikTok where:
-    #   t=0.4s — all 3 words fade in TOGETHER, all white
-    #   t=1.4s — beat hits: grid red L blinks AND "Thirds" turns red
-    #            (white "Thirds" overlay ends, red "Thirds" overlay begins)
-    #   t=2.4s — second beat: grid red L blinks again, Thirds stays red
-    #   t=3.0s — slot ends, cuts to slot 2
+    # Timeline:
+    #   t=0.4s — "The" and "Rule of" both fade in white on lines 1 and 2
+    #            (~500ms ASS fade-in inherited from _HOOK_BASE)
+    #   t=0.9s — both white words fully solid
+    #   t=1.4s — beat hits: grid red L snaps ON at top-left AND "Thirds" snaps
+    #            in red on line 3 — both events on the same frame, NO fade-in
+    #            on "Thirds" so its appearance locks to the line snap
+    #   t=1.7s — red L snaps off; "Thirds" stays red
+    #   t=2.4s — second beat: red L snaps on again; all 3 texts unchanged
+    #   t=2.7s — red L snaps off; all 3 texts unchanged
+    #   t=3.0s — slot ends, hard cut to slot 2; all 3 texts disappear on the
+    #            same frame (ASS \fad has 0ms fade-out)
     #
-    # The "Thirds" word uses two overlays at the same position with sequential
-    # times: the swap creates the beat-synced color change without needing ASS
-    # \t() time animation. The white overlay's end matches the red overlay's
-    # start (1.4s) which also matches grid_highlight_windows[0][0] in slot 1.
+    # Why "Thirds" uses effect="none": the inherited "fade-in" effect from
+    # _HOOK_BASE renders as ASS \fad(500,0), which delays full opacity until
+    # 1.9s — visibly behind the grid red L that snaps on instantly at 1.4s via
+    # FFmpeg between(t,1.4,1.7). Setting effect="none" routes the overlay
+    # through the static branch in text_overlay.py (any value outside
+    # ASS_ANIMATED_EFFECTS falls through to the no-animation tag path), making
+    # the text appear on the exact frame where t=start_s.
+    #
+    # Why 3 separate single-word overlays instead of "The Rule of" + "Thirds":
+    # the joined phrase "The Rule of" at 95px Playfair is ~440px wide and
+    # overflows the center cell of the rule-of-thirds grid (354px inside-width
+    # between the 6px-thick vertical lines at x=iw/3 and x=2*iw/3). Splitting
+    # to one word per line gives each line a width that fits — "Rule of" (the
+    # widest white word) measures ~315px at 95px, with ~20px margin per side.
+    #
+    # subject_substitute=False (inherited from _HOOK_BASE) opts the literal
+    # title words out of the placeholder-casing heuristic in
+    # template_orchestrate._is_subject_placeholder (PR #125). Without it,
+    # "The" and "Thirds" (single title-cased words) get re-classified as
+    # variable subject tokens and replaced with clip_meta.hook_text ("pilot in
+    # cockpit"), losing the recipe's color in the process (regression fixed
+    # in PR #133).
     _HOOK_BASE = {
         "role": "hook",
         "position": "center",
@@ -79,6 +105,7 @@ def build_recipe() -> dict:
         "font_family": "Playfair Display",
         "font_style": "serif",
         "end_s": 3.0,
+        "subject_substitute": False,
     }
     slots.append({
         "position": 1,
@@ -91,10 +118,11 @@ def build_recipe() -> dict:
         "energy": 6.0,
         # Slot 1 carries the rule-of-thirds grid AND the title — matches the
         # reference where the Big Ben subject sits at the top-left intersection
-        # under a red L while "The / Rule of / Thirds" stacks in the middle row.
-        # Highlight starts OFF so the opening reads as a clean white grid; it
-        # blinks twice on music beats: once when "Thirds" appears (t=1.4s) and
-        # once near the end of the slot (t=2.4s) to lead into slot 2's red L.
+        # under a red L while "The" / "Rule of" / "Thirds" stack inside the
+        # center cell of the grid. Highlight starts OFF so the opening reads as
+        # a clean white grid; it blinks twice on music beats: once when
+        # "Thirds" appears (t=1.4s) and once near the end of the slot (t=2.4s)
+        # to lead into slot 2's red L.
         "has_grid": True,
         "grid_color": "#FFFFFF",
         "grid_opacity": 0.95,
@@ -102,22 +130,29 @@ def build_recipe() -> dict:
         "grid_highlight_intersection": "top-left",
         "grid_highlight_color": "#E63946",
         "grid_highlight_windows": [[1.4, 1.7], [2.4, 2.7]],
-        # The 3 title words appear SEQUENTIALLY in the reference TikTok,
-        # NOT stacked: each word reveals on its own beat then is replaced
-        # by the next.
+        # 3-line title — each word on its own line, all three stacked inside
+        # the center cell of the rule-of-thirds grid.
         #
         # `position_y_frac` is the VERTICAL CENTER of the rendered text
         # (text_overlay.py: `block_top = CANVAS_H * y_frac - block_h / 2`).
-        # On a 1920px frame, a delta of 0.01 = ~19px. The earlier values
-        # (0.42 / 0.55 / 0.56) put a ~250px jump between "The" and "Rule of"
-        # which read as a "wide gap" because the eye has to leap down to
-        # find the next word. Tightened to a 0.04 total spread (~77px) so
-        # the words land in a single readable band centered on the middle
-        # rule-of-thirds row, with a subtle downward sweep that mimics the
-        # reference's reading rhythm without the disorienting jump.
-        # Sizes tuned against the reference: ~95px font on 1920px video.
-        # "Thirds" same size as the others — the red color is the emphasis,
-        # not bigger type.
+        # Center cell bounds on a 1080x1920 frame: y=640 (ih/3) to y=1280
+        # (2*ih/3), height 640px. With 95px Playfair lines spread evenly:
+        #   y_frac 0.43 -> center y=826 (line 1: "The")
+        #   y_frac 0.50 -> center y=960 (line 2: "Rule of", dead center)
+        #   y_frac 0.57 -> center y=1094 (line 3: "Thirds", red)
+        # 134px between centers, ~39px gap between text blocks. Top text at
+        # y=779 (139px below the y=640 top grid line). Bottom text ending at
+        # y=1141 (139px above the y=1280 bottom grid line).
+        #
+        # All three overlays have distinct y_fracs, so _collect_absolute_overlays
+        # treats them as separate screen slots — no dedup truncation.
+        #
+        # Sizes tuned against the reference: 95px Playfair on 1920px video.
+        # Per-word horizontal width at 95px (measured from preview render):
+        # "The" ~135px, "Rule of" ~315px, "Thirds" ~295px — all fit inside the
+        # ~354px center-cell inside-width with margin. "Thirds" matches the
+        # upper lines' size; emphasis comes from snap-on + red color, not
+        # bigger type.
         "text_overlays": [
             {
                 **_HOOK_BASE,
@@ -125,28 +160,30 @@ def build_recipe() -> dict:
                 "text_size_px": 95,
                 "text_color": "#FFFFFF",
                 "start_s": 0.4,
-                "end_s": 1.0,
-                "position_y_frac": 0.50,
+                "end_s": 3.0,
+                "position_y_frac": 0.43,
             },
             {
                 **_HOOK_BASE,
                 "text": "Rule of",
                 "text_size_px": 95,
                 "text_color": "#FFFFFF",
-                "start_s": 1.0,
-                "end_s": 1.4,
-                "position_y_frac": 0.52,
+                "start_s": 0.4,
+                "end_s": 3.0,
+                "position_y_frac": 0.50,
             },
-            # "Thirds" lands red on the beat at 1.4s and stays through slot
-            # end — no white phase, the reference shows it red from frame 1
-            # of its appearance.
+            # "Thirds" snaps in on the beat at 1.4s — effect="none" overrides
+            # the inherited _HOOK_BASE fade-in so the appearance frame matches
+            # the grid red L's snap-on frame (grid_highlight_windows[0][0]).
             {
                 **_HOOK_BASE,
+                "effect": "none",
                 "text": "Thirds",
                 "text_size_px": 95,
                 "text_color": "#E63946",
                 "start_s": 1.4,
-                "position_y_frac": 0.54,
+                "end_s": 3.0,
+                "position_y_frac": 0.57,
             },
         ],
     })

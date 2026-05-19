@@ -315,12 +315,100 @@ class TestOrchestratePipelineHelpers:
         assert failed_count == 4
         assert len(metas) == 0
 
+    def test_gemini_failure_records_phase_log_event(self):
+        """Investigations of silent 6s outputs were inferring clip-analysis
+        failure from the absence of a `gemini_analyze` event. With this fix,
+        a Gemini failure positively records `gemini_analyze_failed` with
+        clip_idx + error so post-mortems can see exactly which clip fell
+        through, even when Whisper rescues the job."""
+        from app.tasks.template_orchestrate import _analyze_clips_parallel
+
+        file_refs = [MagicMock(), MagicMock()]
+        file_refs[0].name = "files/clip_0"
+        file_refs[1].name = "files/clip_1"
+        local_paths = ["/tmp/clip_0.mp4", "/tmp/clip_1.mp4"]
+
+        # First clip succeeds, second fails Gemini and Whisper rescues it.
+        def _mock_analyze(ref, **_kw):
+            if ref is file_refs[1]:
+                raise GeminiAnalysisError("boom")
+            return _make_clip_meta("clip_0")
+
+        from app.pipeline.transcribe import Transcript
+        whisper_transcript = Transcript(words=[], full_text="hello", low_confidence=False)
+
+        with (
+            patch("app.tasks.template_orchestrate.analyze_clip", side_effect=_mock_analyze),
+            patch("app.pipeline.transcribe.transcribe_whisper", return_value=whisper_transcript),
+            patch("app.tasks.template_orchestrate.record_sub_phase") as mock_record,
+        ):
+            metas, failed_count = _analyze_clips_parallel(
+                file_refs,
+                local_paths,
+                job_id="job-abc",
+                record_sub_phases=True,
+            )
+
+        assert failed_count == 0
+        assert len(metas) == 2  # second meta is degraded fallback
+
+        # Find the failure event among recorded sub-phases.
+        failure_calls = [
+            c for c in mock_record.call_args_list
+            if len(c.args) >= 3 and c.args[2] == "gemini_analyze_failed"
+        ]
+        assert len(failure_calls) == 1, (
+            f"expected one gemini_analyze_failed event, got "
+            f"{[c.args[2] for c in mock_record.call_args_list if len(c.args) >= 3]}"
+        )
+        call = failure_calls[0]
+        # Positional args: (job_id, phase, event_name)
+        assert call.args[0] == "job-abc"
+        # detail carries clip_idx + error string
+        detail = call.kwargs["detail"]
+        assert detail["clip_idx"] == 1
+        assert "boom" in detail["error"]
+        assert detail["clip_path"] == "clip_1.mp4"
+
+    def test_gemini_failure_not_logged_when_record_sub_phases_false(self):
+        """The diagnostic only fires under record_sub_phases — the legacy
+        path keeps zero new noise."""
+        from app.tasks.template_orchestrate import _analyze_clips_parallel
+
+        file_refs = [MagicMock()]
+        file_refs[0].name = "files/clip_0"
+        local_paths = ["/tmp/clip_0.mp4"]
+
+        from app.pipeline.transcribe import Transcript
+        whisper_transcript = Transcript(words=[], full_text="", low_confidence=True)
+
+        with (
+            patch(
+                "app.tasks.template_orchestrate.analyze_clip",
+                side_effect=GeminiAnalysisError("boom"),
+            ),
+            patch("app.pipeline.transcribe.transcribe_whisper", return_value=whisper_transcript),
+            patch("app.tasks.template_orchestrate.record_sub_phase") as mock_record,
+        ):
+            _analyze_clips_parallel(file_refs, local_paths)  # record_sub_phases default False
+
+        assert mock_record.call_count == 0
+
 
 class TestPreBurnCurtainSlotText:
-    """Test _pre_burn_curtain_slot_text encodes intermediates with ultrafast."""
+    """Test _pre_burn_curtain_slot_text encodes with preset=fast (final-output
+    quality budget — see tests/test_encoder_policy.py and CLAUDE.md "Encoder
+    policy"). Prior policy used preset=ultrafast to fit Fly.io's 600s timeout
+    on 24-slot recipes; PR #105's --concurrency=1 + PNG-overlay curtain freed
+    enough CPU budget that fast fits. ultrafast disables mb-tree + psy-rd,
+    which made smooth blue-canopy gradients (Dimples slot 5 BRAZIL title)
+    show visible macroblocking — fixed by propagating fast here."""
 
-    def test_pre_burn_uses_ultrafast_preset(self):
-        """Intermediate clip must use preset=ultrafast to avoid 600s timeouts on Fly.io."""
+    def test_pre_burn_uses_fast_preset(self):
+        """Pre-curtain text burn must use preset=fast — the slot is about to be
+        re-encoded once more by curtain-close, so ultrafast losses would be
+        baked in before curtain-close can run. See app/pipeline/reframe.py:
+        _encoding_args.__doc__ for the full call-site audit."""
         import tempfile
 
         from app.tasks.template_orchestrate import _pre_burn_curtain_slot_text
@@ -370,8 +458,9 @@ class TestPreBurnCurtainSlotText:
         cmd = mock_run.call_args[0][0]
         assert "-preset" in cmd, f"No -preset flag in cmd: {cmd}"
         preset_idx = cmd.index("-preset")
-        assert cmd[preset_idx + 1] == "ultrafast", (
-            f"Expected ultrafast preset for intermediate, got: {cmd[preset_idx + 1]}"
+        assert cmd[preset_idx + 1] == "fast", (
+            f"Expected preset=fast (final-output quality budget — locked by "
+            f"tests/test_encoder_policy.py), got: {cmd[preset_idx + 1]}"
         )
 
 
@@ -429,9 +518,12 @@ class TestConcatDemuxerStreamCopyFallback:
         # Two subprocess.run calls: the failed stream-copy + the re-encode fallback.
         assert mock_run.call_count == 2
         last_cmd = mock_run.call_args_list[-1][0][0]
-        # The fallback uses _encoding_args which sets -preset ultrafast.
+        # The fallback uses _encoding_args which is locked to preset=fast for
+        # this call site (final-output quality budget). Locked by
+        # tests/test_encoder_policy.py — ultrafast here compounds banding
+        # because the bytes written are the bytes shipped.
         assert "-preset" in last_cmd
-        assert last_cmd[last_cmd.index("-preset") + 1] == "ultrafast"
+        assert last_cmd[last_cmd.index("-preset") + 1] == "fast"
         # And the rejected copy_tmp must have been cleaned up before the
         # fallback wrote its own output_path.
         assert not os.path.exists(copy_tmp)
@@ -470,15 +562,19 @@ class TestConcatDemuxerStreamCopyFallback:
 
 
 class TestConcatDemuxerPreset:
-    """_concat_demuxer uses preset=ultrafast for shared-CPU iteration speed."""
+    """_concat_demuxer fallback re-encode uses preset=fast — this is a
+    final-output path, the bytes get shipped to users. See
+    tests/test_encoder_policy.py for the policy, CLAUDE.md "Encoder policy"
+    for the rule, and app/pipeline/reframe.py:_encoding_args docstring for
+    the full call-site audit. ultrafast was the previous policy and produced
+    visible macroblocking on smooth gradients (the BRAZIL/blue-canopy bug);
+    PR #105 unlocked enough CPU budget that fast fits within the 1200s timeout.
+    """
 
-    def test_concat_uses_ultrafast_preset(self):
-        """Final concat must use preset=ultrafast to fit Fly.io's 600s ffmpeg
-        timeout on 24-slot recipes. CRF 18 and the 4M bitrate cap keep quality
-        in the visually-lossless band; the scenecut/I-frame benefit of
-        preset=fast was costing 9+ minutes per render — not worth it for
-        marginal seam quality.
-        """
+    def test_concat_uses_fast_preset(self):
+        """Concat fallback must use preset=fast so banding doesn't compound
+        through the final output. mb-tree + psy-rd (disabled by ultrafast)
+        are what protect smooth gradients from 16x16 macroblocking."""
         import tempfile
 
         from app.tasks.template_orchestrate import _concat_demuxer
@@ -503,8 +599,9 @@ class TestConcatDemuxerPreset:
         cmd = mock_run.call_args[0][0]
         assert "-preset" in cmd, f"No -preset flag in cmd: {cmd}"
         preset_idx = cmd.index("-preset")
-        assert cmd[preset_idx + 1] == "ultrafast", (
-            f"concat must use preset=ultrafast, got: {cmd[preset_idx + 1]}"
+        assert cmd[preset_idx + 1] == "fast", (
+            f"concat must use preset=fast (final-output quality budget — "
+            f"locked by tests/test_encoder_policy.py), got: {cmd[preset_idx + 1]}"
         )
 
 
@@ -555,6 +652,125 @@ class TestAnalyzeTemplateTask:
             analyze_template_task("template-123")
 
         assert mock_template.analysis_status == "failed"
+
+    def test_audio_only_template_regenerates_recipe_from_music_track(self):
+        """Regression: audio_only templates have gcs_path=None.
+
+        Pre-fix: analyze_template_task called download_to_file(None) which
+        crashed inside google-cloud-storage with "None could not be converted
+        to unicode" — the symptom the user saw clicking Reanalyze on the
+        Bad Bunny - DtMF Letra template.
+
+        Post-fix: the task short-circuits to a recipe regen from the linked
+        MusicTrack — useful both as a "refresh recipe" action AND as a heal
+        path for templates whose recipe_cached was left empty (prod DtMF
+        had recipe_cached={} despite the track carrying 532 beats).
+        """
+        from app.models import MusicTrack
+        from app.tasks.template_orchestrate import analyze_template_task
+
+        mock_template = MagicMock()
+        mock_template.gcs_path = None
+        mock_template.template_type = "audio_only"
+        mock_template.music_track_id = "track-bb-dtmf"
+        mock_template.analysis_status = "ready"
+        mock_template.recipe_cached = {}  # the empty-recipe state we are healing
+
+        mock_track = MagicMock(spec=MusicTrack)
+        mock_track.beat_timestamps_s = [
+            70.0, 70.5, 71.0, 71.5, 72.0, 72.5, 73.0, 73.5,
+            74.0, 74.5, 75.0, 75.5, 76.0, 76.5, 77.0, 77.5,
+        ]
+        mock_track.track_config = {
+            "best_start_s": 69.02,
+            "best_end_s": 114.02,
+            "slot_every_n_beats": 8,
+        }
+        mock_track.duration_s = 240.0
+
+        regenerated_recipe = {
+            "slots": [{"position": 1, "target_duration_s": 4.0}],
+            "beat_timestamps_s": mock_track.beat_timestamps_s,
+        }
+
+        def _session_get(model, pk):
+            if model is MusicTrack:
+                return mock_track
+            return mock_template
+
+        _orch = "app.tasks.template_orchestrate"
+        with (
+            patch(f"{_orch}._sync_session") as mock_session_ctx,
+            patch(f"{_orch}.download_to_file") as mock_download,
+            patch(f"{_orch}.gemini_upload_and_wait") as mock_upload,
+            patch(
+                "app.pipeline.music_recipe.generate_music_recipe",
+                return_value=regenerated_recipe,
+            ) as mock_gen,
+        ):
+            session = MagicMock()
+            mock_session_ctx.return_value.__enter__ = MagicMock(return_value=session)
+            mock_session_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            session.get.side_effect = _session_get
+
+            analyze_template_task("template-audio-only")
+
+        # download_to_file must NOT be called with None (the original crash).
+        mock_download.assert_not_called()
+        mock_upload.assert_not_called()
+        # generate_music_recipe was called with the track's data.
+        mock_gen.assert_called_once()
+        track_data_arg = mock_gen.call_args[0][0]
+        assert track_data_arg["track_config"] == mock_track.track_config
+        assert track_data_arg["beat_timestamps_s"] == mock_track.beat_timestamps_s
+        # Recipe was written back onto the template.
+        assert mock_template.recipe_cached == regenerated_recipe
+        assert mock_template.analysis_status == "ready"
+        assert mock_template.error_detail is None
+
+    def test_audio_only_with_no_beats_marks_ready_without_crash(self):
+        """If the linked track has no beats yet, regen is skipped but the
+        task still completes cleanly (no download, no error).
+        """
+        from app.models import MusicTrack
+        from app.tasks.template_orchestrate import analyze_template_task
+
+        mock_template = MagicMock()
+        mock_template.gcs_path = None
+        mock_template.template_type = "audio_only"
+        mock_template.music_track_id = "track-empty"
+        mock_template.analysis_status = "ready"
+
+        mock_track = MagicMock(spec=MusicTrack)
+        mock_track.beat_timestamps_s = []
+        mock_track.track_config = {}
+        mock_track.duration_s = 0.0
+
+        def _session_get(model, pk):
+            if model is MusicTrack:
+                return mock_track
+            return mock_template
+
+        _orch = "app.tasks.template_orchestrate"
+        with (
+            patch(f"{_orch}._sync_session") as mock_session_ctx,
+            patch(f"{_orch}.download_to_file") as mock_download,
+            patch(
+                "app.pipeline.music_recipe.generate_music_recipe"
+            ) as mock_gen,
+        ):
+            session = MagicMock()
+            mock_session_ctx.return_value.__enter__ = MagicMock(return_value=session)
+            mock_session_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            session.get.side_effect = _session_get
+
+            analyze_template_task("template-audio-empty")
+
+        mock_download.assert_not_called()
+        # No beats → regen skipped entirely, no exception
+        mock_gen.assert_not_called()
+        assert mock_template.analysis_status == "ready"
+        assert mock_template.error_detail is None
 
 
 # ── Regression anchors — fail on the old broken code, pass after fix ──────────
@@ -725,6 +941,145 @@ class TestAssembleClipsTiming:
             assert kwargs["end_s"] == 5.0
 
 
+class TestClipFootageExhausted:
+    """Lock the no-freeze invariant for slots whose source is shorter than the
+    slot's target duration.
+
+    Background: job 5282cab7-3914-4779-937f-dc2364e8f9d6 slot 5 had a 2.97s
+    source filling a 5.5s "Welcome to THAILAND" hook slot. The orchestrator
+    used to clamp `end_s = min(start_s + source_duration, clip_dur)` (= 2.97)
+    and let FFmpeg's CFR muxer (`-r 30` in `_encoding_args`) pad the gap with
+    the held last frame, producing a 2.53s frozen-frame tail before the
+    curtain bars even started. Empirically confirmed via per-frame MAD on
+    the rendered output: from t≈8.07s onward the background-only MAD (text
+    region masked out) drops to 0.17–0.52 — pixels are essentially identical.
+
+    Fix: when the planned window overruns the source, slow the available
+    footage down via `speed_factor` so the slot still spans
+    `slot_target_dur` of output time with continuous motion across it.
+    """
+
+    def _make_step(
+        self, clip_id: str, start_s: float,
+        end_s: float, target_dur: float,
+    ) -> MagicMock:
+        step = MagicMock()
+        step.clip_id = clip_id
+        step.moment = {"start_s": start_s, "end_s": end_s}
+        step.slot = {"position": 5, "target_duration_s": target_dur}
+        return step
+
+    def test_short_source_slows_down_to_fill_slot(self, tmp_path):
+        """Source 2.97s in a 5.5s slot → speed_factor ≈ 0.54, end_s = 2.97
+        (clip_dur). reframe.py applies `setpts=PTS/0.54` + motion-blended
+        `framerate=fps=30`, so the slot has 5.5s of continuous motion.
+
+        Without this fix, end_s would still be 2.97 (clamped) but
+        speed_factor would stay 1.0; the slot would render as 2.97s of
+        real footage + 2.53s of held last frame (the freeze)."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+        # Real probe says the clip is 2.97s — the exact value from job
+        # 5282cab7's slot 5 (sharks swimming).
+        probe = VideoProbe(
+            duration_s=2.97, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = self._make_step("clip_a", start_s=0.0, end_s=3.9, target_dur=5.5)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            # Speed factor slowed to fill the slot
+            expected_speed = 2.97 / 5.5
+            assert kwargs["speed_factor"] == pytest.approx(expected_speed, rel=0.01), (
+                f"expected speed_factor ≈ {expected_speed:.3f}, got "
+                f"{kwargs['speed_factor']}"
+            )
+            # Window covers ALL available footage from start
+            assert kwargs["start_s"] == 0.0
+            assert kwargs["end_s"] == pytest.approx(2.97, abs=0.01)
+
+    def test_severely_short_source_falls_back_to_clamp(self, tmp_path):
+        """When the slowdown would drop below 0.4× (source < 40% of slot),
+        fall back to the original clamp behavior. The slot will still have
+        a frozen tail under FFmpeg's CFR padding, but extreme slow-motion
+        reads as "broken" rather than stylistic — clamping is the lesser
+        evil. Eliminating this severity case requires a re-pick from the
+        matcher (out of scope here)."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+        # Clip 1.0s in a 5.5s slot → would need speed_factor 0.18, well
+        # below the 0.4 floor.
+        probe = VideoProbe(
+            duration_s=1.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = self._make_step("clip_a", start_s=0.0, end_s=1.0, target_dur=5.5)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            # Speed factor unchanged from recipe default
+            assert kwargs["speed_factor"] == 1.0
+            # Window clamped to clip_dur
+            assert kwargs["end_s"] == pytest.approx(1.0, abs=0.01)
+
+    def test_source_long_enough_no_slowdown(self, tmp_path):
+        """Sanity: when the source has enough footage, speed_factor stays
+        at the recipe default and the window covers exactly slot_target_dur.
+        Locks the no-regression on the common case."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+        probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = self._make_step("clip_a", start_s=0.0, end_s=10.0, target_dur=5.5)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            assert kwargs["speed_factor"] == 1.0
+            assert kwargs["end_s"] == pytest.approx(5.5, abs=0.01)
+
+
 # ── _assemble_clips aspect ratio ──────────────────────────────────────────────
 
 
@@ -783,6 +1138,57 @@ class TestAssembleClipsAspectRatio:
                 tmpdir=str(tmp_path),
             )
             assert mock_reframe.call_args.kwargs["aspect_ratio"] == "16:9"
+
+    def test_locked_source_uses_letterbox_black_not_aspect_mutation(self, tmp_path):
+        """Locked-source slots (e.g. Morocco's 1024x576 template intro with
+        baked-in hook text on the sides) must opt into the explicit
+        `output_fit="letterbox_black"` branch instead of mutating
+        aspect_ratio to "9:16" to back-door the old pad-by-default behavior.
+
+        The non-16:9 default reframe branch now crops to fill the canvas
+        (job d1eaabd3 fix). If a locked 16:9 source still went through that
+        branch, the side-text would get chopped. This test pins:
+            (a) `aspect_ratio` is NOT mutated to "9:16" — the probe's real
+                value flows through (here "16:9").
+            (b) `output_fit="letterbox_black"` is threaded so the reframe
+                filter hits the intentional pad branch.
+        """
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "locked_clip.mp4"
+        clip_file.write_bytes(b"fake")
+
+        probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1024, height=576,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = MagicMock()
+        step.clip_id = "locked_a"
+        step.moment = {"start_s": 0.0, "end_s": 5.0}
+        step.slot = {"position": 1, "target_duration_s": 5.0, "locked": True}
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"locked_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            assert kwargs["aspect_ratio"] == "16:9", (
+                "Locked source must NOT mutate aspect_ratio to '9:16' — "
+                "the probe's real value must flow through so the reframe "
+                "filter can branch correctly."
+            )
+            assert kwargs["output_fit"] == "letterbox_black", (
+                "Locked source must opt into the explicit letterbox path "
+                "to preserve side-baked hook text."
+            )
 
     def test_probe_clips_happy_path(self, tmp_path):
         """_probe_clips returns one VideoProbe per path."""
@@ -972,6 +1378,121 @@ class TestTemplateAudio:
 
         mock_copy.assert_not_called()
 
+    def test_mix_audio_applies_audio_start_offset(self, tmp_path):
+        """audio_start_offset_s > 0 → ffmpeg cmd has -ss BEFORE the audio -i."""
+        from app.tasks.template_orchestrate import _mix_template_audio
+
+        ok_proc = MagicMock()
+        ok_proc.returncode = 0
+        captured: dict = {}
+
+        def _capture(cmd, *_args, **_kwargs):
+            captured["cmd"] = cmd
+            return ok_proc
+
+        with (
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch(
+                "app.tasks.template_orchestrate._probe_duration",
+                side_effect=[20.0, 60.0],  # video, audio
+            ),
+            patch(
+                "app.tasks.template_orchestrate.subprocess.run",
+                side_effect=_capture,
+            ),
+        ):
+            _mix_template_audio(
+                video_path="/tmp/assembled.mp4",
+                audio_gcs_path="templates/t1/audio.m4a",
+                output_path=str(tmp_path / "final.mp4"),
+                tmpdir=str(tmp_path),
+                audio_start_offset_s=12.5,
+            )
+
+        cmd = captured["cmd"]
+        audio_local = os.path.join(str(tmp_path), "template_audio.m4a")
+        # Find "-i audio_local" and check the two args before it are "-ss" + offset
+        i_audio = next(
+            i for i, a in enumerate(cmd)
+            if a == "-i" and i + 1 < len(cmd) and cmd[i + 1] == audio_local
+        )
+        assert cmd[i_audio - 2 : i_audio] == ["-ss", "12.500"], (
+            "Expected '-ss 12.500' immediately before audio input, got "
+            f"{cmd[i_audio - 2 : i_audio + 2]}"
+        )
+
+    def test_mix_audio_no_offset_preserves_existing_cmd(self, tmp_path):
+        """audio_start_offset_s=0.0 (default) → ffmpeg cmd has NO -ss flag."""
+        from app.tasks.template_orchestrate import _mix_template_audio
+
+        ok_proc = MagicMock()
+        ok_proc.returncode = 0
+        captured: dict = {}
+
+        def _capture(cmd, *_args, **_kwargs):
+            captured["cmd"] = cmd
+            return ok_proc
+
+        with (
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch(
+                "app.tasks.template_orchestrate._probe_duration",
+                side_effect=[20.0, 60.0],
+            ),
+            patch(
+                "app.tasks.template_orchestrate.subprocess.run",
+                side_effect=_capture,
+            ),
+        ):
+            _mix_template_audio(
+                video_path="/tmp/assembled.mp4",
+                audio_gcs_path="templates/t1/audio.m4a",
+                output_path=str(tmp_path / "final.mp4"),
+                tmpdir=str(tmp_path),
+            )
+
+        assert "-ss" not in captured["cmd"], (
+            "Default offset 0.0 must not emit -ss — regression risk for existing templates"
+        )
+
+    def test_mix_audio_offset_clamped_below_audio_duration(self, tmp_path):
+        """Offset close to / past EOF is clamped so ≥5s of audio remains."""
+        from app.tasks.template_orchestrate import _mix_template_audio
+
+        ok_proc = MagicMock()
+        ok_proc.returncode = 0
+        captured: dict = {}
+
+        def _capture(cmd, *_args, **_kwargs):
+            captured["cmd"] = cmd
+            return ok_proc
+
+        with (
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch(
+                "app.tasks.template_orchestrate._probe_duration",
+                side_effect=[20.0, 30.0],  # video=20s, audio=30s
+            ),
+            patch(
+                "app.tasks.template_orchestrate.subprocess.run",
+                side_effect=_capture,
+            ),
+        ):
+            _mix_template_audio(
+                video_path="/tmp/assembled.mp4",
+                audio_gcs_path="templates/t1/audio.m4a",
+                output_path=str(tmp_path / "final.mp4"),
+                tmpdir=str(tmp_path),
+                audio_start_offset_s=29.0,  # would leave only 1s — must clamp
+            )
+
+        cmd = captured["cmd"]
+        ss_idx = cmd.index("-ss")
+        # audio_dur=30, safe_offset = min(29.0, 30-5) = 25.0
+        assert cmd[ss_idx + 1] == "25.000", (
+            f"Expected offset clamped to 25.000 (audio_dur 30 - 5s tail), got {cmd[ss_idx + 1]}"
+        )
+
     def test_mix_audio_download_failure_fallback(self, tmp_path):
         """download_to_file raises → shutil.copy2 used, no exception raised."""
         from app.tasks.template_orchestrate import _mix_template_audio
@@ -1004,6 +1525,7 @@ class TestTemplateAudio:
 
         mock_template = MagicMock()
         mock_template.analysis_status = "ready"
+        mock_template.is_agentic = False
         mock_template.recipe_cached = {
             "shot_count": 1,
             "total_duration_s": 5.0,
@@ -1071,6 +1593,198 @@ class TestTemplateAudio:
 
         # Called twice: once for the final video, once for the base (editor preview)
         assert mock_mix.call_count == 2
+
+    def test_run_template_job_passes_music_track_best_start_s_to_mixer(self):
+        """audio_only template with linked MusicTrack → _mix_template_audio
+        receives audio_start_offset_s = track_config.best_start_s.
+        Regression: prior bug played intro instead of chorus on Bad Bunny - DtMF.
+        """
+        from app.models import MusicTrack
+        from app.tasks.template_orchestrate import _run_template_job
+
+        mock_job = MagicMock()
+        mock_job.status = "queued"
+        mock_job.template_id = "t1"
+        mock_job.all_candidates = {"clip_paths": ["gs://bucket/clip_0.mp4"]}
+        mock_job.selected_platforms = ["tiktok"]
+
+        mock_template = MagicMock()
+        mock_template.analysis_status = "ready"
+        mock_template.is_agentic = False
+        mock_template.recipe_cached = {
+            "shot_count": 1,
+            "total_duration_s": 5.0,
+            "hook_duration_s": 3.0,
+            "slots": [
+                {
+                    "position": 1,
+                    "target_duration_s": 5.0,
+                    "priority": 5,
+                    "slot_type": "hook",
+                },
+            ],
+            "copy_tone": "casual",
+            "caption_style": "bold",
+        }
+        mock_template.audio_gcs_path = "music/bb/audio.m4a"
+        mock_template.music_track_id = "track-bb-dtmf"
+
+        mock_track = MagicMock(spec=MusicTrack)
+        mock_track.track_config = {
+            "best_start_s": 69.02,
+            "best_end_s": 114.02,
+            "slot_every_n_beats": 8,
+        }
+
+        def _mock_ctx():
+            ctx = MagicMock()
+            ctx.__enter__ = MagicMock(return_value=session)
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        session = MagicMock()
+
+        def _session_get(model, pk):
+            if model is VideoTemplate:
+                return mock_template
+            if model is MusicTrack:
+                return mock_track
+            return mock_job
+
+        session.get.side_effect = _session_get
+
+        _orch = "app.tasks.template_orchestrate"
+        with (
+            patch(f"{_orch}._sync_session", side_effect=_mock_ctx),
+            patch(
+                f"{_orch}._download_clips_parallel",
+                return_value=["/tmp/clip_0.mp4"],
+            ),
+            patch(f"{_orch}._probe_clips", return_value={}),
+            patch(
+                f"{_orch}._upload_clips_parallel",
+                return_value=[MagicMock(name="clip_0")],
+            ),
+            patch(
+                f"{_orch}._analyze_clips_parallel",
+                return_value=([_make_clip_meta()], 0),
+            ),
+            patch(f"{_orch}.match") as mock_match,
+            patch(f"{_orch}._assemble_clips"),
+            patch(f"{_orch}._mix_template_audio") as mock_mix,
+            patch(f"{_orch}._extract_hook_text", return_value=""),
+            patch(f"{_orch}._extract_transcript", return_value=""),
+            patch(
+                f"{_orch}.upload_public_read", return_value="https://cdn/out.mp4"
+            ),
+        ):
+            from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep
+            step = AssemblyStep(
+                slot={"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "hook"},
+                clip_id="clip_0",
+                moment={"start_s": 0.0, "end_s": 5.0, "energy": 7.0},
+            )
+            mock_match.return_value = AssemblyPlan(steps=[step])
+
+            mock_platform_copy = MagicMock()
+            mock_platform_copy.model_dump.return_value = {}
+            with patch("app.pipeline.agents.copy_writer.generate_copy") as mock_copy:
+                mock_copy.return_value = (mock_platform_copy, "generated")
+                _run_template_job("12345678-1234-5678-1234-567812345678")
+
+        # Both calls (final + base) must receive the track's best_start_s offset.
+        assert mock_mix.call_count == 2
+        for call in mock_mix.call_args_list:
+            assert call.kwargs.get("audio_start_offset_s") == 69.02, (
+                f"Expected audio_start_offset_s=69.02 from track_config, got "
+                f"{call.kwargs.get('audio_start_offset_s')}"
+            )
+
+    def test_run_template_job_no_music_track_offset_zero(self):
+        """Regular template (music_track_id=None) → offset stays 0.0, default behaviour."""
+        from app.tasks.template_orchestrate import _run_template_job
+
+        mock_job = MagicMock()
+        mock_job.status = "queued"
+        mock_job.template_id = "t1"
+        mock_job.all_candidates = {"clip_paths": ["gs://bucket/clip_0.mp4"]}
+        mock_job.selected_platforms = ["tiktok"]
+
+        mock_template = MagicMock()
+        mock_template.analysis_status = "ready"
+        mock_template.is_agentic = False
+        mock_template.recipe_cached = {
+            "shot_count": 1,
+            "total_duration_s": 5.0,
+            "hook_duration_s": 3.0,
+            "slots": [
+                {
+                    "position": 1,
+                    "target_duration_s": 5.0,
+                    "priority": 5,
+                    "slot_type": "hook",
+                },
+            ],
+            "copy_tone": "casual",
+            "caption_style": "bold",
+        }
+        mock_template.audio_gcs_path = "templates/t1/audio.m4a"
+        mock_template.music_track_id = None
+
+        def _mock_ctx():
+            ctx = MagicMock()
+            ctx.__enter__ = MagicMock(return_value=session)
+            ctx.__exit__ = MagicMock(return_value=False)
+            return ctx
+
+        session = MagicMock()
+        session.get.side_effect = lambda model, pk: (
+            mock_template if model is VideoTemplate else mock_job
+        )
+
+        _orch = "app.tasks.template_orchestrate"
+        with (
+            patch(f"{_orch}._sync_session", side_effect=_mock_ctx),
+            patch(
+                f"{_orch}._download_clips_parallel",
+                return_value=["/tmp/clip_0.mp4"],
+            ),
+            patch(f"{_orch}._probe_clips", return_value={}),
+            patch(
+                f"{_orch}._upload_clips_parallel",
+                return_value=[MagicMock(name="clip_0")],
+            ),
+            patch(
+                f"{_orch}._analyze_clips_parallel",
+                return_value=([_make_clip_meta()], 0),
+            ),
+            patch(f"{_orch}.match") as mock_match,
+            patch(f"{_orch}._assemble_clips"),
+            patch(f"{_orch}._mix_template_audio") as mock_mix,
+            patch(f"{_orch}._extract_hook_text", return_value=""),
+            patch(f"{_orch}._extract_transcript", return_value=""),
+            patch(
+                f"{_orch}.upload_public_read", return_value="https://cdn/out.mp4"
+            ),
+        ):
+            from app.pipeline.agents.gemini_analyzer import AssemblyPlan, AssemblyStep
+            step = AssemblyStep(
+                slot={"position": 1, "target_duration_s": 5.0, "priority": 5, "slot_type": "hook"},
+                clip_id="clip_0",
+                moment={"start_s": 0.0, "end_s": 5.0, "energy": 7.0},
+            )
+            mock_match.return_value = AssemblyPlan(steps=[step])
+
+            mock_platform_copy = MagicMock()
+            mock_platform_copy.model_dump.return_value = {}
+            with patch("app.pipeline.agents.copy_writer.generate_copy") as mock_copy:
+                mock_copy.return_value = (mock_platform_copy, "generated")
+                _run_template_job("12345678-1234-5678-1234-567812345678")
+
+        # Regular templates: offset must default to 0.0, no behaviour change.
+        assert mock_mix.call_count == 2
+        for call in mock_mix.call_args_list:
+            assert call.kwargs.get("audio_start_offset_s") == 0.0
 
 
 # ── template_matcher two-pass tolerance ───────────────────────────────────────
@@ -1296,6 +2010,66 @@ class TestOrchestrateTemplateJobErrors:
         assert mock_job.status == "processing_failed"
         assert mock_job.failure_reason == "ffmpeg_failed"
         assert "rc=234" in mock_job.error_detail
+
+
+class TestClassifySinglePassFailure:
+    """Unit tests for `_classify_single_pass_failure`.
+
+    Prod incident: job 1b555c69-32e3-434b-8886-7e6f2494366a failed with
+    failure_reason="unknown" and error_detail ending in
+    `rc=-9, output=/tmp/.../assembled.mp4):` — the SIGKILL fingerprint from
+    a kernel OOM-kill on a 2 GB Fly.io worker. This classifier exists so
+    that signal-killed renders get bucketed as `render_oom` instead of the
+    meaningless `unknown` reason.
+    """
+
+    def test_classify_single_pass_failure_rc_neg_9_is_oom(self):
+        from app.tasks.template_orchestrate import (
+            FAILURE_REASON_OOM,
+            _classify_single_pass_failure,
+        )
+
+        msg = "single-pass ffmpeg failed (rc=-9, output=/tmp/x/assembled.mp4):\n"
+        assert _classify_single_pass_failure(msg) == FAILURE_REASON_OOM
+
+    def test_classify_single_pass_failure_rc_neg_15_is_oom(self):
+        """SIGTERM (rc=-15) is also OOM-adjacent (Fly drain / OOM-soft)."""
+        from app.tasks.template_orchestrate import (
+            FAILURE_REASON_OOM,
+            _classify_single_pass_failure,
+        )
+
+        msg = "single-pass ffmpeg failed (rc=-15, output=/tmp/x/assembled.mp4):\n"
+        assert _classify_single_pass_failure(msg) == FAILURE_REASON_OOM
+
+    def test_classify_single_pass_failure_rc_1_is_unknown(self):
+        from app.tasks.template_orchestrate import (
+            FAILURE_REASON_UNKNOWN,
+            _classify_single_pass_failure,
+        )
+
+        msg = (
+            "single-pass ffmpeg failed (rc=1, output=/tmp/x/assembled.mp4):\n"
+            "Invalid filter"
+        )
+        assert _classify_single_pass_failure(msg) == FAILURE_REASON_UNKNOWN
+
+    def test_classify_single_pass_failure_no_rc_is_unknown(self):
+        from app.tasks.template_orchestrate import (
+            FAILURE_REASON_UNKNOWN,
+            _classify_single_pass_failure,
+        )
+
+        msg = "single-pass ffmpeg timed out after 1500s"
+        assert _classify_single_pass_failure(msg) == FAILURE_REASON_UNKNOWN
+
+    def test_classify_single_pass_failure_empty_message_is_unknown(self):
+        from app.tasks.template_orchestrate import (
+            FAILURE_REASON_UNKNOWN,
+            _classify_single_pass_failure,
+        )
+
+        assert _classify_single_pass_failure("") == FAILURE_REASON_UNKNOWN
 
 
 # ── Beat detection tests ─────────────────────────────────────────────────────
@@ -1668,6 +2442,49 @@ class TestAssembleClipsTextOverlays:
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert result == []
 
+    def test_cycle_fonts_pass_through_to_renderer(self):
+        """REGRESSION: recipe-level `cycle_fonts` MUST reach the renderer
+        entry dict. Earlier the orchestrator's hand-rolled entry builder
+        didn't copy cycle_fonts, so _resolve_cycle_fonts fell back to the
+        global cycle_role=contrast pool, producing a sans/serif/script
+        flicker that overlay authors specifically opted out of. The Waka
+        Waka AFRICA overlay relies on this pass-through to render its
+        hand-drawn cycle (Permanent Marker, Caveat Brush, Shadows Into
+        Light, Kalam, Indie Flower, Architects Daughter)."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        africa_cycle = [
+            "Permanent Marker",
+            "Caveat Brush",
+            "Shadows Into Light",
+            "Kalam",
+            "Indie Flower",
+            "Architects Daughter",
+        ]
+        step = self._make_step_with_overlays(overlays=[{
+            "role": "label",
+            "start_s": 0.0,
+            "end_s": 2.4,
+            "position": "center",
+            "effect": "font-cycle",
+            "sample_text": "AFRICA",
+            "font_family": "Permanent Marker",
+            "cycle_fonts": list(africa_cycle),
+            "subject_substitute": False,
+            "text_color": "#FFD700",
+            "text_size_px": 250,
+        }])
+        result = _collect_absolute_overlays([step], [2.4], None, "Morocco")
+        assert len(result) == 1
+        entry = result[0]
+        # The cycle_fonts list must survive the orchestrator's field-copy
+        # logic and arrive at the renderer's entry dict intact.
+        assert entry.get("cycle_fonts") == africa_cycle
+        # font_family also propagates (separate but related bug class).
+        assert entry.get("font_family") == "Permanent Marker"
+        # Text doesn't get rewritten to "Morocco" because subject_substitute=False.
+        assert entry["text"] == "AFRICA"
+
     def test_curtain_close_slots_skipped_in_collect(self):
         """Curtain-close slot overlays are pre-burned, so skipped in _collect."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays
@@ -1996,11 +2813,19 @@ class TestCrossSlotMerge:
 
 
 class TestResolveOverlayText:
-    def test_hook_role_uses_hook_text(self):
+    def test_empty_hook_overlay_does_not_leak_clip_meta_hook_text(self):
+        """REGRESSION: empty hook overlay MUST render empty — never fall
+        back to Gemini's `clip_meta.hook_text`. The earlier fallback
+        leaked Gemini's per-clip description into the rendered video
+        (job a1091488, Rule of Thirds, 2026-05-13)."""
         from app.tasks.template_orchestrate import _resolve_overlay_text
-        meta = _make_clip_meta()
+        meta = _make_clip_meta()  # hook_text="test hook" populated
         result = _resolve_overlay_text("hook", meta, {})
-        assert result == "test hook"
+        assert result == "", (
+            "Gemini hook_text leaked into an empty overlay — the fallback "
+            "branch was reintroduced. See template_orchestrate.py's "
+            "_resolve_overlay_text and the 'pilot in cockpit' incident."
+        )
 
     def test_reaction_role_uses_sample_text(self):
         from app.tasks.template_orchestrate import _resolve_overlay_text
@@ -2113,6 +2938,108 @@ class TestSubjectSubstitution:
         from app.tasks.template_orchestrate import _is_subject_placeholder
         assert _is_subject_placeholder("Welcome to peru") is False
         assert _is_subject_placeholder("Welcome to") is False
+
+
+class TestSubjectSubstituteOptOut:
+    """`subject_substitute: False` pins an overlay to its literal sample_text.
+
+    REGRESSION coverage for the Waka Waka "Morocco appears instead of This"
+    bug. Without the opt-out, "This" (single title-cased word) and "AFRICA"
+    (all-caps) match `_is_subject_placeholder` and get rewritten to the
+    user's location. The opt-out is the explicit "this is literal text" flag
+    that templates with title-cased / all-caps intros must set.
+    """
+
+    def test_optout_beats_casing_heuristic_title_case(self):
+        """REGRESSION: 'This' is title-case and would otherwise match the
+        heuristic; opt-out must return the literal text."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {"sample_text": "This", "subject_substitute": False},
+            subject="Morocco",
+        )
+        assert result == "This"
+
+    def test_optout_beats_casing_heuristic_all_caps(self):
+        """REGRESSION: 'AFRICA' is all-caps and would otherwise be replaced
+        with 'MOROCCO'; opt-out must return the literal text."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {"sample_text": "AFRICA", "subject_substitute": False},
+            subject="Morocco",
+        )
+        assert result == "AFRICA"
+
+    def test_optout_beats_subject_template(self):
+        """`subject_template` would normally interpolate; opt-out wins."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {
+                "sample_text": "that one trip to AFRICA",
+                "subject_template": "that one trip to {subject}",
+                "subject_substitute": False,
+            },
+            subject="Morocco",
+        )
+        assert result == "that one trip to AFRICA"
+
+    def test_optout_beats_subject_part(self):
+        """`subject_part` would normally slice and substitute; opt-out wins."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {
+                "sample_text": "lon",
+                "subject_part": "first_half",
+                "subject_substitute": False,
+            },
+            subject="Paris",
+        )
+        assert result == "lon"
+
+    def test_optout_preserves_empty_subject_fallback(self):
+        """Opt-out returns the literal text regardless of subject value."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {"sample_text": "This", "subject_substitute": False},
+            subject="",
+        )
+        assert result == "This"
+
+    def test_missing_field_keeps_heuristic_behavior(self):
+        """REGRESSION GUARD: absence of subject_substitute means default
+        (substitute via heuristic) behavior is preserved — Dimples Passport
+        and similar templates still work."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None, {"sample_text": "PERU"}, subject="Tokyo",
+        )
+        assert result == "TOKYO"
+
+    def test_true_flag_keeps_heuristic_behavior(self):
+        """Explicit subject_substitute=True is functionally equivalent to
+        the field being absent — heuristic still applies."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "label", None,
+            {"sample_text": "PERU", "subject_substitute": True},
+            subject="Tokyo",
+        )
+        assert result == "TOKYO"
+
+    def test_optout_does_not_break_cta_role(self):
+        """CTA always returns empty regardless of overlay fields."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        result = _resolve_overlay_text(
+            "cta", None,
+            {"sample_text": "click me", "subject_substitute": False},
+            subject="Tokyo",
+        )
+        assert result == ""
 
 
 class TestEmbeddedAllcapsToken:
@@ -2462,6 +3389,61 @@ class TestResolveOverlayTextSubjectTemplate:
         ov = {"subject_template": "that one trip to {subject}"}
         assert _resolve_overlay_text("label", None, ov, subject="New York") == \
             "that one trip to New York"
+
+
+class TestWakaWakaSubjectTemplate:
+    """Covers the shukran-Africa outro substitution backfilled by
+    scripts/backfill_waka_waka_location.py.
+
+    Shape mirrors what the backfill writes onto the prod outro overlay:
+        sample_text = "shukran Africa!"
+        subject_template = "shukran {subject}!"
+    Blank-input fallback resolves to sample_text (= "shukran Africa!"),
+    not the literal "Morocco" the template was originally built around.
+    """
+
+    def test_substitutes_user_location(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="Bali") == \
+            "shukran Bali!"
+
+    def test_empty_subject_falls_back_to_africa(self):
+        """Blank Location input → renders 'shukran Africa!' (per product spec)."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="") == \
+            "shukran Africa!"
+
+    def test_preserves_input_casing(self):
+        """Subject 'new york' → 'shukran new york!' — the subject_template
+        branch never auto-uppercases, unlike the heuristic AFRICA→BALI path."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="new york") == \
+            "shukran new york!"
+
+    def test_multi_word_location_preserved(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        ov = {
+            "text": "",
+            "sample_text": "shukran Africa!",
+            "subject_template": "shukran {subject}!",
+        }
+        assert _resolve_overlay_text("reaction", None, ov, subject="New York") == \
+            "shukran New York!"
 
 
 # ── Timeout & error_detail tests ──────────────────────────────────────────────
@@ -3270,8 +4252,395 @@ class TestTemplateKindStrip:
         with pytest.raises(TypeError, match="template_kind"):
             TemplateRecipe(**recipe_data)
 
-        # The orchestrator's _build_recipe helper MUST succeed
-        from app.tasks.template_orchestrate import _build_recipe
-        recipe = _build_recipe(recipe_data)
+        # The shared build_recipe helper MUST succeed
+        from app.pipeline.agents.gemini_analyzer import build_recipe
+        recipe = build_recipe(recipe_data)
         assert recipe.shot_count == 3
         assert len(recipe.slots) == 3
+
+
+class TestRuleOfThirdsHookLiterals:
+    """REGRESSION: Rule of Thirds template — literal hook words must NOT be
+    substituted by the placeholder heuristic.
+
+    Production job a1091488-09f6-4ce0-b92e-b1cc52695c9c (2026-05-13) rendered
+    the hook with "pilot in cockpit" in place of "The" and "Thirds" because
+    those single title-cased words triggered _is_subject_placeholder() and the
+    seed script lacked the subject_substitute=False opt-out that PR #125 added
+    for Waka Waka. These tests pin every overlay in seed_rule_of_thirds.py so
+    a future edit that removes the flag fails CI instead of shipping.
+    """
+
+    @staticmethod
+    def _clip_meta_with_hook():
+        return ClipMeta(
+            clip_id="files/q5p2zfdeepuw",
+            transcript="",
+            hook_text="pilot in cockpit",
+            hook_score=7.0,
+            best_moments=[{
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "energy": 6.0,
+                "description": "pilot adjusts controls",
+            }],
+            clip_path="/tmp/clip.mp4",
+        )
+
+    def test_overlay_the_returns_literal(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        overlay = {
+            "role": "hook",
+            "text": "The",
+            "subject_substitute": False,
+        }
+        result = _resolve_overlay_text(
+            "hook", self._clip_meta_with_hook(), overlay, subject="Vieques",
+        )
+        assert result == "The"
+
+    def test_overlay_rule_of_returns_literal(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        overlay = {
+            "role": "hook",
+            "text": "Rule of",
+            "subject_substitute": False,
+        }
+        result = _resolve_overlay_text(
+            "hook", self._clip_meta_with_hook(), overlay, subject="Vieques",
+        )
+        assert result == "Rule of"
+
+    def test_overlay_thirds_returns_literal(self):
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        overlay = {
+            "role": "hook",
+            "text": "Thirds",
+            "subject_substitute": False,
+        }
+        result = _resolve_overlay_text(
+            "hook", self._clip_meta_with_hook(), overlay, subject="Vieques",
+        )
+        assert result == "Thirds"
+
+    def test_seed_recipe_pins_optout_on_every_literal_overlay(self):
+        """Snapshot: every literal-text overlay produced by build_recipe() in
+        the Rule of Thirds seed script must carry subject_substitute=False —
+        regardless of which slot it lives in. Walking ALL slots (not just
+        slot_type=='hook') prevents a future edit that moves "Thirds" or
+        similar copy into a broll slot from silently bypassing the safety
+        contract.
+        """
+        from app.tasks.template_orchestrate import _is_subject_placeholder
+        from scripts.seed_rule_of_thirds import build_recipe
+        recipe = build_recipe()
+        hook_seen = False
+        for slot in recipe["slots"]:
+            for overlay in slot.get("text_overlays", []) or []:
+                text = overlay.get("text") or overlay.get("sample_text") or ""
+                if not text:
+                    continue
+                if not _is_subject_placeholder(text):
+                    # Heuristic doesn't match → no substitution risk → flag
+                    # not required.
+                    continue
+                if slot.get("slot_type") == "hook":
+                    hook_seen = True
+                assert overlay.get("subject_substitute") is False, (
+                    f"Rule of Thirds overlay {text!r} in slot "
+                    f"{slot.get('position')!r} ({slot.get('slot_type')!r}) is "
+                    "missing subject_substitute=False — see plan "
+                    "~/.claude/plans/the-rule-of-third-floating-thompson.md"
+                )
+        assert hook_seen, (
+            "Rule of Thirds seed produced no placeholder-shaped overlays in "
+            "any hook slot — the recipe shape has drifted from what this "
+            "test was designed to pin. Verify build_recipe() still emits "
+            "'The' / 'Rule of' / 'Thirds' style title text."
+        )
+
+
+class TestNoGeminiTextLeaks:
+    """Architectural invariant: Gemini's per-clip metadata MUST NOT become
+    user-visible rendered text. Subject substitution is fed exclusively by
+    explicit user input (inputs.location / legacy subject field).
+
+    These tests act as sentinels — they fail loudly if either Gemini-leak
+    path (the consensus-subject fallback or the empty-hook hook_text
+    fallback) is reintroduced. Both paths existed before 2026-05-13 and
+    produced "pilot in cockpit" on Rule of Thirds job a1091488.
+    """
+
+    def test_consensus_subject_function_removed(self):
+        """_consensus_subject took a majority vote across clip_meta
+        .detected_subject and fed the result into the substitution path.
+        Removing the function makes accidental reintroduction stand out
+        in a diff. Reintroducing the helper without updating this test
+        is a deliberate review event."""
+        from app.tasks import template_orchestrate
+        assert not hasattr(template_orchestrate, "_consensus_subject"), (
+            "_consensus_subject was reintroduced. This function lets "
+            "Gemini's clip_meta.detected_subject become subject-substitution "
+            "input when user_subject is empty — the exact bug that rendered "
+            "'pilot in cockpit' on Rule of Thirds. If a legitimate need for "
+            "majority-vote subject detection exists, gate it behind an "
+            "explicit per-template opt-in, not a default fallback."
+        )
+
+    def test_assemble_clips_call_site_uses_user_subject_only(self):
+        """Static check: the line in _assemble_clips that selects `subject`
+        must not call _consensus_subject. The fallback path was the
+        production bug; this test pins the code shape so a refactor
+        cannot silently reintroduce it."""
+        import inspect
+
+        from app.tasks import template_orchestrate
+        src = inspect.getsource(template_orchestrate._assemble_clips)
+        assert "_consensus_subject" not in src, (
+            "_assemble_clips references _consensus_subject — the Gemini "
+            "fallback is back. Replace with `subject = user_subject` only."
+        )
+
+    def test_assemble_clips_subject_does_not_consume_clip_metas(self):
+        """AST-based sentinel: walk _assemble_clips and assert that every
+        assignment to `subject` has a right-hand side that does NOT pipe
+        `clip_metas` into any function call.
+
+        The string-grep sibling test only catches the literal name
+        `_consensus_subject`. A refactor that renames the helper
+        (`_majority_subject`, `_subject_from_clips`, `_auto_detect_subject`)
+        would silently pass that test while reintroducing the same
+        Gemini-leak path. This AST check inspects the data flow instead
+        of the symbol name — any call that takes `clip_metas` as an
+        argument while computing `subject` trips the assertion.
+
+        Multi-specialist confirmed: testing + maintainability + security +
+        red-team all flagged the string-grep as evasion-prone.
+        """
+        import ast
+        import inspect
+
+        from app.tasks import template_orchestrate
+        src = inspect.cleandoc(inspect.getsource(template_orchestrate._assemble_clips))
+        tree = ast.parse(src)
+        fn = tree.body[0]
+        offenders: list[str] = []
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Assign):
+                continue
+            if not any(
+                isinstance(t, ast.Name) and t.id == "subject" for t in node.targets
+            ):
+                continue
+            # Walk the RHS; any function call that takes `clip_metas` as
+            # an argument is a Gemini-leak reintroduction.
+            for sub in ast.walk(node.value):
+                if not isinstance(sub, ast.Call):
+                    continue
+                call_args = list(sub.args) + [kw.value for kw in sub.keywords]
+                for arg in call_args:
+                    if isinstance(arg, ast.Name) and arg.id == "clip_metas":
+                        offenders.append(
+                            f"line {sub.lineno}: subject assignment calls "
+                            f"a function with `clip_metas` as an argument"
+                        )
+        assert not offenders, (
+            "_assemble_clips routes clip_metas into subject computation — "
+            "that's the exact Gemini-leak path PR (this commit) closed. "
+            f"Offenders: {offenders}. Subject must come from user_subject "
+            "only; do NOT derive it from clip-level Gemini analysis."
+        )
+
+    def test_resolve_overlay_text_does_not_return_hook_text(self):
+        """Even when role=='hook' and clip_meta.hook_text is rich and
+        sample is empty, the resolver must return empty — not the
+        Gemini-derived hook text. Pins the lack of the fallback branch."""
+        from app.tasks.template_orchestrate import _resolve_overlay_text
+        meta = ClipMeta(
+            clip_id="x",
+            transcript="",
+            hook_text="this is a Gemini description of the clip",
+            hook_score=8.0,
+            best_moments=[],
+        )
+        # Empty overlay, hook role, subject empty → must NOT leak hook_text.
+        assert _resolve_overlay_text("hook", meta, {}, subject="") == ""
+        # Even with a subject set, empty overlay with no placeholder field
+        # to interpolate into must NOT return hook_text.
+        assert _resolve_overlay_text("hook", meta, {}, subject="Tokyo") == ""
+
+
+# ── Single-pass runtime failure fallback ──────────────────────────────────────
+#
+# Production job 1b555c69-… (Bad Bunny – DtMF Test) failed with
+# `single-pass ffmpeg failed (rc=-9)` — kernel OOM kill. Multi-pass for the
+# same template family has run in prod for months without an rc=-9 history.
+# This suite locks in that any SinglePassError (OOM, timeout, filter-graph
+# syntax error, missing output) falls back to multi-pass instead of failing
+# the job.
+class TestSinglePassRuntimeFallback:
+    """Wraps run_single_pass with a try/except so single-pass crashes route
+    back to the existing multi-pass branch."""
+
+    @staticmethod
+    def _make_step_and_probe(tmp_path, slot_idx: int = 1):
+        from app.pipeline.probe import VideoProbe
+
+        clip_file = tmp_path / f"clip_{slot_idx}.mp4"
+        clip_file.write_bytes(b"fake")
+        probe = VideoProbe(
+            duration_s=10.0, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = MagicMock()
+        step.clip_id = f"clip_{slot_idx}"
+        step.moment = {"start_s": 0.0, "end_s": 3.0}
+        step.slot = {
+            "position": slot_idx,
+            "target_duration_s": 3.0,
+            "transition_in": "none",
+        }
+        return step, probe, clip_file
+
+    def test_single_pass_oom_falls_back_to_multipass(self, tmp_path):
+        """rc=-9 OOM kill → SinglePassError → multi-pass fallback → no job failure.
+
+        This is the exact production-incident reproducer for Bad Bunny – DtMF.
+        """
+        from app.pipeline.single_pass import SinglePassError
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        step, probe, clip_file = self._make_step_and_probe(tmp_path)
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.run_single_pass") as mock_single,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+            patch("app.tasks.template_orchestrate.log") as mock_log,
+        ):
+            mock_single.side_effect = SinglePassError(
+                "single-pass ffmpeg failed (rc=-9, output=/tmp/x):\n"
+            )
+            # Job must NOT raise — the SinglePassError is caught and the
+            # multi-pass branch (reframe_and_export) runs the assembly.
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={step.clip_id: str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                force_single_pass=True,
+            )
+            # Single-pass was attempted, then multi-pass took over.
+            mock_single.assert_called_once()
+            mock_reframe.assert_called_once()
+            # Canonical alert key must be emitted.
+            warning_events = [
+                call.args[0] for call in mock_log.warning.call_args_list
+            ]
+            assert "single_pass_failed_falling_back_multipass" in warning_events
+
+    def test_single_pass_filter_syntax_error_also_falls_back(self, tmp_path):
+        """rc=1 filter-graph syntax error → same fallback.
+
+        This PR does NOT differentiate rc=-9 from rc=1; every SinglePassError
+        falls back. A future PR may gate filter-graph errors to surface
+        (since they indicate a spec bug, not a resource issue).
+        """
+        from app.pipeline.single_pass import SinglePassError
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        step, probe, clip_file = self._make_step_and_probe(tmp_path)
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.run_single_pass") as mock_single,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+            patch("app.tasks.template_orchestrate.log") as mock_log,
+        ):
+            mock_single.side_effect = SinglePassError(
+                "single-pass ffmpeg failed (rc=1, output=/tmp/x):\n"
+                "Invalid filter graph: [bad]"
+            )
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={step.clip_id: str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                force_single_pass=True,
+            )
+            mock_single.assert_called_once()
+            mock_reframe.assert_called_once()
+            warning_events = [
+                call.args[0] for call in mock_log.warning.call_args_list
+            ]
+            assert "single_pass_failed_falling_back_multipass" in warning_events
+
+    def test_single_pass_unsupported_still_falls_back(self, tmp_path):
+        """Regression: the existing M4/M5 SinglePassUnsupportedError fallback
+        keeps working unchanged. Adding the SinglePassError arm must not
+        regress the pre-existing fallback path."""
+        from app.pipeline.single_pass import SinglePassUnsupportedError
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        step, probe, clip_file = self._make_step_and_probe(tmp_path)
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.run_single_pass") as mock_single,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+            patch("app.tasks.template_orchestrate.log") as mock_log,
+        ):
+            mock_single.side_effect = SinglePassUnsupportedError(
+                "curtain-close not yet implemented in single-pass"
+            )
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={step.clip_id: str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                force_single_pass=True,
+            )
+            mock_single.assert_called_once()
+            mock_reframe.assert_called_once()
+            warning_events = [
+                call.args[0] for call in mock_log.warning.call_args_list
+            ]
+            # The pre-existing alert key remains, NOT the new SinglePassError
+            # key — the two failure modes are still distinguishable in logs.
+            assert "single_pass_unsupported_fallback_to_multi" in warning_events
+            assert "single_pass_failed_falling_back_multipass" not in warning_events
+
+    def test_multipass_failure_after_single_pass_fallback_propagates(self, tmp_path):
+        """If multi-pass also fails after the single-pass fallback, the
+        multi-pass failure must surface — not the swallowed SinglePassError.
+
+        This guards against masking a deeper bug. If both paths fail, the
+        operator sees the more recent (multi-pass) failure with full context.
+        """
+        from app.pipeline.reframe import ReframeError
+        from app.pipeline.single_pass import SinglePassError
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        step, probe, clip_file = self._make_step_and_probe(tmp_path)
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.run_single_pass") as mock_single,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            mock_single.side_effect = SinglePassError(
+                "single-pass ffmpeg failed (rc=-9, output=/tmp/x):\n"
+            )
+            mock_reframe.side_effect = ReframeError("multi-pass also broken")
+            # The multi-pass failure surfaces — the SinglePassError does NOT
+            # mask it. Operators see the most recent, most informative error.
+            with pytest.raises(ReframeError, match="multi-pass also broken"):
+                _assemble_clips(
+                    steps=[step],
+                    clip_id_to_local={step.clip_id: str(clip_file)},
+                    clip_probe_map={str(clip_file): probe},
+                    output_path=str(tmp_path / "out.mp4"),
+                    tmpdir=str(tmp_path),
+                    force_single_pass=True,
+                )
+            mock_single.assert_called_once()
+            mock_reframe.assert_called_once()

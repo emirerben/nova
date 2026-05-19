@@ -1,0 +1,37 @@
+{
+  "agent": "nova.video.clip_metadata",
+  "prompt_version": "exported",
+  "input": {
+    "file_uri": "clips/04022f9ef641.mp4",
+    "file_mime": "video/mp4"
+  },
+  "raw_text": "{\"clip_id\": \"files/c1kndfg60vzl\", \"transcript\": \"O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o! O campe\\u00e3o!\", \"hook_text\": \"The stadium erupts with an enthusiastic crowd chanting in unison, setting a powerful atmosphere.\", \"hook_score\": 8.5, \"best_moments\": [{\"start_s\": 0.0, \"end_s\": 0.1, \"energy\": 8.0, \"description\": \"Stadium roof lights transitioning from red to white\"}, {\"start_s\": 0.0, \"end_s\": 0.18, \"energy\": 9.0, \"description\": \"Crowd's continuous enthusiastic chanting\"}], \"detected_subject\": \"\"}",
+  "output": {
+    "clip_id": "files/c1kndfg60vzl",
+    "transcript": "O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o! O campe\u00e3o!",
+    "hook_text": "The stadium erupts with an enthusiastic crowd chanting in unison, setting a powerful atmosphere.",
+    "hook_score": 8.5,
+    "best_moments": [
+      {
+        "start_s": 0.0,
+        "end_s": 0.1,
+        "energy": 8.0,
+        "description": "Stadium roof lights transitioning from red to white"
+      },
+      {
+        "start_s": 0.0,
+        "end_s": 0.18,
+        "energy": 9.0,
+        "description": "Crowd's continuous enthusiastic chanting"
+      }
+    ],
+    "detected_subject": ""
+  },
+  "meta": {
+    "source": "Redis clip_analysis cache",
+    "clip_hash": "04022f9ef6413632b810b947c2e65a54604522c9e79f022a3f9172549f297cbb",
+    "moment_count": 2,
+    "transcript_len": 384,
+    "exported_at": "2026-05-13T04:32:29.354682+00:00"
+  }
+}

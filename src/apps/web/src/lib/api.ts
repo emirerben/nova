@@ -100,7 +100,10 @@ export type TemplateJobStatus =
   | "queued"
   | "processing"
   | "template_ready"
-  | "processing_failed";
+  | "processing_failed"
+  // Admin-initiated cancel via POST /admin/jobs/{id}/cancel.
+  // Rendered as a distinct screen on /template-jobs/[id].
+  | "cancelled";
 
 export interface AssemblyPlanData {
   // Optional because single_video templates produce no slot-step array —
@@ -139,6 +142,24 @@ export type JobFailureReason =
   | "timeout"
   | "unknown";
 
+/** One completed pipeline phase. Appended to TemplateJobStatusResponse.phase_log
+ *  by the worker. The frontend rolls these into a progress bar so the user
+ *  sees motion during the multi-second render.
+ *
+ *  Sub-phases (e.g. per-clip gemini_upload timings inside analyze_clips) are
+ *  recorded as entries with a `parent` field set to the parent phase name.
+ *  Entries without `parent` are top-level phases. */
+export interface PhaseLogEntry {
+  name: string;
+  elapsed_ms: number | null;
+  t_offset_ms: number | null;
+  ts: string;
+  /** Parent phase name when this entry is a sub-phase (e.g. "analyze_clips"). */
+  parent?: string | null;
+  /** Free-form detail map (e.g. {clip_idx, clip_path}). */
+  detail?: Record<string, unknown> | null;
+}
+
 export interface TemplateJobStatusResponse {
   job_id: string;
   status: TemplateJobStatus;
@@ -146,8 +167,46 @@ export interface TemplateJobStatusResponse {
   assembly_plan: AssemblyPlanData | null;
   error_detail: string | null;
   failure_reason: JobFailureReason | null;
+  // Live pipeline phase tracking (migration 0015). Null/[] on legacy rows
+  // and during the brief queued → first-phase window.
+  current_phase?: string | null;
+  phase_log?: PhaseLogEntry[];
+  started_at?: string | null;
+  finished_at?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Structured error detail returned by the upload-time pre-flight when one
+ * or more clips exceed the pipeline's empirical cost budget for 10-bit HDR
+ * footage. See `app/services/template_validation.py` for the empirical record. */
+export interface ClipTooLongFor10BitDetail {
+  code: "clip_too_long_for_10bit";
+  clip_index: number;
+  duration_s: number;
+  limit_s: number;
+  pix_fmt: string;
+  message: string;
+  offenders: { clip_index: number; duration_s: number; pix_fmt: string }[];
+}
+
+/** Thrown by createTemplateJob when the API returns a structured (dict) error
+ * detail. Lets callers inspect `code` and render a per-clip remediation UI
+ * instead of dumping `[object Object]` into the error banner. */
+export class TemplateJobCreateError extends Error {
+  detail: ClipTooLongFor10BitDetail | { code?: string; [k: string]: unknown } | string | null;
+  status: number;
+
+  constructor(
+    message: string,
+    detail: TemplateJobCreateError["detail"],
+    status: number,
+  ) {
+    super(message);
+    this.name = "TemplateJobCreateError";
+    this.detail = detail;
+    this.status = status;
+  }
 }
 
 export async function createTemplateJob(params: {
@@ -160,19 +219,50 @@ export async function createTemplateJob(params: {
   selected_platforms: string[];
   inputs?: Record<string, string>;
 }): Promise<TemplateJobCreateResponse> {
+  const init: RequestInit = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  };
   let res: Response;
   try {
-    res = await fetch(`${API_URL}/template-jobs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
-    });
+    res = await fetch(`${API_URL}/template-jobs`, init);
   } catch {
-    throw new Error("Cannot reach the server. Make sure the API is running.");
+    // One retry: covers brief api unavailability (deploys, crash-restarts).
+    // 2s gives Fly time to route past a momentarily-unhealthy instance.
+    //
+    // Trade-off: POST /template-jobs has no idempotency key, so if the
+    // first attempt actually reached the server but the response was lost
+    // (rare: connection reset mid-response), the retry creates a second
+    // job. The dominant failure mode is CORS-preflight failure / connect
+    // refused during a Firecracker reboot, where the POST never reaches
+    // the server — safe to retry. To close the duplicate-job window,
+    // add an idempotency key to CreateTemplateJobRequest in
+    // app/routes/template_jobs.py.
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      res = await fetch(`${API_URL}/template-jobs`, init);
+    } catch {
+      throw new Error("Cannot reach the server. Make sure the API is running.");
+    }
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail ?? `Template job creation failed: ${res.status}`);
+    const body = await res.json().catch(() => ({}));
+    const detail = body?.detail ?? null;
+    // Structured detail (FastAPI returns a dict for our pre-flight checks).
+    // Extract the user-visible message for `Error.message` but keep the full
+    // object on `.detail` so the caller can render per-clip UI.
+    if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+      const message =
+        (detail as { message?: string }).message ??
+        `Template job creation failed: ${res.status}`;
+      throw new TemplateJobCreateError(message, detail, res.status);
+    }
+    const message =
+      typeof detail === "string"
+        ? detail
+        : `Template job creation failed: ${res.status}`;
+    throw new TemplateJobCreateError(message, detail, res.status);
   }
   return res.json();
 }
@@ -181,6 +271,41 @@ export async function getTemplateJobStatus(jobId: string): Promise<TemplateJobSt
   const res = await fetch(`${API_URL}/template-jobs/${jobId}/status`);
   if (!res.ok) throw new Error(`Status fetch failed: ${res.status}`);
   return res.json();
+}
+
+/** URL for the SSE events stream. Consumed by `useJobStream`. */
+export function getTemplateJobEventsUrl(jobId: string): string {
+  return `${API_URL}/template-jobs/${jobId}/events`;
+}
+
+/** Fire-and-forget: kick off pre-emptive Gemini analysis for a clip that
+ *  just finished its presigned PUT. The server returns 202 immediately and
+ *  runs the upload+analyse in the background. By the time the user clicks
+ *  Generate, the result is already in Redis and the orchestrator skips
+ *  Gemini entirely for this clip.
+ *
+ *  Errors are swallowed by design — prefetch is an optimisation, not a
+ *  correctness step. If it fails, the orchestrator does the same work
+ *  on the critical path (same behaviour as before this hook existed).
+ */
+export function prefetchClipAnalyze(
+  gcsPath: string,
+  templateId: string,
+): void {
+  void fetch(`${API_URL}/clips/prefetch-analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ gcs_path: gcsPath, template_id: templateId }),
+    // keepalive lets the request survive a tab-close mid-fire so the server
+    // still kicks off the prefetch. The user might Cmd+Tab away the second
+    // their last clip finishes uploading; we still want the analysis warm
+    // when they come back.
+    keepalive: true,
+  }).catch(() => {
+    // Intentionally silent. Logging here would spam the user's console
+    // for failures they can't act on. The backend logs prefetch_* events
+    // for observability.
+  });
 }
 
 // ── Batch presigned + template gallery API ──────────────────────────────────
@@ -265,10 +390,15 @@ export async function uploadTemplatePhoto(params: {
   fd.append("slot_position", String(params.slotPosition));
   fd.append("file", params.file);
 
-  const res = await fetch(`${API_URL}/uploads/template-photo`, {
-    method: "POST",
-    body: fd,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/uploads/template-photo`, {
+      method: "POST",
+      body: fd,
+    });
+  } catch {
+    throw new Error("Cannot reach the server. Check your connection and try again.");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Photo upload failed: ${res.status}`);
