@@ -37,19 +37,32 @@ def _parse_owner(
 
     Exactly zero or one of the three values will be non-null; an all-None tuple
     means the row should be dropped (eval harness, malformed prefix).
+
+    Optional trailing context segments after the UUID are tolerated. Callers
+    use them as log/trace labels to distinguish flows on the same owner — e.g.
+    ``agentic_template_build_task`` passes ``f"template:{template_id}:agentic"``
+    so log lines can be separated from ``analyze_template_task``'s plain
+    ``f"template:{template_id}"``. The first ``:`` after the prefix terminates
+    the UUID; everything past it is a label and ignored for persistence.
+
+    Without this tolerance the strict ``uuid.UUID("<uuid>:agentic")`` parse
+    failed and every agentic agent_run row was silently dropped from the audit
+    table — that's how this regression was caught on template `fdaf3bbc-…`.
     """
     if not job_id:
         return (None, None, None)
 
     if job_id.startswith(_TEMPLATE_PREFIX):
+        candidate = job_id[len(_TEMPLATE_PREFIX) :].split(":", 1)[0]
         try:
-            return (None, uuid.UUID(job_id[len(_TEMPLATE_PREFIX) :]), None)
+            return (None, uuid.UUID(candidate), None)
         except (ValueError, AttributeError):
             return (None, None, None)
 
     if job_id.startswith(_TRACK_PREFIX):
+        candidate = job_id[len(_TRACK_PREFIX) :].split(":", 1)[0]
         try:
-            return (None, None, uuid.UUID(job_id[len(_TRACK_PREFIX) :]))
+            return (None, None, uuid.UUID(candidate))
         except (ValueError, AttributeError):
             return (None, None, None)
 
