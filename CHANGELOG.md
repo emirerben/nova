@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.35.1] - 2026-05-19
+
+### Fixed
+- **STALE recipe badge no longer false-clears on a Redis cache-hit reanalyze.** v0.4.35.0 wrote the live `AgentSpec.prompt_version` map onto the template row whenever the build task rewrote `recipe_cached` — including the cache-hit shortcut where the recipe was reused verbatim from a prior run. Operators clicking Reanalyze on a template whose source video already had a cached entry would see the badge clear without any agent having actually run with the current prompts, then trust output that was in fact pre-fix. Both `analyze_template_task` (manual) and `agentic_template_build_task` (agentic) now track an `agents_ran` boolean that only flips True inside the cache-miss branch; `recipe_cached_versions` is refreshed only when that flag is set. Cache-hit reanalyzes leave the snapshot intact so STALE templates stay flagged until a real agent run lands. Source-inspection tests in `tests/tasks/test_staleness_cache_hit_guard.py` pin the guard against future refactors.
+
 ## [0.4.35.0] - 2026-05-19
 
 ### Added
