@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   type AdminTemplateListItem,
   adminListTemplates,
+  adminReanalyzeAgentic,
+  adminReanalyzeTemplate,
 } from "@/lib/admin-api";
 
 /**
@@ -31,6 +33,39 @@ export default function AdminDashboardPage() {
     return templates.filter((t) => !t.is_agentic);
   }, [templates, agenticFilter]);
 
+  // Templates that the operator is currently reanalyzing — show a per-row
+  // spinner without blocking the rest of the table.
+  const [pendingReanalyze, setPendingReanalyze] = useState<Set<string>>(new Set());
+
+  const handleReanalyze = useCallback(async (t: AdminTemplateListItem) => {
+    setPendingReanalyze((prev) => new Set(prev).add(t.id));
+    try {
+      if (t.is_agentic) {
+        await adminReanalyzeAgentic(t.id);
+      } else {
+        await adminReanalyzeTemplate(t.id);
+      }
+      // Optimistically clear the stale list for this row — the badge hides
+      // immediately; the next list refresh will reflect the real post-build
+      // state once the worker finishes.
+      setTemplates((prev) =>
+        prev.map((row) =>
+          row.id === t.id
+            ? { ...row, recipe_stale_agents: [], analysis_status: "analyzing" }
+            : row,
+        ),
+      );
+    } catch (err) {
+      window.alert(`Reanalyze failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setPendingReanalyze((prev) => {
+        const next = new Set(prev);
+        next.delete(t.id);
+        return next;
+      });
+    }
+  }, []);
+
   // Attention queue: templates that need action
   const attention = useMemo(() => {
     const failed = templates.filter((t) => t.analysis_status === "failed");
@@ -41,7 +76,13 @@ export default function AdminDashboardPage() {
       (t) => t.analysis_status === "ready" && t.job_count > 0 && !t.published_at && !t.archived_at,
     );
     const analyzing = templates.filter((t) => t.analysis_status === "analyzing");
-    return { failed, neverTested, readyToPublish, analyzing };
+    // STALE = recipe was materialized under an older AgentSpec.prompt_version
+    // map than what the agents currently declare. Hide archived templates so
+    // the queue reflects what actually needs operator action.
+    const stale = templates.filter(
+      (t) => (t.recipe_stale_agents ?? []).length > 0 && !t.archived_at,
+    );
+    return { failed, neverTested, readyToPublish, analyzing, stale };
   }, [templates]);
 
   if (loading) {
@@ -70,7 +111,8 @@ export default function AdminDashboardPage() {
     attention.failed.length > 0 ||
     attention.neverTested.length > 0 ||
     attention.readyToPublish.length > 0 ||
-    attention.analyzing.length > 0;
+    attention.analyzing.length > 0 ||
+    attention.stale.length > 0;
 
   return (
     <div className="p-6 space-y-6">
@@ -111,6 +153,12 @@ export default function AdminDashboardPage() {
             color="blue"
             items={attention.analyzing}
           />
+          <AttentionCard
+            label="Stale Recipe"
+            count={attention.stale.length}
+            color="amber"
+            items={attention.stale}
+          />
         </div>
       ) : (
         <div className="bg-zinc-900 border border-zinc-800 rounded p-4 text-center">
@@ -142,46 +190,68 @@ export default function AdminDashboardPage() {
                   <th className="text-left px-4 py-2.5 text-zinc-500 font-medium">Published</th>
                   <th className="text-left px-4 py-2.5 text-zinc-500 font-medium">Jobs</th>
                   <th className="text-left px-4 py-2.5 text-zinc-500 font-medium">Created</th>
+                  <th className="text-left px-4 py-2.5 text-zinc-500 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredTemplates.map((t) => (
-                  <tr key={t.id} className="border-t border-zinc-800 hover:bg-zinc-900/50">
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-2">
-                        <Link
-                          href={`/admin/templates/${t.id}?tab=recipe`}
-                          className="text-white hover:text-blue-400"
-                        >
-                          {t.name}
-                        </Link>
-                        {t.is_agentic && <AgenticBadge />}
-                      </div>
-                      {t.description && (
-                        <p className="text-xs text-zinc-600 truncate max-w-[200px]">{t.description}</p>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <StatusBadge status={t.analysis_status} />
-                    </td>
-                    <td className="px-4 py-2.5">
-                      {t.archived_at ? (
-                        <span className="text-xs text-zinc-600">Archived</span>
-                      ) : t.published_at ? (
-                        <span className="text-xs text-green-400">Yes</span>
-                      ) : (
-                        <span className="text-xs text-zinc-600">No</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-400">{t.job_count}</td>
-                    <td className="px-4 py-2.5 text-zinc-500 text-xs">
-                      {new Date(t.created_at).toLocaleDateString()}
-                    </td>
-                  </tr>
-                ))}
+                {filteredTemplates.map((t) => {
+                  const staleAgents = t.recipe_stale_agents ?? [];
+                  const isStale = staleAgents.length > 0 && !t.archived_at;
+                  const isReanalyzing = pendingReanalyze.has(t.id);
+                  return (
+                    <tr key={t.id} className="border-t border-zinc-800 hover:bg-zinc-900/50">
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <Link
+                            href={`/admin/templates/${t.id}?tab=recipe`}
+                            className="text-white hover:text-blue-400"
+                          >
+                            {t.name}
+                          </Link>
+                          {t.is_agentic && <AgenticBadge />}
+                          {isStale && <StaleBadge agents={staleAgents} />}
+                        </div>
+                        {t.description && (
+                          <p className="text-xs text-zinc-600 truncate max-w-[200px]">
+                            {t.description}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <StatusBadge status={t.analysis_status} />
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {t.archived_at ? (
+                          <span className="text-xs text-zinc-600">Archived</span>
+                        ) : t.published_at ? (
+                          <span className="text-xs text-green-400">Yes</span>
+                        ) : (
+                          <span className="text-xs text-zinc-600">No</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-zinc-400">{t.job_count}</td>
+                      <td className="px-4 py-2.5 text-zinc-500 text-xs">
+                        {new Date(t.created_at).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {isStale && (
+                          <button
+                            type="button"
+                            onClick={() => handleReanalyze(t)}
+                            disabled={isReanalyzing}
+                            className="text-xs px-2 py-1 rounded bg-amber-900/40 text-amber-300 hover:bg-amber-900/60 disabled:opacity-50"
+                            title={`Re-run analysis to pick up: ${staleAgents.join(", ")}`}
+                          >
+                            {isReanalyzing ? "Reanalyzing…" : "Reanalyze"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {filteredTemplates.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-6 text-center text-xs text-zinc-600">
+                    <td colSpan={6} className="px-4 py-6 text-center text-xs text-zinc-600">
                       No templates match this filter.
                     </td>
                   </tr>
@@ -266,6 +336,22 @@ function AgenticBadge() {
       title="Recipe is generated by agents — overlay editor is locked"
     >
       Agentic
+    </span>
+  );
+}
+
+function StaleBadge({ agents }: { agents: string[] }) {
+  // Strip the canonical "nova.<group>." prefix so the tooltip is readable.
+  const shortNames = agents.map((a) => a.split(".").slice(-1)[0]);
+  const title =
+    `Recipe was materialized under older prompt versions for: ${shortNames.join(", ")}.` +
+    " Click Reanalyze to rebuild.";
+  return (
+    <span
+      className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 border border-amber-800/60"
+      title={title}
+    >
+      Stale
     </span>
   );
 }

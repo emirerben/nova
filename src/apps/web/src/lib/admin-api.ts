@@ -82,6 +82,12 @@ export interface AdminTemplate {
   use_layer2_default: boolean | null;
   error_detail: string | null;
   created_at: string;
+  /**
+   * Canonical agent names whose live prompt_version no longer matches the
+   * snapshot stored when this template's recipe_cached was last written.
+   * Empty array = recipe is up to date. Hit reanalyze to refresh.
+   */
+  recipe_stale_agents: string[];
 }
 
 export interface AdminTemplateListItem {
@@ -96,11 +102,26 @@ export interface AdminTemplateListItem {
   is_agentic: boolean;
   job_count: number;
   created_at: string;
+  /** See AdminTemplate.recipe_stale_agents. */
+  recipe_stale_agents: string[];
 }
 
 export interface AdminTemplateListResponse {
   templates: AdminTemplateListItem[];
   total: number;
+}
+
+export interface StaleTemplateItem {
+  id: string;
+  name: string;
+  is_agentic: boolean;
+  template_type: string;
+  stale_agents: string[];
+}
+
+export interface StaleTemplatesResponse {
+  total: number;
+  templates: StaleTemplateItem[];
 }
 
 export interface TemplateMetrics {
@@ -241,6 +262,20 @@ export async function adminReanalyzeAgentic(id: string): Promise<AdminTemplate> 
   const res = await adminFetch(`/admin/templates/${id}/reanalyze-agentic`, {
     method: "POST",
   });
+  return res.json();
+}
+
+/**
+ * Return every template whose stored recipe_cached_versions snapshot doesn't
+ * match the live AgentSpec.prompt_version values. Archived templates excluded
+ * by default. Useful right after a prompt rollout — surface what needs to be
+ * reanalyzed instead of clicking through templates one by one.
+ */
+export async function adminListStaleTemplates(
+  includeArchived = false,
+): Promise<StaleTemplatesResponse> {
+  const qs = includeArchived ? "?include_archived=true" : "";
+  const res = await adminFetch(`/admin/templates/stale-summary${qs}`);
   return res.json();
 }
 
