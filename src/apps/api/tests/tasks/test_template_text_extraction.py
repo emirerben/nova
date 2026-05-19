@@ -346,6 +346,79 @@ def test_extract_success_overwrites_overlays(monkeypatch: pytest.MonkeyPatch) ->
     assert "recipe-stale" not in s1_texts + s2_texts
 
 
+def test_extract_transcript_words_propagates_to_agent_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """transcript_words is forwarded into TemplateTextInput so Stage E of the
+    Layer-2 pipeline (text alignment) actually runs against the audio
+    transcript. Regression for the agentic build where the parameter was
+    omitted and Stage E always short-circuited on empty transcript — letting
+    OCR garbage like "if you if you put put in" leak into cached recipes.
+    """
+    from app.tasks import template_text_extraction as mod
+
+    captured_input: dict[str, Any] = {}
+
+    class _StubAgent:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, inp: TemplateTextInput, ctx=None):  # noqa: ARG002
+            captured_input["input"] = inp
+            return TemplateTextOutput(overlays=[])
+
+    monkeypatch.setattr(mod, "TemplateTextAgent", _StubAgent)
+    monkeypatch.setattr(mod, "default_client", lambda: object())
+
+    transcript = [
+        {"text": "if", "start_s": 3.0, "end_s": 3.2},
+        {"text": "you", "start_s": 3.2, "end_s": 3.5},
+        {"text": "put", "start_s": 3.5, "end_s": 3.7},
+        {"text": "in", "start_s": 3.8, "end_s": 4.0},
+    ]
+    recipe = _StubRecipe(slots=[{"target_duration_s": 5.0, "text_overlays": []}])
+    success, _ = extract_template_text_overlays(
+        _StubFileRef(),
+        recipe,
+        job_id="t-transcript",
+        transcript_words=transcript,
+    )
+    assert success is True
+    # The transcript reached the agent input intact.
+    received = captured_input["input"].transcript_words
+    assert len(received) == 4
+    # Pydantic may coerce dicts → TranscriptWord; accept either shape.
+    received_texts = [(w.text if hasattr(w, "text") else w["text"]) for w in received]
+    assert received_texts == ["if", "you", "put", "in"]
+
+
+def test_extract_transcript_words_defaults_to_empty_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the caller omits transcript_words the agent receives an empty list,
+    not None. Preserves the pre-PR behavior for non-Layer-2 callers and keeps
+    Stage E's empty-transcript early-return contract intact.
+    """
+    from app.tasks import template_text_extraction as mod
+
+    captured_input: dict[str, Any] = {}
+
+    class _StubAgent:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, inp: TemplateTextInput, ctx=None):  # noqa: ARG002
+            captured_input["input"] = inp
+            return TemplateTextOutput(overlays=[])
+
+    monkeypatch.setattr(mod, "TemplateTextAgent", _StubAgent)
+    monkeypatch.setattr(mod, "default_client", lambda: object())
+
+    recipe = _StubRecipe(slots=[{"target_duration_s": 3.0, "text_overlays": []}])
+    extract_template_text_overlays(_StubFileRef(), recipe, job_id="t-no-transcript")
+    assert captured_input["input"].transcript_words == []
+
+
 def test_extract_force_layer2_propagates_to_agent_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
