@@ -36,6 +36,11 @@ export type TextSize = (typeof TEXT_SIZE_OPTIONS)[number];
 export const OVERLAY_ROLE_OPTIONS = ["hook", "reaction", "cta", "label"] as const;
 export type OverlayRole = (typeof OVERLAY_ROLE_OPTIONS)[number];
 
+// Editor-facing subject-part options. The model field is `"first_half" | "second_half" | "full" | null`;
+// "none" is a Select sentinel that maps to null at the boundary.
+export const OVERLAY_SUBJECT_PART_OPTIONS = ["none", "first_half", "second_half", "full"] as const;
+export type SubjectPartChoice = (typeof OVERLAY_SUBJECT_PART_OPTIONS)[number];
+
 export const SYNC_STYLE_OPTIONS = [
   "cut-on-beat", "transition-on-beat", "energy-match", "freeform",
 ] as const;
