@@ -717,6 +717,14 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
 
                 template.recipe_cached = recipe_dict
                 template.recipe_cached_at = datetime.now(UTC)
+                # Persist the live AgentSpec.prompt_version map so the admin UI
+                # can flag this row as STALE if any agent's prompt rotates later.
+                # See app/services/template_staleness.py for the rationale.
+                from app.services.template_staleness import (  # noqa: PLC0415
+                    capture_recipe_versions,
+                )
+
+                template.recipe_cached_versions = capture_recipe_versions(is_agentic=True)
                 template.analysis_status = "ready"
                 if audio_gcs and not template.audio_gcs_path:
                     template.audio_gcs_path = audio_gcs
