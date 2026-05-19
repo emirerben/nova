@@ -347,6 +347,61 @@ def _apply_font_default_to_overlays(recipe) -> int:
     return applied
 
 
+def _fetch_transcript_words_for_layer2(
+    file_ref,
+    *,
+    template_id: str,
+    use_layer2: bool,
+) -> list[dict]:
+    """Best-effort transcript fetch for Stage E of the Layer-2 OCR pipeline.
+
+    Without per-word timestamps the alignment LLM short-circuits via its
+    empty-transcript early return and OCR garbage (duplicated tokens like
+    "if you if you put put in" from prod template fdaf3bbc) passes through
+    unchanged into the cached recipe.
+
+    Gated on Layer-2 routing — the Gemini transcribe call only fires when
+    Layer-2 will actually run (`use_layer2=True` admin override OR
+    `settings.text_overlay_v2_enabled=True`). Layer-1 builds skip entirely
+    so the Gemini cost isn't wasted on a transcript no consumer will read.
+
+    A transcription failure must NOT abort the agentic build. Returns an
+    empty list on any error; Stage E falls back to its existing
+    empty-transcript passthrough.
+    """
+    if not (use_layer2 or settings.text_overlay_v2_enabled):
+        return []
+    try:
+        from app.pipeline.agents.gemini_analyzer import transcribe  # noqa: PLC0415
+
+        transcript = transcribe(file_ref, job_id=f"template:{template_id}:agentic")
+        words = [{"text": w.text, "start_s": w.start_s, "end_s": w.end_s} for w in transcript.words]
+        log.info(
+            "agentic_build_transcript_ready",
+            template_id=template_id,
+            word_count=len(words),
+        )
+        return words
+    except (TypeError, AttributeError, ImportError, NameError):
+        # Programming errors must not be silently degraded — they indicate
+        # a refactor broke the transcribe() contract and every Layer-2 build
+        # would invisibly fall back to empty-transcript passthrough (the
+        # exact failure mode this helper was added to fix).
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # Transient failures (network, agent runtime, Gemini quota) fall back
+        # to empty transcript so the build doesn't abort. Stage E handles
+        # the empty case via its existing passthrough. error_type lets
+        # log-based alerts distinguish quota errors from other transients.
+        log.warning(
+            "agentic_build_transcript_failed",
+            template_id=template_id,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        return []
+
+
 @celery_app.task(
     name="tasks.agentic_template_build_task",
     bind=True,
@@ -472,6 +527,11 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
             )
             template_hash = compute_template_hash(local_path)
             recipe = None
+            # Tracks whether the recipe was produced by a fresh agent run this
+            # invocation. On cache hit the recipe came from a prior run whose
+            # `prompt_version` values are unknown to us — see the
+            # `recipe_cached_versions` write below for the staleness rationale.
+            agents_ran = False
             if template_hash is not None:
                 cached = get_cached_recipe(
                     template_hash,
@@ -524,12 +584,17 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
                 # promises text-agent overlays. Caching that would pin stale data for
                 # the full TTL. Skip the cache on failure; the next reanalyze gets
                 # another shot at producing the proper merged recipe.
+                transcript_words = _fetch_transcript_words_for_layer2(
+                    file_ref, template_id=template_id, use_layer2=use_layer2
+                )
+
                 text_success, _text_count = extract_template_text_overlays(
                     file_ref,
                     recipe,
                     job_id=f"template:{template_id}:agentic",
                     force_layer2=use_layer2,
                     gcs_path=gcs_path,
+                    transcript_words=transcript_words,
                 )
                 if template_hash is not None and text_success:
                     set_cached_recipe(
@@ -539,6 +604,7 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
                         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
                         text_overlay_version=text_overlay_version,
                     )
+                agents_ran = True
 
             # Font identification (PR2). Best-effort: a font-id failure must
             # not abort agentic build. Mutates `recipe.slots[*]["text_overlays"]
@@ -657,6 +723,20 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
 
                 template.recipe_cached = recipe_dict
                 template.recipe_cached_at = datetime.now(UTC)
+                # Only refresh the per-agent prompt_version snapshot when the
+                # agents actually ran this invocation. On cache hit the recipe
+                # came from an earlier run whose prompts may already be stale
+                # — overwriting the snapshot with the current live values
+                # would falsely clear the admin STALE badge and tell the
+                # operator their reanalyze produced fresh output when in fact
+                # Redis served the prior recipe untouched. See
+                # app/services/template_staleness.py for the rationale.
+                if agents_ran:
+                    from app.services.template_staleness import (  # noqa: PLC0415
+                        capture_recipe_versions,
+                    )
+
+                    template.recipe_cached_versions = capture_recipe_versions(is_agentic=True)
                 template.analysis_status = "ready"
                 if audio_gcs and not template.audio_gcs_path:
                     template.audio_gcs_path = audio_gcs

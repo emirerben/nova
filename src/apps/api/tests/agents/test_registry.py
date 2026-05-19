@@ -10,6 +10,7 @@ _EXPECTED = {
     "nova.compose.template_recipe",
     "nova.compose.template_text",
     "nova.audio.transcript",
+    "nova.audio.lyrics",
     "nova.audio.template_recipe",
     "nova.audio.song_classifier",
     "nova.audio.song_sections",

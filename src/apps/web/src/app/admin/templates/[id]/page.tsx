@@ -277,6 +277,19 @@ export default function TemplateDetailPage() {
                   Agentic
                 </span>
               )}
+              {(template.recipe_stale_agents ?? []).length > 0 && !template.archived_at && (
+                <span
+                  className="text-xs bg-amber-900/40 text-amber-300 border border-amber-800/60 px-2 py-0.5 rounded"
+                  title={
+                    `Recipe was materialized under older prompt versions for: ` +
+                    `${(template.recipe_stale_agents ?? [])
+                      .map((a) => a.split(".").slice(-1)[0])
+                      .join(", ")}. Click Reanalyze to rebuild.`
+                  }
+                >
+                  Stale recipe
+                </span>
+              )}
               {template.published_at && !template.archived_at && (
                 <span className="text-xs bg-green-900/40 text-green-400 px-2 py-0.5 rounded">Published</span>
               )}
@@ -353,7 +366,28 @@ export default function TemplateDetailPage() {
           broken — "nothing happens when I click" — because the click was
           silently swallowed by the disabled DOM element.
         */}
-        {template.is_agentic ? (
+        {/*
+          audio_only templates are derived from a linked MusicTrack
+          (gcs_path=null). The Reanalyze button re-derives the recipe from
+          that track — useful when the music track's beat detection has
+          changed (or the original recipe was never generated, as happened
+          to prod DtMF where recipe_cached={} despite 532 beats existing).
+          The backend at analyze_template_task short-circuits to the
+          re-derive path for audio_only.
+        */}
+        {template.template_type === "audio_only" ? (
+          <ReanalyzeButton
+            onClick={handleReanalyze}
+            disabled={actionLoading}
+            status={template.analysis_status}
+            errorDetail={template.error_detail}
+            analyzingStartMs={analyzingStartMs}
+            color="zinc"
+            idleLabel="Regenerate from music track"
+            busyLabel="Regenerating"
+            title="Re-derive the recipe from the linked MusicTrack (no source video to analyze)"
+          />
+        ) : template.is_agentic ? (
           <>
             <ReanalyzeButton
               onClick={handleReanalyzeAgentic}
@@ -752,9 +786,42 @@ function TestTab({
       {/* Free-form upload (legacy: all-video templates) */}
       {!isSlotBound && (
       <div className="border border-zinc-800 rounded p-4 space-y-4">
-        <h3 className="text-sm font-medium text-white">
-          {hasIntroSlot ? "Test Clips (Part 1 + Part 2)" : "Upload Test Clips"}
-        </h3>
+        <div className="flex items-baseline justify-between gap-3">
+          <h3 className="text-sm font-medium text-white">
+            {hasIntroSlot ? "Test Clips (Part 1 + Part 2)" : "Upload Test Clips"}
+          </h3>
+          {/*
+            Surface the clip-count requirement up front. Without this, users
+            uploaded N clips, clicked Create Test Job, and got a 422 from
+            validate_clip_count buried in the small testError line beside the
+            button — easy to miss. Now the requirement is visible before they
+            upload anything.
+          */}
+          {template.required_clips_min && template.required_clips_max ? (
+            (() => {
+              // Backend's validate_clip_count sees face+action together when
+              // hasIntroSlot is true (handleCreateTestJob concatenates them).
+              // The displayed total must match that, otherwise the hint flips
+              // to "amber/short" when the user has actually uploaded enough.
+              const totalUploaded =
+                upload.successfulPaths.length +
+                (hasIntroSlot ? faceUpload.successfulPaths.length : 0);
+              const inRange =
+                totalUploaded >= template.required_clips_min &&
+                totalUploaded <= template.required_clips_max;
+              return (
+                <span className={`text-xs ${inRange ? "text-emerald-400" : "text-amber-400"}`}>
+                  Needs {template.required_clips_min}
+                  {template.required_clips_min !== template.required_clips_max
+                    ? `–${template.required_clips_max}`
+                    : ""}{" "}
+                  clips
+                  {totalUploaded > 0 ? ` · uploaded ${totalUploaded}` : ""}
+                </span>
+              );
+            })()
+          ) : null}
+        </div>
 
         {/* Part 1 — Face/Intro dropzone (face templates only) */}
         {hasIntroSlot && (

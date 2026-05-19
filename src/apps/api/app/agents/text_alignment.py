@@ -19,6 +19,8 @@ behind the `text_overlay_v2_enabled` flag.  See the Layer-2 architecture doc at
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from typing import ClassVar
 
 import structlog
@@ -37,6 +39,64 @@ __all__ = [
     "TextAlignmentOutput",
 ]
 
+_FORBIDDEN_MARKERS = ("[overlap_truncated]", "<truncated>")
+_ESCAPE_SEQUENCES = ("\\n", "\\N")
+_WHITESPACE_RE = re.compile(r"\s+")
+# ASS subtitle tag pattern: {\an5}, {\fs120}, {\fad(500,500)}, etc.
+# These reach the renderer via `sample_text` → drawtext/ASS filter and would
+# be interpreted as positioning/style overrides instead of literal text.
+# Strip pre-emptively; the LLM should never emit them but defense-in-depth.
+_ASS_TAG_RE = re.compile(r"\{[^}]*\}")
+# Unicode control + format codepoints that aren't tab. Includes zero-width
+# joiners (U+200B-200D), RTL override (U+202E), line/paragraph separators
+# (U+2028/2029), C0/C1 controls. Tabs survive because some legitimate text
+# might use them; whitespace normalization collapses them anyway.
+_ALLOWED_CONTROL_CHARS = {"\t", "\n"}
+
+
+def _strip_unicode_controls(text: str) -> str:
+    """Remove Unicode control + format codepoints except tab/newline.
+
+    Newlines survive this pass because `_ESCAPE_SEQUENCES` and `_WHITESPACE_RE`
+    handle them downstream — bypassing them here lets the existing logic do
+    its job. RTL overrides and zero-width joiners cannot be normalised away
+    by whitespace collapse, so they get stripped explicitly here.
+    """
+    return "".join(
+        ch for ch in text if ch in _ALLOWED_CONTROL_CHARS or unicodedata.category(ch)[0] != "C"
+    )
+
+
+def _sanitize_aligned_line(line: str) -> str:
+    """Deterministic cleanup of structurally forbidden content in LLM output.
+
+    The transcript-authoritative prompt explicitly forbids literal `\\n`,
+    `\\N`, and debug markers. This function also defends against shapes the
+    prompt cannot prevent: ASS subtitle tags `{\\an5}`/`{\\fs120}` would reach
+    the renderer and be interpreted as positioning/style overrides instead of
+    text; Unicode control + format codepoints (RTL overrides, zero-width
+    joiners, line separators) can flip rendering direction or break layout
+    even if the model never emits them deliberately.
+
+    Intentionally does NOT collapse adjacent identical word tokens. Stage D's
+    OCR-level dedup already catches re-detection garbage upstream, and the
+    LLM prompt instructs the model to dedup at content level. Doing it again
+    here would corrupt legitimate transcript content like song refrains
+    ("rain rain go away", "Whoa whoa whoa") where the repetition IS the
+    intended on-screen text.
+    """
+    if not line:
+        return line
+    cleaned = line
+    cleaned = _ASS_TAG_RE.sub("", cleaned)
+    cleaned = _strip_unicode_controls(cleaned)
+    for marker in _FORBIDDEN_MARKERS:
+        cleaned = cleaned.replace(marker, "")
+    for esc in _ESCAPE_SEQUENCES:
+        cleaned = cleaned.replace(esc, " ")
+    cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
+    return cleaned
+
 
 class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
     """Stage E: correct OCR phrase text using the audio transcript as ground truth."""
@@ -44,7 +104,7 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.text_alignment",
         prompt_id="align_overlay_to_transcript",
-        prompt_version="2026-05-18",
+        prompt_version="2026-05-19-atomize",
         model="gemini-2.5-flash",
         # Alignment is a small focused call: ~1k tokens in, ~200 tokens out.
         # Cost estimate per design doc: ~$0.0005 per call.
@@ -76,10 +136,40 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
             }
             for w in input.transcript_words
         ]
+        # `mode_directive` is the load-bearing instruction in the prompt:
+        # atomized input (one OCR word per phrase) needs single-word output
+        # per phrase, while phrase-mode input (multi-word OCR per phrase)
+        # may concatenate multiple transcript words. Picking the wrong
+        # directive at runtime causes the prompt to either drop content
+        # (atomized→phrase mode collapses words) or over-stuff content
+        # (phrase→atomized mode merged 'if you put in' into one overlay
+        # spanning 2 seconds in prod after the v0.4.34.0 reanalyze).
+        if input.atomize_mode:
+            mode_directive = (
+                "ATOMIZED INPUT. Each phrase has one line representing ONE OCR "
+                "word at its first-appeared moment. For each phrase, output "
+                "exactly ONE transcript word — the one whose timestamp is "
+                "closest to `phrase.start_t_s`, preferring a fuzzy text match "
+                "to the OCR line over pure timestamp proximity when the two "
+                "disagree. NEVER concatenate multiple transcript words into a "
+                "single output line. If no transcript word is within "
+                "[phrase.start_t_s - 0.5, phrase.start_t_s + 0.5] OR no "
+                "eligible word shares any letters with the OCR line, drop "
+                "the phrase."
+            )
+        else:
+            mode_directive = (
+                "PHRASE-MODE INPUT. Each phrase represents a multi-word OCR "
+                "block. For each phrase, output the transcript word(s) whose "
+                "timestamps overlap the phrase's visible window with a small "
+                "tolerance, concatenated in transcript order with single "
+                "spaces. Drop phrases with no transcript overlap."
+            )
         return load_prompt(
             "align_overlay_to_transcript",
             phrases_json=json.dumps(phrases_payload, ensure_ascii=False),
             transcript_json=json.dumps(transcript_payload, ensure_ascii=False),
+            mode_directive=mode_directive,
         )
 
     def parse(self, raw_text: str, input: TextAlignmentInput) -> TextAlignmentOutput:  # noqa: A002
@@ -120,7 +210,17 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
             if not all(isinstance(ln, str) for ln in lines):
                 log.warning("text_alignment_entry_non_string_lines", phrase_index=idx)
                 continue
-            corrected_lines_by_index[idx] = [str(ln) for ln in lines]
+            sanitized = [_sanitize_aligned_line(str(ln)) for ln in lines]
+            # If sanitization emptied every line, treat the phrase as dropped
+            # (model returned only forbidden content for it).
+            if not any(s for s in sanitized):
+                log.warning(
+                    "text_alignment_entry_emptied_by_sanitizer",
+                    phrase_index=idx,
+                    raw=[str(ln)[:40] for ln in lines],
+                )
+                continue
+            corrected_lines_by_index[idx] = sanitized
 
         # ── 4. Rebuild the Phrase list with corrected lines ───────────────────
         kept: list[Phrase] = []

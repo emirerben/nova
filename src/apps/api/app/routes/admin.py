@@ -22,7 +22,7 @@ from typing import Literal
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, field_validator, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -148,6 +148,11 @@ class TemplateResponse(BaseModel):
     is_agentic: bool = False
     use_layer2_default: bool | None = None
     created_at: datetime
+    # Sorted list of canonical-agent names whose live prompt_version differs
+    # from the snapshot stored on this template when its recipe was last
+    # materialized. Empty list = recipe is up to date with all live prompts.
+    # See app/services/template_staleness.py for semantics around NULL/{}.
+    recipe_stale_agents: list[str] = []
 
 
 class UpdateTemplateRequest(BaseModel):
@@ -200,6 +205,8 @@ class TemplateListItem(BaseModel):
     is_agentic: bool = False
     job_count: int
     created_at: datetime
+    # See TemplateResponse.recipe_stale_agents.
+    recipe_stale_agents: list[str] = []
 
 
 class TemplateListResponse(BaseModel):
@@ -663,9 +670,12 @@ def resolve_use_layer2(
 
 
 def _template_response(t: VideoTemplate) -> TemplateResponse:
+    from app.services.template_staleness import diff_recipe_versions  # noqa: PLC0415
+
     has_intro_slot = False
     if isinstance(t.recipe_cached, dict):
         has_intro_slot = bool(t.recipe_cached.get("has_intro_slot", False))
+    stale_agents = diff_recipe_versions(t.recipe_cached_versions, is_agentic=bool(t.is_agentic))
     return TemplateResponse(
         id=t.id,
         name=t.name,
@@ -687,6 +697,7 @@ def _template_response(t: VideoTemplate) -> TemplateResponse:
         is_agentic=t.is_agentic,
         use_layer2_default=t.use_layer2_default,
         created_at=t.created_at,
+        recipe_stale_agents=stale_agents,
     )
 
 
@@ -741,6 +752,8 @@ async def list_templates(
     result = await db.execute(query.offset(offset).limit(limit))
     rows = result.all()
 
+    from app.services.template_staleness import diff_recipe_versions  # noqa: PLC0415
+
     return TemplateListResponse(
         templates=[
             TemplateListItem(
@@ -756,6 +769,9 @@ async def list_templates(
                 is_agentic=t.is_agentic,
                 job_count=job_count,
                 created_at=t.created_at,
+                recipe_stale_agents=diff_recipe_versions(
+                    t.recipe_cached_versions, is_agentic=bool(t.is_agentic)
+                ),
             )
             for t, job_count in rows
         ],
@@ -877,6 +893,67 @@ async def create_template_from_url(
         is_agentic=req.is_agentic,
     )
     return _template_response(template)
+
+
+class StaleTemplateItem(BaseModel):
+    id: str
+    name: str
+    is_agentic: bool
+    template_type: str
+    stale_agents: list[str]
+
+
+class StaleTemplatesResponse(BaseModel):
+    # Templates whose stored recipe_cached_versions snapshot does not match
+    # the live AgentSpec.prompt_version values for at least one canonical
+    # agent. Pre-migration rows (NULL snapshot) also appear here. Use this
+    # endpoint to bulk-reanalyze after rolling out a prompt change.
+    total: int
+    templates: list[StaleTemplateItem]
+
+
+# IMPORTANT: this literal-path route MUST be declared BEFORE the
+# parameterized `/templates/{template_id}` route below, otherwise FastAPI
+# matches "stale-summary" as a {template_id} value.
+@router.get(
+    "/templates/stale-summary",
+    response_model=StaleTemplatesResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def list_stale_templates(
+    db: AsyncSession = Depends(get_db),
+    include_archived: bool = Query(default=False),
+) -> StaleTemplatesResponse:
+    """Return every template whose materialized recipe is older than its
+    canonical agents' live ``prompt_version`` values.
+
+    Archived templates are excluded by default — you usually don't want to
+    burn Gemini quota reanalyzing them. Pass ``include_archived=true`` to
+    surface them too.
+    """
+    from app.services.template_staleness import diff_recipe_versions  # noqa: PLC0415
+
+    query = select(VideoTemplate).where(VideoTemplate.template_type != "music_child")
+    if not include_archived:
+        query = query.where(VideoTemplate.archived_at.is_(None))
+    query = query.order_by(VideoTemplate.created_at.desc())
+
+    result = await db.execute(query)
+    items: list[StaleTemplateItem] = []
+    for t in result.scalars().all():
+        stale_agents = diff_recipe_versions(t.recipe_cached_versions, is_agentic=bool(t.is_agentic))
+        if not stale_agents:
+            continue
+        items.append(
+            StaleTemplateItem(
+                id=t.id,
+                name=t.name,
+                is_agentic=t.is_agentic,
+                template_type=t.template_type,
+                stale_agents=stale_agents,
+            )
+        )
+    return StaleTemplatesResponse(total=len(items), templates=items)
 
 
 @router.get(
@@ -1273,6 +1350,7 @@ async def create_test_job(
 
     job_id = str(job.id)
 
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
     from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
 
     # Preview-mode test jobs force the single-pass encode path regardless of
@@ -1284,12 +1362,14 @@ async def create_test_job(
     # admin-only and explicitly opt-in for "fast at the cost of some fidelity,"
     # so forcing single-pass here matches what the operator asked for.
     if req.preview_mode:
-        orchestrate_template_job.apply_async(
-            args=[job_id],
+        await enqueue_orchestrator(
+            orchestrate_template_job,
+            job.id,
+            db,
             kwargs={"force_single_pass": True},
         )
     else:
-        orchestrate_template_job.delay(job_id)
+        await enqueue_orchestrator(orchestrate_template_job, job.id, db)
 
     log.info(
         "test_job_created",
@@ -1391,9 +1471,10 @@ async def create_rerender_job(
 
     job_id = str(job.id)
 
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
     from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
 
-    orchestrate_template_job.delay(job_id)
+    await enqueue_orchestrator(orchestrate_template_job, job.id, db)
 
     log.info(
         "rerender_job_created",
@@ -1535,12 +1616,24 @@ async def get_latest_test_job(
     """Return the most recent completed test job for a template."""
     await get_template_or_404(template_id, db)
 
+    # Accept either template_ready jobs OR processing_failed jobs that have
+    # an output_url in assembly_plan. The latter covers the window where the
+    # pre-#243 reaper falsely flipped successful template_ready jobs to
+    # processing_failed (see admin_jobs.un_reap endpoint for the canonical
+    # restore). Without this, the editor's Test Job button silently no-ops
+    # when every prior job for the template was reaped before #243 deployed.
     result = await db.execute(
         select(Job)
         .where(
             Job.template_id == template_id,
             Job.job_type == "template",
-            Job.status == "template_ready",
+            or_(
+                Job.status == "template_ready",
+                and_(
+                    Job.status == "processing_failed",
+                    Job.assembly_plan.op("?")("output_url"),
+                ),
+            ),
         )
         .order_by(Job.created_at.desc())
         .limit(1)
@@ -1730,6 +1823,10 @@ async def save_recipe(
     # Update cached recipe
     template.recipe_cached = recipe_dict
     template.recipe_cached_at = datetime.now(UTC)
+    # Operator hand-edited this recipe — agents didn't produce it. Empty dict
+    # signals "no LLM agents contributed" so the admin STALE badge clears.
+    # Future prompt rotations don't invalidate a hand-edited recipe.
+    template.recipe_cached_versions = {}
 
     await db.commit()
     await db.refresh(version)
@@ -1915,6 +2012,8 @@ async def set_font_default(
     db.add(version)
     template.recipe_cached = recipe
     template.recipe_cached_at = datetime.now(UTC)
+    # Operator-driven cascade — same rationale as save_recipe above.
+    template.recipe_cached_versions = {}
     await db.commit()
     await db.refresh(version)
 
@@ -2059,6 +2158,9 @@ async def create_child_template(
         music_track_id=track.id,
         recipe_cached=merged_recipe,
         recipe_cached_at=datetime.now(UTC),
+        # Synthetic merge of parent recipe + track beats — no agents ran here.
+        # Empty dict = staleness check N/A. See app/services/template_staleness.py.
+        recipe_cached_versions={},
         analysis_status="ready",
         audio_gcs_path=track.audio_gcs_path,
         required_clips_min=merged_recipe.get("required_clips_min", parent.required_clips_min),
@@ -2179,6 +2281,9 @@ async def remerge_children(
 
         child.recipe_cached = merged
         child.recipe_cached_at = datetime.now(UTC)
+        # Re-merge is the same synthetic path as initial child creation — no
+        # agents ran. Empty dict = staleness check N/A.
+        child.recipe_cached_versions = {}
         child.required_clips_min = merged.get("required_clips_min", child.required_clips_min)
         child.required_clips_max = merged.get("required_clips_max", child.required_clips_max)
 
@@ -2583,6 +2688,9 @@ async def create_template_from_music_track(
         music_track_id=track.id,
         recipe_cached=recipe,
         recipe_cached_at=now,
+        # Generated from beat timestamps, no LLM agents involved. See
+        # app/services/template_staleness.py for the empty-dict sentinel.
+        recipe_cached_versions={},
         analysis_status="ready",
         required_clips_min=req_min,
         required_clips_max=req_max,

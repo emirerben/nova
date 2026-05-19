@@ -290,12 +290,16 @@ def import_from_drive(
             log.info("drive_import_uploading_gcs", job_id=job_id, gcs_path=gcs_path)
             _upload_to_gcs(local_path, gcs_path)
 
-            # Atomic handoff: set status + enqueue orchestrate in one try block
+            # Atomic handoff: set status + celery_task_id + enqueue orchestrate.
+            # task_id=job_id is the convention enforced by
+            # app/services/job_dispatch.py — drive_import predates that helper
+            # and runs in sync context, so it sets celery_task_id inline here.
             with _sync_session() as db:
                 job = db.get(Job, uuid.UUID(job_id))
                 if job is None:
                     return
                 job.status = "queued"
+                job.celery_task_id = job_id
                 db.commit()
 
                 from app.tasks.orchestrate import orchestrate_job

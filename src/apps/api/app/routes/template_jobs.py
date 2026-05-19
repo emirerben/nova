@@ -224,15 +224,16 @@ async def create_template_job(
     recipe = template.recipe_cached or {}
     template_kind = recipe.get("template_kind", "multiple_videos")
 
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
     from app.tasks.template_orchestrate import (  # noqa: PLC0415
         orchestrate_single_video_job,
         orchestrate_template_job,
     )
 
     if template_kind == "single_video":
-        orchestrate_single_video_job.delay(job_id)
+        await enqueue_orchestrator(orchestrate_single_video_job, job.id, db)
     else:
-        orchestrate_template_job.delay(job_id)
+        await enqueue_orchestrator(orchestrate_template_job, job.id, db)
 
     log.info(
         "template_job_created",
@@ -357,15 +358,16 @@ async def reroll_template_job(
         if tpl and isinstance(tpl.recipe_cached, dict):
             template_kind = tpl.recipe_cached.get("template_kind", "multiple_videos")
 
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
     from app.tasks.template_orchestrate import (  # noqa: PLC0415
         orchestrate_single_video_job,
         orchestrate_template_job,
     )
 
     if template_kind == "single_video":
-        orchestrate_single_video_job.delay(new_job_id)
+        await enqueue_orchestrator(orchestrate_single_video_job, new_job.id, db)
     else:
-        orchestrate_template_job.delay(new_job_id)
+        await enqueue_orchestrator(orchestrate_template_job, new_job.id, db)
 
     log.info(
         "template_job_rerolled",

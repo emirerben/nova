@@ -98,7 +98,24 @@ AGENT_SET_RECIPE_PLUS_TEXT = "recipe+text"
 # therefore have no v1/v2 distinction — `text_overlay_version` is ignored for
 # that agent_set so their cache keys stay unchanged.
 TEXT_OVERLAY_VERSION_V1 = "v1"
-TEXT_OVERLAY_VERSION_V2 = "v2"
+# IMPORTANT: bump this constant on EVERY Stage E (text_alignment) prompt
+# change. The cache key embeds this value but does NOT embed the
+# `text_alignment.prompt_version` field directly, so a prompt bump without
+# a constant bump silently serves stale recipes.
+#
+# History:
+#   2026-05-19 (v2 → v2-2026-05-19): v0.4.34.0 wired transcript_words into
+#     agentic builds, rewrote Stage E to transcript-authoritative, fixed
+#     Stage D dedup + Stage G newline normalize. Pre-fix recipes had garbage
+#     like "if you if you put put in" (prod job 87b7292b).
+#   2026-05-19 (v2-2026-05-19 → v2-2026-05-19-atomize): v0.4.34.2. v0.4.34.1
+#     shipped the atomize_mode prompt branching but the cache constant wasn't
+#     re-bumped, so reanalyze cache-hit on the v0.4.34.0 namespace and served
+#     the multi-word-stuffed recipes from that run unchanged.
+#
+# When you change anything that affects Layer-2 overlay output (Stage E
+# prompt, sanitizer logic, Stage D/G semantics), append a new suffix here.
+TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-19-atomize"
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.

@@ -429,3 +429,178 @@ def test_timing_and_bbox_preserved(
     assert result.end_t_s == 3.5
     assert result.aabb == (0.1, 0.2, 0.9, 0.4)
     assert result.mean_confidence == 0.88
+
+
+# ── Sanitizer post-pass (regression: prod job 87b7292b) ───────────────────────
+#
+# These tests lock in the deterministic cleanup applied to LLM output before
+# the corrected lines are accepted. The sanitizer strips STRUCTURAL forbidden
+# content (literal \n, debug markers) but does NOT collapse adjacent identical
+# tokens — that would corrupt legitimate transcript refrains like "rain rain
+# go away" or "Whoa whoa whoa".
+
+
+def test_sanitizer_strips_literal_newline_and_truncation_markers(
+    agent: TextAlignmentAgent, mock_client: MockModelClient
+):
+    phrase = _make_phrase(["the work to get there"], start_t_s=4.5, end_t_s=5.4)
+    transcript_words = [
+        _make_word("the", 4.5, 4.6),
+        _make_word("work", 4.6, 4.9),
+        _make_word("to", 4.9, 5.0),
+        _make_word("get", 5.0, 5.2),
+        _make_word("there", 5.2, 5.4),
+    ]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response([{"index": 0, "lines": ["the\\nwork to get there[overlap_truncated]"]}]),
+    )
+    out = agent.run(TextAlignmentInput(phrases=[phrase], transcript_words=transcript_words))
+
+    assert len(out.phrases) == 1
+    text = out.phrases[0].sample_text
+    assert "\\n" not in text
+    assert "[overlap_truncated]" not in text
+    assert text == "the work to get there"
+
+
+def test_sanitizer_drops_phrase_when_only_forbidden_content_returned(
+    agent: TextAlignmentAgent, mock_client: MockModelClient
+):
+    phrase = _make_phrase(["watermark"], start_t_s=0.0, end_t_s=1.0)
+    transcript_words = [_make_word("hello", 0.0, 1.0)]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response([{"index": 0, "lines": ["[overlap_truncated]"]}]),
+    )
+    out = agent.run(TextAlignmentInput(phrases=[phrase], transcript_words=transcript_words))
+
+    # Phrase dropped: sanitizer emptied the only line.
+    assert out.phrases == []
+    assert out.dropped_count == 1
+
+
+def test_sanitizer_strips_ass_subtitle_tags(
+    agent: TextAlignmentAgent, mock_client: MockModelClient
+):
+    """LLM-emitted ASS subtitle tags (`{\\an5}`, `{\\fs120}`) would reach the
+    renderer and be interpreted as positioning/style overrides instead of
+    text. The sanitizer must strip them defensively.
+    """
+    phrase = _make_phrase(["centered hook"], start_t_s=0.0, end_t_s=1.0)
+    transcript_words = [_make_word("centered", 0.0, 0.3), _make_word("hook", 0.4, 1.0)]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response([{"index": 0, "lines": ["{\\an5}centered{\\fs120} hook"]}]),
+    )
+    out = agent.run(TextAlignmentInput(phrases=[phrase], transcript_words=transcript_words))
+
+    text = out.phrases[0].sample_text
+    assert "{" not in text and "}" not in text
+    assert "\\an5" not in text and "\\fs120" not in text
+    assert text == "centered hook"
+
+
+def test_sanitizer_strips_unicode_controls(agent: TextAlignmentAgent, mock_client: MockModelClient):
+    """Zero-width joiners, RTL overrides, and line/paragraph separators are
+    stripped so they cannot flip rendering direction or break layout. Tab and
+    newline survive — newlines are handled by the existing whitespace pass.
+    """
+    phrase = _make_phrase(["hello world"], start_t_s=0.0, end_t_s=1.0)
+    transcript_words = [_make_word("hello", 0.0, 0.3), _make_word("world", 0.4, 1.0)]
+    # ‮ is RTL override, ​ is zero-width space,   is line separator.
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response([{"index": 0, "lines": ["hello‮​ world "]}]),
+    )
+    out = agent.run(TextAlignmentInput(phrases=[phrase], transcript_words=transcript_words))
+
+    text = out.phrases[0].sample_text
+    assert "‮" not in text
+    assert "​" not in text
+    assert " " not in text
+    assert text == "hello world"
+
+
+def test_sanitizer_preserves_legitimate_repeated_tokens(
+    agent: TextAlignmentAgent, mock_client: MockModelClient
+):
+    """Refrains like 'rain rain go away' and 'Whoa whoa whoa' must survive the
+    sanitizer. Stage D and the LLM prompt already handle OCR-side dedup; doing
+    it again here would corrupt legitimate content for music-template overlays.
+    """
+    phrase = _make_phrase(["rain rain go away"], start_t_s=1.0, end_t_s=2.5)
+    transcript_words = [
+        _make_word("rain", 1.0, 1.3),
+        _make_word("rain", 1.4, 1.7),
+        _make_word("go", 1.8, 2.0),
+        _make_word("away", 2.1, 2.5),
+    ]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response([{"index": 0, "lines": ["rain rain go away"]}]),
+    )
+    out = agent.run(TextAlignmentInput(phrases=[phrase], transcript_words=transcript_words))
+
+    assert out.phrases[0].sample_text == "rain rain go away"
+
+
+# ── atomize_mode prompt branching (regression: v0.4.34.0 multi-word stuffing) ─
+#
+# The v0.4.34.0 prompt told the LLM to "concatenate eligible transcript words"
+# which produced multi-word output like "if you" 2-4s when the atomized OCR
+# phrase represented a single word "if" at 2.0s. atomize_mode=True must tell
+# the LLM to output ONE transcript word per phrase, never concatenate.
+
+
+def test_render_prompt_atomize_mode_emits_atomized_directive(
+    agent: TextAlignmentAgent,
+) -> None:
+    """When atomize_mode=True, the rendered prompt must contain the
+    single-word-per-phrase directive. Locks the wiring through
+    TextAlignmentInput → render_prompt → load_prompt's mode_directive slot.
+    """
+    phrase = _make_phrase(["if"], start_t_s=2.0, end_t_s=4.0)
+    transcript_words = [_make_word("if", 2.0, 2.5)]
+    inp = TextAlignmentInput(
+        phrases=[phrase],
+        transcript_words=transcript_words,
+        atomize_mode=True,
+    )
+    rendered = agent.render_prompt(inp)
+    assert "ATOMIZED INPUT" in rendered
+    assert "exactly ONE transcript word" in rendered
+    assert "NEVER concatenate" in rendered
+    # Phrase-mode directive must NOT appear when atomize_mode=True.
+    assert "PHRASE-MODE INPUT" not in rendered
+
+
+def test_render_prompt_phrase_mode_emits_phrase_directive(
+    agent: TextAlignmentAgent,
+) -> None:
+    """When atomize_mode=False (default), the rendered prompt instructs the
+    LLM to concatenate eligible transcript words for multi-word OCR blocks.
+    """
+    phrase = _make_phrase(["multi word block"], start_t_s=0.0, end_t_s=2.0)
+    transcript_words = [
+        _make_word("multi", 0.0, 0.5),
+        _make_word("word", 0.5, 1.0),
+        _make_word("block", 1.0, 2.0),
+    ]
+    inp = TextAlignmentInput(
+        phrases=[phrase],
+        transcript_words=transcript_words,
+        atomize_mode=False,
+    )
+    rendered = agent.render_prompt(inp)
+    assert "PHRASE-MODE INPUT" in rendered
+    assert "concatenated in transcript order" in rendered
+    assert "ATOMIZED INPUT" not in rendered
+
+
+def test_atomize_mode_defaults_to_false():
+    """Existing callers that omit atomize_mode get the legacy phrase-mode
+    directive. Backward-compatible default.
+    """
+    inp = TextAlignmentInput(phrases=[], transcript_words=[])
+    assert inp.atomize_mode is False

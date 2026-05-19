@@ -94,6 +94,11 @@ class VideoTemplate(Base):
     gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     recipe_cached: Mapped[dict | None] = mapped_column(JSONB)
     recipe_cached_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ)
+    # {agent_name: prompt_version} captured when recipe_cached was written.
+    # The admin staleness check compares this against live AgentSpec.prompt_version
+    # values. NULL = unknown (pre-migration row) → treated as stale so existing
+    # templates surface for reanalysis on first deploy.
+    recipe_cached_versions: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # "analyzing" → Gemini analysis in progress; "ready" → recipe_cached populated
     analysis_status: Mapped[str] = mapped_column(Text, nullable=False, default="analyzing")
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -216,6 +221,16 @@ class MusicTrack(Base):
     # Gemini audio analysis → cached recipe for audio-only template creation
     recipe_cached: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     recipe_cached_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # Lyrics extraction (Genius lyric text + Whisper word timings, aligned).
+    # See app.agents.lyrics for the producer and app.pipeline.lyric_injector for
+    # how this gets baked into music-job text overlays.
+    # "pending" | "extracting" | "ready" | "failed" | "unavailable"
+    lyrics_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    lyrics_cached: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    lyrics_error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lyrics_extracted_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # "genius+whisper" | "whisper_only" | "manual" — null until extraction runs
+    lyrics_source: Mapped[str | None] = mapped_column(Text, nullable=True)
     # song_classifier creative labels (vibe, genre, mood, copy_tone, ...).
     # See app/agents/_schemas/music_labels.py — MusicLabels Pydantic shape.
     # Nullable until backfill runs; the matcher filters out NULL-labeled tracks.
@@ -236,6 +251,7 @@ class MusicTrack(Base):
     __table_args__ = (
         Index("idx_music_tracks_status", "analysis_status"),
         Index("idx_music_tracks_published", "published_at"),
+        Index("idx_music_tracks_lyrics_status", "lyrics_status"),
     )
 
 
@@ -247,7 +263,8 @@ class Job(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     # importing|queued|processing|clips_ready|clips_ready_partial|
-    # posting|posting_partial|done|posting_failed|processing_failed
+    # posting|posting_partial|done|posting_failed|processing_failed|
+    # cancelled (admin cancel via /admin/jobs/{id}/cancel)
     # drive import: importing → queued → processing → ...
     # template jobs: queued → processing → template_ready | processing_failed
     # music jobs:   queued → processing → music_ready   | processing_failed
@@ -292,6 +309,12 @@ class Job(Base):
     # Each entry: {ts, stage, event, data}. Drives the admin job-debug view's
     # pipeline-trace tab. NULL on legacy/pre-feature jobs — the UI handles that.
     pipeline_trace: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Celery task_id of the orchestrator task dispatched for this job. By
+    # convention str(job.id) — set by app.services.job_dispatch.enqueue_orchestrator
+    # on every orchestrator dispatch site. NULL on legacy rows (pre-0027)
+    # and on rows whose orchestrator was never dispatched. Used by the
+    # admin debug UI to call celery_app.control.{inspect,revoke}.
+    celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # True pipeline-wall-time anchors. Distinct from created_at (queue insert)
     # and updated_at (any column write).
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)

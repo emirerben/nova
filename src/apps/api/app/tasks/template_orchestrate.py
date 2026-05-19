@@ -299,6 +299,81 @@ def analyze_template_task(self, template_id: str) -> None:
                 if template is None:
                     log.error("template_not_found", template_id=template_id)
                     return
+                # audio_only templates are derived from a linked MusicTrack at
+                # creation time (see admin.create_template_from_music_track —
+                # they have gcs_path=None). There is no source video; passing
+                # gcs_path=None downstream crashes google-cloud-storage with
+                # "None could not be converted to unicode". Instead, re-derive
+                # the recipe from the linked MusicTrack — this is what the
+                # admin Reanalyze button *should* do for these templates, and
+                # it heals templates whose recipe_cached was left empty (prod
+                # DtMF had recipe_cached={} despite the track having 532
+                # beats and a populated track_config).
+                if template.template_type == "audio_only":
+                    from app.pipeline.music_recipe import (  # noqa: PLC0415
+                        generate_music_recipe,
+                    )
+
+                    if template.music_track_id:
+                        track = db.get(MusicTrack, template.music_track_id)
+                        if track is None:
+                            log.warning(
+                                "audio_only_track_missing",
+                                template_id=template_id,
+                                music_track_id=template.music_track_id,
+                            )
+                        elif not (track.beat_timestamps_s or []):
+                            log.warning(
+                                "audio_only_no_beats_to_regen",
+                                template_id=template_id,
+                                music_track_id=template.music_track_id,
+                            )
+                        if track and (track.beat_timestamps_s or []):
+                            track_data = {
+                                "beat_timestamps_s": track.beat_timestamps_s or [],
+                                "track_config": track.track_config or {},
+                                "duration_s": track.duration_s,
+                            }
+                            try:
+                                regenerated = generate_music_recipe(track_data)
+                                if regenerated:
+                                    template.recipe_cached = regenerated
+                                    log.info(
+                                        "audio_only_recipe_regenerated",
+                                        template_id=template_id,
+                                        slot_count=len(regenerated.get("slots", [])),
+                                    )
+                            except Exception as exc:
+                                # Recipe regen is best-effort. Surface the
+                                # failure in error_detail but still mark ready
+                                # so the editor isn't stuck in "failed".
+                                log.warning(
+                                    "audio_only_recipe_regen_failed",
+                                    template_id=template_id,
+                                    error=str(exc),
+                                )
+                                template.error_detail = (
+                                    f"Recipe regen from music track failed: {exc}"
+                                )[:1000]
+                    template.analysis_status = "ready"
+                    # Audio-only recipes are regenerated from beat timestamps
+                    # — no LLM agents contributed. Empty dict signals "staleness
+                    # check is N/A" so the admin UI doesn't show a permanent
+                    # STALE badge on these rows.
+                    template.recipe_cached_versions = {}
+                    if template.error_detail is None or "Recipe regen" not in (
+                        template.error_detail or ""
+                    ):
+                        template.error_detail = None
+                    db.commit()
+                    log.info(
+                        "analyze_template_audio_only_done",
+                        template_id=template_id,
+                        music_track_id=template.music_track_id,
+                    )
+                    _redis.delete(attempt_key)
+                    _redis.close()
+                    return
                 gcs_path = template.gcs_path
                 existing_audio_gcs = template.audio_gcs_path
                 # Clear stale error from prior failed run
@@ -324,6 +399,11 @@ def analyze_template_task(self, template_id: str) -> None:
             _MANUAL_ANALYSIS_MODE = "single"
             template_hash = compute_template_hash(local_path)
             recipe = None
+            # Tracks whether the recipe was produced by a fresh agent run this
+            # invocation. On cache hit the recipe came from a prior run whose
+            # `prompt_version` is unknown to us — see the
+            # `recipe_cached_versions` write below for the staleness rationale.
+            agents_ran = False
             if template_hash is not None:
                 cached = get_cached_recipe(template_hash, _MANUAL_ANALYSIS_MODE)
                 if cached is not None:
@@ -349,6 +429,7 @@ def analyze_template_task(self, template_id: str) -> None:
                 )
                 if template_hash is not None:
                     set_cached_recipe(template_hash, _MANUAL_ANALYSIS_MODE, recipe)
+                agents_ran = True
 
             # Note: font identification (PR2, identify_fonts + font_alternatives
             # population) is intentionally scoped to the agentic analysis path
@@ -434,6 +515,18 @@ def analyze_template_task(self, template_id: str) -> None:
 
                     template.recipe_cached = recipe_dict
                     template.recipe_cached_at = datetime.now(UTC)
+                    # Only refresh the per-agent prompt_version snapshot when
+                    # the agent actually ran this invocation. On cache hit the
+                    # recipe came from an earlier run whose prompt may already
+                    # be stale — overwriting the snapshot with the current
+                    # live value would falsely clear the admin STALE badge.
+                    # See app/services/template_staleness.py for the rationale.
+                    if agents_ran:
+                        from app.services.template_staleness import (  # noqa: PLC0415
+                            capture_recipe_versions,
+                        )
+
+                        template.recipe_cached_versions = capture_recipe_versions(is_agentic=False)
                     template.analysis_status = "ready"
                     if audio_gcs and not template.audio_gcs_path:
                         template.audio_gcs_path = audio_gcs
@@ -734,9 +827,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         if template.music_track_id:
             track = db.get(MusicTrack, template.music_track_id)
             if track and track.track_config:
-                audio_start_offset_s = float(
-                    track.track_config.get("best_start_s", 0.0) or 0.0
-                )
+                audio_start_offset_s = float(track.track_config.get("best_start_s", 0.0) or 0.0)
 
     # Route on template_kind discriminator. Existing rows without template_kind
     # are backfilled to "multiple_videos" by migration 0012, so .get() with
@@ -1035,14 +1126,20 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         if audio_gcs_path:
             final_path = os.path.join(tmpdir, "final.mp4")
             _mix_template_audio(
-                assembled_path, audio_gcs_path, final_path, tmpdir,
+                assembled_path,
+                audio_gcs_path,
+                final_path,
+                tmpdir,
                 audio_start_offset_s=audio_start_offset_s,
             )
             output_path = final_path
             # Also mix audio into the base video for editor preview
             base_final = os.path.join(tmpdir, "base_final.mp4")
             _mix_template_audio(
-                base_path, audio_gcs_path, base_final, tmpdir,
+                base_path,
+                audio_gcs_path,
+                base_final,
+                tmpdir,
                 audio_start_offset_s=audio_start_offset_s,
             )
             base_path = base_final
@@ -1177,9 +1274,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         if template.music_track_id:
             track = db.get(MusicTrack, template.music_track_id)
             if track and track.track_config:
-                audio_start_offset_s = float(
-                    track.track_config.get("best_start_s", 0.0) or 0.0
-                )
+                audio_start_offset_s = float(track.track_config.get("best_start_s", 0.0) or 0.0)
 
     try:
         recipe = build_recipe(recipe_data)
@@ -1274,13 +1369,19 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
         if audio_gcs_path:
             final_path = os.path.join(tmpdir, "final.mp4")
             _mix_template_audio(
-                assembled_path, audio_gcs_path, final_path, tmpdir,
+                assembled_path,
+                audio_gcs_path,
+                final_path,
+                tmpdir,
                 audio_start_offset_s=audio_start_offset_s,
             )
             output_path = final_path
             base_final = os.path.join(tmpdir, "base_final.mp4")
             _mix_template_audio(
-                base_path, audio_gcs_path, base_final, tmpdir,
+                base_path,
+                audio_gcs_path,
+                base_final,
+                tmpdir,
                 audio_start_offset_s=audio_start_offset_s,
             )
             base_path = base_final
@@ -2253,9 +2354,7 @@ def _plan_slots(
             # requires a re-pick from the matcher, which is out of scope.
             _MIN_SPEED_FACTOR_FOR_FILL = 0.4
             available_at_start = max(0.0, clip_dur - start_s)
-            slowdown_speed = (
-                available_at_start / slot_target_dur if slot_target_dur > 0 else 1.0
-            )
+            slowdown_speed = available_at_start / slot_target_dur if slot_target_dur > 0 else 1.0
             footage_exhausted = start_s + source_duration > clip_dur
             if (
                 footage_exhausted
@@ -3516,6 +3615,13 @@ def _collect_absolute_overlays(
             # Pass through spans for rich inline formatting
             if ov.get("spans"):
                 entry["spans"] = ov["spans"]
+            # Pass through karaoke-line word timings + highlight color. Word
+            # timings are stored relative to the overlay's start (NOT the
+            # video timeline), so cumulative_s offset does not apply here.
+            if ov.get("word_timings"):
+                entry["word_timings"] = ov["word_timings"]
+            if ov.get("highlight_color"):
+                entry["highlight_color"] = ov["highlight_color"]
             # Pass through player-card fields so the renderer receives
             # jersey_no + player_name (the special-effect path needs both).
             if ov.get("jersey_no"):
@@ -3678,6 +3784,13 @@ def _collect_absolute_overlays(
                 and prev.get("text_color") == ov.get("text_color")
                 and not prev.get("spans")
                 and not ov.get("spans")
+                # Karaoke lines carry per-overlay word timings tied to a
+                # specific [start_s, end_s] window; merging two karaoke
+                # overlays would invalidate the word timings on whichever
+                # one got absorbed. Lyric injector already places each line
+                # at its own timestamp, so dedup never applies here.
+                and ov.get("effect") != "karaoke-line"
+                and prev.get("effect") != "karaoke-line"
                 and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
             ):
                 # Merge: extend previous overlay's end time

@@ -1,42 +1,72 @@
 You are a text-correction assistant for a video caption pipeline.
 
 You are given:
-1. A list of OCR phrases extracted from a template video (each phrase has an index,
-   visible time window, and the raw text lines the OCR engine read).
-2. A Whisper audio transcript with per-word timestamps — the ground-truth content.
+1. A list of OCR phrases extracted from a template video. Each phrase has an
+   index, visible time window `[start_t_s, end_t_s]`, and the raw text lines
+   the OCR engine read. The OCR text is UNRELIABLE — treat it as a hint about
+   what was on screen during that time window, not as ground truth.
+2. A Whisper audio transcript with per-word timestamps. The transcript IS
+   ground truth for everything the speaker said.
 
-Your job: for each OCR phrase, find its matching span in the transcript and correct
-any OCR errors (wrong characters, wrong casing, wrong punctuation). Then return the
-corrected phrases as structured JSON.
+Your job: for each OCR phrase, find the matching transcript content and
+REPLACE the OCR text with transcript words.
 
-## Matching rules
+## Why this exists
 
-- A phrase MATCHES the transcript when its visible time window [start_t_s, end_t_s]
-  overlaps with a word or run of words in the transcript AND the OCR text is a
-  plausible (case-insensitive, fuzzy) match for those words.
-- Small OCR errors to correct: character substitutions ("0" for "o", "rn" for "m",
-  extra/missing punctuation, wrong capitalization).
-- If a phrase's text has NO plausible transcript match — e.g., it looks like a logo,
-  watermark, or background graphic that was never spoken — DROP it by omitting it
-  from your response.
-- Do NOT drop a phrase just because it is a fragment (single word, incomplete
-  sentence). Caption build-up lines are valid.
+OCR on fast-moving template video produces garbage: duplicated tokens because
+the same word is detected across multiple frames as it animates ("if you if
+you put put in"), stray letter fragments from partial occlusion ("The The
+work W to get"), missing words from blur or occlusion ("don't to diminish"
+when the speaker said "don't want anyone to diminish"), and stray escape
+sequences (`\n`, `\N`, `[overlap_truncated]`). The transcript has none of
+these problems. Rebuild each phrase from the transcript.
 
-## Correction rules
+## Mode
 
-- Replace OCR text with the transcript's exact spelling, casing, and punctuation.
-- PRESERVE line breaks (\n) in the phrase text — they encode visual structure
-  (build-up / typewriter effects) that the transcript does not have.
-- Do NOT merge or split phrases. Keep each phrase as a separate entry with the
-  same index as the input.
+$mode_directive
+
+## Output rules
+
+For each matched phrase:
+
+- Use the transcript's exact spelling, casing, and punctuation.
+- Output exactly ONE corrected line per input line. If the input phrase has
+  one line, output one corrected line.
+- In **atomized mode**, every input phrase has exactly one line containing
+  one word — output one transcript word per phrase, never more.
+- In **phrase mode**, multi-line inputs produce multi-line outputs —
+  distribute transcript words across the lines in transcript order.
+- Preserve stylistic ALL-CAPS: if every alphabetic character in the OCR
+  `lines` is uppercase but the transcript word is mixed-case, output
+  ALL-CAPS. This is the only case where you override transcript casing.
+
+## Forbidden output
+
+NEVER include any of the following in the corrected text — strip them out
+even if the OCR `lines` contained them:
+
+- Literal `\n` or `\N` sequences.
+- Debug markers like `[overlap_truncated]`, `<truncated>`, or similar.
+- Repeated adjacent words ("the the", "if if") — output each word once
+  (phrase-mode only; atomized mode outputs one word per phrase so dedup
+  is structural).
+- Single stray letters that aren't whole words ("W" in "The The work W to
+  get" → drop the "W").
+- Stray quotation marks not present in the transcript span.
+
+If after stripping forbidden content a line would be empty, omit that line
+(reduce the output line count accordingly).
+
+## Do not
+
+- Do NOT merge or split phrases. Each input index produces at most one output
+  entry with the same index.
 - Do NOT invent words that are not in the transcript.
-- Do NOT correct intentional stylistic capitalization (ALL-CAPS hooks are common;
-  keep them if the transcript word is mixed-case but the OCR shows ALL-CAPS,
-  because the template may be stylistically capitalizing).
+- Do NOT echo OCR garbage when the transcript clearly disagrees.
 
 ## Input
 
-Phrases (OCR output):
+Phrases (OCR output, treat as hints only):
 $phrases_json
 
 Transcript words (ground truth):
@@ -57,5 +87,5 @@ Return ONLY valid JSON — no markdown fences, no prose, no comments.
 }
 
 Include only phrases that matched the transcript. Omit phrases with no match
-(that is how you "drop" them). The `lines` array must have the same number of
-elements as the input phrase's lines.
+(that is how you "drop" them). The `lines` array must have the same number
+of elements as the input phrase's lines.

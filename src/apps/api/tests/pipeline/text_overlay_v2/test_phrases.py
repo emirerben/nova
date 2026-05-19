@@ -403,3 +403,62 @@ def test_atomize_per_event_keeps_same_line_words_separate():
 
 def test_atomize_per_event_empty_input_returns_empty():
     assert reconstruct_phrases([], atomize_per_event=True) == []
+
+
+# ── Dedup of duplicate events within one phrase ───────────────────────────────
+#
+# Regression for prod job 87b7292b-3913-40b9-844f-835f7544063b: a phrase
+# rendered as "if you if you put put in" because Stage D collected duplicate
+# events (same OCR text re-detected as the template animated) into the same
+# phrase's `lines` list with no dedup. After the fix, _finalize collapses
+# same-text events by casefolded key.
+
+
+def test_finalize_dedups_adjacent_duplicate_events():
+    # Three events all reading "if" at the same Y (same on-screen line) but
+    # different X positions — same word re-detected as the template animates.
+    events = _events(
+        ("if", 0.0, 1.0, 0.4, 0.5),
+        ("if", 0.0, 1.0, 0.45, 0.5),
+        ("if", 0.0, 1.0, 0.5, 0.5),
+    )
+    phrases = reconstruct_phrases(events)
+    assert len(phrases) == 1
+    assert phrases[0].lines == ["if"]
+    assert phrases[0].sample_text == "if"
+
+
+def test_finalize_dedups_non_adjacent_duplicates():
+    # "if", "you", "if" — same word at two non-adjacent y-positions.
+    # Dedup must catch the second "if" even though "you" is between them.
+    events = _events(
+        ("if", 0.0, 1.0, 0.5, 0.40),
+        ("you", 0.0, 1.0, 0.5, 0.50),
+        ("if", 0.0, 1.0, 0.5, 0.60),
+    )
+    phrases = reconstruct_phrases(events)
+    assert len(phrases) == 1
+    # Y-sort puts top-most first: if (0.40), you (0.50), then DROP duplicate if (0.60).
+    assert phrases[0].lines == ["if", "you"]
+
+
+def test_finalize_dedup_is_case_insensitive():
+    events = _events(
+        ("The", 0.0, 1.0, 0.5, 0.45),
+        ("THE", 0.0, 1.0, 0.5, 0.55),
+    )
+    phrases = reconstruct_phrases(events)
+    assert len(phrases) == 1
+    # Casefolded dedup keeps the first occurrence's original casing.
+    assert phrases[0].lines == ["The"]
+
+
+def test_finalize_preserves_distinct_words_in_y_order():
+    # Sanity: dedup does not collapse legitimately different words.
+    events = _events(
+        ("Top", 0.0, 1.0, 0.5, 0.40),
+        ("Middle", 0.0, 1.0, 0.5, 0.50),
+        ("Bottom", 0.0, 1.0, 0.5, 0.60),
+    )
+    phrases = reconstruct_phrases(events)
+    assert phrases[0].lines == ["Top", "Middle", "Bottom"]

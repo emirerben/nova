@@ -100,7 +100,10 @@ export type TemplateJobStatus =
   | "queued"
   | "processing"
   | "template_ready"
-  | "processing_failed";
+  | "processing_failed"
+  // Admin-initiated cancel via POST /admin/jobs/{id}/cancel.
+  // Rendered as a distinct screen on /template-jobs/[id].
+  | "cancelled";
 
 export interface AssemblyPlanData {
   // Optional because single_video templates produce no slot-step array —

@@ -119,9 +119,12 @@ def test_admin_test_job_accepts_unpublished_ready_track(client: TestClient) -> N
     try:
         with (
             patch("app.routes.admin_music.Job", return_value=new_job),
-            patch("app.tasks.music_orchestrate.orchestrate_music_job") as mock_task,
+            patch(
+                "app.services.job_dispatch.enqueue_orchestrator",
+                new_callable=AsyncMock,
+            ) as mock_enqueue,
         ):
-            mock_task.delay = MagicMock()
+            mock_enqueue.return_value = str(new_job.id)
             resp = client.post(
                 f"/admin/music-tracks/{track.id}/test-job",
                 json={"clip_gcs_paths": ["music-uploads/u1/a.mp4", "music-uploads/u2/b.mp4"]},
@@ -134,7 +137,10 @@ def test_admin_test_job_accepts_unpublished_ready_track(client: TestClient) -> N
     body = resp.json()
     assert body["status"] == "queued"
     assert body["music_track_id"] == track.id
-    mock_task.delay.assert_called_once_with(body["job_id"])
+    mock_enqueue.assert_awaited_once()
+    # First positional arg: the Celery task. Second: job UUID.
+    args = mock_enqueue.await_args.args
+    assert str(args[1]) == body["job_id"]
 
 
 def test_admin_test_job_rejects_analyzing_track(client: TestClient) -> None:
@@ -305,8 +311,11 @@ def test_admin_rerender_copies_clip_paths(client: TestClient) -> None:
 
     app.dependency_overrides[get_db] = _override
     try:
-        with patch("app.tasks.music_orchestrate.orchestrate_music_job") as mock_task:
-            mock_task.delay = MagicMock()
+        with patch(
+            "app.services.job_dispatch.enqueue_orchestrator",
+            new_callable=AsyncMock,
+        ) as mock_enqueue:
+            mock_enqueue.return_value = str(new_job_id)
             resp = client.post(
                 f"/admin/music-tracks/{track.id}/rerender-job",
                 json={"source_job_id": str(source_job.id)},
@@ -319,7 +328,8 @@ def test_admin_rerender_copies_clip_paths(client: TestClient) -> None:
     body = resp.json()
     assert body["job_id"] == str(new_job_id)
     assert body["status"] == "queued"
-    mock_task.delay.assert_called_once_with(str(new_job_id))
+    mock_enqueue.assert_awaited_once()
+    assert str(mock_enqueue.await_args.args[1]) == str(new_job_id)
 
     # Verify the new Job was constructed with the source job's clip paths.
     added_job = mock_session.add.call_args[0][0]

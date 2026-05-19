@@ -169,9 +169,10 @@ async def create_music_job(
 
     job_id = str(job.id)
 
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
     from app.tasks.music_orchestrate import orchestrate_music_job  # noqa: PLC0415
 
-    orchestrate_music_job.delay(job_id)
+    await enqueue_orchestrator(orchestrate_music_job, job.id, db)
 
     log.info(
         "music_job_created",

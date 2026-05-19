@@ -537,15 +537,24 @@ def test_recipe_only_keys_are_identical_regardless_of_version():
 
 
 def test_resolve_v2_when_force_layer2_true():
-    assert _resolve_text_overlay_version(force_layer2=True, settings_flag=False) == "v2"
+    assert (
+        _resolve_text_overlay_version(force_layer2=True, settings_flag=False)
+        == TEXT_OVERLAY_VERSION_V2
+    )
 
 
 def test_resolve_v2_when_settings_flag_true():
-    assert _resolve_text_overlay_version(force_layer2=False, settings_flag=True) == "v2"
+    assert (
+        _resolve_text_overlay_version(force_layer2=False, settings_flag=True)
+        == TEXT_OVERLAY_VERSION_V2
+    )
 
 
 def test_resolve_v2_when_both_true():
-    assert _resolve_text_overlay_version(force_layer2=True, settings_flag=True) == "v2"
+    assert (
+        _resolve_text_overlay_version(force_layer2=True, settings_flag=True)
+        == TEXT_OVERLAY_VERSION_V2
+    )
 
 
 def test_resolve_v1_when_both_false():

@@ -20,6 +20,7 @@ from app.tasks.agentic_template_build import (
     _TEXT_DESIGNER_PARALLEL_CAP,
     _bake_text_designer_into_overlay,
     _classify_overlay,
+    _fetch_transcript_words_for_layer2,
     _run_text_designer_on_slots,
 )
 
@@ -628,3 +629,131 @@ def test_run_text_designer_styles_body_overlays() -> None:
     assert sleeping.calls == 1, (
         f"LLM agent should be called exactly once (label only), got {sleeping.calls}"
     )
+
+
+# ── _fetch_transcript_words_for_layer2 ───────────────────────────────────────
+
+
+@dataclass
+class _StubTranscript:
+    """Minimal Transcript stand-in carrying the .words attribute used by the helper."""
+
+    words: list[Any]
+
+
+@dataclass
+class _StubTranscriptWord:
+    text: str
+    start_s: float
+    end_s: float
+
+
+def test_fetch_transcript_skips_when_layer2_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When Layer-2 is off (use_layer2=False AND setting=False), no Gemini call
+    fires. The transcript would be wasted — Stage E only runs in Layer-2.
+    """
+    from app.tasks import agentic_template_build as mod
+
+    monkeypatch.setattr(mod.settings, "text_overlay_v2_enabled", False)
+
+    def _should_not_be_called(*_a, **_k):
+        raise AssertionError("transcribe must not be called when Layer-2 is off")
+
+    monkeypatch.setattr("app.pipeline.agents.gemini_analyzer.transcribe", _should_not_be_called)
+    words = _fetch_transcript_words_for_layer2(object(), template_id="t-off", use_layer2=False)
+    assert words == []
+
+
+def test_fetch_transcript_fires_when_use_layer2_true(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """use_layer2=True alone (settings flag off) is enough to trigger the call.
+    Admin force-routing must work even when the global flag stays default-False.
+    """
+    from app.tasks import agentic_template_build as mod
+
+    monkeypatch.setattr(mod.settings, "text_overlay_v2_enabled", False)
+
+    captured: dict[str, Any] = {}
+
+    def _fake_transcribe(file_ref, *, job_id=None):
+        captured["job_id"] = job_id
+        return _StubTranscript(
+            words=[
+                _StubTranscriptWord("if", 3.0, 3.2),
+                _StubTranscriptWord("you", 3.2, 3.5),
+            ]
+        )
+
+    monkeypatch.setattr("app.pipeline.agents.gemini_analyzer.transcribe", _fake_transcribe)
+
+    words = _fetch_transcript_words_for_layer2(object(), template_id="t-forced", use_layer2=True)
+    assert words == [
+        {"text": "if", "start_s": 3.0, "end_s": 3.2},
+        {"text": "you", "start_s": 3.2, "end_s": 3.5},
+    ]
+    # job_id is namespaced for agent_run attribution.
+    assert captured["job_id"] == "template:t-forced:agentic"
+
+
+def test_fetch_transcript_fires_when_settings_flag_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """settings.text_overlay_v2_enabled=True alone (use_layer2=False) also
+    triggers the call — global flag takes the same effect as the admin override.
+    """
+    from app.tasks import agentic_template_build as mod
+
+    monkeypatch.setattr(mod.settings, "text_overlay_v2_enabled", True)
+    monkeypatch.setattr(
+        "app.pipeline.agents.gemini_analyzer.transcribe",
+        lambda file_ref, *, job_id=None: _StubTranscript(
+            words=[_StubTranscriptWord("hello", 0.0, 0.5)]
+        ),
+    )
+
+    words = _fetch_transcript_words_for_layer2(object(), template_id="t-global", use_layer2=False)
+    assert len(words) == 1
+    assert words[0]["text"] == "hello"
+
+
+def test_fetch_transcript_swallows_transcribe_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transcribe failure must NOT abort the build. The helper returns an empty
+    list and lets Stage E fall back to its empty-transcript passthrough.
+    """
+    from app.tasks import agentic_template_build as mod
+
+    monkeypatch.setattr(mod.settings, "text_overlay_v2_enabled", True)
+
+    def _boom(file_ref, *, job_id=None):
+        raise RuntimeError("Gemini quota exceeded")
+
+    monkeypatch.setattr("app.pipeline.agents.gemini_analyzer.transcribe", _boom)
+    words = _fetch_transcript_words_for_layer2(object(), template_id="t-fail", use_layer2=True)
+    assert words == []
+
+
+@pytest.mark.parametrize("exc_class", [TypeError, AttributeError, NameError])
+def test_fetch_transcript_reraises_programming_errors(
+    monkeypatch: pytest.MonkeyPatch, exc_class
+) -> None:
+    """Programming errors must propagate. A refactor that breaks the transcribe()
+    signature (TypeError) or accesses a missing attribute (AttributeError) would
+    silently degrade every Layer-2 build to empty-transcript passthrough if
+    swallowed broadly. Re-raising lets these failures surface in CI or as task
+    failures in prod rather than rotting silently.
+    """
+    from app.tasks import agentic_template_build as mod
+
+    monkeypatch.setattr(mod.settings, "text_overlay_v2_enabled", True)
+
+    def _broken(file_ref, *, job_id=None):
+        raise exc_class("programming error")
+
+    monkeypatch.setattr("app.pipeline.agents.gemini_analyzer.transcribe", _broken)
+    with pytest.raises(exc_class):
+        _fetch_transcript_words_for_layer2(object(), template_id="t-prog", use_layer2=True)
