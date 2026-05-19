@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.34.2] - 2026-05-19
+
+### Fixed
+- **Bumped `TEXT_OVERLAY_VERSION_V2` cache constant so v0.4.34.1's atomize_mode prompt actually fires.** v0.4.34.1 added the atomize_mode prompt branching but did NOT re-bump the cache namespace, which is still keyed on `v2-2026-05-19` (v0.4.34.0's bump). The cache key doesn't embed `text_alignment.prompt_version` directly — so the next reanalyze of `fdaf3bbc` after v0.4.34.1 deploy hit the cache, returned the v0.4.34.0 multi-word-stuffed recipe unchanged, and the new prompt was never invoked. Constant bumped to `v2-2026-05-19-atomize`; added an inline-comment runbook so future Stage E prompt changes don't drop this step.
+
 ## [0.4.34.1] - 2026-05-19
 
 ### Fixed
