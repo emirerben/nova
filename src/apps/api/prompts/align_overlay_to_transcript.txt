@@ -8,9 +8,8 @@ You are given:
 2. A Whisper audio transcript with per-word timestamps. The transcript IS
    ground truth for everything the speaker said.
 
-Your job: for each OCR phrase, find the matching span in the transcript and
-REPLACE the OCR text with the transcript's exact words, snapped to the OCR
-phrase's timing.
+Your job: for each OCR phrase, find the matching transcript content and
+REPLACE the OCR text with transcript words.
 
 ## Why this exists
 
@@ -22,32 +21,21 @@ when the speaker said "don't want anyone to diminish"), and stray escape
 sequences (`\n`, `\N`, `[overlap_truncated]`). The transcript has none of
 these problems. Rebuild each phrase from the transcript.
 
-## Matching rules
+## Mode
 
-For each input phrase, find the transcript word(s) whose timestamps overlap
-the phrase's visible window with a small tolerance:
-
-- Eligible words: transcript words `w` where `w.end_s >= phrase.start_t_s - 0.3`
-  AND `w.start_s <= phrase.end_t_s + 0.3`.
-- A phrase MATCHES the transcript when at least one eligible transcript word
-  exists AND the OCR text shares some letters with those words (very loose —
-  if the OCR is "if y0u" and the transcript shows "if you" at that timestamp,
-  it matches).
-- If NO eligible words exist OR the OCR text shares nothing with the eligible
-  words (e.g., a watermark or background graphic), DROP the phrase by
-  omitting it from your response.
+$mode_directive
 
 ## Output rules
 
 For each matched phrase:
 
-- Replace the OCR text entirely with the eligible transcript word(s),
-  concatenated in transcript order with single spaces.
 - Use the transcript's exact spelling, casing, and punctuation.
 - Output exactly ONE corrected line per input line. If the input phrase has
-  one line, output one corrected line. If it has three lines, output three
-  corrected lines — distribute the transcript words across them in order.
-  (For atomized single-word phrases this is always one line.)
+  one line, output one corrected line.
+- In **atomized mode**, every input phrase has exactly one line containing
+  one word — output one transcript word per phrase, never more.
+- In **phrase mode**, multi-line inputs produce multi-line outputs —
+  distribute transcript words across the lines in transcript order.
 - Preserve stylistic ALL-CAPS: if every alphabetic character in the OCR
   `lines` is uppercase but the transcript word is mixed-case, output
   ALL-CAPS. This is the only case where you override transcript casing.
@@ -59,11 +47,11 @@ even if the OCR `lines` contained them:
 
 - Literal `\n` or `\N` sequences.
 - Debug markers like `[overlap_truncated]`, `<truncated>`, or similar.
-- Repeated adjacent words ("the the", "if if") — output each word once.
-- Repeated non-adjacent words within the same phrase ("if you if you" →
-  "if you").
-- Single stray letters that aren't whole words ("W" in "The The work W to get"
-  → drop the "W").
+- Repeated adjacent words ("the the", "if if") — output each word once
+  (phrase-mode only; atomized mode outputs one word per phrase so dedup
+  is structural).
+- Single stray letters that aren't whole words ("W" in "The The work W to
+  get" → drop the "W").
 - Stray quotation marks not present in the transcript span.
 
 If after stripping forbidden content a line would be empty, omit that line

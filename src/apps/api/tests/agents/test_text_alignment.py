@@ -543,3 +543,64 @@ def test_sanitizer_preserves_legitimate_repeated_tokens(
     out = agent.run(TextAlignmentInput(phrases=[phrase], transcript_words=transcript_words))
 
     assert out.phrases[0].sample_text == "rain rain go away"
+
+
+# ── atomize_mode prompt branching (regression: v0.4.34.0 multi-word stuffing) ─
+#
+# The v0.4.34.0 prompt told the LLM to "concatenate eligible transcript words"
+# which produced multi-word output like "if you" 2-4s when the atomized OCR
+# phrase represented a single word "if" at 2.0s. atomize_mode=True must tell
+# the LLM to output ONE transcript word per phrase, never concatenate.
+
+
+def test_render_prompt_atomize_mode_emits_atomized_directive(
+    agent: TextAlignmentAgent,
+) -> None:
+    """When atomize_mode=True, the rendered prompt must contain the
+    single-word-per-phrase directive. Locks the wiring through
+    TextAlignmentInput → render_prompt → load_prompt's mode_directive slot.
+    """
+    phrase = _make_phrase(["if"], start_t_s=2.0, end_t_s=4.0)
+    transcript_words = [_make_word("if", 2.0, 2.5)]
+    inp = TextAlignmentInput(
+        phrases=[phrase],
+        transcript_words=transcript_words,
+        atomize_mode=True,
+    )
+    rendered = agent.render_prompt(inp)
+    assert "ATOMIZED INPUT" in rendered
+    assert "exactly ONE transcript word" in rendered
+    assert "NEVER concatenate" in rendered
+    # Phrase-mode directive must NOT appear when atomize_mode=True.
+    assert "PHRASE-MODE INPUT" not in rendered
+
+
+def test_render_prompt_phrase_mode_emits_phrase_directive(
+    agent: TextAlignmentAgent,
+) -> None:
+    """When atomize_mode=False (default), the rendered prompt instructs the
+    LLM to concatenate eligible transcript words for multi-word OCR blocks.
+    """
+    phrase = _make_phrase(["multi word block"], start_t_s=0.0, end_t_s=2.0)
+    transcript_words = [
+        _make_word("multi", 0.0, 0.5),
+        _make_word("word", 0.5, 1.0),
+        _make_word("block", 1.0, 2.0),
+    ]
+    inp = TextAlignmentInput(
+        phrases=[phrase],
+        transcript_words=transcript_words,
+        atomize_mode=False,
+    )
+    rendered = agent.render_prompt(inp)
+    assert "PHRASE-MODE INPUT" in rendered
+    assert "concatenated in transcript order" in rendered
+    assert "ATOMIZED INPUT" not in rendered
+
+
+def test_atomize_mode_defaults_to_false():
+    """Existing callers that omit atomize_mode get the legacy phrase-mode
+    directive. Backward-compatible default.
+    """
+    inp = TextAlignmentInput(phrases=[], transcript_words=[])
+    assert inp.atomize_mode is False

@@ -259,6 +259,7 @@ def run_full_pipeline(
                 phrases=phrases,
                 transcript_words=transcript_words,
                 template_id=template_id,
+                atomize_mode=atomize_words,
             )
             alignment_output = alignment_agent.run(alignment_input, ctx=ctx)
         except Exception as exc:
@@ -616,8 +617,22 @@ def _classified_phrases_to_output(
         TextBBox,
     )
 
+    # Sort classified phrases by start_t_s so we can extend each phrase's
+    # end_s up to (but not past) the next phrase's start. Single-frame OCR
+    # detections produce phrases where end_t_s == start_t_s; without this
+    # extension Stage G would emit zero-duration overlays clamped to 10ms,
+    # which render for a single frame (prod evidence: "luck" 7.50-7.51s in
+    # the post-v0.4.34.0 reanalyze of template fdaf3bbc).
+    classified_sorted = sorted(classified, key=lambda c: c.phrase.start_t_s)
+    next_start_by_index = {
+        id(classified_sorted[i]): classified_sorted[i + 1].phrase.start_t_s
+        for i in range(len(classified_sorted) - 1)
+    }
+    _MIN_OVERLAY_DURATION_S = 0.5
+    _MAX_OVERLAY_EXTENSION_S = 2.0
+
     overlays: list[TemplateTextOverlay] = []
-    for i, cp in enumerate(classified):
+    for i, cp in enumerate(classified_sorted):
         phrase = cp.phrase
         normalized_text = _normalize_overlay_text(phrase.sample_text)
         if not normalized_text:
@@ -652,8 +667,21 @@ def _classified_phrases_to_output(
         y_norm = max(h_norm / 2.0, min(1.0 - h_norm / 2.0, y_norm))
 
         # end_s must be > start_s for TemplateTextOverlay validation.
+        # Stretch single-frame detections (end_t_s ~= start_t_s) up to the
+        # next phrase's start so the word stays visible long enough to read.
+        # Cap the extension at _MAX_OVERLAY_EXTENSION_S so a phrase followed
+        # by a long gap doesn't linger for the entire gap.
         start_s = phrase.start_t_s
-        end_s = max(phrase.end_t_s, start_s + 0.01)
+        raw_end_s = max(phrase.end_t_s, start_s + 0.01)
+        if raw_end_s - start_s < _MIN_OVERLAY_DURATION_S:
+            next_start = next_start_by_index.get(id(cp))
+            if next_start is not None and next_start > start_s:
+                extended_cap = min(next_start, start_s + _MAX_OVERLAY_EXTENSION_S)
+                end_s = max(raw_end_s, min(extended_cap, start_s + _MIN_OVERLAY_DURATION_S * 4))
+            else:
+                end_s = max(raw_end_s, start_s + _MIN_OVERLAY_DURATION_S)
+        else:
+            end_s = raw_end_s
 
         slot_index = _assign_slot_index(start_s, slot_boundaries_s)
 

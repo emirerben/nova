@@ -104,7 +104,7 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.text_alignment",
         prompt_id="align_overlay_to_transcript",
-        prompt_version="2026-05-19",
+        prompt_version="2026-05-19-atomize",
         model="gemini-2.5-flash",
         # Alignment is a small focused call: ~1k tokens in, ~200 tokens out.
         # Cost estimate per design doc: ~$0.0005 per call.
@@ -136,10 +136,40 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
             }
             for w in input.transcript_words
         ]
+        # `mode_directive` is the load-bearing instruction in the prompt:
+        # atomized input (one OCR word per phrase) needs single-word output
+        # per phrase, while phrase-mode input (multi-word OCR per phrase)
+        # may concatenate multiple transcript words. Picking the wrong
+        # directive at runtime causes the prompt to either drop content
+        # (atomized→phrase mode collapses words) or over-stuff content
+        # (phrase→atomized mode merged 'if you put in' into one overlay
+        # spanning 2 seconds in prod after the v0.4.34.0 reanalyze).
+        if input.atomize_mode:
+            mode_directive = (
+                "ATOMIZED INPUT. Each phrase has one line representing ONE OCR "
+                "word at its first-appeared moment. For each phrase, output "
+                "exactly ONE transcript word — the one whose timestamp is "
+                "closest to `phrase.start_t_s`, preferring a fuzzy text match "
+                "to the OCR line over pure timestamp proximity when the two "
+                "disagree. NEVER concatenate multiple transcript words into a "
+                "single output line. If no transcript word is within "
+                "[phrase.start_t_s - 0.5, phrase.start_t_s + 0.5] OR no "
+                "eligible word shares any letters with the OCR line, drop "
+                "the phrase."
+            )
+        else:
+            mode_directive = (
+                "PHRASE-MODE INPUT. Each phrase represents a multi-word OCR "
+                "block. For each phrase, output the transcript word(s) whose "
+                "timestamps overlap the phrase's visible window with a small "
+                "tolerance, concatenated in transcript order with single "
+                "spaces. Drop phrases with no transcript overlap."
+            )
         return load_prompt(
             "align_overlay_to_transcript",
             phrases_json=json.dumps(phrases_payload, ensure_ascii=False),
             transcript_json=json.dumps(transcript_payload, ensure_ascii=False),
+            mode_directive=mode_directive,
         )
 
     def parse(self, raw_text: str, input: TextAlignmentInput) -> TextAlignmentOutput:  # noqa: A002
