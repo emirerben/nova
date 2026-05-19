@@ -18,12 +18,33 @@ import { useEffect, useState } from "react";
 import { AgentSection } from "@/app/admin/_shared/AgentSection";
 import { JsonTreeView } from "@/components/JsonTreeView";
 import {
+  adminCancelJob,
   adminGetJobDebug,
   type JobDebugResponse,
+  type JobRuntimePayload,
   type PipelineTraceEvent,
 } from "@/lib/admin-jobs-api";
 
 import { Timeline } from "./Timeline";
+
+// Status values eligible for cancellation.
+//
+// Mirror of _CANCELLABLE_STATUSES in
+// src/apps/api/app/routes/admin_jobs.py. Update both when adding or
+// removing a status. If these drift, the Cancel button renders for a
+// status the backend rejects with 409 (or hides for a status it would
+// accept) — operator confusion either way.
+const CANCELLABLE_STATUSES: ReadonlySet<string> = new Set([
+  "queued",
+  "processing",
+  "matching",
+  "rendering",
+  "posting",
+]);
+
+// Detail page polls runtime more aggressively than the list page because
+// you opened it to watch one specific job.
+const RUNTIME_POLL_MS = 5_000;
 
 type Tab = "agents" | "timeline" | "recipe" | "trace" | "raw";
 
@@ -57,6 +78,11 @@ export default function JobDebugPage({
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("agents");
 
+  const refetch = (): Promise<void> =>
+    adminGetJobDebug(id)
+      .then((d) => setData(d))
+      .catch((err: Error) => setError(err.message));
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -74,6 +100,38 @@ export default function JobDebugPage({
       cancelled = true;
     };
   }, [id]);
+
+  // Poll runtime while the job is still cancellable. Stops automatically
+  // when status becomes terminal so we don't waste broker calls.
+  //
+  // Dep is `data?.job.status` (not `data`) so the interval is only
+  // reset when status actually transitions — not on every successful
+  // poll. Skipping the new fetch when one is already in-flight avoids
+  // pile-up if `inspect()` is slow (5s broker timeout in queue_state.py).
+  const status = data?.job.status;
+  useEffect(() => {
+    if (!status || !CANCELLABLE_STATUSES.has(status)) return;
+    let cancelled = false;
+    let inFlight = false;
+    const t = setInterval(() => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      adminGetJobDebug(id)
+        .then((d) => {
+          if (!cancelled) setData(d);
+        })
+        .catch(() => {
+          // Swallow — the detail render still has the last-good data.
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    }, RUNTIME_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [id, status]);
 
   return (
     <main className="min-h-screen bg-black text-white px-4 py-10">
@@ -97,6 +155,12 @@ export default function JobDebugPage({
         {data && (
           <>
             <Header data={data} />
+            <WorkerStatePanel
+              runtime={data.runtime}
+              status={data.job.status}
+              jobId={id}
+              onCancelled={refetch}
+            />
             <Tabs tab={tab} onChange={setTab} />
             <div className="mt-6">
               {tab === "agents" && <AgentsTab data={data} />}
@@ -328,5 +392,182 @@ function RawTab({ data }: { data: JobDebugResponse }): JSX.Element {
       </div>
       <JsonTreeView value={data} defaultDepth={1} />
     </div>
+  );
+}
+
+// ── Worker state panel + Cancel button ──────────────────────────────────────
+
+/**
+ * Live Celery state for this job, plus the Cancel control.
+ *
+ * The state rendering is load-bearing: 'NOT FOUND' vs 'UNKNOWN' is the
+ * difference between "worker died, this job is dead in the water" and
+ * "we couldn't ask the broker, don't make decisions". A misread here
+ * leads an operator to cancel a healthy job.
+ */
+function WorkerStatePanel({
+  runtime,
+  status,
+  jobId,
+  onCancelled,
+}: {
+  runtime: JobRuntimePayload;
+  status: string;
+  jobId: string;
+  onCancelled: () => Promise<void>;
+}): JSX.Element {
+  const cancellable = CANCELLABLE_STATUSES.has(status);
+  const isTerminal = !cancellable;
+  return (
+    <section className="mt-6 rounded-lg border border-zinc-800 bg-zinc-950 px-4 py-3">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+        <div className="text-xs uppercase tracking-wider text-zinc-500">
+          Worker state
+        </div>
+        <StateChip state={runtime.state} terminal={isTerminal} status={status} />
+        {runtime.worker && (
+          <span className="text-xs text-zinc-400">
+            on <span className="font-mono text-zinc-200">{runtime.worker}</span>
+          </span>
+        )}
+        {runtime.queue_position !== null && runtime.queue_position !== undefined && (
+          <span className="text-xs text-zinc-400">
+            queue pos:{" "}
+            <span className="text-zinc-200 font-medium">
+              {runtime.queue_position}
+            </span>
+          </span>
+        )}
+        {runtime.task_id && (
+          <span className="text-xs text-zinc-500">
+            task_id:{" "}
+            <span className="font-mono text-zinc-400">
+              {runtime.task_id.slice(0, 8)}
+            </span>
+          </span>
+        )}
+        <div className="ml-auto">
+          {cancellable && (
+            <CancelButton jobId={jobId} runtime={runtime} onCancelled={onCancelled} />
+          )}
+        </div>
+      </div>
+      {runtime.state === "not_found" && cancellable && (
+        <div className="mt-2 text-xs text-red-300/80">
+          Worker did not report this task. It probably died mid-task. The
+          reaper sweeps every ~5 min; cancel here to clear immediately.
+        </div>
+      )}
+      {runtime.state === "unknown" && (
+        <div className="mt-2 text-xs text-zinc-400">
+          Broker unreachable. The task may still be running — don&apos;t cancel
+          until you&apos;ve confirmed via fly ssh or until the broker recovers.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StateChip({
+  state,
+  terminal,
+  status,
+}: {
+  state: JobRuntimePayload["state"];
+  terminal: boolean;
+  status: string;
+}): JSX.Element {
+  // For terminal rows we show the DB status — runtime state isn't
+  // meaningful anymore (no worker is asked about a finished job).
+  if (terminal) {
+    return (
+      <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 text-xs font-medium">
+        {status.toUpperCase()}
+      </span>
+    );
+  }
+  const style: Record<JobRuntimePayload["state"], string> = {
+    active: "bg-green-900/70 text-green-300",
+    reserved: "bg-yellow-900/70 text-yellow-300",
+    not_found: "bg-red-900/70 text-red-300",
+    unknown: "bg-zinc-800 text-zinc-400",
+  };
+  const label: Record<JobRuntimePayload["state"], string> = {
+    active: "ACTIVE",
+    reserved: "RESERVED",
+    not_found: "NOT FOUND",
+    unknown: "UNKNOWN",
+  };
+  return (
+    <span
+      className={`px-2 py-0.5 rounded text-xs font-medium ${style[state]}`}
+    >
+      {label[state]}
+    </span>
+  );
+}
+
+function CancelButton({
+  jobId,
+  runtime,
+  onCancelled,
+}: {
+  jobId: string;
+  runtime: JobRuntimePayload;
+  onCancelled: () => Promise<void>;
+}): JSX.Element {
+  const [confirming, setConfirming] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (confirming) {
+    return (
+      <div className="flex items-center gap-2">
+        {err && <span className="text-xs text-red-400">{err}</span>}
+        <button
+          type="button"
+          disabled={submitting}
+          onClick={() => {
+            setSubmitting(true);
+            setErr(null);
+            adminCancelJob(jobId)
+              .then(() => onCancelled())
+              .then(() => {
+                setConfirming(false);
+              })
+              .catch((e: Error) => setErr(e.message))
+              .finally(() => setSubmitting(false));
+          }}
+          className="px-3 py-1 rounded bg-red-700 hover:bg-red-600 text-white text-xs font-medium disabled:opacity-50"
+        >
+          {submitting
+            ? "Cancelling…"
+            : runtime.state === "active"
+              ? "Yes, terminate task"
+              : "Yes, cancel job"}
+        </button>
+        <button
+          type="button"
+          disabled={submitting}
+          onClick={() => {
+            setConfirming(false);
+            setErr(null);
+          }}
+          className="px-3 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs"
+        >
+          Keep running
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setConfirming(true)}
+      className="px-3 py-1 rounded bg-zinc-800 hover:bg-red-900 text-red-300 text-xs font-medium border border-red-900/60"
+    >
+      Cancel job
+    </button>
   );
 }

@@ -554,10 +554,13 @@ class TestCreateRerenderJob:
 
         with (
             patch("app.routes.admin.settings") as mock_settings,
-            patch("app.routes.admin.orchestrate_template_job", create=True) as mock_task,
+            patch(
+                "app.services.job_dispatch.enqueue_orchestrator",
+                new_callable=AsyncMock,
+            ) as mock_enqueue,
         ):
             mock_settings.admin_api_key = VALID_TOKEN
-            mock_task.delay = MagicMock()
+            mock_enqueue.return_value = "stubbed-task-id"
             app.dependency_overrides[get_db] = _override_db
             try:
                 res = client.post(
@@ -572,6 +575,7 @@ class TestCreateRerenderJob:
         data = res.json()
         assert data["status"] == "queued"
         assert data["template_id"] == "tmpl-123"
+        mock_enqueue.assert_awaited_once()
 
     def test_404_for_wrong_template(self, client):
         """Source job belongs to a different template."""

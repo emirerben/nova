@@ -24,6 +24,12 @@ export interface AdminJobListItem {
   failure_reason: string | null;
   created_at: string;
   updated_at: string;
+  /** Pipeline wall-clock start. NULL until the worker picks up the task. */
+  started_at: string | null;
+  /** Seconds since started_at (server-computed). NULL when terminal or queued. */
+  time_in_processing_s: number | null;
+  /** Celery task_id (= job_id by convention from app/services/job_dispatch.py). */
+  celery_task_id: string | null;
   agent_run_count: number;
   failure_count: number;
 }
@@ -104,6 +110,32 @@ export interface JobPayload {
   finished_at: string | null;
   created_at: string;
   updated_at: string;
+  celery_task_id: string | null;
+}
+
+/**
+ * Live Celery/broker state for one job. Drives the admin Worker state panel.
+ *
+ * - active   : Celery reports the task as currently running on `worker`.
+ * - reserved : Sitting in the broker queue, waiting for a worker. `queue_position`
+ *              is its index in the queue (0 = next up).
+ * - not_found: Not in any worker's active/reserved set AND no broker error —
+ *              the worker likely died mid-task. UI should suggest cancel/reaper.
+ * - unknown  : inspect() failed (broker unreachable). UI must distinguish this
+ *              from not_found — claiming "not_found" without asking the broker
+ *              would let an operator cancel a healthy job.
+ */
+export type JobRuntimeState =
+  | "active"
+  | "reserved"
+  | "not_found"
+  | "unknown";
+
+export interface JobRuntimePayload {
+  state: JobRuntimeState;
+  worker: string | null;
+  task_id: string | null;
+  queue_position: number | null;
 }
 
 export interface TemplateSummary {
@@ -140,6 +172,28 @@ export interface JobDebugResponse {
   template_agent_runs: AgentRunPayload[];
   /** Agent runs that analyzed the linked music track (song_classifier, song_sections, music_matcher, etc.) */
   track_agent_runs: AgentRunPayload[];
+  runtime: JobRuntimePayload;
+}
+
+export interface QueueInfoPayload {
+  name: string;
+  depth: number;
+  oldest_pending_job_id: string | null;
+}
+
+export interface QueueSnapshotResponse {
+  queues: QueueInfoPayload[];
+  active_workers: string[];
+  /** False when inspect() failed — UI renders "broker unreachable" instead of "0 queued". */
+  ok: boolean;
+}
+
+export interface CancelJobResponse {
+  job_id: string;
+  previous_status: string;
+  status: string;
+  task_id: string | null;
+  revoke_sent: boolean;
 }
 
 // ── Calls ─────────────────────────────────────────────────────────────────────
@@ -181,4 +235,25 @@ export async function adminListJobs(
 
 export async function adminGetJobDebug(jobId: string): Promise<JobDebugResponse> {
   return _adminJson<JobDebugResponse>(`/jobs/${encodeURIComponent(jobId)}/debug`);
+}
+
+export async function adminGetQueueState(): Promise<QueueSnapshotResponse> {
+  return _adminJson<QueueSnapshotResponse>(`/jobs/queue-state`);
+}
+
+export async function adminCancelJob(jobId: string): Promise<CancelJobResponse> {
+  const res = await fetch(`${ADMIN_PROXY}/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    let detail = `Cancel failed: ${res.status}`;
+    try {
+      const body = await res.json();
+      if (typeof body.detail === "string") detail = body.detail;
+    } catch {
+      // ignore
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as CancelJobResponse;
 }

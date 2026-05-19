@@ -247,7 +247,8 @@ class Job(Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
     # importing|queued|processing|clips_ready|clips_ready_partial|
-    # posting|posting_partial|done|posting_failed|processing_failed
+    # posting|posting_partial|done|posting_failed|processing_failed|
+    # cancelled (admin cancel via /admin/jobs/{id}/cancel)
     # drive import: importing → queued → processing → ...
     # template jobs: queued → processing → template_ready | processing_failed
     # music jobs:   queued → processing → music_ready   | processing_failed
@@ -292,6 +293,12 @@ class Job(Base):
     # Each entry: {ts, stage, event, data}. Drives the admin job-debug view's
     # pipeline-trace tab. NULL on legacy/pre-feature jobs — the UI handles that.
     pipeline_trace: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Celery task_id of the orchestrator task dispatched for this job. By
+    # convention str(job.id) — set by app.services.job_dispatch.enqueue_orchestrator
+    # on every orchestrator dispatch site. NULL on legacy rows (pre-0027)
+    # and on rows whose orchestrator was never dispatched. Used by the
+    # admin debug UI to call celery_app.control.{inspect,revoke}.
+    celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # True pipeline-wall-time anchors. Distinct from created_at (queue insert)
     # and updated_at (any column write).
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)

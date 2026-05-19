@@ -55,6 +55,7 @@ def _job_row(**overrides) -> SimpleNamespace:
         finished_at=None,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
+        celery_task_id=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -263,6 +264,16 @@ class TestUnReapJobs:
 
 
 class TestJobDebug:
+    @pytest.fixture(autouse=True)
+    def _stub_runtime(self):
+        """The detail endpoint always calls _resolve_runtime, which talks to
+        Celery. Stub it across this class so we don't need a live broker."""
+        from app.routes.admin_jobs import JobRuntimePayload  # noqa: PLC0415
+
+        stub = JobRuntimePayload(state="unknown", worker=None, task_id=None, queue_position=None)
+        with patch("app.routes.admin_jobs._resolve_runtime", return_value=stub) as m:
+            yield m
+
     def test_invalid_uuid_returns_400(self, client):
         with patch("app.routes.admin.settings") as s:
             s.admin_api_key = VALID_TOKEN
@@ -457,9 +468,7 @@ class TestJobDebug:
                 app.dependency_overrides.pop(get_db, None)
         assert res.status_code == 200
         body = res.json()
-        assert [r["agent_name"] for r in body["agent_runs"]] == [
-            "nova.video.clip_metadata"
-        ]
+        assert [r["agent_name"] for r in body["agent_runs"]] == ["nova.video.clip_metadata"]
         assert [r["agent_name"] for r in body["template_agent_runs"]] == [
             "nova.compose.template_recipe"
         ]
@@ -467,3 +476,259 @@ class TestJobDebug:
             "nova.audio.song_classifier",
             "nova.audio.music_matcher",
         ]
+
+
+# ── Cancel endpoint ──────────────────────────────────────────────────────────
+
+
+class TestCancelJob:
+    """POST /admin/jobs/{id}/cancel — revoke Celery task + flip status."""
+
+    def _db_gen_for_cancel(self, job, *, rowcount: int = 1):
+        async def _gen():
+            db = AsyncMock()
+            job_res = MagicMock()
+            job_res.scalar_one_or_none.return_value = job
+            update_res = MagicMock()
+            update_res.rowcount = rowcount
+            db.execute = AsyncMock(side_effect=[job_res, update_res])
+            db.commit = AsyncMock()
+            db.rollback = AsyncMock()
+            yield db
+
+        return _gen
+
+    def test_invalid_uuid_returns_400(self, client):
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+
+            async def _gen():
+                yield AsyncMock()
+
+            app.dependency_overrides[get_db] = _gen
+            try:
+                res = client.post(
+                    "/admin/jobs/not-a-uuid/cancel",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+        assert res.status_code == 400
+
+    def test_missing_job_returns_404(self, client):
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+
+            async def _gen():
+                db = AsyncMock()
+                res_obj = MagicMock()
+                res_obj.scalar_one_or_none.return_value = None
+                db.execute = AsyncMock(return_value=res_obj)
+                yield db
+
+            app.dependency_overrides[get_db] = _gen
+            try:
+                res = client.post(
+                    f"/admin/jobs/{uuid.uuid4()}/cancel",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+        assert res.status_code == 404
+
+    def test_terminal_status_returns_409(self, client):
+        """A job in 'done' / 'template_ready' / 'processing_failed' is NOT cancellable."""
+        j = _job_row(status="template_ready")
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+
+            async def _gen():
+                db = AsyncMock()
+                job_res = MagicMock()
+                job_res.scalar_one_or_none.return_value = j
+                db.execute = AsyncMock(return_value=job_res)
+                yield db
+
+            app.dependency_overrides[get_db] = _gen
+            try:
+                res = client.post(
+                    f"/admin/jobs/{j.id}/cancel",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+        assert res.status_code == 409
+        assert "template_ready" in res.json()["detail"]
+
+    def test_processing_with_task_id_revokes_and_flips_status(self, client):
+        task_id = str(uuid.uuid4())
+        j = _job_row(status="processing", celery_task_id=task_id)
+        # Patch only celery_app.control (not the whole app object) so we
+        # don't pollute app.tasks.maintenance's module-level @celery_app.task
+        # bindings for subsequent tests in the suite.
+        from app.worker import celery_app  # noqa: PLC0415
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch.object(celery_app, "control") as mock_control,
+            patch("app.tasks.maintenance.cleanup_cancelled_job") as mock_cleanup,
+        ):
+            s.admin_api_key = VALID_TOKEN
+            mock_control.revoke = MagicMock()
+            mock_cleanup.apply_async = MagicMock()
+            mock_cleanup.delay = MagicMock()
+            mock_celery = MagicMock()
+            mock_celery.control = mock_control
+
+            app.dependency_overrides[get_db] = self._db_gen_for_cancel(j, rowcount=1)
+            try:
+                res = client.post(
+                    f"/admin/jobs/{j.id}/cancel",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["job_id"] == str(j.id)
+        assert body["previous_status"] == "processing"
+        assert body["status"] == "cancelled"
+        assert body["task_id"] == task_id
+        assert body["revoke_dispatched"] is True
+        mock_celery.control.revoke.assert_called_once_with(
+            task_id, terminate=True, signal="SIGTERM"
+        )
+        # 30s countdown so the still-dying worker can finish writing
+        # to GCS before cleanup deletes the prefix.
+        mock_cleanup.apply_async.assert_called_once_with(
+            args=[str(j.id)], countdown=30
+        )
+
+    def test_null_task_id_skips_revoke_but_still_flips_status(self, client):
+        """Legacy row (celery_task_id=NULL): worker is gone, revoke would no-op anyway.
+        We still mark the row cancelled so it stops blocking the queue picture."""
+        j = _job_row(status="processing", celery_task_id=None)
+        # Patch only celery_app.control (not the whole app object) so we
+        # don't pollute app.tasks.maintenance's module-level @celery_app.task
+        # bindings for subsequent tests in the suite.
+        from app.worker import celery_app  # noqa: PLC0415
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch.object(celery_app, "control") as mock_control,
+            patch("app.tasks.maintenance.cleanup_cancelled_job") as mock_cleanup,
+        ):
+            s.admin_api_key = VALID_TOKEN
+            mock_control.revoke = MagicMock()
+            mock_cleanup.apply_async = MagicMock()
+            mock_cleanup.delay = MagicMock()
+            mock_celery = MagicMock()
+            mock_celery.control = mock_control
+
+            app.dependency_overrides[get_db] = self._db_gen_for_cancel(j, rowcount=1)
+            try:
+                res = client.post(
+                    f"/admin/jobs/{j.id}/cancel",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["task_id"] is None
+        assert body["revoke_dispatched"] is False
+        assert body["status"] == "cancelled"
+        mock_celery.control.revoke.assert_not_called()
+
+    def test_concurrent_completion_race_returns_409(self, client):
+        """SELECT saw 'processing' but UPDATE matched 0 rows — worker won the race.
+        Endpoint must 409 rather than silently overwriting a terminal status."""
+        j = _job_row(status="processing", celery_task_id=str(uuid.uuid4()))
+        # Patch only celery_app.control (not the whole app object) so we
+        # don't pollute app.tasks.maintenance's module-level @celery_app.task
+        # bindings for subsequent tests in the suite.
+        from app.worker import celery_app  # noqa: PLC0415
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch.object(celery_app, "control") as mock_control,
+            patch("app.tasks.maintenance.cleanup_cancelled_job") as mock_cleanup,
+        ):
+            s.admin_api_key = VALID_TOKEN
+            mock_control.revoke = MagicMock()
+            mock_cleanup.apply_async = MagicMock()
+            mock_cleanup.delay = MagicMock()
+            mock_celery = MagicMock()
+            mock_celery.control = mock_control
+
+            app.dependency_overrides[get_db] = self._db_gen_for_cancel(j, rowcount=0)
+            try:
+                res = client.post(
+                    f"/admin/jobs/{j.id}/cancel",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 409
+        assert "terminal" in res.json()["detail"].lower()
+
+
+# ── Queue-state endpoint ─────────────────────────────────────────────────────
+
+
+class TestQueueState:
+    """GET /admin/jobs/queue-state — broker-level snapshot for the summary panel."""
+
+    def test_requires_admin_token(self, client):
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            res = client.get("/admin/jobs/queue-state")
+        assert res.status_code in (401, 422)
+
+    def test_returns_snapshot_shape(self, client):
+        from app.services.queue_state import QueueInfo, QueueSnapshot  # noqa: PLC0415
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch("app.routes.admin_jobs.get_queue_snapshot") as mock_snapshot,
+        ):
+            s.admin_api_key = VALID_TOKEN
+            mock_snapshot.return_value = QueueSnapshot(
+                queues=[QueueInfo(name="celery", depth=3, oldest_pending_job_id="abc")],
+                active_workers=["celery@worker-1"],
+                ok=True,
+            )
+
+            res = client.get(
+                "/admin/jobs/queue-state",
+                headers={"X-Admin-Token": VALID_TOKEN},
+            )
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["ok"] is True
+        assert body["active_workers"] == ["celery@worker-1"]
+        assert body["queues"] == [{"name": "celery", "depth": 3, "oldest_pending_job_id": "abc"}]
+
+    def test_returns_not_ok_when_broker_unreachable(self, client):
+        from app.services.queue_state import QueueSnapshot  # noqa: PLC0415
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch("app.routes.admin_jobs.get_queue_snapshot") as mock_snapshot,
+        ):
+            s.admin_api_key = VALID_TOKEN
+            mock_snapshot.return_value = QueueSnapshot(queues=[], active_workers=[], ok=False)
+
+            res = client.get(
+                "/admin/jobs/queue-state",
+                headers={"X-Admin-Token": VALID_TOKEN},
+            )
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["ok"] is False
+        assert body["queues"] == []
