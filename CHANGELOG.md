@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.35.0] - 2026-05-19
+
+### Added
+- **Admin templates dashboard now flags STALE recipes when an agent's prompt rotates after the recipe was materialized.** Closes the silent staleness gap that caused job `e00a1ab8` ("not just luck") to keep producing identical text overlays across reruns even after the Layer-2 Stage E prompt was edited. Job submissions never re-run analysis — they read `video_templates.recipe_cached` directly — so a prompt change has zero observable effect until someone explicitly reanalyzes. The dashboard now shows which templates need that reanalyze. New JSONB column `video_templates.recipe_cached_versions` stores the `{agent_name: prompt_version}` map captured at write time; the admin endpoints surface a sorted `recipe_stale_agents` list per template. Existing rows surface as STALE on first deploy (NULL = unknown) so the next reanalyze fills them in.
+- **One-click Reanalyze button on every stale row** of `/admin` and an inline "Stale recipe" badge on `/admin/templates/{id}`. The button picks the correct reanalyze endpoint based on the template's `is_agentic` flag.
+- **`GET /admin/templates/stale-summary`** for bulk operator visibility. Returns every active template whose stored `prompt_version` snapshot doesn't match live `AgentSpec.prompt_version` values. Skips archived rows by default. Useful for "deploy bumped a prompt, what needs reanalyzing?"
+- **`app/services/template_staleness.py`** owns the canonical lists (manual = `template_recipe` only; agentic = `template_recipe + creative_direction + transcript + template_text + text_alignment + text_classification + text_designer`) and the comparison semantics. Empty-dict (`{}`) sentinel marks "no LLM agents contributed" so audio-only and operator-edited recipes don't display a permanent STALE badge.
+
+### Fixed
+- **All six recipe-write sites now persist the version snapshot or sentinel.** `analyze_template_task` and `agentic_template_build_task` capture the live agent versions; `save_recipe` (editor), `font_default_override`, `create_music_child_template`, `remerge_audio_only_children`, and `create_audio_only_template` write `{}` because operator edits and synthetic merges don't run agents. The `has_intro_slot` toggle deliberately leaves the snapshot alone (it mutates one boolean, no agents re-ran).
+
 ## [0.4.34.2] - 2026-05-19
 
 ### Fixed
