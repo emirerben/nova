@@ -69,10 +69,7 @@ def reconstruct_phrases(
         return []
 
     if atomize_per_event:
-        return [
-            _finalize([ev])
-            for ev in sorted(events, key=lambda e: (e.start_t_s, e.aabb[1]))
-        ]
+        return [_finalize([ev]) for ev in sorted(events, key=lambda e: (e.start_t_s, e.aabb[1]))]
 
     events_sorted = sorted(events, key=lambda e: (e.start_t_s, e.aabb[1]))
     open_phrases: list[list[TextEvent]] = []
@@ -111,9 +108,26 @@ def _finalize(phrase_events: list[TextEvent]) -> Phrase:
     constituent event mean-confidences (event-weighted, not frame-weighted
     — phrases with one long-lived event and one brief event are not
     skewed by the long-lived one's higher frame count).
+
+    Same-text events are deduplicated by casefolded-stripped key. An
+    identical word appearing in two events within one phrase is always
+    OCR re-detection (bbox drifted, frame sampling captured it twice) —
+    never an intentional repeat in viral-template captions. Without this
+    dedup, a single phrase with lines=["if", "you", "if", "you", "put",
+    "put", "in"] would render as the literal duplicated string visible
+    in prod job 87b7292b-3913-40b9-844f-835f7544063b.
     """
     y_sorted = sorted(phrase_events, key=lambda e: e.y_center())
-    lines = [e.text for e in y_sorted]
+    seen: set[str] = set()
+    lines: list[str] = []
+    for ev in y_sorted:
+        key = ev.text.strip().casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        lines.append(ev.text)
+    if not lines:
+        lines = [y_sorted[0].text]
     start_t_s = min(e.start_t_s for e in phrase_events)
     end_t_s = max(e.end_t_s for e in phrase_events)
     aabb = phrase_events[0].aabb
