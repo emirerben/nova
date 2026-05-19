@@ -49,3 +49,66 @@ def sweep_stale_jobs(self) -> int:
     except Exception as exc:  # noqa: BLE001
         log.warning("sweep_stale_jobs_failed", error=str(exc))
         return 0
+
+
+# Job-scoped prefixes that may hold a job's temp uploads / intermediate
+# encodes. Matches the GCS lifecycle rule in infra/gcs-lifecycle.json —
+# anything outside these prefixes either persists (templates/, music/
+# library tracks) or is handled by the lifecycle rule's 24h delete.
+_JOB_TEMP_PREFIXES = ("dev-user/", "music-jobs/")
+
+
+@celery_app.task(
+    name="tasks.cleanup_cancelled_job",
+    bind=True,
+    autoretry_for=(),
+    max_retries=0,
+    soft_time_limit=60,
+    time_limit=90,
+)
+def cleanup_cancelled_job(self, job_id: str) -> int:
+    """Best-effort delete of GCS objects under `<prefix>/{job_id}/`.
+
+    The 24h bucket lifecycle rule (see CLAUDE.md "Storage retention") is
+    the real backstop — this task just removes temp files sooner when
+    an admin cancels. Failures are logged and swallowed; never raises.
+    Returns the number of objects deleted.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.storage import _get_client  # noqa: PLC0415
+
+    try:
+        bucket = _get_client().bucket(settings.storage_bucket)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("cleanup_cancelled_job_client_failed", job_id=job_id, error=str(exc))
+        return 0
+
+    deleted = 0
+    for prefix_root in _JOB_TEMP_PREFIXES:
+        prefix = f"{prefix_root}{job_id}/"
+        try:
+            blobs = list(bucket.list_blobs(prefix=prefix))
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "cleanup_cancelled_job_list_failed",
+                job_id=job_id,
+                prefix=prefix,
+                error=str(exc),
+            )
+            continue
+
+        for blob in blobs:
+            try:
+                blob.delete()
+                deleted += 1
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "cleanup_cancelled_job_delete_failed",
+                    job_id=job_id,
+                    blob=blob.name,
+                    error=str(exc),
+                )
+
+    if deleted:
+        log.info("cleanup_cancelled_job_done", job_id=job_id, deleted=deleted)
+    return deleted

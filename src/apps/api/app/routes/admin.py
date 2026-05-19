@@ -1273,6 +1273,7 @@ async def create_test_job(
 
     job_id = str(job.id)
 
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
     from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
 
     # Preview-mode test jobs force the single-pass encode path regardless of
@@ -1284,12 +1285,14 @@ async def create_test_job(
     # admin-only and explicitly opt-in for "fast at the cost of some fidelity,"
     # so forcing single-pass here matches what the operator asked for.
     if req.preview_mode:
-        orchestrate_template_job.apply_async(
-            args=[job_id],
+        await enqueue_orchestrator(
+            orchestrate_template_job,
+            job.id,
+            db,
             kwargs={"force_single_pass": True},
         )
     else:
-        orchestrate_template_job.delay(job_id)
+        await enqueue_orchestrator(orchestrate_template_job, job.id, db)
 
     log.info(
         "test_job_created",
@@ -1391,9 +1394,10 @@ async def create_rerender_job(
 
     job_id = str(job.id)
 
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
     from app.tasks.template_orchestrate import orchestrate_template_job  # noqa: PLC0415
 
-    orchestrate_template_job.delay(job_id)
+    await enqueue_orchestrator(orchestrate_template_job, job.id, db)
 
     log.info(
         "rerender_job_created",

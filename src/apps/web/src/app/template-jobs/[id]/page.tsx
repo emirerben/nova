@@ -74,6 +74,17 @@ export default function TemplateJobPage() {
       />
     );
   }
+  // Admin-initiated cancel via POST /admin/jobs/{id}/cancel flips status
+  // to "cancelled". Render distinctly from a pipeline failure so the user
+  // doesn't think their video errored — it was deliberately stopped.
+  if (job.status === "cancelled") {
+    return (
+      <ErrorScreen
+        message="This job was cancelled by an administrator. Resubmit if you'd like to try again."
+        jobId={id}
+      />
+    );
+  }
   if (job.status !== "template_ready" || !job.assembly_plan?.output_url) {
     return <ProgressScreen job={job} />;
   }
