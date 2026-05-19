@@ -19,6 +19,7 @@ import pytest
 from app.agents._schemas.text_overlay_ocr import FrameDetection, OcrPolygon
 from app.pipeline.text_overlay_v2.pipeline import (
     DEFAULT_OCR_CONCURRENCY,
+    _classified_phrases_to_output,
     _dump_stage,
     _normalize_overlay_text,
     run_phrase_pipeline_from_frames,
@@ -349,3 +350,96 @@ def test_normalize_overlay_text_handles_empty_and_whitespace_only():
     assert _normalize_overlay_text("") == ""
     assert _normalize_overlay_text("   ") == ""
     assert _normalize_overlay_text("\\N\\n") == ""
+
+
+# ── Stage G end_s extension (regression: 10ms "luck" entries from post-v0.4.34.0) ─
+
+
+def _make_classified_phrase(text: str, start_t_s: float, end_t_s: float):
+    """Build a minimal ClassifiedPhrase for end_s extension tests."""
+    from app.agents._schemas.text_classification import ClassifiedPhrase
+    from app.agents._schemas.text_overlay_pipeline import Phrase
+
+    return ClassifiedPhrase(
+        phrase=Phrase(
+            lines=[text],
+            start_t_s=start_t_s,
+            end_t_s=end_t_s,
+            aabb=(0.3, 0.4, 0.7, 0.5),
+            mean_confidence=0.9,
+        ),
+        effect="none",
+        role="label",
+        size_class="medium",
+        font_color_hex="#FFFFFF",
+    )
+
+
+def test_stage_g_extends_single_frame_phrase_to_next_phrase_start():
+    """A phrase whose end_t_s ≈ start_t_s (single-frame OCR detection) gets
+    extended to the next phrase's start so the word stays visible. Regression
+    for the post-v0.4.34.0 reanalyze where 'luck' rendered for 10ms.
+    """
+    classified = [
+        _make_classified_phrase("It's", 0.0, 0.9),
+        _make_classified_phrase("not", 1.0, 1.5),
+        # Single-frame detection: end_t_s == start_t_s.
+        _make_classified_phrase("luck", 7.5, 7.5),
+        _make_classified_phrase("combination", 8.0, 8.5),
+    ]
+    out = _classified_phrases_to_output(classified, slot_boundaries_s=[(0.0, 10.0)])
+    overlays_by_text = {o.sample_text: o for o in out.overlays}
+
+    luck = overlays_by_text["luck"]
+    # Without the extension, luck would be 7.5 → 7.51 (10ms). With it,
+    # luck extends toward the next phrase's start at 8.0 — capped at the
+    # _MIN_OVERLAY_DURATION_S * 4 ceiling (2.0s), so 8.0 wins here.
+    assert luck.end_s == pytest.approx(8.0)
+    assert luck.start_s == pytest.approx(7.5)
+
+
+def test_stage_g_extends_last_phrase_to_min_duration_when_no_next():
+    """The final phrase has no next phrase to extend toward. It gets a
+    floor of _MIN_OVERLAY_DURATION_S (0.5s) so it doesn't end at 10ms.
+    """
+    classified = [
+        _make_classified_phrase("It's", 0.0, 0.9),
+        _make_classified_phrase("end", 9.0, 9.0),  # single-frame at the end
+    ]
+    out = _classified_phrases_to_output(classified, slot_boundaries_s=[(0.0, 10.0)])
+    overlays_by_text = {o.sample_text: o for o in out.overlays}
+
+    end = overlays_by_text["end"]
+    assert end.end_s == pytest.approx(9.5)  # 9.0 + 0.5s minimum
+
+
+def test_stage_g_does_not_extend_phrases_with_real_duration():
+    """A phrase with end_t_s well past start_t_s keeps its original window.
+    No greedy extension — only the degenerate single-frame case is touched.
+    """
+    classified = [
+        _make_classified_phrase("It's", 0.0, 0.9),
+        _make_classified_phrase("just luck", 2.0, 4.0),  # already 2 seconds
+        _make_classified_phrase("end", 5.0, 5.5),
+    ]
+    out = _classified_phrases_to_output(classified, slot_boundaries_s=[(0.0, 10.0)])
+    overlays_by_text = {o.sample_text: o for o in out.overlays}
+
+    # Real-duration phrase is untouched.
+    assert overlays_by_text["just luck"].end_s == pytest.approx(4.0)
+
+
+def test_stage_g_caps_extension_at_max_window():
+    """A short phrase followed by a long gap doesn't linger for the entire
+    gap. Extension is capped at _MIN_OVERLAY_DURATION_S * 4 = 2.0s.
+    """
+    classified = [
+        _make_classified_phrase("hook", 0.0, 0.0),  # single-frame at 0
+        _make_classified_phrase("after_gap", 9.0, 9.5),  # 9-second gap
+    ]
+    out = _classified_phrases_to_output(classified, slot_boundaries_s=[(0.0, 10.0)])
+    overlays_by_text = {o.sample_text: o for o in out.overlays}
+
+    hook = overlays_by_text["hook"]
+    # Without the cap, hook would extend to 9.0s. Capped at 0 + 2.0 = 2.0s.
+    assert hook.end_s == pytest.approx(2.0)
