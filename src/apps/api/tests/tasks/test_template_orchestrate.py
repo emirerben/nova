@@ -653,39 +653,122 @@ class TestAnalyzeTemplateTask:
 
         assert mock_template.analysis_status == "failed"
 
-    def test_audio_only_template_skips_download_and_marks_ready(self):
+    def test_audio_only_template_regenerates_recipe_from_music_track(self):
         """Regression: audio_only templates have gcs_path=None.
 
         Pre-fix: analyze_template_task called download_to_file(None) which
         crashed inside google-cloud-storage with "None could not be converted
         to unicode" — the symptom the user saw clicking Reanalyze on the
         Bad Bunny - DtMF Letra template.
+
+        Post-fix: the task short-circuits to a recipe regen from the linked
+        MusicTrack — useful both as a "refresh recipe" action AND as a heal
+        path for templates whose recipe_cached was left empty (prod DtMF
+        had recipe_cached={} despite the track carrying 532 beats).
         """
+        from app.models import MusicTrack
         from app.tasks.template_orchestrate import analyze_template_task
 
         mock_template = MagicMock()
-        mock_template.gcs_path = None  # audio_only invariant
+        mock_template.gcs_path = None
         mock_template.template_type = "audio_only"
         mock_template.music_track_id = "track-bb-dtmf"
         mock_template.analysis_status = "ready"
+        mock_template.recipe_cached = {}  # the empty-recipe state we are healing
+
+        mock_track = MagicMock(spec=MusicTrack)
+        mock_track.beat_timestamps_s = [
+            70.0, 70.5, 71.0, 71.5, 72.0, 72.5, 73.0, 73.5,
+            74.0, 74.5, 75.0, 75.5, 76.0, 76.5, 77.0, 77.5,
+        ]
+        mock_track.track_config = {
+            "best_start_s": 69.02,
+            "best_end_s": 114.02,
+            "slot_every_n_beats": 8,
+        }
+        mock_track.duration_s = 240.0
+
+        regenerated_recipe = {
+            "slots": [{"position": 1, "target_duration_s": 4.0}],
+            "beat_timestamps_s": mock_track.beat_timestamps_s,
+        }
+
+        def _session_get(model, pk):
+            if model is MusicTrack:
+                return mock_track
+            return mock_template
 
         _orch = "app.tasks.template_orchestrate"
         with (
             patch(f"{_orch}._sync_session") as mock_session_ctx,
             patch(f"{_orch}.download_to_file") as mock_download,
             patch(f"{_orch}.gemini_upload_and_wait") as mock_upload,
+            patch(
+                "app.pipeline.music_recipe.generate_music_recipe",
+                return_value=regenerated_recipe,
+            ) as mock_gen,
         ):
             session = MagicMock()
             mock_session_ctx.return_value.__enter__ = MagicMock(return_value=session)
             mock_session_ctx.return_value.__exit__ = MagicMock(return_value=False)
-            session.get.return_value = mock_template
+            session.get.side_effect = _session_get
 
             analyze_template_task("template-audio-only")
 
-        # The critical invariant: download_to_file must NOT be called with
-        # None. The early return path skips it entirely.
+        # download_to_file must NOT be called with None (the original crash).
         mock_download.assert_not_called()
         mock_upload.assert_not_called()
+        # generate_music_recipe was called with the track's data.
+        mock_gen.assert_called_once()
+        track_data_arg = mock_gen.call_args[0][0]
+        assert track_data_arg["track_config"] == mock_track.track_config
+        assert track_data_arg["beat_timestamps_s"] == mock_track.beat_timestamps_s
+        # Recipe was written back onto the template.
+        assert mock_template.recipe_cached == regenerated_recipe
+        assert mock_template.analysis_status == "ready"
+        assert mock_template.error_detail is None
+
+    def test_audio_only_with_no_beats_marks_ready_without_crash(self):
+        """If the linked track has no beats yet, regen is skipped but the
+        task still completes cleanly (no download, no error).
+        """
+        from app.models import MusicTrack
+        from app.tasks.template_orchestrate import analyze_template_task
+
+        mock_template = MagicMock()
+        mock_template.gcs_path = None
+        mock_template.template_type = "audio_only"
+        mock_template.music_track_id = "track-empty"
+        mock_template.analysis_status = "ready"
+
+        mock_track = MagicMock(spec=MusicTrack)
+        mock_track.beat_timestamps_s = []
+        mock_track.track_config = {}
+        mock_track.duration_s = 0.0
+
+        def _session_get(model, pk):
+            if model is MusicTrack:
+                return mock_track
+            return mock_template
+
+        _orch = "app.tasks.template_orchestrate"
+        with (
+            patch(f"{_orch}._sync_session") as mock_session_ctx,
+            patch(f"{_orch}.download_to_file") as mock_download,
+            patch(
+                "app.pipeline.music_recipe.generate_music_recipe"
+            ) as mock_gen,
+        ):
+            session = MagicMock()
+            mock_session_ctx.return_value.__enter__ = MagicMock(return_value=session)
+            mock_session_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            session.get.side_effect = _session_get
+
+            analyze_template_task("template-audio-empty")
+
+        mock_download.assert_not_called()
+        # No beats → regen skipped entirely, no exception
+        mock_gen.assert_not_called()
         assert mock_template.analysis_status == "ready"
         assert mock_template.error_detail is None
 

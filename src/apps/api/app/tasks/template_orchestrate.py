@@ -301,16 +301,68 @@ def analyze_template_task(self, template_id: str) -> None:
                     return
                 # audio_only templates are derived from a linked MusicTrack at
                 # creation time (see admin.create_template_from_music_track —
-                # they have gcs_path=None and recipe_cached pre-populated).
-                # There is no source video to re-analyze; passing gcs_path=None
-                # downstream crashes google-cloud-storage with "None could not
-                # be converted to unicode". Mark ready and bail.
+                # they have gcs_path=None). There is no source video; passing
+                # gcs_path=None downstream crashes google-cloud-storage with
+                # "None could not be converted to unicode". Instead, re-derive
+                # the recipe from the linked MusicTrack — this is what the
+                # admin Reanalyze button *should* do for these templates, and
+                # it heals templates whose recipe_cached was left empty (prod
+                # DtMF had recipe_cached={} despite the track having 532
+                # beats and a populated track_config).
                 if template.template_type == "audio_only":
+                    from app.pipeline.music_recipe import (  # noqa: PLC0415
+                        generate_music_recipe,
+                    )
+
+                    if template.music_track_id:
+                        track = db.get(MusicTrack, template.music_track_id)
+                        if track is None:
+                            log.warning(
+                                "audio_only_track_missing",
+                                template_id=template_id,
+                                music_track_id=template.music_track_id,
+                            )
+                        elif not (track.beat_timestamps_s or []):
+                            log.warning(
+                                "audio_only_no_beats_to_regen",
+                                template_id=template_id,
+                                music_track_id=template.music_track_id,
+                            )
+                        if track and (track.beat_timestamps_s or []):
+                            track_data = {
+                                "beat_timestamps_s": track.beat_timestamps_s or [],
+                                "track_config": track.track_config or {},
+                                "duration_s": track.duration_s,
+                            }
+                            try:
+                                regenerated = generate_music_recipe(track_data)
+                                if regenerated:
+                                    template.recipe_cached = regenerated
+                                    log.info(
+                                        "audio_only_recipe_regenerated",
+                                        template_id=template_id,
+                                        slot_count=len(regenerated.get("slots", [])),
+                                    )
+                            except Exception as exc:
+                                # Recipe regen is best-effort. Surface the
+                                # failure in error_detail but still mark ready
+                                # so the editor isn't stuck in "failed".
+                                log.warning(
+                                    "audio_only_recipe_regen_failed",
+                                    template_id=template_id,
+                                    error=str(exc),
+                                )
+                                template.error_detail = (
+                                    f"Recipe regen from music track failed: {exc}"
+                                )[:1000]
                     template.analysis_status = "ready"
-                    template.error_detail = None
+                    if template.error_detail is None or "Recipe regen" not in (
+                        template.error_detail or ""
+                    ):
+                        template.error_detail = None
                     db.commit()
                     log.info(
-                        "analyze_template_skipped_audio_only",
+                        "analyze_template_audio_only_done",
                         template_id=template_id,
                         music_track_id=template.music_track_id,
                     )
