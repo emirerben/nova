@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.34.1] - 2026-05-19
+
+### Fixed
+- **Layer-2 Stage E now outputs one transcript word per atomized phrase instead of stuffing multiple words into one overlay.** The v0.4.34.0 reanalyze of template `fdaf3bbc` produced overlays like `"if you"` (2.0–4.0s), `"the work"` (4.5–4.9s), `"work to get"` (5.0–5.4s), `"to get"` (5.5–6.0s) — the alignment LLM was concatenating every transcript word that fell within the atomized phrase's visible window, treating each single-OCR-word phrase as a multi-word span. The prompt now branches on a new `TextAlignmentInput.atomize_mode` flag (forwarded from `run_full_pipeline(atomize_words=...)`): atomized input gets the **ATOMIZED INPUT** directive ("each phrase = one OCR word; output exactly ONE transcript word — the one closest to `phrase.start_t_s`; NEVER concatenate"), phrase-mode input keeps the legacy span behavior. `prompt_version` bumped `2026-05-19` → `2026-05-19-atomize`.
+- **Stage G extends single-frame phrase `end_s` so words stay readable.** When OCR catches a word in only one sampled frame (fps=2 → 0.5s of "visibility" or even instant), Stage G previously clamped the overlay duration to 10ms (the post-v0.4.34.0 reanalyze rendered `"luck"` for 7.50–7.51s). Now each atomized overlay's `end_s` extends toward the next overlay's start, capped at `2.0s`, with a `0.5s` floor for the final overlay where no next phrase exists. Long-duration phrases are unaffected — only the degenerate single-frame case is touched.
+
 ## [0.4.34.0] - 2026-05-19
 
 ### Fixed

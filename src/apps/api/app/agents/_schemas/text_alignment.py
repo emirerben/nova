@@ -39,11 +39,19 @@ class TextAlignmentInput(BaseModel):
     agent — a list of dicts that each have at minimum `text`, `start_s`,
     `end_s` keys.  Callers may pass raw dicts; Pydantic validates them.
     `template_id` is optional and used only for log / trace correlation.
+
+    `atomize_mode` tells the prompt how to interpret the input. When True
+    (the prod default — Stage D ran with `atomize_per_event=True`), each
+    phrase represents ONE OCR word at its first-appeared moment; the prompt
+    must output exactly one transcript word per phrase. When False, the
+    prompt may concatenate multiple transcript words spanning the phrase's
+    visible window (legacy phrase-mode behavior).
     """
 
     phrases: list[Phrase]
     transcript_words: list[TranscriptWord] = Field(default_factory=list)
     template_id: str | None = None
+    atomize_mode: bool = False
 
 
 class TextAlignmentOutput(BaseModel):
