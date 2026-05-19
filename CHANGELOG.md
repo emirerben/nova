@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.34.0] - 2026-05-19
+
+### Fixed
+- **Layer-2 agentic text overlays no longer leak OCR garbage onto the screen.** Prod job `87b7292b-3913-40b9-844f-835f7544063b` rendered the canonical "not just luck" template with duplicated tokens (`"if you if you put put in"`), stray letters (`"The The work W to get"`), missing words (`"don't to diminish"` instead of `"don't want anyone to diminish"`), and literal `\N` showing as on-screen text. Three compounding causes, all addressed:
+  - **Stage D (`phrases.py:_finalize`) now dedups same-text events** by casefolded-stripped key. Same word re-detected as the OCR re-fired across frames was stacking as duplicate lines in one phrase; now collapses to the single intended occurrence. Atomized phrases (the prod default) are unaffected — single-event clusters skip the loop.
+  - **Stage E (`prompts/align_overlay_to_transcript.txt`) rewritten to transcript-authoritative semantics.** The LLM was told to "fuzzy correct" OCR; it now treats OCR as a hint and replaces text with transcript words verbatim. Forbids `\n`/`\N` echo, duplicated tokens, stray quotation marks, and debug markers. `prompt_version` bumped `2026-05-18` → `2026-05-19`.
+  - **Stage G (`pipeline._classified_phrases_to_output`) normalizes `sample_text`** — strips embedded `\n`, literal `\\N`/`\\n` escape sequences, and `[overlap_truncated]` markers before constructing the overlay. Stops the `/N` glyph from rendering when text wasn't joined cleanly upstream.
+- **Stage E was dead code in production until this PR.** `agentic_template_build_task` never passed `transcript_words` to `extract_template_text_overlays`, so the alignment LLM always short-circuited via its empty-transcript early return. New helper `_fetch_transcript_words_for_layer2` runs `TranscriptAgent` against the template's Gemini file_ref before the OCR extraction call, gated on `use_layer2 or settings.text_overlay_v2_enabled` so Layer-1 builds skip the cost. Best-effort — transcribe failures fall back to empty list and Stage E's existing passthrough. Programming errors (`TypeError`, `AttributeError`, `ImportError`, `NameError`) re-raise so silent regressions can't hide.
+- **Stage E sanitizer defends against LLM trust-boundary leaks.** `_sanitize_aligned_line` strips ASS subtitle tags (`{\an5}`, `{\fs120}` and friends would otherwise reach the renderer as positioning/style overrides instead of text) and Unicode control + format codepoints (RTL overrides, zero-width joiners, line/paragraph separators). The same pass strips `\n`/`\N` and debug markers as a safety net for prompt non-compliance. **Does not** dedup adjacent identical tokens — refrains like "rain rain go away" or "Whoa whoa whoa" must survive intact when the transcript legitimately repeats.
+- **Layer-2 cache version bumped to `v2-2026-05-19`** so pre-fix cached recipes in Redis stop being served. `template_cache.TEXT_OVERLAY_VERSION_V2` was `"v2"`; new value orphans every Layer-2 cached recipe (force_layer2 builds only — manual templates use a separate namespace and are untouched). Next access to each affected template auto-reanalyzes with the fixed pipeline. No manual reanalyze required.
+
 ## [0.4.33.0] - 2026-05-19
 
 ### Added
