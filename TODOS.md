@@ -7,20 +7,16 @@
 - ~~Cost cap on live-mode eval runs~~ — `--allow-cost` flag + preflight estimator with $20 cap, replay-skipped, zero-cost-spec warning
 - ~~Auto `--shadow` prompt-iteration mode~~ — `--shadow-prompts-dir` flag overlays candidate prompts on prod, side-by-side run + Δ scoring, live-only
 
+**Completed since (on `main`, ~2026-05-14 → 2026-05-18):**
+- ~~Phase 2.5 — evals for the unwired-four agents (`text_designer`, `transition_picker`, `clip_router`, `shot_ranker`)~~ — all four now have rubrics + hand-authored golden fixtures + test entry-points in `tests/evals/`. `text_designer` and `clip_router` are pipeline-wired; `transition_picker` and `shot_ranker` have eval coverage waiting for wiring (gated on `clip_router` earning trust per `agentic_matcher.py:12`).
+- ~~Per-PR auto-eval on prompt changes~~ — `.github/workflows/agent-evals.yml` now fires on `pull_request` when `src/apps/api/prompts/**`, `src/apps/api/app/agents/**`, `src/apps/api/tests/evals/**`, or the workflow file itself changes. Runs structural-only suite (no secrets, ~30s). Manual `workflow_dispatch` job kept for live + judge runs.
+
 ### Re-run creative_direction on 10 templates with under-baked descriptions
 **What:** When seeding eval fixtures, the export script's structural validator rejected 10 of 14 templates' `creative_direction` text as below the 50-word floor (some as short as 4 words). These templates either pre-date two-pass mode or the model produced a near-empty output that nobody caught. Re-run two-pass analysis on: `that_one_trip_to`, `morocco`, `just_fine_test2`, `just_fine___sunset_reassurance`, `impressing_myself`, `football_face_hook`, plus 4 others surfaced by `python scripts/export_eval_fixtures.py 2>&1 | grep '\[reject\]'`.
 **Why:** A 4-word creative_direction means Pass 2 (`template_recipe`) was running with no editorial guidance, so the recipe quality on those templates is whatever Gemini produced cold. Real user-facing impact: the templates' `copy_tone`, `pacing_style`, `transition_style` are likely generic or wrong.
 **How:** Trigger reanalysis from the admin UI for each template, OR add a one-off script that calls `analyze_template_task` with `analysis_mode="two_pass"` for each. Verify by re-running `scripts/export_eval_fixtures.py` — rejected count should drop.
 **Effort:** S (human: ~1h / CC: ~10 min)
 **Priority:** P2
-
-### Phase 2.5 — evals for the unwired-four agents
-**What:** Extend `tests/evals/` to cover `text_designer`, `transition_picker`, `clip_router`, `shot_ranker`. The 3 in-pipeline agents (`transcript`, `platform_copy`, `audio_template`) shipped in v0.4.6.0; these four agent classes exist in `app/agents/` but nothing in production calls them yet, so their evals should land alongside the PR that wires each one into the pipeline.
-**Why:** Bumping `prompt_version` on a prompt that nothing executes is signal-free. Once these agents are actually invoked, prompt drift starts to matter — and at that point, the eval harness should already cover them.
-**How:** Mirror the Phase 1 / Phase 2 pattern: rubric markdown, structural-check function, test entry-point file, hand-authored golden fixtures (no prod-snapshot path until DB persistence is added).
-**Effort:** M (human: ~2d / CC: ~20 min per agent, when each lands)
-**Priority:** P2
-**Depends on:** each agent being wired into the pipeline first
 
 ### Run reanalyze script + re-export `creative_direction/prod_snapshots/`
 **What:** Operator-side follow-up to the script that landed in v0.4.6.0. Run `cd src/apps/api && .venv/bin/python scripts/reanalyze_underbaked_templates.py --auto-detect --watch` against prod DB. Then re-run `scripts/export_eval_fixtures.py` so the freshly-baked `creative_direction` text replaces the rejected fixtures.
@@ -34,19 +30,7 @@
 **Effort:** S (human: ~4h / CC: ~30 min)
 **Priority:** P3
 
-### Per-PR auto-eval on prompt changes
-**What:** Detect when a PR touches files under `src/apps/api/prompts/` and auto-trigger structural-only evals for the affected agents on the PR. Today `agent-evals.yml` is `workflow_dispatch`-only.
-**Why:** Catch prompt regressions before merge instead of after.
-**Effort:** S (human: ~3h / CC: ~20 min)
-**Priority:** P3
-
 ## UX Cleanup (template-first)
-
-### #fallback-removal — Remove subject → inputs.location read-side fallback after 2026-05-16
-**What:** Delete `_resolve_user_subject()` in `src/apps/api/app/tasks/template_orchestrate.py` and inline the `inputs["location"]` read at its call sites. Remove the legacy-subject branch in `routes/template_jobs.py` reroll. Delete `tests/pipeline/test_subject_fallback_removed.py`.
-**Why:** The fallback covers in-flight jobs created before the rename. After 2026-05-16 that window is closed.
-**How:** The xfail in `test_subject_fallback_removed.py` flips on the deadline and CI breaks until the fallback is removed.
-**Priority:** P1
 
 ### Smarter poster-frame selection
 **What:** `app/services/template_poster.py` always seeks 1.5s into the template. For a few templates this lands inside a fade-in and produces a near-black thumbnail (e.g. "How do you enjoy your life?" backfilled to 3.8KB). Add a brightness/variance check on the extracted JPEG and retry at later seek offsets (3s, 5s, 10s) if the frame is too dark or low-variance. Optional: an admin override field on `VideoTemplate` to pin a specific seek time.
