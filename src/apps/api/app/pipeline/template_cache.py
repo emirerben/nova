@@ -9,13 +9,20 @@ Fingerprint the source once, look up Redis, skip the Gemini round-trip on
 hits.
 
 Cache key shape:
-    template_analysis:{prompt_version}:{schema_version}:{agent_set}:{analysis_mode}:{fingerprint}
+    template_analysis:{prompt_version}:{schema_version}:{agent_set}:{analysis_mode}:{template_id}:{fingerprint}
+
+`template_id` is part of the key so two distinct templates that share the same
+source-video fingerprint do NOT collide. Prior to s2 the key was content-only;
+a fresh template created from the same upload as an existing one would
+cache-hit on the existing template's recipe and return it unchanged. This
+caused the prod incident on 2026-05-20 ("not just luck 2 returns old recipe").
+Schema bumped to s2 to orphan the colliding entries.
 
 For agentic builds that run TemplateTextAgent, the key additionally encodes
 `text_overlay_version` so Layer-1 (single Gemini call) and Layer-2 (multi-stage
 OCR pipeline) results coexist as separate cache entries and never collide:
 
-    template_analysis:{prompt_version}:{schema_version}:recipe+text:{analysis_mode}:{fingerprint}:v2
+    template_analysis:{prompt_version}:{schema_version}:recipe+text:{analysis_mode}:{template_id}:{fingerprint}:v2
 
 This is the "v1/v2 namespace". `text_overlay_version` is only appended for the
 `recipe+text` agent_set; `recipe-only` (manual templates) is unaffected because
@@ -73,8 +80,17 @@ log = structlog.get_logger()
 # every manual template the next time they touched cache.
 TEMPLATE_PROMPT_VERSION = "v1"
 
-# Bump when `TemplateRecipe` gains/renames/drops a field.
-CACHE_SCHEMA_VERSION = "s1"
+# Bump when `TemplateRecipe` gains/renames/drops a field, OR when the cache
+# key shape changes. Bumping orphans every existing entry — next access
+# rebuilds from scratch and writes under the new key shape.
+#
+# History:
+#   s1 → s2 (2026-05-20): added `template_id` to the cache key. Pre-s2 keys
+#     were content-only, so two templates sharing a source-video fingerprint
+#     collided on the same Redis entry (incident: "not just luck 2" returned
+#     the old "not just luck" recipe on first analyze). s2 forces a one-time
+#     rebuild wave but eliminates the collision class entirely.
+CACHE_SCHEMA_VERSION = "s2"
 
 # Which set of agents produced the cached recipe. Manual templates use only
 # TemplateRecipeAgent and key as "recipe-only"; agentic templates additionally
@@ -179,15 +195,21 @@ def _cache_key(
     analysis_mode: str,
     agent_set: str = AGENT_SET_RECIPE_ONLY,
     text_overlay_version: str = TEXT_OVERLAY_VERSION_V1,
+    *,
+    template_id: str,
 ) -> str:
     """Build the Redis cache key.
+
+    ``template_id`` is part of the key so two templates that happen to share a
+    source-video fingerprint do NOT collide. Required keyword-only — there is
+    no sensible default; every call site must pass the row's identity.
 
     For ``agent_set="recipe+text"`` (agentic builds), ``text_overlay_version``
     is appended as an additional namespace dimension so Layer-1 and Layer-2
     results coexist:
 
-        template_analysis:v1:s1:recipe+text:single:<hash>:v1   ← Layer-1
-        template_analysis:v1:s1:recipe+text:single:<hash>:v2   ← Layer-2
+        template_analysis:v1:s2:recipe+text:single:<id>:<hash>:v1   ← Layer-1
+        template_analysis:v1:s2:recipe+text:single:<id>:<hash>:v2   ← Layer-2
 
     For ``agent_set="recipe-only"`` (manual templates) the version suffix is
     omitted — text_overlay_version is irrelevant for builds that never run the
@@ -201,7 +223,7 @@ def _cache_key(
     """
     base = (
         f"template_analysis:{TEMPLATE_PROMPT_VERSION}:{CACHE_SCHEMA_VERSION}"
-        f":{agent_set}:{analysis_mode}:{template_hash}"
+        f":{agent_set}:{analysis_mode}:{template_id}:{template_hash}"
     )
     if agent_set == AGENT_SET_RECIPE_PLUS_TEXT and text_overlay_version != TEXT_OVERLAY_VERSION_V1:
         return f"{base}:{text_overlay_version}"
@@ -240,6 +262,8 @@ def get_cached_recipe(
     analysis_mode: str,
     agent_set: str = AGENT_SET_RECIPE_ONLY,
     text_overlay_version: str = TEXT_OVERLAY_VERSION_V1,
+    *,
+    template_id: str,
 ) -> TemplateRecipe | None:
     """Return cached TemplateRecipe or None on miss / Redis failure / corrupt entry.
 
@@ -253,11 +277,16 @@ def get_cached_recipe(
     multi-stage OCR pipeline). Ignored for "recipe-only" agent_set. Use
     `_resolve_text_overlay_version()` to derive this from the per-request
     override and global flag rather than hardcoding it at call sites.
+
+    `template_id` scopes the entry per-template so two templates sharing a
+    source-video fingerprint don't collide. Required keyword-only.
     """
     r = _get_redis()
     if r is None:
         return None
-    key = _cache_key(template_hash, analysis_mode, agent_set, text_overlay_version)
+    key = _cache_key(
+        template_hash, analysis_mode, agent_set, text_overlay_version, template_id=template_id
+    )
     try:
         raw = r.get(key)
     except Exception as exc:
@@ -293,6 +322,8 @@ def set_cached_recipe(
     recipe: TemplateRecipe,
     agent_set: str = AGENT_SET_RECIPE_ONLY,
     text_overlay_version: str = TEXT_OVERLAY_VERSION_V1,
+    *,
+    template_id: str,
 ) -> None:
     """Write TemplateRecipe to cache. Best-effort — failures are logged, not raised.
 
@@ -302,6 +333,9 @@ def set_cached_recipe(
     `text_overlay_version` is forwarded to `_cache_key`; see `get_cached_recipe`
     for the full semantics. Both get and set must receive the same version so
     a future hit returns the entry written by this call.
+
+    `template_id` must match the value passed to `get_cached_recipe` or a
+    future read will miss this entry.
     """
     if _is_degraded_recipe(recipe):
         log.warning(
@@ -316,7 +350,9 @@ def set_cached_recipe(
     r = _get_redis()
     if r is None:
         return
-    key = _cache_key(template_hash, analysis_mode, agent_set, text_overlay_version)
+    key = _cache_key(
+        template_hash, analysis_mode, agent_set, text_overlay_version, template_id=template_id
+    )
     try:
         payload = dataclasses.asdict(recipe)
         r.setex(key, CACHE_TTL_S, json.dumps(payload))

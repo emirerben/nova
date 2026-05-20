@@ -2,7 +2,7 @@
 
 The cache must:
   - Hash files via fingerprint (size + first/last 4MB), tolerate missing files.
-  - Scope keys by prompt + schema version + analysis_mode.
+  - Scope keys by prompt + schema version + analysis_mode + template_id.
   - Scope agentic (recipe+text) keys by text_overlay_version (v1/v2).
   - Keep recipe-only (manual template) keys unchanged by text_overlay_version.
   - Round-trip a real TemplateRecipe through serialize/deserialize.
@@ -23,6 +23,12 @@ from app.pipeline.template_cache import (
     TEXT_OVERLAY_VERSION_V2,
     _resolve_text_overlay_version,
 )
+
+# Used everywhere a template_id is required by the cache API. The exact value
+# is irrelevant for most tests — it just needs to be consistent across paired
+# get/set calls. Tests that specifically exercise the per-template scoping
+# define their own ids inline.
+_TID = "tmpl-test-001"
 
 
 @pytest.fixture(autouse=True)
@@ -127,8 +133,8 @@ def test_compute_template_hash_includes_size_in_fingerprint(tmp_path):
 def test_cache_key_scopes_by_analysis_mode():
     """A template can legitimately have TWO valid recipes: one per mode. The
     key must scope per mode so flipping mode doesn't return the wrong recipe."""
-    single_key = template_cache._cache_key("abc", "single")
-    two_pass_key = template_cache._cache_key("abc", "two_pass")
+    single_key = template_cache._cache_key("abc", "single", template_id=_TID)
+    two_pass_key = template_cache._cache_key("abc", "two_pass", template_id=_TID)
     assert single_key != two_pass_key
     assert "single" in single_key
     assert "two_pass" in two_pass_key
@@ -137,20 +143,52 @@ def test_cache_key_scopes_by_analysis_mode():
 def test_cache_key_includes_prompt_version():
     """Bumping TEMPLATE_PROMPT_VERSION must invalidate prior entries — guards
     against silently returning stale-prompt recipes after a prompt change."""
-    key = template_cache._cache_key("abc", "single")
+    key = template_cache._cache_key("abc", "single", template_id=_TID)
     assert template_cache.TEMPLATE_PROMPT_VERSION in key
 
 
 def test_cache_key_includes_schema_version():
     """Bumping CACHE_SCHEMA_VERSION must invalidate prior entries — guards
     against silent TemplateRecipe field drift."""
-    key = template_cache._cache_key("abc", "single")
+    key = template_cache._cache_key("abc", "single", template_id=_TID)
     assert template_cache.CACHE_SCHEMA_VERSION in key
 
 
+def test_cache_key_schema_version_is_s2_or_later():
+    """s1 keyed only by content hash. s2 added template_id. Bumping below s2
+    would re-introduce the cross-template collision class."""
+    assert template_cache.CACHE_SCHEMA_VERSION >= "s2", (
+        "CACHE_SCHEMA_VERSION must be s2 or later — s1 colliding entries "
+        "predate the template_id key segment and would serve wrong recipes."
+    )
+
+
 def test_cache_key_includes_fingerprint():
-    key = template_cache._cache_key("some-hash-value", "single")
+    key = template_cache._cache_key("some-hash-value", "single", template_id=_TID)
     assert "some-hash-value" in key
+
+
+def test_cache_key_includes_template_id():
+    """template_id must appear in the key so two templates that hash to the same
+    fingerprint don't collide."""
+    key = template_cache._cache_key("abc", "single", template_id="tmpl-XYZ")
+    assert "tmpl-XYZ" in key
+
+
+def test_cache_key_distinct_per_template_id():
+    """Two templates with IDENTICAL template_hash but different template_id MUST
+    produce different cache keys.
+
+    Regression guard for the 2026-05-20 incident: "not just luck 2" was a fresh
+    template that returned the cached recipe of "not just luck" because the
+    cache was content-hash-keyed and the shared upload bytes hashed identically.
+    """
+    key_a = template_cache._cache_key("shared-hash", "single", template_id="template-A")
+    key_b = template_cache._cache_key("shared-hash", "single", template_id="template-B")
+    assert key_a != key_b, (
+        "Two templates with the same source-video fingerprint must NOT share a "
+        "cache key — that's exactly the bug this PR fixes."
+    )
 
 
 # ── round-trip ───────────────────────────────────────────────────────────────
@@ -158,8 +196,8 @@ def test_cache_key_includes_fingerprint():
 
 def test_round_trip_get_after_set(fake_redis):
     recipe = _recipe()
-    template_cache.set_cached_recipe("hash1", "single", recipe)
-    got = template_cache.get_cached_recipe("hash1", "single")
+    template_cache.set_cached_recipe("hash1", "single", recipe, template_id=_TID)
+    got = template_cache.get_cached_recipe("hash1", "single", template_id=_TID)
     assert got is not None
     assert got.shot_count == 7
     assert got.creative_direction == "fast-cut travel montage"
@@ -188,8 +226,8 @@ def test_round_trip_preserves_all_fields(fake_redis):
         clip_filter_hint="ball in frame",
         font_default="Inter Tight",
     )
-    template_cache.set_cached_recipe("hash1", "single", recipe)
-    got = template_cache.get_cached_recipe("hash1", "single")
+    template_cache.set_cached_recipe("hash1", "single", recipe, template_id=_TID)
+    got = template_cache.get_cached_recipe("hash1", "single", template_id=_TID)
     assert got is not None
     assert got.transition_style == "whip-pan"
     assert got.color_grade == "warm"
@@ -207,21 +245,33 @@ def test_round_trip_preserves_all_fields(fake_redis):
 
 
 def test_get_returns_none_on_miss(fake_redis):
-    assert template_cache.get_cached_recipe("never-set", "single") is None
+    assert template_cache.get_cached_recipe("never-set", "single", template_id=_TID) is None
 
 
 def test_analysis_mode_scoping_is_enforced_at_lookup(fake_redis):
     """A recipe cached under `single` must NOT be returned to a `two_pass` lookup."""
-    template_cache.set_cached_recipe("hash1", "single", _recipe())
-    assert template_cache.get_cached_recipe("hash1", "two_pass") is None
+    template_cache.set_cached_recipe("hash1", "single", _recipe(), template_id=_TID)
+    assert template_cache.get_cached_recipe("hash1", "two_pass", template_id=_TID) is None
     # And the original is still findable under its own mode.
-    assert template_cache.get_cached_recipe("hash1", "single") is not None
+    assert template_cache.get_cached_recipe("hash1", "single", template_id=_TID) is not None
+
+
+def test_template_id_scoping_is_enforced_at_lookup(fake_redis):
+    """A recipe cached under template_id "A" must NOT be returned to a lookup
+    under template_id "B", even when template_hash matches.
+
+    This is the per-key counterpart to test_cache_key_distinct_per_template_id —
+    the previous test pins the key shape, this one pins the lookup behavior."""
+    template_cache.set_cached_recipe("shared-hash", "single", _recipe(), template_id="A")
+    assert template_cache.get_cached_recipe("shared-hash", "single", template_id="B") is None
+    # And A's own lookup still finds it.
+    assert template_cache.get_cached_recipe("shared-hash", "single", template_id="A") is not None
 
 
 def test_ttl_is_set(fake_redis):
     """30-day TTL must be applied so the cache doesn't grow unbounded."""
-    template_cache.set_cached_recipe("hash1", "single", _recipe())
-    key = template_cache._cache_key("hash1", "single")
+    template_cache.set_cached_recipe("hash1", "single", _recipe(), template_id=_TID)
+    key = template_cache._cache_key("hash1", "single", template_id=_TID)
     assert fake_redis.ttls[key] == template_cache.CACHE_TTL_S
     assert template_cache.CACHE_TTL_S == 30 * 24 * 60 * 60
 
@@ -231,28 +281,28 @@ def test_ttl_is_set(fake_redis):
 
 def test_get_falls_open_when_redis_unavailable(monkeypatch):
     monkeypatch.setattr(template_cache, "_get_redis", lambda: None)
-    assert template_cache.get_cached_recipe("hash1", "single") is None
+    assert template_cache.get_cached_recipe("hash1", "single", template_id=_TID) is None
 
 
 def test_set_falls_open_when_redis_unavailable(monkeypatch):
     monkeypatch.setattr(template_cache, "_get_redis", lambda: None)
     # Must not raise — fail-open is the contract.
-    template_cache.set_cached_recipe("hash1", "single", _recipe())
+    template_cache.set_cached_recipe("hash1", "single", _recipe(), template_id=_TID)
 
 
 def test_get_falls_open_on_redis_get_error(monkeypatch):
     fake = _FakeRedis()
     fake.get = MagicMock(side_effect=RuntimeError("network blip"))
     monkeypatch.setattr(template_cache, "_get_redis", lambda: fake)
-    assert template_cache.get_cached_recipe("hash1", "single") is None
+    assert template_cache.get_cached_recipe("hash1", "single", template_id=_TID) is None
 
 
 def test_get_falls_open_on_corrupt_cache_value(monkeypatch):
     """Garbage bytes in Redis must not crash the orchestrator."""
     fake = _FakeRedis()
-    fake.store[template_cache._cache_key("hash1", "single")] = b"not-json-at-all"
+    fake.store[template_cache._cache_key("hash1", "single", template_id=_TID)] = b"not-json-at-all"
     monkeypatch.setattr(template_cache, "_get_redis", lambda: fake)
-    assert template_cache.get_cached_recipe("hash1", "single") is None
+    assert template_cache.get_cached_recipe("hash1", "single", template_id=_TID) is None
 
 
 def test_get_falls_open_on_schema_drift(monkeypatch):
@@ -274,9 +324,9 @@ def test_get_falls_open_on_schema_drift(monkeypatch):
             "future_field_we_didnt_bump_schema_for": "boom",
         }
     )
-    fake.store[template_cache._cache_key("hash1", "single")] = payload.encode()
+    fake.store[template_cache._cache_key("hash1", "single", template_id=_TID)] = payload.encode()
     monkeypatch.setattr(template_cache, "_get_redis", lambda: fake)
-    assert template_cache.get_cached_recipe("hash1", "single") is None
+    assert template_cache.get_cached_recipe("hash1", "single", template_id=_TID) is None
 
 
 def test_set_falls_open_on_redis_setex_error(monkeypatch):
@@ -284,7 +334,7 @@ def test_set_falls_open_on_redis_setex_error(monkeypatch):
     fake.setex = MagicMock(side_effect=RuntimeError("network blip"))
     monkeypatch.setattr(template_cache, "_get_redis", lambda: fake)
     # Must not raise.
-    template_cache.set_cached_recipe("hash1", "single", _recipe())
+    template_cache.set_cached_recipe("hash1", "single", _recipe(), template_id=_TID)
 
 
 # ── degraded-recipe gate ─────────────────────────────────────────────────────
@@ -294,24 +344,24 @@ def test_set_skips_recipe_with_no_slots(fake_redis):
     """Empty slots = matcher has nothing to do = recipe is broken. Must not
     enter the cache or it pins a useless recipe for 30 days."""
     degraded = _recipe(slots=[], shot_count=5)
-    template_cache.set_cached_recipe("hash1", "single", degraded)
-    assert template_cache.get_cached_recipe("hash1", "single") is None
+    template_cache.set_cached_recipe("hash1", "single", degraded, template_id=_TID)
+    assert template_cache.get_cached_recipe("hash1", "single", template_id=_TID) is None
 
 
 def test_set_skips_recipe_with_zero_shot_count(fake_redis):
     """shot_count == 0 is the structural signal that JSON recovery returned
     a partial recipe with pydantic defaults instead of raising."""
     degraded = _recipe(shot_count=0)
-    template_cache.set_cached_recipe("hash1", "single", degraded)
-    assert template_cache.get_cached_recipe("hash1", "single") is None
+    template_cache.set_cached_recipe("hash1", "single", degraded, template_id=_TID)
+    assert template_cache.get_cached_recipe("hash1", "single", template_id=_TID) is None
 
 
 def test_set_accepts_well_formed_recipe(fake_redis):
     """The gate must NOT block legitimate recipes — the helper test_round_trip
     already covers this implicitly, but make the contract explicit."""
     healthy = _recipe(shot_count=7, slots=[{"position": 1, "slot_type": "hook"}])
-    template_cache.set_cached_recipe("hash1", "single", healthy)
-    assert template_cache.get_cached_recipe("hash1", "single") is not None
+    template_cache.set_cached_recipe("hash1", "single", healthy, template_id=_TID)
+    assert template_cache.get_cached_recipe("hash1", "single", template_id=_TID) is not None
 
 
 # ── call-site integration contract ───────────────────────────────────────────
@@ -377,6 +427,83 @@ def test_agentic_build_task_caches_after_analyze():
     )
 
 
+def test_agentic_build_task_passes_template_id_to_cache():
+    """Both get and set calls in the agentic task must forward template_id —
+    otherwise the call site raises TypeError at runtime (template_id is
+    keyword-only and required)."""
+    import inspect
+
+    from app.tasks import agentic_template_build
+
+    src = inspect.getsource(agentic_template_build.agentic_template_build_task)
+    # Each cache call site must mention template_id= explicitly.
+    assert src.count("template_id=template_id") >= 2, (
+        "agentic_template_build_task must pass template_id= to BOTH "
+        "get_cached_recipe and set_cached_recipe"
+    )
+
+
+def test_manual_analyze_task_passes_template_id_to_cache():
+    """Same template_id-forwarding contract for the manual path."""
+    import inspect
+
+    from app.tasks import template_orchestrate
+
+    src = inspect.getsource(template_orchestrate.analyze_template_task)
+    assert src.count("template_id=template_id") >= 2, (
+        "analyze_template_task must pass template_id= to BOTH get and set"
+    )
+
+
+def test_agentic_build_task_gates_cache_read_on_force():
+    """force=True must skip the cache READ (still does the WRITE on success).
+
+    Required so the admin reanalyze button actually reruns agents instead of
+    cache-hitting on the prior recipe. Source-inspection pin so a future
+    refactor that drops the `not force` guard fails this test loudly.
+    """
+    import inspect
+
+    from app.tasks import agentic_template_build
+
+    src = inspect.getsource(agentic_template_build.agentic_template_build_task)
+    # The cache-read block must be guarded by `not force`.
+    assert "not force" in src, (
+        "agentic_template_build_task must gate get_cached_recipe on `not force` — "
+        "without it, reanalyze cache-hits and no agents run"
+    )
+
+
+def test_manual_analyze_task_gates_cache_read_on_force():
+    """Same force-bypass contract for the manual path."""
+    import inspect
+
+    from app.tasks import template_orchestrate
+
+    src = inspect.getsource(template_orchestrate.analyze_template_task)
+    assert "not force" in src, (
+        "analyze_template_task must gate get_cached_recipe on `not force`"
+    )
+
+
+def test_admin_reanalyze_routes_pass_force_true():
+    """Both reanalyze routes must enqueue with force=True. Without this, the
+    cache short-circuits and the Re-run button silently does nothing."""
+    import inspect
+
+    from app.routes import admin
+
+    src = inspect.getsource(admin.reanalyze_template_agentic)
+    assert "force=True" in src, (
+        "reanalyze_template_agentic must enqueue agentic_template_build_task "
+        "with force=True so reanalyze actually reruns agents"
+    )
+    src_manual = inspect.getsource(admin.reanalyze_template)
+    assert "force=True" in src_manual, (
+        "reanalyze_template must enqueue analyze_template_task with force=True"
+    )
+
+
 # ── connection-pooling guarantee ─────────────────────────────────────────────
 
 
@@ -412,10 +539,18 @@ def test_v1_and_v2_keys_are_distinct():
     consulted. Same template_hash + agent_set, different version → different key.
     """
     v1_key = template_cache._cache_key(
-        "abc123", "single", AGENT_SET_RECIPE_PLUS_TEXT, TEXT_OVERLAY_VERSION_V1
+        "abc123",
+        "single",
+        AGENT_SET_RECIPE_PLUS_TEXT,
+        TEXT_OVERLAY_VERSION_V1,
+        template_id=_TID,
     )
     v2_key = template_cache._cache_key(
-        "abc123", "single", AGENT_SET_RECIPE_PLUS_TEXT, TEXT_OVERLAY_VERSION_V2
+        "abc123",
+        "single",
+        AGENT_SET_RECIPE_PLUS_TEXT,
+        TEXT_OVERLAY_VERSION_V2,
+        template_id=_TID,
     )
     assert v1_key != v2_key
 
@@ -428,12 +563,14 @@ def test_v1_write_does_not_satisfy_v2_read(fake_redis):
         _recipe(),
         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
         text_overlay_version=TEXT_OVERLAY_VERSION_V1,
+        template_id=_TID,
     )
     result = template_cache.get_cached_recipe(
         "hash1",
         "single",
         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
         text_overlay_version=TEXT_OVERLAY_VERSION_V2,
+        template_id=_TID,
     )
     assert result is None, "v1 cache entry must not be returned for a v2 lookup"
 
@@ -446,12 +583,14 @@ def test_v2_write_does_not_satisfy_v1_read(fake_redis):
         _recipe(),
         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
         text_overlay_version=TEXT_OVERLAY_VERSION_V2,
+        template_id=_TID,
     )
     result = template_cache.get_cached_recipe(
         "hash1",
         "single",
         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
         text_overlay_version=TEXT_OVERLAY_VERSION_V1,
+        template_id=_TID,
     )
     assert result is None, "v2 cache entry must not be returned for a v1 lookup"
 
@@ -464,12 +603,14 @@ def test_v2_write_satisfies_v2_read(fake_redis):
         _recipe(shot_count=12),
         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
         text_overlay_version=TEXT_OVERLAY_VERSION_V2,
+        template_id=_TID,
     )
     result = template_cache.get_cached_recipe(
         "hash1",
         "single",
         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
         text_overlay_version=TEXT_OVERLAY_VERSION_V2,
+        template_id=_TID,
     )
     assert result is not None
     assert result.shot_count == 12
@@ -486,12 +627,14 @@ def test_v1_is_default_when_version_not_specified(fake_redis):
         _recipe(shot_count=7),
         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
         text_overlay_version=TEXT_OVERLAY_VERSION_V1,
+        template_id=_TID,
     )
     # Read without specifying version (legacy call site).
     result = template_cache.get_cached_recipe(
         "hash1",
         "single",
         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
+        template_id=_TID,
     )
     assert result is not None
     assert result.shot_count == 7
@@ -503,13 +646,14 @@ def test_recipe_only_unaffected_by_version(fake_redis):
 
     Concretely: write without version, read with explicit v2 → same key.
     """
-    template_cache.set_cached_recipe("hash1", "single", _recipe(shot_count=3))
+    template_cache.set_cached_recipe("hash1", "single", _recipe(shot_count=3), template_id=_TID)
     # recipe-only has no v1/v2 dimension — v2 kwarg is ignored.
     result = template_cache.get_cached_recipe(
         "hash1",
         "single",
         agent_set=AGENT_SET_RECIPE_ONLY,
         text_overlay_version=TEXT_OVERLAY_VERSION_V2,
+        template_id=_TID,
     )
     # Should still find the entry because recipe-only ignores the version dimension.
     assert result is not None
@@ -520,12 +664,14 @@ def test_recipe_only_keys_are_identical_regardless_of_version():
     """The cache key for recipe-only must be the same regardless of which
     text_overlay_version is passed — ensures no silent key drift for manual
     templates after this PR."""
-    key_default = template_cache._cache_key("abc", "single", AGENT_SET_RECIPE_ONLY)
+    key_default = template_cache._cache_key(
+        "abc", "single", AGENT_SET_RECIPE_ONLY, template_id=_TID
+    )
     key_v1 = template_cache._cache_key(
-        "abc", "single", AGENT_SET_RECIPE_ONLY, TEXT_OVERLAY_VERSION_V1
+        "abc", "single", AGENT_SET_RECIPE_ONLY, TEXT_OVERLAY_VERSION_V1, template_id=_TID
     )
     key_v2 = template_cache._cache_key(
-        "abc", "single", AGENT_SET_RECIPE_ONLY, TEXT_OVERLAY_VERSION_V2
+        "abc", "single", AGENT_SET_RECIPE_ONLY, TEXT_OVERLAY_VERSION_V2, template_id=_TID
     )
     assert key_default == key_v1 == key_v2, (
         "recipe-only cache key must be identical regardless of text_overlay_version — "

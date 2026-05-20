@@ -139,22 +139,34 @@ def test_cache_uses_v2_namespace_when_use_layer2_true(monkeypatch: pytest.Monkey
     get_calls: list[dict] = []
     set_calls: list[dict] = []
 
-    def _fake_get(template_hash, analysis_mode, *, agent_set, text_overlay_version):
+    def _fake_get(
+        template_hash, analysis_mode, *, agent_set, text_overlay_version, template_id
+    ):
         get_calls.append(
             {
                 "template_hash": template_hash,
                 "agent_set": agent_set,
                 "text_overlay_version": text_overlay_version,
+                "template_id": template_id,
             }
         )
         return None  # miss — force full build path
 
-    def _fake_set(template_hash, analysis_mode, recipe, *, agent_set, text_overlay_version):
+    def _fake_set(
+        template_hash,
+        analysis_mode,
+        recipe,
+        *,
+        agent_set,
+        text_overlay_version,
+        template_id,
+    ):
         set_calls.append(
             {
                 "template_hash": template_hash,
                 "agent_set": agent_set,
                 "text_overlay_version": text_overlay_version,
+                "template_id": template_id,
             }
         )
 
@@ -178,6 +190,7 @@ def test_cache_uses_v2_namespace_when_use_layer2_true(monkeypatch: pytest.Monkey
         "single",
         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
         text_overlay_version=resolved,
+        template_id="tmpl-test-001",
     )
     _fake_set(
         "fixed-hash-abc",
@@ -185,6 +198,7 @@ def test_cache_uses_v2_namespace_when_use_layer2_true(monkeypatch: pytest.Monkey
         object(),
         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
         text_overlay_version=resolved,
+        template_id="tmpl-test-001",
     )
 
     assert get_calls[0]["text_overlay_version"] == TEXT_OVERLAY_VERSION_V2

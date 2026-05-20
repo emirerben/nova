@@ -274,8 +274,23 @@ export async function adminReanalyzeTemplate(id: string): Promise<AdminTemplate>
   return res.json();
 }
 
-export async function adminReanalyzeAgentic(id: string): Promise<AdminTemplate> {
-  const res = await adminFetch(`/admin/templates/${id}/reanalyze-agentic`, {
+/**
+ * Re-run the full agent stack on an agentic template.
+ *
+ * `useLayer2` maps to the backend `?use_layer2` query param. Default `true`
+ * because Layer-2 is the active text-overlay pipeline; pass `false` to force
+ * the legacy Layer-1 path for diffing. Pass `undefined` to let the backend
+ * fall back to `template.use_layer2_default`, then `text_overlay_v2_enabled`.
+ *
+ * The backend always reruns the agent stack on this endpoint (force=True is
+ * applied server-side), so each click produces fresh agent_run rows.
+ */
+export async function adminReanalyzeAgentic(
+  id: string,
+  useLayer2: boolean | undefined = true,
+): Promise<AdminTemplate> {
+  const qs = useLayer2 === undefined ? "" : `?use_layer2=${useLayer2 ? "true" : "false"}`;
+  const res = await adminFetch(`/admin/templates/${id}/reanalyze-agentic${qs}`, {
     method: "POST",
   });
   return res.json();

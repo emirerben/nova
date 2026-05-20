@@ -209,8 +209,8 @@ export default function TemplateDetailPage() {
       !confirm(
         "Re-run the full agent stack?\n\n" +
           "This regenerates the recipe end-to-end (creative direction → " +
-          "template recipe → per-slot text_designer). The previous recipe " +
-          "is preserved in history.\n\n" +
+          "template recipe → per-slot text_designer) using the Layer-2 " +
+          "text-overlay pipeline. The previous recipe is preserved in history.\n\n" +
           "Takes a few minutes. Continue?",
       )
     ) {
@@ -218,7 +218,32 @@ export default function TemplateDetailPage() {
     }
     setActionLoading(true);
     try {
-      const updated = await adminReanalyzeAgentic(id);
+      // useLayer2=true: Layer-2 is the active text-overlay pipeline. Pressing
+      // "Re-run agents" should exercise the v2 stages by default so recent
+      // pipeline edits actually get tested. Use the kebab-menu "Reanalyze
+      // (Layer-1)" action for diffing against the legacy path.
+      const updated = await adminReanalyzeAgentic(id, true);
+      setTemplate(updated);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Agentic rebuild failed");
+    } finally {
+      setActionLoading(false);
+    }
+  }, [id]);
+
+  const handleReanalyzeAgenticLayer1 = useCallback(async () => {
+    if (
+      !confirm(
+        "Re-run with the legacy Layer-1 text-overlay pipeline?\n\n" +
+          "Only use this for diffing v1 vs v2 output. Production templates " +
+          "should be analyzed with Layer-2 (the default Re-run agents button).",
+      )
+    ) {
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const updated = await adminReanalyzeAgentic(id, false);
       setTemplate(updated);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Agentic rebuild failed");
@@ -428,9 +453,19 @@ export default function TemplateDetailPage() {
               color="emerald"
               idleLabel="Re-run agents"
               busyLabel="Building"
-              title="Re-run creative_direction + template_recipe + text_designer"
+              title="Re-run creative_direction + template_recipe + text_designer (Layer-2 text overlays)"
             />
-            {/* Effective Layer-2 mode badge — shows what the next reanalyze will use */}
+            <button
+              onClick={handleReanalyzeAgenticLayer1}
+              disabled={actionLoading}
+              className="text-xs text-zinc-500 hover:text-zinc-300 underline-offset-2 hover:underline disabled:opacity-50"
+              title="Re-run with the legacy Layer-1 text-overlay pipeline — for diffing only"
+            >
+              Layer-1
+            </button>
+            {/* Effective Layer-2 mode badge — shows the template's sticky default. The
+                primary button explicitly requests Layer-2; the badge tells you what
+                a query-param-less call (e.g. analyze on create) would resolve to. */}
             <Layer2ModeBadge useLayer2Default={template.use_layer2_default} />
           </>
         ) : (

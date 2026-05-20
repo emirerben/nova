@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.37.0] - 2026-05-20
+
+### Fixed
+- **Agentic template recipes no longer collide across templates that share a source video, and "Re-run agents" actually reruns agents.** Two reinforcing bugs combined into a single user-visible symptom — "Not just luck" stopped reflecting Layer-2 pipeline changes from recent PRs, and a freshly-created "Not just luck 2" returned the old recipe on first analyze. Root cause: the Redis cache key was built from a source-video fingerprint (`sha256(size || head 4MB || tail 4MB)`) with no `template_id` segment, so any two templates whose video bytes hashed identically shared one cache entry. Compounding it, `POST /admin/templates/{id}/reanalyze-agentic` deleted only the requeue-attempt counter — never the recipe cache — so the task immediately cache-hit the stale entry, no agents ran, and the admin Debug tab stayed empty after every click. `template_id` is now part of the cache key (`CACHE_SCHEMA_VERSION` bumped `s1` → `s2`, orphaning pre-fix entries; one-time Gemini cost spike as templates re-analyze on first access). `agentic_template_build_task` and `analyze_template_task` accept a `force` kwarg that skips the cache READ but still WRITES on success; both reanalyze routes pass `force=True` unconditionally so every press reruns the full agent stack and produces fresh `agent_run` rows.
+
+### Changed
+- **"Re-run agents" button now exercises the Layer-2 text-overlay pipeline by default.** The button used to call the reanalyze endpoint with no parameters, so the backend fell back to `template.use_layer2_default` (rarely set) and then `settings.text_overlay_v2_enabled` (off by default). Layer-2 pipeline edits were invisible from the UI unless an operator manually set the per-template default via a separate endpoint nobody calls. The button now sends `?use_layer2=true`. A small "Layer-1" text-link button sits next to it for v1/v2 output diffing.
+
 ## [0.4.36.0] - 2026-05-19
 
 ### Fixed
