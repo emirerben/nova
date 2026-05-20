@@ -77,6 +77,7 @@ def _emoji_png_path(emoji: str) -> str | None:
     path = os.path.join(_EMOJI_DIR, f"{cp}.png")
     return path if os.path.exists(path) else None
 
+
 OVERLAY_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "PlayfairDisplay-Bold.ttf"))
 OVERLAY_FONT_PATH_REGULAR = os.path.normpath(
     os.path.join(_ASSETS_DIR, "PlayfairDisplay-Regular.ttf")
@@ -85,17 +86,16 @@ MONTSERRAT_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "Montserrat-Ex
 
 # Effects that produce animated .ass files instead of static PNGs
 ASS_ANIMATED_EFFECTS = frozenset(
-    {"fade-in", "typewriter", "slide-up", "slide-down", "pop-in", "bounce",
-     "karaoke-line"}
+    {"fade-in", "typewriter", "slide-up", "slide-down", "pop-in", "bounce", "karaoke-line"}
 )
 
 # Animation keyframe timings (ms from overlay start). At runtime, each timestamp
 # is clamped to a fraction of the overlay's actual duration so very short
 # overlays don't get a truncated animation tail (e.g. a 200ms label with a
 # 500ms bounce would otherwise just freeze mid-bounce).
-_POP_IN_KEYFRAMES_MS = (0, 150, 250)        # scale 30 -> 115 -> 100
+_POP_IN_KEYFRAMES_MS = (0, 150, 250)  # scale 30 -> 115 -> 100
 _POP_IN_SCALES = (30, 115, 100)
-_BOUNCE_KEYFRAMES_MS = (0, 180, 360, 500)   # scale 100 -> 125 -> 90 -> 100
+_BOUNCE_KEYFRAMES_MS = (0, 180, 360, 500)  # scale 100 -> 125 -> 90 -> 100
 _BOUNCE_SCALES = (100, 125, 90, 100)
 
 
@@ -112,6 +112,7 @@ def _clamp_keyframes(keyframes_ms: tuple[int, ...], duration_ms: int) -> tuple[i
         return keyframes_ms
     ratio = duration_ms / last
     return tuple(max(0, int(kf * ratio)) for kf in keyframes_ms)
+
 
 # Position -> vertical anchor (fraction of canvas height)
 _POSITION_Y = {
@@ -165,8 +166,12 @@ def _registry_ass_name(font_name: str) -> str:
 # -- Font size mapping --------------------------------------------------------
 
 _FONT_SIZE_MAP = {
-    "small": 36, "medium": 72, "large": 120,
-    "xlarge": 150, "xxlarge": 250, "jumbo": 199,
+    "small": 36,
+    "medium": 72,
+    "large": 120,
+    "xlarge": 150,
+    "xxlarge": 250,
+    "jumbo": 199,
 }
 
 # -- Font style mapping (backwards compat, now backed by registry) ------------
@@ -310,12 +315,20 @@ def generate_text_overlay_png(
 
         if effect == "font-cycle":
             configs = _render_font_cycle(
-                overlay, slot_duration_s, output_dir, slot_index, i,
+                overlay,
+                slot_duration_s,
+                output_dir,
+                slot_index,
+                i,
             )
             results.extend(configs)
         elif effect == "player-card":
             cfg = _render_player_card(
-                overlay, slot_duration_s, output_dir, slot_index, i,
+                overlay,
+                slot_duration_s,
+                output_dir,
+                slot_index,
+                i,
             )
             if cfg:
                 results.extend(cfg)
@@ -333,8 +346,9 @@ def generate_text_overlay_png(
                     continue  # genuinely bad timing — skip even with spans
                 position = overlay.get("position", "center")
             png_path = os.path.join(output_dir, f"slot_{slot_index}_overlay_{i}.png")
-            _draw_spans_png(overlay, spans, position, png_path,
-                            outline_px=overlay.get("outline_px"))
+            _draw_spans_png(
+                overlay, spans, position, png_path, outline_px=overlay.get("outline_px")
+            )
             if os.path.exists(png_path):
                 results.append({"png_path": png_path, "start_s": start_s, "end_s": end_s})
         else:
@@ -351,9 +365,13 @@ def generate_text_overlay_png(
 
             png_path = os.path.join(output_dir, f"slot_{slot_index}_overlay_{i}.png")
             _draw_text_png(
-                text, position, png_path,
-                font_family=font_family, font_style=font_style,
-                text_size=text_size, text_size_px=text_size_px_val,
+                text,
+                position,
+                png_path,
+                font_family=font_family,
+                font_style=font_style,
+                text_size=text_size,
+                text_size_px=text_size_px_val,
                 text_color=text_color,
                 position_x_frac=overlay.get("position_x_frac"),
                 position_y_frac=overlay.get("position_y_frac"),
@@ -392,7 +410,12 @@ def generate_animated_overlay_ass(
         ass_path = os.path.join(output_dir, f"slot_{slot_index}_anim_{i}.ass")
         try:
             _write_animated_ass(
-                text, start_s, end_s, position, effect, ass_path,
+                text,
+                start_s,
+                end_s,
+                position,
+                effect,
+                ass_path,
                 font_family=font_family,
                 position_x_frac=overlay.get("position_x_frac"),
                 position_y_frac=overlay.get("position_y_frac"),
@@ -403,6 +426,11 @@ def generate_animated_overlay_ass(
                 word_timings=overlay.get("word_timings"),
                 highlight_color=overlay.get("highlight_color"),
                 text_color=overlay.get("text_color"),
+                # Per-word-pop cumulative stages set this to the newly added
+                # word; the renderer animates only that suffix and keeps the
+                # accumulated prefix static. Without it, every new word
+                # re-pops the full line — visible flicker.
+                pop_animated_suffix=overlay.get("pop_animated_suffix"),
             )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
@@ -465,7 +493,11 @@ def render_overlays_at_time(
         for i, overlay in enumerate(overlays):
             try:
                 layer_path = _render_single_overlay_at_time(
-                    overlay, slot_duration_s, time_in_slot_s, tmp_dir, i,
+                    overlay,
+                    slot_duration_s,
+                    time_in_slot_s,
+                    tmp_dir,
+                    i,
                 )
             except Exception as exc:
                 log.warning(
@@ -486,7 +518,9 @@ def render_overlays_at_time(
                     layer = layer.convert("RGBA")
                     if layer.size != (CANVAS_W, CANVAS_H):
                         canvas = Image.new(
-                            "RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0),
+                            "RGBA",
+                            (CANVAS_W, CANVAS_H),
+                            (0, 0, 0, 0),
                         )
                         canvas.paste(layer, (0, 0))
                         layer = canvas
@@ -553,12 +587,15 @@ def _render_single_overlay_at_time(
         text_color = _hex_to_rgba(overlay.get("text_color", "#FFFFFF"))
         cycling_span_indices: list[int] = []
         if spans:
-            cycling_span_indices = [
-                idx for idx, s in enumerate(spans) if not s.get("font_family")
-            ]
+            cycling_span_indices = [idx for idx, s in enumerate(spans) if not s.get("font_family")]
         _draw_frame(
-            overlay, spans, text, position, png_path,
-            font=active_font, text_color=text_color,
+            overlay,
+            spans,
+            text,
+            position,
+            png_path,
+            font=active_font,
+            text_color=text_color,
             cycling_span_indices=cycling_span_indices,
             position_x_frac=overlay.get("position_x_frac"),
             position_y_frac=overlay.get("position_y_frac"),
@@ -569,7 +606,10 @@ def _render_single_overlay_at_time(
         sub_dir = os.path.join(output_dir, f"player_card_{overlay_index}")
         os.makedirs(sub_dir, exist_ok=True)
         configs = _render_player_card(
-            overlay, slot_duration_s, sub_dir, slot_index=0,
+            overlay,
+            slot_duration_s,
+            sub_dir,
+            slot_index=0,
             overlay_index=overlay_index,
         )
         if not configs:
@@ -592,7 +632,10 @@ def _render_static_overlay_layer(
     spans = overlay.get("spans")
     if spans:
         _draw_spans_png(
-            overlay, spans, position, png_path,
+            overlay,
+            spans,
+            position,
+            png_path,
             outline_px=overlay.get("outline_px"),
         )
         return png_path
@@ -603,9 +646,13 @@ def _render_static_overlay_layer(
     text_size_px_val = overlay.get("text_size_px")
     text_color = _hex_to_rgba(overlay.get("text_color", "#FFFFFF"))
     _draw_text_png(
-        text, position, png_path,
-        font_family=font_family, font_style=font_style,
-        text_size=text_size, text_size_px=text_size_px_val,
+        text,
+        position,
+        png_path,
+        font_family=font_family,
+        font_style=font_style,
+        text_size=text_size,
+        text_size_px=text_size_px_val,
         text_color=text_color,
         position_x_frac=overlay.get("position_x_frac"),
         position_y_frac=overlay.get("position_y_frac"),
@@ -679,6 +726,12 @@ def _write_animated_ass(
     word_timings: list[dict] | None = None,
     highlight_color: str | None = None,
     text_color: str | None = None,
+    # Per-word-pop cumulative-stage hint. When set on a "pop-in" effect, only
+    # this trailing suffix of `text` scales in; the prefix renders statically
+    # at 100%. Used by the lyrics injector to avoid re-popping the entire
+    # accumulated line each time a new word is added. None for any other
+    # effect or for non-cumulative pop-in usage (the full text pops as before).
+    pop_animated_suffix: str | None = None,
 ) -> None:
     """Write an ASS file with animation tags for the given effect.
 
@@ -705,8 +758,7 @@ def _write_animated_ass(
     pos_tag = ""
     if position_y_frac is not None or position_x_frac is not None:
         y_frac_for_pos = (
-            position_y_frac if position_y_frac is not None
-            else _POSITION_Y.get(position, 0.5)
+            position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
         )
         target_y = int(CANVAS_H * y_frac_for_pos)
         pos_tag = f"\\pos({target_x},{target_y})"
@@ -745,7 +797,7 @@ def _write_animated_ass(
         # the user described it as "yukarıdan aşağı gelen" (coming top-to-bottom).
         y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
         target_y = int(CANVAS_H * y_frac)
-        start_y = -200            # 200 px above the top edge of the 1920 canvas
+        start_y = -200  # 200 px above the top edge of the 1920 canvas
         dialogue_text = (
             f"{{\\an5\\move({target_x},{start_y},{target_x},{target_y},0,500){outline_tag}}}{text}"
         )
@@ -759,18 +811,46 @@ def _write_animated_ass(
         # scaled glyph widths, so without a fixed line structure the text jumps
         # from 1 line at \fscx30 to 2 lines once \fscx crosses the wrap threshold.
         # See test_pop_in_prewraps_long_text_into_fixed_lines for the regression.
-        wrapped = _pre_wrap_for_scale_animation(text, font_family)
         duration_ms = int((end_s - start_s) * 1000)
         k0, k1, k2 = _clamp_keyframes(_POP_IN_KEYFRAMES_MS, duration_ms)
         s0, s1, s2 = _POP_IN_SCALES
         pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
-        dialogue_text = (
-            f"{{{pos_or_align}\\q2{outline_tag}"
+        scale_anim = (
             f"\\fscx{s0}\\fscy{s0}"
             f"\\t({k0},{k1},\\fscx{s1}\\fscy{s1})"
             f"\\t({k1},{k2},\\fscx{s2}\\fscy{s2})"
-            f"}}{wrapped}"
         )
+
+        # Cumulative-stage path (used by the lyrics per-word-pop injector):
+        # the suffix is the newly added word, the prefix is the accumulated
+        # line up to but not including it. We render the prefix statically at
+        # 100% scale and apply the scale animation only to the suffix so the
+        # already-visible words don't re-pop on every new word. Skip pre-wrap
+        # here: lyric lines are short (one wrap line at most in 9:16 layout)
+        # and splitting on a wrap break inside the prefix would put the
+        # animated suffix on its own line, which looks worse than the
+        # occasional long line.
+        suffix_stripped = (pop_animated_suffix or "").strip()
+        if suffix_stripped and text.rstrip().endswith(suffix_stripped):
+            stripped_text = text.rstrip()
+            # Trim the suffix from the right; whatever's left (minus its
+            # trailing whitespace) is the static prefix. If text is "I got
+            # room" and suffix is "room", prefix becomes "I got" and the
+            # rendered dialogue reads "I got <animated>room</animated>".
+            prefix_text = stripped_text[: -len(suffix_stripped)].rstrip()
+            if prefix_text:
+                dialogue_text = (
+                    f"{{{pos_or_align}\\q2{outline_tag}}}"
+                    f"{prefix_text} "
+                    f"{{{scale_anim}}}{suffix_stripped}"
+                )
+            else:
+                # First stage of the line — only the suffix exists. Animate it
+                # the same way the legacy single-word pop did.
+                dialogue_text = f"{{{pos_or_align}\\q2{outline_tag}{scale_anim}}}{suffix_stripped}"
+        else:
+            wrapped = _pre_wrap_for_scale_animation(text, font_family)
+            dialogue_text = f"{{{pos_or_align}\\q2{outline_tag}{scale_anim}}}{wrapped}"
 
     elif effect == "karaoke-line":
         # Sing-along: the full line is visible for the overlay duration. Each
@@ -796,10 +876,7 @@ def _write_animated_ass(
             primary_bgr = _hex_to_ass_bgr(text_color or "#FFFFFF")
             secondary_bgr = _hex_to_ass_bgr(highlight_color or "#888888")
             pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
-            parts = [
-                f"{{{pos_or_align}{outline_tag}"
-                f"\\1c&H{primary_bgr}&\\2c&H{secondary_bgr}&}}"
-            ]
+            parts = [f"{{{pos_or_align}{outline_tag}\\1c&H{primary_bgr}&\\2c&H{secondary_bgr}&}}"]
             # `\kf` durations are in centiseconds. We clamp each word to at
             # least 5cs (50ms) so karaoke never emits a zero-length token
             # which libass renders as an immediate primary-color flash.
@@ -847,14 +924,8 @@ def _write_animated_ass(
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(header)
         f.write("\n[Events]\n")
-        f.write(
-            "Format: Layer, Start, End, Style, Name, "
-            "MarginL, MarginR, MarginV, Effect, Text\n"
-        )
-        f.write(
-            f"Dialogue: 0,{start_str},{end_str},Overlay,,"
-            f"0,0,{margin_v},,{dialogue_text}\n"
-        )
+        f.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+        f.write(f"Dialogue: 0,{start_str},{end_str},Overlay,,0,0,{margin_v},,{dialogue_text}\n")
 
 
 def _validate_ass_file(path: str) -> bool:
@@ -862,11 +933,7 @@ def _validate_ass_file(path: str) -> bool:
     try:
         with open(path, encoding="utf-8") as f:
             content = f.read()
-        return (
-            "[Script Info]" in content
-            and "[V4+ Styles]" in content
-            and "[Events]" in content
-        )
+        return "[Script Info]" in content and "[V4+ Styles]" in content and "[Events]" in content
     except Exception:
         return False
 
@@ -893,20 +960,27 @@ def _draw_frame(
     """Dispatch to spans or flat text rendering. Used by font-cycle to avoid repetition."""
     if spans:
         overrides = (
-            {idx: font for idx in cycling_span_indices}
-            if font and cycling_span_indices
-            else None
+            {idx: font for idx in cycling_span_indices} if font and cycling_span_indices else None
         )
         _draw_spans_png(
-            overlay, spans, position, png_path,
-            font_overrides=overrides, position_y_frac=position_y_frac,
+            overlay,
+            spans,
+            position,
+            png_path,
+            font_overrides=overrides,
+            position_y_frac=position_y_frac,
             outline_px=overlay.get("outline_px"),
         )
     else:
         _draw_text_png(
-            text, position, png_path,
-            font=font, font_family=font_family, font_style=font_style,
-            text_size=text_size, text_color=text_color,
+            text,
+            position,
+            png_path,
+            font=font,
+            font_family=font_family,
+            font_style=font_style,
+            text_size=text_size,
+            text_color=text_color,
             position_x_frac=position_x_frac,
             position_y_frac=position_y_frac,
             stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
@@ -924,14 +998,14 @@ def _draw_frame(
 # through, matching the "Rayan Cherki / 10" beat in the reference TikTok.
 
 PLAYER_CARD_NUMBER_PX = 720
-PLAYER_CARD_NAME_PX = 200            # bumped — Pacifico script needs more size to read
-PLAYER_CARD_NAME_COLOR = "#C81E32"   # crimson red
+PLAYER_CARD_NAME_PX = 200  # bumped — Pacifico script needs more size to read
+PLAYER_CARD_NAME_COLOR = "#C81E32"  # crimson red
 PLAYER_CARD_NUMBER_COLOR = "#FFFFFF"
-PLAYER_CARD_NUMBER_OPACITY = 0.85    # slight transparency so footage bleeds through
+PLAYER_CARD_NUMBER_OPACITY = 0.85  # slight transparency so footage bleeds through
 # Animation timing (1.0s window): fade-in + hold + fade-out
 PLAYER_CARD_FADE_IN_S = 0.15
 PLAYER_CARD_FADE_OUT_S = 0.15
-PLAYER_CARD_FADE_STEPS = 4           # smoothness per fade direction
+PLAYER_CARD_FADE_STEPS = 4  # smoothness per fade direction
 
 
 def _render_player_card(
@@ -1021,8 +1095,12 @@ def _render_player_card(
 
     log.info(
         "player_card_rendered",
-        slot=slot_index, jersey_no=jersey_no, player_name=player_name,
-        start_s=start_s, end_s=end_s, frames=len(configs),
+        slot=slot_index,
+        jersey_no=jersey_no,
+        player_name=player_name,
+        start_s=start_s,
+        end_s=end_s,
+        frames=len(configs),
     )
     return configs
 
@@ -1043,9 +1121,7 @@ def _draw_player_card_master(jersey_no: str, player_name: str):
 
     # ── Giant kit number ────────────────────────────────────────────────
     number_font_path = (
-        _registry_font_path("Outfit")
-        or _registry_font_path("Montserrat")
-        or MONTSERRAT_FONT_PATH
+        _registry_font_path("Outfit") or _registry_font_path("Montserrat") or MONTSERRAT_FONT_PATH
     )
     try:
         number_font = ImageFont.truetype(number_font_path, PLAYER_CARD_NUMBER_PX)
@@ -1060,9 +1136,7 @@ def _draw_player_card_master(jersey_no: str, player_name: str):
     n_y = (CANVAS_H - n_h) // 2 - n_bbox[1]
 
     shadow = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
-    ImageDraw.Draw(shadow).text(
-        (n_x, n_y + 12), jersey_no, font=number_font, fill=(0, 0, 0, 200)
-    )
+    ImageDraw.Draw(shadow).text((n_x, n_y + 12), jersey_no, font=number_font, fill=(0, 0, 0, 200))
     shadow = shadow.filter(ImageFilter.GaussianBlur(radius=24))
     img = Image.alpha_composite(img, shadow)
 
@@ -1070,8 +1144,12 @@ def _draw_player_card_master(jersey_no: str, player_name: str):
     number_color = _hex_to_rgba(PLAYER_CARD_NUMBER_COLOR)[:3] + (number_alpha,)
     fg = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     ImageDraw.Draw(fg).text(
-        (n_x, n_y), jersey_no, font=number_font,
-        fill=number_color, stroke_width=12, stroke_fill=(0, 0, 0, 230),
+        (n_x, n_y),
+        jersey_no,
+        font=number_font,
+        fill=number_color,
+        stroke_width=12,
+        stroke_fill=(0, 0, 0, 230),
     )
     img = Image.alpha_composite(img, fg)
 
@@ -1107,13 +1185,14 @@ def _draw_player_card_master(jersey_no: str, player_name: str):
     base_w = nm_bbox[2] - nm_bbox[0]
     base_h = nm_bbox[3] - nm_bbox[1]
     pad = 32
-    name_layer = Image.new(
-        "RGBA", (base_w + pad * 2, base_h + pad * 2), (0, 0, 0, 0)
-    )
+    name_layer = Image.new("RGBA", (base_w + pad * 2, base_h + pad * 2), (0, 0, 0, 0))
     ImageDraw.Draw(name_layer).text(
         (pad - nm_bbox[0], pad - nm_bbox[1]),
-        player_name, font=name_font, fill=name_color,
-        stroke_width=4, stroke_fill=(0, 0, 0, 220),
+        player_name,
+        font=name_font,
+        fill=name_color,
+        stroke_width=4,
+        stroke_fill=(0, 0, 0, 220),
     )
 
     name_x = (CANVAS_W - name_layer.width) // 2
@@ -1234,9 +1313,15 @@ def _render_font_cycle(
         log.warning("font_cycle_insufficient_fonts", count=len(cycle_fonts))
         png_path = os.path.join(output_dir, f"slot_{slot_index}_overlay_{overlay_index}.png")
         _draw_frame(
-            overlay, spans, text, position, png_path,
-            font_family=font_family, font_style=overlay.get("font_style", "display"),
-            text_size=text_size, text_color=text_color,
+            overlay,
+            spans,
+            text,
+            position,
+            png_path,
+            font_family=font_family,
+            font_style=overlay.get("font_style", "display"),
+            text_size=text_size,
+            text_color=text_color,
             position_x_frac=x_override,
             position_y_frac=y_override,
         )
@@ -1248,9 +1333,7 @@ def _render_font_cycle(
     # Determine which spans participate in cycling (no explicit font_family)
     cycling_span_indices: list[int] = []
     if spans:
-        cycling_span_indices = [
-            idx for idx, s in enumerate(spans) if not s.get("font_family")
-        ]
+        cycling_span_indices = [idx for idx, s in enumerate(spans) if not s.get("font_family")]
 
     # Pure spec computation lives in _compute_font_cycle_frame_specs so the
     # admin preview endpoint can pick the active frame at time T using
@@ -1281,8 +1364,13 @@ def _render_font_cycle(
     def _render_one(spec: tuple) -> dict:
         png_p, fnt, s, e = spec
         _draw_frame(
-            overlay, spans, text, position, png_p,
-            font=fnt, text_color=text_color,
+            overlay,
+            spans,
+            text,
+            position,
+            png_p,
+            font=fnt,
+            text_color=text_color,
             cycling_span_indices=cycling_span_indices,
             position_x_frac=x_override,
             position_y_frac=y_override,
@@ -1313,7 +1401,8 @@ def _render_font_cycle(
 
 
 def _validate_overlay(
-    overlay: dict, slot_duration_s: float,
+    overlay: dict,
+    slot_duration_s: float,
 ) -> tuple[str | None, float, float, str]:
     """Validate and sanitize overlay fields. Returns (text, start_s, end_s, position).
 
@@ -1507,6 +1596,7 @@ def _draw_text_png(
     # to avoid pathological inputs blowing render time. Skip when we don't
     # own the font (font-cycle case: caller is responsible for sizing).
     if own_font:
+
         def _max_line_w(ls: list[str]) -> int:
             widest = 0
             for ln in ls:
@@ -1579,9 +1669,7 @@ def _draw_text_png(
                         emoji_size = new_emoji_size
                         gap = max(6, emoji_size // 6)
                         combined = emoji_size + gap + line_widths[0]
-                emoji_img = emoji_img.resize(
-                    (emoji_size, emoji_size), Image.Resampling.LANCZOS
-                )
+                emoji_img = emoji_img.resize((emoji_size, emoji_size), Image.Resampling.LANCZOS)
                 emoji_metrics = {
                     "img": emoji_img,
                     "size": emoji_size,
@@ -1621,8 +1709,12 @@ def _draw_text_png(
         # so glyph anti-aliasing stays clean.
         if stroke_width > 0:
             fg_draw.text(
-                (x, y), ln, font=font, fill=text_color,
-                stroke_width=stroke_width, stroke_fill=stroke_color,
+                (x, y),
+                ln,
+                font=font,
+                fill=text_color,
+                stroke_width=stroke_width,
+                stroke_fill=stroke_color,
             )
         else:
             fg_draw.text((x, y), ln, font=font, fill=text_color)
@@ -1763,14 +1855,16 @@ def _draw_spans_png(
             ascender = -bbox[1]
             h = bbox[3] - bbox[1]
 
-        span_data.append({
-            "text": text,
-            "font": font,
-            "color": color,
-            "w": w,
-            "h": h,
-            "ascender": ascender,
-        })
+        span_data.append(
+            {
+                "text": text,
+                "font": font,
+                "color": color,
+                "w": w,
+                "h": h,
+                "ascender": ascender,
+            }
+        )
 
     if not span_data:
         return
@@ -1824,8 +1918,14 @@ def _draw_spans_png(
             shadow_draw.text((x, draw_y + 6), sd["text"], font=sd["font"], fill=(0, 0, 0, 160))
             # Foreground — optional black stroke when overlay sets outline_px
             if outline_px and outline_px > 0:
-                fg_draw.text((x, draw_y), sd["text"], font=sd["font"], fill=sd["color"],
-                             stroke_width=outline_px, stroke_fill=(0, 0, 0, 255))
+                fg_draw.text(
+                    (x, draw_y),
+                    sd["text"],
+                    font=sd["font"],
+                    fill=sd["color"],
+                    stroke_width=outline_px,
+                    stroke_fill=(0, 0, 0, 255),
+                )
             else:
                 fg_draw.text((x, draw_y), sd["text"], font=sd["font"], fill=sd["color"])
 

@@ -616,9 +616,23 @@ def _run_music_job(job_id: str) -> None:
         )
 
         # [10] Mix in music track audio
+        # `audio_start_offset_s` MUST match the `best_start_s` passed to
+        # `inject_lyric_overlays` above (line 509). Lyric overlays are placed in
+        # section-relative time (song-absolute timestamps minus best_start_s);
+        # if the audio is mixed without the same offset, FFmpeg plays the song
+        # from t=0 while the lyrics describe what's sung at song-time
+        # best_start_s — drift equals best_start_s seconds. The latent bug was
+        # invisible for music-only output (beat-snap clip cuts feel rhythmic
+        # regardless of audio offset) and surfaced the moment lyrics shipped.
         log.info("mix_audio_start", job_id=job_id)
         final_path = os.path.join(tmpdir, "final.mp4")
-        _mix_template_audio(assembled_path, audio_gcs_path, final_path, tmpdir)
+        _mix_template_audio(
+            assembled_path,
+            audio_gcs_path,
+            final_path,
+            tmpdir,
+            audio_start_offset_s=float(cfg.get("best_start_s", 0.0)),
+        )
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError(
                 "_mix_template_audio produced empty or missing output — "
@@ -1253,9 +1267,21 @@ def _run_templated_music_job(job_id: str) -> None:
                 )
 
         # [7] Mix in template audio
+        # Mirror of the audio-offset fix in `_run_music_job` (see the long
+        # comment there). Templated tracks usually have best_start_s == 0
+        # (slot times start at the beginning of the audio file per the
+        # docstring at the inject_lyric_overlays call above), so this is a
+        # latent guard: it only changes behavior if someone configures a
+        # non-zero best_start_s on a templated track. Cheap defense.
         log.info("templated_mix_audio_start", job_id=job_id)
         final_path = os.path.join(tmpdir, "final.mp4")
-        _mix_template_audio(assembled_path, audio_gcs_path, final_path, tmpdir)
+        _mix_template_audio(
+            assembled_path,
+            audio_gcs_path,
+            final_path,
+            tmpdir,
+            audio_start_offset_s=float(track_cfg_tmpl.get("best_start_s", 0.0)),
+        )
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError("_mix_template_audio produced empty output")
 
