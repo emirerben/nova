@@ -27,6 +27,21 @@ async function proxy(
   const qs = req.nextUrl.search;
   const upstream = `${API_BASE}/admin/${path.join("/")}${qs}`;
 
+  // Short-circuit if the web server is missing its env, rather than forwarding
+  // an empty `X-Admin-Token` and surfacing a misleading 401 from FastAPI.
+  // Next.js loads env from `src/apps/web/.env*`, NOT the repo-root `.env` —
+  // `dev-auto.sh` works because it `source`s the root file before launching.
+  if (!ADMIN_TOKEN) {
+    return NextResponse.json(
+      {
+        detail:
+          "ADMIN_TOKEN not set on the web server. Either run dev-auto.sh, " +
+          "or add ADMIN_TOKEN to src/apps/web/.env.local.",
+      },
+      { status: 500 },
+    );
+  }
+
   const headers: Record<string, string> = {
     "X-Admin-Token": ADMIN_TOKEN,
   };
