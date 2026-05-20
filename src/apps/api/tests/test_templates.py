@@ -23,7 +23,8 @@ async def client():
 
     app.dependency_overrides[get_db] = override_get_db
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test",
+        transport=ASGITransport(app=app),
+        base_url="http://test",
     ) as c:
         yield c
     app.dependency_overrides.clear()
@@ -66,6 +67,7 @@ async def test_list_templates_returns_ready(client):
 
         # Make it async
         import asyncio
+
         mock_session.execute = lambda *a, **kw: asyncio.coroutine(lambda: mock_result)()
 
         async def mock_db_gen():
@@ -172,3 +174,53 @@ async def test_playback_url_not_found(client):
         res = await client.get("/templates/nonexistent/playback-url")
         # Will return 404 or 500 depending on DB mock
         assert res.status_code in (404, 500)
+
+
+# ── In-process cache ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_templates_caches_repeat_calls():
+    """Second call within TTL returns cached payload without hitting the DB."""
+    from app.routes import templates as routes_templates
+
+    routes_templates.invalidate_templates_cache()
+
+    tpl = _mock_template()
+    tpl.published_at = "set"
+    tpl.archived_at = None
+    tpl.template_type = "single_video"
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [tpl]
+
+    db = AsyncMock()
+    db.execute.return_value = mock_result
+
+    first = await routes_templates.list_templates(db=db)
+    second = await routes_templates.list_templates(db=db)
+
+    assert db.execute.await_count == 1, "second call should hit the cache"
+    assert first == second
+
+
+@pytest.mark.asyncio
+async def test_invalidate_templates_cache_forces_refetch():
+    """After invalidate_templates_cache(), the next call queries the DB again."""
+    from app.routes import templates as routes_templates
+
+    routes_templates.invalidate_templates_cache()
+
+    tpl = _mock_template()
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [tpl]
+
+    db = AsyncMock()
+    db.execute.return_value = mock_result
+
+    await routes_templates.list_templates(db=db)
+    await routes_templates.list_templates(db=db)
+    routes_templates.invalidate_templates_cache()
+    await routes_templates.list_templates(db=db)
+
+    assert db.execute.await_count == 2, "invalidation should force a fresh query"
