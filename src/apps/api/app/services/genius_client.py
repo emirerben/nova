@@ -113,18 +113,26 @@ def search_lyrics(title: str, artist: str = "") -> GeniusLyrics:
     Raises:
         GeniusNotFound — no hit, or the hit had no extractable lyric body.
         GeniusError — credentials missing, network failure, or unexpected shape.
+
+    Every failure path logs a structured event before raising so a silent
+    catch upstream (lyrics.py treats GeniusError as a soft fallback) still
+    leaves a trace. Stage tags (`search` vs `scrape`) keep grep simple:
+    `fly logs | grep genius_` walks the whole funnel.
     """
     token = (settings.genius_access_token or "").strip()
     if not token:
+        log.warning("genius_token_missing", title=title, artist=artist)
         raise GeniusError("GENIUS_ACCESS_TOKEN not configured — set it to enable Genius lookup")
 
     query = _build_search_query(title, artist)
     if not query:
+        log.info("genius_empty_query", title=title, artist=artist)
         raise GeniusNotFound("empty title — nothing to search")
 
     headers = {"Authorization": f"Bearer {token}"}
 
     # 1. Search
+    log.info("genius_search_start", query=query, title=title, artist=artist)
     try:
         with httpx.Client(timeout=_SEARCH_TIMEOUT_S) as client:
             resp = client.get(
@@ -133,22 +141,33 @@ def search_lyrics(title: str, artist: str = "") -> GeniusLyrics:
                 headers=headers,
             )
     except httpx.HTTPError as exc:
+        log.warning("genius_search_network_error", query=query, error=str(exc))
         raise GeniusError(f"genius search network error: {exc}") from exc
 
     if resp.status_code == 401:
+        log.error("genius_search_unauthorized", query=query, status_code=401)
         raise GeniusError("genius search returned 401 — token invalid")
     if resp.status_code == 429:
+        log.warning("genius_search_rate_limited", query=query, status_code=429)
         raise GeniusError("genius search rate-limited (429)")
     if resp.status_code >= 400:
+        log.warning(
+            "genius_search_http_error",
+            query=query,
+            status_code=resp.status_code,
+            body_snippet=resp.text[:200],
+        )
         raise GeniusError(f"genius search returned {resp.status_code}: {resp.text[:200]}")
 
     try:
         body = resp.json()
     except ValueError as exc:
+        log.warning("genius_search_non_json", query=query, error=str(exc))
         raise GeniusError(f"genius search returned non-JSON: {exc}") from exc
 
     hits = (body.get("response") or {}).get("hits") or []
     if not hits:
+        log.info("genius_search_no_hits", query=query, hit_count=0)
         raise GeniusNotFound(f"no genius hits for {query!r}")
 
     hit = _pick_best_hit(hits, title, artist)
@@ -158,10 +177,26 @@ def search_lyrics(title: str, artist: str = "") -> GeniusLyrics:
     matched_artist = ((result.get("primary_artist") or {}).get("name") or "").strip() or artist
 
     if not genius_url:
+        log.warning(
+            "genius_hit_missing_url",
+            query=query,
+            matched_title=matched_title,
+            matched_artist=matched_artist,
+        )
         raise GeniusError("genius hit has no URL — cannot fetch lyrics body")
+
+    log.info(
+        "genius_search_hit",
+        query=query,
+        matched_title=matched_title,
+        matched_artist=matched_artist,
+        url=genius_url,
+        hit_count=len(hits),
+    )
 
     # 2. Scrape lyric body. The /songs/{id} API endpoint returns metadata but
     # NOT the lyric text — that's only available on the public web page.
+    log.info("genius_scrape_start", url=genius_url)
     try:
         with httpx.Client(
             timeout=_FETCH_TIMEOUT_S,
@@ -176,13 +211,28 @@ def search_lyrics(title: str, artist: str = "") -> GeniusLyrics:
         ) as client:
             page = client.get(genius_url)
     except httpx.HTTPError as exc:
+        log.warning("genius_scrape_network_error", url=genius_url, error=str(exc))
         raise GeniusError(f"genius page fetch failed: {exc}") from exc
 
     if page.status_code >= 400:
+        # Most-watched event: prod observation 2026-05-19 caught Fly worker
+        # IPs blocked by Genius CDN with 403 (~50ms). Bucket the status so
+        # alerting can split bot-block (403/406/429) from genuine 4xx/5xx.
+        log.warning(
+            "genius_scrape_blocked",
+            url=genius_url,
+            status_code=page.status_code,
+            body_snippet=page.text[:200],
+        )
         raise GeniusError(f"genius page returned {page.status_code}: {genius_url}")
 
     lines = _extract_lyric_lines(page.text)
     if not lines:
+        log.warning(
+            "genius_scrape_empty_body",
+            url=genius_url,
+            page_bytes=len(page.text),
+        )
         raise GeniusNotFound(f"genius page had no extractable lyric body at {genius_url}")
 
     log.info(

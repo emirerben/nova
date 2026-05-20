@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+import structlog
 from pydantic import BaseModel, Field
 
 from app.agents._runtime import Agent, AgentSpec, TerminalError
@@ -37,6 +38,8 @@ from app.services.whisper_lyrics import (
     WhisperLyricsResult,
     transcribe_for_lyrics,
 )
+
+log = structlog.get_logger()
 
 # ── I/O schema ────────────────────────────────────────────────────────────────
 
@@ -142,13 +145,29 @@ class LyricsExtractionAgent(Agent[LyricsInput, LyricsOutput]):
         genius_lyrics: GeniusLyrics | None = None
         try:
             genius_lyrics = search_lyrics(input.track_title, input.artist)
-        except GeniusNotFound:
+        except GeniusNotFound as exc:
             # Expected for obscure tracks — proceed with Whisper-only.
+            # Logged at info so the "why is everything whisper_only?" question
+            # can be answered from `fly logs | grep lyrics_genius` without
+            # adding observability after the fact.
+            log.info(
+                "lyrics_genius_miss",
+                track_title=input.track_title,
+                artist=input.artist,
+                reason=str(exc),
+            )
             genius_lyrics = None
-        except GeniusError:
-            # Network / auth / rate limit — also proceed Whisper-only. The
-            # caller's `lyrics_error_detail` will preserve the exception
-            # when Whisper too fails.
+        except GeniusError as exc:
+            # Network / auth / rate limit / page 4xx — also proceed Whisper-only.
+            # Logged at warning because these are usually fixable (token,
+            # CDN block, scraper drift) and we'd rather not have to re-run
+            # an extraction to diagnose.
+            log.warning(
+                "lyrics_genius_error",
+                track_title=input.track_title,
+                artist=input.artist,
+                error=str(exc),
+            )
             genius_lyrics = None
 
         try:

@@ -5,6 +5,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+import structlog
+from structlog.testing import capture_logs
 
 from app.services.genius_client import (
     GeniusError,
@@ -15,6 +17,14 @@ from app.services.genius_client import (
     _pick_best_hit,
     search_lyrics,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_structlog():
+    """capture_logs() depends on default structlog config; pipeline tests
+    may have left it patched. Reset before each test."""
+    structlog.reset_defaults()
+    yield
 
 
 def _hit(title: str, primary_artist: str, url: str = "https://genius.com/x") -> dict:
@@ -46,9 +56,7 @@ def test_build_search_query_strips_youtube_artist_prefix() -> None:
 
 def test_build_search_query_strips_official_video_tag() -> None:
     """Parenthetical noise like '(Official Video)' tanks Genius relevance."""
-    q = _build_search_query(
-        "The Weeknd - Can't Feel My Face (Official Video)", "The Weeknd"
-    )
+    q = _build_search_query("The Weeknd - Can't Feel My Face (Official Video)", "The Weeknd")
     assert q == "Can't Feel My Face The Weeknd"
 
 
@@ -184,3 +192,124 @@ def test_search_lyrics_propagates_429_as_error(
 
     with pytest.raises(GeniusError, match="rate-limited"):
         search_lyrics("X", "Y")
+
+
+# ── Observability ─────────────────────────────────────────────────────────────
+#
+# Every failure path must emit a structured log BEFORE raising. lyrics.py
+# swallows GeniusError/GeniusNotFound as a soft fallback (whisper_only), so
+# without these logs prod has zero forensic trail for "why is everything
+# whisper_only?". Regression-locked here. History: 2026-05-19 Katy Perry
+# extract returned whisper_only with no genius_* logs — root cause turned out
+# to be Genius CDN blocking Fly worker IPs with 403, invisible because
+# scrape errors were silently caught.
+
+
+@patch("app.services.genius_client.settings")
+def test_search_lyrics_logs_token_missing(mock_settings: MagicMock) -> None:
+    mock_settings.genius_access_token = ""
+    with capture_logs() as logs, pytest.raises(GeniusError):
+        search_lyrics("Anything", "")
+    events = [e["event"] for e in logs]
+    assert "genius_token_missing" in events
+
+
+@patch("app.services.genius_client.httpx.Client")
+@patch("app.services.genius_client.settings")
+def test_search_lyrics_logs_search_start_with_cleaned_query(
+    mock_settings: MagicMock,
+    mock_client_cls: MagicMock,
+) -> None:
+    """PR #251 cleanup runs before the network call; the search_start event
+    is the only place prod-side observers can confirm the cleaned query
+    that was actually sent to Genius."""
+    mock_settings.genius_access_token = "fake"
+    # No hits — short-circuits before scrape stage but search_start fires.
+    mock_resp = MagicMock(status_code=200)
+    mock_resp.json.return_value = {"response": {"hits": []}}
+    mock_client = MagicMock()
+    mock_client.get.return_value = mock_resp
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    with capture_logs() as logs, pytest.raises(GeniusNotFound):
+        search_lyrics("Katy Perry - Hot N Cold (Official Music Video)", "Katy Perry")
+
+    start_events = [e for e in logs if e["event"] == "genius_search_start"]
+    assert len(start_events) == 1
+    assert start_events[0]["query"] == "Hot N Cold Katy Perry"
+    no_hits = [e for e in logs if e["event"] == "genius_search_no_hits"]
+    assert len(no_hits) == 1
+    assert no_hits[0]["query"] == "Hot N Cold Katy Perry"
+
+
+@patch("app.services.genius_client.httpx.Client")
+@patch("app.services.genius_client.settings")
+def test_search_lyrics_logs_scrape_blocked_on_403(
+    mock_settings: MagicMock,
+    mock_client_cls: MagicMock,
+) -> None:
+    """Genius CDN regularly returns 403 to Fly worker IPs on the /lyrics
+    HTML page even when the /search API is fine. Without this log the only
+    visible symptom is `lyrics_source='whisper_only'` with no breadcrumb.
+    Locks the structured event that proves the funnel stopped at scrape."""
+    mock_settings.genius_access_token = "fake"
+
+    search_resp = MagicMock(status_code=200)
+    search_resp.json.return_value = {
+        "response": {
+            "hits": [_hit("Hot N Cold", "Katy Perry", "https://genius.com/katy-perry-hot")]
+        }
+    }
+    page_resp = MagicMock(status_code=403, text="<html>blocked</html>")
+    mock_search_client = MagicMock()
+    mock_search_client.get.return_value = search_resp
+    mock_page_client = MagicMock()
+    mock_page_client.get.return_value = page_resp
+    mock_client_cls.return_value.__enter__.side_effect = [
+        mock_search_client,
+        mock_page_client,
+    ]
+
+    with capture_logs() as logs, pytest.raises(GeniusError, match="403"):
+        search_lyrics("Hot N Cold", "Katy Perry")
+
+    blocked = [e for e in logs if e["event"] == "genius_scrape_blocked"]
+    assert len(blocked) == 1
+    assert blocked[0]["status_code"] == 403
+    assert blocked[0]["url"] == "https://genius.com/katy-perry-hot"
+
+    # The full funnel produced a trail — search_start, search_hit, scrape_start,
+    # scrape_blocked — so an operator greps `genius_` and sees exactly where it stopped.
+    funnel = [e["event"] for e in logs if e["event"].startswith("genius_")]
+    assert "genius_search_start" in funnel
+    assert "genius_search_hit" in funnel
+    assert "genius_scrape_start" in funnel
+    assert "genius_scrape_blocked" in funnel
+
+
+@patch("app.services.genius_client.httpx.Client")
+@patch("app.services.genius_client.settings")
+def test_search_lyrics_logs_empty_scrape_body(
+    mock_settings: MagicMock,
+    mock_client_cls: MagicMock,
+) -> None:
+    """Scraper regex drift would be silent without this — the page comes
+    back 200 but the lyrics_container selector finds nothing."""
+    mock_settings.genius_access_token = "fake"
+
+    search_resp = MagicMock(status_code=200)
+    search_resp.json.return_value = {"response": {"hits": [_hit("X", "Y", "https://genius.com/x")]}}
+    page_resp = MagicMock(status_code=200, text="<html><body>no container here</body></html>")
+    mock_search_client = MagicMock()
+    mock_search_client.get.return_value = search_resp
+    mock_page_client = MagicMock()
+    mock_page_client.get.return_value = page_resp
+    mock_client_cls.return_value.__enter__.side_effect = [
+        mock_search_client,
+        mock_page_client,
+    ]
+
+    with capture_logs() as logs, pytest.raises(GeniusNotFound):
+        search_lyrics("X", "Y")
+    empty = [e for e in logs if e["event"] == "genius_scrape_empty_body"]
+    assert len(empty) == 1
