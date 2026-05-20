@@ -29,7 +29,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import AgentRun, Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
 from app.routes._admin_schemas import AgentRunPayload, agent_run_to_payload
-from app.routes.templates import RequiredInput
+from app.routes.templates import RequiredInput, invalidate_templates_cache
 from app.services.lyrics_config_validation import validate_lyrics_config_dict
 from app.services.template_validation import (
     get_template_or_404,
@@ -1144,6 +1144,7 @@ async def update_template(
         current["has_intro_slot"] = bool(req.has_intro_slot)
         template.recipe_cached = current
 
+    publish_or_archive = False
     if req.publish:
         if template.analysis_status != "ready":
             raise HTTPException(
@@ -1152,14 +1153,22 @@ async def update_template(
             )
         template.published_at = datetime.now(UTC)
         template.archived_at = None  # unarchive if re-publishing
+        publish_or_archive = True
         log.info("template_published", template_id=template_id)
 
     if req.archive:
         template.archived_at = datetime.now(UTC)
+        publish_or_archive = True
         log.info("template_archived", template_id=template_id)
 
     await db.commit()
     await db.refresh(template)
+    if publish_or_archive:
+        # Drop the public /templates in-process cache so the gallery picks
+        # up the publish/archive on the next request instead of after TTL.
+        # Only flushes this worker process; sibling Fly workers see up to
+        # _LIST_CACHE_TTL_S of staleness, which is by design.
+        invalidate_templates_cache()
     return _template_response(template)
 
 

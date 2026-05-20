@@ -6,6 +6,7 @@ GET /templates/:id/playback-url — signed GCS URL for template video playback
 """
 
 import datetime
+from time import monotonic
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,11 +21,33 @@ log = structlog.get_logger()
 router = APIRouter()
 
 
+# In-process cache for the published template list. The list endpoint is
+# read-mostly (admins publish/archive rarely) and the Next.js gallery hits
+# it on every cold cache-miss, so a short TTL here cuts repeat DB load
+# without surprising freshness. Poster URLs in the cached payload are
+# 7-day-signed, so a 30s TTL is well within the signature lifetime.
+# invalidate_templates_cache() is called from admin publish/archive paths
+# to flush on intentional mutations.
+_LIST_CACHE: tuple[float, list["TemplateListItem"]] | None = None
+_LIST_CACHE_TTL_S = 30.0
+
+
+def invalidate_templates_cache() -> None:
+    """Force the next /templates request to rebuild from the database.
+
+    Called from admin routes after publish/archive so changes show up
+    without waiting for the TTL.
+    """
+    global _LIST_CACHE
+    _LIST_CACHE = None
+
+
 # ── Response schemas ────────────────────────────────────────────────────────
 
 
 class SlotSummary(BaseModel):
     """Lightweight slot info for the upload UI: which media to collect per slot."""
+
     position: int
     target_duration_s: float
     media_type: str  # "video" | "photo"
@@ -32,6 +55,7 @@ class SlotSummary(BaseModel):
 
 class RequiredInput(BaseModel):
     """User input the upload UI must collect for a given template."""
+
     key: str
     label: str
     placeholder: str = ""
@@ -122,9 +146,7 @@ def _template_to_list_item(t: VideoTemplate) -> TemplateListItem | None:
             required_clips_min=t.required_clips_min,
             required_clips_max=t.required_clips_max,
             slots=slot_summaries,
-            required_inputs=[
-                RequiredInput(**r) for r in (t.required_inputs or [])
-            ],
+            required_inputs=[RequiredInput(**r) for r in (t.required_inputs or [])],
         )
     except (TypeError, ValueError, AttributeError):
         log.warning("template_recipe_corrupt", template_id=t.id)
@@ -143,7 +165,16 @@ async def list_templates(
     Filters by published_at IS NOT NULL AND archived_at IS NULL.
     Derives slot_count, total_duration_s, copy_tone from recipe_cached JSONB.
     Silently skips templates with None or corrupt recipe_cached.
+
+    Cached in-process for _LIST_CACHE_TTL_S seconds; invalidated on admin
+    publish/archive via invalidate_templates_cache().
     """
+    global _LIST_CACHE
+    now = monotonic()
+    cached = _LIST_CACHE
+    if cached is not None and now - cached[0] < _LIST_CACHE_TTL_S:
+        return cached[1]
+
     result = await db.execute(
         select(VideoTemplate).where(
             VideoTemplate.published_at.isnot(None),
@@ -155,6 +186,7 @@ async def list_templates(
 
     items = [item for t in templates if (item := _template_to_list_item(t)) is not None]
 
+    _LIST_CACHE = (now, items)
     log.info("templates_listed", count=len(items))
     return items
 
@@ -209,9 +241,7 @@ async def get_playback_url(
 
     Used by the side-by-side comparison view (original template vs generated output).
     """
-    result = await db.execute(
-        select(VideoTemplate).where(VideoTemplate.id == template_id)
-    )
+    result = await db.execute(select(VideoTemplate).where(VideoTemplate.id == template_id))
     template = result.scalar_one_or_none()
 
     if template is None:
