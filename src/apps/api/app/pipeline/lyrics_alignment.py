@@ -293,6 +293,17 @@ _FALLBACK_TRAILING_WINDOW_S = 3.0
 # karaoke line from clipping.
 _LAST_WORD_TAIL_PAD_S = 0.5
 
+# Maximum per-word slice when Strategy 3 (linear interpolation) is forced.
+# Without a cap, a long instrumental break — a melodic build-up in an
+# Artbat set, the bridge in a power ballad — stretches `window_end` until
+# the next sung anchor, and dividing 60s by 5 words would highlight each
+# word for 12 SECONDS. That kills the snappy karaoke pacing the per-word
+# animation is built around. 0.8s caps highlights at a comfortable reading
+# pace; after the final capped word, the karaoke line clears the screen
+# and the instrumental gap plays out clean (no stale highlight stuck on
+# the last token).
+_MAX_INTERP_SLICE_S = 0.8
+
 
 def align_with_line_anchors(
     anchor_lines: Sequence[SyncedLine],
@@ -392,8 +403,11 @@ def _align_within_window(
 
     3. **Linear interpolation**: zero Whisper words landed in the window
        (rare — instrumental gap, or Whisper missed a quiet line). Distribute
-       canonical words uniformly across the window so the karaoke line
-       still plays at a readable pace.
+       canonical words uniformly across the window, but CAP each word's
+       duration at `_MAX_INTERP_SLICE_S`. Without the cap, a 60s
+       instrumental break would hold a single word on screen for 12s and
+       kill the per-word karaoke pacing; with it, the line plays out at a
+       readable pace and the rest of the gap clears the screen.
 
     Returns `(line, matched_count)` where `matched_count` counts words with
     real Whisper timings (strategy 1 → all, strategy 2 → variable,
@@ -440,9 +454,11 @@ def _align_within_window(
         # through to interpolation so the line still renders.
 
     # Strategy 3 — linear interpolation across the window.
-    slice_dur = max(
-        (window_end - window_start) / len(expected_words),
-        0.05,
+    # Clamp to [0.05, _MAX_INTERP_SLICE_S] — see constant docstring above
+    # for why the cap matters (instrumental-break pacing).
+    slice_dur = min(
+        max((window_end - window_start) / len(expected_words), 0.05),
+        _MAX_INTERP_SLICE_S,
     )
     words = tuple(
         AlignedWord(

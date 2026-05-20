@@ -154,8 +154,10 @@ def test_anchored_count_mismatch_falls_back_to_fuzzy_align() -> None:
 def test_anchored_zero_whisper_words_in_window_interpolates_linearly() -> None:
     """A window with zero matching Whisper words (Whisper missed a quiet
     line, or there's instrumental in this section). Distribute canonical
-    words uniformly across `[window_start, window_end)` so the karaoke
-    line still plays at a readable pace."""
+    words uniformly across `[window_start, window_end)` — but with the
+    per-word cap so the line clears the screen rather than holding the
+    last word for the rest of the gap. The window here is 3s / 3 words =
+    1s natural pace, which exceeds the 0.8s cap and gets clamped."""
     anchors = [
         SyncedLine(start_s=0.0, text="ignored first"),
         SyncedLine(start_s=2.0, text="silent line here"),
@@ -171,9 +173,12 @@ def test_anchored_zero_whisper_words_in_window_interpolates_linearly() -> None:
     result = align_with_line_anchors(anchors, whisper, track_end_s=6.0)
     silent_line = next(line for line in result.lines if line.text == "silent line here")
     assert len(silent_line.words) == 3
-    # Linear distribution across [2.0, 5.0): slice = 1.0s each.
     assert silent_line.words[0].start_s == 2.0
-    assert silent_line.words[2].end_s == 5.0
+    # Natural pace 1.0s/word > 0.8s cap → each word is 0.8s.
+    # Line ends at 2.0 + 3*0.8 = 4.4s, NOT at window_end (5.0s).
+    for word in silent_line.words:
+        assert word.end_s - word.start_s <= 0.81  # 0.8 + rounding slack
+    assert silent_line.words[2].end_s <= 4.5
 
 
 def test_anchored_last_line_uses_track_end_s_for_window() -> None:
@@ -202,6 +207,35 @@ def test_anchored_last_line_falls_back_to_whisper_tail_when_no_track_end() -> No
 
 def test_anchored_empty_anchor_lines_returns_empty_result() -> None:
     assert align_with_line_anchors([], [_ww("x", 0.0, 0.1)]).lines == ()
+
+
+def test_anchored_interpolation_caps_word_duration_in_long_gap() -> None:
+    """The Artbat regression: when LRC blank-text lines (instrumental
+    breaks) are skipped by the parser, the preceding lyric's window
+    stretches across the gap. If Whisper produced no words in that window,
+    naive division would highlight each word for 10+ seconds and kill the
+    karaoke pacing. The cap clamps each interpolated word to
+    `_MAX_INTERP_SLICE_S` (0.8s) so highlights clear the screen at a
+    readable pace and the instrumental break plays out clean."""
+    anchors = [
+        SyncedLine(start_s=0.0, text="five word lyric line here"),
+        # Next sung anchor is 60s later — simulates a long melodic break.
+        SyncedLine(start_s=60.0, text="next sung line"),
+    ]
+    # Whisper missed the entire first window — purely instrumental.
+    whisper = [_ww("next", 60.0, 60.3), _ww("sung", 60.3, 60.6), _ww("line", 60.6, 60.9)]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=62.0)
+
+    gap_line = next(line for line in result.lines if "five word" in line.text)
+    assert len(gap_line.words) == 5
+    # Each word capped at 0.8s — would have been 12s without the fix.
+    for word in gap_line.words:
+        assert word.end_s - word.start_s <= 0.81  # 0.8 + rounding slack
+    # Line ends 5 * 0.8 = 4.0s in, NOT at window_end (60.0).
+    assert gap_line.end_s <= 4.1, (
+        f"line should clear the screen at ~4s, not run to {gap_line.end_s}"
+    )
 
 
 def test_anchored_multi_timestamp_chorus_anchors_get_distinct_windows() -> None:
