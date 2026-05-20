@@ -18,7 +18,7 @@ A `SessionStart` hook (`.claude/settings.json` → `scripts/session-check.sh`) f
 Rules:
 - Run all edits, tests, and commits from the worktree path — never from `/Users/emirerben/Projects/nova` directly.
 - One worktree per logical change. Don't reuse a worktree for an unrelated feature.
-- When done, `git worktree remove ../nova-<topic>` after the PR merges. List active worktrees with `git worktree list`.
+- **Always remove the worktree as soon as the PR merges.** Run `git worktree remove ../nova-<topic>` (and `git branch -d <branch>` if the branch is local-only) the moment GitHub confirms the merge — do not wait for a later cleanup pass, do not leave it "for next time," and do not skip it because the directory might be useful later. Stale worktrees pinned to merged branches are the #1 source of "why is `git status` showing files that don't exist on main" confusion. List active worktrees with `git worktree list`; anything pinned to a merged branch should already be gone.
 - `.claude/worktrees/agent-*` are auto-managed by the Agent tool (`isolation: "worktree"`) — leave those alone.
 - Skip the worktree only for read-only investigation or single-line config tweaks confined to one file. The session-check warning still applies.
 
