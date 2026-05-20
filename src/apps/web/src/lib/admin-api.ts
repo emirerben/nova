@@ -1,13 +1,15 @@
 /**
- * Admin API client with X-Admin-Token injection from sessionStorage.
+ * Admin API client.
  *
- * All admin endpoints require the token; the backend validates it.
- * Token is stored in sessionStorage (clears on tab close).
+ * All requests go through the Next.js admin proxy (`/api/admin/[...path]`),
+ * which injects the server-side `ADMIN_TOKEN` env var. The browser never
+ * holds the real upstream token — sessionStorage just remembers that the
+ * AuthGate has been unlocked in this tab.
  */
 
 import type { AgentRunPayload } from "@/lib/admin-jobs-api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const ADMIN_PROXY = "/api/admin";
 const TOKEN_KEY = "nova_admin_token";
 
 export function getAdminToken(): string | null {
@@ -23,18 +25,18 @@ export function clearAdminToken(): void {
   sessionStorage.removeItem(TOKEN_KEY);
 }
 
-function adminHeaders(): Record<string, string> {
-  const token = getAdminToken();
-  if (!token) throw new Error("Not authenticated");
-  return {
-    "Content-Type": "application/json",
-    "X-Admin-Token": token,
-  };
+/** Strip the `/admin/` prefix callers still pass for historical reasons. */
+function proxyUrl(path: string): string {
+  if (!path.startsWith("/admin/")) {
+    throw new Error(`admin-api: path must start with /admin/ (got ${path})`);
+  }
+  return `${ADMIN_PROXY}${path.slice("/admin".length)}`;
 }
 
 async function adminFetch(path: string, init?: RequestInit): Promise<Response> {
-  const headers = { ...adminHeaders(), ...init?.headers };
-  const res = await fetch(`${API_URL}${path}`, { ...init, headers });
+  if (!getAdminToken()) throw new Error("Not authenticated");
+  const headers = { "Content-Type": "application/json", ...init?.headers };
+  const res = await fetch(proxyUrl(path), { ...init, headers });
   if (res.status === 401) {
     clearAdminToken();
     throw new Error("Invalid admin token");
@@ -410,10 +412,9 @@ export interface LatestTestJob {
 export async function adminGetLatestTestJob(
   templateId: string,
 ): Promise<LatestTestJob | null> {
-  const token = getAdminToken();
-  if (!token) return null;
-  const res = await fetch(`${API_URL}/admin/templates/${templateId}/latest-test-job`, {
-    headers: { "Content-Type": "application/json", "X-Admin-Token": token },
+  if (!getAdminToken()) return null;
+  const res = await fetch(proxyUrl(`/admin/templates/${templateId}/latest-test-job`), {
+    headers: { "Content-Type": "application/json" },
   });
   if (res.status === 404) return null;
   if (!res.ok) {
@@ -503,11 +504,24 @@ export async function adminCreateTemplateFromMusicTrack(
   return res.json();
 }
 
-/** Validate admin token by making a lightweight API call. */
+/**
+ * Validate the typed admin token against the server-side `ADMIN_TOKEN`.
+ *
+ * Uses `/api/admin-auth` (server-only) rather than poking an upstream admin
+ * endpoint, because the admin proxy ignores the browser's token and always
+ * uses its own env var — so any proxy call would succeed regardless of what
+ * the user typed, defeating the gate.
+ */
 export async function adminValidateToken(): Promise<boolean> {
+  const token = getAdminToken();
+  if (!token) return false;
   try {
-    await adminFetch("/admin/templates?limit=1&offset=0");
-    return true;
+    const res = await fetch("/api/admin-auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    return res.ok;
   } catch {
     return false;
   }
