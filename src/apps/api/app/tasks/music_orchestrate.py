@@ -387,8 +387,23 @@ def extract_track_lyrics_task(self, track_id: str) -> None:
     # Covers the documented 65s nova-db VM stall (2026-05-18 07:45:57Z)
     # with ~2× safety margin. retry_backoff_max=60 caps any single delay.
     max_retries=7,
-    soft_time_limit=1080,
-    time_limit=1200,
+    # Matched to orchestrate_template_job (1740/1800). Music jobs go through
+    # the same heavy `_assemble_clips` → per-slot reframe → ASS-burn → mix
+    # pipeline that template jobs do, but historically had a tighter budget
+    # because their burn step was lighter. After #258 shipped lyrics, music
+    # renders now stage per-word-pop overlays + run the same ASS burn pass,
+    # and the legacy 1080/1200 budget no longer covers the same 10-clip
+    # iPhone-HEVC-HDR input that templates render comfortably (incident: job
+    # ceaed607 hit SoftTimeLimitExceeded at 1080s with lyric burn ~90%
+    # complete; empirical phase breakdown:
+    #   - Gemini analyze (10 clips parallel, ~57s each):  568s
+    #   - Per-slot reframe (10 slots, max 2 workers):     445s
+    #   - Overlay collect (Bug B cumulative-pop staging): ~1s
+    #   - ASS burn + mix attempt (truncated by SIGKILL):  ~90s
+    # Worker's broker_transport_options.visibility_timeout=1900 still has
+    # 100s headroom above the new 1800s ceiling.
+    soft_time_limit=1740,
+    time_limit=1800,
 )
 def orchestrate_music_job(self, job_id: str) -> None:
     """Full beat-sync pipeline for a music job.

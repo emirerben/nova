@@ -433,3 +433,114 @@ def test_run_templated_music_job_passes_audio_start_offset_s_to_mixer() -> None:
         f"Current call:\n{mix_call}"
     )
     assert "best_start_s" in mix_call
+
+
+# ── Time-limit parity lock: music vs template orchestrator budgets ───────────
+
+
+def _read_template_orchestrate_source() -> str:
+    """Sibling of _read_music_orchestrate_source() (added in PR #258).
+
+    Reads template_orchestrate.py as a raw string so the parity-check test
+    below can compare its Celery decorator kwargs against music's without
+    importing the module (which would drag in sqlalchemy/celery/fastapi).
+    """
+    import os
+
+    api_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+    path = os.path.join(api_dir, "app/tasks/template_orchestrate.py")
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def _extract_celery_task_decorator(source: str, task_name_substr: str) -> str:
+    """Return the `@celery_app.task(...)` block whose `name=` matches.
+
+    Walks backward from the matched `name="tasks.<substr>"` line to find the
+    enclosing `@celery_app.task(` and forward via Python's tokenizer to its
+    matching closing paren. Tokenizing (instead of naive char-by-char paren
+    counting) is essential because decorator kwarg comments frequently contain
+    unbalanced parens in prose (e.g. `# foo (incident bar`), which would fool
+    a string-level scan into reporting a missing close paren.
+    """
+    import io
+    import tokenize
+
+    name_idx = source.index(f'name="tasks.{task_name_substr}"')
+    decorator_idx = source.rfind("@celery_app.task(", 0, name_idx)
+    assert decorator_idx != -1, f"decorator not found for {task_name_substr}"
+
+    # Tokenize the source slice starting at the decorator. The first OP token
+    # `(` opens the decorator call; we walk OP tokens, ignoring COMMENT and
+    # STRING tokens, until the matching `)` brings depth back to zero.
+    slice_src = source[decorator_idx:]
+    tokens = tokenize.generate_tokens(io.StringIO(slice_src).readline)
+    depth = 0
+    saw_open = False
+    for tok in tokens:
+        if tok.type != tokenize.OP:
+            continue
+        if tok.string == "(":
+            depth += 1
+            saw_open = True
+        elif tok.string == ")":
+            depth -= 1
+            if saw_open and depth == 0:
+                # tok.end is (row, col) — convert back to a string offset.
+                end_row, end_col = tok.end
+                lines = slice_src.splitlines(keepends=True)
+                offset = sum(len(line) for line in lines[: end_row - 1]) + end_col
+                return source[decorator_idx : decorator_idx + offset]
+    raise AssertionError(f"unbalanced parens in decorator for {task_name_substr}")
+
+
+def _extract_limit_kwarg(decorator_src: str, kwarg_name: str) -> int:
+    import re
+
+    m = re.search(rf"\b{kwarg_name}\s*=\s*(\d+)", decorator_src)
+    assert m, f"{kwarg_name} kwarg not found in decorator:\n{decorator_src}"
+    return int(m.group(1))
+
+
+def test_music_job_time_limit_is_at_least_template_job_time_limit() -> None:
+    """The music orchestrator runs the same heavy `_assemble_clips` →
+    reframe → ASS-burn → mix pipeline as the template orchestrator. Their
+    Celery time budgets must stay in lockstep — otherwise the same 10-clip
+    HDR-iPhone input that template renders comfortably will trip the music
+    soft limit.
+
+    Incident: job ceaed607 hit SoftTimeLimitExceeded at 1080s with lyric
+    burn ~90% complete (audio mix + final encode never ran). The post-#258
+    music pipeline now does extra overlay-burn work that the legacy
+    1080s/1200s budget did not anticipate. Empirical phase breakdown is in
+    the PR description and the plan file
+    (plans/we-replaced-genius-with-ancient-shamir.md).
+
+    Source-inspection by file read (NOT inspect.getsource on the imported
+    module) to keep this test free of sqlalchemy/celery/fastapi imports.
+    Matches the pattern PR #258 established for the Bug A locks above.
+    """
+    music_src = _read_music_orchestrate_source()
+    tmpl_src = _read_template_orchestrate_source()
+
+    music_dec = _extract_celery_task_decorator(music_src, "orchestrate_music_job")
+    tmpl_dec = _extract_celery_task_decorator(tmpl_src, "orchestrate_template_job")
+
+    music_soft = _extract_limit_kwarg(music_dec, "soft_time_limit")
+    music_hard = _extract_limit_kwarg(music_dec, "time_limit")
+    tmpl_soft = _extract_limit_kwarg(tmpl_dec, "soft_time_limit")
+    tmpl_hard = _extract_limit_kwarg(tmpl_dec, "time_limit")
+
+    assert music_soft >= tmpl_soft, (
+        f"orchestrate_music_job.soft_time_limit ({music_soft}) is below "
+        f"orchestrate_template_job.soft_time_limit ({tmpl_soft}). Music jobs "
+        "run the same `_assemble_clips` → reframe → ASS-burn → mix pipeline "
+        "as templates, so they need at least the same budget. See "
+        "plans/we-replaced-genius-with-ancient-shamir.md."
+    )
+    assert music_hard >= tmpl_hard, (
+        f"orchestrate_music_job.time_limit ({music_hard}) is below "
+        f"orchestrate_template_job.time_limit ({tmpl_hard}). Hard limits "
+        "must move together with soft limits — a tight hard limit will "
+        "SIGKILL the worker before the soft-limit grace period elapses."
+    )
