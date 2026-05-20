@@ -34,10 +34,14 @@ function clipsLabel(t: TemplateListItem): string {
 
 interface Props {
   template: TemplateListItem;
+  /** Grid index. First row (index < 6) loads its poster eagerly with
+   *  fetchPriority=high so the visible tiles paint without lazy-load delay.
+   *  Lower rows stay lazy to spare bandwidth on initial paint. */
+  index?: number;
   onOpenPreview: (t: TemplateListItem) => void;
 }
 
-export default function TemplateTile({ template, onOpenPreview }: Props) {
+export default function TemplateTile({ template, index = 0, onOpenPreview }: Props) {
   const activeId = useSyncExternalStore(
     activeTileStore.subscribe,
     activeTileStore.getSnapshot,
@@ -195,7 +199,8 @@ export default function TemplateTile({ template, onOpenPreview }: Props) {
           <img
             src={template.thumbnail_url}
             alt=""
-            loading="lazy"
+            loading={index < 6 ? "eager" : "lazy"}
+            fetchPriority={index < 6 ? "high" : "auto"}
             className="absolute inset-0 w-full h-full object-cover"
           />
         ) : (
