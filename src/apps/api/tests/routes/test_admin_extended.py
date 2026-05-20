@@ -51,6 +51,9 @@ def _make_template(**kwargs):
         recipe_cached={"slots": [{"position": 1}], "total_duration_s": 30.0},
         recipe_cached_at=datetime.now(UTC),
         audio_gcs_path=None,
+        # _template_response reads this; without an explicit None, MagicMock
+        # auto-attrs return a MagicMock and Pydantic 500s on serialization.
+        lyrics_config=None,
     )
     defaults.update(kwargs)
     mock = MagicMock(spec=VideoTemplate)

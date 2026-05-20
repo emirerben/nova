@@ -14,7 +14,8 @@ import {
   type TrackConfig,
 } from "@/lib/music-api";
 import { adminCreateTemplateFromMusicTrack } from "@/lib/admin-api";
-import LyricsSection from "./LyricsSection";
+import LyricsConfigPanel from "@/app/admin/_shared/LyricsConfigPanel";
+import type { LyricsConfig } from "@/lib/music-api";
 import { TestTab } from "./components/TestTab";
 
 type AdminMusicTabId = "config" | "test";
@@ -462,6 +463,12 @@ export default function AdminMusicTrackPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creatingTemplate, setCreatingTemplate] = useState(false);
+  // Track whether LyricsConfigPanel has unsaved edits. We block Create
+  // Template on dirty state below — the failure mode this guards is the
+  // user checking the lyrics box, clicking Create Template before clicking
+  // Save, and getting a template the linked track doesn't carry lyrics for.
+  const [lyricsDirty, setLyricsDirty] = useState(false);
+  const [pendingLyricsCfg, setPendingLyricsCfg] = useState<LyricsConfig | null>(null);
 
   // Config form state
   const [bestStart, setBestStart] = useState("");
@@ -570,8 +577,32 @@ export default function AdminMusicTrackPage({
 
   async function handleCreateTemplate() {
     if (!track) return;
+    // Guard the unsaved-checkbox footgun. If the lyrics panel has pending
+    // edits, the user almost certainly wants those persisted on the track
+    // before we derive a template from it — otherwise the new template
+    // inherits a config that hasn't been saved anywhere.
+    let cfgToSaveFirst: LyricsConfig | null = null;
+    if (lyricsDirty && pendingLyricsCfg) {
+      const choice = window.confirm(
+        "You have unsaved lyrics settings. Save them to the track before creating the template?\n\n" +
+          "OK = Save lyrics config, then create the template (recommended)\n" +
+          "Cancel = Create the template with whatever's currently saved on the track",
+      );
+      if (choice) {
+        cfgToSaveFirst = pendingLyricsCfg;
+      }
+    }
     setCreatingTemplate(true);
     try {
+      if (cfgToSaveFirst) {
+        const updated = await adminUpdateMusicTrack(track.id, {
+          track_config: {
+            ...(track.track_config ?? {}),
+            lyrics_config: cfgToSaveFirst,
+          },
+        });
+        setTrack(updated);
+      }
       const template = await adminCreateTemplateFromMusicTrack(track.id);
       router.push(`/admin/templates/${template.id}`);
     } catch (err) {
@@ -664,6 +695,10 @@ export default function AdminMusicTrackPage({
           handleReanalyze={handleReanalyze}
           handleCreateTemplate={handleCreateTemplate}
           handleArchive={handleArchive}
+          onLyricsDirtyChange={(dirty, cfg) => {
+            setLyricsDirty(dirty);
+            setPendingLyricsCfg(cfg);
+          }}
         />
       )}
     </div>
@@ -690,6 +725,7 @@ interface ConfigTabContentProps {
   handleReanalyze: () => void;
   handleCreateTemplate: () => void;
   handleArchive: () => void;
+  onLyricsDirtyChange: (dirty: boolean, cfg: LyricsConfig) => void;
 }
 
 function ConfigTabContent({
@@ -712,6 +748,7 @@ function ConfigTabContent({
   handleReanalyze,
   handleCreateTemplate,
   handleArchive,
+  onLyricsDirtyChange,
 }: ConfigTabContentProps) {
   return (
     <>
@@ -861,7 +898,12 @@ function ConfigTabContent({
       </div>
 
       {/* Lyrics section */}
-      <LyricsSection track={track} onTrackUpdated={setTrack as (t: MusicTrackDetail) => void} />
+      <LyricsConfigPanel
+        kind="track"
+        track={track}
+        onTrackUpdated={setTrack as (t: MusicTrackDetail) => void}
+        onDirtyChange={onLyricsDirtyChange}
+      />
 
       {/* Actions */}
       <div className="flex flex-wrap gap-3">

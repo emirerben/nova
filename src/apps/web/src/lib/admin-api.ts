@@ -90,6 +90,20 @@ export interface AdminTemplate {
    * Empty array = recipe is up to date. Hit reanalyze to refresh.
    */
   recipe_stale_agents: string[];
+  /**
+   * Per-template lyrics override. `null` = inherit from the linked
+   * MusicTrack's lyrics_config. A non-null value (including `{}` for
+   * "lyrics explicitly off") wins over the track at render time. Set via
+   * PATCH /admin/templates/{id}/lyrics-config; reset by passing `null`.
+   */
+  lyrics_config: Record<string, unknown> | null;
+  /**
+   * The linked track's current lyrics_config — surfaced on the detail
+   * response so the admin UI can show "Inherits from track: <summary>"
+   * without a second RPC. `null` on standalone templates or when the
+   * track has no lyrics_config saved.
+   */
+  linked_track_lyrics_config: Record<string, unknown> | null;
 }
 
 export interface AdminTemplateListItem {
@@ -486,6 +500,32 @@ export async function adminCreateTemplateFromMusicTrack(
     method: "POST",
     body: JSON.stringify({ music_track_id: musicTrackId, name }),
   });
+  return res.json();
+}
+
+/**
+ * Set or clear the per-template lyrics override.
+ *
+ * - `cfg` is a `LyricsConfig` dict → snapshot the override; template now
+ *   wins over the linked track at render time.
+ * - `cfg` is `null` → clear the override; the orchestrator falls back to
+ *   the linked track's `track_config.lyrics_config`.
+ * - `cfg` is `{}` (empty object) is a legal "lyrics explicitly off"
+ *   sentinel that the backend persists as-is (NOT silently converted to
+ *   null). The orchestrator's resolver distinguishes `{}` from `null`
+ *   via `is not None`.
+ */
+export async function adminUpdateTemplateLyricsConfig(
+  templateId: string,
+  cfg: Record<string, unknown> | null,
+): Promise<AdminTemplate> {
+  const res = await adminFetch(
+    `/admin/templates/${templateId}/lyrics-config`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ lyrics_config: cfg }),
+    },
+  );
   return res.json();
 }
 

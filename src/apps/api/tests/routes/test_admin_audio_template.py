@@ -15,6 +15,7 @@ ADMIN_TOKEN = "test-admin-token"
 def _patch_admin_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ADMIN_API_KEY", ADMIN_TOKEN)
     from app.config import settings
+
     settings.admin_api_key = ADMIN_TOKEN
 
 
@@ -58,12 +59,28 @@ def _make_recipe() -> dict:
         "total_duration_s": 5.0,
         "hook_duration_s": 2.5,
         "slots": [
-            {"position": 1, "target_duration_s": 2.5, "slot_type": "hook",
-             "transition_in": "whip-pan", "color_hint": "warm", "speed_factor": 1.0,
-             "text_overlays": [], "energy": 7.0, "priority": 5},
-            {"position": 2, "target_duration_s": 2.5, "slot_type": "broll",
-             "transition_in": "dissolve", "color_hint": "cool", "speed_factor": 1.0,
-             "text_overlays": [], "energy": 5.0, "priority": 5},
+            {
+                "position": 1,
+                "target_duration_s": 2.5,
+                "slot_type": "hook",
+                "transition_in": "whip-pan",
+                "color_hint": "warm",
+                "speed_factor": 1.0,
+                "text_overlays": [],
+                "energy": 7.0,
+                "priority": 5,
+            },
+            {
+                "position": 2,
+                "target_duration_s": 2.5,
+                "slot_type": "broll",
+                "transition_in": "dissolve",
+                "color_hint": "cool",
+                "speed_factor": 1.0,
+                "text_overlays": [],
+                "energy": 5.0,
+                "priority": 5,
+            },
         ],
         "beat_timestamps_s": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
         "sync_style": "cut-on-beat",
@@ -86,6 +103,7 @@ class TestCreateTemplateFromMusicTrack:
         mock_db.get.return_value = None
 
         from app.database import get_db
+
         app.dependency_overrides[get_db] = lambda: mock_db
         try:
             res = client.post(
@@ -106,6 +124,7 @@ class TestCreateTemplateFromMusicTrack:
         mock_db.get.return_value = mock_track
 
         from app.database import get_db
+
         app.dependency_overrides[get_db] = lambda: mock_db
         try:
             res = client.post(
@@ -127,6 +146,7 @@ class TestCreateTemplateFromMusicTrack:
         mock_db.get.return_value = mock_track
 
         from app.database import get_db
+
         app.dependency_overrides[get_db] = lambda: mock_db
         try:
             res = client.post(
@@ -152,6 +172,7 @@ class TestCreateTemplateFromMusicTrack:
         mock_db.refresh = AsyncMock()
 
         from app.database import get_db
+
         app.dependency_overrides[get_db] = lambda: mock_db
         try:
             res = client.post(
@@ -182,6 +203,7 @@ class TestCreateTemplateFromMusicTrack:
         mock_db.refresh = AsyncMock()
 
         from app.database import get_db
+
         app.dependency_overrides[get_db] = lambda: mock_db
         try:
             res = client.post(
@@ -209,6 +231,7 @@ class TestCreateTemplateFromMusicTrack:
         mock_db.refresh = AsyncMock()
 
         from app.database import get_db
+
         app.dependency_overrides[get_db] = lambda: mock_db
         try:
             res = client.post(
@@ -221,3 +244,51 @@ class TestCreateTemplateFromMusicTrack:
 
         assert res.status_code == 200
         assert res.json()["name"] == "Custom Name"
+
+    def test_lyrics_config_not_snapshotted_at_creation(self, client):
+        """Template starts with lyrics_config = NULL even when the source
+        track has lyrics_config enabled. NULL means "inherit from track" at
+        render time; per-template lock-in only happens on explicit PATCH.
+        """
+        mock_track = _make_track(recipe_cached=_make_recipe())
+        # Track has lyrics enabled — the response should still echo that as
+        # `linked_track_lyrics_config`, but `lyrics_config` on the template
+        # stays None.
+        mock_track.track_config = {
+            **mock_track.track_config,
+            "lyrics_config": {
+                "enabled": True,
+                "style": "karaoke",
+                "position": "bottom",
+                "text_color": "#FFFFFF",
+                "highlight_color": "#FFFF00",
+            },
+        }
+
+        mock_db = AsyncMock()
+        mock_db.get.return_value = mock_track
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
+
+        from app.database import get_db
+
+        app.dependency_overrides[get_db] = lambda: mock_db
+        try:
+            res = client.post(
+                "/admin/templates/from-music-track",
+                json={"music_track_id": "track-001"},
+                headers=admin_headers(),
+            )
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        data = res.json()
+        assert data["lyrics_config"] is None, (
+            "Newly created templates must NOT snapshot lyrics_config — see "
+            "the NULL = inherit decision in the plan."
+        )
+        assert data["linked_track_lyrics_config"] is not None
+        assert data["linked_track_lyrics_config"]["enabled"] is True
+        assert data["linked_track_lyrics_config"]["style"] == "karaoke"

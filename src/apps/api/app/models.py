@@ -144,6 +144,13 @@ class VideoTemplate(Base):
     single_pass_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false"
     )
+    # Per-template lyrics override. NULL = dynamically inherit from the linked
+    # MusicTrack.track_config.lyrics_config; non-NULL (including the empty
+    # dict) = this template's own setting wins. Resolution happens in
+    # template_orchestrate via `is not None` (NOT `or`), so `{}` is a valid
+    # "lyrics explicitly off" state. See tests/tasks/test_template_orchestrate
+    # for the full fallback matrix.
+    lyrics_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 

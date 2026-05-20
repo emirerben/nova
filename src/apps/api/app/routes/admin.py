@@ -30,6 +30,7 @@ from app.database import get_db
 from app.models import AgentRun, Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
 from app.routes._admin_schemas import AgentRunPayload, agent_run_to_payload
 from app.routes.templates import RequiredInput
+from app.services.lyrics_config_validation import validate_lyrics_config_dict
 from app.services.template_validation import (
     get_template_or_404,
     require_ready,
@@ -153,6 +154,15 @@ class TemplateResponse(BaseModel):
     # materialized. Empty list = recipe is up to date with all live prompts.
     # See app/services/template_staleness.py for semantics around NULL/{}.
     recipe_stale_agents: list[str] = []
+    # Per-template lyrics override. NULL = inherit from the linked music
+    # track's lyrics_config. Non-NULL (including {}) = template's own setting
+    # wins. See app/models.py VideoTemplate.lyrics_config docstring.
+    lyrics_config: dict | None = None
+    # The linked track's current lyrics_config, surfaced so the admin UI can
+    # show "Inherits from track: <summary>" without a second RPC. Set only on
+    # detail responses where music_track_id is non-NULL; None on list rows
+    # and standalone templates.
+    linked_track_lyrics_config: dict | None = None
 
 
 class UpdateTemplateRequest(BaseModel):
@@ -669,7 +679,11 @@ def resolve_use_layer2(
     return global_flag
 
 
-def _template_response(t: VideoTemplate) -> TemplateResponse:
+def _template_response(
+    t: VideoTemplate,
+    *,
+    linked_track_lyrics_config: dict | None = None,
+) -> TemplateResponse:
     from app.services.template_staleness import diff_recipe_versions  # noqa: PLC0415
 
     has_intro_slot = False
@@ -698,6 +712,8 @@ def _template_response(t: VideoTemplate) -> TemplateResponse:
         use_layer2_default=t.use_layer2_default,
         created_at=t.created_at,
         recipe_stale_agents=stale_agents,
+        lyrics_config=t.lyrics_config,
+        linked_track_lyrics_config=linked_track_lyrics_config,
     )
 
 
@@ -967,7 +983,12 @@ async def get_template(
 ) -> TemplateResponse:
     """Get template status and metadata."""
     template = await get_template_or_404(template_id, db)
-    return _template_response(template)
+    linked_track_lyrics_config: dict | None = None
+    if template.music_track_id:
+        track = await db.get(MusicTrack, template.music_track_id)
+        if track is not None and track.track_config:
+            linked_track_lyrics_config = track.track_config.get("lyrics_config")
+    return _template_response(template, linked_track_lyrics_config=linked_track_lyrics_config)
 
 
 class TemplateDebugSummary(BaseModel):
@@ -1306,6 +1327,64 @@ async def set_use_layer2_default(
         use_layer2_default=req.use_layer2_default,
     )
     return _template_response(template)
+
+
+class LyricsConfigUpdate(BaseModel):
+    """Body for PATCH /admin/templates/{id}/lyrics-config.
+
+    ``lyrics_config: null`` clears the per-template override and the
+    template reverts to inheriting from the linked MusicTrack. A non-null
+    dict (including ``{}``) snapshots an override onto the template that
+    wins over the track from then on. ``{}`` is a legal sentinel that
+    means "lyrics explicitly off for this template" — the orchestrator
+    distinguishes ``None`` from ``{}`` via ``is not None`` (NOT ``or``).
+    """
+
+    lyrics_config: dict | None
+
+
+@router.patch(
+    "/templates/{template_id}/lyrics-config",
+    response_model=TemplateResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def set_template_lyrics_config(
+    template_id: str,
+    req: LyricsConfigUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateResponse:
+    """Set or clear the per-template lyrics override."""
+    if req.lyrics_config is not None:
+        try:
+            validate_lyrics_config_dict(req.lyrics_config)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+    template = await get_template_or_404(template_id, db)
+    if template.music_track_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Template is not linked to a music track; lyrics config does not apply",
+        )
+
+    template.lyrics_config = req.lyrics_config
+    await db.commit()
+    await db.refresh(template)
+
+    linked_track_lyrics_config: dict | None = None
+    track = await db.get(MusicTrack, template.music_track_id)
+    if track is not None and track.track_config:
+        linked_track_lyrics_config = track.track_config.get("lyrics_config")
+
+    log.info(
+        "template_lyrics_config_updated",
+        template_id=template_id,
+        has_override=req.lyrics_config is not None,
+    )
+    return _template_response(template, linked_track_lyrics_config=linked_track_lyrics_config)
 
 
 # ── Test job endpoint ──────────────────────────────────────────────────────────
@@ -2716,6 +2795,12 @@ async def create_template_from_music_track(
         slot_count=n_slots,
     )
 
+    # NOTE: We intentionally do NOT snapshot track.track_config.lyrics_config
+    # onto the new template. Leaving template.lyrics_config = NULL means the
+    # orchestrator dynamically inherits the track's config at render time —
+    # admin edits on the track flow through until an admin opts into a
+    # per-template override via PATCH /admin/templates/{id}/lyrics-config.
+    linked_track_lyrics_config = (track.track_config or {}).get("lyrics_config")
     return TemplateResponse(
         id=template.id,
         name=template.name,
@@ -2733,4 +2818,6 @@ async def create_template_from_music_track(
         parent_template_id=template.parent_template_id,
         music_track_id=template.music_track_id,
         created_at=template.created_at,
+        lyrics_config=None,
+        linked_track_lyrics_config=linked_track_lyrics_config,
     )

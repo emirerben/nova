@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   adminExtractLyrics,
   adminGetMusicTrack,
@@ -9,6 +9,10 @@ import {
   type LyricsStatus,
   type MusicTrackDetail,
 } from "@/lib/music-api";
+import {
+  adminUpdateTemplateLyricsConfig,
+  type AdminTemplate,
+} from "@/lib/admin-api";
 
 const STATUS_COLORS: Record<LyricsStatus, string> = {
   pending: "bg-zinc-700 text-zinc-300",
@@ -42,34 +46,100 @@ function defaultConfig(): LyricsConfig {
   };
 }
 
-export default function LyricsSection({
-  track,
-  onTrackUpdated,
-}: {
+function coerceConfig(raw: unknown): LyricsConfig {
+  if (raw && typeof raw === "object") {
+    return { ...defaultConfig(), ...(raw as Partial<LyricsConfig>) };
+  }
+  return defaultConfig();
+}
+
+// ─── Track variant ────────────────────────────────────────────────────────────
+
+type TrackProps = {
+  kind: "track";
   track: MusicTrackDetail;
   onTrackUpdated: (t: MusicTrackDetail) => void;
-}) {
-  const existing = track.track_config?.lyrics_config ?? defaultConfig();
-  const [cfg, setCfg] = useState<LyricsConfig>(existing);
+  /**
+   * Called when the form's local state diverges from what's persisted on the
+   * track. The parent page uses this to warn before the user kicks off a
+   * Create Template action with unsaved lyrics edits — see the "unsaved
+   * checkbox footgun" callout in the plan.
+   */
+  onDirtyChange?: (isDirty: boolean, currentCfg: LyricsConfig) => void;
+};
+
+// ─── Template variant ─────────────────────────────────────────────────────────
+
+type TemplateProps = {
+  kind: "template";
+  template: AdminTemplate;
+  /**
+   * Linked track (lyrics_status, lyrics_cached, etc.) — fetched by the
+   * parent so the panel can render the cached-lines preview and status badge
+   * exactly like the track variant.
+   */
+  track: MusicTrackDetail;
+  onTemplateUpdated: (t: AdminTemplate) => void;
+};
+
+type Props = TrackProps | TemplateProps;
+
+export default function LyricsConfigPanel(props: Props) {
+  // For the template variant, the active config is the override when set,
+  // otherwise the linked track's config — matches the orchestrator's
+  // `is not None` resolution. NEVER use `||` here; `{}` is a legit value.
+  const initial: LyricsConfig =
+    props.kind === "track"
+      ? coerceConfig(props.track.track_config?.lyrics_config)
+      : props.template.lyrics_config !== null
+        ? coerceConfig(props.template.lyrics_config)
+        : coerceConfig(props.track.track_config?.lyrics_config);
+
+  const [cfg, setCfg] = useState<LyricsConfig>(initial);
   const [saving, setSaving] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [previewExpanded, setPreviewExpanded] = useState(false);
 
-  const status = track.lyrics_status;
-  const cache = track.lyrics_cached;
+  const status = props.track.lyrics_status;
+  const cache = props.track.lyrics_cached;
+
+  const persisted: LyricsConfig | null =
+    props.kind === "track"
+      ? (props.track.track_config?.lyrics_config ?? null)
+      : (props.template.lyrics_config as LyricsConfig | null);
+
+  const isCustom =
+    props.kind === "template" && props.template.lyrics_config !== null;
+
+  // Dirty-tracking: ping the parent whenever the local form diverges from
+  // what's on the server. Only relevant for the track variant (the music
+  // page uses this to gate Create Template).
+  useEffect(() => {
+    if (props.kind !== "track" || !props.onDirtyChange) return;
+    const dirty = JSON.stringify(cfg) !== JSON.stringify(persisted ?? defaultConfig());
+    props.onDirtyChange(dirty, cfg);
+  }, [cfg, persisted, props]);
 
   async function handleSave() {
     setSaving(true);
     setMsg(null);
     try {
-      const updated = await adminUpdateMusicTrack(track.id, {
-        track_config: {
-          ...(track.track_config ?? {}),
-          lyrics_config: cfg,
-        },
-      });
-      onTrackUpdated(updated);
+      if (props.kind === "track") {
+        const updated = await adminUpdateMusicTrack(props.track.id, {
+          track_config: {
+            ...(props.track.track_config ?? {}),
+            lyrics_config: cfg,
+          },
+        });
+        props.onTrackUpdated(updated);
+      } else {
+        const updated = await adminUpdateTemplateLyricsConfig(
+          props.template.id,
+          cfg as unknown as Record<string, unknown>,
+        );
+        props.onTemplateUpdated(updated);
+      }
       setMsg("Saved.");
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Save failed");
@@ -78,17 +148,36 @@ export default function LyricsSection({
     }
   }
 
+  async function handleResetToTrack() {
+    if (props.kind !== "template") return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      const updated = await adminUpdateTemplateLyricsConfig(
+        props.template.id,
+        null,
+      );
+      props.onTemplateUpdated(updated);
+      setCfg(coerceConfig(props.track.track_config?.lyrics_config));
+      setMsg("Reset to track config.");
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Reset failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleExtract() {
+    if (props.kind !== "track") return;
     setExtracting(true);
     setMsg(null);
     try {
-      await adminExtractLyrics(track.id);
-      // Poll until status leaves "extracting".
+      await adminExtractLyrics(props.track.id);
       const start = Date.now();
       while (Date.now() - start < 120_000) {
         await new Promise((r) => setTimeout(r, 2500));
-        const fresh = await adminGetMusicTrack(track.id);
-        onTrackUpdated(fresh);
+        const fresh = await adminGetMusicTrack(props.track.id);
+        props.onTrackUpdated(fresh);
         if (fresh.lyrics_status !== "extracting") return;
       }
       setMsg("Extraction is still running — refresh in a minute.");
@@ -112,10 +201,42 @@ export default function LyricsSection({
         </span>
       </div>
 
+      {/* Template variant: inheritance state strip */}
+      {props.kind === "template" && (
+        <div
+          className={`text-xs mb-4 px-3 py-2 rounded-lg border ${
+            isCustom
+              ? "bg-amber-950/40 border-amber-800 text-amber-200"
+              : "bg-zinc-950 border-zinc-800 text-zinc-400"
+          }`}
+        >
+          {isCustom ? (
+            <div className="flex items-center justify-between gap-3">
+              <span>
+                Custom to this template. Track edits no longer affect this
+                template until you reset.
+              </span>
+              <button
+                onClick={handleResetToTrack}
+                disabled={saving}
+                className="text-xs font-semibold px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-zinc-100"
+              >
+                Reset to inherit from track
+              </button>
+            </div>
+          ) : (
+            <span>
+              Inherits from the linked music track. Edits to the track flow
+              through here. Save below to lock in a per-template override.
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm mb-4">
         <div>
           <span className="text-zinc-500">Source </span>
-          <span className="text-zinc-100">{track.lyrics_source ?? "—"}</span>
+          <span className="text-zinc-100">{props.track.lyrics_source ?? "—"}</span>
         </div>
         <div>
           <span className="text-zinc-500">Language </span>
@@ -144,9 +265,9 @@ export default function LyricsSection({
             </a>
           </div>
         )}
-        {track.lyrics_error_detail && (
+        {props.track.lyrics_error_detail && (
           <div className="col-span-2 text-red-400 text-xs break-words">
-            {track.lyrics_error_detail}
+            {props.track.lyrics_error_detail}
           </div>
         )}
       </div>
@@ -186,7 +307,11 @@ export default function LyricsSection({
             onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })}
             className="rounded"
           />
-          <span>Enable lyrics in music jobs using this track</span>
+          <span>
+            {props.kind === "track"
+              ? "Enable lyrics in music jobs using this track"
+              : "Enable lyrics for jobs rendered from this template"}
+          </span>
         </label>
 
         <div className="grid grid-cols-2 gap-4">
@@ -252,7 +377,9 @@ export default function LyricsSection({
       {msg && (
         <p
           className={`text-sm mb-3 ${
-            msg === "Saved." ? "text-green-400" : "text-red-400"
+            msg.startsWith("Sav") || msg.startsWith("Reset")
+              ? "text-green-400"
+              : "text-red-400"
           }`}
         >
           {msg}
@@ -265,17 +392,25 @@ export default function LyricsSection({
           disabled={saving}
           className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
         >
-          {saving ? "Saving…" : "Save lyrics config"}
+          {saving
+            ? "Saving…"
+            : props.kind === "track"
+              ? "Save lyrics config"
+              : isCustom
+                ? "Save override"
+                : "Customize for this template"}
         </button>
-        <button
-          onClick={handleExtract}
-          disabled={extracting || status === "extracting"}
-          className="bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 text-zinc-100 text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
-        >
-          {extracting || status === "extracting"
-            ? "Extracting…"
-            : "Re-extract lyrics"}
-        </button>
+        {props.kind === "track" && (
+          <button
+            onClick={handleExtract}
+            disabled={extracting || status === "extracting"}
+            className="bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 text-zinc-100 text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+          >
+            {extracting || status === "extracting"
+              ? "Extracting…"
+              : "Re-extract lyrics"}
+          </button>
+        )}
       </div>
     </div>
   );
