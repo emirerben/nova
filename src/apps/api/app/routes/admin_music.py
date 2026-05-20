@@ -55,6 +55,7 @@ from app.services.audio_download import (
     download_audio_and_upload,
     is_supported_audio_url,
 )
+from app.services.lyrics_config_validation import validate_lyrics_config_dict
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -95,17 +96,6 @@ class CreateMusicTrackRequest(BaseModel):
         return v.strip()
 
 
-_LYRICS_STYLES = {"karaoke", "per-word-pop"}
-_LYRICS_POSITIONS = {
-    "top",
-    "bottom",
-    "center",
-    "center-above",
-    "center-below",
-    "center-label",
-}
-
-
 class UpdateMusicTrackRequest(BaseModel):
     title: str | None = None
     artist: str | None = None
@@ -124,35 +114,12 @@ class UpdateMusicTrackRequest(BaseModel):
                 raise ValueError("best_end_s must be greater than best_start_s")
 
         # Lyrics config is nested under track_config (one JSON column for all
-        # per-song admin tuning).
+        # per-song admin tuning). Same validator runs at the template-level
+        # PATCH endpoint so a stale schema can't sneak in via either path.
         lyrics_cfg = cfg.get("lyrics_config")
         if lyrics_cfg is not None:
-            if not isinstance(lyrics_cfg, dict):
-                raise ValueError("lyrics_config must be an object")
-            if "style" in lyrics_cfg and lyrics_cfg["style"] not in _LYRICS_STYLES:
-                raise ValueError(f"lyrics_config.style must be one of {sorted(_LYRICS_STYLES)}")
-            if "position" in lyrics_cfg and lyrics_cfg["position"] not in _LYRICS_POSITIONS:
-                raise ValueError(
-                    f"lyrics_config.position must be one of {sorted(_LYRICS_POSITIONS)}"
-                )
-            for hex_key in ("text_color", "highlight_color"):
-                v = lyrics_cfg.get(hex_key)
-                if v is not None and not _is_valid_hex(v):
-                    raise ValueError(f"lyrics_config.{hex_key} must be a #RRGGBB hex string")
+            validate_lyrics_config_dict(lyrics_cfg)
         return self
-
-
-def _is_valid_hex(s: object) -> bool:
-    if not isinstance(s, str):
-        return False
-    candidate = s.strip().lstrip("#")
-    if len(candidate) != 6:
-        return False
-    try:
-        int(candidate, 16)
-    except ValueError:
-        return False
-    return True
 
 
 class MusicTrackResponse(BaseModel):

@@ -824,10 +824,57 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         # so the mix can seek past the intro to the chorus/drop. Regular
         # video templates have music_track_id=None → offset stays 0.
         audio_start_offset_s = 0.0
+        # Lyrics fields snapshotted alongside best_start_s so we can pass
+        # them out of the session without re-querying.
+        track_lyrics_cached: dict | None = None
+        effective_lyrics_cfg: dict | None = None
+        best_end_s_for_lyrics: float = 0.0
         if template.music_track_id:
             track = db.get(MusicTrack, template.music_track_id)
             if track and track.track_config:
                 audio_start_offset_s = float(track.track_config.get("best_start_s", 0.0) or 0.0)
+                best_end_s_for_lyrics = float(track.track_config.get("best_end_s", 0.0) or 0.0)
+            if track:
+                track_lyrics_cached = track.lyrics_cached
+                # resolve_effective_lyrics_config uses identity, not truthy,
+                # so the empty dict `{}` on the template is honored as
+                # "lyrics explicitly off". See its docstring for the
+                # truthiness pitfall this avoids.
+                from app.services.lyrics_config_validation import (  # noqa: PLC0415
+                    resolve_effective_lyrics_config,
+                )
+
+                track_cfg = (track.track_config or {}).get("lyrics_config")
+                effective_lyrics_cfg = resolve_effective_lyrics_config(
+                    template.lyrics_config, track_cfg
+                )
+
+    # Inject lyric overlays before the recipe is parsed. The injector handles
+    # enabled=False, missing cache, empty lines, and unknown styles itself —
+    # see app/pipeline/lyric_injector.py for the short-circuit list. We
+    # deep-copy first so the in-place ``recipe_dict["slots"] = new_slots`` at
+    # the tail of the injector can't leak back to template.recipe_cached
+    # across future code paths that capture the reference.
+    if effective_lyrics_cfg and effective_lyrics_cfg.get("enabled"):
+        from copy import deepcopy  # noqa: PLC0415
+
+        from app.pipeline.lyric_injector import inject_lyric_overlays  # noqa: PLC0415
+
+        # When the track doesn't carry an explicit best_end_s, fall back to
+        # the recipe's total slot duration so the section window covers the
+        # whole rendered timeline. inject_lyric_overlays clamps internally.
+        if best_end_s_for_lyrics <= 0:
+            best_end_s_for_lyrics = sum(
+                float(s.get("target_duration_s", 0.0) or 0.0)
+                for s in recipe_data.get("slots", []) or []
+            )
+        recipe_data = inject_lyric_overlays(
+            deepcopy(recipe_data),
+            track_lyrics_cached,
+            best_start_s=audio_start_offset_s,
+            best_end_s=best_end_s_for_lyrics,
+            lyrics_config=effective_lyrics_cfg,
+        )
 
     # Route on template_kind discriminator. Existing rows without template_kind
     # are backfilled to "multiple_videos" by migration 0012, so .get() with

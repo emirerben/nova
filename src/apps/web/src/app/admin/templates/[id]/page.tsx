@@ -37,6 +37,11 @@ import {
   humanisePhase,
   splitPhaseLog,
 } from "@/lib/template-job-phases";
+import {
+  adminGetMusicTrack,
+  type MusicTrackDetail,
+} from "@/lib/music-api";
+import LyricsConfigPanel from "@/app/admin/_shared/LyricsConfigPanel";
 import { DebugTab } from "./components/DebugTab";
 import { EditorTab } from "./components/EditorTab";
 import { MusicTab } from "./components/MusicTab";
@@ -269,6 +274,30 @@ export default function TemplateDetailPage() {
               {template.template_type === "audio_only" && (
                 <span className="text-xs bg-amber-900/40 text-amber-400 px-2 py-0.5 rounded">Audio Only</span>
               )}
+              {/*
+                Effective lyrics = template's own override OR linked track's.
+                Use `??` (nullish coalescing) NOT `||` — `{}` (lyrics
+                explicitly off) is "set" and must NOT fall back to the
+                track. Mirrors the backend's `is not None` resolution.
+              */}
+              {(() => {
+                const eff =
+                  (template.lyrics_config ?? template.linked_track_lyrics_config) as
+                    | { enabled?: boolean }
+                    | null;
+                return eff?.enabled === true ? (
+                  <span
+                    className="text-xs bg-violet-900/40 text-violet-300 border border-violet-800/60 px-2 py-0.5 rounded"
+                    title={
+                      template.lyrics_config !== null
+                        ? "Lyrics override active on this template"
+                        : "Lyrics inherited from linked music track"
+                    }
+                  >
+                    Lyrics
+                  </span>
+                ) : null;
+              })()}
               {template.is_agentic && (
                 <span
                   className="text-xs bg-emerald-900/40 text-emerald-300 border border-emerald-800/60 px-2 py-0.5 rounded"
@@ -330,6 +359,7 @@ export default function TemplateDetailPage() {
             template={template}
             playbackUrl={playbackUrl}
             onRefresh={refreshTemplate}
+            onTemplateUpdated={setTemplate}
           />
         )}
         {resolvedTab === "editor" && (
@@ -443,12 +473,28 @@ function RecipeTab({
   template,
   playbackUrl,
   onRefresh,
+  onTemplateUpdated,
 }: {
   template: AdminTemplate;
   playbackUrl: string | null;
   onRefresh: () => void;
+  onTemplateUpdated: (t: AdminTemplate) => void;
 }) {
   const [recipeHistory, setRecipeHistory] = useState<RecipeVersionItem[]>([]);
+  // Linked track — fetched once for the LyricsConfigPanel so it can show
+  // lyrics_status, cached lines preview, etc. Audio-only templates point
+  // at a music_track; standalone templates leave this null.
+  const [linkedTrack, setLinkedTrack] = useState<MusicTrackDetail | null>(null);
+
+  useEffect(() => {
+    if (template.music_track_id) {
+      adminGetMusicTrack(template.music_track_id)
+        .then(setLinkedTrack)
+        .catch(() => setLinkedTrack(null));
+    } else {
+      setLinkedTrack(null);
+    }
+  }, [template.music_track_id]);
 
   useEffect(() => {
     adminGetRecipeHistory(template.id).then((r) => setRecipeHistory(r.versions)).catch(() => {});
@@ -503,6 +549,21 @@ function RecipeTab({
 
   return (
     <div className="space-y-6">
+      {/*
+        Lyrics panel — shown for any template linked to a music track. The
+        panel handles its own inheritance vs override state internally; we
+        just wire the save handler back into the parent's setTemplate so
+        the header badge updates immediately after a save.
+      */}
+      {isAudioOnly && template.music_track_id && linkedTrack && (
+        <LyricsConfigPanel
+          kind="template"
+          template={template}
+          track={linkedTrack}
+          onTemplateUpdated={onTemplateUpdated}
+        />
+      )}
+
       <div className="flex gap-6">
         {playbackUrl && <VideoPlayer url={playbackUrl} />}
         {isAudioOnly && !playbackUrl && <AudioOnlyPlaceholder />}
