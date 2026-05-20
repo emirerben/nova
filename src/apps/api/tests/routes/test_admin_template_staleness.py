@@ -63,6 +63,7 @@ def _fake_template(**overrides) -> SimpleNamespace:
         created_at=datetime(2026, 5, 1, tzinfo=UTC),
         recipe_cached=None,
         recipe_cached_versions=None,
+        lyrics_config=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
