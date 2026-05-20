@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.37.1] - 2026-05-20
+
+### Fixed
+- **Layer-2 atomized text overlays no longer stutter the same word 3-5 times in a row.** First reanalyze of Not Just Luck after v0.4.37.0 (job `673d26d7-...`) revealed the second-order bug the cache fix had been hiding: 21 atomized overlays with "and" appearing 5×, "combination" 3×, "to" 3×, "the" 2× — all stacked center-positioned on top of each other. Root cause: `reconstruct_phrases(atomize_per_event=True)` short-circuits the cluster-then-`_finalize` loop that dedups same-text events within a phrase. OCR routinely re-detects the same on-screen word across multiple frame samples; in non-atomized mode those duplicates collapse inside one phrase, but in atomized mode each became its own phrase and survived to the renderer. New `_dedup_overlapping_atomized_phrases` runs on the atomized output, grouping by casefolded text and merging same-text phrases whose intervals overlap or sit within 0.5s of each other. Threshold is tuned to swallow sub-second OCR fan-out without collapsing legitimate refrains — a same-word repeat with a real time gap survives. `TEXT_OVERLAY_VERSION_V2` bumped to `v2-2026-05-20-xphrase-dedup` so existing v2 cache entries are orphaned and pick up the cleaner output on next analyze.
+
 ## [0.4.37.0] - 2026-05-20
 
 ### Fixed
