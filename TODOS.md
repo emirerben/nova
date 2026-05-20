@@ -454,6 +454,18 @@ producing real music-only edits at volume.
 **Effort:** M (human: ~1d / CC: ~45 min)
 **Priority:** P2
 
+### Revisit LRCLIB 429 backoff schedule after 1 week of prod observation
+**What:** Re-evaluate `_RETRY_DELAYS_S = (0.5, 1.5, 4.5)` in `src/apps/api/app/services/lrclib_client.py:77`. If `lrclib_rate_limited_retrying` log events show workers consistently being pushed to the 4.5s tier, the initial base delay is too short — bump to `(1.0, 3.0, 7.0)` or larger. If retries almost never fire, the current schedule is fine.
+**Why:** LRCLIB is keyless and rate-limits by IP. Our worker pool (4 shared CPUs on Fly) can fire several `analyze_music_track_task` jobs concurrently during admin batch uploads, and a too-aggressive schedule means we burn retry budget unnecessarily while a too-conservative schedule means real songs silently degrade to whisper-only.
+**How:** After ~1 week post-deploy (shipped 2026-05-20 in PR #256 → merge commit `475a2e7`):
+1. `fly logs -a nova-video | grep lrclib_rate_limited_retrying | jq '.attempt' | sort | uniq -c` — distribution of which retry attempt fired.
+2. If `attempt:3` dominates → bump base delays.
+3. If retries rarely fire (< 1% of `lrclib_lyrics_fetched` events) → leave alone.
+4. Document the observed distribution in this TODO when you close it.
+**Depends on:** PR #256 having been in prod for ≥ 7 days with non-trivial music-track upload traffic.
+**Effort:** S (human: ~30 min observation + tune / CC: ~10 min once data is collected)
+**Priority:** P3
+
 ---
 
 ## Vercel Frontend Deploy (added 2026-04-06)
