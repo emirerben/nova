@@ -1180,7 +1180,9 @@ async def reanalyze_template(
 
     from app.tasks.template_orchestrate import analyze_template_task  # noqa: PLC0415
 
-    analyze_template_task.delay(template_id)
+    # force=True so reanalyze always reruns the agent stack. Without this the
+    # task cache-hits on the prior recipe and the user sees nothing change.
+    analyze_template_task.delay(template_id, force=True)
 
     log.info("template_reanalyzed", template_id=template_id)
     return _template_response(template)
@@ -1247,7 +1249,12 @@ async def reanalyze_template_agentic(
         agentic_template_build_task,
     )
 
-    agentic_template_build_task.delay(template_id, use_layer2=effective_layer2)
+    # force=True so reanalyze always reruns the agent stack. Without this the
+    # task cache-hits on the prior recipe, no agent_run rows appear in the
+    # Debug tab, and any Layer-2 pipeline edits that don't bump a cache version
+    # constant are invisible. The cache write still produces a fresh entry for
+    # future non-forced hits.
+    agentic_template_build_task.delay(template_id, use_layer2=effective_layer2, force=True)
 
     log.info(
         "template_reanalyzed_agentic",

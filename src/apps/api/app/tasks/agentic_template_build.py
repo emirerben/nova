@@ -418,7 +418,13 @@ def _fetch_transcript_words_for_layer2(
     soft_time_limit=1500,  # ~25 min — Big 3 + N text_designer calls
     time_limit=1560,
 )
-def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = False) -> None:
+def agentic_template_build_task(
+    self,
+    template_id: str,
+    *,
+    use_layer2: bool = False,
+    force: bool = False,
+) -> None:
     """Build a full recipe end-to-end using agents. No human edits.
 
     Mirrors `analyze_template_task` so the manual path is unchanged; the only
@@ -429,6 +435,14 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
     text-extraction pass routes through the Layer-2 pipeline regardless of
     the global `text_overlay_v2_enabled` flag. Default False keeps existing
     behavior; callers that omit the kwarg are unaffected.
+
+    `force=True` skips the cache READ (still does the WRITE on success) so a
+    reanalyze always reruns the full agent stack. Reanalyze is the
+    user-visible "rebuild from scratch" gesture — without this the endpoint
+    cache-hits, no agents run, no new agent_run rows appear in the Debug tab,
+    and any pipeline changes that don't bump a cache version constant are
+    invisible. The cache write still produces a fresh entry for future
+    non-forced hits.
     """
     # Captured once at task entry and written to TemplateRecipeVersion.build_started_at
     # at the end of the happy path. Paired with the DB-generated `created_at` (end),
@@ -532,12 +546,13 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
             # `prompt_version` values are unknown to us — see the
             # `recipe_cached_versions` write below for the staleness rationale.
             agents_ran = False
-            if template_hash is not None:
+            if template_hash is not None and not force:
                 cached = get_cached_recipe(
                     template_hash,
                     _AGENTIC_ANALYSIS_MODE,
                     agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
                     text_overlay_version=text_overlay_version,
+                    template_id=template_id,
                 )
                 if cached is not None:
                     log.info(
@@ -554,6 +569,13 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
                         template_hash=template_hash[:12],
                         text_overlay_version=text_overlay_version,
                     )
+            elif force:
+                log.info(
+                    "agentic_template_recipe_cache_bypass_force",
+                    template_id=template_id,
+                    template_hash=(template_hash or "")[:12],
+                    text_overlay_version=text_overlay_version,
+                )
 
             if recipe is None:
                 file_ref = gemini_upload_and_wait(local_path)
@@ -603,6 +625,7 @@ def agentic_template_build_task(self, template_id: str, *, use_layer2: bool = Fa
                         recipe,
                         agent_set=AGENT_SET_RECIPE_PLUS_TEXT,
                         text_overlay_version=text_overlay_version,
+                        template_id=template_id,
                     )
                 agents_ran = True
 

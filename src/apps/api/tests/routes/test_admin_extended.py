@@ -613,7 +613,9 @@ class TestReanalyzeAgenticLayer2Param:
                 app.dependency_overrides.pop(get_db, None)
 
         assert res.status_code == 200
-        mock_task.delay.assert_called_once_with(template.id, use_layer2=True)
+        # force=True so the reanalyze always reruns the agent stack instead of
+        # cache-hitting on the prior recipe (Bug 2 fix, 2026-05-20).
+        mock_task.delay.assert_called_once_with(template.id, use_layer2=True, force=True)
 
     def test_reanalyze_agentic_use_layer2_false_enqueues_without_override(self, client):
         """`POST /admin/templates/{id}/reanalyze-agentic` (no param) must
@@ -644,7 +646,7 @@ class TestReanalyzeAgenticLayer2Param:
                 app.dependency_overrides.pop(get_db, None)
 
         assert res.status_code == 200
-        mock_task.delay.assert_called_once_with(template.id, use_layer2=False)
+        mock_task.delay.assert_called_once_with(template.id, use_layer2=False, force=True)
 
 
 # ── resolve_use_layer2 pure-function tests ────────────────────────────────────
@@ -721,7 +723,7 @@ class TestReanalyzeAgenticTemplateDefault:
 
         assert res.status_code == 200
         # template default overrides global flag
-        mock_task.delay.assert_called_once_with(template.id, use_layer2=True)
+        mock_task.delay.assert_called_once_with(template.id, use_layer2=True, force=True)
 
     def test_query_param_false_beats_template_default_true(self, client):
         """?use_layer2=false wins even when template.use_layer2_default=True."""
@@ -751,7 +753,7 @@ class TestReanalyzeAgenticTemplateDefault:
 
         assert res.status_code == 200
         # query param=false wins over template_default=True and global=True
-        mock_task.delay.assert_called_once_with(template.id, use_layer2=False)
+        mock_task.delay.assert_called_once_with(template.id, use_layer2=False, force=True)
 
 
 # ── PUT /admin/templates/{id}/use-layer2-default ──────────────────────────────

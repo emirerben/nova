@@ -261,8 +261,13 @@ def _stage(name: str, on_fail: str, *, job_id: str) -> Iterator[None]:
     soft_time_limit=840,
     time_limit=900,
 )
-def analyze_template_task(self, template_id: str) -> None:
-    """Download template video, analyze with Gemini, cache recipe in DB."""
+def analyze_template_task(self, template_id: str, *, force: bool = False) -> None:
+    """Download template video, analyze with Gemini, cache recipe in DB.
+
+    `force=True` skips the cache READ (still writes on success). Reanalyze
+    enqueues with force=True so the user-visible "Reanalyze" gesture always
+    reruns the agent; a fresh entry replaces the old one for future hits.
+    """
     # Captured once at task entry and written to TemplateRecipeVersion.build_started_at
     # at the end of the happy path. Paired with the DB-generated `created_at` (end),
     # gives per-run wall-clock for forward-looking perf baselines.
@@ -404,8 +409,12 @@ def analyze_template_task(self, template_id: str) -> None:
             # `prompt_version` is unknown to us — see the
             # `recipe_cached_versions` write below for the staleness rationale.
             agents_ran = False
-            if template_hash is not None:
-                cached = get_cached_recipe(template_hash, _MANUAL_ANALYSIS_MODE)
+            if template_hash is not None and not force:
+                cached = get_cached_recipe(
+                    template_hash,
+                    _MANUAL_ANALYSIS_MODE,
+                    template_id=template_id,
+                )
                 if cached is not None:
                     log.info(
                         "manual_template_recipe_cache_hit",
@@ -413,6 +422,12 @@ def analyze_template_task(self, template_id: str) -> None:
                         template_hash=template_hash[:12],
                     )
                     recipe = cached
+            elif force:
+                log.info(
+                    "manual_template_recipe_cache_bypass_force",
+                    template_id=template_id,
+                    template_hash=(template_hash or "")[:12],
+                )
 
             if recipe is None:
                 file_ref = gemini_upload_and_wait(local_path)
@@ -428,7 +443,12 @@ def analyze_template_task(self, template_id: str) -> None:
                     job_id=f"template:{template_id}",
                 )
                 if template_hash is not None:
-                    set_cached_recipe(template_hash, _MANUAL_ANALYSIS_MODE, recipe)
+                    set_cached_recipe(
+                        template_hash,
+                        _MANUAL_ANALYSIS_MODE,
+                        recipe,
+                        template_id=template_id,
+                    )
                 agents_ran = True
 
             # Note: font identification (PR2, identify_fonts + font_alternatives
