@@ -1,17 +1,29 @@
-"""Align canonical Genius lyric lines to Whisper word-level timings.
+"""Align canonical lyric text to Whisper word-level timings.
 
 WHY THIS EXISTS
 ---------------
-Genius gives accurate text but no timings. Whisper gives timings but mishears
-words (especially on Turkish + heavy-instrumental tracks). We want:
+A canonical lyric source (LRCLIB, formerly Genius) gives accurate text but
+either no timings or only line-level timings. Whisper gives word-grain
+timings but mishears words (especially on Turkish + heavy-instrumental
+tracks). We want:
 
-  - Genius's text shown to the viewer (correct spelling, line breaks)
+  - The canonical text shown to the viewer (correct spelling, line breaks)
   - Whisper's timings driving the karaoke / per-word animation
 
-So we walk Whisper's word stream and pop one Whisper word per Genius word
-in order, using fuzzy character matching to recover from drift. When
-Whisper drops a word or hallucinates one, we resync by skipping forward to
-the next plausible match.
+Two entry points:
+
+  align(canonical_lines, whisper_words)
+      Used when the source provides text only (LRCLIB plainLyrics fallback,
+      legacy Genius). Walks Whisper's word stream and pops one Whisper word
+      per canonical word in order, using fuzzy character matching to
+      recover from drift.
+
+  align_with_line_anchors(anchor_lines, whisper_words, track_end_s)
+      Used when the source provides line-level start times (LRCLIB
+      syncedLyrics). Each anchor line defines a hard time window; per-word
+      timing is distributed within the window using Whisper. Strictly
+      higher quality than the unanchored path because the line bounds are
+      exact rather than fuzzy-matched.
 
 This is a deliberately simple O(N*W) Needleman-Wunsch-style alignment with
 a small look-ahead window — it's pure Python, has no SciPy dependency, and
@@ -22,11 +34,13 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 import structlog
 
+from app.services.lrclib_client import SyncedLine
 from app.services.whisper_lyrics import WhisperWord
 
 log = structlog.get_logger()
@@ -265,4 +279,201 @@ def _build_line(
         start_s=line_start,
         end_s=line_end,
         words=aligned_words,
+    )
+
+
+# Safety fallback for the very last anchor line when neither track_end_s nor
+# any Whisper words are available to bound it. 3 seconds is long enough that
+# karaoke renders the line at a readable pace, short enough that nothing
+# beyond it gets eaten.
+_FALLBACK_TRAILING_WINDOW_S = 3.0
+
+# Padding added past the last whisper word when track_end_s isn't supplied.
+# Whisper sometimes truncates the final word early; this prevents the last
+# karaoke line from clipping.
+_LAST_WORD_TAIL_PAD_S = 0.5
+
+# Maximum per-word slice when Strategy 3 (linear interpolation) is forced.
+# Without a cap, a long instrumental break — a melodic build-up in an
+# Artbat set, the bridge in a power ballad — stretches `window_end` until
+# the next sung anchor, and dividing 60s by 5 words would highlight each
+# word for 12 SECONDS. That kills the snappy karaoke pacing the per-word
+# animation is built around. 0.8s caps highlights at a comfortable reading
+# pace; after the final capped word, the karaoke line clears the screen
+# and the instrumental gap plays out clean (no stale highlight stuck on
+# the last token).
+_MAX_INTERP_SLICE_S = 0.8
+
+
+def align_with_line_anchors(
+    anchor_lines: Sequence[SyncedLine],
+    whisper_words: Sequence[WhisperWord] | tuple[WhisperWord, ...],
+    track_end_s: float | None = None,
+) -> AlignmentResult:
+    """Align canonical lines using LRC line timestamps as hard bounds.
+
+    Each `anchor_lines[i]` provides exact start time `t_i`; the line's window
+    is `[t_i, t_{i+1})` (last line uses `track_end_s` or
+    `whisper_words[-1].end_s + 0.5`). Per-word timing is distributed within
+    each window using Whisper's words.
+
+    Strictly higher quality than `align()`: line bounds are exact rather
+    than recovered via fuzzy matching, so we don't bleed timing across
+    line breaks.
+
+    Args:
+        anchor_lines: SyncedLine list from `lrclib_client._parse_synced_lyrics`,
+            sorted by `start_s` ascending. Multi-timestamp lines have
+            already been expanded into one anchor per timestamp.
+        whisper_words: Whisper's per-word timings for the full track.
+        track_end_s: Optional hard upper bound for the final line's window.
+            Defaults to `whisper_words[-1].end_s + 0.5` if Whisper data
+            exists, otherwise a 3s fallback.
+    """
+    if not anchor_lines:
+        return AlignmentResult(lines=(), confidence=0.0)
+
+    whisper_list = list(whisper_words)
+    aligned_lines: list[AlignedLine] = []
+    total_words = 0
+    matched_words = 0
+
+    for i, anchor in enumerate(anchor_lines):
+        window_start = anchor.start_s
+        if i + 1 < len(anchor_lines):
+            window_end = anchor_lines[i + 1].start_s
+        elif track_end_s is not None:
+            window_end = track_end_s
+        elif whisper_list:
+            window_end = whisper_list[-1].end_s + _LAST_WORD_TAIL_PAD_S
+        else:
+            window_end = window_start + _FALLBACK_TRAILING_WINDOW_S
+
+        # Guard against malformed input — anchors out of order would yield a
+        # negative window. Skip rather than emit nonsense timings.
+        if window_end <= window_start:
+            continue
+
+        expected = _tokenize(anchor.text)
+        if not expected:
+            continue
+        total_words += len(expected)
+
+        words_in_window = [w for w in whisper_list if window_start <= w.start_s < window_end]
+
+        line, matched_in_line = _align_within_window(
+            anchor.text, expected, words_in_window, window_start, window_end
+        )
+        if line is not None:
+            aligned_lines.append(line)
+            matched_words += matched_in_line
+
+    confidence = (matched_words / total_words) if total_words else 0.0
+    log.info(
+        "lyrics_alignment_anchored_done",
+        anchor_lines=len(anchor_lines),
+        aligned_lines=len(aligned_lines),
+        whisper_words=len(whisper_list),
+        matched_words=matched_words,
+        total_canonical_words=total_words,
+        confidence=round(confidence, 3),
+    )
+    return AlignmentResult(lines=tuple(aligned_lines), confidence=confidence)
+
+
+def _align_within_window(
+    anchor_text: str,
+    expected_words: list[str],
+    whisper_words_in_window: list[WhisperWord],
+    window_start: float,
+    window_end: float,
+) -> tuple[AlignedLine | None, int]:
+    """Distribute `expected_words` across `[window_start, window_end)`.
+
+    Three strategies, in priority order:
+
+    1. **Exact-count zip** (fast path, common case): if Whisper produced
+       exactly the right number of words in the window, zip directly. Every
+       canonical word gets a real Whisper timing — no interpolation.
+
+    2. **Fuzzy align within window**: Whisper produced some but not the
+       right count. Run the cursor-based fuzzy matcher restricted to this
+       window, then interpolate gaps via `_build_line`. Same logic the
+       unanchored path uses, just scoped.
+
+    3. **Linear interpolation**: zero Whisper words landed in the window
+       (rare — instrumental gap, or Whisper missed a quiet line). Distribute
+       canonical words uniformly across the window, but CAP each word's
+       duration at `_MAX_INTERP_SLICE_S`. Without the cap, a 60s
+       instrumental break would hold a single word on screen for 12s and
+       kill the per-word karaoke pacing; with it, the line plays out at a
+       readable pace and the rest of the gap clears the screen.
+
+    Returns `(line, matched_count)` where `matched_count` counts words with
+    real Whisper timings (strategy 1 → all, strategy 2 → variable,
+    strategy 3 → 0). This drives `AlignmentResult.confidence`.
+    """
+    # Strategy 1 — exact-count fast path.
+    if len(whisper_words_in_window) == len(expected_words):
+        words = tuple(
+            AlignedWord(
+                text=expected_words[k],
+                start_s=round(whisper_words_in_window[k].start_s, 3),
+                end_s=round(whisper_words_in_window[k].end_s, 3),
+            )
+            for k in range(len(expected_words))
+        )
+        return (
+            AlignedLine(
+                text=anchor_text.strip(),
+                start_s=words[0].start_s,
+                end_s=words[-1].end_s,
+                words=words,
+            ),
+            len(expected_words),
+        )
+
+    # Strategy 2 — fuzzy align within the window using the existing matcher.
+    if whisper_words_in_window:
+        slots: list[tuple[str, float | None, float | None]] = []
+        cursor = 0
+        matched_count = 0
+        for canonical_word in expected_words:
+            match_idx = _find_match(canonical_word, whisper_words_in_window, cursor)
+            if match_idx is None:
+                slots.append((canonical_word, None, None))
+            else:
+                ww = whisper_words_in_window[match_idx]
+                slots.append((canonical_word, ww.start_s, ww.end_s))
+                matched_count += 1
+                cursor = match_idx + 1
+        line = _build_line(anchor_text, slots)
+        if line is not None:
+            return line, matched_count
+        # `_build_line` only returns None when zero words matched — fall
+        # through to interpolation so the line still renders.
+
+    # Strategy 3 — linear interpolation across the window.
+    # Clamp to [0.05, _MAX_INTERP_SLICE_S] — see constant docstring above
+    # for why the cap matters (instrumental-break pacing).
+    slice_dur = min(
+        max((window_end - window_start) / len(expected_words), 0.05),
+        _MAX_INTERP_SLICE_S,
+    )
+    words = tuple(
+        AlignedWord(
+            text=expected_words[k],
+            start_s=round(window_start + k * slice_dur, 3),
+            end_s=round(window_start + (k + 1) * slice_dur, 3),
+        )
+        for k in range(len(expected_words))
+    )
+    return (
+        AlignedLine(
+            text=anchor_text.strip(),
+            start_s=words[0].start_s,
+            end_s=words[-1].end_s,
+            words=words,
+        ),
+        0,
     )

@@ -37,9 +37,7 @@ class Settings(BaseSettings):
         ``sslmode``.  We translate ``sslmode`` to asyncpg's ``ssl``
         param and swap the scheme to ``postgresql+asyncpg://``.
         """
-        url = self.database_url.replace(
-            "postgresql://", "postgresql+asyncpg://", 1
-        )
+        url = self.database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
         parsed = urlparse(url)
         qs = parse_qs(parsed.query)
         # Translate libpq sslmode → asyncpg ssl
@@ -69,13 +67,10 @@ class Settings(BaseSettings):
     whisper_backend: str = "openai-api"  # "openai-api" | "local"
     whisper_model: str = "base.en"
 
-    # Genius API (lyric text source for the lyrics agent). Free tier — get a
-    # client access token at https://genius.com/api-clients. Leave empty to
-    # fall back to Whisper-only transcription (no canonical text).
-    genius_access_token: str = ""
-    # Hard ceiling on lyric extraction wall time (Genius search + Whisper
+    # Hard ceiling on lyric extraction wall time (LRCLIB search + Whisper
     # transcription + alignment). Beat analysis caps at 300s; the lyric task
-    # runs after it so we keep a tight budget.
+    # runs after it so we keep a tight budget. LRCLIB itself needs no API
+    # key — see app/services/lrclib_client.py.
     lyrics_extraction_timeout_s: float = 90.0
 
     # CORS — JSON array in env: ALLOWED_ORIGINS='["https://nova.io","http://localhost:3000"]'
