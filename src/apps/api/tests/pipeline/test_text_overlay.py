@@ -316,6 +316,72 @@ class TestAnimatedOverlayASS:
             assert "\\fscx115" in dialogue
             assert "\\fscx100" in dialogue
 
+    def test_pop_in_cumulative_stage_animates_only_suffix(self):
+        """When `pop_animated_suffix` is set, only the suffix gets \\fscx scaling.
+
+        Locks the lyrics fix: cumulative-line per-word-pop emits stages like
+        ``text="I got room", pop_animated_suffix="room"``. Without splicing,
+        the entire accumulated line would re-scale on every new word and the
+        viewer would see flicker on the words that are already visible. The
+        renderer must emit the prefix (\"I got\") as a static run and apply
+        the scale animation only to the trailing word.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{
+                    "text": "I got room", "start_s": 0.0, "end_s": 1.5,
+                    "position": "bottom", "effect": "pop-in",
+                    "pop_animated_suffix": "room",
+                }],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None and len(result) == 1
+            dialogue = next(
+                ln for ln in open(result[0]).read().splitlines()
+                if ln.startswith("Dialogue:")
+            )
+            # Scale animation tags still emitted...
+            assert "\\fscx30\\fscy30" in dialogue
+            assert "\\fscx100\\fscy100" in dialogue
+            # ...but the prefix words appear BEFORE the \fscx30 init tag.
+            # That means the prefix renders at the default 100% scale while
+            # only "room" goes through the scale ramp.
+            fscx30_idx = dialogue.find("\\fscx30")
+            prefix_idx = dialogue.find("I got")
+            suffix_idx = dialogue.find("room")
+            assert 0 <= prefix_idx < fscx30_idx, (
+                f"prefix 'I got' must appear before the scale-init tag: {dialogue}"
+            )
+            assert fscx30_idx < suffix_idx, (
+                f"suffix 'room' must appear after the scale-init tag: {dialogue}"
+            )
+
+    def test_pop_in_first_stage_with_suffix_only_animates_suffix(self):
+        """First cumulative stage has no prefix — the suffix IS the whole text.
+
+        The renderer must still apply the scale animation to that single word
+        (it's the only thing on screen). Verifies the prefix-less branch of
+        the splice logic.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{
+                    "text": "I", "start_s": 0.0, "end_s": 0.4,
+                    "position": "bottom", "effect": "pop-in",
+                    "pop_animated_suffix": "I",
+                }],
+                5.0, tmpdir, 0,
+            )
+            assert result is not None and len(result) == 1
+            dialogue = next(
+                ln for ln in open(result[0]).read().splitlines()
+                if ln.startswith("Dialogue:")
+            )
+            assert "\\fscx30\\fscy30" in dialogue
+            assert "\\fscx100\\fscy100" in dialogue
+            # The word "I" appears AFTER the scale tags (it's the animated suffix).
+            assert dialogue.rfind("\\fscx100") < dialogue.rfind("I")
+
     def test_pop_in_short_text_skips_wrap(self):
         """Short text that fits on one line must not get a stray `\\N`.
 

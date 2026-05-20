@@ -217,12 +217,28 @@ def test_analyze_music_track_task_gemini_populates_recipe_cached() -> None:
         "shot_count": 2,
         "total_duration_s": 5.0,
         "slots": [
-            {"position": 1, "target_duration_s": 2.5, "slot_type": "hook",
-             "transition_in": "whip-pan", "color_hint": "warm", "speed_factor": 1.0,
-             "text_overlays": [], "energy": 7.0, "priority": 5},
-            {"position": 2, "target_duration_s": 2.5, "slot_type": "broll",
-             "transition_in": "dissolve", "color_hint": "cool", "speed_factor": 1.0,
-             "text_overlays": [], "energy": 5.0, "priority": 5},
+            {
+                "position": 1,
+                "target_duration_s": 2.5,
+                "slot_type": "hook",
+                "transition_in": "whip-pan",
+                "color_hint": "warm",
+                "speed_factor": 1.0,
+                "text_overlays": [],
+                "energy": 7.0,
+                "priority": 5,
+            },
+            {
+                "position": 2,
+                "target_duration_s": 2.5,
+                "slot_type": "broll",
+                "transition_in": "dissolve",
+                "color_hint": "cool",
+                "speed_factor": 1.0,
+                "text_overlays": [],
+                "energy": 5.0,
+                "priority": 5,
+            },
         ],
         "copy_tone": "energetic",
         "color_grade": "warm",
@@ -301,3 +317,119 @@ def test_analyze_music_track_task_gemini_failure_falls_back_to_beat_only() -> No
     assert mock_track.recipe_cached is not None
     # Fallback recipe has default color_grade="none" (no Gemini visuals)
     assert mock_track.recipe_cached.get("color_grade") == "none"
+
+
+# ── Bug A regression lock: audio offset must reach _mix_template_audio ────────
+
+
+_MUSIC_ORCHESTRATE_SOURCE_PATH = (
+    "app/tasks/music_orchestrate.py"  # repo-rooted; pytest cwd is `src/apps/api`
+)
+
+
+def _read_music_orchestrate_source() -> str:
+    """Read music_orchestrate.py from disk without importing it.
+
+    The structural-lock tests below need to inspect the source of two
+    private functions. We deliberately avoid `inspect.getsource` (which
+    requires `import app.tasks.music_orchestrate`) because that module
+    has heavy transitive imports (sqlalchemy, celery, fastapi, ...) which
+    are not needed for source-level invariant checks.
+    """
+    import os
+
+    # pytest may be invoked from various cwd's; resolve relative to this file.
+    api_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+    path = os.path.join(api_dir, _MUSIC_ORCHESTRATE_SOURCE_PATH)
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def _extract_function_body(source: str, func_name: str) -> str:
+    """Return the body of `def func_name(...)` up to the next top-level `def`.
+
+    Top-level meaning at column 0 — we don't care about nested defs, just
+    the slice belonging to this function.
+    """
+    needle = f"\ndef {func_name}("
+    start = source.find(needle)
+    assert start != -1, f"function {func_name} not found in source"
+    next_def = source.find("\ndef ", start + len(needle))
+    end = next_def if next_def != -1 else len(source)
+    return source[start:end]
+
+
+def _extract_mix_template_audio_call(func_source: str) -> str:
+    """Pull the (possibly multi-line) `_mix_template_audio(...)` call from `func_source`.
+
+    Returns the text from `_mix_template_audio(` through its closing paren.
+    Used by the structural-lock tests below.
+    """
+    call_idx = func_source.index("_mix_template_audio(")
+    depth = 0
+    for i in range(call_idx, len(func_source)):
+        ch = func_source[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return func_source[call_idx : i + 1]
+    raise AssertionError("Unbalanced parens in _mix_template_audio call")
+
+
+def test_run_music_job_passes_audio_start_offset_s_to_mixer() -> None:
+    """Lock the Bug A fix: `_run_music_job` MUST pass `audio_start_offset_s`.
+
+    Without this kwarg, `_mix_template_audio` defaults the offset to 0.0 and
+    FFmpeg plays the song from t=0 — while the lyric injector positions
+    overlays in section-relative time (subtracting `best_start_s` from every
+    word). The two timelines drift by `best_start_s` seconds. On the prod
+    repro (Travis Scott — HIGHEST IN THE ROOM, best_start_s=68.7s) the lyrics
+    were 68.7 seconds out of sync with the audio.
+
+    This is a structural source-inspection test rather than a full mock-based
+    integration test. Mocking the entire _run_music_job pipeline (download,
+    probe, Gemini upload+analyze, template match, assemble, mix, upload)
+    requires ~12 patches and is brittle; the structural test catches the
+    regression cleanly and explains *why* it matters in the failure message.
+    """
+    src = _read_music_orchestrate_source()
+    body = _extract_function_body(src, "_run_music_job")
+    mix_call = _extract_mix_template_audio_call(body)
+    assert "audio_start_offset_s" in mix_call, (
+        "_mix_template_audio in _run_music_job is missing the "
+        "audio_start_offset_s kwarg. Without it the song plays from t=0 "
+        "while lyric overlays are positioned in section-relative time, "
+        "causing drift of best_start_s seconds (Bug A — fixed in #257).\n\n"
+        f"Current call:\n{mix_call}"
+    )
+    # The offset must come from track_config best_start_s, not a literal 0
+    # or a stale local variable. Document the explicit data dependency.
+    assert "best_start_s" in mix_call, (
+        "_mix_template_audio must derive audio_start_offset_s from "
+        "track_config.best_start_s (the same source used for the lyric "
+        f"injector call). Current call:\n{mix_call}"
+    )
+
+
+def test_run_templated_music_job_passes_audio_start_offset_s_to_mixer() -> None:
+    """Mirror Bug A lock for the templated-music path.
+
+    Templated tracks (typed-slot recipes like Love From Moon) currently default
+    `best_start_s` to 0, so this kwarg is a latent guard rather than an active
+    fix on the prod repro. Still required: a future templated track configured
+    with a non-zero `best_start_s` would otherwise resurface the same drift
+    that bit `_run_music_job`.
+    """
+    src = _read_music_orchestrate_source()
+    body = _extract_function_body(src, "_run_templated_music_job")
+    mix_call = _extract_mix_template_audio_call(body)
+    assert "audio_start_offset_s" in mix_call, (
+        "_mix_template_audio in _run_templated_music_job is missing the "
+        "audio_start_offset_s kwarg — see _run_music_job for the original "
+        "incident. Latent for templated tracks today (best_start_s==0 by "
+        "convention) but required as defense-in-depth.\n\n"
+        f"Current call:\n{mix_call}"
+    )
+    assert "best_start_s" in mix_call
