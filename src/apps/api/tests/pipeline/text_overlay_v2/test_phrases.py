@@ -462,3 +462,113 @@ def test_finalize_preserves_distinct_words_in_y_order():
     )
     phrases = reconstruct_phrases(events)
     assert phrases[0].lines == ["Top", "Middle", "Bottom"]
+
+
+# ── Cross-phrase dedup in atomized mode ───────────────────────────────────────
+#
+# Regression for prod job 673d26d7-edbf-43a8-ac58-50dd604baae0 on template
+# fdaf3bbc-2f4f-43bc-ba7c-e5cd819de102 (Not Just Luck, 2026-05-20). Atomized
+# output contained "the" twice with overlapping intervals, "to" three times
+# all at 5.5-6.0, "combination" three times spanning 8.0-9.5, and "and" five
+# times in the 9.5-10.5 window. Renderer stacked all 21 overlays
+# center-positioned. _dedup_overlapping_atomized_phrases collapses these
+# OCR re-detections back into one phrase per visible word.
+
+
+def test_atomize_dedups_overlapping_same_text_phrases():
+    # Two events with identical text whose time intervals overlap.
+    # Atomized mode produces two phrases; cross-phrase dedup collapses them.
+    events = _events(
+        ("the", 4.5, 5.5, 0.5, 0.5),
+        ("the", 5.0, 6.0, 0.5, 0.5),
+    )
+    phrases = reconstruct_phrases(events, atomize_per_event=True)
+    assert len(phrases) == 1
+    assert phrases[0].sample_text == "the"
+    # Merged interval covers the union of both inputs.
+    assert phrases[0].start_t_s == 4.5
+    assert phrases[0].end_t_s == 6.0
+
+
+def test_atomize_dedups_three_identical_overlapping_phrases():
+    # Three "to" phrases at identical [5.5, 6.0] — the production "to/get/to"
+    # pattern with one neighboring distinct word in between in time-sorted
+    # order. The "get" must survive; the three "to"s collapse to one.
+    events = _events(
+        ("to", 5.5, 6.0, 0.5, 0.5),
+        ("get", 5.5, 6.0, 0.4, 0.5),
+        ("to", 5.5, 6.0, 0.6, 0.5),
+        ("to", 5.5, 6.0, 0.5, 0.5),
+    )
+    phrases = reconstruct_phrases(events, atomize_per_event=True)
+    sample_texts = sorted(p.sample_text for p in phrases)
+    assert sample_texts == ["get", "to"], (
+        f"three identical 'to' phrases must collapse to one alongside 'get'; got {sample_texts}"
+    )
+
+
+def test_atomize_preserves_legitimate_repeat_with_gap():
+    # Same text said twice with a gap larger than the dedup threshold —
+    # a real refrain or beat-synced re-display. Both must survive.
+    events = _events(
+        ("rain", 0.0, 1.0, 0.5, 0.5),
+        ("rain", 3.0, 4.0, 0.5, 0.5),  # 2s gap, well above _ATOMIZED_DEDUP_GAP_THRESHOLD_S
+    )
+    phrases = reconstruct_phrases(events, atomize_per_event=True)
+    assert len(phrases) == 2
+    assert [p.start_t_s for p in phrases] == [0.0, 3.0]
+    assert [p.sample_text for p in phrases] == ["rain", "rain"]
+
+
+def test_atomize_dedup_preserves_distinct_overlapping_words():
+    # Two overlapping events with different text must NOT collapse.
+    # Guards against the dedup over-reaching.
+    events = _events(
+        ("if", 0.0, 1.0, 0.4, 0.5),
+        ("you", 0.5, 1.5, 0.6, 0.5),
+    )
+    phrases = reconstruct_phrases(events, atomize_per_event=True)
+    assert len(phrases) == 2
+    assert sorted(p.sample_text for p in phrases) == ["if", "you"]
+
+
+def test_atomize_dedup_collapses_full_not_just_luck_run():
+    # Exact replay of the prod 21-overlay output. Expected after dedup:
+    # 1× "the" (4.5-6.0), 1× "work" (5.0-6.0), 1× "to" (5.5-6.0),
+    # 1× "get" (5.5-6.0), 1× "luck" (6.5-8.0), 1× "combination" (8.0-9.5),
+    # 1× "and" (9.5-10.5), 1× "don't" (10.0-10.5).
+    # 8 distinct words from 11 input events; the missing rows below mirror
+    # the prod set, abbreviated to keep the test focused.
+    events = _events(
+        ("the", 4.5, 5.5, 0.5, 0.5),
+        ("the", 5.0, 6.0, 0.5, 0.5),
+        ("work", 5.0, 6.0, 0.4, 0.5),
+        ("to", 5.5, 6.0, 0.5, 0.5),
+        ("get", 5.5, 6.0, 0.45, 0.5),
+        ("to", 5.5, 6.0, 0.55, 0.5),
+        ("luck", 6.5, 7.0, 0.5, 0.5),
+        ("luck", 6.5, 8.0, 0.5, 0.5),
+        ("combination", 8.0, 8.5, 0.5, 0.5),
+        ("combination", 8.5, 9.0, 0.5, 0.5),
+        ("combination", 8.5, 9.5, 0.5, 0.5),
+        ("and", 9.5, 10.0, 0.5, 0.5),
+        ("and", 10.0, 10.5, 0.5, 0.5),
+        ("don't", 10.0, 10.5, 0.5, 0.5),
+    )
+    phrases = reconstruct_phrases(events, atomize_per_event=True)
+    texts_by_start = [(p.start_t_s, p.sample_text) for p in phrases]
+    # Each distinct word appears exactly once; total count drops from 14 → 8.
+    assert len(phrases) == 8, (
+        f"expected 8 phrases after dedup, got {len(phrases)}: {texts_by_start}"
+    )
+    sample_texts = sorted(p.sample_text for p in phrases)
+    assert sample_texts == [
+        "and",
+        "combination",
+        "don't",
+        "get",
+        "luck",
+        "the",
+        "to",
+        "work",
+    ]

@@ -128,10 +128,18 @@ TEXT_OVERLAY_VERSION_V1 = "v1"
 #     shipped the atomize_mode prompt branching but the cache constant wasn't
 #     re-bumped, so reanalyze cache-hit on the v0.4.34.0 namespace and served
 #     the multi-word-stuffed recipes from that run unchanged.
+#   2026-05-20 (v2-2026-05-19-atomize → v2-2026-05-20-xphrase-dedup): Stage D
+#     `_dedup_overlapping_atomized_phrases` collapses same-text atomized
+#     phrases whose intervals overlap or sit within 0.5s of each other.
+#     Caught after the v0.4.37.0 cache-fix reanalyze of Not Just Luck
+#     (job 673d26d7-edbf-43a8-ac58-50dd604baae0) produced 21 overlays with
+#     "and" appearing 5×, "combination" 3×, "to" 3×, "the" 2× — all stacked
+#     center-positioned because atomized mode skipped the within-cluster
+#     dedup loop in `_finalize`.
 #
 # When you change anything that affects Layer-2 overlay output (Stage E
 # prompt, sanitizer logic, Stage D/G semantics), append a new suffix here.
-TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-19-atomize"
+TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-20-xphrase-dedup"
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.

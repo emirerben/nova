@@ -40,6 +40,16 @@ from app.agents._schemas.text_overlay_pipeline import (
 
 DEFAULT_X_BAND_THRESHOLD = 0.15
 
+# Maximum gap between two atomized same-text phrases that still counts as
+# OCR re-detection of the same on-screen word. Phrases farther apart than
+# this are kept separate because they likely represent a real repeat
+# (e.g. a refrain or a beat-synced re-display) rather than the multi-frame
+# OCR fan-out that produced job 673d26d7-edbf-43a8-ac58-50dd604baae0 's
+# "and / and / and / and / and" stutter on template Not Just Luck. Tuned
+# to be a touch above sub-second neighbor sampling without swallowing a
+# typical word's display duration.
+_ATOMIZED_DEDUP_GAP_THRESHOLD_S = 0.5
+
 
 def reconstruct_phrases(
     events: list[TextEvent],
@@ -63,13 +73,21 @@ def reconstruct_phrases(
     becomes its own one-line phrase. Used by the word-by-word pipeline
     (after `tokenize_detections_into_words`) where each event already
     represents a single word and same-line same-time words must NOT be
-    re-merged into a multi-line phrase.
+    re-merged into a multi-line phrase. After per-event finalize, the
+    output passes through `_dedup_overlapping_atomized_phrases` so the
+    same on-screen word captured by OCR across multiple frame samples
+    collapses back to a single phrase covering the union of its
+    appearances.
     """
     if not events:
         return []
 
     if atomize_per_event:
-        return [_finalize([ev]) for ev in sorted(events, key=lambda e: (e.start_t_s, e.aabb[1]))]
+        sorted_events = sorted(events, key=lambda e: (e.start_t_s, e.aabb[1]))
+        finalized = [_finalize([ev]) for ev in sorted_events]
+        return _dedup_overlapping_atomized_phrases(
+            finalized, gap_threshold_s=_ATOMIZED_DEDUP_GAP_THRESHOLD_S
+        )
 
     events_sorted = sorted(events, key=lambda e: (e.start_t_s, e.aabb[1]))
     open_phrases: list[list[TextEvent]] = []
@@ -141,3 +159,69 @@ def _finalize(phrase_events: list[TextEvent]) -> Phrase:
         aabb=aabb,
         mean_confidence=mean_confidence,
     )
+
+
+def _dedup_overlapping_atomized_phrases(
+    phrases: list[Phrase],
+    *,
+    gap_threshold_s: float,
+) -> list[Phrase]:
+    """Collapse same-text phrases whose time intervals overlap or sit within
+    `gap_threshold_s` of each other.
+
+    The atomized path produces one phrase per `TextEvent` to keep
+    word-by-word overlays distinct. But OCR routinely fires the same
+    on-screen word in multiple sampled frames, yielding multiple events
+    whose `text` is identical and whose time intervals overlap or sit
+    near-adjacent. The atomize short-circuit in `reconstruct_phrases`
+    skips the cluster-then-dedup loop in `_finalize`, so those duplicates
+    survive all the way to the renderer.
+
+    Concrete failure mode (prod job 673d26d7-edbf-43a8-ac58-50dd604baae0
+    on template Not Just Luck, 2026-05-20): atomized output contained
+    "the" twice (overlapping intervals at 4.5-5.5 and 5.0-6.0), "to" three
+    times all at 5.5-6.0, "combination" three times spanning 8.0-9.5, and
+    "and" five times in the 9.5-10.5 window. Renderer stacked all 21
+    overlays center-positioned on top of each other.
+
+    Algorithm: group by casefolded-stripped text key, sort each group by
+    start time, then merge intervals where the next start is within
+    `gap_threshold_s` of the prior end. Order is restored at the end by
+    re-sorting on start time so the renderer still walks the timeline.
+
+    `gap_threshold_s` is tuned to swallow OCR re-detection (sub-second
+    frame sampling) without swallowing legitimate repeats — a beat-synced
+    refrain or a deliberate re-display will have a gap larger than this.
+    A separate `gap_threshold_s=0` would only collapse strict overlaps
+    and miss the sub-second neighbor cases.
+    """
+    if len(phrases) <= 1:
+        return list(phrases)
+
+    groups: dict[str, list[Phrase]] = {}
+    for p in phrases:
+        key = "\n".join(line.strip().casefold() for line in p.lines)
+        groups.setdefault(key, []).append(p)
+
+    merged: list[Phrase] = []
+    for key, group in groups.items():
+        group.sort(key=lambda p: p.start_t_s)
+        run: Phrase = group[0]
+        for p in group[1:]:
+            if p.start_t_s - run.end_t_s <= gap_threshold_s:
+                run = Phrase(
+                    lines=run.lines,
+                    start_t_s=run.start_t_s,
+                    end_t_s=max(run.end_t_s, p.end_t_s),
+                    aabb=_aabb_union(run.aabb, p.aabb),
+                    # Pick the higher confidence so a marginal re-detection
+                    # next to a strong one doesn't drag the score down.
+                    mean_confidence=max(run.mean_confidence, p.mean_confidence),
+                )
+            else:
+                merged.append(run)
+                run = p
+        merged.append(run)
+
+    merged.sort(key=lambda p: p.start_t_s)
+    return merged
