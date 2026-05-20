@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.38.0] - 2026-05-20
+
+### Changed
+- **Home page (`/`) now paints instantly instead of showing a blank screen while JS loads.** The template gallery used to be a client-only component that downloaded its bundle, hydrated, and only then fired the `/templates` fetch from `useEffect`. On a cold visit a user stared at a blank screen for ~700ms–1.8s before even seeing a skeleton. Page is now an async server component that streams the header + skeleton in the initial HTML and resolves the template grid via `<Suspense>` once the data lands. Subsequent visits within 60s hit Next.js's data cache and skip the round-trip to Fly entirely. Above-the-fold posters (first 6 tiles) load eagerly with `fetchPriority="high"` instead of `loading="lazy"`, so they appear with the tiles rather than popping in after.
+- **Backend `/templates` endpoint caches its result in-process for 30s.** A Vercel cache miss (cold revalidate, different region) no longer means a DB query + signed-URL generation per call — first request fills the cache, the next 30s of requests on the same Fly worker serve from memory. Admin publish/archive flushes the cache immediately via `invalidate_templates_cache()`. Bounded staleness for other template mutations (renames, reanalysis, `template_type` swaps) is intentional and capped at 30s. Signed poster URLs in the cached payload are 7-day TTL so the cache window is well within their signature lifetime. Per-process cache: each Fly worker has its own; an admin's PATCH invalidates only the worker that handled the request, so sibling workers see up to 30s of staleness across the fleet by design.
+
 ## [0.4.37.0] - 2026-05-20
 
 ### Fixed
