@@ -96,7 +96,7 @@ export type LyricsStatus =
   | "failed"
   | "unavailable";
 
-export type LyricsStyle = "karaoke" | "per-word-pop";
+export type LyricsStyle = "karaoke" | "per-word-pop" | "line";
 
 /** Per-template visual config. Stored nested under `track_config.lyrics_config`. */
 export interface LyricsConfig {
