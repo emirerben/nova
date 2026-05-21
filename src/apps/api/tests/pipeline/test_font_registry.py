@@ -133,7 +133,9 @@ class TestFontRegistryFile:
                 if rec is not None:
                     internal_names.add(str(rec))
             if ass_name not in internal_names:
-                mismatches.append(f"{name}: ass_name='{ass_name}' not in internal names {internal_names}")
+                mismatches.append(
+                    f"{name}: ass_name='{ass_name}' not in internal names {internal_names}"
+                )
         assert not mismatches, "\n".join(mismatches)
 
     def test_style_defaults_point_to_active_fonts(self):
