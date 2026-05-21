@@ -108,6 +108,23 @@ export interface LyricsConfig {
   font_style?: "display" | "sans" | "serif";
   text_size?: "small" | "medium" | "large" | "xlarge";
   outline_px?: number;
+  pre_roll_s?: number;
+  post_dwell_s?: number;
+  next_line_gap_s?: number;
+  fade_in_ms?: number;
+  fade_out_ms?: number;
+  hold_to_next_threshold_ms?: number;
+  font_family?: string;
+}
+
+export interface LyricsConfigOverride {
+  pre_roll_s?: number;
+  post_dwell_s?: number;
+  next_line_gap_s?: number;
+  fade_in_ms?: number;
+  fade_out_ms?: number;
+  hold_to_next_threshold_ms?: number;
+  font_family?: string;
 }
 
 export interface LyricsCacheWord {
@@ -160,6 +177,16 @@ export interface MusicJobStatus {
   music_track_id: string | null;
   assembly_plan: Record<string, unknown> | null;
   error_detail: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LyricsPreviewStatus {
+  job_id: string;
+  status: string;
+  output_url: string | null;
+  error_detail: string | null;
+  lyrics_config_effective: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -268,6 +295,22 @@ export async function adminUpdateMusicTrack(
   return res.json();
 }
 
+export async function adminPatchLyricsConfig(
+  trackId: string,
+  partial: LyricsConfigOverride,
+): Promise<{ lyrics_config: Partial<LyricsConfig> }> {
+  const res = await fetch(`${ADMIN_PROXY}/music-tracks/${trackId}/lyrics-config`, {
+    method: "PATCH",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(partial),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? `Lyrics config save failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function adminReanalyzeMusicTrack(
   id: string,
 ): Promise<{ track_id: string; analysis_status: string }> {
@@ -343,11 +386,17 @@ export interface AdminMusicTestJobSummary {
 export async function adminCreateMusicTestJob(
   trackId: string,
   clipGcsPaths: string[],
+  lyricsConfigOverride?: LyricsConfigOverride,
 ): Promise<MusicJobResponse> {
   const res = await fetch(`${ADMIN_PROXY}/music-tracks/${trackId}/test-job`, {
     method: "POST",
     headers: JSON_HEADERS,
-    body: JSON.stringify({ clip_gcs_paths: clipGcsPaths }),
+    body: JSON.stringify({
+      clip_gcs_paths: clipGcsPaths,
+      ...(lyricsConfigOverride
+        ? { lyrics_config_override: lyricsConfigOverride }
+        : {}),
+    }),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
@@ -359,11 +408,17 @@ export async function adminCreateMusicTestJob(
 export async function adminRerenderMusicJob(
   trackId: string,
   sourceJobId: string,
+  lyricsConfigOverride?: LyricsConfigOverride,
 ): Promise<MusicJobResponse> {
   const res = await fetch(`${ADMIN_PROXY}/music-tracks/${trackId}/rerender-job`, {
     method: "POST",
     headers: JSON_HEADERS,
-    body: JSON.stringify({ source_job_id: sourceJobId }),
+    body: JSON.stringify({
+      source_job_id: sourceJobId,
+      ...(lyricsConfigOverride
+        ? { lyrics_config_override: lyricsConfigOverride }
+        : {}),
+    }),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
@@ -394,5 +449,36 @@ export async function adminGetMusicJobStatus(
     `${ADMIN_PROXY}/music-tracks/${trackId}/jobs/${jobId}/status`,
   );
   if (!res.ok) throw new Error(`Admin job status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function adminCreateLyricsPreview(
+  trackId: string,
+  lyricsConfigOverride?: LyricsConfigOverride,
+): Promise<{ job_id: string }> {
+  const res = await fetch(`${ADMIN_PROXY}/music-tracks/${trackId}/lyrics-preview`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(
+      lyricsConfigOverride
+        ? { lyrics_config_override: lyricsConfigOverride }
+        : {},
+    ),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? "Failed to create lyrics preview");
+  }
+  return res.json();
+}
+
+export async function adminGetLyricsPreviewStatus(
+  trackId: string,
+  jobId: string,
+): Promise<LyricsPreviewStatus> {
+  const res = await fetch(
+    `${ADMIN_PROXY}/music-tracks/${trackId}/lyrics-preview-jobs/${jobId}/status`,
+  );
+  if (!res.ok) throw new Error(`Lyrics preview status failed: ${res.status}`);
   return res.json();
 }

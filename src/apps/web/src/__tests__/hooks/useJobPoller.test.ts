@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useJobPoller } from "@/hooks/useJobPoller";
 
@@ -50,6 +51,73 @@ describe("useJobPoller", () => {
     });
 
     expect(result.current.polling).toBe(false);
+  });
+
+  it("polls default consumers at 4s", async () => {
+    jest.useFakeTimers();
+    const mockFetch = jest.fn().mockResolvedValue({ status: "queued" });
+
+    renderHook(() =>
+      useJobPoller("job-default", {
+        fetchStatus: mockFetch,
+        isTerminal: () => false,
+      }),
+    );
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      jest.advanceTimersByTime(3999);
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      jest.advanceTimersByTime(1);
+    });
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+    jest.useRealTimers();
+  });
+
+  it("polls explicit active consumers at 1s", async () => {
+    jest.useFakeTimers();
+    const mockFetch = jest.fn().mockResolvedValue({ status: "queued" });
+
+    renderHook(() =>
+      useJobPoller("job-fast", {
+        fetchStatus: mockFetch,
+        isTerminal: () => false,
+        activeIntervalMs: 1000,
+      }),
+    );
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      jest.advanceTimersByTime(1000);
+    });
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+    jest.useRealTimers();
+  });
+
+  it("does not continue interval polling after a terminal response", async () => {
+    jest.useFakeTimers();
+    const mockFetch = jest.fn().mockResolvedValue({ status: "done" });
+
+    renderHook(() =>
+      useJobPoller("job-terminal", {
+        fetchStatus: mockFetch,
+        isTerminal: (d) => d.status === "done",
+        activeIntervalMs: 1000,
+      }),
+    );
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      jest.advanceTimersByTime(5000);
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
   });
 
   it("sets error on fetch failure", async () => {

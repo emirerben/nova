@@ -50,10 +50,17 @@ from app.routes.music_jobs import (
     MusicJobStatusResponse,
     validate_clip_count,
 )
+from app.schemas.lyrics_config_override import LyricsConfigOverride
 from app.services.audio_download import (
     DownloadError,
     download_audio_and_upload,
     is_supported_audio_url,
+)
+from app.services.lyrics_config_effective import (
+    deep_merge_dict,
+    effective_lyrics_config,
+    non_null_model_dict,
+    normalize_lyrics_config,
 )
 from app.services.lyrics_config_validation import validate_lyrics_config_dict
 
@@ -166,6 +173,28 @@ class CreateMusicTrackResponse(BaseModel):
 class ReanalyzeResponse(BaseModel):
     track_id: str
     analysis_status: str
+
+
+class LyricsConfigPatchResponse(BaseModel):
+    lyrics_config: dict
+
+
+class LyricsPreviewRequest(BaseModel):
+    lyrics_config_override: LyricsConfigOverride | None = None
+
+
+class LyricsPreviewResponse(BaseModel):
+    job_id: str
+
+
+class LyricsPreviewStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    output_url: str | None = None
+    error_detail: str | None = None
+    lyrics_config_effective: dict | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -657,6 +686,139 @@ async def update_music_track(
     return _to_response(track)
 
 
+@router.patch(
+    "/{track_id}/lyrics-config",
+    response_model=LyricsConfigPatchResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def update_music_track_lyrics_config(
+    track_id: str,
+    req: LyricsConfigOverride,
+    db: AsyncSession = Depends(get_db),
+) -> LyricsConfigPatchResponse:
+    """Persist lyric timing defaults without disturbing other track_config keys."""
+    track = await _get_track_or_404(track_id, db)
+    override = non_null_model_dict(req)
+    track_config = dict(track.track_config or {})
+    merged = deep_merge_dict(track_config.get("lyrics_config") or {}, override)
+    try:
+        validate_lyrics_config_dict(merged)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    normalized = normalize_lyrics_config(merged)
+    track_config["lyrics_config"] = normalized
+    track.track_config = track_config
+    await db.commit()
+    await db.refresh(track)
+    return LyricsConfigPatchResponse(lyrics_config=normalized)
+
+
+@router.post(
+    "/{track_id}/lyrics-preview",
+    response_model=LyricsPreviewResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(_require_admin)],
+)
+async def create_admin_lyrics_preview(
+    track_id: str,
+    req: LyricsPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+) -> LyricsPreviewResponse:
+    track = await _get_track_or_404(track_id, db)
+    if track.analysis_status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Music track analysis is not complete (status: {track.analysis_status}).",
+        )
+    if not track.audio_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Music track has no audio file to preview.",
+        )
+    if not track.lyrics_cached:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Music track has no cached lyrics to preview.",
+        )
+
+    override = non_null_model_dict(req.lyrics_config_override)
+    try:
+        effective = {
+            **effective_lyrics_config(track.track_config, override),
+            "enabled": True,
+            "style": "line",
+        }
+        validate_lyrics_config_dict(effective)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    job = Job(
+        user_id=SYNTHETIC_USER_ID,
+        job_type="lyrics_preview",
+        music_track_id=track_id,
+        raw_storage_path=track.audio_gcs_path or "",
+        selected_platforms=["admin"],
+        all_candidates={"lyrics_config_effective": effective},
+        assembly_plan={"lyrics_config_effective": effective},
+        status="queued",
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
+    from app.tasks.lyrics_preview_task import render_lyrics_preview_task  # noqa: PLC0415
+
+    await enqueue_orchestrator(render_lyrics_preview_task, job.id, db)
+    return LyricsPreviewResponse(job_id=str(job.id))
+
+
+@router.get(
+    "/{track_id}/lyrics-preview-jobs/{job_id}/status",
+    response_model=LyricsPreviewStatusResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def get_admin_lyrics_preview_status(
+    track_id: str,
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> LyricsPreviewStatusResponse:
+    await _get_track_or_404(track_id, db)
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    result = await db.execute(select(Job).where(Job.id == job_uuid))
+    job = result.scalar_one_or_none()
+    if job is None or job.job_type != "lyrics_preview" or job.music_track_id != track_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    plan = job.assembly_plan or {}
+    raw_url = plan.get("output_url")
+    output_url = (
+        raw_url
+        if isinstance(raw_url, str) and raw_url.startswith(("http://", "https://"))
+        else None
+    )
+    return LyricsPreviewStatusResponse(
+        job_id=str(job.id),
+        status=job.status,
+        output_url=output_url,
+        error_detail=job.error_detail,
+        lyrics_config_effective=plan.get("lyrics_config_effective")
+        if isinstance(plan.get("lyrics_config_effective"), dict)
+        else None,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
+
+
 @router.post(
     "/{track_id}/extract-lyrics",
     response_model=ReanalyzeResponse,
@@ -800,6 +962,7 @@ def _validate_clip_path_prefixes(paths: list[str]) -> list[str]:
 class CreateAdminMusicJobRequest(BaseModel):
     clip_gcs_paths: list[str]
     selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
+    lyrics_config_override: LyricsConfigOverride | None = None
 
     @field_validator("clip_gcs_paths")
     @classmethod
@@ -822,6 +985,7 @@ class CreateAdminMusicJobRequest(BaseModel):
 
 class RerenderMusicJobRequest(BaseModel):
     source_job_id: str
+    lyrics_config_override: LyricsConfigOverride | None = None
 
 
 class AdminMusicJobSummary(BaseModel):
@@ -867,6 +1031,14 @@ async def create_admin_music_test_job(
     track = await _get_track_or_404(track_id, db)
     _require_ready_track_for_admin(track)
     validate_clip_count(track, len(req.clip_gcs_paths))
+    override = non_null_model_dict(req.lyrics_config_override)
+    try:
+        effective_lyrics_config(track.track_config, override)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
     job = Job(
         user_id=SYNTHETIC_USER_ID,
@@ -874,7 +1046,10 @@ async def create_admin_music_test_job(
         music_track_id=track_id,
         raw_storage_path=req.clip_gcs_paths[0],
         selected_platforms=req.selected_platforms,
-        all_candidates={"clip_paths": req.clip_gcs_paths},
+        all_candidates={
+            "clip_paths": req.clip_gcs_paths,
+            **({"lyrics_config_override": override} if override else {}),
+        },
         status="queued",
     )
     db.add(job)
@@ -918,6 +1093,14 @@ async def create_admin_music_rerender_job(
     """
     track = await _get_track_or_404(track_id, db)
     _require_ready_track_for_admin(track)
+    override = non_null_model_dict(req.lyrics_config_override)
+    try:
+        effective_lyrics_config(track.track_config, override)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
     try:
         source_uuid = uuid.UUID(req.source_job_id)
@@ -963,7 +1146,10 @@ async def create_admin_music_rerender_job(
         music_track_id=track_id,
         raw_storage_path=clip_paths[0],
         selected_platforms=source.selected_platforms or ["tiktok", "instagram", "youtube"],
-        all_candidates={"clip_paths": clip_paths},
+        all_candidates={
+            "clip_paths": clip_paths,
+            **({"lyrics_config_override": override} if override else {}),
+        },
         status="queued",
     )
     db.add(new_job)

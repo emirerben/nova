@@ -14,6 +14,10 @@ Caller-side semantics:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 LYRICS_STYLES = {"karaoke", "per-word-pop", "line"}
 LYRICS_POSITIONS = {
     "top",
@@ -23,6 +27,34 @@ LYRICS_POSITIONS = {
     "center-below",
     "center-label",
 }
+LYRICS_FONT_STYLES = {"display", "sans", "serif", "serif_italic", "script"}
+LYRICS_TEXT_SIZES = {"small", "medium", "large", "xlarge", "xxlarge", "jumbo"}
+LYRICS_CONFIG_KEYS = {
+    "enabled",
+    "style",
+    "position",
+    "text_color",
+    "highlight_color",
+    "font_style",
+    "text_size",
+    "outline_px",
+    "lines_per_screen",
+    "pre_roll_s",
+    "post_dwell_s",
+    "next_line_gap_s",
+    "fade_in_ms",
+    "fade_out_ms",
+    "hold_to_next_threshold_ms",
+    "font_family",
+}
+
+_FONT_REGISTRY_PATH = (
+    Path(__file__).resolve().parents[2] / "assets" / "fonts" / "font-registry.json"
+)
+try:
+    _FONT_REGISTRY: dict[str, Any] = json.loads(_FONT_REGISTRY_PATH.read_text())
+except Exception:
+    _FONT_REGISTRY = {"fonts": {}}
 
 
 def is_valid_hex_color(s: object) -> bool:
@@ -69,11 +101,52 @@ def validate_lyrics_config_dict(cfg: object) -> None:
     """
     if not isinstance(cfg, dict):
         raise ValueError("lyrics_config must be an object")
+    unknown = set(cfg) - LYRICS_CONFIG_KEYS
+    if unknown:
+        raise ValueError(f"lyrics_config contains unknown key(s): {sorted(unknown)}")
+    if "enabled" in cfg and not isinstance(cfg["enabled"], bool):
+        raise ValueError("lyrics_config.enabled must be a boolean")
     if "style" in cfg and cfg["style"] not in LYRICS_STYLES:
         raise ValueError(f"lyrics_config.style must be one of {sorted(LYRICS_STYLES)}")
     if "position" in cfg and cfg["position"] not in LYRICS_POSITIONS:
         raise ValueError(f"lyrics_config.position must be one of {sorted(LYRICS_POSITIONS)}")
+    if "font_style" in cfg and cfg["font_style"] not in LYRICS_FONT_STYLES:
+        raise ValueError(f"lyrics_config.font_style must be one of {sorted(LYRICS_FONT_STYLES)}")
+    if "text_size" in cfg and cfg["text_size"] not in LYRICS_TEXT_SIZES:
+        raise ValueError(f"lyrics_config.text_size must be one of {sorted(LYRICS_TEXT_SIZES)}")
+    if "font_family" in cfg and cfg["font_family"] is not None:
+        font_family = cfg["font_family"]
+        if not isinstance(font_family, str) or font_family not in _FONT_REGISTRY.get("fonts", {}):
+            raise ValueError("lyrics_config.font_family must be a known font registry key")
     for hex_key in ("text_color", "highlight_color"):
         v = cfg.get(hex_key)
         if v is not None and not is_valid_hex_color(v):
             raise ValueError(f"lyrics_config.{hex_key} must be a #RRGGBB hex string")
+    _validate_number(cfg, "outline_px", min_value=0, max_value=20, integer=True)
+    _validate_number(cfg, "lines_per_screen", min_value=1, max_value=4, integer=True)
+    _validate_number(cfg, "pre_roll_s", min_value=0.0, max_value=2.0)
+    _validate_number(cfg, "post_dwell_s", min_value=0.0, max_value=5.0)
+    _validate_number(cfg, "next_line_gap_s", min_value=0.0, max_value=2.0)
+    _validate_number(cfg, "fade_in_ms", min_value=0, max_value=2000, integer=True)
+    _validate_number(cfg, "fade_out_ms", min_value=0, max_value=2000, integer=True)
+    _validate_number(cfg, "hold_to_next_threshold_ms", min_value=0, max_value=5000, integer=True)
+
+
+def _validate_number(
+    cfg: dict,
+    key: str,
+    *,
+    min_value: float,
+    max_value: float,
+    integer: bool = False,
+) -> None:
+    if key not in cfg or cfg[key] is None:
+        return
+    value = cfg[key]
+    if integer:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"lyrics_config.{key} must be an integer")
+    elif not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(f"lyrics_config.{key} must be a number")
+    if not (min_value <= value <= max_value):
+        raise ValueError(f"lyrics_config.{key} must be between {min_value} and {max_value}")

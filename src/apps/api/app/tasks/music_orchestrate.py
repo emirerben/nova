@@ -39,6 +39,7 @@ from app.pipeline.music_recipe import (
     generate_music_recipe,
     merge_audio_recipe,
 )
+from app.services.lyrics_config_effective import effective_lyrics_config
 from app.storage import download_to_file
 from app.tasks.template_orchestrate import (
     _analyze_clips_parallel,
@@ -478,6 +479,7 @@ def _run_music_job(job_id: str) -> None:
         music_track_id = job.music_track_id
         all_candidates = job.all_candidates or {}
         clip_paths_gcs: list[str] = all_candidates.get("clip_paths", [])
+        lyrics_config_override = all_candidates.get("lyrics_config_override") or None
 
     if not clip_paths_gcs:
         raise ValueError("No clip paths found in job")
@@ -509,7 +511,7 @@ def _run_music_job(job_id: str) -> None:
         # Lyrics config lives next to the rest of the per-track admin tuning
         # (best_start_s, slot_every_n_beats, etc) so admins can edit
         # everything in one place. See app.routes.admin_music.update_music_track.
-        lyrics_config = (track.track_config or {}).get("lyrics_config") or {}
+        lyrics_config = effective_lyrics_config(track.track_config or {}, lyrics_config_override)
 
     # [3] Generate recipe from beats
     recipe_dict = generate_music_recipe(track_data)
@@ -592,7 +594,8 @@ def _run_music_job(job_id: str) -> None:
                     "moment": step.moment,
                 }
                 for step in assembly_plan.steps
-            ]
+            ],
+            "lyrics_config_effective": lyrics_config,
         }
         with _sync_session() as db:
             job = db.get(Job, uuid.UUID(job_id))
@@ -1000,6 +1003,7 @@ def _run_templated_music_job(job_id: str) -> None:
             raise ValueError("Job has no music_track_id")
         all_candidates = job.all_candidates or {}
         clip_paths_gcs: list[str] = all_candidates.get("clip_paths", [])
+        lyrics_config_override = all_candidates.get("lyrics_config_override") or None
 
         track = db.get(MusicTrack, job.music_track_id)
         if track is None:
@@ -1014,7 +1018,7 @@ def _run_templated_music_job(job_id: str) -> None:
         audio_gcs_path = track.audio_gcs_path
         lyrics_cached_tmpl = track.lyrics_cached
         track_cfg_tmpl = track.track_config or {}
-        lyrics_config_tmpl = track_cfg_tmpl.get("lyrics_config") or {}
+        lyrics_config_tmpl = effective_lyrics_config(track_cfg_tmpl, lyrics_config_override)
 
     # Inject lyric overlays for templated tracks. `best_start_s` defaults to 0
     # for templated tracks (slot times already start at the beginning of the
@@ -1239,6 +1243,7 @@ def _run_templated_music_job(job_id: str) -> None:
                 for step in steps
             ],
             "templated": True,
+            "lyrics_config_effective": lyrics_config_tmpl,
         }
         with _sync_session() as db:
             j = db.get(Job, uuid.UUID(job_id))
