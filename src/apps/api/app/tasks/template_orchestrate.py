@@ -3689,6 +3689,13 @@ def _collect_absolute_overlays(
                 entry["word_timings"] = ov["word_timings"]
             if ov.get("highlight_color"):
                 entry["highlight_color"] = ov["highlight_color"]
+            # `lyric-line` effect fade durations. Threaded through the same
+            # entry dict so the text-overlay renderer can pick them up in
+            # _write_animated_ass without a separate parameter channel.
+            if ov.get("fade_in_ms") is not None:
+                entry["fade_in_ms"] = ov["fade_in_ms"]
+            if ov.get("fade_out_ms") is not None:
+                entry["fade_out_ms"] = ov["fade_out_ms"]
             # Pass through player-card fields so the renderer receives
             # jersey_no + player_name (the special-effect path needs both).
             if ov.get("jersey_no"):
@@ -3856,8 +3863,12 @@ def _collect_absolute_overlays(
                 # overlays would invalidate the word timings on whichever
                 # one got absorbed. Lyric injector already places each line
                 # at its own timestamp, so dedup never applies here.
-                and ov.get("effect") != "karaoke-line"
-                and prev.get("effect") != "karaoke-line"
+                # `lyric-line` is excluded for the same reason: each line
+                # needs its own fade-in/fade-out window. Merging two adjacent
+                # lyric-line overlays would collapse them into one block
+                # with a single fade, losing the per-line transition.
+                and ov.get("effect") not in ("karaoke-line", "lyric-line")
+                and prev.get("effect") not in ("karaoke-line", "lyric-line")
                 and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
             ):
                 # Merge: extend previous overlay's end time
