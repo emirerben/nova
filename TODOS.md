@@ -1,5 +1,21 @@
 # Nova — Deferred Work
 
+## Fonts
+
+### Save the variable-font instancing helper as a committed script
+**What:** v0.4.38.1 instanced Montserrat-Regular/Bold from `Montserrat[wght].ttf` using a one-off Python script at `/tmp/instance_montserrat_v2.py` that ran `fontTools.varLib.instancer.instantiateVariableFont` and then patched nameID 1/2/4/6 so the family name stays "Montserrat" instead of the variable font's default-instance name. The script lives only in /tmp. Next time someone needs to add a static weight from a variable-font source (Inter-SemiBold, Poppins-Medium, etc.) they will re-derive the name-table fixup from scratch.
+**Why:** The default `instantiateVariableFont` call leaves the family name as the variable font's default instance (e.g. "Montserrat Thin") which causes libass to silently fall back to a system font at render time. The fix is non-obvious and was caught only because v0.4.38.1 added a guard test. The next person without the guard test or this script in front of them will hit the same bug.
+**How:** Lift the script from this PR's session into `src/apps/api/scripts/instance_variable_font.py`. Parametrize the family name + weights via CLI args. Add a one-paragraph README section under the font library docs explaining when to use it.
+**Effort:** XS (human: ~30 min / CC: ~5 min)
+**Priority:** P3
+
+### Fix `test_active_font_renders_with_ass` smoke test on FFmpeg 8.1.1
+**What:** `tests/pipeline/test_text_overlay_smoke.py::test_active_font_renders_with_ass` is parametrized over every active font and fails for ALL of them on FFmpeg 8.1.1 (Homebrew, macOS). All 24 failures share the same error: `[AVFilterGraph] No option name near '/tmp/.../font-smoke.ass:fontsdir=...'` — FFmpeg's filter-graph parser is rejecting the unescaped `:` in the absolute ASS path. Was 18 failures on main pre-v0.4.38.1; now 24 because the new fonts get parametrized in. Verified pre-existing.
+**Why:** This is the only test that exercises libass actually loading a font from fontsdir end-to-end. With it broken locally, font-related changes can ship subtle render-time bugs (like the Montserrat family-name issue v0.4.38.1 fixed by adding a unit-level guard test). CI may still pass if it uses an older FFmpeg, but local devs can't verify.
+**How:** Update the `subtitles=...` filter string in the test to escape colons in the ASS path, matching what `single_pass.py` does at line ~457 (escapes `:` to `\:`). Cross-check against `app/pipeline/single_pass.py:457` for the exact escaping rules. Verify against both FFmpeg 6.x and 8.x.
+**Effort:** S (human: ~1h / CC: ~15 min)
+**Priority:** P2
+
 ## Agent evals — Phase 2
 
 **Completed in v0.4.6.0 (2026-05-10):**
