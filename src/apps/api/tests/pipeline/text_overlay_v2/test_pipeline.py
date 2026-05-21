@@ -443,3 +443,351 @@ def test_stage_g_caps_extension_at_max_window():
     hook = overlays_by_text["hook"]
     # Without the cap, hook would extend to 9.0s. Capped at 0 + 2.0 = 2.0s.
     assert hook.end_s == pytest.approx(2.0)
+
+
+# ── Stage G cumulative emit (LineGroup → progressive word reveal) ──────────
+
+
+def _make_atomized_classified(word: str, start_s: float, x_min: float = 0.1):
+    """ClassifiedPhrase with a single-word atomized phrase at a known left x."""
+    from app.agents._schemas.text_classification import ClassifiedPhrase
+    from app.agents._schemas.text_overlay_pipeline import Phrase
+
+    return ClassifiedPhrase(
+        phrase=Phrase(
+            lines=[word],
+            start_t_s=start_s,
+            end_t_s=start_s + 0.5,
+            aabb=(x_min, 0.7, x_min + 0.2, 0.85),
+            mean_confidence=0.9,
+        ),
+        effect="pop-in",
+        role="label",
+        size_class="medium",
+        font_color_hex="#FFFFFF",
+    )
+
+
+def test_stage_g_line_group_emits_n_cumulative_overlays():
+    """A LineGroup of 3 atomized phrases emits 3 cumulative overlays where
+    each carries the cumulative text up to and including its word. This is
+    the core progressive-reveal behavior the user requested."""
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    classified = [
+        _make_atomized_classified("good", 0.0),
+        _make_atomized_classified("morning", 1.0),
+        _make_atomized_classified("everyone", 2.0),
+    ]
+    lg = LineGroup(
+        phrase_indices=[0, 1, 2],
+        line_end_s=3.0,
+        line_anchor_x_frac=0.1,
+
+        line_anchor_y_frac=0.8,
+
+        line_height_frac=0.05,
+        transcript_word_indices=[0, 1, 2],
+        word_start_s_list=[0.0, 1.0, 2.0],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 10.0)], line_groups=[lg]
+    )
+    assert len(out.overlays) == 3
+    cumulative_texts = [o.sample_text for o in out.overlays]
+    assert cumulative_texts == ["good", "good morning", "good morning everyone"]
+
+
+def test_stage_g_line_group_overlays_are_left_anchored():
+    """Cumulative overlays must carry text_anchor='left' so the rendered
+    text grows rightward without re-centering as new words appear."""
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    classified = [
+        _make_atomized_classified("hello", 0.0, x_min=0.15),
+        _make_atomized_classified("world", 1.0, x_min=0.4),
+    ]
+    lg = LineGroup(
+        phrase_indices=[0, 1],
+        line_end_s=2.0,
+        line_anchor_x_frac=0.15,
+
+        line_anchor_y_frac=0.8,
+
+        line_height_frac=0.05,
+        transcript_word_indices=[0, 1],
+        word_start_s_list=[0.0, 1.0],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 5.0)], line_groups=[lg]
+    )
+    assert all(o.text_anchor == "left" for o in out.overlays)
+    # All cumulative overlays share the FIRST phrase's left anchor, regardless
+    # of where individual words' bboxes were on screen. Left edge of "good"
+    # stays put as "morning" enters to its right.
+    assert all(o.bbox.x_norm == pytest.approx(0.15) for o in out.overlays)
+
+
+def test_stage_g_pop_animated_suffix_on_pop_in_effect():
+    """When the classified effect is pop-in, each cumulative stage carries
+    pop_animated_suffix = newly added word so only that word pops on screen
+    (prefix renders statically)."""
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    classified = [
+        _make_atomized_classified("good", 0.0),
+        _make_atomized_classified("morning", 1.0),
+    ]
+    lg = LineGroup(
+        phrase_indices=[0, 1],
+        line_end_s=2.0,
+        line_anchor_x_frac=0.1,
+
+        line_anchor_y_frac=0.8,
+
+        line_height_frac=0.05,
+        transcript_word_indices=[0, 1],
+        word_start_s_list=[0.0, 1.0],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 5.0)], line_groups=[lg]
+    )
+    assert [o.pop_animated_suffix for o in out.overlays] == ["good", "morning"]
+
+
+def test_stage_g_pop_animated_suffix_none_for_non_pop_effect():
+    """When the classified effect is not pop-in, pop_animated_suffix stays
+    None so the renderer doesn't try to animate a suffix on a static overlay."""
+    from app.agents._schemas.text_classification import ClassifiedPhrase
+    from app.agents._schemas.text_overlay_pipeline import Phrase
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    # Build classified with effect="none" instead of pop-in.
+    def _none_atomized(w, s):
+        return ClassifiedPhrase(
+            phrase=Phrase(
+                lines=[w], start_t_s=s, end_t_s=s + 0.3,
+                aabb=(0.1, 0.7, 0.3, 0.85), mean_confidence=0.9,
+            ),
+            effect="none", role="label", size_class="medium", font_color_hex="#FFFFFF",
+        )
+    classified = [_none_atomized("a", 0.0), _none_atomized("b", 1.0)]
+    lg = LineGroup(
+        phrase_indices=[0, 1], line_end_s=2.0, line_anchor_x_frac=0.1,
+ line_anchor_y_frac=0.8,
+ line_height_frac=0.05,
+        transcript_word_indices=[0, 1], word_start_s_list=[0.0, 1.0],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 5.0)], line_groups=[lg]
+    )
+    assert all(o.pop_animated_suffix is None for o in out.overlays)
+
+
+def test_stage_g_ungrouped_phrases_passthrough_unchanged():
+    """Phrases NOT in any LineGroup use the existing per-phrase emit path
+    (one TemplateTextOverlay per phrase, center-anchored). This is the
+    regression lock — visual-only labels and non-progressive captions
+    must keep working."""
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    classified = [
+        _make_atomized_classified("hello", 0.0),
+        _make_atomized_classified("PERU", 5.0),  # not in any group
+        _make_atomized_classified("world", 1.0),
+    ]
+    # Only phrases 0 and 2 are in the line group; phrase 1 ("PERU") stays
+    # ungrouped and passes through.
+    lg = LineGroup(
+        phrase_indices=[0, 2],
+        line_end_s=2.0,
+        line_anchor_x_frac=0.1,
+
+        line_anchor_y_frac=0.8,
+
+        line_height_frac=0.05,
+        transcript_word_indices=[0, 1],
+        word_start_s_list=[0.0, 1.0],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 10.0)], line_groups=[lg]
+    )
+    # 2 cumulative + 1 passthrough = 3 overlays.
+    assert len(out.overlays) == 3
+    by_text = {o.sample_text: o for o in out.overlays}
+    assert "PERU" in by_text
+    # PERU stays center-anchored (the default), not left-anchored.
+    assert by_text["PERU"].text_anchor == "center"
+    # The two cumulative overlays are left-anchored.
+    assert by_text["hello"].text_anchor == "left"
+    assert by_text["hello world"].text_anchor == "left"
+
+
+def test_stage_g_empty_line_groups_preserves_existing_behavior():
+    """Passing line_groups=None or empty list must produce identical output
+    to the pre-change behavior — every phrase goes through the per-phrase
+    passthrough emit. This is the broad regression lock."""
+    classified = [
+        _make_atomized_classified("good", 0.0),
+        _make_atomized_classified("morning", 1.0),
+    ]
+    out_none = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 5.0)], line_groups=None
+    )
+    out_empty = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 5.0)], line_groups=[]
+    )
+    assert len(out_none.overlays) == 2
+    assert len(out_empty.overlays) == 2
+    # Both are center-anchored (default), not left.
+    assert all(o.text_anchor == "center" for o in out_none.overlays)
+
+
+def test_stage_g_line_split_breaks_oversized_cumulative_line():
+    """A LineGroup whose cumulative text would exceed 90% of canvas width
+    splits at the overflow word into separate sub-groups, each with its
+    own start time. No word is dropped."""
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    # 12 medium-size words: cumulative text grows past 90% canvas width
+    # around word 6-8 depending on font. Forces at least one split.
+    long_words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa", "lambda", "mu"]
+    classified = [
+        _make_atomized_classified(w, float(i)) for i, w in enumerate(long_words)
+    ]
+    lg = LineGroup(
+        phrase_indices=list(range(len(long_words))),
+        line_end_s=12.0,
+        line_anchor_x_frac=0.05,
+
+        line_anchor_y_frac=0.8,
+
+        line_height_frac=0.05,
+        transcript_word_indices=list(range(len(long_words))),
+        word_start_s_list=[float(i) for i in range(len(long_words))],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 15.0)], line_groups=[lg]
+    )
+    # Total overlays > len(words) because each sub-group emits N cumulative
+    # stages for N words — and split sub-groups duplicate prefix words across
+    # boundaries? No: split sub-groups RESET cumulative text, so total =
+    # sum of sub-group sizes. With 12 words and at least one split, total
+    # overlays equals 12 (no overlap, no drop).
+    assert len(out.overlays) == len(long_words)
+    # Reveal sequence: the first overlay is "alpha"; somewhere in the middle
+    # a cumulative resets (text becomes a single word, not cumulative-prefixed).
+    cumulative_resets = sum(
+        1 for o in out.overlays if " " not in o.sample_text and o.sample_text in long_words[1:]
+    )
+    # At least one reset means line was split into >=2 sub-groups.
+    assert cumulative_resets >= 1
+
+
+def test_stage_g_cumulative_bbox_y_norm_comes_from_first_phrase():
+    """Cumulative overlays must inherit the line group's y position, not
+    hardcode canvas center. Regression for the P1 bug where every cumulative
+    reveal rendered at y=0.5 regardless of where OCR detected the line."""
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    classified = [
+        _make_atomized_classified("hello", 0.0),
+        _make_atomized_classified("world", 1.0),
+    ]
+    lg = LineGroup(
+        phrase_indices=[0, 1],
+        line_end_s=2.0,
+        line_anchor_x_frac=0.1,
+        line_anchor_y_frac=0.8,  # bottom of screen, NOT 0.5
+        line_height_frac=0.05,
+        transcript_word_indices=[0, 1],
+        word_start_s_list=[0.0, 1.0],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 5.0)], line_groups=[lg]
+    )
+    assert all(o.bbox.y_norm == pytest.approx(0.8) for o in out.overlays)
+
+
+def test_stage_g_cumulative_bbox_x_norm_is_not_clamped():
+    """Cumulative overlays at the canvas's left edge keep their detected x
+    position. Regression for the prior bug where x_norm was clamped to
+    >= 0.05, visibly shifting left-hugging text right by ~30px."""
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    classified = [
+        _make_atomized_classified("hello", 0.0),
+        _make_atomized_classified("world", 1.0),
+    ]
+    lg = LineGroup(
+        phrase_indices=[0, 1],
+        line_end_s=2.0,
+        line_anchor_x_frac=0.02,  # would have been clamped to 0.05
+        line_anchor_y_frac=0.8,
+        line_height_frac=0.05,
+        transcript_word_indices=[0, 1],
+        word_start_s_list=[0.0, 1.0],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 5.0)], line_groups=[lg]
+    )
+    assert all(o.bbox.x_norm == pytest.approx(0.02) for o in out.overlays)
+
+
+def test_stage_g_output_is_sorted_by_start_s():
+    """Final overlay list interleaves cumulative + ungrouped by start time.
+    FFmpeg's overlay filter layers later items on top of earlier ones —
+    sorting by start_s keeps later-starting overlays visually on top
+    regardless of which branch (cumulative vs passthrough) produced them."""
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    classified = [
+        _make_atomized_classified("good", 5.0),
+        _make_atomized_classified("morning", 6.0),
+        _make_atomized_classified("PERU", 0.0),
+        _make_atomized_classified("ROME", 8.0),
+    ]
+    lg = LineGroup(
+        phrase_indices=[0, 1],
+        line_end_s=7.0,
+        line_anchor_x_frac=0.1,
+        line_anchor_y_frac=0.8,
+        line_height_frac=0.05,
+        transcript_word_indices=[0, 1],
+        word_start_s_list=[5.0, 6.0],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 10.0)], line_groups=[lg]
+    )
+    starts = [o.start_s for o in out.overlays]
+    assert starts == sorted(starts), f"overlays out of time order: {starts}"
+    assert out.overlays[0].sample_text == "PERU"
+    assert out.overlays[-1].sample_text == "ROME"
+
+
+def test_stage_g_no_word_is_lost_in_line_split():
+    """When a LineGroup splits, every original word still appears in some
+    overlay's sample_text. Critical leakage-prevention test."""
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    words = ["the", "quick", "brown", "fox", "jumps", "over", "the", "lazy", "dog", "running", "very", "fast"]
+    classified = [_make_atomized_classified(w, float(i)) for i, w in enumerate(words)]
+    lg = LineGroup(
+        phrase_indices=list(range(len(words))),
+        line_end_s=float(len(words)),
+        line_anchor_x_frac=0.05,
+
+        line_anchor_y_frac=0.8,
+
+        line_height_frac=0.05,
+        transcript_word_indices=list(range(len(words))),
+        word_start_s_list=[float(i) for i in range(len(words))],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 20.0)], line_groups=[lg]
+    )
+    all_words_in_overlays = set()
+    for o in out.overlays:
+        for w in o.sample_text.split():
+            all_words_in_overlays.add(w)
+    assert all_words_in_overlays == set(words)

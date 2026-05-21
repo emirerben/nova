@@ -50,6 +50,10 @@ from app.pipeline.text_overlay_v2.grouping import (
     DEFAULT_JITTER_MAX_GAP_S,
     group_detections_into_events,
 )
+from app.pipeline.text_overlay_v2.line_grouping import (
+    LineGroup,
+    build_line_groups,
+)
 from app.pipeline.text_overlay_v2.phrases import (
     DEFAULT_X_BAND_THRESHOLD,
     reconstruct_phrases,
@@ -315,10 +319,23 @@ def run_full_pipeline(
         _dump_stage(dump_dir, "stage_f", classification_output.classified)
 
         # ── G: Convert to TemplateTextOutput ─────────────────────────────
+        # Build progressive-reveal line groups from aligned phrases + transcript.
+        # Atomized phrases whose transcript matches form contiguous sentences
+        # become LineGroups; Stage G emits them as cumulative reveal overlays
+        # (text_anchor="left", N stages per N words). Phrases not in any
+        # group fall through to the existing single-overlay emit unchanged.
+        line_groups = build_line_groups(aligned_phrases, transcript_words)
+        log.info(
+            "full_pipeline_line_groups_built",
+            n_groups=len(line_groups),
+            n_grouped_phrases=sum(len(g.phrase_indices) for g in line_groups),
+            job_id=job_id,
+        )
         log.info("full_pipeline_stage_g_start", job_id=job_id)
         output = _classified_phrases_to_output(
             classification_output.classified,
             slot_boundaries_s=slot_boundaries_s,
+            line_groups=line_groups,
         )
         log.info(
             "full_pipeline_stage_g_done",
@@ -587,10 +604,176 @@ def _normalize_overlay_text(text: str) -> str:
     return cleaned
 
 
+# Threshold for the Stage G line-split pass. Cumulative text whose measured
+# width would exceed this fraction of the canvas gets split into a new
+# LineGroup that starts at the overflowing word's transcript time. Matches
+# the renderer's `_TEXT_MAX_LINE_W` so a stage emitted by Stage G doesn't
+# trigger the renderer's shrink-to-fit safety net.
+_CUMULATIVE_LINE_MAX_W_FRAC = 0.90
+_CANVAS_W_PX = 1080
+
+
+def _emit_cumulative_line_overlays(
+    lg: LineGroup,
+    *,
+    classified: list,
+    slot_boundaries_s: list[tuple[float, float]],
+    drops: dict[str, int],
+) -> list:
+    """Emit N cumulative reveal overlays for a single LineGroup.
+
+    Two passes:
+      1. Line-split: walk words left-to-right, measure cumulative width with
+         the classified font for THIS group, and split into sub-groups at
+         each overflow point. A single oversized word records to
+         `drops["single_word_overflow"]` and is emitted as a solo cumulative
+         (the renderer's shrink-to-fit will handle it).
+      2. Cumulative emit: for each sub-group, call
+         `text_reveal.build_cumulative_stages` and emit one
+         `TemplateTextOverlay` per stage with `text_anchor="left"`,
+         `bbox.x_norm = lg.line_anchor_x_frac`, and the classified font /
+         color / role / size_class from the FIRST phrase in the group.
+
+    Empty groups, validation failures, and degenerate inputs are recorded in
+    `drops` and skipped silently.
+    """
+    from pydantic import ValidationError  # noqa: PLC0415
+
+    from app.agents._schemas.template_text import (  # noqa: PLC0415
+        TemplateTextOverlay,
+        TextBBox,
+    )
+    from app.pipeline.text_overlay import measure_text_width  # noqa: PLC0415
+    from app.pipeline.text_reveal import Word, build_cumulative_stages  # noqa: PLC0415
+
+    if not lg.phrase_indices:
+        drops["empty_group"] += 1
+        return []
+
+    # Pull the texts and per-word start_s from the line group. Each phrase is
+    # atomized (one word). The size_class / effect / font_color come from the
+    # FIRST phrase's classification — cumulative stages share one visual style.
+    first_cp = classified[lg.phrase_indices[0]]
+    size_class = first_cp.size_class
+    effect = first_cp.effect
+    font_color_hex = first_cp.font_color_hex
+    role = first_cp.role
+
+    word_texts: list[str] = []
+    for idx in lg.phrase_indices:
+        cp = classified[idx]
+        text = (cp.phrase.lines[0] if cp.phrase.lines else "").strip()
+        if not text:
+            text = ""
+        word_texts.append(text)
+
+    # Pass 1: line-split by measured cumulative width.
+    max_w_px = int(_CANVAS_W_PX * _CUMULATIVE_LINE_MAX_W_FRAC)
+    sub_groups: list[tuple[list[int], float]] = []  # (local indices into word_texts, line_end_s)
+    current: list[int] = []
+    for j in range(len(word_texts)):
+        candidate = current + [j]
+        cumulative_text = " ".join(word_texts[k] for k in candidate if word_texts[k])
+        width = measure_text_width(cumulative_text, text_size=size_class)
+        if width > max_w_px and current:
+            # Adding word j overflows. Close current sub-group at j-1, open a
+            # new sub-group starting at j. Sub-group's line_end_s is the next
+            # word's start_s minus a frame so the prior line clears before
+            # the next opens (butted edge).
+            line_end_s = lg.word_start_s_list[j]
+            sub_groups.append((list(current), line_end_s))
+            current = [j]
+            # Check if the new singleton ALREADY overflows (a single word
+            # wider than 90% canvas). If so, flag it and let it through —
+            # the renderer's shrink-to-fit will handle the actual rendering.
+            singleton_text = word_texts[j]
+            if singleton_text and measure_text_width(singleton_text, text_size=size_class) > max_w_px:
+                drops["single_word_overflow"] += 1
+        elif width > max_w_px and not current:
+            # Very first word of the group is already too wide. Same fallback.
+            drops["single_word_overflow"] += 1
+            current = [j]
+        else:
+            current = candidate
+
+    # Close the final sub-group with the group's overall line_end_s.
+    if current:
+        sub_groups.append((list(current), lg.line_end_s))
+
+    if len(sub_groups) > 1:
+        drops["line_overflow"] += len(sub_groups) - 1
+
+    # Pass 2: cumulative emit per sub-group.
+    out: list = []
+    for sub_indices, sub_line_end_s in sub_groups:
+        words = [
+            Word(
+                text=word_texts[k],
+                start_s=lg.word_start_s_list[k],
+                end_s=lg.word_start_s_list[k],  # informational only
+            )
+            for k in sub_indices
+            if word_texts[k]
+        ]
+        if not words:
+            drops["empty_group"] += 1
+            continue
+        stages = build_cumulative_stages(words, line_end_s=sub_line_end_s)
+        for stage in stages:
+            slot_index = _assign_slot_index(stage.start_s, slot_boundaries_s)
+            # Read positional metadata from the LineGroup so the cumulative
+            # overlay's bbox reflects where the OCR actually detected the
+            # text on screen — NOT a hardcoded canvas-center placeholder.
+            # `_bbox_to_named_position(y_norm)` downstream will bucket this
+            # to top/center/bottom correctly; without the real y the
+            # renderer would default every reveal to canvas center.
+            anchor_x = max(0.0, min(1.0, lg.line_anchor_x_frac))
+            anchor_y = max(0.0, min(1.0, lg.line_anchor_y_frac))
+            # Tiny w_norm so the TextBBox extent stays in-frame for anchors
+            # near 0.0 or 1.0. Layout for left-anchored cumulative overlays
+            # is driven by position_x_frac + the renderer's measured text
+            # width, NOT by bbox extent.
+            w_norm_placeholder = 0.01
+            h_norm = min(max(lg.line_height_frac, 0.01), 1.0)
+            try:
+                # Pop animation only meaningful for pop-in effect.
+                pop_suffix = stage.pop_animated_suffix if effect == "pop-in" else None
+                overlay = TemplateTextOverlay(
+                    slot_index=slot_index,
+                    sample_text=stage.text,
+                    start_s=stage.start_s,
+                    end_s=stage.end_s,
+                    bbox=TextBBox(
+                        x_norm=anchor_x,
+                        y_norm=anchor_y,
+                        w_norm=w_norm_placeholder,
+                        h_norm=h_norm,
+                        sample_frame_t=stage.start_s,
+                    ),
+                    font_color_hex=font_color_hex,
+                    effect=effect,
+                    role=role,
+                    size_class=size_class,
+                    text_anchor="left",
+                    pop_animated_suffix=pop_suffix,
+                )
+            except (ValidationError, ValueError) as exc:
+                log.warning(
+                    "stage_g_cumulative_validation_failed",
+                    error=str(exc),
+                    text=stage.text[:60],
+                )
+                drops["validation_failed"] += 1
+                continue
+            out.append(overlay)
+    return out
+
+
 def _classified_phrases_to_output(
     classified: list,
     *,
     slot_boundaries_s: list[tuple[float, float]],
+    line_groups: list[LineGroup] | None = None,
 ) -> TemplateTextOutput:
     """Stage G: convert `ClassifiedPhrase` list to `TemplateTextOutput`.
 
@@ -616,14 +799,51 @@ def _classified_phrases_to_output(
         TemplateTextOverlay,
         TextBBox,
     )
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
+    drops: dict[str, int] = {
+        "degenerate_bbox": 0,
+        "empty_text_after_normalize": 0,
+        "validation_failed": 0,
+        "empty_group": 0,
+        "single_word_overflow": 0,
+        "line_overflow": 0,
+    }
+    overlays: list[TemplateTextOverlay] = []
+
+    # ── Cumulative line-group emit (progressive word reveal) ───────────────
+    # Build the set of phrase indices covered by any LineGroup, then route
+    # those through the cumulative-reveal path. Indices are into the
+    # ORIGINAL `classified` list (pre-sort). Grouped phrases are skipped in
+    # the per-phrase loop below.
+    line_groups = line_groups or []
+    grouped_indices: set[int] = set()
+    for lg in line_groups:
+        grouped_indices.update(lg.phrase_indices)
+
+    for lg in line_groups:
+        cum_overlays = _emit_cumulative_line_overlays(
+            lg,
+            classified=classified,
+            slot_boundaries_s=slot_boundaries_s,
+            drops=drops,
+        )
+        overlays.extend(cum_overlays)
+
+    # ── Per-phrase passthrough (ungrouped only) ────────────────────────────
     # Sort classified phrases by start_t_s so we can extend each phrase's
     # end_s up to (but not past) the next phrase's start. Single-frame OCR
     # detections produce phrases where end_t_s == start_t_s; without this
     # extension Stage G would emit zero-duration overlays clamped to 10ms,
     # which render for a single frame (prod evidence: "luck" 7.50-7.51s in
     # the post-v0.4.34.0 reanalyze of template fdaf3bbc).
-    classified_sorted = sorted(classified, key=lambda c: c.phrase.start_t_s)
+    # We filter by `grouped_indices` against the ORIGINAL position so
+    # line-group phrases don't double-emit.
+    ungrouped_with_orig_idx = [
+        (orig_idx, cp) for orig_idx, cp in enumerate(classified) if orig_idx not in grouped_indices
+    ]
+    ungrouped_sorted = sorted(ungrouped_with_orig_idx, key=lambda pair: pair[1].phrase.start_t_s)
+    classified_sorted = [cp for _, cp in ungrouped_sorted]
     next_start_by_index = {
         id(classified_sorted[i]): classified_sorted[i + 1].phrase.start_t_s
         for i in range(len(classified_sorted) - 1)
@@ -631,7 +851,6 @@ def _classified_phrases_to_output(
     _MIN_OVERLAY_DURATION_S = 0.5
     _MAX_OVERLAY_EXTENSION_S = 2.0
 
-    overlays: list[TemplateTextOverlay] = []
     for i, cp in enumerate(classified_sorted):
         phrase = cp.phrase
         normalized_text = _normalize_overlay_text(phrase.sample_text)
@@ -641,6 +860,7 @@ def _classified_phrases_to_output(
                 phrase_index=i,
                 raw_sample_text=phrase.sample_text[:60],
             )
+            drops["empty_text_after_normalize"] += 1
             continue
         x_min, y_min, x_max, y_max = phrase.aabb
 
@@ -658,6 +878,7 @@ def _classified_phrases_to_output(
                 sample_text=normalized_text[:60],
                 aabb=phrase.aabb,
             )
+            drops["degenerate_bbox"] += 1
             continue
 
         # Clamp to valid range (OCR polygons can occasionally exceed unit square).
@@ -710,8 +931,39 @@ def _classified_phrases_to_output(
                 sample_text=normalized_text[:60],
                 error=str(exc),
             )
+            drops["validation_failed"] += 1
             continue
 
         overlays.append(overlay)
+
+    # Sort the final list by start_s so cumulative-reveal overlays and
+    # ungrouped passthrough overlays interleave chronologically. Without
+    # this, every cumulative overlay would precede every ungrouped overlay
+    # in iteration order — and FFmpeg's overlay filter chain layers later
+    # items ON TOP of earlier ones. A visual-only label that overlaps in
+    # time with a cumulative reveal would obscure it. Sorting by start_s
+    # keeps later-starting overlays on top regardless of their group origin.
+    overlays.sort(key=lambda o: o.start_s)
+
+    # ── Stage G summary: aggregate counts for /admin/jobs Debug tab ────────
+    # The drops dict captures every silent-skip reason. Sum of drops equals
+    # input_phrases - emitted_overlays - cumulative_extra (each LineGroup
+    # emits N overlays for N words, expanding overlay count beyond phrase
+    # count). Leakage audit reads this event.
+    try:
+        record_pipeline_event(
+            "overlay",
+            "stage_g_summary",
+            {
+                "phrases_in": len(classified),
+                "line_groups_in": len(line_groups),
+                "grouped_phrases_in": len(grouped_indices),
+                "overlays_out": len(overlays),
+                "drops": dict(drops),
+            },
+        )
+    except Exception:  # noqa: BLE001
+        # Pipeline-trace failures must never break the build. Best-effort.
+        pass
 
     return TemplateTextOutput(overlays=overlays)
