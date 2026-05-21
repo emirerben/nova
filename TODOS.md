@@ -82,6 +82,18 @@
 
 ## Font System (shipped v0.2.2.0, 2026-04-12)
 
+### Refactor Pacifico player-card hardcoding
+**What:** `src/apps/api/app/pipeline/text_overlay.py` hardcodes `_registry_font_path("Pacifico")` for player-card name rendering. Replace with `_registry_font_path(_FONT_REGISTRY["style_defaults"]["script"])` so player-card rendering follows the registry's script default. Unblocks future Pacifico deprecation.
+**Effort:** XS (CC ~15 min). **Priority:** P3.
+
+### Hard-remove soft-deprecated fonts in ~6 months
+**What:** Once we have evidence no live templates reference Outfit / Space Mono / 5 redundant handwriting fonts / Inter Regular / Inter Medium, delete the 9 deprecated registry entries + TTF files + license docs.
+**Effort:** XS (CC ~10 min). **Priority:** P3. **Target:** ~2026-11-21.
+
+### Matcher vibe-bias (future opt-in)
+**What:** Add optional weighting where templates carry a vibe tag and matcher biases toward fonts in that vibe bucket (e.g. music templates prefer `viral_headlines`). Currently the matcher is vibe-blind; only the admin UI uses vibe for grouping.
+**Effort:** M (CC ~2 hr). **Priority:** P3. **Defer until:** we have concrete evidence the current matcher under-picks for a category of templates.
+
 ### Font-Cycle Cycling Font Customization
 **What:** Let admins pick which fonts appear during the rapid cycling phase (not just the settle font). Currently, cycling fonts are hardcoded from registry fonts with `cycle_role="contrast"`.
 **Why:** Different templates may want different cycling character (e.g., all serifs for editorial, all sans for modern). Currently only the settle font is customizable via `font_family`.

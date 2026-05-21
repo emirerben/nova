@@ -95,6 +95,7 @@ dev = [
     "aiosqlite>=0.20",
     "ruff>=0.4",
     "mypy>=1.10",
+    "fonttools>=4.53",
     "anthropic>=0.40",
 ]
 analysis = [

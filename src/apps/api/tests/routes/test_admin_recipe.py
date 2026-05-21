@@ -162,6 +162,46 @@ class TestGetRecipe:
         assert data["version_number"] == 2
         assert data["recipe"]["shot_count"] == 3
         assert len(data["recipe"]["slots"]) == 3
+        assert data["recipe"]["analysis_pool_stale"] is False
+        assert data["recipe"]["matcher_version"] == "2"
+        assert isinstance(data["recipe"]["registry_sha256"], str)
+
+    def test_strips_deprecated_font_alternatives(self, client):
+        recipe = _make_recipe()
+        recipe["slots"][0]["text_overlays"][0]["font_alternatives"] = [
+            {"family": "Outfit", "similarity": 0.9},
+            {"family": "DM Sans", "similarity": 0.8},
+        ]
+        template = _mock_template(recipe_cached=recipe)
+        version = _mock_version()
+
+        mock_db = AsyncMock()
+        template_result = MagicMock()
+        template_result.scalar_one_or_none.return_value = template
+        version_result = MagicMock()
+        version_result.scalar_one_or_none.return_value = version
+        count_result = MagicMock()
+        count_result.scalar.return_value = 2
+        mock_db.execute.side_effect = [template_result, version_result, count_result]
+
+        def _override_db():
+            yield mock_db
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = _override_db
+            try:
+                res = client.get(
+                    "/admin/templates/tmpl-123/recipe",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        overlay = res.json()["recipe"]["slots"][0]["text_overlays"][0]
+        assert overlay["font_alternatives"] == [{"family": "DM Sans", "similarity": 0.8}]
+        assert res.json()["recipe"]["analysis_pool_stale"] is True
 
     def test_404_for_missing_template(self, client):
         mock_db = AsyncMock()
@@ -311,6 +351,21 @@ class TestSaveRecipe:
             )
 
         assert res.status_code == 422
+
+    def test_rejects_deprecated_overlay_font_family(self, client):
+        recipe = _make_recipe()
+        recipe["slots"][0]["text_overlays"][0]["font_family"] = "Outfit"
+
+        with patch("app.routes.admin.settings") as mock_settings:
+            mock_settings.admin_api_key = VALID_TOKEN
+            res = client.put(
+                "/admin/templates/tmpl-123/recipe",
+                headers={"X-Admin-Token": VALID_TOKEN},
+                json={"recipe": recipe, "base_version_id": None},
+            )
+
+        assert res.status_code == 422
+        assert "deprecated" in res.text.lower()
 
     def test_rejects_empty_slots(self, client):
         recipe = _make_recipe(slots=[])
@@ -992,8 +1047,11 @@ class TestInterstitialHoldSValidator:
         from app.routes.admin import RecipeInterstitialSchema
 
         inter = RecipeInterstitialSchema(
-            type="curtain-close", after_slot=5, hold_s=0.0,
-            hold_color="#000000", animate_s=2.0,
+            type="curtain-close",
+            after_slot=5,
+            hold_s=0.0,
+            hold_color="#000000",
+            animate_s=2.0,
         )
         assert inter.hold_s == 0.0
 
@@ -1001,7 +1059,9 @@ class TestInterstitialHoldSValidator:
         from app.routes.admin import RecipeInterstitialSchema
 
         inter = RecipeInterstitialSchema(
-            type="curtain-close", after_slot=3, hold_s=1.5,
+            type="curtain-close",
+            after_slot=3,
+            hold_s=1.5,
         )
         assert inter.hold_s == 1.5
 
@@ -1012,5 +1072,7 @@ class TestInterstitialHoldSValidator:
 
         with pytest.raises(ValidationError, match="hold_s must be >= 0"):
             RecipeInterstitialSchema(
-                type="curtain-close", after_slot=1, hold_s=-0.5,
+                type="curtain-close",
+                after_slot=1,
+                hold_s=-0.5,
             )

@@ -5,14 +5,16 @@
       "ass_name": "Inter",
       "weight": 400,
       "category": "sans",
-      "css_family": "'Inter', sans-serif"
+      "css_family": "'Inter', sans-serif",
+      "deprecated": true
     },
     "Inter Medium": {
       "file": "Inter-Medium.ttf",
       "ass_name": "Inter",
       "weight": 500,
       "category": "sans",
-      "css_family": "'Inter', sans-serif"
+      "css_family": "'Inter', sans-serif",
+      "deprecated": true
     },
     "Playfair Display": {
       "file": "PlayfairDisplay-Bold.ttf",
@@ -20,14 +22,16 @@
       "weight": 700,
       "category": "serif",
       "css_family": "'Playfair Display', serif",
-      "cycle_role": "settle"
+      "cycle_role": "settle",
+      "vibe": "editorial"
     },
     "Playfair Display Regular": {
       "file": "PlayfairDisplay-Regular.ttf",
       "ass_name": "Playfair Display",
       "weight": 400,
       "category": "serif",
-      "css_family": "'Playfair Display', serif"
+      "css_family": "'Playfair Display', serif",
+      "vibe": "editorial"
     },
     "Montserrat": {
       "file": "Montserrat-ExtraBold.ttf",
@@ -35,35 +39,40 @@
       "weight": 800,
       "category": "sans",
       "css_family": "'Montserrat', sans-serif",
-      "cycle_role": "contrast"
+      "cycle_role": "contrast",
+      "vibe": "viral_headlines"
     },
     "Space Grotesk": {
       "file": "SpaceGrotesk-Bold.ttf",
       "ass_name": "Space Grotesk",
       "weight": 700,
       "category": "sans",
-      "css_family": "'Space Grotesk', sans-serif"
+      "css_family": "'Space Grotesk', sans-serif",
+      "vibe": "viral_headlines"
     },
     "DM Sans": {
       "file": "DMSans-Bold.ttf",
       "ass_name": "DM Sans",
       "weight": 700,
       "category": "sans",
-      "css_family": "'DM Sans', sans-serif"
+      "css_family": "'DM Sans', sans-serif",
+      "vibe": "clean_captions"
     },
     "Inter": {
       "file": "Inter-Bold.ttf",
       "ass_name": "Inter",
       "weight": 700,
       "category": "sans",
-      "css_family": "'Inter', sans-serif"
+      "css_family": "'Inter', sans-serif",
+      "vibe": "editorial"
     },
     "Inter Tight": {
       "file": "InterTight-Bold.ttf",
       "ass_name": "Inter Tight",
       "weight": 700,
       "category": "sans",
-      "css_family": "'Inter Tight', sans-serif"
+      "css_family": "'Inter Tight', sans-serif",
+      "vibe": "editorial"
     },
     "Instrument Serif": {
       "file": "InstrumentSerif-Regular.ttf",
@@ -71,7 +80,8 @@
       "weight": 400,
       "category": "serif",
       "css_family": "'Instrument Serif', serif",
-      "cycle_role": "contrast"
+      "cycle_role": "contrast",
+      "vibe": "editorial"
     },
     "Bodoni Moda": {
       "file": "BodoniModa-Bold.ttf",
@@ -79,7 +89,8 @@
       "weight": 700,
       "category": "serif",
       "css_family": "'Bodoni Moda', serif",
-      "cycle_role": "contrast"
+      "cycle_role": "contrast",
+      "vibe": "editorial"
     },
     "Fraunces": {
       "file": "Fraunces-Bold.ttf",
@@ -87,21 +98,24 @@
       "weight": 700,
       "category": "serif",
       "css_family": "'Fraunces', serif",
-      "cycle_role": "contrast"
+      "cycle_role": "contrast",
+      "vibe": "editorial"
     },
     "Space Mono": {
       "file": "SpaceMono-Bold.ttf",
       "ass_name": "Space Mono",
       "weight": 700,
       "category": "mono",
-      "css_family": "'Space Mono', monospace"
+      "css_family": "'Space Mono', monospace",
+      "deprecated": true
     },
     "Outfit": {
       "file": "Outfit-Bold.ttf",
       "ass_name": "Outfit",
       "weight": 700,
       "category": "sans",
-      "css_family": "'Outfit', sans-serif"
+      "css_family": "'Outfit', sans-serif",
+      "deprecated": true
     },
     "Permanent Marker": {
       "file": "PermanentMarker-Regular.ttf",
@@ -109,7 +123,8 @@
       "weight": 400,
       "category": "handwriting",
       "css_family": "'Permanent Marker', cursive",
-      "cycle_role": "contrast"
+      "cycle_role": "contrast",
+      "vibe": "handwritten"
     },
     "Pacifico": {
       "file": "Pacifico-Regular.ttf",
@@ -117,42 +132,96 @@
       "weight": 400,
       "category": "script",
       "css_family": "'Pacifico', cursive",
-      "cycle_role": "contrast"
+      "cycle_role": "contrast",
+      "vibe": "script"
     },
     "Caveat Brush": {
       "file": "CaveatBrush-Regular.ttf",
       "ass_name": "Caveat Brush",
       "weight": 400,
       "category": "handwriting",
-      "css_family": "'Caveat Brush', cursive"
+      "css_family": "'Caveat Brush', cursive",
+      "deprecated": true
     },
     "Shadows Into Light": {
       "file": "ShadowsIntoLight-Regular.ttf",
       "ass_name": "Shadows Into Light",
       "weight": 400,
       "category": "handwriting",
-      "css_family": "'Shadows Into Light', cursive"
+      "css_family": "'Shadows Into Light', cursive",
+      "deprecated": true
     },
     "Kalam": {
       "file": "Kalam-Regular.ttf",
       "ass_name": "Kalam",
       "weight": 400,
       "category": "handwriting",
-      "css_family": "'Kalam', cursive"
+      "css_family": "'Kalam', cursive",
+      "deprecated": true
     },
     "Indie Flower": {
       "file": "IndieFlower-Regular.ttf",
       "ass_name": "Indie Flower",
       "weight": 400,
       "category": "handwriting",
-      "css_family": "'Indie Flower', cursive"
+      "css_family": "'Indie Flower', cursive",
+      "deprecated": true
     },
     "Architects Daughter": {
       "file": "ArchitectsDaughter-Regular.ttf",
       "ass_name": "Architects Daughter",
       "weight": 400,
       "category": "handwriting",
-      "css_family": "'Architects Daughter', cursive"
+      "css_family": "'Architects Daughter', cursive",
+      "deprecated": true
+    },
+    "Bebas Neue": {
+      "file": "BebasNeue-Regular.ttf",
+      "ass_name": "Bebas Neue",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Bebas Neue', sans-serif",
+      "vibe": "viral_headlines"
+    },
+    "Anton": {
+      "file": "Anton-Regular.ttf",
+      "ass_name": "Anton",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Anton', sans-serif",
+      "vibe": "viral_headlines"
+    },
+    "Poppins Black": {
+      "file": "Poppins-Black.ttf",
+      "ass_name": "Poppins Black",
+      "weight": 900,
+      "category": "sans",
+      "css_family": "'Poppins', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Nunito ExtraBold": {
+      "file": "Nunito-ExtraBold.ttf",
+      "ass_name": "Nunito ExtraBold",
+      "weight": 800,
+      "category": "sans",
+      "css_family": "'Nunito', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Bowlby One SC": {
+      "file": "BowlbyOneSC-Regular.ttf",
+      "ass_name": "Bowlby One SC",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Bowlby One SC', sans-serif",
+      "vibe": "viral_headlines"
+    },
+    "Bangers": {
+      "file": "Bangers-Regular.ttf",
+      "ass_name": "Bangers",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Bangers', sans-serif",
+      "vibe": "viral_headlines"
     }
   },
   "style_defaults": {
@@ -160,6 +229,6 @@
     "sans": "Montserrat",
     "serif": "Playfair Display Regular",
     "serif_italic": "Instrument Serif",
-    "script": "Fraunces"
+    "script": "Pacifico"
   }
 }
