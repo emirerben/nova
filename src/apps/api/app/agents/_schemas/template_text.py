@@ -110,6 +110,26 @@ class TemplateTextOverlay(BaseModel):
     effect: str = Field(default="none")
     role: str = Field(default="label")
     size_class: str = Field(default="medium")
+    # Horizontal anchor mode for the renderer. Default "center" preserves the
+    # historical behavior: lines center on `bbox.x_norm`. "left" anchors the
+    # left edge of each line at `bbox.x_norm` so cumulative word-reveal
+    # overlays (Layer-2 progressive reveal) can grow rightward without
+    # re-centering as new words appear. "right" mirrors left for right-anchored
+    # text. Renderer reads this in `_draw_text_png` / `_draw_spans_png`.
+    text_anchor: str = Field(default="center")
+    # Optional: when `effect="pop-in"`, tags only the newly added word of a
+    # cumulative reveal stage as the pop-animation target. The renderer
+    # animates just this suffix (scale 30->115->100) while the prefix renders
+    # statically. Without it, every cumulative stage would re-pop the whole
+    # line. Ignored when effect != "pop-in". None preserves historical behavior.
+    pop_animated_suffix: str | None = Field(default=None)
+
+    @field_validator("text_anchor")
+    @classmethod
+    def _validate_text_anchor(cls, v: str) -> str:
+        if v not in ("left", "center", "right"):
+            raise ValueError(f"text_anchor={v!r} must be one of left/center/right")
+        return v
 
     @field_validator("effect")
     @classmethod

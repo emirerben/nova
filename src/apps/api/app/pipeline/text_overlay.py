@@ -403,6 +403,7 @@ def generate_text_overlay_png(
                 text_color=text_color,
                 position_x_frac=overlay.get("position_x_frac"),
                 position_y_frac=overlay.get("position_y_frac"),
+                text_anchor=overlay.get("text_anchor", "center"),
                 stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
                 emoji_prefix=overlay.get("emoji_prefix", ""),
             )
@@ -694,6 +695,7 @@ def _render_static_overlay_layer(
         text_color=text_color,
         position_x_frac=overlay.get("position_x_frac"),
         position_y_frac=overlay.get("position_y_frac"),
+        text_anchor=overlay.get("text_anchor", "center"),
         stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
         emoji_prefix=overlay.get("emoji_prefix", ""),
     )
@@ -1090,6 +1092,7 @@ def _draw_frame(
             text_color=text_color,
             position_x_frac=position_x_frac,
             position_y_frac=position_y_frac,
+            text_anchor=overlay.get("text_anchor", "center"),
             stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
             emoji_prefix=overlay.get("emoji_prefix", ""),
         )
@@ -1644,6 +1647,45 @@ def _wrap_text_to_lines(text: str, font, max_width: int, draw) -> list[str]:
     return lines
 
 
+def measure_text_width(
+    text: str,
+    *,
+    font=None,
+    font_family: str | None = None,
+    font_style: str = "display",
+    text_size: str = "medium",
+    text_size_px: int | None = None,
+) -> int:
+    """Return the rendered pixel width of `text` for the chosen font.
+
+    Pure measurement: resolves the same font that `_draw_text_png` would, then
+    asks Pillow for the textbbox. Used by Stage G of the Layer-2 pipeline to
+    decide whether a cumulative reveal line will fit within `_TEXT_MAX_LINE_W`
+    before emitting overlays — if not, the line is split at the overflow word
+    into a new LineGroup that starts at its own transcript timestamp.
+
+    Returns 0 for empty text. Returns 0 if the font cannot be resolved (caller
+    treats that as "don't split" — failing open is safer than failing closed
+    here, since the renderer still has its own shrink-to-fit safety net).
+    """
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    if not text:
+        return 0
+    if font is None:
+        size = text_size_px or _FONT_SIZE_MAP.get(text_size, 72)
+        if font_family:
+            font = _resolve_font_family(font_family, size)
+        if font is None:
+            font = _load_styled_font(font_style, text_size, text_size_px=text_size_px)
+    if font is None:
+        return 0
+    img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[2] - bbox[0]
+
+
 def _draw_text_png(
     text: str,
     position: str,
@@ -1657,6 +1699,7 @@ def _draw_text_png(
     text_color: tuple[int, int, int, int] = (255, 255, 255, 255),
     position_x_frac: float | None = None,
     position_y_frac: float | None = None,
+    text_anchor: str = "center",
     stroke_width: int = 0,
     stroke_color: tuple[int, int, int, int] = (0, 0, 0, 230),
     emoji_prefix: str = "",
@@ -1671,6 +1714,16 @@ def _draw_text_png(
     Wraps long text by words to fit within 90% of canvas width. If a single
     word still exceeds that width (rare — long URL, no spaces), shrinks the
     font enough to make it fit.
+
+    `text_anchor` controls the horizontal alignment of each rendered line
+    against `position_x_frac` (default: canvas center):
+      - "center" — line is centered on the anchor x (historical default).
+      - "left"   — line's LEFT edge is at the anchor x. Used by progressive
+                   word-reveal overlays so adding a word grows the line to the
+                   right without shifting earlier words leftward.
+      - "right"  — line's RIGHT edge is at the anchor x.
+    `position_x_frac` semantics change with `text_anchor`: for "center" it is
+    the centerline; for "left"/"right" it is the corresponding edge.
 
     Two compositing layers: a soft drop shadow for depth, and an optional
     crisp black stroke (Pillow's stroke_width) for the TikTok caption look.
@@ -1802,12 +1855,24 @@ def _draw_text_png(
 
     for i, ln in enumerate(lines):
         if i == 0 and emoji_metrics:
-            # Center emoji + line 1 together as a single unit, around anchor_x.
+            # Position emoji + line 1 as a single unit. For center anchor we
+            # center the combined block; for left/right anchor we align the
+            # block's edge to anchor_x just like a plain line.
             combined_w = emoji_metrics["combined_w"]
-            combined_x = max(0, anchor_x - combined_w // 2)
+            if text_anchor == "left":
+                combined_x = max(0, anchor_x)
+            elif text_anchor == "right":
+                combined_x = max(0, anchor_x - combined_w)
+            else:
+                combined_x = max(0, anchor_x - combined_w // 2)
             x = combined_x + emoji_metrics["size"] + emoji_metrics["gap"]
         else:
-            x = anchor_x - line_widths[i] // 2
+            if text_anchor == "left":
+                x = anchor_x
+            elif text_anchor == "right":
+                x = anchor_x - line_widths[i]
+            else:
+                x = anchor_x - line_widths[i] // 2
         y = block_top + i * line_step
         # Soft drop shadow (always on — gives depth on busy backgrounds)
         shadow_draw.text((x, y + 6), ln, font=font, fill=(0, 0, 0, 160))
