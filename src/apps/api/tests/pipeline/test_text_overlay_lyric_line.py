@@ -1,8 +1,8 @@
 """ASS rendering tests for the `lyric-line` effect.
 
 Companion to `test_text_overlay_karaoke.py`. The lyric-line effect is the
-plain YouTube-lyric-video style: one static block of text with a smooth
-`\\fad(in, out)` alpha animation, no per-word color sweep.
+plain YouTube-lyric-video style: one static block of text with eased
+ASS alpha transforms, no per-word color sweep.
 """
 
 from __future__ import annotations
@@ -27,7 +27,12 @@ def _render(overlay: dict, slot_duration_s: float = 5.0) -> str:
             return f.read()
 
 
-def test_lyric_line_emits_plain_text_with_fad_tag() -> None:
+def _style_fields(content: str) -> list[str]:
+    style_line = next(line for line in content.splitlines() if line.startswith("Style: LyricLine,"))
+    return style_line.removeprefix("Style: ").split(",")
+
+
+def test_lyric_line_emits_plain_text_with_alpha_transforms() -> None:
     overlay = {
         "effect": "lyric-line",
         "text": "Hello world",
@@ -39,8 +44,10 @@ def test_lyric_line_emits_plain_text_with_fad_tag() -> None:
         "fade_out_ms": 250,
     }
     content = _render(overlay)
-    # Fade tag present with the supplied durations.
-    assert "\\fad(150,250)" in content
+    assert r"\alpha&HFF&" in content
+    assert r"\t(0,150,0.5,\alpha&H00&)" in content
+    assert r"\t(1750,2000,2.0,\alpha&HFF&)" in content
+    assert "\\fad(" not in content
     # No per-word color sweep tag.
     assert "\\kf" not in content
     # No karaoke secondary-color setup.
@@ -61,7 +68,8 @@ def test_lyric_line_uses_overlay_fade_overrides() -> None:
         "fade_out_ms": 600,
     }
     content = _render(overlay)
-    assert "\\fad(300,600)" in content
+    assert r"\t(0,300,0.5,\alpha&H00&)" in content
+    assert r"\t(1400,2000,2.0,\alpha&HFF&)" in content
 
 
 def test_lyric_line_applies_text_color() -> None:
@@ -93,3 +101,42 @@ def test_lyric_line_position_alignment_for_bottom() -> None:
     content = _render(overlay)
     # Bottom anchor is \an2 (per _ASS_POSITION in text_overlay.py).
     assert "\\an2" in content
+
+
+def test_lyric_line_style_has_outline_and_shadow() -> None:
+    content = _render(
+        {
+            "effect": "lyric-line",
+            "text": "Styled",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "bottom",
+            "font_family": "Inter Tight",
+            "fade_in_ms": 150,
+            "fade_out_ms": 250,
+        }
+    )
+    fields = _style_fields(content)
+    assert fields[0] == "LyricLine"
+    assert fields[2] == "90"
+    assert fields[5] == "&H00000000"
+    assert fields[6].startswith("&H99")
+    assert fields[7] == "0"
+    assert fields[15] == "1"
+    assert fields[16] == "1.5"
+    assert fields[17] == "2"
+
+
+def test_zero_fade_out_emits_no_fade_out_transform() -> None:
+    content = _render(
+        {
+            "effect": "lyric-line",
+            "text": "Hold",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "bottom",
+            "fade_in_ms": 150,
+            "fade_out_ms": 0,
+        }
+    )
+    assert content.count(r"\t(") == 1

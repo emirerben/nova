@@ -70,9 +70,11 @@
       "file": "InterTight-Bold.ttf",
       "ass_name": "Inter Tight",
       "weight": 700,
+      "ass_bold": 0,
       "category": "sans",
       "css_family": "'Inter Tight', sans-serif",
-      "vibe": "editorial"
+      "vibe": "editorial",
+      "note": "InterTight-Bold.ttf is already a bold face; keep ASS Bold=0 to avoid synthetic bolding."
     },
     "Instrument Serif": {
       "file": "InstrumentSerif-Regular.ttf",

@@ -82,16 +82,30 @@ _MIN_RENDERABLE_S = 0.05
 # Travis Scott "Highest in the Room" reference.
 #
 # Pre-roll is small (100 ms) — user prefers tight near-sync, not a 250 ms
-# lead-in. Post-dwell of 750 ms is the breathing room past the vocal end
+# lead-in. Post-dwell of 1s is the breathing room past the vocal end
 # that the karaoke effect lacked (the karaoke overlay cuts at line.end_s,
 # i.e. the exact frame the last word's vocal stops). The next-line gap
 # prevents the current line from sitting on top of the upcoming one when
 # lines are densely packed.
 _LINE_PRE_ROLL_S = 0.10
-_LINE_POST_DWELL_S = 0.75
+_LINE_POST_DWELL_S = 1.0
 _LINE_NEXT_LINE_GAP_S = 0.10
 _LINE_FADE_IN_MS = 150
 _LINE_FADE_OUT_MS = 250
+_LINE_HOLD_TO_NEXT_THRESHOLD_MS = 500
+_LINE_DEFAULT_FONT_FAMILY = "Inter Tight"
+_MIN_LINE_VISIBLE_S = 0.20
+
+
+@dataclass(slots=True)
+class _LineOverlayWindow:
+    text: str
+    line_start_s: float
+    line_end_s: float
+    section_start_s: float
+    section_end_s: float
+    fade_in_ms: int
+    fade_out_ms: int
 
 
 def inject_lyric_overlays(
@@ -480,21 +494,27 @@ def _inject_line(
       - `fade_out_ms` (default `_LINE_FADE_OUT_MS`)
     """
     base = _common_overlay_fields(cfg)
+    base.setdefault("font_family", _LINE_DEFAULT_FONT_FAMILY)
     pre_roll = float(cfg.get("pre_roll_s", _LINE_PRE_ROLL_S))
     post_dwell = float(cfg.get("post_dwell_s", _LINE_POST_DWELL_S))
     next_gap = float(cfg.get("next_line_gap_s", _LINE_NEXT_LINE_GAP_S))
     fade_in_ms = int(cfg.get("fade_in_ms", _LINE_FADE_IN_MS))
     fade_out_ms = int(cfg.get("fade_out_ms", _LINE_FADE_OUT_MS))
+    threshold_s = (
+        float(cfg.get("hold_to_next_threshold_ms", _LINE_HOLD_TO_NEXT_THRESHOLD_MS)) / 1000.0
+    )
 
-    injected = 0
     n = len(section_lines)
+    line_windows: list[_LineOverlayWindow] = []
 
     for i, line in enumerate(section_lines):
         # Expand the visible window. Pre-roll is clamped to 0 (don't go
         # negative into the previous section). Post-dwell is capped by the
         # next line's start so two adjacent lines never overlap on screen.
-        section_start = max(0.0, float(line["start_s"]) - pre_roll)
-        natural_end = float(line["end_s"]) + post_dwell
+        line_start = float(line["start_s"])
+        line_end = float(line["end_s"])
+        section_start = max(0.0, line_start - pre_roll)
+        natural_end = line_end + post_dwell
         if i + 1 < n:
             next_start = float(section_lines[i + 1]["start_s"])
             section_end = min(natural_end, next_start - next_gap)
@@ -505,20 +525,52 @@ def _inject_line(
         # (degenerate case from a tight next_gap), keep it at least as long
         # as the vocal itself so the user still sees the line through its
         # sung duration.
-        section_end = max(section_end, float(line["end_s"]))
+        section_end = max(section_end, line_end)
         if section_end <= section_start:
             continue
 
-        slot_win = _slot_for_time(section_start, windows)
+        line_windows.append(
+            _LineOverlayWindow(
+                text=line["text"],
+                line_start_s=line_start,
+                line_end_s=line_end,
+                section_start_s=section_start,
+                section_end_s=section_end,
+                fade_in_ms=fade_in_ms,
+                fade_out_ms=fade_out_ms,
+            )
+        )
+
+    # Hold-to-next is a transition-level behavior: a small positive gap between
+    # adjacent vocal lines hard-cuts at the next line's vocal start. That means
+    # mutating both sides of the boundary: no current fade-out, no next pre-roll,
+    # and no next fade-in.
+    for curr, nxt in zip(line_windows, line_windows[1:], strict=False):
+        gap_s = nxt.line_start_s - curr.line_end_s
+        if (
+            0.0 <= gap_s < threshold_s
+            and nxt.line_start_s > curr.section_start_s + _MIN_LINE_VISIBLE_S
+        ):
+            curr.section_end_s = nxt.line_start_s
+            curr.fade_out_ms = 0
+            nxt.section_start_s = nxt.line_start_s
+            nxt.fade_in_ms = 0
+
+    injected = 0
+    for line in line_windows:
+        if line.section_end_s <= line.section_start_s:
+            continue
+
+        slot_win = _slot_for_time(line.section_start_s, windows)
         if slot_win is None:
             continue
 
         # Rebase to slot-relative time, then clamp to the slot's own
         # window. A line that spills past its slot is truncated at the
         # slot end — the next slot's renderer pipeline is independent.
-        rel_start = max(0.0, section_start - slot_win.start_s)
+        rel_start = max(0.0, line.section_start_s - slot_win.start_s)
         slot_dur = slot_win.end_s - slot_win.start_s
-        rel_end = min(slot_dur, section_end - slot_win.start_s)
+        rel_end = min(slot_dur, line.section_end_s - slot_win.start_s)
         rel_end = max(rel_start + _MIN_OVERLAY_DURATION_S, rel_end)
         rel_end = min(rel_end, slot_dur)
         if rel_end <= rel_start:
@@ -527,12 +579,12 @@ def _inject_line(
         overlay = dict(base)
         overlay.update(
             {
-                "text": line["text"],
+                "text": line.text,
                 "effect": "lyric-line",
                 "start_s": round(rel_start, 3),
                 "end_s": round(rel_end, 3),
-                "fade_in_ms": fade_in_ms,
-                "fade_out_ms": fade_out_ms,
+                "fade_in_ms": line.fade_in_ms,
+                "fade_out_ms": line.fade_out_ms,
             }
         )
         _ensure_overlay_list(slots[slot_win.index]).append(overlay)

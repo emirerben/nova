@@ -47,6 +47,7 @@ ORCHESTRATOR_TASK_NAMES: tuple[str, ...] = (
     "orchestrate_single_video_job",
     "orchestrate_music_job",
     "orchestrate_auto_music_job",
+    "render_lyrics_preview_task",
 )
 
 
@@ -94,9 +95,7 @@ async def enqueue_orchestrator(
     task.apply_async(args=[task_id], kwargs=kwargs or {}, task_id=task_id)
 
     try:
-        await db.execute(
-            update(Job).where(Job.id == job_uuid).values(celery_task_id=task_id)
-        )
+        await db.execute(update(Job).where(Job.id == job_uuid).values(celery_task_id=task_id))
         await db.commit()
     except Exception as exc:  # noqa: BLE001
         # Task is already on the broker; row write failed. Don't re-raise —

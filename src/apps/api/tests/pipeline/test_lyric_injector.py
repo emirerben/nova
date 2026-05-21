@@ -228,7 +228,7 @@ def test_unknown_style_is_noop() -> None:
 #
 # These lock the YouTube-lyric-video behavior: plain line, pre-roll, post-dwell
 # past the vocal end, no per-word color sweep. Defaults: pre_roll=0.10s,
-# post_dwell=0.75s, next_line_gap=0.10s, fade=150/250ms.
+# post_dwell=1.00s, next_line_gap=0.10s, fade=150/250ms.
 
 
 def test_line_emits_one_overlay_per_line_with_lyric_line_effect() -> None:
@@ -239,7 +239,13 @@ def test_line_emits_one_overlay_per_line_with_lyric_line_effect() -> None:
             ("Goodbye now", 4.0, 5.0, [("Goodbye", 4.0, 4.5), ("now", 4.5, 5.0)]),
         ]
     )
-    out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {"enabled": True, "style": "line", "hold_to_next_threshold_ms": 0},
+    )
     overlays = out["slots"][0]["text_overlays"]
     assert len(overlays) == 2
     for ov in overlays:
@@ -279,7 +285,7 @@ def test_line_post_dwell_capped_by_next_line_start() -> None:
     """When the next line is close, current line ends just before it."""
     recipe = _make_recipe([10.0])
     # First line ends at 2.0; second line starts at 2.3.
-    # Natural post-dwell would end first line at 2.0 + 0.75 = 2.75.
+    # Natural post-dwell would end first line at 2.0 + 1.0 = 3.0.
     # next_line cap: 2.3 - 0.10 = 2.20.
     # Expected end: min(2.75, 2.20) = 2.20.
     cache = _make_lyrics_cache(
@@ -288,7 +294,13 @@ def test_line_post_dwell_capped_by_next_line_start() -> None:
             ("Second", 2.3, 3.0, [("Second", 2.3, 3.0)]),
         ]
     )
-    out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {"enabled": True, "style": "line", "hold_to_next_threshold_ms": 0},
+    )
     ov0 = out["slots"][0]["text_overlays"][0]
     assert abs(ov0["end_s"] - 2.20) < 1e-3
 
@@ -299,8 +311,8 @@ def test_line_last_line_uses_full_post_dwell() -> None:
     cache = _make_lyrics_cache([("Only line", 1.0, 2.0, [("Only", 1.0, 1.5), ("line", 1.5, 2.0)])])
     out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
     ov = out["slots"][0]["text_overlays"][0]
-    # 2.0 + 0.75 = 2.75
-    assert abs(ov["end_s"] - 2.75) < 1e-3
+    # 2.0 + 1.0 = 3.0
+    assert abs(ov["end_s"] - 3.0) < 1e-3
 
 
 def test_line_reads_tuning_from_config() -> None:

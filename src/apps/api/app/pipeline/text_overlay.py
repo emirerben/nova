@@ -172,6 +172,16 @@ def _registry_ass_name(font_name: str) -> str:
     return font_name
 
 
+def _registry_ass_bold(font_name: str) -> int:
+    """Look up the ASS Bold flag for a registry font."""
+    entry = _FONT_REGISTRY.get("fonts", {}).get(font_name)
+    if entry and "ass_bold" in entry:
+        return int(entry["ass_bold"])
+    if entry and int(entry.get("weight", 400)) >= 700:
+        return 0
+    return -1
+
+
 # -- Font size mapping --------------------------------------------------------
 
 _FONT_SIZE_MAP = {
@@ -247,7 +257,16 @@ _ASS_POSITION = {
 }
 
 
-def _build_ass_header(fontname: str = "Playfair Display") -> str:
+def _build_ass_header(
+    fontname: str = "Playfair Display",
+    *,
+    style_name: str = "Overlay",
+    bold: int = -1,
+    outline: str = "0",
+    shadow: str = "2",
+    outline_colour: str = "&H00000000",
+    back_colour: str = "&H40000000",
+) -> str:
     """Build ASS header with dynamic font name."""
     return f"""\
 [Script Info]
@@ -258,7 +277,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Overlay,{fontname},90,&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,-1,0,0,0,100,100,0,0,1,0,2,5,50,50,0,1
+Style: {style_name},{fontname},90,&H00FFFFFF,&H00FFFFFF,{outline_colour},{back_colour},{bold},0,0,0,100,100,0,0,1,{outline},{shadow},5,50,50,0,1
 """  # noqa: E501
 
 
@@ -443,8 +462,8 @@ def generate_animated_overlay_ass(
                 # `lyric-line` effect only — alpha fade in/out durations (ms).
                 # The injector (`_inject_line`) sets these per-overlay; falls
                 # back to the function defaults for any other call site.
-                fade_in_ms=int(overlay.get("fade_in_ms") or 150),
-                fade_out_ms=int(overlay.get("fade_out_ms") or 250),
+                fade_in_ms=_overlay_int(overlay, "fade_in_ms", 150),
+                fade_out_ms=_overlay_int(overlay, "fade_out_ms", 250),
             )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
@@ -466,6 +485,11 @@ def generate_animated_overlay_ass(
             ) from exc
 
     return ass_paths if ass_paths else None
+
+
+def _overlay_int(overlay: dict, key: str, default: int) -> int:
+    value = overlay.get(key)
+    return default if value is None else int(value)
 
 
 def render_overlays_at_time(
@@ -722,6 +746,31 @@ def _pre_wrap_for_scale_animation(text: str, font_family: str | None) -> str:
     return "\\N".join(lines)
 
 
+def _emit_lyric_line_alpha_tags(
+    section_start_s: float,
+    section_end_s: float,
+    fade_in_ms: int,
+    fade_out_ms: int,
+) -> str:
+    """Emit clamped eased opacity tags for lyric-line ASS events."""
+    duration_ms = max(0, int(round((section_end_s - section_start_s) * 1000)))
+    fade_in = max(0, min(fade_in_ms, duration_ms))
+    fade_out = max(0, min(fade_out_ms, max(0, duration_ms - fade_in)))
+
+    tags: list[str] = []
+    if fade_in > 0:
+        tags.append(r"\alpha&HFF&")
+        tags.append(rf"\t(0,{fade_in},0.5,\alpha&H00&)")
+    else:
+        tags.append(r"\alpha&H00&")
+
+    if fade_out > 0:
+        fade_out_start = max(fade_in, duration_ms - fade_out)
+        tags.append(rf"\t({fade_out_start},{duration_ms},2.0,\alpha&HFF&)")
+
+    return "{" + "".join(tags) + "}"
+
+
 def _write_animated_ass(
     text: str,
     start_s: float,
@@ -909,20 +958,17 @@ def _write_animated_ass(
 
     elif effect == "lyric-line":
         # YouTube-lyric-video style: one static line of plain text with a
-        # smooth `\fad(in, out)` alpha animation. No per-word color sweep
-        # (that's the `karaoke-line` effect). The injector
-        # (`lyric_injector._inject_line`) sets `start_s` / `end_s` to include
-        # a small pre-roll and a post-dwell past the last word's vocal end,
-        # so the line settles before fading out rather than cutting at the
-        # exact frame the vocal stops.
+        # thin outline, hard libass offset shadow, and eased opacity transforms.
+        # The transforms use libass's accel exponent, not cubic-bezier curves,
+        # and the shadow is hard-edged rather than blurred.
         pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
         color_tag = ""
         if text_color:
             bgr = _hex_to_ass_bgr(text_color)
             color_tag = f"\\1c&H{bgr}&"
-        dialogue_text = (
-            f"{{{pos_or_align}\\q2{outline_tag}\\fad({fade_in_ms},{fade_out_ms}){color_tag}}}{text}"
-        )
+        alpha_tags = _emit_lyric_line_alpha_tags(start_s, end_s, fade_in_ms, fade_out_ms)
+        inline = alpha_tags[:-1] + pos_or_align + r"\q2" + outline_tag + color_tag + "}"
+        dialogue_text = f"{inline}{text}"
 
     elif effect == "bounce":
         # Squash-and-stretch: 100 → 125 (stretch) → 90 (squash) → 100 (settle).
@@ -950,10 +996,33 @@ def _write_animated_ass(
             else f"{{\\an{alignment}{outline_tag}}}{text}"
         )
 
+    style_name = "LyricLine" if effect == "lyric-line" else "Overlay"
+
     # Use dynamic ASS header when font_family is set
     if font_family:
         ass_name = _registry_ass_name(font_family)
-        header = _build_ass_header(ass_name)
+        if effect == "lyric-line":
+            header = _build_ass_header(
+                ass_name,
+                style_name=style_name,
+                bold=_registry_ass_bold(font_family),
+                outline="1.5",
+                shadow="2",
+                outline_colour="&H00000000",
+                back_colour="&H99000000",
+            )
+        else:
+            header = _build_ass_header(ass_name)
+    elif effect == "lyric-line":
+        header = _build_ass_header(
+            "Playfair Display",
+            style_name=style_name,
+            bold=0,
+            outline="1.5",
+            shadow="2",
+            outline_colour="&H00000000",
+            back_colour="&H99000000",
+        )
     else:
         header = _ASS_OVERLAY_HEADER
 
@@ -961,7 +1030,9 @@ def _write_animated_ass(
         f.write(header)
         f.write("\n[Events]\n")
         f.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
-        f.write(f"Dialogue: 0,{start_str},{end_str},Overlay,,0,0,{margin_v},,{dialogue_text}\n")
+        f.write(
+            f"Dialogue: 0,{start_str},{end_str},{style_name},,0,0,{margin_v},,{dialogue_text}\n"
+        )
 
 
 def _validate_ass_file(path: str) -> bool:

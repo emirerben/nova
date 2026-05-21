@@ -143,6 +143,58 @@ def test_admin_test_job_accepts_unpublished_ready_track(client: TestClient) -> N
     assert str(args[1]) == body["job_id"]
 
 
+def test_admin_test_job_stores_lyrics_override_on_job(client: TestClient) -> None:
+    track = _ready_unpublished_track(
+        track_config={
+            "required_clips_min": 1,
+            "required_clips_max": 20,
+            "lyrics_config": {"enabled": True, "style": "line", "post_dwell_s": 1.0},
+        }
+    )
+    override, _session = _override_db_returning(track=track)
+
+    new_job = MagicMock()
+    new_job.id = uuid4()
+
+    app.dependency_overrides[get_db] = override
+    try:
+        with (
+            patch("app.routes.admin_music.Job", return_value=new_job) as mock_job,
+            patch(
+                "app.services.job_dispatch.enqueue_orchestrator",
+                new_callable=AsyncMock,
+            ) as mock_enqueue,
+        ):
+            mock_enqueue.return_value = str(new_job.id)
+            resp = client.post(
+                f"/admin/music-tracks/{track.id}/test-job",
+                json={
+                    "clip_gcs_paths": ["music-uploads/u1/a.mp4"],
+                    "lyrics_config_override": {"fade_in_ms": 50},
+                },
+                headers=_admin_headers(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 201, resp.text
+    assert mock_job.call_args.kwargs["all_candidates"]["lyrics_config_override"] == {
+        "fade_in_ms": 50
+    }
+
+
+def test_admin_test_job_rejects_invalid_lyrics_override(client: TestClient) -> None:
+    resp = client.post(
+        "/admin/music-tracks/some-id/test-job",
+        json={
+            "clip_gcs_paths": ["music-uploads/u1/a.mp4"],
+            "lyrics_config_override": {"post_dwell_s": 10.0},
+        },
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 422
+
+
 def test_admin_test_job_rejects_analyzing_track(client: TestClient) -> None:
     """analysis_status='analyzing' → 409 (must wait for beats)."""
     track = _ready_unpublished_track(analysis_status="analyzing")

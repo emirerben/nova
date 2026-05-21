@@ -4,17 +4,26 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   type AdminMusicTestJobSummary,
+  type LyricsConfig,
+  type LyricsConfigOverride,
+  type LyricsPreviewStatus,
   type MusicJobStatus,
   type MusicTrackDetail,
+  adminCreateLyricsPreview,
   adminCreateMusicTestJob,
+  adminGetLyricsPreviewStatus,
   adminGetMusicJobStatus,
   adminListMusicTestJobs,
   adminRerenderMusicJob,
   uploadMusicSlot,
 } from "@/lib/music-api";
+import { JobIdChip } from "@/app/admin/_shared/JobIdChip";
 import { useJobPoller } from "@/hooks/useJobPoller";
+import { LyricsTimingPanel } from "./LyricsTimingPanel";
 
 const TERMINAL_STATUSES = new Set(["music_ready", "processing_failed"]);
+type ActiveJobKind = "full" | "lyrics_preview";
+type ActiveJobStatus = MusicJobStatus | LyricsPreviewStatus;
 
 interface TestTabProps {
   trackId: string;
@@ -55,19 +64,31 @@ export function TestTab({ trackId, track }: TestTabProps) {
 
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeJobKind, setActiveJobKind] = useState<ActiveJobKind>("full");
+  const [savedLyricsConfig, setSavedLyricsConfig] = useState<Partial<LyricsConfig>>(
+    track.track_config?.lyrics_config ?? {},
+  );
   const [prevJobs, setPrevJobs] = useState<AdminMusicTestJobSummary[]>([]);
   const [loadingPrev, setLoadingPrev] = useState(false);
 
   const expected = useMemo(() => describeExpectedClipCount(track), [track]);
 
   const fetchStatusForTrack = useCallback(
-    (jobId: string) => adminGetMusicJobStatus(trackId, jobId),
-    [trackId],
+    (jobId: string) =>
+      activeJobKind === "lyrics_preview"
+        ? adminGetLyricsPreviewStatus(trackId, jobId)
+        : adminGetMusicJobStatus(trackId, jobId),
+    [trackId, activeJobKind],
   );
-  const poller = useJobPoller<MusicJobStatus>(activeJobId, {
+  const poller = useJobPoller<ActiveJobStatus>(activeJobId, {
     fetchStatus: fetchStatusForTrack,
     isTerminal: (d) => TERMINAL_STATUSES.has(d.status),
+    activeIntervalMs: 1000,
   });
+
+  useEffect(() => {
+    setSavedLyricsConfig(track.track_config?.lyrics_config ?? {});
+  }, [track.track_config?.lyrics_config]);
 
   const refreshPrevJobs = useCallback(async () => {
     setLoadingPrev(true);
@@ -130,16 +151,29 @@ export function TestTab({ trackId, track }: TestTabProps) {
     setUploads([]);
   }
 
-  async function submitJob() {
+  async function submitJob(lyricsConfigOverride?: LyricsConfigOverride) {
     setSubmitError(null);
     try {
       const resp = await adminCreateMusicTestJob(
         trackId,
         uploads.map((u) => u.gcsPath),
+        lyricsConfigOverride,
       );
+      setActiveJobKind("full");
       setActiveJobId(resp.job_id);
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "Submit failed");
+    }
+  }
+
+  async function previewLyrics(lyricsConfigOverride?: LyricsConfigOverride) {
+    setSubmitError(null);
+    try {
+      const resp = await adminCreateLyricsPreview(trackId, lyricsConfigOverride);
+      setActiveJobKind("lyrics_preview");
+      setActiveJobId(resp.job_id);
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : "Lyrics preview failed");
     }
   }
 
@@ -147,6 +181,7 @@ export function TestTab({ trackId, track }: TestTabProps) {
     setSubmitError(null);
     try {
       const resp = await adminRerenderMusicJob(trackId, sourceJobId);
+      setActiveJobKind("full");
       setActiveJobId(resp.job_id);
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "Re-render failed");
@@ -156,6 +191,12 @@ export function TestTab({ trackId, track }: TestTabProps) {
   const clipCount = uploads.length;
   const submitDisabled =
     !trackReady || uploading || clipCount < expected.min || clipCount > expected.max;
+  const fullTestHint =
+    clipCount > 0 && clipCount < expected.min
+      ? `Need ${expected.min - clipCount} more clip${expected.min - clipCount === 1 ? "" : "s"}`
+      : clipCount > expected.max
+        ? `Too many clips (${clipCount} > ${expected.max})`
+        : null;
 
   const currentJob = poller.data;
   const isPolling = poller.polling;
@@ -164,8 +205,10 @@ export function TestTab({ trackId, track }: TestTabProps) {
   // orchestrator was fixed to capture the signed URL. Filter to http(s) so the
   // <video src> never falls back to a same-origin path lookup.
   const rawOutput =
-    currentJob?.status === "music_ready" && currentJob.assembly_plan
-      ? ((currentJob.assembly_plan as Record<string, unknown>).output_url as string | undefined)
+    currentJob?.status === "music_ready" && "output_url" in currentJob
+      ? (currentJob.output_url ?? undefined)
+      : currentJob?.status === "music_ready" && "assembly_plan" in currentJob && currentJob.assembly_plan
+        ? ((currentJob.assembly_plan as Record<string, unknown>).output_url as string | undefined)
       : undefined;
   const outputUrl =
     typeof rawOutput === "string" && /^https?:\/\//.test(rawOutput) ? rawOutput : undefined;
@@ -260,30 +303,25 @@ export function TestTab({ trackId, track }: TestTabProps) {
           </div>
         )}
 
-        <div className="flex items-center gap-3 mt-4">
-          <button
-            onClick={submitJob}
-            disabled={submitDisabled}
-            className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
-          >
-            Render preview
-          </button>
-          {clipCount > 0 && clipCount < expected.min && (
-            <span className="text-xs text-amber-400">
-              Need {expected.min - clipCount} more clip{expected.min - clipCount === 1 ? "" : "s"}
-            </span>
-          )}
-          {clipCount > expected.max && (
-            <span className="text-xs text-red-400">
-              Too many clips ({clipCount} {">"} {expected.max})
-            </span>
-          )}
-        </div>
-
         {submitError && (
           <p className="text-sm text-red-400 mt-3">{submitError}</p>
         )}
       </div>
+
+      <LyricsTimingPanel
+        trackId={trackId}
+        savedConfig={savedLyricsConfig}
+        fullTestDisabled={submitDisabled}
+        fullTestHint={fullTestHint}
+        onSaved={setSavedLyricsConfig}
+        onSubmit={(action, override) => {
+          if (action === "preview") {
+            previewLyrics(override);
+          } else {
+            submitJob(override);
+          }
+        }}
+      />
 
       {/* Current job status */}
       {activeJobId && (
@@ -300,7 +338,7 @@ export function TestTab({ trackId, track }: TestTabProps) {
             <div className="text-sm space-y-2">
               <div className="flex items-center gap-3">
                 <span className="text-zinc-500">Job</span>
-                <span className="font-mono text-xs text-zinc-300">{currentJob.job_id}</span>
+                <JobIdChip jobId={currentJob.job_id} truncateChars={36} />
                 <StatusPill status={currentJob.status} />
                 {isPolling && <span className="text-xs text-zinc-500">polling…</span>}
               </div>
@@ -327,12 +365,14 @@ export function TestTab({ trackId, track }: TestTabProps) {
                     >
                       Open in new tab
                     </a>
-                    <button
-                      onClick={() => rerenderFrom(currentJob.job_id)}
-                      className="ml-auto text-xs font-semibold px-3 py-1.5 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-zinc-100"
-                    >
-                      Re-render with same clips
-                    </button>
+                    {activeJobKind === "full" && (
+                      <button
+                        onClick={() => rerenderFrom(currentJob.job_id)}
+                        className="ml-auto text-xs font-semibold px-3 py-1.5 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-zinc-100"
+                      >
+                        Re-render with same clips
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -372,8 +412,8 @@ export function TestTab({ trackId, track }: TestTabProps) {
                 key={j.job_id}
                 className="flex items-center gap-3 bg-zinc-800/60 rounded px-3 py-2 text-xs"
               >
-                <span className="font-mono text-zinc-300 flex-shrink-0 w-20 truncate">
-                  {j.job_id.slice(0, 8)}
+                <span className="flex-shrink-0 w-24">
+                  <JobIdChip jobId={j.job_id} />
                 </span>
                 <StatusPill status={j.status} />
                 <span className="text-zinc-500">{j.clip_count} clips</span>

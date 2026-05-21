@@ -14,7 +14,9 @@ interface UseJobPollerOptions<T> {
   fetchStatus: (jobId: string) => Promise<T>;
   /** Predicate that returns true when the job is in a terminal state. */
   isTerminal: (data: T) => boolean;
-  /** Poll interval in ms. Default: 4000. */
+  /** Poll interval in ms while the job is active. Default: 4000. */
+  activeIntervalMs?: number;
+  /** @deprecated Use activeIntervalMs. */
   intervalMs?: number;
   /** Timeout in ms. Default: 10 min. */
   timeoutMs?: number;
@@ -39,10 +41,12 @@ export function useJobPoller<T>(
   const {
     fetchStatus,
     isTerminal,
-    intervalMs = DEFAULT_INTERVAL_MS,
+    activeIntervalMs,
+    intervalMs,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     onTimeout,
   } = options;
+  const pollingIntervalMs = activeIntervalMs ?? intervalMs ?? DEFAULT_INTERVAL_MS;
 
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -105,9 +109,9 @@ export function useJobPoller<T>(
 
       // Immediately poll, then set interval
       poll();
-      intervalRef.current = setInterval(poll, intervalMs);
+      intervalRef.current = setInterval(poll, pollingIntervalMs);
     },
-    [fetchStatus, isTerminal, intervalMs, timeoutMs, onTimeout, stopPolling],
+    [fetchStatus, isTerminal, pollingIntervalMs, timeoutMs, onTimeout, stopPolling],
   );
 
   // Start polling when jobId changes (including initial mount)
