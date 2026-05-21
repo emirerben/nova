@@ -44,9 +44,12 @@ from typing import Any
 import structlog
 
 from app.pipeline.text_reveal import (
-    LAST_WORD_DWELL_S as _LAST_WORD_DWELL_S,
     MIN_RENDERABLE_S as _MIN_RENDERABLE_S,
+)
+from app.pipeline.text_reveal import (
     Word as _RevealWord,
+)
+from app.pipeline.text_reveal import (
     build_cumulative_stages,
 )
 

@@ -29,7 +29,6 @@ from dataclasses import dataclass
 from app.agents._schemas.text_alignment import TranscriptWord
 from app.agents._schemas.text_overlay_pipeline import Phrase
 
-
 DEFAULT_SILENCE_GAP_S = 0.7
 DEFAULT_MAX_WORDS_PER_LINE = 8
 DEFAULT_MIN_GROUP_SIZE = 2

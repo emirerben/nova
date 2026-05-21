@@ -30,7 +30,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 LAST_WORD_DWELL_S = 0.30
 MIN_RENDERABLE_S = 0.05
 
@@ -87,8 +86,7 @@ def build_cumulative_stages(
 
     # Pass 1: natural ends and keep mask.
     natural_ends: list[float] = [
-        line_end_s if i == len(words) - 1 else words[i + 1].start_s
-        for i in range(len(words))
+        line_end_s if i == len(words) - 1 else words[i + 1].start_s for i in range(len(words))
     ]
     keep_mask: list[bool] = [
         (natural_ends[i] - words[i].start_s) >= min_renderable_s for i in range(len(words))

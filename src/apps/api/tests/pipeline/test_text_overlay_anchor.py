@@ -88,8 +88,7 @@ def test_left_anchor_places_text_left_edge_at_anchor_x(tmp_png_path):
     # centered on it. With a centered "hello" at anchor_x=216, left_x would be
     # roughly 216 - hello_width/2 ≈ 130; with left anchor it should be ≥ ~200.
     assert left_x >= anchor_x - 25, (
-        f"left-anchored text should not start far left of anchor_x={anchor_x}, "
-        f"got left_x={left_x}"
+        f"left-anchored text should not start far left of anchor_x={anchor_x}, got left_x={left_x}"
     )
     assert right_x > anchor_x, "text should extend rightward from the anchor"
 

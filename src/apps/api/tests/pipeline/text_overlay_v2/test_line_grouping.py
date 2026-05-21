@@ -170,8 +170,9 @@ def test_max_words_cap_splits_long_lines():
 
 
 def test_max_words_cap_at_default_8():
-    phrases = [_phrase(f"w{i}", i * 0.5, i * 0.5 + 0.3) for i in range(DEFAULT_MAX_WORDS_PER_LINE + 1)]
-    transcript = [_tw(f"w{i}", i * 0.5, i * 0.5 + 0.4) for i in range(DEFAULT_MAX_WORDS_PER_LINE + 1)]
+    n = DEFAULT_MAX_WORDS_PER_LINE + 1
+    phrases = [_phrase(f"w{i}", i * 0.5, i * 0.5 + 0.3) for i in range(n)]
+    transcript = [_tw(f"w{i}", i * 0.5, i * 0.5 + 0.4) for i in range(n)]
     groups = build_line_groups(phrases, transcript)
     # 9 words → groups [0..7] (8 words) then singleton [8] gets dropped under
     # min_group_size=2.

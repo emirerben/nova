@@ -483,9 +483,7 @@ def test_stage_g_line_group_emits_n_cumulative_overlays():
         phrase_indices=[0, 1, 2],
         line_end_s=3.0,
         line_anchor_x_frac=0.1,
-
         line_anchor_y_frac=0.8,
-
         line_height_frac=0.05,
         transcript_word_indices=[0, 1, 2],
         word_start_s_list=[0.0, 1.0, 2.0],
@@ -511,9 +509,7 @@ def test_stage_g_line_group_overlays_are_left_anchored():
         phrase_indices=[0, 1],
         line_end_s=2.0,
         line_anchor_x_frac=0.15,
-
         line_anchor_y_frac=0.8,
-
         line_height_frac=0.05,
         transcript_word_indices=[0, 1],
         word_start_s_list=[0.0, 1.0],
@@ -542,9 +538,7 @@ def test_stage_g_pop_animated_suffix_on_pop_in_effect():
         phrase_indices=[0, 1],
         line_end_s=2.0,
         line_anchor_x_frac=0.1,
-
         line_anchor_y_frac=0.8,
-
         line_height_frac=0.05,
         transcript_word_indices=[0, 1],
         word_start_s_list=[0.0, 1.0],
@@ -566,17 +560,27 @@ def test_stage_g_pop_animated_suffix_none_for_non_pop_effect():
     def _none_atomized(w, s):
         return ClassifiedPhrase(
             phrase=Phrase(
-                lines=[w], start_t_s=s, end_t_s=s + 0.3,
-                aabb=(0.1, 0.7, 0.3, 0.85), mean_confidence=0.9,
+                lines=[w],
+                start_t_s=s,
+                end_t_s=s + 0.3,
+                aabb=(0.1, 0.7, 0.3, 0.85),
+                mean_confidence=0.9,
             ),
-            effect="none", role="label", size_class="medium", font_color_hex="#FFFFFF",
+            effect="none",
+            role="label",
+            size_class="medium",
+            font_color_hex="#FFFFFF",
         )
+
     classified = [_none_atomized("a", 0.0), _none_atomized("b", 1.0)]
     lg = LineGroup(
-        phrase_indices=[0, 1], line_end_s=2.0, line_anchor_x_frac=0.1,
- line_anchor_y_frac=0.8,
- line_height_frac=0.05,
-        transcript_word_indices=[0, 1], word_start_s_list=[0.0, 1.0],
+        phrase_indices=[0, 1],
+        line_end_s=2.0,
+        line_anchor_x_frac=0.1,
+        line_anchor_y_frac=0.8,
+        line_height_frac=0.05,
+        transcript_word_indices=[0, 1],
+        word_start_s_list=[0.0, 1.0],
     )
     out = _classified_phrases_to_output(
         classified, slot_boundaries_s=[(0.0, 5.0)], line_groups=[lg]
@@ -602,9 +606,7 @@ def test_stage_g_ungrouped_phrases_passthrough_unchanged():
         phrase_indices=[0, 2],
         line_end_s=2.0,
         line_anchor_x_frac=0.1,
-
         line_anchor_y_frac=0.8,
-
         line_height_frac=0.05,
         transcript_word_indices=[0, 1],
         word_start_s_list=[0.0, 1.0],
@@ -651,17 +653,26 @@ def test_stage_g_line_split_breaks_oversized_cumulative_line():
 
     # 12 medium-size words: cumulative text grows past 90% canvas width
     # around word 6-8 depending on font. Forces at least one split.
-    long_words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa", "lambda", "mu"]
-    classified = [
-        _make_atomized_classified(w, float(i)) for i, w in enumerate(long_words)
+    long_words = [
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "epsilon",
+        "zeta",
+        "eta",
+        "theta",
+        "iota",
+        "kappa",
+        "lambda",
+        "mu",
     ]
+    classified = [_make_atomized_classified(w, float(i)) for i, w in enumerate(long_words)]
     lg = LineGroup(
         phrase_indices=list(range(len(long_words))),
         line_end_s=12.0,
         line_anchor_x_frac=0.05,
-
         line_anchor_y_frac=0.8,
-
         line_height_frac=0.05,
         transcript_word_indices=list(range(len(long_words))),
         word_start_s_list=[float(i) for i in range(len(long_words))],
@@ -770,15 +781,26 @@ def test_stage_g_no_word_is_lost_in_line_split():
     overlay's sample_text. Critical leakage-prevention test."""
     from app.pipeline.text_overlay_v2.line_grouping import LineGroup
 
-    words = ["the", "quick", "brown", "fox", "jumps", "over", "the", "lazy", "dog", "running", "very", "fast"]
+    words = [
+        "the",
+        "quick",
+        "brown",
+        "fox",
+        "jumps",
+        "over",
+        "the",
+        "lazy",
+        "dog",
+        "running",
+        "very",
+        "fast",
+    ]
     classified = [_make_atomized_classified(w, float(i)) for i, w in enumerate(words)]
     lg = LineGroup(
         phrase_indices=list(range(len(words))),
         line_end_s=float(len(words)),
         line_anchor_x_frac=0.05,
-
         line_anchor_y_frac=0.8,
-
         line_height_frac=0.05,
         transcript_word_indices=list(range(len(words))),
         word_start_s_list=[float(i) for i in range(len(words))],

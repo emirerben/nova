@@ -52,9 +52,7 @@ def test_single_word_no_expansion():
 
 
 def test_last_word_dwell_overrides_default():
-    stages = build_cumulative_stages(
-        [_w("hi", 0.0, 0.5)], line_end_s=0.5, dwell_s=1.0
-    )
+    stages = build_cumulative_stages([_w("hi", 0.0, 0.5)], line_end_s=0.5, dwell_s=1.0)
     assert stages[0].end_s == pytest.approx(1.5)
 
 
@@ -101,9 +99,7 @@ def test_whitespace_only_word_filtered_from_cumulative():
 def test_terminal_stage_with_start_past_line_end_is_padded():
     # Pathological input: word starts after line_end_s. Helper still emits a
     # stage with at least MIN_RENDERABLE_S window so caller can validate.
-    stages = build_cumulative_stages(
-        [_w("late", 5.0, 6.0)], line_end_s=4.0, dwell_s=0.0
-    )
+    stages = build_cumulative_stages([_w("late", 5.0, 6.0)], line_end_s=4.0, dwell_s=0.0)
     assert len(stages) == 1
     assert stages[0].end_s - stages[0].start_s == pytest.approx(MIN_RENDERABLE_S)
 

@@ -687,7 +687,10 @@ def _emit_cumulative_line_overlays(
             # wider than 90% canvas). If so, flag it and let it through —
             # the renderer's shrink-to-fit will handle the actual rendering.
             singleton_text = word_texts[j]
-            if singleton_text and measure_text_width(singleton_text, text_size=size_class) > max_w_px:
+            if (
+                singleton_text
+                and measure_text_width(singleton_text, text_size=size_class) > max_w_px
+            ):
                 drops["single_word_overflow"] += 1
         elif width > max_w_px and not current:
             # Very first word of the group is already too wide. Same fallback.
