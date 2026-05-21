@@ -187,6 +187,63 @@ def test_merge_overlays_preserves_bbox_and_color() -> None:
     assert ov["position"] == "bottom"
 
 
+def test_merge_overlays_carries_text_anchor_and_pop_suffix() -> None:
+    """Progressive word-reveal fields must survive the recipe-dict translation.
+
+    Stage G emits TemplateTextOverlay with text_anchor="left" and a non-None
+    pop_animated_suffix. If `_overlay_to_recipe_dict` drops these, the renderer
+    falls back to center-anchor with no per-word pop — silently breaking
+    progressive reveal even though the schema and Stage G are correct.
+
+    Regression lock for the silent-drop bug fixed alongside Lane F.
+    """
+    slot = {"target_duration_s": 3.0, "text_overlays": []}
+    overlay = TemplateTextOverlay(
+        slot_index=1,
+        sample_text="good morning",
+        start_s=1.0,
+        end_s=2.5,
+        bbox=TextBBox(x_norm=0.15, y_norm=0.7, w_norm=0.1, h_norm=0.05, sample_frame_t=1.0),
+        font_color_hex="#FFFFFF",
+        effect="pop-in",
+        role="label",
+        size_class="medium",
+        text_anchor="left",
+        pop_animated_suffix="morning",
+    )
+    _merge_overlays_into_slots([slot], [overlay])
+    ov = slot["text_overlays"][0]
+    assert ov["text_anchor"] == "left"
+    assert ov["pop_animated_suffix"] == "morning"
+    # Non-center anchor also propagates the OCR x_norm as position_x_frac so
+    # the renderer uses the LINE'S left edge, not canvas center.
+    assert ov["position_x_frac"] == pytest.approx(0.15)
+
+
+def test_merge_overlays_center_anchor_omits_position_x_frac() -> None:
+    """Center-anchored overlays (the default) should NOT emit position_x_frac.
+    Setting it for every overlay would change historical center-anchor behavior
+    on overlays whose detected bbox.x_norm != 0.5 — visible regression."""
+    slot = {"target_duration_s": 3.0, "text_overlays": []}
+    overlay = TemplateTextOverlay(
+        slot_index=1,
+        sample_text="Hello",
+        start_s=0.5,
+        end_s=2.0,
+        bbox=TextBBox(x_norm=0.3, y_norm=0.85, w_norm=0.4, h_norm=0.08, sample_frame_t=0.5),
+        font_color_hex="#FFFFFF",
+        effect="none",
+        role="label",
+        size_class="medium",
+        # text_anchor defaults to "center", pop_animated_suffix defaults to None
+    )
+    _merge_overlays_into_slots([slot], [overlay])
+    ov = slot["text_overlays"][0]
+    assert ov["text_anchor"] == "center"
+    assert "position_x_frac" not in ov
+    assert "pop_animated_suffix" not in ov
+
+
 def test_merge_overlays_converts_sample_frame_t_to_slot_relative() -> None:
     """sample_frame_t was global on input; merge must convert it to slot-
     relative AND keep it inside the (clamped) overlay window so the existing
