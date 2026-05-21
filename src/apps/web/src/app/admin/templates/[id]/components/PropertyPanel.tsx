@@ -21,14 +21,17 @@ import {
   TRANSITION_IN_OPTIONS,
 } from "./recipe-types";
 import {
-  FONT_NAMES,
+  ACTIVE_FONT_NAMES,
   FONT_REGISTRY,
   MAX_OVERLAY_TEXT_LEN,
   getInferredFontName,
+  isActiveFont,
+  isDeprecatedFont,
   resolveOverlayPreview,
 } from "./overlay-constants";
 import { SpanEditor } from "./SpanEditor";
 import { FontAlternatives } from "./FontAlternatives";
+import { FontLibraryBrowser } from "./FontLibraryBrowser";
 
 // ── Shared field components ─────────────────────────────────────────────────
 
@@ -166,19 +169,20 @@ function FontPicker({
   const inferred = getInferredFontName(overlay);
   const current = overlay.font_family ?? "";
   const unknownFont = !!current && !FONT_REGISTRY[current];
+  const deprecatedFont = isDeprecatedFont(current);
 
   return (
     <Field label="Font">
       <select
-        value={unknownFont ? "" : current}
+        value={unknownFont || deprecatedFont ? "" : current}
         onChange={(e) => onChange(e.target.value || null)}
         className={selectClass}
       >
         {/* Show inferred font as placeholder when font_family is not set */}
         <option value="">
-          {inferred} (from style)
+          {deprecatedFont ? `${current} (deprecated)` : `${inferred} (from style)`}
         </option>
-        {FONT_NAMES.map((name) => {
+        {ACTIVE_FONT_NAMES.map((name) => {
           const entry = FONT_REGISTRY[name];
           return (
             <option
@@ -197,6 +201,32 @@ function FontPicker({
         </span>
       )}
     </Field>
+  );
+}
+
+function DeprecatedFontNotice({
+  family,
+  onSwitch,
+}: {
+  family: string;
+  onSwitch: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded border border-amber-900/40 bg-amber-950/20 px-3 py-2">
+      <div className="min-w-0">
+        <span className="inline-flex rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">
+          deprecated
+        </span>
+        <span className="ml-2 text-xs text-zinc-300">{family}</span>
+      </div>
+      <button
+        type="button"
+        onClick={onSwitch}
+        className="shrink-0 rounded bg-amber-400 px-2 py-1 text-[11px] font-medium text-black hover:bg-amber-300"
+      >
+        Switch to active alternative
+      </button>
+    </div>
   );
 }
 
@@ -345,6 +375,12 @@ function OverlayListItem({
       field,
       value,
     });
+  const currentFont = overlay.font_family ?? null;
+  const deprecatedFont = isDeprecatedFont(currentFont);
+  const firstActiveAlternative =
+    overlay.font_alternatives?.find((alt) => isActiveFont(alt.family))?.family ??
+    ACTIVE_FONT_NAMES[0];
+  const pickFont = (family: string) => set("font_family", family);
 
   return (
     <div className="bg-zinc-900/50 border border-zinc-800 rounded p-3 space-y-3">
@@ -391,6 +427,13 @@ function OverlayListItem({
         />
       </div>
 
+      {deprecatedFont && currentFont && (
+        <DeprecatedFontNotice
+          family={currentFont}
+          onSwitch={() => pickFont(firstActiveAlternative)}
+        />
+      )}
+
       <div className="grid grid-cols-3 gap-2">
         <SelectInput
           label="Subject Part"
@@ -405,6 +448,11 @@ function OverlayListItem({
         slotIndex={slotIndex}
         overlayIndex={overlayIndex}
         dispatch={dispatch}
+      />
+
+      <FontLibraryBrowser
+        currentFamily={currentFont}
+        onPickFont={pickFont}
       />
 
       <div className="grid grid-cols-3 gap-2">

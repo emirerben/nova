@@ -38,6 +38,8 @@ export interface FontRegistryEntry {
   category: string;
   css_family: string;
   cycle_role?: string;
+  vibe?: FontVibe;
+  deprecated?: true;
 }
 
 interface FontRegistryFile {
@@ -48,6 +50,38 @@ interface FontRegistryFile {
 const _registry = fontRegistryJson as FontRegistryFile;
 export const FONT_REGISTRY: Record<string, FontRegistryEntry> = _registry.fonts;
 export const FONT_NAMES = Object.keys(FONT_REGISTRY);
+export const ACTIVE_FONT_NAMES = FONT_NAMES.filter(
+  (name) => !FONT_REGISTRY[name]?.deprecated,
+);
+
+export const FONT_VIBES = [
+  "viral_headlines",
+  "clean_captions",
+  "editorial",
+  "handwritten",
+  "script",
+] as const;
+export type FontVibe = (typeof FONT_VIBES)[number];
+
+export const FONT_VIBE_LABELS: Record<FontVibe, string> = {
+  viral_headlines: "Viral Headlines",
+  clean_captions: "Clean Captions",
+  editorial: "Editorial",
+  handwritten: "Handwritten",
+  script: "Script",
+};
+
+export function isDeprecatedFont(family: string | null | undefined): boolean {
+  return !!family && FONT_REGISTRY[family]?.deprecated === true;
+}
+
+export function isActiveFont(family: string | null | undefined): boolean {
+  return !!family && !!FONT_REGISTRY[family] && !isDeprecatedFont(family);
+}
+
+export function fontPreviewSlug(family: string): string {
+  return family.toLowerCase().replace(/\s+/g, "-");
+}
 
 const STYLE_DEFAULTS: Record<string, string> = _registry.style_defaults;
 

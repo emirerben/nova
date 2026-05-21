@@ -392,6 +392,7 @@ export default function TemplateDetailPage() {
             template={template}
             latestTestJob={latestTestJob}
             onTestJobComplete={handleTestJobComplete}
+            onReanalyze={handleReanalyze}
           />
         )}
         {resolvedTab === "test" && (
