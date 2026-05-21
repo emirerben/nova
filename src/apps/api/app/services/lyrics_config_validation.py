@@ -14,7 +14,7 @@ Caller-side semantics:
 
 from __future__ import annotations
 
-LYRICS_STYLES = {"karaoke", "per-word-pop"}
+LYRICS_STYLES = {"karaoke", "per-word-pop", "line"}
 LYRICS_POSITIONS = {
     "top",
     "bottom",

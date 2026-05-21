@@ -222,3 +222,130 @@ def test_unknown_style_is_noop() -> None:
     cache = _make_lyrics_cache([("Hi", 0.0, 0.5, [("Hi", 0.0, 0.5)])])
     out = inject_lyric_overlays(recipe, cache, 0.0, 5.0, {"enabled": True, "style": "ascii-rain"})
     assert out["slots"][0]["text_overlays"] == []
+
+
+# ── `"line"` style ────────────────────────────────────────────────────────────
+#
+# These lock the YouTube-lyric-video behavior: plain line, pre-roll, post-dwell
+# past the vocal end, no per-word color sweep. Defaults: pre_roll=0.10s,
+# post_dwell=0.75s, next_line_gap=0.10s, fade=150/250ms.
+
+
+def test_line_emits_one_overlay_per_line_with_lyric_line_effect() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("Hello world", 1.0, 2.0, [("Hello", 1.0, 1.5), ("world", 1.5, 2.0)]),
+            ("Goodbye now", 4.0, 5.0, [("Goodbye", 4.0, 4.5), ("now", 4.5, 5.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
+    overlays = out["slots"][0]["text_overlays"]
+    assert len(overlays) == 2
+    for ov in overlays:
+        assert ov["effect"] == "lyric-line"
+        assert ov["role"] == "lyrics"
+        # No per-word sweep — plain line should not carry word_timings.
+        assert "word_timings" not in ov
+        # Fade durations attached per overlay (defaults).
+        assert ov["fade_in_ms"] == 150
+        assert ov["fade_out_ms"] == 250
+    assert overlays[0]["text"] == "Hello world"
+    assert overlays[1]["text"] == "Goodbye now"
+
+
+def test_line_applies_pre_roll_to_start() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache([("Hi", 1.0, 2.0, [("Hi", 1.0, 2.0)])])
+    out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
+    ov = out["slots"][0]["text_overlays"][0]
+    # Default pre_roll=0.10 → start_s = 1.0 - 0.10 = 0.90
+    assert abs(ov["start_s"] - 0.9) < 1e-3
+
+
+def test_line_clamps_pre_roll_to_section_start() -> None:
+    """A line starting right at the section edge can't pre-roll below 0."""
+    recipe = _make_recipe([10.0])
+    # Line at section-relative start 0.05 with default pre_roll 0.10 would
+    # produce a negative window; injector must clamp to 0.
+    cache = _make_lyrics_cache([("Edge", 0.05, 1.0, [("Edge", 0.05, 1.0)])])
+    out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
+    ov = out["slots"][0]["text_overlays"][0]
+    assert ov["start_s"] >= 0.0
+    assert ov["start_s"] == 0.0
+
+
+def test_line_post_dwell_capped_by_next_line_start() -> None:
+    """When the next line is close, current line ends just before it."""
+    recipe = _make_recipe([10.0])
+    # First line ends at 2.0; second line starts at 2.3.
+    # Natural post-dwell would end first line at 2.0 + 0.75 = 2.75.
+    # next_line cap: 2.3 - 0.10 = 2.20.
+    # Expected end: min(2.75, 2.20) = 2.20.
+    cache = _make_lyrics_cache(
+        [
+            ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
+            ("Second", 2.3, 3.0, [("Second", 2.3, 3.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
+    ov0 = out["slots"][0]["text_overlays"][0]
+    assert abs(ov0["end_s"] - 2.20) < 1e-3
+
+
+def test_line_last_line_uses_full_post_dwell() -> None:
+    """No next line → use the full post-dwell."""
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache([("Only line", 1.0, 2.0, [("Only", 1.0, 1.5), ("line", 1.5, 2.0)])])
+    out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
+    ov = out["slots"][0]["text_overlays"][0]
+    # 2.0 + 0.75 = 2.75
+    assert abs(ov["end_s"] - 2.75) < 1e-3
+
+
+def test_line_reads_tuning_from_config() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache([("Hi", 1.0, 2.0, [("Hi", 1.0, 2.0)])])
+    cfg = {
+        "enabled": True,
+        "style": "line",
+        "pre_roll_s": 0.30,
+        "post_dwell_s": 1.50,
+        "fade_in_ms": 200,
+        "fade_out_ms": 400,
+    }
+    out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, cfg)
+    ov = out["slots"][0]["text_overlays"][0]
+    assert abs(ov["start_s"] - 0.70) < 1e-3  # 1.0 - 0.30
+    assert abs(ov["end_s"] - 3.50) < 1e-3  # 2.0 + 1.50
+    assert ov["fade_in_ms"] == 200
+    assert ov["fade_out_ms"] == 400
+
+
+def test_line_style_does_not_affect_karaoke_path() -> None:
+    """Template-scoping guard: switching to `line` must not emit karaoke fields.
+
+    Reverse direction is also implied — picking `karaoke` must not emit
+    `fade_in_ms` / `fade_out_ms`. Verifies the dispatch is mutually exclusive
+    so other templates that rely on karaoke aren't disturbed.
+    """
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache([("Hello", 1.0, 2.0, [("Hello", 1.0, 1.5), ("world", 1.5, 2.0)])])
+
+    out_line = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
+    ov_line = out_line["slots"][0]["text_overlays"][0]
+    assert ov_line["effect"] == "lyric-line"
+    assert "word_timings" not in ov_line
+    assert "highlight_color" not in ov_line
+
+    # Karaoke path on a fresh recipe — must still produce word_timings and
+    # NOT carry the line-style fade fields.
+    recipe2 = _make_recipe([10.0])
+    out_kar = inject_lyric_overlays(
+        recipe2, cache, 0.0, 10.0, {"enabled": True, "style": "karaoke"}
+    )
+    ov_kar = out_kar["slots"][0]["text_overlays"][0]
+    assert ov_kar["effect"] == "karaoke-line"
+    assert "word_timings" in ov_kar
+    assert "fade_in_ms" not in ov_kar
+    assert "fade_out_ms" not in ov_kar

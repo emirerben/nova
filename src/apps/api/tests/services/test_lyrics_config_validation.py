@@ -90,6 +90,9 @@ class TestValidateLyricsConfigDict:
     def test_accepts_per_word_pop_style(self):
         validate_lyrics_config_dict({"style": "per-word-pop"})
 
+    def test_accepts_line_style(self):
+        validate_lyrics_config_dict({"style": "line"})
+
     def test_accepts_all_known_positions(self):
         for pos in ("top", "bottom", "center", "center-above", "center-below", "center-label"):
             validate_lyrics_config_dict({"position": pos})

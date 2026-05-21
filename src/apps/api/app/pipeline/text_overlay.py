@@ -86,7 +86,16 @@ MONTSERRAT_FONT_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "Montserrat-Ex
 
 # Effects that produce animated .ass files instead of static PNGs
 ASS_ANIMATED_EFFECTS = frozenset(
-    {"fade-in", "typewriter", "slide-up", "slide-down", "pop-in", "bounce", "karaoke-line"}
+    {
+        "fade-in",
+        "typewriter",
+        "slide-up",
+        "slide-down",
+        "pop-in",
+        "bounce",
+        "karaoke-line",
+        "lyric-line",
+    }
 )
 
 # Animation keyframe timings (ms from overlay start). At runtime, each timestamp
@@ -431,6 +440,11 @@ def generate_animated_overlay_ass(
                 # accumulated prefix static. Without it, every new word
                 # re-pops the full line — visible flicker.
                 pop_animated_suffix=overlay.get("pop_animated_suffix"),
+                # `lyric-line` effect only — alpha fade in/out durations (ms).
+                # The injector (`_inject_line`) sets these per-overlay; falls
+                # back to the function defaults for any other call site.
+                fade_in_ms=int(overlay.get("fade_in_ms") or 150),
+                fade_out_ms=int(overlay.get("fade_out_ms") or 250),
             )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
@@ -732,6 +746,11 @@ def _write_animated_ass(
     # accumulated line each time a new word is added. None for any other
     # effect or for non-cumulative pop-in usage (the full text pops as before).
     pop_animated_suffix: str | None = None,
+    # Lyric-line only: alpha fade durations in milliseconds. Threaded as
+    # scalar kwargs (not via an overlay dict) to match the existing pattern
+    # for effect-specific parameters in this function.
+    fade_in_ms: int = 150,
+    fade_out_ms: int = 250,
 ) -> None:
     """Write an ASS file with animation tags for the given effect.
 
@@ -887,6 +906,23 @@ def _write_animated_ass(
                 dur_cs = max(5, int(round(float(w.get("duration_cs", 30)))))
                 parts.append(f"{{\\kf{dur_cs}}}{word_text} ")
             dialogue_text = "".join(parts).rstrip()
+
+    elif effect == "lyric-line":
+        # YouTube-lyric-video style: one static line of plain text with a
+        # smooth `\fad(in, out)` alpha animation. No per-word color sweep
+        # (that's the `karaoke-line` effect). The injector
+        # (`lyric_injector._inject_line`) sets `start_s` / `end_s` to include
+        # a small pre-roll and a post-dwell past the last word's vocal end,
+        # so the line settles before fading out rather than cutting at the
+        # exact frame the vocal stops.
+        pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
+        color_tag = ""
+        if text_color:
+            bgr = _hex_to_ass_bgr(text_color)
+            color_tag = f"\\1c&H{bgr}&"
+        dialogue_text = (
+            f"{{{pos_or_align}\\q2{outline_tag}\\fad({fade_in_ms},{fade_out_ms}){color_tag}}}{text}"
+        )
 
     elif effect == "bounce":
         # Squash-and-stretch: 100 → 125 (stretch) → 90 (squash) → 100 (settle).

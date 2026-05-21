@@ -76,6 +76,23 @@ _LAST_WORD_DWELL_S = 0.30
 # overlays for a few frames).
 _MIN_RENDERABLE_S = 0.05
 
+# `"line"` style defaults. The line style is the calm YouTube-lyric-video
+# look: full line appears in white in near-sync with the vocal, holds past
+# the last word, then fades out. Tuned for hip-hop / pop tempos against the
+# Travis Scott "Highest in the Room" reference.
+#
+# Pre-roll is small (100 ms) — user prefers tight near-sync, not a 250 ms
+# lead-in. Post-dwell of 750 ms is the breathing room past the vocal end
+# that the karaoke effect lacked (the karaoke overlay cuts at line.end_s,
+# i.e. the exact frame the last word's vocal stops). The next-line gap
+# prevents the current line from sitting on top of the upcoming one when
+# lines are densely packed.
+_LINE_PRE_ROLL_S = 0.10
+_LINE_POST_DWELL_S = 0.75
+_LINE_NEXT_LINE_GAP_S = 0.10
+_LINE_FADE_IN_MS = 150
+_LINE_FADE_OUT_MS = 250
+
 
 def inject_lyric_overlays(
     recipe_dict: dict,
@@ -94,7 +111,7 @@ def inject_lyric_overlays(
         return recipe_dict
 
     style = cfg.get("style") or "karaoke"
-    if style not in ("karaoke", "per-word-pop"):
+    if style not in ("karaoke", "per-word-pop", "line"):
         log.warning("lyric_inject_unknown_style", style=style)
         return recipe_dict
 
@@ -131,6 +148,8 @@ def inject_lyric_overlays(
 
     if style == "karaoke":
         injected = _inject_karaoke(section_lines, slot_windows, new_slots, cfg)
+    elif style == "line":
+        injected = _inject_line(section_lines, slot_windows, new_slots, cfg)
     else:  # per-word-pop
         injected = _inject_per_word_pop(section_lines, slot_windows, new_slots, cfg)
 
@@ -430,5 +449,93 @@ def _inject_per_word_pop(
             )
             _ensure_overlay_list(slots[slot_win.index]).append(overlay)
             injected += 1
+
+    return injected
+
+
+def _inject_line(
+    section_lines: list[dict],
+    windows: list[_SlotWindow],
+    slots: list[dict],
+    cfg: dict,
+) -> int:
+    """One overlay per line, plain text with smooth fade in/out.
+
+    Differences from `_inject_karaoke`:
+      - No per-word `\\kf` timings — the renderer draws the line as a single
+        static block (no color sweep).
+      - The overlay's visible window is **expanded** past the raw line span:
+        starts at `line.start_s - pre_roll`, ends at
+        `min(line.end_s + post_dwell, next_line.start_s - next_line_gap)`.
+        This is the YouTube-lyric-video "settle time" — without it, the line
+        cuts the same frame the vocal ends (the karaoke complaint).
+      - Each overlay carries `fade_in_ms` / `fade_out_ms` so the ASS renderer
+        emits a `\\fad(in, out)` tag for a soft alpha transition.
+
+    Tunable via lyrics_config:
+      - `pre_roll_s` (default `_LINE_PRE_ROLL_S`)
+      - `post_dwell_s` (default `_LINE_POST_DWELL_S`)
+      - `next_line_gap_s` (default `_LINE_NEXT_LINE_GAP_S`)
+      - `fade_in_ms` (default `_LINE_FADE_IN_MS`)
+      - `fade_out_ms` (default `_LINE_FADE_OUT_MS`)
+    """
+    base = _common_overlay_fields(cfg)
+    pre_roll = float(cfg.get("pre_roll_s", _LINE_PRE_ROLL_S))
+    post_dwell = float(cfg.get("post_dwell_s", _LINE_POST_DWELL_S))
+    next_gap = float(cfg.get("next_line_gap_s", _LINE_NEXT_LINE_GAP_S))
+    fade_in_ms = int(cfg.get("fade_in_ms", _LINE_FADE_IN_MS))
+    fade_out_ms = int(cfg.get("fade_out_ms", _LINE_FADE_OUT_MS))
+
+    injected = 0
+    n = len(section_lines)
+
+    for i, line in enumerate(section_lines):
+        # Expand the visible window. Pre-roll is clamped to 0 (don't go
+        # negative into the previous section). Post-dwell is capped by the
+        # next line's start so two adjacent lines never overlap on screen.
+        section_start = max(0.0, float(line["start_s"]) - pre_roll)
+        natural_end = float(line["end_s"]) + post_dwell
+        if i + 1 < n:
+            next_start = float(section_lines[i + 1]["start_s"])
+            section_end = min(natural_end, next_start - next_gap)
+        else:
+            section_end = natural_end
+
+        # If post-dwell would make the line shorter than the raw vocal span
+        # (degenerate case from a tight next_gap), keep it at least as long
+        # as the vocal itself so the user still sees the line through its
+        # sung duration.
+        section_end = max(section_end, float(line["end_s"]))
+        if section_end <= section_start:
+            continue
+
+        slot_win = _slot_for_time(section_start, windows)
+        if slot_win is None:
+            continue
+
+        # Rebase to slot-relative time, then clamp to the slot's own
+        # window. A line that spills past its slot is truncated at the
+        # slot end — the next slot's renderer pipeline is independent.
+        rel_start = max(0.0, section_start - slot_win.start_s)
+        slot_dur = slot_win.end_s - slot_win.start_s
+        rel_end = min(slot_dur, section_end - slot_win.start_s)
+        rel_end = max(rel_start + _MIN_OVERLAY_DURATION_S, rel_end)
+        rel_end = min(rel_end, slot_dur)
+        if rel_end <= rel_start:
+            continue
+
+        overlay = dict(base)
+        overlay.update(
+            {
+                "text": line["text"],
+                "effect": "lyric-line",
+                "start_s": round(rel_start, 3),
+                "end_s": round(rel_end, 3),
+                "fade_in_ms": fade_in_ms,
+                "fade_out_ms": fade_out_ms,
+            }
+        )
+        _ensure_overlay_list(slots[slot_win.index]).append(overlay)
+        injected += 1
 
     return injected
