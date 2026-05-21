@@ -206,9 +206,15 @@ interface EditorTabProps {
   template: AdminTemplate;
   latestTestJob: LatestTestJob | null;
   onTestJobComplete?: (job: LatestTestJob) => void;
+  onReanalyze?: () => void | Promise<void>;
 }
 
-export function EditorTab({ template, latestTestJob, onTestJobComplete }: EditorTabProps) {
+export function EditorTab({
+  template,
+  latestTestJob,
+  onTestJobComplete,
+  onReanalyze,
+}: EditorTabProps) {
   if (template.is_agentic) {
     return <AgenticEditorLock templateId={template.id} />;
   }
@@ -217,8 +223,50 @@ export function EditorTab({ template, latestTestJob, onTestJobComplete }: Editor
       template={template}
       latestTestJob={latestTestJob}
       onTestJobComplete={onTestJobComplete}
+      onReanalyze={onReanalyze}
     />
   );
+}
+
+export function StaleFontAlternativesBanner({
+  onDismiss,
+  onReanalyze,
+}: {
+  onDismiss: () => void;
+  onReanalyze?: () => void | Promise<void>;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded border border-amber-900/40 bg-amber-950/20 px-4 py-3">
+      <p className="text-sm text-amber-100">
+        Font alternatives reflect an older library. Re-analyze for fresh suggestions.
+      </p>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void onReanalyze?.()}
+          disabled={!onReanalyze}
+          className="rounded bg-amber-400 px-3 py-1.5 text-xs font-medium text-black hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Re-analyze
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="rounded px-2 py-1 text-xs text-amber-200 hover:bg-amber-500/10"
+          aria-label="Dismiss stale font alternatives banner"
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function shouldShowStaleFontAlternativesBanner(
+  recipe: Pick<Recipe, "analysis_pool_stale"> | null,
+  dismissed: boolean,
+): boolean {
+  return !!recipe?.analysis_pool_stale && !dismissed;
 }
 
 function AgenticEditorLock({ templateId }: { templateId: string }) {
@@ -443,7 +491,12 @@ function FontTile({
   );
 }
 
-function EditorTabInner({ template, latestTestJob, onTestJobComplete }: EditorTabProps) {
+function EditorTabInner({
+  template,
+  latestTestJob,
+  onTestJobComplete,
+  onReanalyze,
+}: EditorTabProps) {
   const [state, dispatch] = useReducer(editorReducer, initialState);
   const [saving, setSaving] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -451,6 +504,7 @@ function EditorTabInner({ template, latestTestJob, onTestJobComplete }: EditorTa
   const [videoError, setVideoError] = useState(false);
   const [savedSinceLastTest, setSavedSinceLastTest] = useState(false);
   const [previewSubject, setPreviewSubject] = useState("");
+  const [staleBannerDismissed, setStaleBannerDismissed] = useState(false);
 
   // Re-run polling state
   const [rerunJobId, setRerunJobId] = useState<string | null>(null);
@@ -499,6 +553,7 @@ function EditorTabInner({ template, latestTestJob, onTestJobComplete }: EditorTa
           }
         }
         dispatch({ type: "LOAD_RECIPE", recipe: res.recipe as unknown as Recipe });
+        setStaleBannerDismissed(false);
         dispatch({ type: "SET_VERSION", versionId: res.version_id, versionNumber: res.version_number });
       })
       .catch((err) => {
@@ -682,6 +737,13 @@ function EditorTabInner({ template, latestTestJob, onTestJobComplete }: EditorTa
 
   const editorContent = (
     <div className="flex-1 space-y-4 min-w-0">
+      {shouldShowStaleFontAlternativesBanner(recipe, staleBannerDismissed) && (
+        <StaleFontAlternativesBanner
+          onDismiss={() => setStaleBannerDismissed(true)}
+          onReanalyze={onReanalyze}
+        />
+      )}
+
       {/* Mini-timeline: slot bars */}
       <div className="border border-zinc-800 rounded p-3">
         <div className="flex items-center gap-1 mb-2">

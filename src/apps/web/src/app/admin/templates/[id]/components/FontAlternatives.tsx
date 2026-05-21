@@ -15,10 +15,7 @@
  */
 import type { Dispatch } from "react";
 import type { EditorAction, RecipeTextOverlay } from "./recipe-types";
-
-function slugify(family: string): string {
-  return family.toLowerCase().replace(/\s+/g, "-");
-}
+import { fontPreviewSlug, isActiveFont } from "./overlay-constants";
 
 interface FontAlternativesProps {
   overlay: RecipeTextOverlay;
@@ -33,7 +30,9 @@ export function FontAlternatives({
   overlayIndex,
   dispatch,
 }: FontAlternativesProps) {
-  const alternatives = overlay.font_alternatives;
+  const alternatives = overlay.font_alternatives
+    ?.filter((alt) => isActiveFont(alt.family))
+    .slice(0, 5);
 
   // Pipeline didn't run on this overlay (no text_bbox, or matcher failed
   // best-effort). Don't render the section — fall back to the regular
@@ -62,13 +61,13 @@ export function FontAlternatives({
     <div className="space-y-2 pt-1">
       <div className="flex items-center justify-between">
         <label className="text-xs text-zinc-400">
-          Suggested fonts ({alternatives.length})
+          Top matches ({alternatives.length})
         </label>
         <span className="text-[10px] text-zinc-600">
           click to apply · top match: {(alternatives[0].similarity * 100).toFixed(0)}%
         </span>
       </div>
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
         {alternatives.map((alt) => {
           const isCurrent = alt.family === currentFamily;
           return (
@@ -91,12 +90,12 @@ export function FontAlternatives({
               */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={`/font-previews/${slugify(alt.family)}.png`}
+                src={`/font-previews/${fontPreviewSlug(alt.family)}.png`}
                 alt={alt.family}
                 width={120}
                 height={40}
                 loading="lazy"
-                className="h-10 w-full rounded bg-white object-contain"
+                className="h-10 w-full rounded bg-zinc-900 object-contain"
                 onError={(e) => {
                   // Preview missing (registry changed but PNG not regenerated).
                   // Fall back to the family name in default sans-serif so the

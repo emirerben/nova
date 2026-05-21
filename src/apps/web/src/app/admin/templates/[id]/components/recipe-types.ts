@@ -161,6 +161,9 @@ export interface Recipe {
   // is unset. null when no overlay had a text_bbox or all matches were below
   // the similarity floor.
   font_default?: string | null;
+  analysis_pool_stale?: boolean;
+  matcher_version?: string | null;
+  registry_sha256?: string | null;
 }
 
 // ── Editor state ────────────────────────────────────────────────────────────
