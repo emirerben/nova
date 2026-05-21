@@ -43,6 +43,13 @@ from typing import Any
 
 import structlog
 
+from app.pipeline.text_reveal import (
+    LAST_WORD_DWELL_S as _LAST_WORD_DWELL_S,
+    MIN_RENDERABLE_S as _MIN_RENDERABLE_S,
+    Word as _RevealWord,
+    build_cumulative_stages,
+)
+
 log = structlog.get_logger()
 
 
@@ -57,24 +64,14 @@ class _SlotWindow:
 
 # Minimum overlay duration. ASS rendering of <100ms overlays produces flicker;
 # Whisper sometimes emits 30-50ms words. Karaoke extends short overlays to this
-# floor; per-word-pop instead drops stages shorter than _MIN_RENDERABLE_S
-# (see _inject_per_word_pop) because forcing a floor there would overlap the
-# next stage and glitch the screen.
+# floor; per-word-pop instead delegates to `text_reveal.build_cumulative_stages`
+# which drops stages shorter than _MIN_RENDERABLE_S because forcing a floor
+# would overlap the next stage and glitch the screen.
 _MIN_OVERLAY_DURATION_S = 0.18
 
-# Per-word-pop: how long the final-word overlay (the one carrying the complete
-# line text) lingers after the last word ends. Lets the full line settle in
-# the viewer's eye before the next line starts. Intentionally short — too long
-# and the next line gets crowded out.
-_LAST_WORD_DWELL_S = 0.30
-
-# Per-word-pop: if a middle word's natural span (next.start_s - this.start_s)
-# is below this threshold, the stage is DROPPED rather than floor-clamped.
-# The next stage subsumes the dropped word via the cumulative-text mechanism
-# so nothing is visually lost. Forcing a minimum duration on these stages
-# would overlap the next stage and produce a visible glitch (two stacked
-# overlays for a few frames).
-_MIN_RENDERABLE_S = 0.05
+# `_LAST_WORD_DWELL_S` and `_MIN_RENDERABLE_S` are re-exported from
+# `text_reveal` (above) so existing callers/tests that import these names from
+# this module continue to work. The single source of truth is `text_reveal`.
 
 # `"line"` style defaults. The line style is the calm YouTube-lyric-video
 # look: full line appears in white in near-sync with the vocal, holds past
@@ -351,114 +348,72 @@ def _inject_per_word_pop(
     cfg: dict,
 ) -> int:
     """One overlay per word that carries the cumulative line text built up to
-    and including that word. Consecutive stages are butted edge-to-edge —
-    each middle word's overlay ends EXACTLY at the next word's start_s, so the
-    screen never holds two overlays at once. Only the final word of a line
-    gets a small dwell (`_LAST_WORD_DWELL_S`) so the complete line lingers
-    briefly before clearing.
+    and including that word. Consecutive stages are butted edge-to-edge — each
+    middle word's overlay ends EXACTLY at the next word's start_s, so the
+    screen never holds two overlays at once. Only the final word of a line gets
+    a small dwell (`text_reveal.LAST_WORD_DWELL_S`).
 
-    Why cumulative text and not per-word isolation: the prior implementation
-    emitted single-word overlays that vanished after each word, making the
-    lyrics unreadable ("tek kelime gidiyor sonra direk gidiyor"). Carrying the
-    cumulative line means the viewer sees the line build up word by word and
-    can actually read it.
-
-    Why no `_MIN_OVERLAY_DURATION_S` floor here: extending a middle word's
-    overlay past the next word's start would put two overlays on screen
-    simultaneously, glitching the render. Short stages are DROPPED instead —
-    the next stage's cumulative text still contains the dropped word, so
-    nothing is visually lost.
+    Delegates the stage-building algorithm to
+    `text_reveal.build_cumulative_stages` so the same logic is shared with the
+    Layer-2 text-overlay path. This function adds the lyric-injector-specific
+    concerns: routing each stage to a slot window, converting section-relative
+    coordinates to slot-relative, and dropping stages clipped sub-renderable by
+    the slot boundary.
     """
     base = _common_overlay_fields(cfg)
     injected = 0
 
     for line in section_lines:
-        words = [w for w in line.get("words", []) if (w.get("text") or "").strip()]
-        if not words:
+        word_dicts = [w for w in line.get("words", []) if (w.get("text") or "").strip()]
+        if not word_dicts:
             continue
-
-        # Two-pass to keep "butted edge-to-edge" honest when middle stages
-        # are dropped. Pass 1 decides which word indices survive the
-        # `_MIN_RENDERABLE_S` floor based on their NATURAL spans. Pass 2 sets
-        # each kept stage's end_s to the NEXT KEPT stage's word.start_s
-        # (rather than the immediate next word's start_s) so dropped middle
-        # stages don't leave a sub-frame gap in the timeline.
-        natural_ends: list[float] = [
-            line["end_s"] if i == len(words) - 1 else words[i + 1]["start_s"]
-            for i in range(len(words))
+        words = [
+            _RevealWord(
+                text=str(w.get("text", "")),
+                start_s=float(w["start_s"]),
+                end_s=float(w["end_s"]),
+            )
+            for w in word_dicts
         ]
-        keep_mask = [
-            (natural_ends[i] - words[i]["start_s"]) >= _MIN_RENDERABLE_S for i in range(len(words))
-        ]
-        # The last word always survives — line accumulation is meaningless
-        # without its terminal stage. If it's somehow shorter than the
-        # threshold, the dwell extension below will pad it to renderable.
-        keep_mask[-1] = True
+        stages = build_cumulative_stages(words, line_end_s=float(line["end_s"]))
 
-        # Pre-compute "next kept stage's word.start_s" for each kept index.
-        # Walking forward only — O(n) total.
-        next_kept_start: list[float | None] = [None] * len(words)
-        next_start: float | None = None
-        for i in range(len(words) - 1, -1, -1):
-            if keep_mask[i]:
-                if next_start is None:
-                    next_kept_start[i] = None  # marker: this is the last kept stage
-                else:
-                    next_kept_start[i] = next_start
-                next_start = words[i]["start_s"]
-
-        for i, word in enumerate(words):
-            if not keep_mask[i]:
-                continue
-            slot_win = _slot_for_time(word["start_s"], windows)
+        for stage in stages:
+            slot_win = _slot_for_time(stage.start_s, windows)
             if slot_win is None:
                 continue
-
-            cumulative_text = " ".join((w.get("text") or "").strip() for w in words[: i + 1])
-
-            # End at the next kept stage's start_s (no gap, no overlap). If
-            # this IS the last kept stage, extend past line.end_s by the
-            # dwell so the full line settles before the next line begins.
-            if next_kept_start[i] is None:
-                end_section_s = line["end_s"] + _LAST_WORD_DWELL_S
-            else:
-                end_section_s = next_kept_start[i]
-
             slot_dur = slot_win.end_s - slot_win.start_s
-            rel_start = max(0.0, word["start_s"] - slot_win.start_s)
-            rel_end = min(slot_dur, end_section_s - slot_win.start_s)
+            rel_start = max(0.0, stage.start_s - slot_win.start_s)
+            rel_end = min(slot_dur, stage.end_s - slot_win.start_s)
 
-            # Defensive: a stage that survives Pass 1 could still end up too
-            # short here if `_slot_for_time` clipped it to the slot boundary.
-            # Drop rather than floor-clamp (same reason as Pass 1). Warn so
-            # user reports of "missing word X" can be traced back to this
-            # boundary clip without needing to reconstruct the slot windows.
+            # Defensive: a stage that survives the helper's renderable check
+            # could still end up too short here if `_slot_for_time` clipped it
+            # to the slot boundary. Drop rather than floor-clamp — floor would
+            # overlap the next stage. Warn so user reports of "missing word X"
+            # can be traced back to this boundary clip.
             if rel_end - rel_start < _MIN_RENDERABLE_S:
                 log.warning(
                     "lyric_stage_dropped_by_slot_clip",
-                    word=word.get("text"),
+                    word=stage.pop_animated_suffix,
                     rel_duration=rel_end - rel_start,
-                    word_start_s=word["start_s"],
+                    stage_start_s=stage.start_s,
                     slot_start_s=slot_win.start_s,
                     slot_end_s=slot_win.end_s,
                 )
                 continue
 
-            # The renderer's pop-in effect scales the entire dialogue text from
-            # 30% to 115% to 100% over 250ms. Without intervention, every new
-            # cumulative-stage would re-scale the full accumulated line — the
-            # viewer would see the whole line flickering on each new word. We
-            # mark only the newly added word as the animation target so the
-            # prefix words render statically and only the new tail pops in.
-            new_word = (word.get("text") or "").strip()
             overlay = dict(base)
             overlay.update(
                 {
-                    "text": cumulative_text,
+                    "text": stage.text,
                     "effect": "pop-in",
                     "start_s": round(rel_start, 3),
                     "end_s": round(rel_end, 3),
-                    "pop_animated_suffix": new_word,
+                    # The renderer's pop-in effect scales the entire dialogue
+                    # from 30%→115%→100% over 250ms. Marking only the newly
+                    # added word as the animation target keeps the prefix
+                    # static so the viewer doesn't see the whole line re-pop
+                    # on every new word.
+                    "pop_animated_suffix": stage.pop_animated_suffix,
                 }
             )
             _ensure_overlay_list(slots[slot_win.index]).append(overlay)
