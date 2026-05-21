@@ -25,6 +25,7 @@ const STATUS_COLORS: Record<LyricsStatus, string> = {
 const STYLE_OPTIONS: { value: LyricsConfig["style"]; label: string }[] = [
   { value: "karaoke", label: "Karaoke (sing-along highlight)" },
   { value: "per-word-pop", label: "Per-word pop-in (TikTok style)" },
+  { value: "line", label: "Line (fade in/out, full-line)" },
 ];
 
 const POSITION_OPTIONS: { value: string; label: string }[] = [
