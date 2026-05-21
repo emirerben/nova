@@ -139,7 +139,7 @@ TEXT_OVERLAY_VERSION_V1 = "v1"
 #
 # When you change anything that affects Layer-2 overlay output (Stage E
 # prompt, sanitizer logic, Stage D/G semantics), append a new suffix here.
-TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-20-xphrase-dedup"
+TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-21-progressive-reveal"
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.
