@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.39.0] - 2026-05-21
+
+### Added
+- **Layer-2 text overlays can now reveal word-by-word in a single line.** When the on-screen caption matches the audio transcript (the "Not just luck" template is the canary), Stage G of the Layer-2 pipeline emits cumulative-text overlays: word 1 appears alone, then word 2 enters to its right while word 1 stays put, then word 3 enters to its right, then the whole line clears at the transcript's silence boundary. Earlier words do not shift position as new words enter — the line is left-anchored at the OCR-detected x of the first word. The renderer gained `text_anchor: "left" | "center" | "right"` on `TemplateTextOverlay`; "center" remains the default so every existing overlay renders identically. Cumulative stages also carry `pop_animated_suffix` so only the newly-added word pops in when classification chose the `pop-in` effect — the prefix words render statically, no full-line re-pop on every new word.
+- **Stage G splits over-long cumulative lines at measured screen width.** A line whose cumulative text would render past 90% of canvas width is split at the overflow word into a new line group that starts at that word's transcript time, with the prior line clearing first. No detected word is dropped; the trade is one continuous reveal vs two sequential ones for very long captions. New public helper `text_overlay.measure_text_width()` does the measurement using the same font resolution the renderer uses.
+- **Operational visibility into Layer-2 leakage.** Stages D, E, and G each emit a summary event via `record_pipeline_event` (`stage_d_summary`, `stage_e_summary`, `stage_g_summary`) that aggregates events-in vs phrases-out, transcript-match counts, line-group formation, and per-reason drops (degenerate bbox, empty-text-after-normalize, validation failure, empty group, single-word overflow, line overflow). Visible in the existing `/admin/jobs/{id}` and `/admin/templates/{id}` Debug tabs; no UI change needed. Operators can now answer "the OCR detected word X but it never appeared on screen — where did it drop?" by reading the per-stage summaries.
+
+### Changed
+- **`lyric_injector._inject_per_word_pop` was refactored to share its cumulative-reveal algorithm with Layer-2.** The two-pass keep-mask + next-kept-start logic that decides which word stages survive `_MIN_RENDERABLE_S` and butts edges together moved out of `lyric_injector` into a new pure helper `app/pipeline/text_reveal.py:build_cumulative_stages`. The music-lyric pipeline now calls the helper; the Layer-2 Stage G cumulative emit calls the same helper. Behavior of the music-lyric path is unchanged — locked by the existing `test_lyric_injector.py` regression suite (9 cases pass unmodified). Single source of truth for the algorithm means future tweaks (different dwell, different renderable threshold) apply to both surfaces from one edit.
+- **`TEXT_OVERLAY_VERSION_V2` bumped to `v2-2026-05-21-progressive-reveal`.** Every existing Layer-2 cache entry is orphaned; the next analyze (or admin Reanalyze click) on any template rebuilds with the new logic. Templates without transcript-aligned text — visual-only labels like "PERU", "RULE OF THIRDS" — fall through unchanged: their atomized phrases stay ungrouped and emit as today's center-anchored static overlays.
+
 ## [0.4.38.0] - 2026-05-20
 
 ### Changed

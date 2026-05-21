@@ -80,14 +80,23 @@ def reconstruct_phrases(
     appearances.
     """
     if not events:
+        _emit_stage_d_summary(events_in=0, phrases_out=0, atomized=atomize_per_event)
         return []
 
     if atomize_per_event:
         sorted_events = sorted(events, key=lambda e: (e.start_t_s, e.aabb[1]))
         finalized = [_finalize([ev]) for ev in sorted_events]
-        return _dedup_overlapping_atomized_phrases(
+        dedup_in = len(finalized)
+        out = _dedup_overlapping_atomized_phrases(
             finalized, gap_threshold_s=_ATOMIZED_DEDUP_GAP_THRESHOLD_S
         )
+        _emit_stage_d_summary(
+            events_in=len(events),
+            phrases_out=len(out),
+            atomized=True,
+            dedup_collapsed=dedup_in - len(out),
+        )
+        return out
 
     events_sorted = sorted(events, key=lambda e: (e.start_t_s, e.aabb[1]))
     open_phrases: list[list[TextEvent]] = []
@@ -110,10 +119,43 @@ def reconstruct_phrases(
         else:
             open_phrases.append([ev])
 
-    return [
+    out = [
         _finalize(p_events)
         for p_events in sorted(open_phrases, key=lambda pe: min(e.start_t_s for e in pe))
     ]
+    _emit_stage_d_summary(
+        events_in=len(events),
+        phrases_out=len(out),
+        atomized=False,
+    )
+    return out
+
+
+def _emit_stage_d_summary(
+    *,
+    events_in: int,
+    phrases_out: int,
+    atomized: bool,
+    dedup_collapsed: int = 0,
+) -> None:
+    """Best-effort pipeline_trace event so /admin/jobs Debug tab can show
+    Stage D's events-in vs phrases-out counts (and atomized-dedup collapses).
+    Silently no-ops when there's no active job context."""
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "overlay",
+            "stage_d_summary",
+            {
+                "events_in": events_in,
+                "phrases_out": phrases_out,
+                "atomized": atomized,
+                "dedup_collapsed": dedup_collapsed,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _finalize(phrase_events: list[TextEvent]) -> Phrase:

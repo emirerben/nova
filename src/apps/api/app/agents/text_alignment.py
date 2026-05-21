@@ -283,6 +283,24 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
             dropped=dropped,
             template_id=input.template_id,
         )
+        # Best-effort stage_e_summary so /admin/jobs Debug tab surfaces the
+        # leakage signal: phrases_in vs kept, with drop attribution.
+        try:
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            record_pipeline_event(
+                "overlay",
+                "stage_e_summary",
+                {
+                    "phrases_in": len(input.phrases),
+                    "transcript_words_in": len(input.transcript_words),
+                    "phrases_kept": len(kept),
+                    "phrases_dropped": dropped,
+                    "atomize_mode": input.atomize_mode,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
         return TextAlignmentOutput(phrases=kept, dropped_count=dropped)
 
     # ── Override run() for empty-input short-circuit ──────────────────────────

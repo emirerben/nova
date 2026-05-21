@@ -480,6 +480,47 @@ producing real music-only edits at volume.
 
 ---
 
+## Layer-2 Progressive Reveal — follow-ups (added 2026-05-21)
+
+Captured from Lanes A-G of `feat/layer2-progressive-reveal-2026-05-21` (v0.4.39.0). The progressive word-by-word reveal feature shipped; these are the explicitly-deferred parts of the original plan.
+
+### Frontend overlay editor exposes `text_anchor`
+**What:** Add a `text_anchor` dropdown (left / center / right) to the overlay editor at `/admin/templates/[id]` — `PropertyPanel.tsx`. Backend already writes the field through `_overlay_to_recipe_dict`; the editor reads it generically but offers no way to set it.
+**Why:** Admins editing overlays today can't switch a static caption to left-anchor for visual testing without editing JSON. The cumulative reveal sets this automatically, but manual overlays can't benefit from the same anchor mode.
+**How:** Add to `PropertyPanel` overlay form, wire to `recipe-types.ts`, send via `PATCH /admin/templates/{id}`. The orchestrator already round-trips the field.
+**Effort:** S (human: ~1h / CC: ~10 min)
+**Priority:** P3
+
+### `_draw_spans_png` honors `text_anchor`
+**What:** Extend `app/pipeline/text_overlay.py:_draw_spans_png` to accept the `text_anchor` parameter and apply it to the spans layout (font-cycle, karaoke). Currently the spans renderer silently ignores `text_anchor` — set the field on a spans overlay and nothing changes.
+**Why:** Cumulative reveal doesn't use spans, so this didn't matter in Lanes A-G. But a future caller (e.g. a karaoke template that wants left-anchor) would see the field ignored without warning.
+**How:** Mirror the `_draw_text_png` anchor logic in the spans path. Center-anchored spans (the existing path) stay unchanged.
+**Effort:** XS (human: ~30 min / CC: ~5 min)
+**Priority:** P3
+
+### Spatial+temporal OCR clustering for visual-only labels
+**What:** Extend line-grouping in `app/pipeline/text_overlay_v2/line_grouping.py` to form groups from spatial+temporal OCR clustering when no transcript match exists. Today: phrases without a transcript word fall through to today's per-phrase emit (no progressive reveal). For visual-only label templates ("PERU", "RULE OF THIRDS"), this means progressive reveal never kicks in.
+**Why:** Some templates have on-screen text that builds up word-by-word without spoken audio. The current line-source picker is transcript-only by user choice; expanding to spatial fallback gates on real templates wanting it.
+**How:** Add a second grouping pass: cluster atomized phrases by proximity in y (same row) + monotone-rightward x + temporal proximity. Existing transcript-match groups take precedence; spatial groups fill the remainder. Add `LineGroup.source: "transcript" | "spatial"` so debug tab attributes which path each line took.
+**Effort:** M (human: ~1 day / CC: ~1h)
+**Priority:** P3 — only do this when a real visual-only template needs reveal.
+
+### Hand-label `fdaf3bbc.json` ground truth
+**What:** Hand-label `src/apps/api/tests/fixtures/agent_evals/template_text/ground_truth/fdaf3bbc.json` so the eval harness can quantitatively score "Not just luck" instead of just confirming overlays render with the expected shape.
+**Why:** Without ground truth, the Layer-2 evals fall back to qualitative inspection on this canary template. The design doc at `~/.gstack/projects/emirerben-nova/template-cache-id-fix-design-text-overlay-strategy-20260520.md` calls this out as Phase 1 of the broader measurement loop.
+**How:** Run `scripts/build_text_ground_truth.py` for a tesseract first pass, then hand-correct from the prod video.
+**Effort:** S (human: ~2h / CC: not applicable — human in the loop)
+**Priority:** P2 — gates honest measurement of progressive-reveal quality on prod templates.
+
+### Stage E `dropped_count` per-reason attribution
+**What:** Today the stage_e_summary event reports `phrases_dropped` as a single bucket. Split it by reason: `transcript_unmatched`, `line_count_mismatch_fallback`, `sanitizer_emptied`, `rebuild_failed`. Pure logging change.
+**Why:** Future debugging of "why was this phrase dropped at Stage E" requires per-reason logging. The current bucket forces operators to grep raw logs to attribute.
+**How:** Add a per-reason counter inside `TextAlignmentAgent.parse()` mirroring Stage G's `drops` dict pattern.
+**Effort:** XS (human: ~30 min / CC: ~5 min)
+**Priority:** P3 — forward-looking; only do this when leakage debugging actually needs it.
+
+---
+
 ## Vercel Frontend Deploy (added 2026-04-06)
 
 All items completed 2026-04-06:

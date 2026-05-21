@@ -73,7 +73,10 @@ def _overlay_to_recipe_dict(overlay: TemplateTextOverlay) -> dict[str, Any]:
     and any downstream consumer that seeks into the slot's video using
     sample_frame_t would land at the wrong frame.
     """
-    return {
+    text_anchor = getattr(overlay, "text_anchor", "center") or "center"
+    pop_suffix = getattr(overlay, "pop_animated_suffix", None)
+
+    out: dict[str, Any] = {
         "role": overlay.role,
         "effect": overlay.effect,
         "position": _bbox_to_named_position(overlay.bbox.y_norm),
@@ -95,6 +98,20 @@ def _overlay_to_recipe_dict(overlay: TemplateTextOverlay) -> dict[str, Any]:
         # Preserved for debugging — renderer ignores.
         "_extracted_by": "nova.compose.template_text",
     }
+
+    # Progressive word-reveal fields. Always emit `text_anchor` so the
+    # renderer's `overlay.get("text_anchor", "center")` reads a consistent
+    # value. When non-center, also emit `position_x_frac` so the renderer's
+    # anchor calculation uses the OCR-detected line x (not canvas center).
+    # `pop_animated_suffix` only emitted when set — None means the renderer
+    # uses its default behavior (pop the whole text, not just the suffix).
+    out["text_anchor"] = text_anchor
+    if text_anchor != "center":
+        out["position_x_frac"] = overlay.bbox.x_norm
+    if pop_suffix:
+        out["pop_animated_suffix"] = pop_suffix
+
+    return out
 
 
 def _bbox_to_named_position(y_norm: float) -> str:
