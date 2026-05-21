@@ -49,7 +49,7 @@ MODEL_ID = f"open-clip/{MODEL_ARCHITECTURE}/{MODEL_PRETRAINED}"
 # weights themselves still forces the loader to reject old artifacts — useful
 # when we change preprocessing (different resize, different normalization)
 # even with identical weights.
-MODEL_VERSION = "1"
+MODEL_VERSION = "2"
 
 
 # ── Lazy singleton state ─────────────────────────────────────────────────────

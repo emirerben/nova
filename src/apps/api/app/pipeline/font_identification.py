@@ -44,7 +44,9 @@ import io
 import json
 import os
 import subprocess
+from copy import deepcopy
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any, Protocol
 
 import numpy as np
@@ -185,6 +187,7 @@ def _aggregate_font_default(per_overlay: list[tuple[list[FontMatch], float]]) ->
     """
     scores: dict[str, float] = {}
     for matches, duration_s in per_overlay:
+        matches = _active_font_matches(matches)
         if not matches:
             continue
         top = matches[0]
@@ -232,7 +235,7 @@ def identify_fonts(
                 frame = extract_frame_png(video_path, float(bbox["sample_frame_t"]))
                 crop = crop_bbox(frame, bbox)
                 embedding = matcher.embed_image(crop)
-                matches = matcher.rank_registry(embedding, top_n=top_n)
+                matches = _active_font_matches(matcher.rank_registry(embedding, top_n=top_n))
             except Exception as exc:  # noqa: BLE001
                 log.warning(
                     "font_identification_overlay_failed",
@@ -264,6 +267,9 @@ def identify_fonts(
 _REGISTRY_EMBEDDINGS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "assets", "fonts", "registry-embeddings.npz"
 )
+_FONT_REGISTRY_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "assets", "fonts", "font-registry.json"
+)
 
 
 @dataclass(frozen=True)
@@ -289,6 +295,40 @@ class FontIdLoadError(RuntimeError):
 
 class FontIdExtractError(RuntimeError):
     pass
+
+
+class DeprecatedFontError(ValueError):
+    """Raised when a write path attempts to set a deprecated font."""
+
+
+def _font_registry() -> dict[str, Any]:
+    with open(_FONT_REGISTRY_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def registry_sha256() -> str:
+    """Return the canonical SHA-256 for the current font registry."""
+    canonical = json.dumps(
+        _font_registry(),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return sha256(canonical).hexdigest()
+
+
+def _is_deprecated_font(family: str) -> bool:
+    entry = _font_registry().get("fonts", {}).get(family)
+    return bool(entry and entry.get("deprecated") is True)
+
+
+def assert_active_font(family: str) -> None:
+    """Raise DeprecatedFontError if `family` is marked deprecated."""
+    if _is_deprecated_font(family):
+        raise DeprecatedFontError(f"font {family!r} is deprecated and cannot be set on new content")
+
+
+def _active_font_matches(matches: list[FontMatch]) -> list[FontMatch]:
+    return [match for match in matches if not _is_deprecated_font(match.family)]
 
 
 def load_registry_embeddings(
@@ -327,6 +367,14 @@ def load_registry_embeddings(
             f"artifact={meta.get('model_version')!r}, runtime={expected_model_version!r}. "
             "Regenerate the artifact."
         )
+    stored_registry_sha = str(meta.get("registry_sha256") or "")
+    computed_registry_sha = registry_sha256()
+    if stored_registry_sha != computed_registry_sha:
+        raise FontIdLoadError(
+            f"registry embeddings registry_sha256 mismatch: "
+            f"artifact={stored_registry_sha!r}, computed={computed_registry_sha!r}. "
+            "Regenerate the artifact."
+        )
 
     return RegistryEmbeddings(
         families=families,
@@ -354,8 +402,16 @@ def cosine_rank(
     if norm > 0:
         q = q / norm
     sims = registry.embeddings @ q
-    order = np.argsort(-sims)[:top_n]
-    return [FontMatch(family=str(registry.families[i]), similarity=float(sims[i])) for i in order]
+    order = np.argsort(-sims)
+    matches: list[FontMatch] = []
+    for i in order:
+        match = FontMatch(family=str(registry.families[i]), similarity=float(sims[i]))
+        if _is_deprecated_font(match.family):
+            continue
+        matches.append(match)
+        if len(matches) >= top_n:
+            break
+    return matches
 
 
 # ── Admin override helpers ───────────────────────────────────────────────────
@@ -379,6 +435,8 @@ def aggregate_font_alternatives(recipe_dict: dict) -> list[dict]:
             for alt in overlay.get("font_alternatives") or []:
                 family = alt.get("family")
                 if not isinstance(family, str) or not family:
+                    continue
+                if _is_deprecated_font(family):
                     continue
                 try:
                     sim = float(alt.get("similarity") or 0.0)
@@ -410,6 +468,7 @@ def cascade_font_default_change(
 
     Returns count of overlays whose `font_family` actually changed.
     """
+    assert_active_font(new_default)
     recipe_dict["font_default"] = new_default
     if old_default is None:
         old_default = ""
@@ -426,6 +485,33 @@ def cascade_font_default_change(
     return updated
 
 
+def recipe_with_fresh_font_metadata(recipe_dict: dict) -> dict:
+    """Return recipe JSON with deprecated alternatives stripped on read."""
+    recipe = deepcopy(recipe_dict)
+    stripped = False
+
+    for slot in recipe.get("slots") or []:
+        for overlay in slot.get("text_overlays") or []:
+            alternatives = overlay.get("font_alternatives")
+            if not isinstance(alternatives, list):
+                continue
+            fresh_alts = []
+            for alt in alternatives:
+                if not isinstance(alt, dict):
+                    fresh_alts.append(alt)
+                    continue
+                family = alt.get("family")
+                if isinstance(family, str) and _is_deprecated_font(family):
+                    stripped = True
+                    continue
+                fresh_alts.append(alt)
+            overlay["font_alternatives"] = fresh_alts
+
+    recipe["analysis_pool_stale"] = stripped
+    recipe["registry_sha256"] = registry_sha256()
+    return recipe
+
+
 # ── Public re-exports for app.services.clip_font_matcher ─────────────────────
 
 __all__ = [
@@ -433,12 +519,16 @@ __all__ = [
     "FontMatcher",
     "FontIdLoadError",
     "FontIdExtractError",
+    "DeprecatedFontError",
     "RegistryEmbeddings",
     "aggregate_font_alternatives",
+    "assert_active_font",
     "cascade_font_default_change",
     "extract_frame_png",
     "crop_bbox",
     "identify_fonts",
     "load_registry_embeddings",
+    "recipe_with_fresh_font_metadata",
+    "registry_sha256",
     "cosine_rank",
 ]

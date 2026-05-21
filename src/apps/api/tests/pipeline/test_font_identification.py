@@ -26,6 +26,7 @@ from app.pipeline.font_identification import (
     crop_bbox,
     identify_fonts,
     load_registry_embeddings,
+    registry_sha256,
 )
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -119,9 +120,9 @@ def test_aggregate_skips_below_floor_matches() -> None:
     poison the vote — we trust the matcher's 'I don't know' signal."""
     per_overlay = [
         ([FontMatch("Junk", 0.3)], 10.0),  # below floor — ignored
-        ([FontMatch("Inter Regular", 0.7)], 2.0),  # above floor
+        ([FontMatch("DM Sans", 0.7)], 2.0),  # above floor
     ]
-    assert _aggregate_font_default(per_overlay) == "Inter Regular"
+    assert _aggregate_font_default(per_overlay) == "DM Sans"
 
 
 def test_aggregate_skips_empty_overlay_lists() -> None:
@@ -129,9 +130,9 @@ def test_aggregate_skips_empty_overlay_lists() -> None:
     as ([], duration). Must not crash the reducer."""
     per_overlay = [
         ([], 5.0),
-        ([FontMatch("Outfit", 0.8)], 3.0),
+        ([FontMatch("DM Sans", 0.8)], 3.0),
     ]
-    assert _aggregate_font_default(per_overlay) == "Outfit"
+    assert _aggregate_font_default(per_overlay) == "DM Sans"
 
 
 # ── Group 3: stub-matcher orchestrator drive ─────────────────────────────────
@@ -226,12 +227,54 @@ def test_orchestrator_writes_alternatives_and_default(monkeypatch) -> None:
 
     ov = recipe.slots[0]["text_overlays"][0]
     assert ov["font_alternatives"] == [
-        {"family": "Outfit", "similarity": 0.91},
         {"family": "DM Sans", "similarity": 0.84},
         {"family": "Montserrat", "similarity": 0.78},
     ]
-    assert recipe.font_default == "Outfit"
+    assert recipe.font_default == "DM Sans"
     assert len(matcher.embed_calls) == 1
+
+
+def test_identify_fonts_never_returns_deprecated_in_alternatives(monkeypatch) -> None:
+    recipe = _StubRecipe(
+        slots=[
+            {
+                "text_overlays": [
+                    {
+                        "text_bbox": {
+                            "x_norm": 0.5,
+                            "y_norm": 0.5,
+                            "w_norm": 0.5,
+                            "h_norm": 0.5,
+                            "sample_frame_t": 1.0,
+                        },
+                        "start_s": 0.0,
+                        "end_s": 4.0,
+                    }
+                ]
+            }
+        ]
+    )
+    matcher = _StubMatcher(
+        [
+            FontMatch("Outfit", 0.99),
+            FontMatch("DM Sans", 0.9),
+            FontMatch("Inter Regular", 0.88),
+            FontMatch("Montserrat", 0.8),
+        ]
+    )
+
+    from app.pipeline import font_identification as fid
+
+    monkeypatch.setattr(fid, "extract_frame_png", lambda *a, **k: _make_frame(1000, 1000))
+
+    identify_fonts(recipe, "/dev/null", matcher, top_n=4)
+
+    alternatives = recipe.slots[0]["text_overlays"][0]["font_alternatives"]
+    assert alternatives == [
+        {"family": "DM Sans", "similarity": 0.9},
+        {"family": "Montserrat", "similarity": 0.8},
+    ]
+    assert recipe.font_default == "DM Sans"
 
 
 def test_orchestrator_recovers_from_overlay_failure(monkeypatch) -> None:
@@ -300,7 +343,7 @@ def _write_test_artifact(
     *,
     model_id: str,
     model_version: str,
-    registry_sha256: str = "deadbeef",
+    registry_hash: str | None = None,
 ) -> str:
     families = np.array(["Inter Regular", "DM Sans"], dtype=object)
     embeddings = np.random.rand(2, 512).astype(np.float32)
@@ -309,7 +352,7 @@ def _write_test_artifact(
         {
             "model_id": model_id,
             "model_version": model_version,
-            "registry_sha256": registry_sha256,
+            "registry_sha256": registry_hash if registry_hash is not None else registry_sha256(),
             "generated_at": "2026-05-15T00:00:00Z",
         }
     )
@@ -368,6 +411,28 @@ def test_load_registry_rejects_model_version_mismatch(tmp_path) -> None:
         )
 
 
+def test_load_rejects_registry_hash_mismatch(tmp_path) -> None:
+    path = _write_test_artifact(
+        tmp_path,
+        model_id="open-clip/ViT-B-32/openai",
+        model_version="1",
+        registry_hash="deadbeef",
+    )
+    from app.pipeline.font_identification import FontIdLoadError
+
+    expected = registry_sha256()
+    with pytest.raises(FontIdLoadError) as excinfo:
+        load_registry_embeddings(
+            expected_model_id="open-clip/ViT-B-32/openai",
+            expected_model_version="1",
+            path=path,
+        )
+    message = str(excinfo.value)
+    assert "registry_sha256 mismatch" in message
+    assert "deadbeef" in message
+    assert expected in message
+
+
 def test_load_registry_missing_file(tmp_path) -> None:
     from app.pipeline.font_identification import FontIdLoadError
 
@@ -410,6 +475,32 @@ def test_cosine_rank_returns_sorted_descending() -> None:
     assert sims == sorted(sims, reverse=True)
 
 
+def test_cosine_rank_skips_deprecated_fonts() -> None:
+    families = np.array(["Outfit", "DM Sans", "Inter Regular", "Montserrat"], dtype=object)
+    embeddings = np.array(
+        [
+            [1.0, 0.0],
+            [0.9, 0.1],
+            [0.8, 0.2],
+            [0.7, 0.3],
+        ],
+        dtype=np.float32,
+    )
+    embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
+    reg = RegistryEmbeddings(
+        families=families,
+        embeddings=embeddings,
+        model_id="x",
+        model_version="1",
+        registry_sha256="",
+        generated_at="",
+    )
+
+    matches = cosine_rank(np.array([1.0, 0.0], dtype=np.float32), reg, top_n=3)
+
+    assert [m.family for m in matches] == ["DM Sans", "Montserrat"]
+
+
 def test_cosine_rank_is_deterministic() -> None:
     families = np.array(["A", "B"], dtype=object)
     embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
@@ -426,3 +517,42 @@ def test_cosine_rank_is_deterministic() -> None:
     b = cosine_rank(query, reg, top_n=2)
     assert [m.family for m in a] == [m.family for m in b]
     assert [m.similarity for m in a] == [m.similarity for m in b]
+
+
+def test_deprecated_font_still_resolves_at_render() -> None:
+    from app.pipeline.text_overlay import _registry_font_path
+
+    path = _registry_font_path("Outfit")
+
+    assert path is not None
+    assert path.endswith("Outfit-Bold.ttf")
+
+
+def test_existing_recipe_with_deprecated_font_family_renders(tmp_path) -> None:
+    from PIL import Image
+
+    from app.pipeline.text_overlay import render_overlays_at_time
+
+    output = tmp_path / "deprecated-font-preview.png"
+    render_overlays_at_time(
+        overlays=[
+            {
+                "text": "Hello",
+                "font_family": "Outfit",
+                "font_style": "sans",
+                "text_size": "large",
+                "text_color": "#FFFFFF",
+                "position": "center",
+                "effect": "none",
+                "start_s": 0,
+                "end_s": 1,
+            }
+        ],
+        slot_duration_s=1,
+        time_in_slot_s=0.5,
+        output_path=str(output),
+    )
+
+    with Image.open(output) as img:
+        alpha = img.convert("RGBA").getchannel("A")
+        assert alpha.getbbox() is not None

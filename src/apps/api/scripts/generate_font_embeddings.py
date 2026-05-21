@@ -107,6 +107,17 @@ def main() -> int:
         action="store_true",
         help="Render previews + compute embeddings but write nothing",
     )
+    parser.add_argument(
+        "--include-deprecated",
+        action="store_true",
+        help="Include deprecated registry entries in the artifact for forensic comparisons.",
+    )
+    parser.add_argument(
+        "--strict",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Fail if any active font cannot render.",
+    )
     args = parser.parse_args()
 
     # Heavy imports gated behind argparse so `--help` works without torch.
@@ -120,7 +131,16 @@ def main() -> int:
         MODEL_VERSION,
     )
 
-    registry = json.loads(_REGISTRY_JSON.read_text())["fonts"]
+    registry_data = json.loads(_REGISTRY_JSON.read_text())
+    registry_sha = hashlib.sha256(
+        json.dumps(registry_data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    all_fonts = registry_data["fonts"]
+    registry = {
+        family: entry
+        for family, entry in all_fonts.items()
+        if args.include_deprecated or not entry.get("deprecated")
+    }
     print(f"Loaded {len(registry)} fonts from registry.")
 
     # Sanity: every key must reference a file that exists on disk.
@@ -143,10 +163,18 @@ def main() -> int:
 
     if not args.skip_previews and not args.dry_run:
         _WEB_PUBLIC.mkdir(parents=True, exist_ok=True)
+        for stale_preview in _WEB_PUBLIC.glob("*.png"):
+            stale_preview.unlink()
 
     for family, entry in registry.items():
         ttf = _FONT_DIR / entry["file"]
-        png = render_sample(family, ttf)
+        try:
+            png = render_sample(family, ttf)
+        except RuntimeError:
+            if args.strict and not entry.get("deprecated"):
+                raise
+            print(f"  skipped {family} ({entry['file']}) — render failed")
+            continue
 
         # Embed via the same path runtime uses.
         img = Image.open(io.BytesIO(png)).convert("RGB")
@@ -164,7 +192,6 @@ def main() -> int:
     embeddings_arr = np.stack(embeddings, axis=0)
     families_arr = np.array(families, dtype=object)
 
-    registry_sha = hashlib.sha256(_REGISTRY_JSON.read_bytes()).hexdigest()
     meta = {
         "model_id": MODEL_ID,
         "model_version": MODEL_VERSION,

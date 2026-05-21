@@ -365,6 +365,16 @@ class TextSpanSchema(BaseModel):
             raise ValueError(f"span text_color must be a hex color (#RRGGBB), got '{v}'")
         return v.upper()
 
+    @field_validator("font_family")
+    @classmethod
+    def validate_active_font_family(cls, v: str | None) -> str | None:
+        if not v:
+            return v
+        from app.pipeline.font_identification import assert_active_font  # noqa: PLC0415
+
+        assert_active_font(v)
+        return v
+
 
 class RecipeTextOverlaySchema(BaseModel):
     role: OverlayRole
@@ -414,6 +424,16 @@ class RecipeTextOverlaySchema(BaseModel):
         if not re.fullmatch(r"#[0-9A-Fa-f]{6}", v):
             raise ValueError(f"text_color must be a hex color (#RRGGBB), got '{v}'")
         return v.upper()
+
+    @field_validator("font_family")
+    @classmethod
+    def validate_active_font_family(cls, v: str | None) -> str | None:
+        if not v:
+            return v
+        from app.pipeline.font_identification import assert_active_font  # noqa: PLC0415
+
+        assert_active_font(v)
+        return v
 
     @model_validator(mode="after")
     def validate_timing(self) -> "RecipeTextOverlaySchema":
@@ -1825,6 +1845,9 @@ async def get_recipe(
     db: AsyncSession = Depends(get_db),
 ) -> RecipeResponse:
     """Return the current recipe JSON with version metadata."""
+    from app.pipeline.font_identification import recipe_with_fresh_font_metadata  # noqa: PLC0415
+    from app.services.clip_font_matcher import MODEL_VERSION  # noqa: PLC0415
+
     template = await get_template_or_404(template_id, db)
     require_ready(template)
 
@@ -1853,8 +1876,11 @@ async def get_recipe(
     )
     version_count = count_result.scalar() or 0
 
+    recipe = recipe_with_fresh_font_metadata(template.recipe_cached)
+    recipe["matcher_version"] = MODEL_VERSION
+
     return RecipeResponse(
-        recipe=template.recipe_cached,
+        recipe=recipe,
         version_id=str(latest_version.id) if latest_version else "",
         version_number=version_count,
     )
@@ -1977,7 +2003,7 @@ class FontDefaultUpdate(BaseModel):
         return v.strip()
 
 
-def _load_font_registry_families() -> list[str]:
+def _load_font_registry_families(*, include_deprecated: bool = False) -> list[str]:
     """Return the list of font families from font-registry.json.
 
     Used to validate font-default override requests (anything outside the
@@ -1997,7 +2023,11 @@ def _load_font_registry_families() -> list[str]:
         log.error("font_registry_load_failed", error=str(exc), path=str(registry_path))
         return []
     fonts = data.get("fonts") or {}
-    return sorted(fonts.keys())
+    return sorted(
+        family
+        for family, entry in fonts.items()
+        if include_deprecated or not entry.get("deprecated")
+    )
 
 
 @router.get(
@@ -2015,9 +2045,9 @@ async def get_font_default(
     Surfaced for agentic templates (whose editor is otherwise locked) so the
     admin has a single narrow control: pick the template-level font.
     `alternatives` is the deduped union of every overlay's `font_alternatives`
-    sorted by similarity descending. `registry_families` is the full font
-    catalogue so the UI can offer "pick any registered font" as a fallback
-    when alternatives is empty (e.g. template analyzed before PR #154).
+    sorted by similarity descending. `registry_families` is the active font
+    catalogue so the UI can offer "pick any active font" as a fallback when
+    alternatives is empty (e.g. template analyzed before PR #154).
     """
     from app.pipeline.font_identification import aggregate_font_alternatives  # noqa: PLC0415
 
@@ -2059,7 +2089,11 @@ async def set_font_default(
     Persists a new TemplateRecipeVersion with trigger="admin_font_override"
     so /recipe-history shows the change.
     """
-    from app.pipeline.font_identification import cascade_font_default_change  # noqa: PLC0415
+    from app.pipeline.font_identification import (  # noqa: PLC0415
+        DeprecatedFontError,
+        assert_active_font,
+        cascade_font_default_change,
+    )
 
     template = await get_template_or_404(template_id, db)
     require_ready(template)
@@ -2070,7 +2104,7 @@ async def set_font_default(
             detail="Template has no cached recipe; re-run analysis first.",
         )
 
-    registry_families = _load_font_registry_families()
+    registry_families = _load_font_registry_families(include_deprecated=True)
     if registry_families and req.font_default not in registry_families:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -2079,6 +2113,13 @@ async def set_font_default(
                 f"Pick one of: {', '.join(registry_families[:8])}..."
             ),
         )
+    try:
+        assert_active_font(req.font_default)
+    except DeprecatedFontError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
     # SQLAlchemy JSONB change detection needs a fresh dict reference, not
     # mutation-in-place. Same pattern as save_recipe / record_phase.
@@ -2567,7 +2608,8 @@ def _strip_unknown_font_families(overlays: list[dict]) -> list[dict]:
     """
     from app.pipeline.text_overlay import _FONT_REGISTRY  # noqa: PLC0415
 
-    known = set(_FONT_REGISTRY.get("fonts", {}).keys())
+    registry_fonts = _FONT_REGISTRY.get("fonts", {})
+    known = set(registry_fonts.keys())
     cleaned: list[dict] = []
     for overlay in overlays:
         copy = dict(overlay)
@@ -2575,6 +2617,8 @@ def _strip_unknown_font_families(overlays: list[dict]) -> list[dict]:
         if ff and ff not in known:
             log.info("unknown_font_family_stripped", font_family=ff, where="overlay")
             copy.pop("font_family", None)
+        elif ff and registry_fonts.get(ff, {}).get("deprecated"):
+            log.info("deprecated_font_family_rendered", font_family=ff, where="overlay")
         spans = copy.get("spans")
         if isinstance(spans, list):
             new_spans = []
@@ -2584,6 +2628,8 @@ def _strip_unknown_font_families(overlays: list[dict]) -> list[dict]:
                 if sf and sf not in known:
                     log.info("unknown_font_family_stripped", font_family=sf, where="span")
                     span_copy.pop("font_family", None)
+                elif sf and registry_fonts.get(sf, {}).get("deprecated"):
+                    log.info("deprecated_font_family_rendered", font_family=sf, where="span")
                 new_spans.append(span_copy)
             copy["spans"] = new_spans
         cleaned.append(copy)

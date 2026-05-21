@@ -106,9 +106,7 @@ class TestSetFontDefault:
         IntegrityConstraintViolationError → 500.
         """
         recipe = _recipe_with_overlays(font_default="Inter Tight")
-        res, added, _, mock_db = self._run(
-            client, recipe, {"font_default": "DM Sans"}
-        )
+        res, added, _, mock_db = self._run(client, recipe, {"font_default": "DM Sans"})
 
         assert res.status_code == 200, res.text
         assert mock_db.commit.await_count == 1
@@ -119,9 +117,7 @@ class TestSetFontDefault:
 
     def test_cascade_rules(self, client):
         recipe = _recipe_with_overlays(font_default="Inter Tight")
-        res, _, template, _ = self._run(
-            client, recipe, {"font_default": "DM Sans"}
-        )
+        res, _, template, _ = self._run(client, recipe, {"font_default": "DM Sans"})
 
         assert res.status_code == 200
         overlays = template.recipe_cached["slots"][0]["text_overlays"]
@@ -135,9 +131,7 @@ class TestSetFontDefault:
 
     def test_no_op_when_same_font(self, client):
         recipe = _recipe_with_overlays(font_default="Inter Tight")
-        res, added, _, mock_db = self._run(
-            client, recipe, {"font_default": "Inter Tight"}
-        )
+        res, added, _, mock_db = self._run(client, recipe, {"font_default": "Inter Tight"})
 
         assert res.status_code == 200
         body = res.json()
@@ -157,6 +151,26 @@ class TestSetFontDefault:
 
         assert res.status_code == 400
         assert "font registry" in res.json()["detail"].lower()
+
+    def test_rejects_deprecated_font(self, client):
+        recipe = _recipe_with_overlays(font_default="Inter Tight")
+        res, added, _, mock_db = self._run(
+            client,
+            recipe,
+            {"font_default": "Outfit"},
+        )
+
+        assert res.status_code == 400
+        assert "deprecated" in res.json()["detail"].lower()
+        assert added == []
+        assert mock_db.commit.await_count == 0
+
+
+def test_cascade_font_default_change_rejects_deprecated():
+    from app.pipeline.font_identification import DeprecatedFontError, cascade_font_default_change
+
+    with pytest.raises(DeprecatedFontError):
+        cascade_font_default_change(_recipe_with_overlays(), "Outfit")
 
 
 class TestMigrationStaticLink:
