@@ -224,6 +224,54 @@
       "category": "sans",
       "css_family": "'Bangers', sans-serif",
       "vibe": "viral_headlines"
+    },
+    "TikTok Sans": {
+      "file": "TikTokSans-Regular.ttf",
+      "ass_name": "TikTok Sans",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'TikTok Sans', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "TikTok Sans Bold": {
+      "file": "TikTokSans-Bold.ttf",
+      "ass_name": "TikTok Sans",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'TikTok Sans', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Montserrat Regular": {
+      "file": "Montserrat-Regular.ttf",
+      "ass_name": "Montserrat",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Montserrat', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Montserrat Bold": {
+      "file": "Montserrat-Bold.ttf",
+      "ass_name": "Montserrat",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Montserrat', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Poppins Regular": {
+      "file": "Poppins-Regular.ttf",
+      "ass_name": "Poppins",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Poppins', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Poppins Bold": {
+      "file": "Poppins-Bold.ttf",
+      "ass_name": "Poppins",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Poppins', sans-serif",
+      "vibe": "clean_captions"
     }
   },
   "style_defaults": {

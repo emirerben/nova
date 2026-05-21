@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.39.1] - 2026-05-21
+
+### Added
+- **Six new fonts in the admin editor's font library: TikTok Sans (Regular + Bold), Montserrat Regular + Bold, Poppins Regular + Bold.** The library shipped in v0.4.38.0 was missing TikTok Sans entirely and only exposed the heaviest weight of Montserrat (ExtraBold/800) and Poppins (Black/900), which are unusable for body text. Designers can now use these families across the full display+body register. New entries appear under the "clean_captions" vibe group in the FontLibraryBrowser; existing `Montserrat` (ExtraBold) and `Poppins Black` entries are unchanged so any template pinned to them keeps rendering identically. Montserrat Regular/Bold are instanced from Google Fonts' variable `Montserrat[wght].ttf` because Google no longer ships static cuts; the variable instancer left family-name metadata as "Montserrat Thin" by default, which would have caused libass to silently fall back to a system font at render time — fixed by forcing nameID 1/2/4/6 during instancing. Added `test_active_font_internal_family_matches_ass_name` as a guard that asserts every active font's internal family matches its registry `ass_name`, so this class of bug can't recur on the next font addition without FFmpeg being available.
+
 ## [0.4.39.0] - 2026-05-21
 
 ### Added
