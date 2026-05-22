@@ -231,8 +231,8 @@ def test_unknown_style_is_noop() -> None:
 #
 # These lock the YouTube-lyric-video behavior: plain line, pre-roll, post-dwell
 # past the vocal end, no per-word color sweep. Dense lines may cross-dissolve
-# inside the fade-bound overlap budget. Defaults: pre_roll=0.10s,
-# post_dwell=1.00s, max_overlap=0.40s, fade=150/250ms.
+# inside the fade-bound overlap budget. Defaults: pre_roll=0.40s,
+# post_dwell=1.00s, max_overlap=0.40s, fade=50/250ms.
 
 
 def test_line_emits_one_overlay_per_line_with_lyric_line_effect() -> None:

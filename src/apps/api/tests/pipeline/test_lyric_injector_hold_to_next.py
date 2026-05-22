@@ -49,8 +49,12 @@ def test_hold_to_next_threshold_is_deprecated_noop_for_next_fade_in_and_pre_roll
 
 
 def test_hold_to_next_no_longer_forces_section_end_to_next_line_start() -> None:
+    # Defaults: pre_roll=0.40, fade_in=50, fade_out=250 →
+    # next_visual_start = 2.3 - 0.40 = 1.90
+    # overlap_budget = min(_LINE_MAX_OVERLAP_S=0.4, (50+250)/1000=0.30) = 0.30
+    # first.end_s = next_visual_start + overlap_budget = 1.90 + 0.30 = 2.20
     overlays = _overlays([("First", 1.0, 2.0), ("Second", 2.3, 3.0)])
-    assert overlays[0]["end_s"] == pytest.approx(2.6, abs=1e-3)
+    assert overlays[0]["end_s"] == pytest.approx(2.2, abs=1e-3)
 
 
 def test_hold_to_next_threshold_value_does_not_change_output() -> None:
@@ -76,6 +80,10 @@ def test_min_line_visible_s_guard() -> None:
 
 
 def test_rapid_sequence_uses_overlap_budget() -> None:
+    # With defaults (fade_in=50, fade_out=250), overlap_budget caps at
+    # (50+250)/1000 = 0.30s, below _LINE_MAX_OVERLAP_S=0.4. The previous
+    # defaults (fade_in=150) gave a 0.40s budget that hit the cap; the
+    # new fade-bound is the binding constraint.
     overlays = _overlays(
         [
             ("One", 1.0, 1.2),
@@ -83,5 +91,5 @@ def test_rapid_sequence_uses_overlap_budget() -> None:
             ("Three", 1.8, 2.0),
         ]
     )
-    assert overlays[0]["end_s"] == pytest.approx(overlays[1]["start_s"] + 0.4, abs=1e-3)
-    assert overlays[1]["end_s"] == pytest.approx(overlays[2]["start_s"] + 0.4, abs=1e-3)
+    assert overlays[0]["end_s"] == pytest.approx(overlays[1]["start_s"] + 0.3, abs=1e-3)
+    assert overlays[1]["end_s"] == pytest.approx(overlays[2]["start_s"] + 0.3, abs=1e-3)
