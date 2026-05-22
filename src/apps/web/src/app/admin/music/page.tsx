@@ -6,7 +6,7 @@ import {
   adminListMusicTracks,
   adminCreateMusicTrack,
   adminUploadMusicTrack,
-  type MusicTrackDetail,
+  type MusicTrackListItem,
 } from "@/lib/music-api";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -17,7 +17,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function AdminMusicPage() {
-  const [tracks, setTracks] = useState<MusicTrackDetail[]>([]);
+  const [tracks, setTracks] = useState<MusicTrackListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

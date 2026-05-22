@@ -33,6 +33,24 @@ class AgentRunPayload(BaseModel):
     created_at: datetime
 
 
+class AgentRunSummaryPayload(BaseModel):
+    """Slim context-run payload that intentionally omits heavy LLM I/O blobs."""
+
+    id: str
+    segment_idx: int | None
+    agent_name: str
+    prompt_version: str
+    model: str
+    outcome: str
+    attempts: int
+    tokens_in: int | None
+    tokens_out: int | None
+    cost_usd: float | None
+    latency_ms: int | None
+    error_message: str | None
+    created_at: datetime
+
+
 def agent_run_to_payload(r: AgentRun) -> AgentRunPayload:
     return AgentRunPayload(
         id=str(r.id),
@@ -50,5 +68,25 @@ def agent_run_to_payload(r: AgentRun) -> AgentRunPayload:
         input_json=r.input_json,
         output_json=r.output_json,
         raw_text=r.raw_text,
+        created_at=r.created_at,
+    )
+
+
+def agent_run_to_payload_summary(r: AgentRun) -> AgentRunSummaryPayload:
+    """Serialize an AgentRun without touching deferred input/output/raw columns."""
+
+    return AgentRunSummaryPayload(
+        id=str(r.id),
+        segment_idx=r.segment_idx,
+        agent_name=r.agent_name,
+        prompt_version=r.prompt_version,
+        model=r.model,
+        outcome=r.outcome,
+        attempts=r.attempts,
+        tokens_in=r.tokens_in,
+        tokens_out=r.tokens_out,
+        cost_usd=float(r.cost_usd) if r.cost_usd is not None else None,
+        latency_ms=r.latency_ms,
+        error_message=r.error_message,
         created_at=r.created_at,
     )

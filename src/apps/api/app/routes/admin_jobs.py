@@ -28,7 +28,12 @@ from sqlalchemy.orm import defer
 from app.agents._runtime import SUCCESS_OUTCOMES
 from app.database import get_db
 from app.models import AgentRun, Job, JobClip, MusicTrack, VideoTemplate
-from app.routes._admin_schemas import AgentRunPayload, agent_run_to_payload
+from app.routes._admin_schemas import (
+    AgentRunPayload,
+    AgentRunSummaryPayload,
+    agent_run_to_payload,
+    agent_run_to_payload_summary,
+)
 from app.routes.admin import _require_admin
 from app.services.pipeline_trace import pipeline_trace_for, record_pipeline_event
 from app.services.queue_state import (
@@ -59,6 +64,9 @@ _CANCELLABLE_STATUSES = (
     "rendering",
     "posting",
 )
+
+# Paired with src/apps/web/src/lib/admin-jobs-api.ts. Bump both if changed.
+CONTEXT_RUNS_CAP = 200
 
 
 # ── Response schemas ─────────────────────────────────────────────────────────
@@ -152,14 +160,7 @@ class MusicTrackSummary(BaseModel):
     id: str
     title: str
     artist: str
-    analysis_status: str
-    audio_gcs_path: str | None
-    track_config: Any
     recipe_cached: Any
-    beat_timestamps_s: Any
-    ai_labels: Any
-    best_sections: Any
-    error_detail: str | None
 
 
 class JobRuntimePayload(BaseModel):
@@ -183,8 +184,11 @@ class JobDebugResponse(BaseModel):
     # but ran outside this job's lifecycle. Empty arrays when the job has
     # no linked template/track or when those entities were analyzed before
     # the agent_run.template_id / music_track_id columns existed.
-    template_agent_runs: list[AgentRunPayload]
-    track_agent_runs: list[AgentRunPayload]
+    template_agent_runs: list[AgentRunSummaryPayload]
+    track_agent_runs: list[AgentRunSummaryPayload]
+    template_agent_runs_has_more: bool
+    track_agent_runs_has_more: bool
+    context_runs_cap: int
     runtime: JobRuntimePayload
 
 
@@ -406,6 +410,9 @@ async def get_job_debug(
             detail=f"Invalid job_id: {exc}",
         ) from exc
 
+    # The debug UI currently renders every Job JSONB field below:
+    # phase_log, pipeline_trace, assembly_plan, probe_metadata, transcript,
+    # scene_cuts, and all_candidates. Keep the row fully loaded here.
     job_res = await db.execute(select(Job).where(Job.id == job_uuid))
     job = job_res.scalar_one_or_none()
     if job is None:
@@ -439,14 +446,7 @@ async def get_job_debug(
                 id=mt.id,
                 title=mt.title,
                 artist=mt.artist,
-                analysis_status=mt.analysis_status,
-                audio_gcs_path=mt.audio_gcs_path,
-                track_config=mt.track_config,
                 recipe_cached=mt.recipe_cached,
-                beat_timestamps_s=mt.beat_timestamps_s,
-                ai_labels=mt.ai_labels,
-                best_sections=mt.best_sections,
-                error_detail=mt.error_detail,
             )
 
     runs_res = await db.execute(
@@ -455,22 +455,40 @@ async def get_job_debug(
     runs = list(runs_res.scalars().all())
 
     template_runs: list[AgentRun] = []
-    if job.template_id:
+    template_agent_runs_has_more = False
+    if job.template_id is not None:
         tpl_runs_res = await db.execute(
             select(AgentRun)
+            .options(
+                defer(AgentRun.input_json),
+                defer(AgentRun.output_json),
+                defer(AgentRun.raw_text),
+            )
             .where(AgentRun.template_id == job.template_id)
-            .order_by(AgentRun.created_at)
+            .order_by(AgentRun.created_at.desc())
+            .limit(CONTEXT_RUNS_CAP + 1)
         )
-        template_runs = list(tpl_runs_res.scalars().all())
+        fetched = list(tpl_runs_res.scalars().all())
+        template_agent_runs_has_more = len(fetched) > CONTEXT_RUNS_CAP
+        template_runs = fetched[:CONTEXT_RUNS_CAP]
 
     track_runs: list[AgentRun] = []
-    if job.music_track_id:
+    track_agent_runs_has_more = False
+    if job.music_track_id is not None:
         track_runs_res = await db.execute(
             select(AgentRun)
+            .options(
+                defer(AgentRun.input_json),
+                defer(AgentRun.output_json),
+                defer(AgentRun.raw_text),
+            )
             .where(AgentRun.music_track_id == job.music_track_id)
-            .order_by(AgentRun.created_at)
+            .order_by(AgentRun.created_at.desc())
+            .limit(CONTEXT_RUNS_CAP + 1)
         )
-        track_runs = list(track_runs_res.scalars().all())
+        fetched = list(track_runs_res.scalars().all())
+        track_agent_runs_has_more = len(fetched) > CONTEXT_RUNS_CAP
+        track_runs = fetched[:CONTEXT_RUNS_CAP]
 
     job_payload = JobPayload(
         id=str(job.id),
@@ -527,8 +545,11 @@ async def get_job_debug(
         template=template,
         music_track=music,
         agent_runs=[agent_run_to_payload(r) for r in runs],
-        template_agent_runs=[agent_run_to_payload(r) for r in template_runs],
-        track_agent_runs=[agent_run_to_payload(r) for r in track_runs],
+        template_agent_runs=[agent_run_to_payload_summary(r) for r in template_runs],
+        track_agent_runs=[agent_run_to_payload_summary(r) for r in track_runs],
+        template_agent_runs_has_more=template_agent_runs_has_more,
+        track_agent_runs_has_more=track_agent_runs_has_more,
+        context_runs_cap=CONTEXT_RUNS_CAP,
         runtime=runtime,
     )
 

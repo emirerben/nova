@@ -60,6 +60,25 @@ export interface AgentRunPayload {
   created_at: string;
 }
 
+// Subset of AgentRunPayload used for template/track context runs. These rows do
+// not carry input_json/output_json/raw_text because the backend defers those
+// columns to keep popular-template debug payloads under the proxy budget.
+export interface AgentRunSummaryPayload {
+  id: string;
+  segment_idx: number | null;
+  agent_name: string;
+  prompt_version: string;
+  model: string;
+  outcome: string;
+  attempts: number;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  cost_usd: number | null;
+  latency_ms: number | null;
+  error_message: string | null;
+  created_at: string;
+}
+
 export interface JobClipPayload {
   id: string;
   rank: number;
@@ -151,14 +170,7 @@ export interface MusicTrackSummary {
   id: string;
   title: string;
   artist: string;
-  analysis_status: string;
-  audio_gcs_path: string | null;
-  track_config: unknown;
   recipe_cached: unknown;
-  beat_timestamps_s: unknown;
-  ai_labels: unknown;
-  best_sections: unknown;
-  error_detail: string | null;
 }
 
 export interface JobDebugResponse {
@@ -169,9 +181,12 @@ export interface JobDebugResponse {
   /** Agent runs that ran inside this job's Celery task (clip_metadata, text_designer, etc.) */
   agent_runs: AgentRunPayload[];
   /** Agent runs that shaped the linked template's recipe (template_recipe, creative_direction, etc.) */
-  template_agent_runs: AgentRunPayload[];
+  template_agent_runs: AgentRunSummaryPayload[];
   /** Agent runs that analyzed the linked music track (song_classifier, song_sections, music_matcher, etc.) */
-  track_agent_runs: AgentRunPayload[];
+  track_agent_runs: AgentRunSummaryPayload[];
+  template_agent_runs_has_more: boolean;
+  track_agent_runs_has_more: boolean;
+  context_runs_cap: number;
   runtime: JobRuntimePayload;
 }
 

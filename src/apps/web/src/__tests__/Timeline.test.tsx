@@ -43,6 +43,7 @@ function makeData(overrides: Partial<JobDebugResponse["job"]> = {}): JobDebugRes
       finished_at: null,
       created_at: "2026-05-17T00:00:00Z",
       updated_at: "2026-05-17T00:00:00Z",
+      celery_task_id: null,
       ...overrides,
     },
     job_clips: [],
@@ -51,6 +52,15 @@ function makeData(overrides: Partial<JobDebugResponse["job"]> = {}): JobDebugRes
     agent_runs: [],
     template_agent_runs: [],
     track_agent_runs: [],
+    template_agent_runs_has_more: false,
+    track_agent_runs_has_more: false,
+    context_runs_cap: 200,
+    runtime: {
+      state: "unknown",
+      worker: null,
+      task_id: null,
+      queue_position: null,
+    },
   };
 }
 

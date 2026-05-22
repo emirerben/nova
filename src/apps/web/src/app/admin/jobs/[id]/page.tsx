@@ -286,36 +286,52 @@ function AgentsTab({ data }: { data: JobDebugResponse }): JSX.Element {
   return (
     <div className="space-y-8">
       {template_agent_runs.length > 0 && (
-        <AgentSection
-          title="Template analysis"
-          subtitle={
-            template
-              ? `Ran when the template ${template.name} was analyzed`
-              : "Ran during template analysis"
-          }
-          link={
-            template
-              ? { href: `/admin/templates/${template.id}`, label: "open template" }
-              : null
-          }
-          runs={template_agent_runs}
-        />
+        <div>
+          <AgentSection
+            title="Template analysis"
+            subtitle={
+              template
+                ? `Ran when the template ${template.name} was analyzed`
+                : "Ran during template analysis"
+            }
+            link={
+              template
+                ? { href: `/admin/templates/${template.id}`, label: "open template" }
+                : null
+            }
+            runs={template_agent_runs}
+            ioMode="summary"
+          />
+          {data.template_agent_runs_has_more && (
+            <p className="text-xs text-zinc-500 mt-2">
+              Showing the {data.context_runs_cap} most recent context runs.
+            </p>
+          )}
+        </div>
       )}
       {track_agent_runs.length > 0 && (
-        <AgentSection
-          title="Music track analysis"
-          subtitle={
-            music_track
-              ? `Ran when "${music_track.title}" — ${music_track.artist} was analyzed`
-              : "Ran during music-track analysis"
-          }
-          link={
-            music_track
-              ? { href: `/admin/music/${music_track.id}`, label: "open track" }
-              : null
-          }
-          runs={track_agent_runs}
-        />
+        <div>
+          <AgentSection
+            title="Music track analysis"
+            subtitle={
+              music_track
+                ? `Ran when "${music_track.title}" — ${music_track.artist} was analyzed`
+                : "Ran during music-track analysis"
+            }
+            link={
+              music_track
+                ? { href: `/admin/music/${music_track.id}`, label: "open track" }
+                : null
+            }
+            runs={track_agent_runs}
+            ioMode="summary"
+          />
+          {data.track_agent_runs_has_more && (
+            <p className="text-xs text-zinc-500 mt-2">
+              Showing the {data.context_runs_cap} most recent context runs.
+            </p>
+          )}
+        </div>
       )}
       <AgentSection
         title="Job-time agents"
