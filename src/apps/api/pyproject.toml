@@ -38,6 +38,11 @@ dependencies = [
     "structlog>=24",
     "Pillow>=10.0",
     "pillow-heif>=0.16",
+    # Skia text renderer for agentic templates + music lyrics
+    # (app.pipeline.text_overlay_skia). Classic non-music + non-agentic
+    # templates remain on Pillow + libass. Wheel is ~50MB; skia-python
+    # ships pre-built binaries for linux + darwin amd64/arm64.
+    "skia-python>=87,<200",
     "yt-dlp>=2024.12",
     # numpy is a transitive of opencv-python-headless / scenedetect, but the
     # font-identification pipeline depends on it directly for embedding math.
