@@ -3,12 +3,16 @@
 
 FROM python:3.11-slim
 
-# System deps for FFmpeg pipeline, opencv, python-magic, libheif (HEIC photo support)
+# System deps for FFmpeg pipeline, opencv, python-magic, libheif (HEIC photo support),
+# Skia runtime (libegl1 — required by skia-python's app/pipeline/text_overlay_skia.py;
+# without it the module's `import skia` raises `libEGL.so.1: cannot open shared object
+# file` at worker boot, before the kill switch can be read).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     fonts-dejavu-core \
     libmagic1 \
     libgl1 \
+    libegl1 \
     libglib2.0-0 \
     libheif1 \
     curl \
