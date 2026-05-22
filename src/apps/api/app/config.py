@@ -110,6 +110,15 @@ class Settings(BaseSettings):
     # enough labeled tracks for the matcher to do real work (~15+).
     enable_auto_music_mode: bool = False
 
+    # agent_run retention (days). Rows with job_id IS NOT NULL and
+    # created_at older than this are deleted by the daily
+    # `tasks.cleanup_agent_runs` Beat task. Template- and track-scoped rows
+    # (job_id IS NULL) are kept indefinitely — they back the per-template
+    # debug view and aren't growth-bound to job volume. Default 30d keeps
+    # the job-debug "what did each agent see?" window meaningful while
+    # bounding table size. Set higher temporarily during incident triage.
+    agent_run_retention_days: int = 30
+
     # Security
     token_encryption_key: str = ""
 

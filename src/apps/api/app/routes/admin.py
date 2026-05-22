@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.config import settings
 from app.database import get_db
@@ -771,8 +772,18 @@ async def list_templates(
     if exclude_children:
         base_filter = base_filter.where(VideoTemplate.template_type != "music_child")
 
+    # Defer the heavy JSONB columns — the list response only uses
+    # recipe_cached_versions (small dict of agent_name -> prompt_version, fed
+    # to diff_recipe_versions). recipe_cached / required_inputs / lyrics_config
+    # are not surfaced here and were inflating every list response. The
+    # detail endpoint builds its own query and is unaffected.
     query = (
         select(VideoTemplate, func.coalesce(job_count_sq.c.job_count, 0).label("job_count"))
+        .options(
+            defer(VideoTemplate.recipe_cached),
+            defer(VideoTemplate.required_inputs),
+            defer(VideoTemplate.lyrics_config),
+        )
         .outerjoin(job_count_sq, VideoTemplate.id == job_count_sq.c.template_id)
         .order_by(VideoTemplate.created_at.desc())
     )
