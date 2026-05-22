@@ -37,6 +37,8 @@ Flow (per the plan):
        - ``published_at IS NOT NULL``
        - ``ai_labels IS NOT NULL``
        - ``label_version = CURRENT_LABEL_VERSION``
+       - ``best_sections IS NOT NULL``
+       - ``section_version = CURRENT_SECTION_VERSION``
      If zero rows match → status=no_labeled_tracks, fail loudly.
   5. Pre-match filter: drop tracks whose ``slot_count`` after
      ``consolidate_slots(slot_count, n_clips)`` would be degenerate
@@ -93,6 +95,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION, MusicLabels
+from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, JobClip, MusicTrack
@@ -132,6 +135,7 @@ except ImportError:  # pragma: no cover — only hit on broken installs
 log = structlog.get_logger()
 
 MAX_ERROR_DETAIL_LEN = 2000
+_SLOT_COUNT_CACHE_ATTR = "_auto_music_slot_count"
 # Plan default. Configurable per-job via the `n_variants` field on the
 # (yet-to-land) POST /auto-music-jobs request; the orchestrator reads it
 # off ``job.all_candidates`` so the API doesn't need a new column.
@@ -284,8 +288,8 @@ def _run_auto_music_job(job_id: str) -> None:
             _fail_job(
                 job_id,
                 (
-                    "No music tracks have current-version AI labels. "
-                    "Run the song_classifier backfill before retrying."
+                    "No music tracks have current-version AI labels and sections. "
+                    "Run the song_classifier and song_sections backfills before retrying."
                 ),
                 failure_reason="no_labeled_tracks",
                 status="no_labeled_tracks",
@@ -413,7 +417,9 @@ def _load_matcher_candidates(n_clips: int) -> list[MusicTrack]:
 
     Two filters:
       - DB-side: ``published_at IS NOT NULL`` AND ``ai_labels IS NOT NULL``
-        AND ``label_version = CURRENT_LABEL_VERSION``.
+        AND ``label_version = CURRENT_LABEL_VERSION`` AND
+        ``best_sections IS NOT NULL`` AND
+        ``section_version = CURRENT_SECTION_VERSION``.
       - Python-side: drop tracks whose slot count is degenerate after
         ``consolidate_slots(slot_count, n_clips)`` — see Critical risk #4
         in the plan. We approximate this by checking that the track's
@@ -428,6 +434,8 @@ def _load_matcher_candidates(n_clips: int) -> list[MusicTrack]:
             MusicTrack.published_at.is_not(None),
             MusicTrack.ai_labels.is_not(None),
             MusicTrack.label_version == CURRENT_LABEL_VERSION,
+            MusicTrack.best_sections.is_not(None),
+            MusicTrack.section_version == CURRENT_SECTION_VERSION,
             MusicTrack.analysis_status == "ready",
         )
         tracks: list[MusicTrack] = list(db.execute(stmt).scalars().all())
@@ -447,12 +455,17 @@ def _load_matcher_candidates(n_clips: int) -> list[MusicTrack]:
                 t.ai_labels,
                 t.label_version,
                 t.recipe_cached,
+                t.best_sections,
+                t.section_version,
             )
         # Pre-match filter: drop tracks whose slot count is wildly too
         # large for the user's clip count.
+        slot_count_cache: dict[str, int] = {}
         out: list[MusicTrack] = []
         for t in tracks:
-            slot_count = _track_slot_count(t)
+            if _current_best_section(t) is None:
+                continue
+            slot_count = _track_slot_count(t, slot_count_cache=slot_count_cache)
             if slot_count <= 0:
                 continue
             # The conservative-but-cheap heuristic: a track that wants
@@ -466,8 +479,83 @@ def _load_matcher_candidates(n_clips: int) -> list[MusicTrack]:
         return out
 
 
-def _track_slot_count(track: MusicTrack) -> int:
+def _current_best_section(track: MusicTrack) -> tuple[float, float] | None:
+    """Return the rank-1 current-version song section, or None if unusable."""
+    if getattr(track, "section_version", None) != CURRENT_SECTION_VERSION:
+        return None
+    sections = getattr(track, "best_sections", None) or []
+    if not isinstance(sections, list) or not sections:
+        return None
+    first = sections[0]
+    if isinstance(first, dict):
+        start_raw = first.get("start_s")
+        end_raw = first.get("end_s")
+    else:
+        start_raw = getattr(first, "start_s", None)
+        end_raw = getattr(first, "end_s", None)
+    try:
+        start_s = float(start_raw)
+        end_s = float(end_raw)
+    except (TypeError, ValueError):
+        return None
+    if end_s <= start_s:
+        return None
+    return start_s, end_s
+
+
+def _track_config_for_best_section(track: MusicTrack) -> dict:
+    """Render auto-music variants against ``best_sections[0]``.
+
+    The admin/manual ``track_config`` window stays untouched. This returns
+    a copy for the auto-music recipe only.
+    """
+    cfg = dict(getattr(track, "track_config", None) or {})
+    section = _current_best_section(track)
+    if section is None:
+        return cfg
+    start_s, end_s = section
+    cfg["best_start_s"] = round(start_s, 3)
+    cfg["best_end_s"] = round(end_s, 3)
+    return cfg
+
+
+def _track_slot_count(
+    track: MusicTrack,
+    *,
+    slot_count_cache: dict[str, int] | None = None,
+) -> int:
     """Best-effort slot count derived from cached recipe or track_config."""
+    cached = _get_cached_slot_count(track)
+    if cached is not None:
+        return cached
+
+    cache_key = _slot_count_cache_key(track)
+    if slot_count_cache is not None and cache_key in slot_count_cache:
+        cached = slot_count_cache[cache_key]
+        _set_cached_slot_count(track, cached)
+        return cached
+
+    slot_count = _compute_track_slot_count(track)
+    if slot_count_cache is not None:
+        slot_count_cache[cache_key] = slot_count
+    _set_cached_slot_count(track, slot_count)
+    return slot_count
+
+
+def _compute_track_slot_count(track: MusicTrack) -> int:
+    if _current_best_section(track) is not None:
+        try:
+            recipe = generate_music_recipe(
+                {
+                    "beat_timestamps_s": getattr(track, "beat_timestamps_s", None) or [],
+                    "track_config": _track_config_for_best_section(track),
+                    "duration_s": getattr(track, "duration_s", None),
+                }
+            )
+            return int(recipe.get("shot_count") or len(recipe.get("slots") or []))
+        except Exception:
+            return 0
+
     recipe = track.recipe_cached or {}
     slots = recipe.get("slots") or []
     if slots:
@@ -480,6 +568,28 @@ def _track_slot_count(track: MusicTrack) -> int:
         return int(val)
     except (TypeError, ValueError):
         return 0
+
+
+def _slot_count_cache_key(track: MusicTrack) -> str:
+    track_id = getattr(track, "id", None)
+    return str(track_id) if track_id else str(id(track))
+
+
+def _get_cached_slot_count(track: MusicTrack) -> int | None:
+    try:
+        cached = vars(track).get(_SLOT_COUNT_CACHE_ATTR)
+    except TypeError:
+        cached = None
+    if isinstance(cached, int) and cached >= 0:
+        return cached
+    return None
+
+
+def _set_cached_slot_count(track: MusicTrack, slot_count: int) -> None:
+    try:
+        setattr(track, _SLOT_COUNT_CACHE_ATTR, int(slot_count))
+    except Exception:
+        pass
 
 
 def _run_music_matcher(
@@ -707,7 +817,7 @@ def _render_one_variant(
 
         track_data = {
             "beat_timestamps_s": track.beat_timestamps_s or [],
-            "track_config": track.track_config or {},
+            "track_config": _track_config_for_best_section(track),
             "duration_s": track.duration_s,
         }
 

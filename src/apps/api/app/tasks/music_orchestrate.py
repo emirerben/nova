@@ -30,6 +30,7 @@ from typing import Any
 import structlog
 from sqlalchemy.exc import DBAPIError, OperationalError
 
+from app.agents._runtime import RefusalError
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
 from app.pipeline.lyric_injector import inject_lyric_overlays
@@ -301,6 +302,25 @@ def analyze_music_track_task(self, track_id: str) -> None:
             retry_count=self.request.retries,
         )
         raise
+    except RefusalError as exc:
+        retry_count = int(getattr(getattr(self, "request", None), "retries", 0) or 0)
+        max_retries = getattr(self, "max_retries", None)
+        log.warning(
+            "analyze_music_track_song_sections_refusal_retry",
+            track_id=track_id,
+            error=str(exc),
+            retry_count=retry_count,
+            max_retries=max_retries,
+        )
+        if max_retries is not None and retry_count >= int(max_retries):
+            log.error(
+                "analyze_music_track_song_sections_refusal_exhausted",
+                track_id=track_id,
+                error=str(exc),
+            )
+            _fail_track(track_id, str(exc))
+            return
+        raise self.retry(exc=exc)
     except Exception as exc:
         log.error("analyze_music_track_failed", track_id=track_id, error=str(exc))
         _fail_track(track_id, str(exc))
@@ -800,9 +820,10 @@ def _run_gemini_audio_analysis(
     Returns ``(recipe_cached, ai_labels, best_sections)``. Each side can
     be ``None`` independently — a Gemini-recipe failure does not block
     label generation, a classifier failure does not block recipe
-    caching, and a sections failure does not block either. On a total
-    upload failure all three are ``None`` (falls back to beat-only
-    recipe, no labels, no sections).
+    caching. A song_sections refusal (all proposed sections invalid)
+    propagates so the track is visibly failed instead of carrying no
+    usable current-version section. Other Gemini failures still fall
+    back to a beat-only recipe where possible.
     """
     try:
         log.info("gemini_audio_analysis_start", track_id=track_id)
@@ -845,6 +866,12 @@ def _run_gemini_audio_analysis(
         )
         return merged, ai_labels, sections
 
+    except RefusalError:
+        log.warning(
+            "gemini_audio_analysis_song_sections_refused",
+            track_id=track_id,
+        )
+        raise
     except Exception as exc:
         # Gemini failure is non-fatal: fall back to beat-only recipe
         log.warning(
@@ -872,11 +899,12 @@ def _run_song_sections(
     duration_s: float,
     track_id: str,
 ) -> dict | None:
-    """Best-effort: pick top-3 edit-worthy sections. Never raises.
+    """Best-effort: pick top-3 edit-worthy sections.
 
-    Failure is logged and returns ``None``; the matcher will treat the
-    track as unsectioned (filtered out of auto-music selection until
-    the backfill script reruns).
+    Ordinary failures are logged and return ``None``; the matcher will
+    treat the track as unsectioned until backfill reruns. RefusalError
+    means every proposed section violated the hard constraints, so it
+    propagates and analyze_music_track_task marks the track failed.
     """
     if duration_s <= 0.0:
         # SongSectionsInput requires duration_s > 0. A track with no
@@ -908,6 +936,13 @@ def _run_song_sections(
             ranks=[s.rank for s in out.sections],
         )
         return out.to_dict()
+    except RefusalError as exc:
+        log.warning(
+            "song_sections_refused",
+            track_id=track_id,
+            error=str(exc),
+        )
+        raise
     except Exception as exc:
         log.warning(
             "song_sections_failed",
@@ -1476,6 +1511,8 @@ def _fail_track(track_id: str, error_detail: str) -> None:
                 if track:
                     track.analysis_status = "failed"
                     track.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
+                    track.best_sections = None
+                    track.section_version = None
                     db.commit()
             return
         except (OperationalError, DBAPIError) as exc:

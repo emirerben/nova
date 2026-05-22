@@ -174,7 +174,7 @@ def test_to_response_round_trips_best_sections() -> None:
         {
             "rank": 1,
             "start_s": 30.0,
-            "end_s": 60.0,
+            "end_s": 48.0,
             "label": "chorus",
             "energy": "peaks_high",
             "suggested_use": "climax",
@@ -183,7 +183,7 @@ def test_to_response_round_trips_best_sections() -> None:
         {
             "rank": 2,
             "start_s": 90.0,
-            "end_s": 120.0,
+            "end_s": 108.0,
             "label": "build",
             "energy": "high",
             "suggested_use": "build",
@@ -203,7 +203,7 @@ def test_to_response_round_trips_best_sections() -> None:
     track.thumbnail_url = None
     track.published_at = None
     track.archived_at = None
-    track.track_config = {"best_start_s": 30.0, "best_end_s": 60.0}
+    track.track_config = {"best_start_s": 30.0, "best_end_s": 48.0}
     track.best_sections = sections_jsonb
     track.section_version = CURRENT_SECTION_VERSION
     track.lyrics_status = "pending"
@@ -233,7 +233,7 @@ def test_to_response_drops_invalid_section_rows() -> None:
         {
             "rank": 1,
             "start_s": 30.0,
-            "end_s": 60.0,
+            "end_s": 48.0,
             "label": "chorus",
             "energy": "peaks_high",
             "suggested_use": "climax",
@@ -242,7 +242,7 @@ def test_to_response_drops_invalid_section_rows() -> None:
         {
             "rank": 2,
             "start_s": 90.0,
-            "end_s": 120.0,
+            "end_s": 108.0,
             "label": "chorus",
             "energy": "extra_extra_high",  # drift: not in the Literal union
             "suggested_use": "build",

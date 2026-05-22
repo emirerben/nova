@@ -941,7 +941,7 @@ def check_song_sections(
     This layer asserts the cross-field invariants ``parse()`` upholds:
     section_version is clamped, start/end inside duration, duration is
     within the TikTok-shape band, ranks are unique, and no pair overlaps
-    by more than 5s.
+    by more than MAX_OVERLAP_S.
     """
     failures: list[str] = []
 

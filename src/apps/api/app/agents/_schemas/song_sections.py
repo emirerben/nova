@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 # bump forces re-sectioning via ``scripts/backfill_song_sections.py
 # --include-stale``. Keep in sync with ``song_sections`` prompt version
 # when semantics shift.
-CURRENT_SECTION_VERSION = "2026-05-15"
+CURRENT_SECTION_VERSION = "2026-05-22"
 
 SectionLabel = Literal[
     "intro",

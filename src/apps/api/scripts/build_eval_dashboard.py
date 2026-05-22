@@ -77,7 +77,7 @@ AGENT_NARRATIVE: dict[str, dict[str, str]] = {
     "nova.audio.song_sections": {
         "phase": "admin",
         "cardinality": "once · per music track",
-        "what": "Picks the top 1-3 ranked edit-worthy sections of a music track (15-60s each). Cached on MusicTrack.best_sections; rank 1 is the default section the matcher renders against, ranks 2/3 unlock variant diversity. Replaces the mechanical auto_best_section pick at job time.",
+        "what": "Picks the top 1-3 ranked edit-worthy sections of a music track (8-20s each). Cached on MusicTrack.best_sections; rank 1 is the default section the matcher renders against, ranks 2/3 unlock variant diversity. Replaces the mechanical auto_best_section pick at job time.",
     },
     "nova.video.clip_metadata": {
         "phase": "job",
