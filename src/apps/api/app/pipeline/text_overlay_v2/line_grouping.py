@@ -5,27 +5,38 @@ transcript, this module groups consecutive atomized phrases (one word each)
 that should render as a single progressive-reveal line. Stage G consumes the
 groups and emits cumulative-text overlays via `text_reveal.build_cumulative_stages`.
 
-Grouping rules (line source = Whisper transcript only):
-- Each phrase is matched to a transcript word (casefold, time-proximate).
-- Phrases that don't match any transcript word are SKIPPED — they do NOT
-  close the running group. OCR noise (single-char artifacts, stray
-  punctuation) and legitimate words the transcript happened to miss should
-  not fragment a cumulative reveal mid-phrase. Groups close only on real
-  terminators (sentence punctuation in the transcript between matched
-  words, silence gap above `silence_gap_s`, or `max_words_per_line` cap).
+Grouping rules:
+- Each atomized phrase is matched to a transcript word (casefold, time-proximate)
+  when possible. Unmatched phrases retain their OCR text — they're either OCR
+  noise (mostly removed at Stage D), real words the transcript missed
+  ("there" missing from "the work to get there"), or visual labels that
+  don't have a vocal counterpart.
+- Unmatched phrases SKIP the group's boundary checks but are INCLUDED in the
+  cumulative reveal — they contribute their OCR text (e.g. "there") and
+  their `start_t_s` (the OCR first-seen frame) to the reveal timeline.
   Regression: prod job 09f56ee3 (2026-05-22) rendered "The work to get"
-  as a cumulative reveal but the trailing "there" was emitted as a
-  standalone overlay because an unmatched OCR phrase between them closed
-  the group; later "allow / allow anyone" was the only fragment of
-  "don't allow anyone to diminish your hard work" that grouped at all.
-- Phrases that match different transcript words become group-mates only if
-  the transcript span between them contains NO sentence-terminating
-  punctuation (`.`, `?`, `!`) AND the silence gap between their transcript
-  words is below `silence_gap_s` AND the running group hasn't exceeded
-  `max_words_per_line`.
+  cumulatively but never reached "The work to get there" because "there"
+  was unmatched. With this rule, the final cumulative stage is the full
+  visible phrase.
+- Matched-against-matched boundary checks split groups on transcript silence
+  (`silence_gap_s`), sentence-terminating punctuation in the transcript
+  span between two matches, and `max_words_per_line` cap (counting MATCHED
+  words only — unmatched additions don't accelerate the cap because the
+  cap is about spoken-word length).
+- Groups open only on a matched phrase (need at least one transcript anchor
+  to ground the reveal). Unmatched phrases at the start of the iteration
+  are skipped silently until the first match opens a group.
 - Only groups of `min_group_size` (default 2+) are emitted. A singleton would
   just be a left-anchored static word, no real progressive reveal — better
   to pass it through Stage G's unchanged path.
+
+KNOWN LIMITATION: when the speaker doesn't pause between two visible
+phrases (transcript silence < `silence_gap_s`), the algorithm cannot
+distinguish "same phrase keeps growing" from "next phrase starts" without
+the OCR-overlap signal. Adjacent on-screen phrases may merge into one
+cumulative reveal. The admin-side overlay editor at
+`PATCH /admin/templates/{id}/overlays` is the escape hatch — manual edits
+override the algorithm.
 
 The output is a list of `LineGroup`s. Phrases NOT covered by any group are
 the caller's responsibility (Stage G emits them via the existing per-phrase
@@ -92,11 +103,16 @@ class LineGroup:
     # Used as `bbox.h_norm` so the TextBBox is meaningful (not just a
     # placeholder) and downstream consumers see a faithful bbox.
     line_height_frac: float
-    transcript_word_indices: list[int]
-    # Per-word transcript start_s, parallel to phrase_indices. Stage G uses
-    # these (more accurate than OCR first-seen frame) to time each cumulative
-    # reveal stage. Pulled from the matched transcript word at group-build
-    # time so Stage G doesn't need the transcript_words list.
+    # Parallel to `phrase_indices`, recording which transcript word each
+    # phrase matched. ``None`` for unmatched phrases included via the
+    # visible-phrase-inclusion rule (the OCR text + start_t_s contribute
+    # to the cumulative reveal even when the transcript missed the word).
+    transcript_word_indices: list[int | None]
+    # Per-word reveal start_s, parallel to phrase_indices. Stage G uses
+    # these to time each cumulative reveal stage. For matched phrases the
+    # source is the transcript word's start_s (more accurate than OCR
+    # first-seen frame). For unmatched phrases it's the OCR phrase's
+    # start_t_s — there's no transcript word to read from.
     word_start_s_list: list[float]
 
 
@@ -169,81 +185,134 @@ def build_line_groups(
         if match_idx is not None:
             transcript_cursor = match_idx + 1
 
-    # Walk phrases in order. Open a group when a matched phrase starts a new
-    # line; close it when the next matched phrase crosses a boundary
-    # (sentence terminator, silence gap, max-words cap, or unmatched phrase).
+    # Walk phrases in order. Tracking state:
+    #   `current` — phrase indices in the open group (matched + unmatched-but-included).
+    #   `current_tw` — parallel transcript-word indices; ``None`` for unmatched.
+    #   `current_word_starts` — parallel reveal start_s (transcript or OCR).
+    #   `last_matched_tw_idx` — last MATCHED transcript word index, used for
+    #       sentence-terminator and silence-gap checks (must compare
+    #       transcript-to-transcript).
+    #   `last_phrase_end_t_s` — last OCR end_t_s in the group, used for the
+    #       visual-phrase-boundary check (the on-screen ground truth).
+    #   `matched_count` — only matched words count against `max_words_per_line`
+    #       (unmatched additions are extensions of the same spoken word run).
     groups: list[LineGroup] = []
-    current: list[int] = []  # phrase indices in the open group
-    current_tw: list[int] = []  # transcript word indices in the open group
+    current: list[int] = []
+    current_tw: list[int | None] = []
+    current_word_starts: list[float] = []
+    last_matched_tw_idx: int | None = None
+    last_phrase_end_t_s: float | None = None
+    matched_count = 0
+
+    def _reset_state():
+        current.clear()
+        current_tw.clear()
+        current_word_starts.clear()
 
     def _close():
+        nonlocal last_matched_tw_idx, last_phrase_end_t_s, matched_count
         if len(current) >= min_group_size:
             first_phrase = phrases[current[0]]
-            last_tw_idx = current_tw[-1]
-            line_end_s = norm_words[last_tw_idx]["end_s"]
+            # `line_end_s` is the clear-from-screen moment for the cumulative
+            # reveal. Prefer the last MATCHED transcript word's end_s (more
+            # accurate than OCR's first-seen frame). If the group ends on an
+            # unmatched phrase, fall back to that phrase's OCR end_t_s.
+            if last_matched_tw_idx is not None:
+                line_end_s = norm_words[last_matched_tw_idx]["end_s"]
+            else:
+                line_end_s = phrases[current[-1]].end_t_s
             # aabb is (x_min, y_min, x_max, y_max). Left edge for x anchor,
             # y center for vertical position, height for bbox h_norm.
             x_anchor = float(first_phrase.aabb[0])
             y_center = float((first_phrase.aabb[1] + first_phrase.aabb[3]) / 2.0)
             h_extent = float(first_phrase.aabb[3] - first_phrase.aabb[1])
-            word_starts = [norm_words[tw_idx]["start_s"] for tw_idx in current_tw]
             groups.append(
                 LineGroup(
                     phrase_indices=list(current),
-                    line_end_s=line_end_s,
+                    line_end_s=float(line_end_s),
                     line_anchor_x_frac=x_anchor,
                     line_anchor_y_frac=y_center,
                     line_height_frac=max(h_extent, 0.01),  # min epsilon for TextBBox
                     transcript_word_indices=list(current_tw),
-                    word_start_s_list=word_starts,
+                    word_start_s_list=list(current_word_starts),
                 )
             )
-        current.clear()
-        current_tw.clear()
+        _reset_state()
+        last_matched_tw_idx = None
+        last_phrase_end_t_s = None
+        matched_count = 0
+
+    def _open(phrase_idx: int, match_idx_or_none: int | None) -> None:
+        nonlocal last_matched_tw_idx, last_phrase_end_t_s, matched_count
+        phrase = phrases[phrase_idx]
+        current.append(phrase_idx)
+        if match_idx_or_none is not None:
+            current_tw.append(match_idx_or_none)
+            current_word_starts.append(norm_words[match_idx_or_none]["start_s"])
+            last_matched_tw_idx = match_idx_or_none
+            matched_count += 1
+        else:
+            current_tw.append(None)
+            current_word_starts.append(float(phrase.start_t_s))
+        last_phrase_end_t_s = float(phrase.end_t_s)
 
     for phrase_idx, match_idx in enumerate(matches):
-        if match_idx is None:
-            # Unmatched phrase (OCR artifact, non-atomized, or a real word
-            # the transcript missed). SKIP — do NOT close the running group.
-            # The group's silence/terminator/max-words checks operate on the
-            # next *matched* phrase against the *last* matched one, so
-            # skipping unmatched preserves correct boundary detection while
-            # keeping the cumulative reveal intact. Skipped phrases fall
-            # through to Stage G's per-phrase fallback emit (where Stage D's
-            # artifact filter has already dropped pure-noise tokens).
-            continue
+        phrase = phrases[phrase_idx]
 
         if not current:
-            current.append(phrase_idx)
-            current_tw.append(match_idx)
+            # Group not started. Only OPEN on a matched phrase — we need at
+            # least one transcript anchor to ground the reveal. Leading
+            # unmatched phrases (artifact, brand label, etc.) are skipped.
+            if match_idx is None:
+                continue
+            _open(phrase_idx, match_idx)
             continue
 
-        # Check boundary against the previous matched word.
-        prev_tw_idx = current_tw[-1]
+        # Group is open.
+        assert last_phrase_end_t_s is not None  # invariant when current non-empty
+
+        # Unmatched phrase mid-group: include it in the cumulative reveal
+        # using its OCR text + start_t_s. Don't run transcript-only boundary
+        # checks (no transcript word to compare against).
+        if match_idx is None:
+            current.append(phrase_idx)
+            current_tw.append(None)
+            current_word_starts.append(float(phrase.start_t_s))
+            last_phrase_end_t_s = max(last_phrase_end_t_s, float(phrase.end_t_s))
+            continue
+
+        # Matched phrase: check transcript-only boundary signals against
+        # the last MATCHED word. These can still split a group even when the
+        # OCR phrases are visually continuous (e.g. a long unbroken caption
+        # that spans two transcript sentences with a comma-less period).
+        assert last_matched_tw_idx is not None  # invariant: group opened on match
+        prev_tw_idx = last_matched_tw_idx
         prev_word = norm_words[prev_tw_idx]
         this_word = norm_words[match_idx]
 
         if _has_sentence_terminator(transcript_words, prev_tw_idx, match_idx):
             _close()
-            current.append(phrase_idx)
-            current_tw.append(match_idx)
+            _open(phrase_idx, match_idx)
             continue
 
         silence = this_word["start_s"] - prev_word["end_s"]
         if silence > silence_gap_s:
             _close()
-            current.append(phrase_idx)
-            current_tw.append(match_idx)
+            _open(phrase_idx, match_idx)
             continue
 
-        if len(current) >= max_words_per_line:
+        if matched_count >= max_words_per_line:
             _close()
-            current.append(phrase_idx)
-            current_tw.append(match_idx)
+            _open(phrase_idx, match_idx)
             continue
 
+        # Add the matched phrase to the running group.
         current.append(phrase_idx)
         current_tw.append(match_idx)
+        current_word_starts.append(this_word["start_s"])
+        last_matched_tw_idx = match_idx
+        last_phrase_end_t_s = max(last_phrase_end_t_s, float(phrase.end_t_s))
+        matched_count += 1
 
     _close()
     return groups

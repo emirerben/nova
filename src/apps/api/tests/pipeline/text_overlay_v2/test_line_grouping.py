@@ -183,9 +183,12 @@ def test_max_words_cap_at_default_8():
 # ── Unmatched phrases ────────────────────────────────────────────────────────
 
 
-def test_unmatched_phrase_closes_group_and_is_omitted():
-    # Phrase "PERU" has no transcript match → ungrouped. The surrounding
-    # matched phrases form their own group (if size >= 2).
+def test_unmatched_phrase_silence_gap_separates_groups():
+    """Silence gap from "there" end (1.4s) to "hi" start (3.0s) is 1.6s,
+    above the 0.7s default. The unmatched "PERU" gets included in the FIRST
+    group (cumulative reveal includes its OCR text), then the silence gap
+    closes that group before "hi" opens a new one.
+    """
     phrases = [
         _phrase("hello", 0.0, 0.3),
         _phrase("there", 1.0, 1.3),
@@ -201,9 +204,13 @@ def test_unmatched_phrase_closes_group_and_is_omitted():
     ]
     groups = build_line_groups(phrases, transcript)
     assert len(groups) == 2
-    assert groups[0].phrase_indices == [0, 1]
+    # "PERU" is included in group 0 — its OCR text contributes to the
+    # cumulative reveal, with start_t_s=2.0 as the reveal timing.
+    assert groups[0].phrase_indices == [0, 1, 2]
+    assert groups[0].transcript_word_indices == [0, 1, None]
+    assert groups[0].word_start_s_list == [0.0, 1.0, 2.0]
     assert groups[1].phrase_indices == [3, 4]
-    # Phrase 2 ("PERU") is not in any group → Stage G passes it through.
+    assert groups[1].transcript_word_indices == [2, 3]
 
 
 def test_singleton_match_is_dropped_below_min_group_size():
@@ -292,17 +299,14 @@ def test_phrase_far_from_any_transcript_match_is_ungrouped():
 # ── Unmatched phrases mid-group: skip, don't close ──────────────────────────
 
 
-def test_unmatched_phrase_mid_group_does_not_close():
-    """Regression for prod job 09f56ee3 (2026-05-22): an OCR artifact
-    ("W", "luck\\"") landing mid-phrase between matched words used to close
-    the running group, fragmenting the cumulative reveal. The fix: unmatched
-    phrases SKIP, only real terminators close.
-
-    Here "the / work / to / get / there" are five consecutive transcript-aligned
-    words. We slip an unmatched OCR artifact ("Z") in between with no silence
-    gap. With the old behavior groups would be [the, work, to, get] + [there
-    as singleton dropped]. With the fix it's one group [the, work, to, get,
-    there] = a full 5-stage cumulative reveal.
+def test_unmatched_phrase_mid_group_included_in_cumulative():
+    """Regression for prod job 09f56ee3 (2026-05-22): "the work to get there"
+    only revealed up to "the work to get" because "there" was unmatched and
+    closed the group. After the fix, unmatched phrases JOIN the group with
+    their OCR text + start_t_s, so the cumulative reveal reaches the full
+    visible phrase. Bonus coverage: an OCR artifact "Z" between matched
+    words also joins (Stage D artifact filter usually strips these, but
+    they're harmless if they slip through).
     """
     phrases = [
         _phrase("the", 4.5, 4.7),
@@ -310,30 +314,30 @@ def test_unmatched_phrase_mid_group_does_not_close():
         _phrase("to", 5.5, 5.6),
         _phrase("get", 5.7, 5.8),
         _phrase("Z", 5.85, 5.86),  # OCR artifact — no transcript match
-        _phrase("there", 5.9, 6.0),
+        _phrase("there", 5.9, 6.0),  # real word, transcript missed it
     ]
     transcript = [
         _tw("the", 4.5, 4.8),
         _tw("work", 5.0, 5.3),
         _tw("to", 5.5, 5.6),
         _tw("get", 5.7, 5.8),
-        _tw("there", 5.9, 6.0),
-        # No transcript word for "Z" — it's a pure OCR artifact.
+        # No "Z" (artifact) and no "there" (real-word miss) in transcript.
     ]
     groups = build_line_groups(phrases, transcript)
     assert len(groups) == 1, "OCR artifact must not fragment the cumulative reveal"
-    # Phrase indices include all 5 MATCHED phrases. Phrase 4 ("Z") is
-    # skipped — it never enters phrase_indices.
-    assert groups[0].phrase_indices == [0, 1, 2, 3, 5]
-    assert groups[0].transcript_word_indices == [0, 1, 2, 3, 4]
-    assert groups[0].line_end_s == pytest.approx(6.0)
+    # All six phrases are in the group — matched and unmatched alike.
+    assert groups[0].phrase_indices == [0, 1, 2, 3, 4, 5]
+    assert groups[0].transcript_word_indices == [0, 1, 2, 3, None, None]
+    # Word start times: transcript start_s for matched, OCR start_t_s for unmatched.
+    assert groups[0].word_start_s_list == [4.5, 5.0, 5.5, 5.7, 5.85, 5.9]
 
 
 def test_unmatched_phrase_does_not_block_silence_gap_closure():
-    """Skipping unmatched phrases must NOT defeat the real silence-gap
-    boundary. When two matched windows are separated by a true gap (a beat
-    rest, scene change), the group still closes correctly even if an
-    unmatched phrase happens to sit in the gap.
+    """Silence gap between MATCHED transcript words still closes the group,
+    even with unmatched phrases sitting inside. The unmatched phrase joins
+    the group it visually belongs to (the FIRST one — same continuous time
+    window), then silence gap closes the group before the next match opens
+    a new one.
     """
     phrases = [
         _phrase("hello", 0.0, 0.3),
@@ -349,31 +353,40 @@ def test_unmatched_phrase_does_not_block_silence_gap_closure():
         _tw("now", 3.5, 3.8),
     ]
     groups = build_line_groups(phrases, transcript)
-    # Silence gap 3.0 - 0.8 = 2.2s > 0.7 default → must close between
-    # "there" and "again" despite the unmatched phrase in between.
+    # Silence gap 3.0 - 0.8 = 2.2s > 0.7 default → close after group 1.
+    # "Q" joins group 1 (no boundary check applies to unmatched).
     assert len(groups) == 2
-    assert groups[0].phrase_indices == [0, 1]
+    assert groups[0].phrase_indices == [0, 1, 2]
+    assert groups[0].transcript_word_indices == [0, 1, None]
     assert groups[1].phrase_indices == [3, 4]
 
 
 def test_unmatched_phrase_does_not_block_sentence_terminator():
-    """Skipping unmatched phrases must NOT defeat the sentence-terminator
-    boundary either. Period in the transcript word between the matched
-    pair still closes the group.
+    """Sentence terminator between matched words still closes. The unmatched
+    'X' joins the FIRST group (with the matching word right before the
+    terminator), then the next matched phrase opens a new group. Singletons
+    drop under default min_group_size, so the test asserts ONE group of two.
     """
     phrases = [
         _phrase("done", 0.0, 0.3),
         _phrase("X", 0.4, 0.5),  # artifact between sentences
         _phrase("now", 1.0, 1.3),
+        _phrase("here", 1.5, 1.7),  # second matched word so group >= min size
     ]
     transcript = [
         _tw("done.", 0.0, 0.4),
         _tw("now", 1.0, 1.4),
+        _tw("here", 1.5, 1.8),
     ]
     groups = build_line_groups(phrases, transcript)
-    # 'done.' terminator → group must split. Singletons drop under default
-    # min_group_size=2, so both groups disappear entirely.
-    assert groups == []
+    # 'done.' terminator splits between phrase 0 and phrase 2. "X" joins
+    # group 1 ([done, X]); group 2 ([now, here]) starts fresh after the
+    # sentence break.
+    assert len(groups) == 2
+    assert groups[0].phrase_indices == [0, 1]
+    assert groups[0].transcript_word_indices == [0, None]
+    assert groups[1].phrase_indices == [2, 3]
+    assert groups[1].transcript_word_indices == [1, 2]
 
 
 def test_leading_unmatched_phrases_dont_consume_group_state():
