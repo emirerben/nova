@@ -1,7 +1,7 @@
 """Music beat-sync job endpoints.
 
 POST /music-jobs                — create a music-mode job
-POST /music-jobs/upload-slot    — direct upload of a video/image for a templated slot
+POST /music-jobs/upload-slot    — legacy API-passthrough slot upload
 GET  /music-jobs/{id}/status    — poll job status
 """
 
@@ -195,6 +195,58 @@ _SLOT_UPLOAD_IMAGE_CT = {
 _SLOT_UPLOAD_VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi"}
 _SLOT_UPLOAD_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 _SLOT_UPLOAD_MAX_BYTES = 200 * 1024 * 1024  # 200 MB — short user clips, not full source
+_UNKNOWN_CONTENT_TYPES = {"", "application/octet-stream"}
+
+
+def _kind_from_extension(filename: str) -> str | None:
+    ext = Path(filename or "").suffix.lower()
+    if ext in _SLOT_UPLOAD_VIDEO_EXT:
+        return "video"
+    if ext in _SLOT_UPLOAD_IMAGE_EXT:
+        return "image"
+    return None
+
+
+def _kind_from_content_type(content_type: str) -> str | None:
+    ct = (content_type or "").lower()
+    if ct in _SLOT_UPLOAD_VIDEO_CT:
+        return "video"
+    if ct in _SLOT_UPLOAD_IMAGE_CT:
+        return "image"
+    return None
+
+
+def classify_slot_kind(filename: str, content_type: str) -> str:
+    """Resolve a slot upload's media kind, failing closed on MIME/extension drift."""
+    ext = Path(filename or "").suffix.lower()
+    ext_kind = _kind_from_extension(filename)
+    ct_raw = (content_type or "").lower()
+
+    if ct_raw in _UNKNOWN_CONTENT_TYPES:
+        if ext_kind is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"unsupported file type {content_type!r} / {ext!r}. "
+                    "Use mp4/mov for video or jpg/png/webp/heic for image."
+                ),
+            )
+        return ext_kind
+
+    ct_kind = _kind_from_content_type(content_type)
+    if ct_kind is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"unsupported content_type {content_type!r}",
+        )
+
+    if ext and (ext_kind is None or ext_kind != ct_kind):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"content_type {content_type!r} disagrees with extension {ext!r}",
+        )
+
+    return ct_kind
 
 
 class SlotUploadResponse(BaseModel):
@@ -212,25 +264,16 @@ async def upload_slot_clip(
 ) -> SlotUploadResponse:
     """Upload a short clip (video) or still (image) for a templated music slot.
 
-    Used by the user-facing music page when the selected track is templated
-    (e.g. Love-From-Moon). Returns a GCS path that the caller passes to
-    `POST /music-jobs` as the slot's clip.
+    Deprecated API-passthrough path kept for one rollout. Admin Test tab
+    uploads should use the track-scoped presigned route instead.
     """
+    log.warning(
+        "slot_upload_legacy_called",
+        note="deprecated — use POST /admin/music-tracks/{id}/upload-slot-presigned",
+    )
     ct = (file.content_type or "").lower()
     ext = Path(file.filename or "upload").suffix.lower()
-
-    if ct in _SLOT_UPLOAD_VIDEO_CT or ext in _SLOT_UPLOAD_VIDEO_EXT:
-        kind = "video"
-    elif ct in _SLOT_UPLOAD_IMAGE_CT or ext in _SLOT_UPLOAD_IMAGE_EXT:
-        kind = "image"
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"Unsupported file type {ct!r} / {ext!r}. "
-                "Use mp4/mov for video or jpg/png/webp for image."
-            ),
-        )
+    kind = classify_slot_kind(file.filename or "upload", ct)
 
     upload_id = uuid.uuid4().hex[:12]
     gcs_path = f"music-uploads/{upload_id}/slot{ext or ('.mp4' if kind == 'video' else '.jpg')}"

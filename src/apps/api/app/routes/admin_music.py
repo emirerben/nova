@@ -9,6 +9,7 @@ PATCH  /admin/music-tracks/{id}             — update config, title, artist, pu
 POST   /admin/music-tracks/{id}/reanalyze   — re-run beat detection
 DELETE /admin/music-tracks/{id}             — soft-archive only
 POST   /admin/music-tracks/{id}/test-job    — render a beat-sync job (skips publish gates)
+POST   /admin/music-tracks/{id}/upload-slot-presigned — mint direct GCS PUT URLs for test clips
 POST   /admin/music-tracks/{id}/rerender-job — re-render a prior job's clips against current config
 GET    /admin/music-tracks/{id}/test-jobs   — list recent admin test jobs for this track
 GET    /admin/music-tracks/{id}/jobs/{job_id}/status — admin-gated status poll
@@ -21,8 +22,9 @@ import hmac
 import json
 import tempfile
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Annotated, Literal
 
 import structlog
 from fastapi import (
@@ -36,7 +38,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
@@ -46,9 +48,11 @@ from app.config import settings
 from app.database import get_db
 from app.models import Job, MusicTrack
 from app.routes.music_jobs import (
+    _SLOT_UPLOAD_MAX_BYTES,
     SYNTHETIC_USER_ID,
     MusicJobResponse,
     MusicJobStatusResponse,
+    classify_slot_kind,
     validate_clip_count,
 )
 from app.schemas.lyrics_config_override import LyricsConfigOverride
@@ -969,6 +973,82 @@ def _validate_clip_path_prefixes(paths: list[str]) -> list[str]:
     return paths
 
 
+class SlotPresignItem(BaseModel):
+    client_id: str
+    filename: str
+    content_type: str
+    file_size_bytes: int
+
+
+class SlotPresignRequest(BaseModel):
+    files: list[SlotPresignItem]
+
+
+class SlotPresignSuccess(BaseModel):
+    ok: Literal[True] = True
+    client_id: str
+    filename: str
+    upload_url: str
+    gcs_path: str
+    kind: Literal["video", "image"]
+    content_type: str
+
+
+class SlotPresignError(BaseModel):
+    ok: Literal[False] = False
+    client_id: str
+    filename: str
+    error: str
+
+
+SlotPresignResult = Annotated[
+    SlotPresignSuccess | SlotPresignError,
+    Field(discriminator="ok"),
+]
+
+
+class SlotPresignResponse(BaseModel):
+    batch_id: str
+    results: list[SlotPresignResult]
+
+
+_MAX_SLOT_PRESIGN_FILES_HARD = 25
+
+
+def _track_slot_upload_cap(track: MusicTrack) -> int:
+    recipe = track.recipe_cached or {}
+    user_slots = [s for s in recipe.get("slots", []) if s.get("slot_type") == "user_upload"]
+    if user_slots:
+        return len(user_slots)
+
+    cfg = track.track_config or {}
+    for key in ("slot_count", "required_clips_max"):
+        raw = cfg.get(key)
+        if raw is None:
+            continue
+        try:
+            cap = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if cap > 0:
+            return cap
+    return _MAX_SLOT_PRESIGN_FILES_HARD
+
+
+def _sign_slot_put(object_path: str, content_type: str) -> str:
+    """Create a signed browser PUT URL using the exact Content-Type to echo back."""
+    from app.storage import _get_client  # noqa: PLC0415
+
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path)
+    return blob.generate_signed_url(
+        version="v4",
+        method="PUT",
+        content_type=content_type,
+        expiration=timedelta(minutes=60),
+    )
+
+
 class CreateAdminMusicJobRequest(BaseModel):
     clip_gcs_paths: list[str]
     selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
@@ -1024,6 +1104,99 @@ def _require_ready_track_for_admin(track: MusicTrack) -> None:
             status_code=status.HTTP_409_CONFLICT,
             detail="Music track has no audio file — re-analyze the track first.",
         )
+
+
+@router.post(
+    "/{track_id}/upload-slot-presigned",
+    response_model=SlotPresignResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def create_slot_upload_urls(
+    track_id: str,
+    body: SlotPresignRequest,
+    db: AsyncSession = Depends(get_db),
+) -> SlotPresignResponse:
+    """Mint signed GCS PUT URLs for admin Test tab clip uploads."""
+    if not body.files:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="files must not be empty",
+        )
+    if len(body.files) > _MAX_SLOT_PRESIGN_FILES_HARD:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"max {_MAX_SLOT_PRESIGN_FILES_HARD} files per batch",
+        )
+
+    track = await _get_track_or_404(track_id, db)
+    track_cap = _track_slot_upload_cap(track)
+    if len(body.files) > track_cap:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"this track expects up to {track_cap} clips per batch (got {len(body.files)})",
+        )
+
+    batch_id = uuid.uuid4().hex[:12]
+    results: list[SlotPresignResult] = []
+
+    for i, f in enumerate(body.files):
+        try:
+            kind = classify_slot_kind(f.filename, f.content_type)
+            if f.file_size_bytes <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="file_size_bytes must be positive",
+                )
+            if f.file_size_bytes > _SLOT_UPLOAD_MAX_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"exceeds 200 MB ({f.file_size_bytes} bytes)",
+                )
+
+            ext = Path(f.filename).suffix.lower() or (".mp4" if kind == "video" else ".jpg")
+            gcs_path = f"music-uploads/{track_id}/{batch_id}/clip_{i:03d}{ext}"
+            content_type = f.content_type or ("video/mp4" if kind == "video" else "image/jpeg")
+            upload_url = _sign_slot_put(gcs_path, content_type)
+            results.append(
+                SlotPresignSuccess(
+                    client_id=f.client_id,
+                    filename=f.filename,
+                    upload_url=upload_url,
+                    gcs_path=gcs_path,
+                    kind=kind,
+                    content_type=content_type,
+                )
+            )
+        except HTTPException as exc:
+            results.append(
+                SlotPresignError(
+                    client_id=f.client_id,
+                    filename=f.filename,
+                    error=str(exc.detail),
+                )
+            )
+        except Exception as exc:
+            log.error(
+                "slot_presign_failed",
+                track_id=track_id,
+                batch_id=batch_id,
+                filename=f.filename,
+                error=str(exc),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Upload service unavailable — try again",
+            ) from exc
+
+    log.info(
+        "slot_presign_created",
+        track_id=track_id,
+        batch_id=batch_id,
+        total=len(body.files),
+        ok=sum(1 for r in results if r.ok),
+        bad=sum(1 for r in results if not r.ok),
+    )
+    return SlotPresignResponse(batch_id=batch_id, results=results)
 
 
 @router.post(

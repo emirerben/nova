@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.41.1] - 2026-05-22
+
+### Added
+- **Admin music test uploads can now prepare direct GCS slot-upload URLs before the frontend switches over.** The new admin-gated `POST /admin/music-tracks/{track_id}/upload-slot-presigned` endpoint validates the target track, caps batches against the track's expected clip count, returns per-file success/error results, and signs 60-minute browser PUT URLs under `music-uploads/{track_id}/{batch_id}/clip_NNN.ext`. Slot media classification now fails closed when MIME type and filename extension disagree, while still accepting unknown browser MIME values via extension for iPhone HEIC/MOV edge cases. The legacy `/music-jobs/upload-slot` route remains available for one release and logs `slot_upload_legacy_called` so rollout can confirm no stale callers remain before deletion.
+
 ## [0.4.41.0] - 2026-05-22
 
 ### Added
