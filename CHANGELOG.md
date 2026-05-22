@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.42.3] - 2026-05-22
+
+### Fixed
+- **Music-job lyric overlays now appear ~350 ms BEFORE the vocal instead of ~35 ms AFTER it.** The previous `_LINE_PRE_ROLL_S=0.10` default could not compensate for `_LINE_FADE_IN_MS=150`: with ASS `\t()` slope=0.5 (quadratic ease), text didn't reach 95 % opacity until recipe_start + 135 ms — i.e. text became fully readable ~35 ms AFTER the vocal hit, making prod music-job lyrics feel chronically "late" against any reference lyric video (e.g. 7clouds-style YouTube refs that show fully-opaque text ~300–400 ms before the vocal). Defaults are now `_LINE_PRE_ROLL_S=0.40` and `_LINE_FADE_IN_MS=50`, which makes text fully readable ~350 ms BEFORE the vocal — matching the reference visual style. Tests `test_line_applies_pre_roll_to_start`, `test_hold_to_next_threshold_is_deprecated_noop_for_next_fade_in_and_pre_roll`, `test_negative_gap_does_not_trigger_hold_to_next`, and the inline default-fade assertion in `test_lyric_injector.py` updated to the new constants; tests that explicitly pass `pre_roll_s: 0.1` / `fade_in_ms: 150` in their config (override path) are unchanged. Tracks with explicit `track_config.lyrics_config.pre_roll_s` or `fade_in_ms` set (e.g. the prod Travis Scott "HIGHEST IN THE ROOM" track has both pinned to the old values) keep their overrides — patch those tracks separately to fall back to the new defaults.
+
+### Added
+- **`src/apps/api/scripts/diff_lyric_sync.py`** — millisecond-level lyric-vs-audio sync diagnostic. Given a Nova music-job output mp4 and a YouTube reference URL, it: cross-correlates the audio (FFT, peak-prominence confidence), OCRs both videos (pytesseract on the lyric band, fuzzy phrase grouping by bigram Jaccard), Whisper-transcribes both sides, then joins everything per lyric line and emits an HTML report with `drift_render`, `drift_audio_mix`, `drift_vs_youtube`, `drift_whisper_vs_youtube`, and the headline `drift_overlay_vs_audio` (C − D). Optional `--job-id` enriches with `lyrics_cached` + `track_config` from the admin API for the per-stage diagnostic. Standalone-runnable — uses system Python with `numpy` + `openai` + `pytesseract` + `ffmpeg`/`yt-dlp` binaries; does not need the api venv. Produced the empirical evidence used to justify the default change above (6 datapoints across 3 prod jobs, +9 ms ± 0 renderer drift, with the residual gap fully explained by fade-in geometry).
+
 ## [0.4.42.2] - 2026-05-22
 
 ### Fixed

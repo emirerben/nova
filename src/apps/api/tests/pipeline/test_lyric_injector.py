@@ -258,7 +258,7 @@ def test_line_emits_one_overlay_per_line_with_lyric_line_effect() -> None:
         # No per-word sweep — plain line should not carry word_timings.
         assert "word_timings" not in ov
         # Fade durations attached per overlay (defaults).
-        assert ov["fade_in_ms"] == 150
+        assert ov["fade_in_ms"] == 50
         assert ov["fade_out_ms"] == 250
     assert overlays[0]["text"] == "Hello world"
     assert overlays[1]["text"] == "Goodbye now"
@@ -269,14 +269,14 @@ def test_line_applies_pre_roll_to_start() -> None:
     cache = _make_lyrics_cache([("Hi", 1.0, 2.0, [("Hi", 1.0, 2.0)])])
     out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
     ov = out["slots"][0]["text_overlays"][0]
-    # Default pre_roll=0.10 → start_s = 1.0 - 0.10 = 0.90
-    assert ov["start_s"] == pytest.approx(0.9, abs=1e-3)
+    # Default pre_roll=0.40 → start_s = 1.0 - 0.40 = 0.60
+    assert ov["start_s"] == pytest.approx(0.6, abs=1e-3)
 
 
 def test_line_clamps_pre_roll_to_section_start() -> None:
     """A line starting right at the section edge can't pre-roll below 0."""
     recipe = _make_recipe([10.0])
-    # Line at section-relative start 0.05 with default pre_roll 0.10 would
+    # Line at section-relative start 0.05 with default pre_roll 0.40 would
     # produce a negative window; injector must clamp to 0.
     cache = _make_lyrics_cache([("Edge", 0.05, 1.0, [("Edge", 0.05, 1.0)])])
     out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})

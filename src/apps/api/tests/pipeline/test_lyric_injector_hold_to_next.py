@@ -43,8 +43,9 @@ def test_hold_to_next_threshold_is_deprecated_noop_for_current_fade_out() -> Non
 
 def test_hold_to_next_threshold_is_deprecated_noop_for_next_fade_in_and_pre_roll() -> None:
     overlays = _overlays([("First", 1.0, 2.0), ("Second", 2.3, 3.0)])
-    assert overlays[1]["fade_in_ms"] == 150
-    assert overlays[1]["start_s"] == pytest.approx(2.2, abs=1e-3)
+    # Defaults: fade_in_ms=50, pre_roll_s=0.40 → second.start_s = 2.3 - 0.40 = 1.90
+    assert overlays[1]["fade_in_ms"] == 50
+    assert overlays[1]["start_s"] == pytest.approx(1.9, abs=1e-3)
 
 
 def test_hold_to_next_no_longer_forces_section_end_to_next_line_start() -> None:
@@ -61,7 +62,7 @@ def test_hold_to_next_threshold_value_does_not_change_output() -> None:
 def test_negative_gap_does_not_trigger_hold_to_next() -> None:
     overlays = _overlays([("First", 1.0, 2.0), ("Second", 1.9, 3.0)])
     assert overlays[0]["fade_out_ms"] == 250
-    assert overlays[1]["fade_in_ms"] == 150
+    assert overlays[1]["fade_in_ms"] == 50
 
 
 def test_overlapping_lines_do_not_create_negative_duration_overlay() -> None:
