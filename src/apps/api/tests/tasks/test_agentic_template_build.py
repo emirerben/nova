@@ -536,6 +536,36 @@ def test_classify_overlay_subject_placeholder_still_label() -> None:
     assert _classify_overlay(overlay) == "subject"
 
 
+def test_classify_overlay_skips_layer2_uniform_sentinel() -> None:
+    """`_layer2_uniform=True` short-circuits classification to None — neither
+    _BODY_CONFIG nor text_designer should touch these overlays.
+
+    Without the gate, text_designer's unconditional ``overlay["text_size"] =
+    designer_output.text_size`` write would clobber the pinned `"large"`
+    and re-introduce per-overlay size variance — the bug the uniform bridge
+    was added to fix. The sentinel wins over both the explicit role check
+    (hook/reaction/cta → "body") and the subject-placeholder heuristic.
+    """
+    for role, sample_text in (
+        ("hook", "It's"),
+        ("reaction", "the work"),
+        ("cta", "Follow for more"),
+        ("label", "PERU"),
+        ("label", "Welcome to"),
+    ):
+        overlay = {
+            "role": role,
+            "sample_text": sample_text,
+            "start_s": 0.0,
+            "end_s": 1.0,
+            "_layer2_uniform": True,
+        }
+        assert _classify_overlay(overlay) is None, (
+            f"_layer2_uniform sentinel must skip classification "
+            f"(role={role!r}, text={sample_text!r})"
+        )
+
+
 def test_classify_overlay_returns_none_for_unknown_role() -> None:
     """Overlays with roles we don't recognize are skipped (None)."""
     overlay = {"role": "caption", "sample_text": "some caption text"}

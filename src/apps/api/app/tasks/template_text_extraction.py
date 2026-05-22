@@ -56,32 +56,38 @@ def _build_slot_boundaries(slots: list[dict[str, Any]]) -> list[tuple[float, flo
     return boundaries
 
 
+_LAYER2_UNIFORM_TEXT_SIZE = "large"
+_LAYER2_UNIFORM_TEXT_SIZE_PX = 120
+_LAYER2_UNIFORM_LEFT_MARGIN_FRAC = 0.05
+
+
 def _overlay_to_recipe_dict(overlay: TemplateTextOverlay) -> dict[str, Any]:
     """Convert a TemplateTextOverlay to the renderer's slot-overlay dict shape.
 
-    Mirrors the fields template_recipe's `_validate_slots` emits per overlay
-    (role/effect/position/font_size_hint/sample_text/start_s/end_s/text_bbox)
-    PLUS the new fields the text agent adds (font_color_hex, slot_index for
-    upstream traceability). The renderer ignores unknown fields, so the extras
-    are inert — but they're useful for the admin debug view.
+    Layer-2 overlays render uniformly: every overlay gets the same large font
+    size (120 px), a hard 5% left-edge anchor, and `text_anchor="left"`. Only
+    the vertical position (`position_y_frac` from `bbox.y_norm`) and per-overlay
+    `text` / `start_s` / `end_s` / `font_color_hex` / `effect` vary across
+    overlays. This replaces the prior per-overlay `size_class` + role-based
+    sizing path that produced visibly inconsistent overlays (different sizes
+    per text block, centered text clipping off-screen on long phrases).
+
+    The `_layer2_uniform` sentinel keys downstream agentic styling (text_designer
+    and _BODY_CONFIG) to skip these overlays — see `_classify_overlay` in
+    `agentic_template_build.py`. Without that gate, text_designer would clobber
+    `text_size` with its own per-overlay choice.
 
     `start_s` / `end_s` / `text_bbox.sample_frame_t` are emitted as raw global
     values here. The caller in `_merge_overlays_into_slots` subtracts the
     slot's start from all three, so the resulting dict is internally
     consistent (slot-relative start <= sample_frame_t <= slot-relative end).
-    Keeping sample_frame_t global here was a real bug: template_recipe's
-    bbox invariant is `overlay_start_s <= sample_frame_t <= overlay_end_s`
-    and any downstream consumer that seeks into the slot's video using
-    sample_frame_t would land at the wrong frame.
     """
-    text_anchor = getattr(overlay, "text_anchor", "center") or "center"
     pop_suffix = getattr(overlay, "pop_animated_suffix", None)
 
     out: dict[str, Any] = {
         "role": overlay.role,
         "effect": overlay.effect,
         "position": _bbox_to_named_position(overlay.bbox.y_norm),
-        "font_size_hint": overlay.size_class,
         "sample_text": overlay.sample_text,
         # Caller writes slot-relative timing for all three fields below.
         "start_s": overlay.start_s,
@@ -96,19 +102,27 @@ def _overlay_to_recipe_dict(overlay: TemplateTextOverlay) -> dict[str, Any]:
         "font_color_hex": overlay.font_color_hex,
         "has_darkening": False,
         "has_narrowing": False,
+        # Stage F's per-overlay size_class. Renderer ignores it (the uniform
+        # text_size/text_size_px below take effect), but the eval-fixture
+        # export script reads this back to reconstruct the agent's original
+        # TemplateTextOverlay for round-trip replay.
+        "font_size_hint": overlay.size_class,
+        # Uniform Layer-2 styling — same for every overlay.
+        "text_size": _LAYER2_UNIFORM_TEXT_SIZE,
+        "text_size_px": _LAYER2_UNIFORM_TEXT_SIZE_PX,
+        "text_anchor": "left",
+        "position_x_frac": _LAYER2_UNIFORM_LEFT_MARGIN_FRAC,
+        "position_y_frac": overlay.bbox.y_norm,
+        # Sentinel: agentic_template_build._classify_overlay returns None when
+        # this is set so neither _BODY_CONFIG nor text_designer can override
+        # the uniform fields above.
+        "_layer2_uniform": True,
         # Preserved for debugging — renderer ignores.
         "_extracted_by": "nova.compose.template_text",
     }
 
-    # Progressive word-reveal fields. Always emit `text_anchor` so the
-    # renderer's `overlay.get("text_anchor", "center")` reads a consistent
-    # value. When non-center, also emit `position_x_frac` so the renderer's
-    # anchor calculation uses the OCR-detected line x (not canvas center).
     # `pop_animated_suffix` only emitted when set — None means the renderer
     # uses its default behavior (pop the whole text, not just the suffix).
-    out["text_anchor"] = text_anchor
-    if text_anchor != "center":
-        out["position_x_frac"] = overlay.bbox.x_norm
     if pop_suffix:
         out["pop_animated_suffix"] = pop_suffix
 
