@@ -84,15 +84,20 @@ _MIN_OVERLAY_DURATION_S = 0.18
 # Pre-roll is small (100 ms) — user prefers tight near-sync, not a 250 ms
 # lead-in. Post-dwell of 1s is the breathing room past the vocal end
 # that the karaoke effect lacked (the karaoke overlay cuts at line.end_s,
-# i.e. the exact frame the last word's vocal stops). The next-line gap
-# prevents the current line from sitting on top of the upcoming one when
-# lines are densely packed.
+# i.e. the exact frame the last word's vocal stops). Dense lines are capped
+# by a small fade-bound overlap budget so lyrics can cross-dissolve without
+# ghosting through an entire section.
 _LINE_PRE_ROLL_S = 0.10
 _LINE_POST_DWELL_S = 1.0
 _LINE_NEXT_LINE_GAP_S = 0.10
 _LINE_FADE_IN_MS = 150
 _LINE_FADE_OUT_MS = 250
 _LINE_HOLD_TO_NEXT_THRESHOLD_MS = 500
+# Upper bound on cross-dissolve overlap with the next lyric line. The
+# actual cap applied per-line is the minimum of this value and
+# (fade_in_s + fade_out_s); see _inject_line. Bounding by fade duration
+# prevents ghosting when a long post_dwell is combined with short fades.
+_LINE_MAX_OVERLAP_S = 0.4
 _LINE_DEFAULT_FONT_FAMILY = "Inter Tight"
 _MIN_LINE_VISIBLE_S = 0.20
 
@@ -438,7 +443,7 @@ def _inject_line(
         static block (no color sweep).
       - The overlay's visible window is **expanded** past the raw line span:
         starts at `line.start_s - pre_roll`, ends at
-        `min(line.end_s + post_dwell, next_line.start_s - next_line_gap)`.
+        `min(line.end_s + post_dwell, next_visual_start + overlap_budget)`.
         This is the YouTube-lyric-video "settle time" — without it, the line
         cuts the same frame the vocal ends (the karaoke complaint).
       - Each overlay carries `fade_in_ms` / `fade_out_ms` so the ASS renderer
@@ -447,43 +452,54 @@ def _inject_line(
     Tunable via lyrics_config:
       - `pre_roll_s` (default `_LINE_PRE_ROLL_S`)
       - `post_dwell_s` (default `_LINE_POST_DWELL_S`)
-      - `next_line_gap_s` (default `_LINE_NEXT_LINE_GAP_S`)
+      - `max_overlap_s` (default `_LINE_MAX_OVERLAP_S`)
       - `fade_in_ms` (default `_LINE_FADE_IN_MS`)
       - `fade_out_ms` (default `_LINE_FADE_OUT_MS`)
+
+    Deprecated config fields still accepted as no-ops for one release:
+      - `next_line_gap_s`
+      - `hold_to_next_threshold_ms`
     """
     base = _common_overlay_fields(cfg)
     base.setdefault("font_family", _LINE_DEFAULT_FONT_FAMILY)
     pre_roll = float(cfg.get("pre_roll_s", _LINE_PRE_ROLL_S))
     post_dwell = float(cfg.get("post_dwell_s", _LINE_POST_DWELL_S))
-    next_gap = float(cfg.get("next_line_gap_s", _LINE_NEXT_LINE_GAP_S))
-    fade_in_ms = int(cfg.get("fade_in_ms", _LINE_FADE_IN_MS))
-    fade_out_ms = int(cfg.get("fade_out_ms", _LINE_FADE_OUT_MS))
-    threshold_s = (
-        float(cfg.get("hold_to_next_threshold_ms", _LINE_HOLD_TO_NEXT_THRESHOLD_MS)) / 1000.0
-    )
+    fade_in_ms = max(0.0, float(cfg.get("fade_in_ms", _LINE_FADE_IN_MS)))
+    fade_out_ms = max(0.0, float(cfg.get("fade_out_ms", _LINE_FADE_OUT_MS)))
+
+    fade_in_s = fade_in_ms / 1000.0
+    fade_out_s = fade_out_ms / 1000.0
+
+    max_overlap_s = max(0.0, float(cfg.get("max_overlap_s", _LINE_MAX_OVERLAP_S)))
+
+    # Bound visual overlap with the next line by the available cross-fade
+    # duration. When a caller explicitly passes fade_in_ms=0 / fade_out_ms=0,
+    # this collapses to 0 → no overlap (intended kill switch). Missing fade
+    # keys fall back to _LINE_FADE_*_MS defaults; missing keys must NOT
+    # silently disable the overlap behavior.
+    dynamic_max_overlap = min(max_overlap_s, fade_in_s + fade_out_s)
 
     n = len(section_lines)
     line_windows: list[_LineOverlayWindow] = []
 
     for i, line in enumerate(section_lines):
         # Expand the visible window. Pre-roll is clamped to 0 (don't go
-        # negative into the previous section). Post-dwell is capped by the
-        # next line's start so two adjacent lines never overlap on screen.
+        # negative into the previous section). Post-dwell is capped against
+        # the next line's visual start plus the fade-bound overlap budget.
         line_start = float(line["start_s"])
         line_end = float(line["end_s"])
         section_start = max(0.0, line_start - pre_roll)
         natural_end = line_end + post_dwell
         if i + 1 < n:
-            next_start = float(section_lines[i + 1]["start_s"])
-            section_end = min(natural_end, next_start - next_gap)
+            next_audio_start = float(section_lines[i + 1]["start_s"])
+            # Cap against the next line's effective VISUAL start (after its
+            # own pre_roll), not its audio start. With dynamic_max_overlap = 0
+            # this guarantees zero visual overlap between adjacent lines.
+            next_visual_start = max(0.0, next_audio_start - pre_roll)
+            section_end = min(natural_end, next_visual_start + dynamic_max_overlap)
         else:
             section_end = natural_end
 
-        # If post-dwell would make the line shorter than the raw vocal span
-        # (degenerate case from a tight next_gap), keep it at least as long
-        # as the vocal itself so the user still sees the line through its
-        # sung duration.
-        section_end = max(section_end, line_end)
         if section_end <= section_start:
             continue
 
@@ -494,25 +510,10 @@ def _inject_line(
                 line_end_s=line_end,
                 section_start_s=section_start,
                 section_end_s=section_end,
-                fade_in_ms=fade_in_ms,
-                fade_out_ms=fade_out_ms,
+                fade_in_ms=int(fade_in_ms),
+                fade_out_ms=int(fade_out_ms),
             )
         )
-
-    # Hold-to-next is a transition-level behavior: a small positive gap between
-    # adjacent vocal lines hard-cuts at the next line's vocal start. That means
-    # mutating both sides of the boundary: no current fade-out, no next pre-roll,
-    # and no next fade-in.
-    for curr, nxt in zip(line_windows, line_windows[1:], strict=False):
-        gap_s = nxt.line_start_s - curr.line_end_s
-        if (
-            0.0 <= gap_s < threshold_s
-            and nxt.line_start_s > curr.section_start_s + _MIN_LINE_VISIBLE_S
-        ):
-            curr.section_end_s = nxt.line_start_s
-            curr.fade_out_ms = 0
-            nxt.section_start_s = nxt.line_start_s
-            nxt.fade_in_ms = 0
 
     injected = 0
     for line in line_windows:
