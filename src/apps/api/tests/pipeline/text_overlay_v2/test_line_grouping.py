@@ -287,3 +287,108 @@ def test_phrase_far_from_any_transcript_match_is_ungrouped():
     groups = build_line_groups(phrases, transcript)
     # Both phrases too far from their transcript matches → ungrouped.
     assert groups == []
+
+
+# ── Unmatched phrases mid-group: skip, don't close ──────────────────────────
+
+
+def test_unmatched_phrase_mid_group_does_not_close():
+    """Regression for prod job 09f56ee3 (2026-05-22): an OCR artifact
+    ("W", "luck\\"") landing mid-phrase between matched words used to close
+    the running group, fragmenting the cumulative reveal. The fix: unmatched
+    phrases SKIP, only real terminators close.
+
+    Here "the / work / to / get / there" are five consecutive transcript-aligned
+    words. We slip an unmatched OCR artifact ("Z") in between with no silence
+    gap. With the old behavior groups would be [the, work, to, get] + [there
+    as singleton dropped]. With the fix it's one group [the, work, to, get,
+    there] = a full 5-stage cumulative reveal.
+    """
+    phrases = [
+        _phrase("the", 4.5, 4.7),
+        _phrase("work", 5.0, 5.2),
+        _phrase("to", 5.5, 5.6),
+        _phrase("get", 5.7, 5.8),
+        _phrase("Z", 5.85, 5.86),  # OCR artifact — no transcript match
+        _phrase("there", 5.9, 6.0),
+    ]
+    transcript = [
+        _tw("the", 4.5, 4.8),
+        _tw("work", 5.0, 5.3),
+        _tw("to", 5.5, 5.6),
+        _tw("get", 5.7, 5.8),
+        _tw("there", 5.9, 6.0),
+        # No transcript word for "Z" — it's a pure OCR artifact.
+    ]
+    groups = build_line_groups(phrases, transcript)
+    assert len(groups) == 1, "OCR artifact must not fragment the cumulative reveal"
+    # Phrase indices include all 5 MATCHED phrases. Phrase 4 ("Z") is
+    # skipped — it never enters phrase_indices.
+    assert groups[0].phrase_indices == [0, 1, 2, 3, 5]
+    assert groups[0].transcript_word_indices == [0, 1, 2, 3, 4]
+    assert groups[0].line_end_s == pytest.approx(6.0)
+
+
+def test_unmatched_phrase_does_not_block_silence_gap_closure():
+    """Skipping unmatched phrases must NOT defeat the real silence-gap
+    boundary. When two matched windows are separated by a true gap (a beat
+    rest, scene change), the group still closes correctly even if an
+    unmatched phrase happens to sit in the gap.
+    """
+    phrases = [
+        _phrase("hello", 0.0, 0.3),
+        _phrase("there", 0.5, 0.7),
+        _phrase("Q", 1.5, 1.6),  # artifact during the silence
+        _phrase("again", 3.0, 3.3),
+        _phrase("now", 3.5, 3.7),
+    ]
+    transcript = [
+        _tw("hello", 0.0, 0.4),
+        _tw("there", 0.5, 0.8),
+        _tw("again", 3.0, 3.4),
+        _tw("now", 3.5, 3.8),
+    ]
+    groups = build_line_groups(phrases, transcript)
+    # Silence gap 3.0 - 0.8 = 2.2s > 0.7 default → must close between
+    # "there" and "again" despite the unmatched phrase in between.
+    assert len(groups) == 2
+    assert groups[0].phrase_indices == [0, 1]
+    assert groups[1].phrase_indices == [3, 4]
+
+
+def test_unmatched_phrase_does_not_block_sentence_terminator():
+    """Skipping unmatched phrases must NOT defeat the sentence-terminator
+    boundary either. Period in the transcript word between the matched
+    pair still closes the group.
+    """
+    phrases = [
+        _phrase("done", 0.0, 0.3),
+        _phrase("X", 0.4, 0.5),  # artifact between sentences
+        _phrase("now", 1.0, 1.3),
+    ]
+    transcript = [
+        _tw("done.", 0.0, 0.4),
+        _tw("now", 1.0, 1.4),
+    ]
+    groups = build_line_groups(phrases, transcript)
+    # 'done.' terminator → group must split. Singletons drop under default
+    # min_group_size=2, so both groups disappear entirely.
+    assert groups == []
+
+
+def test_leading_unmatched_phrases_dont_consume_group_state():
+    """Unmatched phrases BEFORE the first match should be silently skipped
+    without affecting the eventual group that forms."""
+    phrases = [
+        _phrase("LOGO", 0.0, 0.1),  # artifact at the start
+        _phrase("X", 0.1, 0.2),  # artifact
+        _phrase("hello", 0.5, 0.7),
+        _phrase("world", 1.0, 1.2),
+    ]
+    transcript = [
+        _tw("hello", 0.5, 0.8),
+        _tw("world", 1.0, 1.3),
+    ]
+    groups = build_line_groups(phrases, transcript)
+    assert len(groups) == 1
+    assert groups[0].phrase_indices == [2, 3]

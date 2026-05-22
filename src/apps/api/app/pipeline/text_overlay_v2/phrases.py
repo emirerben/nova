@@ -50,6 +50,13 @@ DEFAULT_X_BAND_THRESHOLD = 0.15
 # typical word's display duration.
 ATOMIZED_DEDUP_GAP_THRESHOLD_S = 0.5
 
+# One-letter English words that legitimately appear as standalone OCR. The
+# artifact filter keeps these; every other single-character alphanumeric
+# token is treated as OCR noise (e.g. "W" — confidence 0.634 — appearing
+# alone between "there" and "luck" on job 09f56ee3 broke the cumulative
+# reveal for "the work to get there"). Casefolded for matching.
+_ATOMIZED_SINGLE_CHAR_WHITELIST = frozenset({"i", "a", "o"})
+
 
 def reconstruct_phrases(
     events: list[TextEvent],
@@ -86,6 +93,12 @@ def reconstruct_phrases(
     if atomize_per_event:
         sorted_events = sorted(events, key=lambda e: (e.start_t_s, e.aabb[1]))
         finalized = [_finalize([ev]) for ev in sorted_events]
+        # Filter OCR artifacts BEFORE dedup so dedup-key counts (and the
+        # downstream LineGroup builder) operate on clean text. See
+        # `_is_atomized_ocr_artifact` for the rule set.
+        pre_filter = len(finalized)
+        finalized = [p for p in finalized if not _is_atomized_ocr_artifact(p)]
+        artifacts_dropped = pre_filter - len(finalized)
         dedup_in = len(finalized)
         out = dedup_overlapping_atomized_phrases(
             finalized, gap_threshold_s=ATOMIZED_DEDUP_GAP_THRESHOLD_S
@@ -95,6 +108,7 @@ def reconstruct_phrases(
             phrases_out=len(out),
             atomized=True,
             dedup_collapsed=dedup_in - len(out),
+            artifacts_dropped=artifacts_dropped,
         )
         return out
 
@@ -137,10 +151,12 @@ def _emit_stage_d_summary(
     phrases_out: int,
     atomized: bool,
     dedup_collapsed: int = 0,
+    artifacts_dropped: int = 0,
 ) -> None:
     """Best-effort pipeline_trace event so /admin/jobs Debug tab can show
-    Stage D's events-in vs phrases-out counts (and atomized-dedup collapses).
-    Silently no-ops when there's no active job context."""
+    Stage D's events-in vs phrases-out counts (atomized-dedup collapses and
+    OCR-artifact drops in atomized mode). Silently no-ops when there's no
+    active job context."""
     try:
         from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -152,10 +168,50 @@ def _emit_stage_d_summary(
                 "phrases_out": phrases_out,
                 "atomized": atomized,
                 "dedup_collapsed": dedup_collapsed,
+                "artifacts_dropped": artifacts_dropped,
             },
         )
     except Exception:  # noqa: BLE001
         pass
+
+
+def _is_atomized_ocr_artifact(phrase: Phrase) -> bool:
+    """Return True when an atomized one-word phrase is OCR noise that should
+    not survive into Stage E or Stage G's cumulative-reveal grouping.
+
+    Three rules — any one fires:
+      1. **Pure non-alphanumeric** — token has zero alphanumeric chars (e.g.
+         stray `"`, `--`, `…`). These are punctuation-only OCR hits.
+      2. **Single character outside the English one-letter whitelist** —
+         a single alphanumeric not in {I, A, O, a, i, o}. Real one-letter
+         words ("I am", "a cat") survive; OCR noise like "W" / "M" / "8"
+         drops. Whitelisted by casefold.
+      3. **Punctuation-dominant** — more than half the characters are
+         non-alphanumeric (token shape `..!?` or `,,,` etc.).
+
+    Multi-character real words with stray trailing punctuation (e.g.
+    `luck"`) are NOT dropped here — they're legitimate text with OCR noise
+    around the edges. Stage E's transcript alignment normalizes those.
+
+    Atomized-only: this function assumes ``phrase.lines == [<one word>]``.
+    Multi-line phrases (build-up captions) bypass artifact filtering and
+    go straight through Stage E.
+    """
+    if len(phrase.lines) != 1:
+        return False
+    text = phrase.lines[0].strip()
+    if not text:
+        # Empty/whitespace-only token is itself an artifact.
+        return True
+    alnum_count = sum(1 for ch in text if ch.isalnum())
+    if alnum_count == 0:
+        return True
+    if len(text) == 1 and text.casefold() not in _ATOMIZED_SINGLE_CHAR_WHITELIST:
+        return True
+    if alnum_count * 2 < len(text):
+        # More than half punctuation: e.g. "x.." or ",,a" — noise, not text.
+        return True
+    return False
 
 
 def _finalize(phrase_events: list[TextEvent]) -> Phrase:

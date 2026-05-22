@@ -7,7 +7,17 @@ groups and emits cumulative-text overlays via `text_reveal.build_cumulative_stag
 
 Grouping rules (line source = Whisper transcript only):
 - Each phrase is matched to a transcript word (casefold, time-proximate).
-- Phrases that don't match any transcript word stay UNGROUPED.
+- Phrases that don't match any transcript word are SKIPPED — they do NOT
+  close the running group. OCR noise (single-char artifacts, stray
+  punctuation) and legitimate words the transcript happened to miss should
+  not fragment a cumulative reveal mid-phrase. Groups close only on real
+  terminators (sentence punctuation in the transcript between matched
+  words, silence gap above `silence_gap_s`, or `max_words_per_line` cap).
+  Regression: prod job 09f56ee3 (2026-05-22) rendered "The work to get"
+  as a cumulative reveal but the trailing "there" was emitted as a
+  standalone overlay because an unmatched OCR phrase between them closed
+  the group; later "allow / allow anyone" was the only fragment of
+  "don't allow anyone to diminish your hard work" that grouped at all.
 - Phrases that match different transcript words become group-mates only if
   the transcript span between them contains NO sentence-terminating
   punctuation (`.`, `?`, `!`) AND the silence gap between their transcript
@@ -193,8 +203,14 @@ def build_line_groups(
 
     for phrase_idx, match_idx in enumerate(matches):
         if match_idx is None:
-            # Unmatched phrase or non-atomized — closes the running group.
-            _close()
+            # Unmatched phrase (OCR artifact, non-atomized, or a real word
+            # the transcript missed). SKIP — do NOT close the running group.
+            # The group's silence/terminator/max-words checks operate on the
+            # next *matched* phrase against the *last* matched one, so
+            # skipping unmatched preserves correct boundary detection while
+            # keeping the cumulative reveal intact. Skipped phrases fall
+            # through to Stage G's per-phrase fallback emit (where Stage D's
+            # artifact filter has already dropped pure-noise tokens).
             continue
 
         if not current:
