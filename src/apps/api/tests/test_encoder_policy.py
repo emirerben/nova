@@ -67,6 +67,10 @@ FINAL_OUTPUT_REQUIRED: set[tuple[str, str]] = {
     # settings.single_pass_encode_enabled; the multi-pass entries stay live
     # until the env default flips in a follow-up PR.
     ("app/pipeline/single_pass.py", "build_single_pass_command"),
+    # Skia renderer for agentic templates + music lyrics. Same quality budget
+    # as the Pillow path's `_burn_text_overlays` — these are the final bytes
+    # that ship to users when `settings.text_renderer_skia_enabled` is on.
+    ("app/pipeline/text_overlay_skia.py", "_ffmpeg_burn_pngs"),
 }
 
 # libx264 presets ordered from fastest to slowest. Anything at or stricter
@@ -88,6 +92,7 @@ FILES_TO_AUDIT: list[str] = [
     "app/pipeline/reframe.py",
     "app/tasks/template_orchestrate.py",
     "app/pipeline/single_pass.py",
+    "app/pipeline/text_overlay_skia.py",
 ]
 
 
