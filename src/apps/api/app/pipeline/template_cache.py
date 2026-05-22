@@ -184,10 +184,21 @@ TEXT_OVERLAY_VERSION_V1 = "v1"
 #     fragmented because an unmatched OCR closed the group. After all
 #     three fixes the full source phrases reveal cumulatively. Bumping
 #     orphans every Layer-2 cache entry built under the broken behavior.
+#   2026-05-22 (v2-2026-05-22-reveal-cohesion → v2-2026-05-22-uniform-style):
+#     Stage-G overlays now ship with uniform styling — every overlay forced
+#     to text_size="large" (120 px), text_anchor="left", and a hard 5%
+#     left-edge anchor. Replaces the prior per-overlay size_class + role-
+#     based sizing path (different sizes per text block, centered text
+#     clipping on long phrases). The `_layer2_uniform` sentinel skips these
+#     overlays in `agentic_template_build._classify_overlay` so the body
+#     config + text_designer can't clobber the pinned fields. Evidence:
+#     prod template 89cde014 test render with varying sizes + center-anchor
+#     clipping. Bumping orphans every Layer-2 cache entry under the prior
+#     styling so the next access reanalyzes through the uniform bridge.
 #
 # When you change anything that affects Layer-2 overlay output (Stage E
 # prompt, sanitizer logic, Stage D/G semantics), append a new suffix here.
-TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-22-reveal-cohesion"
+TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-22-uniform-style"
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.

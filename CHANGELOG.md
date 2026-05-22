@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.42.1] - 2026-05-22
+
+### Fixed
+- **Layer-2 (`text_overlay_v2`) overlays now render at a uniform size, left-aligned, and wrap to fit on screen.** Stage G was emitting per-overlay `size_class` (from the Gemini text-classification agent) and per-overlay `text_anchor`, then `_apply_body_config_to_overlay` / `text_designer` mapped each role (hook/reaction/cta/label) to different `text_size` values — so every text block in a single template could render at a different pixel size, with center-anchored long phrases clipping off the right edge. Stage G's bridge now forces every Layer-2 overlay to `text_size="large"` (120 px), `text_anchor="left"`, and a hard 5% left-edge anchor (`position_x_frac=0.05`); only per-overlay vertical position survives (`position_y_frac` from `bbox.y_norm`). A new `_layer2_uniform` sentinel makes `agentic_template_build._classify_overlay` short-circuit on these overlays so neither `_BODY_CONFIG` nor `text_designer`'s unconditional `overlay["text_size"]` write can clobber the pinned fields. The renderer's existing `_wrap_text_to_lines` handles long phrases at 90% canvas width — no new wrap code needed. `TEXT_OVERLAY_VERSION_V2` bumped to `v2-2026-05-22-uniform-style` so prior Layer-2 cache entries reanalyze through the new bridge. Evidence: prod template `89cde014` test renders with visibly inconsistent overlay sizes and center-anchor clipping. Six new regression tests lock the uniform-styling contract, the sentinel-skip behavior, and the cache-version string.
+
 ## [0.4.42.0] - 2026-05-22
 
 ### Fixed

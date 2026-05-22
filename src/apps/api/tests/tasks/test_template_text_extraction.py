@@ -187,15 +187,44 @@ def test_merge_overlays_preserves_bbox_and_color() -> None:
     assert ov["position"] == "bottom"
 
 
-def test_merge_overlays_carries_text_anchor_and_pop_suffix() -> None:
-    """Progressive word-reveal fields must survive the recipe-dict translation.
+def test_merge_overlays_uniform_styling() -> None:
+    """Every Layer-2 overlay must emit the uniform-styling fields regardless of
+    the per-overlay text_anchor / size_class chosen by Stage F.
 
-    Stage G emits TemplateTextOverlay with text_anchor="left" and a non-None
-    pop_animated_suffix. If `_overlay_to_recipe_dict` drops these, the renderer
-    falls back to center-anchor with no per-word pop — silently breaking
-    progressive reveal even though the schema and Stage G are correct.
+    Drift in any of these fields would re-introduce the per-overlay size +
+    center-anchor regression that the uniform bridge was added to fix.
+    """
+    slot = {"target_duration_s": 3.0, "text_overlays": []}
+    overlay = TemplateTextOverlay(
+        slot_index=1,
+        sample_text="Hello",
+        start_s=0.5,
+        end_s=2.0,
+        bbox=TextBBox(x_norm=0.3, y_norm=0.85, w_norm=0.4, h_norm=0.08, sample_frame_t=0.5),
+        font_color_hex="#FFFFFF",
+        effect="none",
+        role="label",
+        size_class="medium",
+    )
+    _merge_overlays_into_slots([slot], [overlay])
+    ov = slot["text_overlays"][0]
+    # Uniform-style contract: same for every Layer-2 overlay.
+    assert ov["text_size"] == "large"
+    assert ov["text_size_px"] == 120
+    assert ov["text_anchor"] == "left"
+    assert ov["position_x_frac"] == pytest.approx(0.05)
+    assert ov["_layer2_uniform"] is True
+    # Per-overlay vertical position survives from bbox.y_norm.
+    assert ov["position_y_frac"] == pytest.approx(0.85)
+    # font_size_hint is preserved as metadata for eval-fixture export round-trip
+    # (renderer ignores it — text_size/text_size_px take effect).
+    assert ov["font_size_hint"] == "medium"
 
-    Regression lock for the silent-drop bug fixed alongside Lane F.
+
+def test_merge_overlays_preserves_pop_animated_suffix() -> None:
+    """`pop_animated_suffix` (per-overlay reveal target) survives the
+    uniform-styling overwrite. Only styling/positioning fields are forced
+    constant; reveal animation metadata stays per-overlay.
     """
     slot = {"target_duration_s": 3.0, "text_overlays": []}
     overlay = TemplateTextOverlay(
@@ -213,35 +242,65 @@ def test_merge_overlays_carries_text_anchor_and_pop_suffix() -> None:
     )
     _merge_overlays_into_slots([slot], [overlay])
     ov = slot["text_overlays"][0]
-    assert ov["text_anchor"] == "left"
     assert ov["pop_animated_suffix"] == "morning"
-    # Non-center anchor also propagates the OCR x_norm as position_x_frac so
-    # the renderer uses the LINE'S left edge, not canvas center.
-    assert ov["position_x_frac"] == pytest.approx(0.15)
 
 
-def test_merge_overlays_center_anchor_omits_position_x_frac() -> None:
-    """Center-anchored overlays (the default) should NOT emit position_x_frac.
-    Setting it for every overlay would change historical center-anchor behavior
-    on overlays whose detected bbox.x_norm != 0.5 — visible regression."""
-    slot = {"target_duration_s": 3.0, "text_overlays": []}
-    overlay = TemplateTextOverlay(
-        slot_index=1,
-        sample_text="Hello",
-        start_s=0.5,
-        end_s=2.0,
-        bbox=TextBBox(x_norm=0.3, y_norm=0.85, w_norm=0.4, h_norm=0.08, sample_frame_t=0.5),
-        font_color_hex="#FFFFFF",
-        effect="none",
-        role="label",
-        size_class="medium",
-        # text_anchor defaults to "center", pop_animated_suffix defaults to None
-    )
-    _merge_overlays_into_slots([slot], [overlay])
-    ov = slot["text_overlays"][0]
-    assert ov["text_anchor"] == "center"
-    assert "position_x_frac" not in ov
-    assert "pop_animated_suffix" not in ov
+def test_merge_overlays_uniform_fields_invariant_across_inputs() -> None:
+    """Stage G can hand us overlays with wildly varying size_class / role /
+    text_anchor / bbox.x_norm. The bridge must collapse all of that variance
+    into a single uniform style — only `position_y_frac` (and per-overlay
+    text / timing / color) should differ across the output.
+    """
+    slot = {"target_duration_s": 10.0, "text_overlays": []}
+    inputs = [
+        TemplateTextOverlay(
+            slot_index=1,
+            sample_text="hook line",
+            start_s=0.0,
+            end_s=1.0,
+            bbox=TextBBox(x_norm=0.5, y_norm=0.2, w_norm=0.3, h_norm=0.1, sample_frame_t=0.0),
+            font_color_hex="#FFFFFF",
+            effect="none",
+            role="hook",
+            size_class="jumbo",
+            text_anchor="center",
+        ),
+        TemplateTextOverlay(
+            slot_index=1,
+            sample_text="reaction",
+            start_s=2.0,
+            end_s=3.0,
+            bbox=TextBBox(x_norm=0.8, y_norm=0.6, w_norm=0.2, h_norm=0.05, sample_frame_t=2.0),
+            font_color_hex="#FFFF00",
+            effect="none",
+            role="reaction",
+            size_class="small",
+            text_anchor="right",
+        ),
+        TemplateTextOverlay(
+            slot_index=1,
+            sample_text="cta",
+            start_s=4.0,
+            end_s=5.0,
+            bbox=TextBBox(x_norm=0.2, y_norm=0.9, w_norm=0.15, h_norm=0.08, sample_frame_t=4.0),
+            font_color_hex="#00FF00",
+            effect="none",
+            role="cta",
+            size_class="large",
+            text_anchor="left",
+        ),
+    ]
+    _merge_overlays_into_slots([slot], inputs)
+    overlays = slot["text_overlays"]
+    assert len(overlays) == 3
+    for ov in overlays:
+        assert ov["text_size"] == "large"
+        assert ov["text_size_px"] == 120
+        assert ov["text_anchor"] == "left"
+        assert ov["position_x_frac"] == pytest.approx(0.05)
+        assert ov["_layer2_uniform"] is True
+    # Vertical position is the one styling-adjacent field that varies.
+    assert [ov["position_y_frac"] for ov in overlays] == pytest.approx([0.2, 0.6, 0.9])
 
 
 def test_merge_overlays_converts_sample_frame_t_to_slot_relative() -> None:

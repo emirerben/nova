@@ -97,7 +97,15 @@ def _classify_overlay(overlay: dict) -> str | None:
     path and lose stage F's classified effect. Explicit role beats heuristics.
 
     Returns None for overlays that need no styling pass (e.g. raw captions).
+
+    Overlays carrying the `_layer2_uniform` sentinel (set by
+    `template_text_extraction._overlay_to_recipe_dict`) bypass every styling
+    pass — their text_size / text_anchor / position_x_frac are already pinned
+    to the uniform Layer-2 constants and any downstream override would
+    re-introduce the per-overlay size variance this sentinel was added to fix.
     """
+    if overlay.get("_layer2_uniform"):
+        return None
     role = overlay.get("role", "")
     # Layer-2 explicit roles take priority — check before subject/prefix heuristics.
     if role in {"hook", "reaction", "cta"}:
