@@ -4,6 +4,7 @@ These exercise validation + guard paths against a mocked DB. Pipeline-level
 behavior (Celery enqueue → orchestrate_music_job) is covered separately.
 """
 
+import re
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -74,6 +75,258 @@ def _override_db_returning(track=None, job=None):
         yield mock_session
 
     return _override, mock_session
+
+
+def _slot_presign_file(
+    i: int = 0,
+    *,
+    filename: str | None = None,
+    content_type: str = "video/mp4",
+    file_size_bytes: int = 1_000_000,
+) -> dict:
+    return {
+        "client_id": f"client-{i}",
+        "filename": filename or f"clip_{i}.mp4",
+        "content_type": content_type,
+        "file_size_bytes": file_size_bytes,
+    }
+
+
+# ── POST /admin/music-tracks/{id}/upload-slot-presigned ───────────────────────
+
+
+def test_slot_presign_requires_admin_token(client: TestClient) -> None:
+    resp = client.post(
+        "/admin/music-tracks/some-id/upload-slot-presigned",
+        json={"files": [_slot_presign_file()]},
+    )
+    assert resp.status_code in (401, 422)
+
+
+def test_slot_presign_happy_path_mints_track_scoped_urls(client: TestClient) -> None:
+    track_id = str(uuid4())
+    track = _ready_unpublished_track(
+        id=track_id,
+        track_config={"required_clips_min": 1, "required_clips_max": 20},
+    )
+    override, _session = _override_db_returning(track=track)
+    files = [
+        _slot_presign_file(
+            i,
+            filename=f"IMG_{i:04d}.MOV",
+            content_type="video/quicktime",
+        )
+        for i in range(10)
+    ]
+
+    app.dependency_overrides[get_db] = override
+    try:
+        with patch(
+            "app.routes.admin_music._sign_slot_put",
+            side_effect=lambda path, ct: f"https://storage.example.com/{path}?ct={ct}",
+        ) as mock_sign:
+            resp = client.post(
+                f"/admin/music-tracks/{track_id}/upload-slot-presigned",
+                json={"files": files},
+                headers=_admin_headers(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert re.fullmatch(r"[0-9a-f]{12}", body["batch_id"])
+    assert len(body["results"]) == 10
+    assert mock_sign.call_count == 10
+    for i, result in enumerate(body["results"]):
+        assert result["ok"] is True
+        assert result["client_id"] == f"client-{i}"
+        assert result["filename"] == f"IMG_{i:04d}.MOV"
+        assert result["kind"] == "video"
+        assert result["content_type"] == "video/quicktime"
+        assert re.fullmatch(
+            rf"music-uploads/{track_id}/[0-9a-f]{{12}}/clip_{i:03d}\.mov",
+            result["gcs_path"],
+        )
+
+
+def test_slot_presign_mixed_batch_preserves_valid_files(client: TestClient) -> None:
+    track_id = str(uuid4())
+    track = _ready_unpublished_track(id=track_id)
+    override, _session = _override_db_returning(track=track)
+    files = [_slot_presign_file(i) for i in range(8)]
+    files.append(_slot_presign_file(8, filename="notes.txt", content_type="video/mp4"))
+    files.append(_slot_presign_file(9, filename="still.mov", content_type="image/jpeg"))
+
+    app.dependency_overrides[get_db] = override
+    try:
+        with patch(
+            "app.routes.admin_music._sign_slot_put",
+            side_effect=lambda path, ct: f"https://storage.example.com/{path}?ct={ct}",
+        ):
+            resp = client.post(
+                f"/admin/music-tracks/{track_id}/upload-slot-presigned",
+                json={"files": files},
+                headers=_admin_headers(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200, resp.text
+    results = resp.json()["results"]
+    assert sum(1 for r in results if r["ok"]) == 8
+    failures = [r for r in results if not r["ok"]]
+    assert len(failures) == 2
+    assert all("disagrees with extension" in r["error"] for r in failures)
+
+
+def test_slot_presign_rejects_batch_above_hard_ceiling(client: TestClient) -> None:
+    resp = client.post(
+        f"/admin/music-tracks/{uuid4()}/upload-slot-presigned",
+        json={"files": [_slot_presign_file(i) for i in range(26)]},
+        headers=_admin_headers(),
+    )
+    assert resp.status_code == 422
+    assert "max 25" in resp.json()["detail"]
+
+
+def test_slot_presign_rejects_batch_above_track_cap(client: TestClient) -> None:
+    track_id = str(uuid4())
+    track = _ready_unpublished_track(
+        id=track_id,
+        track_config={"slot_count": 12, "required_clips_min": 1, "required_clips_max": 20},
+    )
+    override, _session = _override_db_returning(track=track)
+
+    app.dependency_overrides[get_db] = override
+    try:
+        resp = client.post(
+            f"/admin/music-tracks/{track_id}/upload-slot-presigned",
+            json={"files": [_slot_presign_file(i) for i in range(15)]},
+            headers=_admin_headers(),
+        )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+    assert "up to 12 clips" in resp.json()["detail"]
+
+
+def test_slot_presign_404_when_track_missing(client: TestClient) -> None:
+    override, _session = _override_db_returning(track=None)
+
+    app.dependency_overrides[get_db] = override
+    try:
+        resp = client.post(
+            f"/admin/music-tracks/{uuid4()}/upload-slot-presigned",
+            json={"files": [_slot_presign_file()]},
+            headers=_admin_headers(),
+        )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 404
+
+
+def test_slot_presign_file_size_errors_are_per_file(client: TestClient) -> None:
+    track_id = str(uuid4())
+    track = _ready_unpublished_track(id=track_id)
+    override, _session = _override_db_returning(track=track)
+    files = [
+        _slot_presign_file(0),
+        _slot_presign_file(1, file_size_bytes=0),
+        _slot_presign_file(2, file_size_bytes=201 * 1024 * 1024),
+    ]
+
+    app.dependency_overrides[get_db] = override
+    try:
+        with patch(
+            "app.routes.admin_music._sign_slot_put",
+            side_effect=lambda path, ct: f"https://storage.example.com/{path}?ct={ct}",
+        ):
+            resp = client.post(
+                f"/admin/music-tracks/{track_id}/upload-slot-presigned",
+                json={"files": files},
+                headers=_admin_headers(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200, resp.text
+    results = resp.json()["results"]
+    assert results[0]["ok"] is True
+    assert results[1]["ok"] is False
+    assert "must be positive" in results[1]["error"]
+    assert results[2]["ok"] is False
+    assert "exceeds 200 MB" in results[2]["error"]
+
+
+def test_slot_presign_heic_with_empty_content_type_uses_extension(
+    client: TestClient,
+) -> None:
+    track_id = str(uuid4())
+    track = _ready_unpublished_track(id=track_id)
+    override, _session = _override_db_returning(track=track)
+
+    app.dependency_overrides[get_db] = override
+    try:
+        with patch(
+            "app.routes.admin_music._sign_slot_put",
+            side_effect=lambda path, ct: f"https://storage.example.com/{path}?ct={ct}",
+        ):
+            resp = client.post(
+                f"/admin/music-tracks/{track_id}/upload-slot-presigned",
+                json={
+                    "files": [
+                        _slot_presign_file(
+                            0,
+                            filename="IMG_0001.HEIC",
+                            content_type="",
+                        )
+                    ]
+                },
+                headers=_admin_headers(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200, resp.text
+    result = resp.json()["results"][0]
+    assert result["ok"] is True
+    assert result["kind"] == "image"
+    assert result["content_type"] == "image/jpeg"
+
+
+def test_admin_test_job_accepts_track_scoped_presigned_paths(client: TestClient) -> None:
+    track_id = str(uuid4())
+    track = _ready_unpublished_track(id=track_id)
+    override, _session = _override_db_returning(track=track)
+    new_job = MagicMock()
+    new_job.id = uuid4()
+
+    app.dependency_overrides[get_db] = override
+    try:
+        with (
+            patch("app.routes.admin_music.Job", return_value=new_job),
+            patch(
+                "app.services.job_dispatch.enqueue_orchestrator",
+                new_callable=AsyncMock,
+            ) as mock_enqueue,
+        ):
+            mock_enqueue.return_value = str(new_job.id)
+            resp = client.post(
+                f"/admin/music-tracks/{track_id}/test-job",
+                json={
+                    "clip_gcs_paths": [
+                        f"music-uploads/{track_id}/abc123def456/clip_000.mov"
+                    ]
+                },
+                headers=_admin_headers(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 201, resp.text
 
 
 # ── POST /admin/music-tracks/{id}/test-job ────────────────────────────────────
