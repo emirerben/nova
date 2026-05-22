@@ -170,6 +170,11 @@ class VideoTemplate(Base):
         foreign_keys="VideoTemplate.music_track_id",
     )
 
+    __table_args__ = (
+        Index("idx_templates_created_at", "created_at"),
+        Index("idx_templates_type_created", "template_type", "created_at"),
+    )
+
 
 class TemplateRecipeVersion(Base):
     """Tracks recipe versions across analyze/reanalyze cycles for comparison."""
@@ -259,6 +264,7 @@ class MusicTrack(Base):
         Index("idx_music_tracks_status", "analysis_status"),
         Index("idx_music_tracks_published", "published_at"),
         Index("idx_music_tracks_lyrics_status", "lyrics_status"),
+        Index("idx_music_tracks_created_at", "created_at"),
     )
 
 
@@ -340,6 +346,7 @@ class Job(Base):
         Index("idx_jobs_template_id", "template_id"),
         Index("idx_jobs_music_track_id", "music_track_id"),
         Index("idx_jobs_failure_reason", "failure_reason"),
+        Index("idx_jobs_created_at", "created_at"),
     )
 
 
