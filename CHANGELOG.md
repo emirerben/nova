@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.42.2] - 2026-05-22
+
+### Fixed
+- **Layer-2 (`text_overlay_v2`) progressive-reveal cohesion: cumulative-reveal pattern keeps working through the full template, no more clashing orphan overlays, no more per-stage vertical drift.** Three independent issues observed on prod template `89cde014` are addressed together because all three change Layer-2 overlay output for the same input.
+  - **Stage E (`text_alignment`)**: when `atomize_mode=True`, any LLM output line that contains whitespace now reverts to the OCR single word. The prompt already says "NEVER concatenate multiple transcript words into a single output line" but the LLM violates it (e.g. single-word OCR `["luck"]` returned as `["luck just is a"]`). Multi-word output killed downstream `_is_atomized` so the phrase fell out of `build_line_groups` and emitted as a multi-word singleton that broke the cumulative reveal halfway through the template. New defense walks atomized-mode outputs after parse and drops corrected lines with whitespace; OCR fallback then restores the single word so `build_line_groups` can rebuild the cumulative group.
+  - **Stage G (`pipeline._classified_phrases_to_output`)**: tracks the (y, time) coverage of every emitted cumulative LineGroup and suppresses any ungrouped singleton overlay that overlaps in both y (within 0.10 norm) and time. Without this, an unmatched OCR phrase like "there" rendered on top of the "The work to get" cumulative reveal at the same y; the cumulative reveal is now canonical for that band of screen at that time. Tracks `cumulative_overlap_suppressed` in the Stage-G drops counter.
+  - **Renderer (`text_overlay._draw_text_png`)**: switched left-anchored text from PIL's default `'la'` anchor (font ascent line) to `'ls'` (baseline), and switched per-line spacing from `max(bbox_h) * 1.15` to `(font_ascent + font_descent) * 1.15`. PIL's `'la'` anchor and bbox-based line_step both depended on which glyphs were on screen, so adding "put" to "you" shifted the existing letters down by 10-20 px. Baseline + font-intrinsic line_step are constants per font/size, so the 'y' in "you" now stays at the same pixel position whether the line shows "you" alone, "you put", or "you put in". Bitmap fonts that don't expose `getmetrics` fall back to the historical top-anchored draw.
+  - `TEXT_OVERLAY_VERSION_V2` bumped to `v2-2026-05-22-atomized-single-word` so prior Layer-2 caches reanalyze through the corrected Stage E + G. Eight new regression tests lock the Stage E single-word defense (atomized vs phrase mode), Stage G overlap suppression (overlap / remote-y / outside-time), and the renderer baseline-stable behavior.
+
 ## [0.4.42.1] - 2026-05-22
 
 ### Fixed

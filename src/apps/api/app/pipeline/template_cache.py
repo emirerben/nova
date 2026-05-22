@@ -195,10 +195,29 @@ TEXT_OVERLAY_VERSION_V1 = "v1"
 #     prod template 89cde014 test render with varying sizes + center-anchor
 #     clipping. Bumping orphans every Layer-2 cache entry under the prior
 #     styling so the next access reanalyzes through the uniform bridge.
+#   2026-05-22 (v2-2026-05-22-uniform-style → v2-2026-05-22-atomized-single-word):
+#     Two related Stage-E/G changes ship together — both change overlay
+#     output for the same input. (A) Stage E (text_alignment) now reverts
+#     any multi-word LLM output back to the OCR single word when
+#     `atomize_mode=True`. The prompt already says "NEVER concatenate
+#     multiple transcript words into a single output line" but the LLM
+#     violates it (template 89cde014 reanalyze 18:19: single-word OCR
+#     ["luck"] returned as ["luck just is a"]). Multi-word outputs killed
+#     downstream `_is_atomized` so the phrases fell out of
+#     `build_line_groups`, emitting as multi-word singleton overlays.
+#     Defense walks atomized outputs after parse and drops corrected lines
+#     with whitespace — OCR fallback restores the single word. (B) Stage G
+#     now suppresses ungrouped singleton overlays that overlap a cumulative
+#     LineGroup in y + time. Without it, an unmatched OCR phrase like
+#     "there" rendered on top of the "The work to get" cumulative reveal
+#     (same y, overlapping time). Suppression keeps the cumulative reveal
+#     as the canonical rendering for that band of screen at that time.
+#     Bumping orphans every Layer-2 cache entry under the prior alignment
+#     and orphan-singleton behavior.
 #
 # When you change anything that affects Layer-2 overlay output (Stage E
 # prompt, sanitizer logic, Stage D/G semantics), append a new suffix here.
-TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-22-uniform-style"
+TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-22-atomized-single-word"
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.

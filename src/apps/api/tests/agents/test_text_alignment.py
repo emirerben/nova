@@ -305,6 +305,92 @@ def test_atomized_uniqueness_revert_overlapping_duplicates(
     assert out.dropped_count == 0
 
 
+def test_atomized_multi_word_output_reverts_to_ocr(
+    agent: TextAlignmentAgent,
+    mock_client: MockModelClient,
+) -> None:
+    """LLM violates the atomized-mode single-word directive by concatenating
+    multiple transcript words into one output line. Every such violation must
+    revert to the original OCR word so downstream `_is_atomized` stays true
+    and `build_line_groups` can still group the phrase into a cumulative
+    reveal.
+
+    Reproduces the prod failure shape on template 89cde014 (2026-05-22) where
+    Stage E returned `["luck just is a"]` for a phrase whose original OCR
+    text was just `["luck"]`. Downstream the multi-word phrase fell out of
+    cumulative grouping, emitted as a singleton overlay, and clashed visually
+    with adjacent singletons at the same y_norm.
+    """
+    phrases = [
+        _make_phrase(["luck"], 6.5, 7.0),
+        _make_phrase(["just"], 6.7, 7.1),
+        _make_phrase(["is"], 6.9, 7.3),
+        _make_phrase(["a"], 7.0, 7.4),
+    ]
+    transcript_words = [
+        _make_word("luck", 6.5, 6.7),
+        _make_word("just", 6.7, 6.9),
+        _make_word("is", 6.9, 7.0),
+        _make_word("a", 7.0, 7.2),
+    ]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response(
+            [
+                # All four LLM outputs concatenate multiple transcript words —
+                # exactly the prod 89cde014 shape.
+                {"index": 0, "lines": ["luck just is a"]},
+                {"index": 1, "lines": ["just is a"]},
+                {"index": 2, "lines": ["is a"]},
+                {"index": 3, "lines": ["a moment"]},
+            ]
+        ),
+    )
+    out = agent.run(
+        TextAlignmentInput(
+            phrases=phrases,
+            transcript_words=transcript_words,
+            atomize_mode=True,
+        )
+    )
+    sample_texts = [p.sample_text for p in out.phrases]
+    assert sample_texts == ["luck", "just", "is", "a"], (
+        "every multi-word LLM output must revert to the OCR single word so "
+        f"downstream cumulative grouping still works; got {sample_texts}"
+    )
+    # No phrase dropped — OCR fallback fills each one.
+    assert out.dropped_count == 0
+
+
+def test_atomized_multi_word_defense_skipped_in_phrase_mode(
+    agent: TextAlignmentAgent,
+    mock_client: MockModelClient,
+) -> None:
+    """Phrase mode (multi-word OCR per phrase) MUST keep multi-word LLM output
+    — that's exactly what the mode asks the LLM to produce. The single-word
+    defense fires only when `atomize_mode=True`.
+    """
+    phrases = [_make_phrase(["if you put in"], 0.0, 2.0)]
+    transcript_words = [
+        _make_word("if", 0.0, 0.2),
+        _make_word("you", 0.2, 0.4),
+        _make_word("put", 0.4, 0.7),
+        _make_word("in", 0.7, 1.0),
+    ]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response([{"index": 0, "lines": ["if you put in"]}]),
+    )
+    out = agent.run(
+        TextAlignmentInput(
+            phrases=phrases,
+            transcript_words=transcript_words,
+            atomize_mode=False,
+        )
+    )
+    assert [p.sample_text for p in out.phrases] == ["if you put in"]
+
+
 def test_atomized_uniqueness_preserves_legitimate_repeat_with_gap(
     agent: TextAlignmentAgent,
     mock_client: MockModelClient,

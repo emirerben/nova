@@ -1784,7 +1784,27 @@ def _draw_text_png(
         b = draw.textbbox((0, 0), ln, font=font)
         line_widths.append(b[2] - b[0])
         line_heights.append(b[3] - b[1])
-    line_step = int(max(line_heights) * _TEXT_LINE_SPACING) if line_heights else 0
+    # Use the font's INTRINSIC line metrics (ascent + descent) for line_step
+    # when left-anchored. Per-text bbox heights vary with line content — line 2
+    # of a cumulative reveal goes "you" → "you put" → "you put in", each with a
+    # slightly different bbox height because the measured descender depth /
+    # ascender height changes with glyph mix. That feeds back into
+    # `max(line_heights) * 1.15` and shifts line 2's y position by a few px per
+    # cumulative stage, producing the "'you' drifts down when 'put' is added"
+    # visual on template 89cde014. Font metrics (`ascent + descent`) are a
+    # constant per-font-size so the cumulative reveal lines stay locked.
+    # Center-anchor mode keeps the historical bbox-based line_step — changing
+    # it could regress existing centered templates and the drift isn't visible
+    # there (the block center stays at position_y_frac).
+    if text_anchor == "left" and line_heights:
+        try:
+            ascent, descent = font.getmetrics()
+            line_step = int((ascent + descent) * _TEXT_LINE_SPACING)
+        except AttributeError:
+            # Bitmap fonts / default fonts may not expose getmetrics; fall back.
+            line_step = int(max(line_heights) * _TEXT_LINE_SPACING)
+    else:
+        line_step = int(max(line_heights) * _TEXT_LINE_SPACING) if line_heights else 0
     block_h = (
         sum(line_heights[:-1])
         + (line_step - max(line_heights)) * (len(lines) - 1)
@@ -1796,7 +1816,20 @@ def _draw_text_png(
     block_h = line_step * (len(lines) - 1) + (line_heights[-1] if line_heights else 0)
 
     y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
-    block_top = int(CANVAS_H * y_frac - block_h / 2)
+    # Vertical anchor semantics mirror horizontal:
+    #   text_anchor="left"   → position_y_frac is the TOP of the first line.
+    #                          Subsequent wrapped lines extend DOWNWARD, so a
+    #                          cumulative reveal that wraps from 1 line to 2
+    #                          doesn't shift the first line upward.
+    #   text_anchor="center" → position_y_frac is the vertical CENTER of the
+    #                          block (historical default — preserved).
+    # Without the left-branch, a progressive reveal that wraps mid-sequence
+    # moves the earlier (already-visible) line upward — visually wrong since
+    # the eye expects revealed text to stay anchored as new words append.
+    if text_anchor == "left":
+        block_top = int(CANVAS_H * y_frac)
+    else:
+        block_top = int(CANVAS_H * y_frac - block_h / 2)
 
     # Soft gaussian shadow layer (drawn once, all lines).
     shadow_layer = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
@@ -1853,6 +1886,21 @@ def _draw_text_png(
     else:
         anchor_x = CANVAS_W // 2
 
+    # PIL's default text anchor ('la') positions y at the font's ascent line,
+    # but the ACTUAL rendered top of a string varies with which glyphs appear
+    # (top of "you" sits at x-height; top of "you put in" sits at ascender
+    # height because of the 't' / 'i'). Across cumulative reveal stages where
+    # a new word like "put" enters line 2, the line's measured top shifts by
+    # 10-20 px every stage — visually the line "drifts" up or down as words
+    # are added. Anchor 'ls' (left, baseline) pins each line by its baseline,
+    # which is a font-intrinsic reference — stable regardless of glyph mix.
+    # Locked by `test_left_anchor_line_step_stable_across_cumulative_stages`.
+    try:
+        font_ascent, _ = font.getmetrics()
+    except AttributeError:
+        font_ascent = 0  # bitmap/default font — anchor handling falls back to default
+    use_baseline_anchor = font_ascent > 0
+
     for i, ln in enumerate(lines):
         if i == 0 and emoji_metrics:
             # Position emoji + line 1 as a single unit. For center anchor we
@@ -1873,23 +1921,54 @@ def _draw_text_png(
                 x = anchor_x - line_widths[i]
             else:
                 x = anchor_x - line_widths[i] // 2
-        y = block_top + i * line_step
+        # Baseline-anchored y: line i's baseline sits at block_top + ascent +
+        # i * line_step. Anchor 'ls' tells PIL to interpret (x, y) as the
+        # left-baseline anchor point. Without `use_baseline_anchor` we fall
+        # back to the historical top-anchored draw — bitmap fonts don't expose
+        # `getmetrics`, so this is the safe-by-default path.
+        if use_baseline_anchor:
+            y = block_top + font_ascent + i * line_step
+            text_anchor_arg = "ls"
+            shadow_xy = (x, y + 6)
+            fg_xy = (x, y)
+        else:
+            y = block_top + i * line_step
+            text_anchor_arg = None  # PIL default
+            shadow_xy = (x, y + 6)
+            fg_xy = (x, y)
         # Soft drop shadow (always on — gives depth on busy backgrounds)
-        shadow_draw.text((x, y + 6), ln, font=font, fill=(0, 0, 0, 160))
+        if text_anchor_arg:
+            shadow_draw.text(shadow_xy, ln, font=font, fill=(0, 0, 0, 160), anchor=text_anchor_arg)
+        else:
+            shadow_draw.text(shadow_xy, ln, font=font, fill=(0, 0, 0, 160))
         # Foreground: optional crisp stroke (TikTok caption look) + fill.
         # Pillow renders stroke + fill in a single pass when stroke_width > 0,
         # so glyph anti-aliasing stays clean.
         if stroke_width > 0:
-            fg_draw.text(
-                (x, y),
-                ln,
-                font=font,
-                fill=text_color,
-                stroke_width=stroke_width,
-                stroke_fill=stroke_color,
-            )
+            if text_anchor_arg:
+                fg_draw.text(
+                    fg_xy,
+                    ln,
+                    font=font,
+                    fill=text_color,
+                    stroke_width=stroke_width,
+                    stroke_fill=stroke_color,
+                    anchor=text_anchor_arg,
+                )
+            else:
+                fg_draw.text(
+                    fg_xy,
+                    ln,
+                    font=font,
+                    fill=text_color,
+                    stroke_width=stroke_width,
+                    stroke_fill=stroke_color,
+                )
         else:
-            fg_draw.text((x, y), ln, font=font, fill=text_color)
+            if text_anchor_arg:
+                fg_draw.text(fg_xy, ln, font=font, fill=text_color, anchor=text_anchor_arg)
+            else:
+                fg_draw.text(fg_xy, ln, font=font, fill=text_color)
 
     shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
     img = Image.alpha_composite(img, shadow_layer)
