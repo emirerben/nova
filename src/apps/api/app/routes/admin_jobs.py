@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.agents._runtime import SUCCESS_OUTCOMES
 from app.database import get_db
@@ -235,7 +236,20 @@ async def list_jobs(
     Counts join the agent_run table via a subquery rather than a JOIN to
     avoid row-multiplication on the main listing.
     """
-    base = select(Job)
+    # Defer the heavy JSONB columns — the list response only surfaces metadata
+    # (id, status, type, fk ids, timestamps, celery_task_id). Loading
+    # assembly_plan / pipeline_trace / transcript / etc. per row turned the
+    # list into a multi-megabyte payload. The detail endpoint
+    # (/admin/jobs/{id}/debug) builds its own query and is unaffected.
+    base = select(Job).options(
+        defer(Job.assembly_plan),
+        defer(Job.probe_metadata),
+        defer(Job.transcript),
+        defer(Job.scene_cuts),
+        defer(Job.all_candidates),
+        defer(Job.phase_log),
+        defer(Job.pipeline_trace),
+    )
     if job_type != "all":
         base = base.where(Job.job_type == job_type)
     if status_filter:
@@ -243,6 +257,8 @@ async def list_jobs(
     if only_failures:
         base = base.where(Job.status.like("%_failed"))
 
+    # The count query reuses the WHERE filters but not the column loads —
+    # COUNT(*) doesn't materialize the deferred columns either way.
     total_res = await db.execute(select(func.count()).select_from(base.subquery()))
     total = int(total_res.scalar() or 0)
 
@@ -605,9 +621,7 @@ async def cancel_job(
             detail=f"Invalid job_id: {exc}",
         ) from exc
 
-    job_res = await db.execute(
-        select(Job).where(Job.id == job_uuid).with_for_update()
-    )
+    job_res = await db.execute(select(Job).where(Job.id == job_uuid).with_for_update())
     job = job_res.scalar_one_or_none()
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
