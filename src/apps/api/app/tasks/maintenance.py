@@ -19,7 +19,10 @@ Beat or crash the worker.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import structlog
+from sqlalchemy import text
 
 from app.tasks.reaper import reap_orphans
 from app.worker import celery_app
@@ -112,3 +115,92 @@ def cleanup_cancelled_job(self, job_id: str) -> int:
     if deleted:
         log.info("cleanup_cancelled_job_done", job_id=job_id, deleted=deleted)
     return deleted
+
+
+# Per-batch ceiling for the agent_run pruner. Caps the row count held by any
+# single DELETE so the table never sees a long-running ACCESS EXCLUSIVE lock,
+# even on a first-run backfill against months of accumulated rows.
+_AGENT_RUN_DELETE_BATCH = 10_000
+
+# Hard upper bound on iteration count per task run. With the batch above,
+# one Beat firing can prune up to 1M rows; if there's more than that backed
+# up, the next day's run picks up where this one left off. This is a fuse
+# against runaway loops, not a steady-state expectation.
+_AGENT_RUN_DELETE_MAX_BATCHES = 100
+
+
+@celery_app.task(
+    name="tasks.cleanup_agent_runs",
+    bind=True,
+    autoretry_for=(),
+    max_retries=0,
+    # Soft/hard limits match the budget of a midnight-quiet pruning window.
+    # If we're hitting the hard limit it's a sign of either a backfill in
+    # progress (acceptable, next run resumes) or a stuck statement (which
+    # we want killed, not retried).
+    soft_time_limit=600,
+    time_limit=900,
+)
+def cleanup_agent_runs(self, retention_days: int | None = None) -> dict:
+    """Delete job-scoped agent_run rows older than the retention window.
+
+    Returns a dict {deleted, cutoff, batches} for observability.
+
+    Why job_id-scoped: template- and track-scoped agent_run rows (job_id
+    NULL) back the per-template / per-track debug views, are looked up
+    by parent fk, and are bounded by template/track count rather than
+    job volume. Pruning them would surprise admins reviewing template
+    history. The job-scoped rows are the ones that grow with traffic
+    and are useful for at most a few weeks.
+
+    Why a batched DELETE: a single unbounded DELETE on a large table
+    would hold its locks for the full duration. The batched form
+    keeps each transaction short and lets other queries make progress
+    between batches.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.database import sync_engine  # noqa: PLC0415
+
+    days = retention_days if retention_days is not None else settings.agent_run_retention_days
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+
+    total_deleted = 0
+    batches = 0
+    # Each batch runs in its own short transaction so the table never
+    # accumulates lock duration across iterations.
+    while batches < _AGENT_RUN_DELETE_MAX_BATCHES:
+        with sync_engine.begin() as conn:
+            res = conn.execute(
+                text(
+                    """
+                    DELETE FROM agent_run
+                     WHERE id IN (
+                       SELECT id FROM agent_run
+                        WHERE job_id IS NOT NULL
+                          AND created_at < :cutoff
+                        LIMIT :batch
+                     )
+                    """
+                ),
+                {"cutoff": cutoff, "batch": _AGENT_RUN_DELETE_BATCH},
+            )
+            deleted = res.rowcount or 0
+        total_deleted += deleted
+        batches += 1
+        if deleted < _AGENT_RUN_DELETE_BATCH:
+            # Final batch: fewer rows than the limit means nothing left.
+            break
+
+    if total_deleted:
+        log.info(
+            "cleanup_agent_runs_done",
+            deleted=total_deleted,
+            cutoff=cutoff.isoformat(),
+            batches=batches,
+            retention_days=days,
+        )
+    return {
+        "deleted": total_deleted,
+        "cutoff": cutoff.isoformat(),
+        "batches": batches,
+    }

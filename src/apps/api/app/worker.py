@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import worker_ready
 
 from app.config import settings
@@ -44,6 +45,14 @@ celery_app.conf.update(
         "sweep-stale-jobs-every-5-min": {
             "task": "tasks.sweep_stale_jobs",
             "schedule": 300.0,  # seconds
+        },
+        # Daily at 04:00 UTC (low-traffic window). Pruned rows = job-scoped
+        # agent_run entries older than `agent_run_retention_days` (30d
+        # default). Bound by the in-task batch loop, so a first-run
+        # backfill never holds locks long. See tasks/maintenance.py.
+        "cleanup-agent-runs-daily": {
+            "task": "tasks.cleanup_agent_runs",
+            "schedule": crontab(hour=4, minute=0),
         },
     },
 )
