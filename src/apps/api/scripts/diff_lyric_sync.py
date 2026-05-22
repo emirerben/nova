@@ -42,7 +42,6 @@ import re
 import statistics
 import subprocess
 import sys
-import tempfile
 import time
 import wave
 from dataclasses import dataclass
@@ -50,7 +49,6 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-
 
 # ---------------------------------------------------------------------------
 # .env loader — same stdlib-only parser as scripts/admin.py
@@ -99,7 +97,9 @@ _AUDIO_SR = 16000
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--nova-mp4", help="Local path to the Nova-rendered output mp4.")
     p.add_argument("--youtube-url", required=True, help="YouTube URL to use as reference.")
     p.add_argument("--job-id", help="Optional Nova job UUID — adds A/B/D diagnostic columns.")
@@ -113,7 +113,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=os.environ.get("ADMIN_BASE_URL", "https://nova-video.fly.dev"),
         help="Base URL for the admin API. Defaults to Fly prod.",
     )
-    p.add_argument("--no-whisper", action="store_true", help="Skip OpenAI Whisper (faster, no API spend).")
+    p.add_argument(
+        "--no-whisper", action="store_true", help="Skip OpenAI Whisper (faster, no API spend)."
+    )
     p.add_argument(
         "--openai-key",
         default=os.environ.get("OPENAI_API_KEY"),
@@ -121,7 +123,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     p.add_argument("--cache-dir", default=".dev/lyric-sync-diffs/cache")
     p.add_argument("--out-dir", default=".dev/lyric-sync-diffs")
-    p.add_argument("--ocr-fps", type=float, default=6.0, help="OCR frame sampling fps. Default 6 (~167ms).")
+    p.add_argument(
+        "--ocr-fps", type=float, default=6.0, help="OCR frame sampling fps. Default 6 (~167ms)."
+    )
     p.add_argument(
         "--nova-band",
         default="0.72,1.0",
@@ -205,7 +209,9 @@ def _fetch_job_bundle_admin(args: argparse.Namespace) -> dict | None:
         _log("no admin token in --admin-key / env; skipping enriched diagnostic")
         return None
     _log(f"fetching job {args.job_id} via admin API at {args.admin_base_url}…")
-    job_resp = _admin_api_get(f"/admin/jobs/{args.job_id}/debug", args.admin_key, args.admin_base_url)
+    job_resp = _admin_api_get(
+        f"/admin/jobs/{args.job_id}/debug", args.admin_key, args.admin_base_url
+    )
     if not job_resp:
         return None
     job = job_resp.get("job") or job_resp  # endpoint returns the job at top level or under .job
@@ -214,7 +220,9 @@ def _fetch_job_bundle_admin(args: argparse.Namespace) -> dict | None:
     if not music_track_id:
         _log(f"job {args.job_id} has no music_track_id; cannot enrich")
         return None
-    track_resp = _admin_api_get(f"/admin/music-tracks/{music_track_id}", args.admin_key, args.admin_base_url)
+    track_resp = _admin_api_get(
+        f"/admin/music-tracks/{music_track_id}", args.admin_key, args.admin_base_url
+    )
     if not track_resp:
         return None
     return {
@@ -253,15 +261,21 @@ def _yt_dlp_download(url: str, dest: Path) -> None:
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     _log(f"yt-dlp → {dest.name}")
-    _run([
-        "yt-dlp",
-        "-f", "bv*+ba/b",
-        "--merge-output-format", "mp4",
-        "--no-playlist",
-        "--quiet",
-        "-o", str(dest),
-        url,
-    ], quiet=False)
+    _run(
+        [
+            "yt-dlp",
+            "-f",
+            "bv*+ba/b",
+            "--merge-output-format",
+            "mp4",
+            "--no-playlist",
+            "--quiet",
+            "-o",
+            str(dest),
+            url,
+        ],
+        quiet=False,
+    )
     if not dest.exists():
         raise RuntimeError(f"yt-dlp produced no file at {dest}")
 
@@ -276,12 +290,24 @@ def _ffmpeg_extract_wav(video: Path, wav: Path) -> None:
         return
     wav.parent.mkdir(parents=True, exist_ok=True)
     _log(f"extracting audio → {wav.name}")
-    _run([
-        "ffmpeg", "-y", "-loglevel", "error",
-        "-i", str(video),
-        "-vn", "-ac", "1", "-ar", str(_AUDIO_SR),
-        "-f", "wav", str(wav),
-    ])
+    _run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            str(_AUDIO_SR),
+            "-f",
+            "wav",
+            str(wav),
+        ]
+    )
 
 
 def _read_wav(path: Path) -> np.ndarray:
@@ -311,14 +337,18 @@ def _align_audio(
     sr = _AUDIO_SR
     # Restrict YouTube to a window around the hint to (a) speed up the FFT
     # and (b) avoid latching onto a repeated chorus elsewhere in the song.
-    if best_start_hint_s is not None and best_end_hint_s is not None and best_end_hint_s > best_start_hint_s:
+    if (
+        best_start_hint_s is not None
+        and best_end_hint_s is not None
+        and best_end_hint_s > best_start_hint_s
+    ):
         slack = 10.0
         win_start = max(0.0, best_start_hint_s - slack)
         win_end = min(len(yt_pcm) / sr, best_end_hint_s + slack)
     else:
         win_start = 0.0
         win_end = len(yt_pcm) / sr
-    yt_clip = yt_pcm[int(win_start * sr):int(win_end * sr)]
+    yt_clip = yt_pcm[int(win_start * sr) : int(win_end * sr)]
 
     if len(nova_pcm) < sr or len(yt_clip) < sr:
         _log("audio too short for alignment; assuming nova zero aligns with yt zero")
@@ -370,7 +400,9 @@ def _align_audio(
 # ---------------------------------------------------------------------------
 
 
-def _extract_frames(video: Path, fps: float, out_dir: Path, crop_band: tuple[float, float] | None = None) -> list[tuple[Path, float]]:
+def _extract_frames(
+    video: Path, fps: float, out_dir: Path, crop_band: tuple[float, float] | None = None
+) -> list[tuple[Path, float]]:
     """Extract one JPEG per (1/fps) into out_dir. Returns [(path, timestamp_s)].
 
     `crop_band=(y_start_frac, y_end_frac)` crops the vertical band where lyric
@@ -389,13 +421,21 @@ def _extract_frames(video: Path, fps: float, out_dir: Path, crop_band: tuple[flo
         # 2x upscale with lanczos makes tesseract noticeably more accurate
         # on short-form caption text (no native HiDPI shipping fonts).
         vf.append("scale=iw*2:ih*2:flags=lanczos")
-    _run([
-        "ffmpeg", "-y", "-loglevel", "error",
-        "-i", str(video),
-        "-vf", ",".join(vf),
-        "-q:v", "3",
-        pattern,
-    ])
+    _run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video),
+            "-vf",
+            ",".join(vf),
+            "-q:v",
+            "3",
+            pattern,
+        ]
+    )
     frames = sorted(out_dir.glob("f_*.jpg"))
     return [(p, i / fps) for i, p in enumerate(frames)]
 
@@ -412,8 +452,9 @@ def _ocr_one(image_path: Path) -> str:
     return text.strip()
 
 
-def _ocr_phrases(video: Path, fps: float, cache_dir: Path,
-                 lyric_band: tuple[float, float] | None = (0.72, 1.0)) -> list[dict]:
+def _ocr_phrases(
+    video: Path, fps: float, cache_dir: Path, lyric_band: tuple[float, float] | None = (0.72, 1.0)
+) -> list[dict]:
     """OCR the video frame-by-frame, return [{text, start_s, end_s}] phrases.
 
     `lyric_band=(y_start_frac, y_end_frac)` is the vertical strip where lyric
@@ -436,7 +477,9 @@ def _ocr_phrases(video: Path, fps: float, cache_dir: Path,
     try:
         import pytesseract  # noqa: F401,PLC0415
     except ImportError:
-        _log("pytesseract not installed; install with `pip install --user pytesseract` to enable OCR")
+        _log(
+            "pytesseract not installed; install with `pip install --user pytesseract` to enable OCR"
+        )
         return []
 
     # Scratch dir under cache_dir (NOT /tmp/) — tesseract sandbox refuses /tmp.
@@ -448,7 +491,9 @@ def _ocr_phrases(video: Path, fps: float, cache_dir: Path,
             p.unlink()
     frames_dir.mkdir(parents=True, exist_ok=True)
     frames = _extract_frames(video, fps, frames_dir, crop_band=lyric_band)
-    band_desc = "full frame" if lyric_band is None else f"band y∈[{lyric_band[0]:.2f},{lyric_band[1]:.2f}]"
+    band_desc = (
+        "full frame" if lyric_band is None else f"band y∈[{lyric_band[0]:.2f},{lyric_band[1]:.2f}]"
+    )
     _log(f"OCR {video.name}: {len(frames)} frames at {fps} fps ({band_desc})…")
     results: list[tuple[float, str]] = []
     t0 = time.monotonic()
@@ -563,12 +608,23 @@ def _whisper_words(audio_path: Path, prompt: str, api_key: str, cache_dir: Path)
         upload_path = audio_path.with_suffix(".opus")
         if not upload_path.exists():
             _log(f"audio is {size // 1024 // 1024} MB → re-encoding to opus 16k")
-            _run([
-                "ffmpeg", "-y", "-loglevel", "error",
-                "-i", str(audio_path),
-                "-c:a", "libopus", "-b:a", "16k", "-ac", "1",
-                str(upload_path),
-            ])
+            _run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(audio_path),
+                    "-c:a",
+                    "libopus",
+                    "-b:a",
+                    "16k",
+                    "-ac",
+                    "1",
+                    str(upload_path),
+                ]
+            )
 
     from openai import OpenAI  # noqa: PLC0415
 
@@ -608,7 +664,9 @@ def _norm_words(s: str) -> list[str]:
     ]
 
 
-def _build_lines_from_whisper(whisper_words: list[dict], gap_threshold_s: float = 1.0) -> list[dict]:
+def _build_lines_from_whisper(
+    whisper_words: list[dict], gap_threshold_s: float = 1.0
+) -> list[dict]:
     """Heuristically group Whisper words into lines using inter-word silence."""
     lines: list[dict] = []
     if not whisper_words:
@@ -658,7 +716,7 @@ def _match_score(line_words: list[str], ocr_words: list[str]) -> float:
 
     def _bigrams(words: list[str]) -> set[str]:
         joined = "".join(words)
-        return {joined[i:i + 2] for i in range(len(joined) - 1)} if len(joined) >= 2 else set()
+        return {joined[i : i + 2] for i in range(len(joined) - 1)} if len(joined) >= 2 else set()
 
     a = _bigrams(line_words)
     b = _bigrams(ocr_words)
@@ -667,8 +725,13 @@ def _match_score(line_words: list[str], ocr_words: list[str]) -> float:
     return len(a & b) / len(a | b)
 
 
-def _nearest_ocr(line_words: list[str], ocr_phrases: list[dict], expected_t_s: float | None,
-                 radius_s: float = 2.0, min_score: float = 0.35) -> dict | None:
+def _nearest_ocr(
+    line_words: list[str],
+    ocr_phrases: list[dict],
+    expected_t_s: float | None,
+    radius_s: float = 2.0,
+    min_score: float = 0.35,
+) -> dict | None:
     best: tuple[float, dict] | None = None
     for ph in ocr_phrases:
         sc = _match_score(line_words, _norm_words(ph["text"]))
@@ -686,12 +749,14 @@ def _nearest_ocr(line_words: list[str], ocr_phrases: list[dict], expected_t_s: f
     return best[1] if best else None
 
 
-def _first_whisper_match(first_word: str, whisper_words: list[dict],
-                         expected_t_s: float | None, radius_s: float = 2.5) -> dict | None:
+def _first_whisper_match(
+    first_word: str, whisper_words: list[dict], expected_t_s: float | None, radius_s: float = 2.5
+) -> dict | None:
     if not first_word or not whisper_words:
         return None
     cand = [
-        w for w in whisper_words
+        w
+        for w in whisper_words
         if "".join(c for c in w["text"].lower() if c.isalnum()) == first_word
     ]
     if not cand:
@@ -786,15 +851,27 @@ def _ffmpeg_thumb_b64(video: Path, t: float, cache_dir: Path) -> str | None:
     out = cache_dir / "thumbs" / f"{video.stem}_{int(round(t * 1000))}.jpg"
     out.parent.mkdir(parents=True, exist_ok=True)
     if not out.exists():
-        r = subprocess.run([
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-ss", f"{max(0.0, t):.3f}",
-            "-i", str(video),
-            "-frames:v", "1",
-            "-vf", "scale=360:-1",
-            "-q:v", "5",
-            str(out),
-        ], check=False, capture_output=True)
+        r = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-ss",
+                f"{max(0.0, t):.3f}",
+                "-i",
+                str(video),
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=360:-1",
+                "-q:v",
+                "5",
+                str(out),
+            ],
+            check=False,
+            capture_output=True,
+        )
         if r.returncode != 0 or not out.exists():
             return None
     b64 = base64.b64encode(out.read_bytes()).decode("ascii")
@@ -828,7 +905,9 @@ def _build_diagnosis(diffs: list[LineDiff], confidence: float, has_bundle: bool)
     dr = [d.drift_render_ms for d in diffs if d.drift_render_ms is not None]
     da = [d.drift_audio_mix_ms for d in diffs if d.drift_audio_mix_ms is not None]
     dy = [d.drift_vs_youtube_ms for d in diffs if d.drift_vs_youtube_ms is not None]
-    dyw = [d.drift_whisper_vs_youtube_ms for d in diffs if d.drift_whisper_vs_youtube_ms is not None]
+    dyw = [
+        d.drift_whisper_vs_youtube_ms for d in diffs if d.drift_whisper_vs_youtube_ms is not None
+    ]
     doa = [d.drift_overlay_vs_audio_ms for d in diffs if d.drift_overlay_vs_audio_ms is not None]
 
     # Headline: overlay-vs-audio drift (does Nova's overlay land on Nova's
@@ -899,8 +978,10 @@ def _build_diagnosis(diffs: list[LineDiff], confidence: float, has_bundle: bool)
         )
 
     if not notes:
-        notes.append("All measured drift values are within 50 ms — pipeline timing is healthy. "
-                     "Any perceived sync issue is below typical perceptual thresholds.")
+        notes.append(
+            "All measured drift values are within 50 ms — pipeline timing is healthy. "
+            "Any perceived sync issue is below typical perceptual thresholds."
+        )
 
     if not has_bundle:
         notes.append(
@@ -927,7 +1008,8 @@ def _render_html(
 ) -> str:
     has_bundle = bool(bundle and bundle.get("lyrics_cached"))
     title = (
-        f'{bundle["track_title"]} — {bundle["track_artist"]}' if has_bundle
+        f"{bundle['track_title']} — {bundle['track_artist']}"
+        if has_bundle
         else f"Nova vs YouTube — {nova_video.name}"
     )
 
@@ -941,7 +1023,9 @@ def _render_html(
     dr = [d.drift_render_ms for d in diffs if d.drift_render_ms is not None]
     da = [d.drift_audio_mix_ms for d in diffs if d.drift_audio_mix_ms is not None]
     dy = [d.drift_vs_youtube_ms for d in diffs if d.drift_vs_youtube_ms is not None]
-    dyw = [d.drift_whisper_vs_youtube_ms for d in diffs if d.drift_whisper_vs_youtube_ms is not None]
+    dyw = [
+        d.drift_whisper_vs_youtube_ms for d in diffs if d.drift_whisper_vs_youtube_ms is not None
+    ]
     doa = [d.drift_overlay_vs_audio_ms for d in diffs if d.drift_overlay_vs_audio_ms is not None]
 
     p50_r, p95_r = _stats(dr)
@@ -951,7 +1035,13 @@ def _render_html(
     p50_oa, p95_oa = _stats(doa)
 
     # Identify dominant stage for highlight.
-    stage_to_p50 = {"render": p50_r or 0, "audio_mix": p50_a or 0, "vs_yt": p50_y or 0, "wh_vs_yt": p50_yw or 0, "ov_audio": p50_oa or 0}
+    stage_to_p50 = {
+        "render": p50_r or 0,
+        "audio_mix": p50_a or 0,
+        "vs_yt": p50_y or 0,
+        "wh_vs_yt": p50_yw or 0,
+        "ov_audio": p50_oa or 0,
+    }
     dominant = max(stage_to_p50, key=lambda k: stage_to_p50[k])
 
     def hl(name: str) -> str:
@@ -960,8 +1050,8 @@ def _render_html(
     if confidence < 0.3:
         banner = (
             f'<div class="banner bad">⚠ Audio cross-correlation confidence is very low '
-            f'({confidence:.2f}). The YouTube reference probably isn\'t the same recording as Nova\'s mix. '
-            f'The YouTube columns may be meaningless.</div>'
+            f"({confidence:.2f}). The YouTube reference probably isn't the same recording as Nova's mix. "
+            f"The YouTube columns may be meaningless.</div>"
         )
     elif confidence < 0.5:
         banner = f'<div class="banner warn">⚠ Audio match confidence: {confidence:.2f} (borderline).</div>'
@@ -971,7 +1061,11 @@ def _render_html(
     # Build table rows.
     rows: list[str] = []
     for d in diffs:
-        nova_thumb = _ffmpeg_thumb_b64(nova_video, d.C_nova_ocr_section_s, cache_dir) if d.C_nova_ocr_section_s is not None else None
+        nova_thumb = (
+            _ffmpeg_thumb_b64(nova_video, d.C_nova_ocr_section_s, cache_dir)
+            if d.C_nova_ocr_section_s is not None
+            else None
+        )
         yt_thumb = None
         if d.E_yt_ocr_section_s is not None:
             # nova_section_t → yt absolute = nova_t + yt_t_at_nova_zero
@@ -983,13 +1077,21 @@ def _render_html(
         if nova_thumb or yt_thumb:
             thumbs_html = (
                 f'<tr class="row-thumbs" data-thumb-id="{thumb_id}"><td colspan="10"><div class="thumbs">'
-                f'<figure><figcaption>Nova @ {_fmt_s(d.C_nova_ocr_section_s)}s — OCR: '
+                f"<figure><figcaption>Nova @ {_fmt_s(d.C_nova_ocr_section_s)}s — OCR: "
                 f'"{_esc_html(d.matched_nova_ocr_text[:80])}"</figcaption>'
-                + (f'<img src="{nova_thumb}" alt="">' if nova_thumb else '<span class="sub">no frame</span>')
-                + '</figure>'
+                + (
+                    f'<img src="{nova_thumb}" alt="">'
+                    if nova_thumb
+                    else '<span class="sub">no frame</span>'
+                )
+                + "</figure>"
                 f'<figure><figcaption>YouTube — OCR: "{_esc_html(d.matched_yt_ocr_text[:80])}"</figcaption>'
-                + (f'<img src="{yt_thumb}" alt="">' if yt_thumb else '<span class="sub">no frame</span>')
-                + '</figure></div></td></tr>'
+                + (
+                    f'<img src="{yt_thumb}" alt="">'
+                    if yt_thumb
+                    else '<span class="sub">no frame</span>'
+                )
+                + "</figure></div></td></tr>"
             )
 
         rows.append(
@@ -1004,31 +1106,34 @@ def _render_html(
             f'<td class="drift {_drift_cls(d.drift_render_ms)}">{_fmt_drift(d.drift_render_ms)}</td>'
             f'<td class="drift {_drift_cls(d.drift_audio_mix_ms)}">{_fmt_drift(d.drift_audio_mix_ms)}</td>'
             f'<td class="drift {_drift_cls(d.drift_vs_youtube_ms)}">{_fmt_drift(d.drift_vs_youtube_ms)}</td>'
-            '</tr>'
+            "</tr>"
         )
         if thumbs_html:
             rows.append(thumbs_html)
 
-    raw = json.dumps([
-        {
-            "line_idx": d.line_idx,
-            "text": d.text,
-            "line_start_track_s": d.line_start_track_s,
-            "A_expected_section_s": d.A_expected_section_s,
-            "C_nova_ocr_section_s": d.C_nova_ocr_section_s,
-            "D_nova_whisper_section_s": d.D_nova_whisper_section_s,
-            "E_yt_ocr_section_s": d.E_yt_ocr_section_s,
-            "F_yt_whisper_section_s": d.F_yt_whisper_section_s,
-            "drift_render_ms": d.drift_render_ms,
-            "drift_audio_mix_ms": d.drift_audio_mix_ms,
-            "drift_vs_youtube_ms": d.drift_vs_youtube_ms,
-            "drift_whisper_vs_youtube_ms": d.drift_whisper_vs_youtube_ms,
-            "drift_overlay_vs_audio_ms": d.drift_overlay_vs_audio_ms,
-            "matched_nova_ocr": d.matched_nova_ocr_text,
-            "matched_yt_ocr": d.matched_yt_ocr_text,
-        }
-        for d in diffs
-    ], indent=2)
+    raw = json.dumps(
+        [
+            {
+                "line_idx": d.line_idx,
+                "text": d.text,
+                "line_start_track_s": d.line_start_track_s,
+                "A_expected_section_s": d.A_expected_section_s,
+                "C_nova_ocr_section_s": d.C_nova_ocr_section_s,
+                "D_nova_whisper_section_s": d.D_nova_whisper_section_s,
+                "E_yt_ocr_section_s": d.E_yt_ocr_section_s,
+                "F_yt_whisper_section_s": d.F_yt_whisper_section_s,
+                "drift_render_ms": d.drift_render_ms,
+                "drift_audio_mix_ms": d.drift_audio_mix_ms,
+                "drift_vs_youtube_ms": d.drift_vs_youtube_ms,
+                "drift_whisper_vs_youtube_ms": d.drift_whisper_vs_youtube_ms,
+                "drift_overlay_vs_audio_ms": d.drift_overlay_vs_audio_ms,
+                "matched_nova_ocr": d.matched_nova_ocr_text,
+                "matched_yt_ocr": d.matched_yt_ocr_text,
+            }
+            for d in diffs
+        ],
+        indent=2,
+    )
 
     return _HTML_TEMPLATE.format(
         title=_esc_html(title),
@@ -1200,7 +1305,9 @@ def main(argv: list[str]) -> int:
         nova_video = cache_dir / f"nova_{bundle['job_id']}.mp4"
         _http_download(bundle["output_url"], nova_video)
     else:
-        raise SystemExit("No Nova video source: pass --nova-mp4 PATH or set up admin API access for --job-id.")
+        raise SystemExit(
+            "No Nova video source: pass --nova-mp4 PATH or set up admin API access for --job-id."
+        )
 
     yt_id = hashlib.sha1(args.youtube_url.encode()).hexdigest()[:12]
     yt_video = cache_dir / f"yt_{yt_id}.mp4"
@@ -1225,9 +1332,11 @@ def main(argv: list[str]) -> int:
     yt_t_at_nova_zero, confidence, _win_start = _align_audio(
         nova_pcm, yt_pcm, best_start or None, best_end or None
     )
+
     # Define mapping helper: yt_absolute → nova_section
     def yt_to_nova(yt_abs_s: float) -> float:
         return yt_abs_s - yt_t_at_nova_zero
+
     # And: track_absolute (in lyrics_cached) → yt_absolute approximation:
     # If bundle exists, the cached lyric `line.start_s` is in the YouTube source
     # track timeline. So track_abs == yt_abs (modulo the recording variant).
@@ -1240,11 +1349,14 @@ def main(argv: list[str]) -> int:
         try:
             a, b = (float(x) for x in s.split(","))
         except ValueError as exc:
-            raise SystemExit(f"--*-band must be 'y_start,y_end' (e.g. '0,1' or '0.72,1.0'); got {s!r}") from exc
+            raise SystemExit(
+                f"--*-band must be 'y_start,y_end' (e.g. '0,1' or '0.72,1.0'); got {s!r}"
+            ) from exc
         if a < 0 or b > 1 or b <= a:
             raise SystemExit(f"band {a},{b} must satisfy 0 ≤ y_start < y_end ≤ 1")
         # Full frame → skip the crop+upscale entirely (saves a copy + speeds things up).
         return None if (a <= 0.0 and b >= 1.0) else (a, b)
+
     nova_band = _parse_band(args.nova_band)
     yt_band = _parse_band(args.yt_band)
     nova_ocr = _ocr_phrases(nova_video, fps=args.ocr_fps, cache_dir=cache_dir, lyric_band=nova_band)
@@ -1269,10 +1381,11 @@ def main(argv: list[str]) -> int:
         else:
             prompt = ""
             if bundle and bundle.get("lyrics_cached"):
-                prompt = (bundle["lyrics_cached"].get("full_text") or "")
+                prompt = bundle["lyrics_cached"].get("full_text") or ""
                 if not prompt:
                     prompt = "\n".join(
-                        ln.get("text", "") for ln in (bundle["lyrics_cached"].get("lines", []) or [])
+                        ln.get("text", "")
+                        for ln in (bundle["lyrics_cached"].get("lines", []) or [])
                     )
             try:
                 nova_whisper = _whisper_words(nova_wav, prompt, args.openai_key, cache_dir)
@@ -1353,7 +1466,11 @@ def main(argv: list[str]) -> int:
             continue
 
         # C: Nova OCR — search at A when available, else at line's section time.
-        expected_c = A if A is not None else (start_track_s - (best_start if best_start else yt_t_at_nova_zero))
+        expected_c = (
+            A
+            if A is not None
+            else (start_track_s - (best_start if best_start else yt_t_at_nova_zero))
+        )
         nova_ph = _nearest_ocr(words, nova_ocr, expected_t_s=expected_c)
         C = float(nova_ph["start_s"]) if nova_ph else None
 
