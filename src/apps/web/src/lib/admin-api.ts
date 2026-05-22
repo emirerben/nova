@@ -236,6 +236,23 @@ export async function adminUpdateTemplate(
   return res.json();
 }
 
+export interface OverlayTextEdit {
+  slot_index: number;
+  overlay_index: number;
+  sample_text: string;
+}
+
+export async function adminUpdateTemplateOverlays(
+  id: string,
+  edits: OverlayTextEdit[],
+): Promise<TemplateDebugResponse> {
+  const res = await adminFetch(`/admin/templates/${id}/overlays`, {
+    method: "PATCH",
+    body: JSON.stringify({ edits }),
+  });
+  return res.json();
+}
+
 export async function adminCreateTemplate(data: {
   name: string;
   gcs_path: string;

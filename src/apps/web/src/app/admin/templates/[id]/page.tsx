@@ -45,15 +45,24 @@ import LyricsConfigPanel from "@/app/admin/_shared/LyricsConfigPanel";
 import { DebugTab } from "./components/DebugTab";
 import { EditorTab } from "./components/EditorTab";
 import { MusicTab } from "./components/MusicTab";
+import { OverlaysTab } from "./components/OverlaysTab";
 import { RequiredInputsEditor } from "./components/RequiredInputsEditor";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type TabId = "recipe" | "editor" | "test" | "music" | "settings" | "debug";
+type TabId =
+  | "recipe"
+  | "editor"
+  | "overlays"
+  | "test"
+  | "music"
+  | "settings"
+  | "debug";
 
 const ALL_TABS: { id: TabId; label: string }[] = [
   { id: "recipe", label: "Recipe" },
   { id: "editor", label: "Editor" },
+  { id: "overlays", label: "Overlays" },
   { id: "test", label: "Test" },
   { id: "music", label: "Music" },
   { id: "settings", label: "Settings" },
@@ -395,6 +404,7 @@ export default function TemplateDetailPage() {
             onReanalyze={handleReanalyze}
           />
         )}
+        {resolvedTab === "overlays" && <OverlaysTab templateId={template.id} />}
         {resolvedTab === "test" && (
           <TestTab
             template={template}
