@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.41.4] - 2026-05-22
+
+### Added
+- **One-video beat-sync planning now has a locked speed-factor convention before implementation starts.** The new internal note records that `speed_factor` is source seconds per output second (`source_seconds_needed = output_seconds * speed_factor`), cites the orchestration/rendering lines that prove it, and gives Bead 3 the exact `speed_factor=2.0` acceptance case to encode in tests.
+
 ## [0.4.41.3] - 2026-05-22
 
 ### Changed
