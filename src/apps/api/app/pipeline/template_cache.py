@@ -162,10 +162,32 @@ TEXT_OVERLAY_VERSION_V1 = "v1"
 #     31 input phrases ("allow" 3×, "anyone" 4×, "combination" 4×) —
 #     text_alignment output_dict in the agent_run table made the LLM-side
 #     duplication plainly visible.
+#   2026-05-22 (v2-2026-05-22-align-dedup-fallback → v2-2026-05-22-reveal-cohesion):
+#     Three related Layer-2 fixes ship together — all three change overlay
+#     output for the same input, so the namespace bump must cover all of
+#     them at once. (A) `extract_template_text_overlays` refuses to
+#     overwrite template_recipe overlays when transcribe degrades
+#     (terminal_refusal, low_confidence=True, or raised). Without it,
+#     Stage E's music-only passthrough fires on speech videos with a
+#     failed transcript and raw OCR artifacts reach the render. (B) Stage
+#     D drops single-character non-whitelisted alphanumerics ("W", "M",
+#     "8"), pure-punctuation tokens, and punctuation-dominant tokens
+#     BEFORE Stage E sees them. (C) `build_line_groups` skips unmatched
+#     phrases mid-group instead of closing the running group, so an OCR
+#     artifact between two matched transcript words can't fragment the
+#     cumulative reveal — groups close only on real terminators (sentence
+#     punctuation in the transcript, silence gap, max-words cap).
+#     Evidence: prod template 89cde014 reanalyze at 2026-05-22 09:13 had
+#     transcript=terminal_refusal and rendered "luck\""/"W" to pixels in
+#     job d5083a2c; the 07:42 job before it (good transcript) showed
+#     partial progressive reveal — "The work to get" cumulative + "there"
+#     fragmented because an unmatched OCR closed the group. After all
+#     three fixes the full source phrases reveal cumulatively. Bumping
+#     orphans every Layer-2 cache entry built under the broken behavior.
 #
 # When you change anything that affects Layer-2 overlay output (Stage E
 # prompt, sanitizer logic, Stage D/G semantics), append a new suffix here.
-TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-22-align-dedup-fallback"
+TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-22-reveal-cohesion"
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.
