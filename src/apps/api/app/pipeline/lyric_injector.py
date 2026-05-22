@@ -81,16 +81,22 @@ _MIN_OVERLAY_DURATION_S = 0.18
 # the last word, then fades out. Tuned for hip-hop / pop tempos against the
 # Travis Scott "Highest in the Room" reference.
 #
-# Pre-roll is small (100 ms) — user prefers tight near-sync, not a 250 ms
-# lead-in. Post-dwell of 1s is the breathing room past the vocal end
-# that the karaoke effect lacked (the karaoke overlay cuts at line.end_s,
-# i.e. the exact frame the last word's vocal stops). Dense lines are capped
-# by a small fade-bound overlap budget so lyrics can cross-dissolve without
+# Pre-roll 400 ms + fade-in 50 ms produces fully-readable text ~350 ms BEFORE
+# the vocal — matching the "lyric video" feel of 7clouds-style YouTube refs
+# where text leads the vocal by ~300 ms. Previous defaults (pre_roll 100 ms,
+# fade_in 150 ms with ASS slope=0.5 quadratic ease) made text reach 95 %
+# opacity ~35 ms AFTER the vocal hit, which felt "late" against any reference
+# lyric video. See empirical drift analysis in commit message + the
+# diff_lyric_sync.py diagnostic script under api/scripts/ for the math.
+# Post-dwell of 1s is the breathing room past the vocal end that the
+# karaoke effect lacked (the karaoke overlay cuts at line.end_s, i.e. the
+# exact frame the last word's vocal stops). Dense lines are capped by a
+# small fade-bound overlap budget so lyrics can cross-dissolve without
 # ghosting through an entire section.
-_LINE_PRE_ROLL_S = 0.10
+_LINE_PRE_ROLL_S = 0.40
 _LINE_POST_DWELL_S = 1.0
 _LINE_NEXT_LINE_GAP_S = 0.10
-_LINE_FADE_IN_MS = 150
+_LINE_FADE_IN_MS = 50
 _LINE_FADE_OUT_MS = 250
 _LINE_HOLD_TO_NEXT_THRESHOLD_MS = 500
 # Upper bound on cross-dissolve overlap with the next lyric line. The
