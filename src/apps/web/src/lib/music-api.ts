@@ -89,6 +89,18 @@ export interface MusicTrackDetail {
   created_at: string;
 }
 
+export interface MusicTrackListItem {
+  id: string;
+  title: string;
+  artist: string;
+  analysis_status: "queued" | "analyzing" | "ready" | "failed";
+  thumbnail_url: string | null;
+  beat_count: number;
+  published_at: string | null;
+  archived_at: string | null;
+  created_at: string;
+}
+
 export type LyricsStatus =
   | "pending"
   | "extracting"
@@ -161,7 +173,7 @@ export interface TrackConfig {
 }
 
 export interface AdminMusicListResponse {
-  tracks: MusicTrackDetail[];
+  tracks: MusicTrackListItem[];
   total: number;
 }
 

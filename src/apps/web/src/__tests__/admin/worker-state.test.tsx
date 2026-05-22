@@ -91,6 +91,9 @@ function buildDebugResponse(overrides: {
     agent_runs: [],
     template_agent_runs: [],
     track_agent_runs: [],
+    template_agent_runs_has_more: false,
+    track_agent_runs_has_more: false,
+    context_runs_cap: 200,
     runtime: {
       worker: null,
       task_id: baseJob.celery_task_id,

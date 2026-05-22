@@ -41,7 +41,7 @@ from fastapi import (
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import defer
+from sqlalchemy.orm import load_only
 
 from app.agents._schemas.song_sections import SongSection
 from app.config import settings
@@ -165,8 +165,22 @@ class MusicTrackResponse(BaseModel):
     created_at: datetime
 
 
+class MusicTrackListItem(BaseModel):
+    """Strict admin-list projection; keep in sync with list_music_tracks load_only."""
+
+    id: str
+    title: str
+    artist: str
+    analysis_status: str
+    thumbnail_url: str | None
+    beat_count: int
+    published_at: datetime | None
+    archived_at: datetime | None
+    created_at: datetime
+
+
 class MusicTrackListResponse(BaseModel):
-    tracks: list[MusicTrackResponse]
+    tracks: list[MusicTrackListItem]
     total: int
 
 
@@ -248,6 +262,20 @@ def _to_response(t: MusicTrack) -> MusicTrackResponse:
         lyrics_extracted_at=t.lyrics_extracted_at,
         best_sections=coerced_sections,
         section_version=t.section_version,
+        created_at=t.created_at,
+    )
+
+
+def _to_list_item(t: MusicTrack, beat_count: int) -> MusicTrackListItem:
+    return MusicTrackListItem(
+        id=t.id,
+        title=t.title,
+        artist=t.artist,
+        analysis_status=t.analysis_status,
+        thumbnail_url=t.thumbnail_url,
+        beat_count=beat_count,
+        published_at=t.published_at,
+        archived_at=t.archived_at,
         created_at=t.created_at,
     )
 
@@ -617,27 +645,35 @@ async def list_music_tracks(
     offset: int = Query(default=0, ge=0),
 ) -> MusicTrackListResponse:
     """List all music tracks (including unpublished and archived)."""
-    # Defer the JSONB columns that _to_response doesn't surface. recipe_cached
-    # (Gemini audio-analysis recipe for audio-only template creation) and
-    # ai_labels (song-classifier output) are large and unused by the list UI.
-    # beat_timestamps_s / track_config / lyrics_cached / best_sections stay
-    # loaded because _to_response includes them; trimming the response shape
-    # is a separate, frontend-coordinated change.
-    base_query = select(MusicTrack).options(
-        defer(MusicTrack.recipe_cached),
-        defer(MusicTrack.ai_labels),
+    beat_count_expr = func.coalesce(
+        func.jsonb_array_length(MusicTrack.beat_timestamps_s),
+        0,
+    ).label("beat_count")
+    base_query = select(MusicTrack, beat_count_expr).options(
+        load_only(
+            MusicTrack.id,
+            MusicTrack.title,
+            MusicTrack.artist,
+            MusicTrack.analysis_status,
+            MusicTrack.thumbnail_url,
+            MusicTrack.published_at,
+            MusicTrack.archived_at,
+            MusicTrack.created_at,
+        )
     )
 
-    count_result = await db.execute(select(func.count()).select_from(base_query.subquery()))
+    count_result = await db.execute(
+        select(func.count()).select_from(select(MusicTrack.id).subquery())
+    )
     total = count_result.scalar() or 0
 
     result = await db.execute(
         base_query.order_by(MusicTrack.created_at.desc()).offset(offset).limit(limit)
     )
-    tracks = result.scalars().all()
+    rows = result.all()
 
     return MusicTrackListResponse(
-        tracks=[_to_response(t) for t in tracks],
+        tracks=[_to_list_item(t, beat_count) for (t, beat_count) in rows],
         total=total,
     )
 

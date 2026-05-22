@@ -17,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -451,4 +452,16 @@ class AgentRun(Base):
         Index("idx_agent_run_agent_name", "agent_name"),
         Index("idx_agent_run_template_id_created", "template_id", "created_at"),
         Index("idx_agent_run_music_track_id_created", "music_track_id", "created_at"),
+        Index(
+            "idx_agent_run_template_id_created_desc",
+            "template_id",
+            text("created_at DESC"),
+            postgresql_where=text("template_id IS NOT NULL"),
+        ),
+        Index(
+            "idx_agent_run_music_track_id_created_desc",
+            "music_track_id",
+            text("created_at DESC"),
+            postgresql_where=text("music_track_id IS NOT NULL"),
+        ),
     )

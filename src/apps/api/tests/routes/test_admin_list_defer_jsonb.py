@@ -21,12 +21,16 @@ much).
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
-from sqlalchemy import select
+import pytest
+from sqlalchemy import func, inspect, select
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.orm import defer
+from sqlalchemy.orm import defer, load_only
 
 from app.models import Job, MusicTrack, VideoTemplate
+from app.routes.admin_music import _to_list_item, list_music_tracks
 
 
 def _compiled_sql(stmt) -> str:
@@ -129,33 +133,127 @@ def test_template_list_still_selects_recipe_cached_versions():
 
 def _music_list_query():
     """Mirror of admin_music.list_music_tracks's `base_query` construction."""
-    return select(MusicTrack).options(
-        defer(MusicTrack.recipe_cached),
-        defer(MusicTrack.ai_labels),
+    beat_count_expr = func.coalesce(
+        func.jsonb_array_length(MusicTrack.beat_timestamps_s),
+        0,
+    ).label("beat_count")
+    return select(MusicTrack, beat_count_expr).options(
+        load_only(
+            MusicTrack.id,
+            MusicTrack.title,
+            MusicTrack.artist,
+            MusicTrack.analysis_status,
+            MusicTrack.thumbnail_url,
+            MusicTrack.published_at,
+            MusicTrack.archived_at,
+            MusicTrack.created_at,
+        )
     )
 
 
-def test_music_list_defers_unused_jsonb_columns():
+def test_music_list_loads_only_slim_columns_plus_sql_beat_count():
     sql = _compiled_sql(_music_list_query())
-    for col in ("recipe_cached", "ai_labels"):
+    assert "jsonb_array_length(music_tracks.beat_timestamps_s)" in sql
+    for col in (
+        "id",
+        "title",
+        "artist",
+        "analysis_status",
+        "thumbnail_url",
+        "published_at",
+        "archived_at",
+        "created_at",
+    ):
+        assert _selects_column(sql, "music_tracks", col), (
+            f"expected music_tracks.{col} in SELECT, got: {sql}"
+        )
+    for col in ("track_config", "lyrics_cached", "best_sections", "recipe_cached", "ai_labels"):
         assert not _selects_column(sql, "music_tracks", col), (
-            f"expected music_tracks.{col} to be deferred, got: {sql}"
+            f"expected music_tracks.{col} to stay out of the list SELECT, got: {sql}"
         )
 
 
-def test_music_list_still_selects_response_columns():
-    """_to_response surfaces these on every list row; deferring any of them
-    would turn the list into N+1 lazy loads."""
-    sql = _compiled_sql(_music_list_query())
+def test_music_list_item_does_not_touch_heavy_columns():
+    track = MusicTrack(
+        id="track-1",
+        title="Track",
+        artist="Artist",
+        analysis_status="ready",
+        thumbnail_url=None,
+        published_at=None,
+        archived_at=None,
+        created_at=datetime.now(UTC),
+    )
     for col in (
         "beat_timestamps_s",
         "track_config",
         "lyrics_cached",
         "best_sections",
+        "recipe_cached",
+        "ai_labels",
     ):
-        assert _selects_column(sql, "music_tracks", col), (
-            f"expected music_tracks.{col} in SELECT, got: {sql}"
-        )
+        assert col in inspect(track).unloaded
+
+
+@pytest.mark.asyncio
+async def test_music_list_endpoint_returns_exact_slim_keys_and_sql_beat_count():
+    track = MusicTrack(
+        id="track-1",
+        title="Track",
+        artist="Artist",
+        analysis_status="ready",
+        thumbnail_url="https://example.com/thumb.jpg",
+        published_at=None,
+        archived_at=None,
+        created_at=datetime.now(UTC),
+    )
+    count_result = MagicMock()
+    count_result.scalar.return_value = 1
+    rows_result = MagicMock()
+    rows_result.all.return_value = [(track, 4)]
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[count_result, rows_result])
+
+    response = await list_music_tracks(db=db, limit=50, offset=0)
+    payload = response.model_dump(mode="json")
+
+    assert payload["total"] == 1
+    assert payload["tracks"][0].keys() == {
+        "id",
+        "title",
+        "artist",
+        "analysis_status",
+        "thumbnail_url",
+        "beat_count",
+        "published_at",
+        "archived_at",
+        "created_at",
+    }
+    assert payload["tracks"][0]["beat_count"] == 4
+
+    item = _to_list_item(track, beat_count=7)
+
+    assert item.model_dump().keys() == {
+        "id",
+        "title",
+        "artist",
+        "analysis_status",
+        "thumbnail_url",
+        "beat_count",
+        "published_at",
+        "archived_at",
+        "created_at",
+    }
+    assert item.beat_count == 7
+    for col in (
+        "beat_timestamps_s",
+        "track_config",
+        "lyrics_cached",
+        "best_sections",
+        "recipe_cached",
+        "ai_labels",
+    ):
+        assert col in inspect(track).unloaded
 
 
 # ── Detail-endpoint regression: a plain select(Model) MUST still load everything ─
@@ -178,5 +276,12 @@ def test_plain_select_template_still_loads_jsonb():
 
 def test_plain_select_music_track_still_loads_jsonb():
     sql = _compiled_sql(select(MusicTrack))
-    for col in ("recipe_cached", "ai_labels"):
+    for col in (
+        "beat_timestamps_s",
+        "track_config",
+        "lyrics_cached",
+        "best_sections",
+        "recipe_cached",
+        "ai_labels",
+    ):
         assert _selects_column(sql, "music_tracks", col), sql

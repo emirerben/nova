@@ -12,7 +12,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { JsonTreeView } from "@/components/JsonTreeView";
-import type { AgentRunPayload } from "@/lib/admin-jobs-api";
+import type { AgentRunPayload, AgentRunSummaryPayload } from "@/lib/admin-jobs-api";
 
 const OUTCOME_BORDER: Record<string, string> = {
   ok: "border-emerald-700",
@@ -30,12 +30,14 @@ export function AgentSection({
   link,
   runs,
   emptyHint,
+  ioMode = "full",
 }: {
   title: string;
   subtitle: string;
   link: { href: string; label: string } | null;
-  runs: AgentRunPayload[];
+  runs: Array<AgentRunPayload | AgentRunSummaryPayload>;
   emptyHint?: string;
+  ioMode?: "full" | "summary";
 }): JSX.Element {
   return (
     <section>
@@ -62,7 +64,7 @@ export function AgentSection({
       ) : (
         <div className="space-y-3">
           {runs.map((run) => (
-            <AgentRunPanel key={run.id} run={run} />
+            <AgentRunPanel key={run.id} run={run} ioMode={ioMode} />
           ))}
         </div>
       )}
@@ -70,39 +72,67 @@ export function AgentSection({
   );
 }
 
-function AgentRunPanel({ run }: { run: AgentRunPayload }): JSX.Element {
+function AgentRunPanel({
+  run,
+  ioMode,
+}: {
+  run: AgentRunPayload | AgentRunSummaryPayload;
+  ioMode: "full" | "summary";
+}): JSX.Element {
   const [open, setOpen] = useState(false);
   const border = OUTCOME_BORDER[run.outcome] ?? "border-zinc-700";
   const failure = !run.outcome.startsWith("ok");
+  const canExpand = ioMode === "full";
+  const headerClassName =
+    "w-full text-left px-4 py-3 flex flex-wrap items-baseline gap-x-4 gap-y-1";
+  const contents = (
+    <>
+      <span className="text-zinc-500 text-xs">
+        {canExpand ? (open ? "▾" : "▸") : "·"}
+      </span>
+      <span className="text-sm font-medium text-white">{run.agent_name}</span>
+      {run.segment_idx !== null && (
+        <span className="text-xs text-zinc-500">[clip {run.segment_idx}]</span>
+      )}
+      <span
+        className={`text-xs px-2 py-0.5 rounded ${
+          failure ? "bg-red-900/60 text-red-200" : "bg-emerald-900/60 text-emerald-200"
+        }`}
+      >
+        {run.outcome}
+      </span>
+      <span className="text-xs text-zinc-500">
+        {run.model} · v{run.prompt_version}
+      </span>
+      {!canExpand && (
+        <span
+          className="text-[10px] uppercase tracking-wider text-zinc-500"
+          title="Input, output, and raw LLM text are not loaded for context rows."
+        >
+          I/O not loaded
+        </span>
+      )}
+      <span className="ml-auto text-xs text-zinc-500">
+        {run.latency_ms ?? "—"} ms · {run.tokens_in ?? 0}↓ / {run.tokens_out ?? 0}↑ ·
+        ${run.cost_usd?.toFixed(4) ?? "0.0000"} · attempts {run.attempts}
+      </span>
+    </>
+  );
 
   return (
     <div className={`rounded border ${border} bg-zinc-950`}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="w-full text-left px-4 py-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 hover:bg-zinc-900/60"
-      >
-        <span className="text-zinc-500 text-xs">{open ? "▾" : "▸"}</span>
-        <span className="text-sm font-medium text-white">{run.agent_name}</span>
-        {run.segment_idx !== null && (
-          <span className="text-xs text-zinc-500">[clip {run.segment_idx}]</span>
-        )}
-        <span
-          className={`text-xs px-2 py-0.5 rounded ${
-            failure ? "bg-red-900/60 text-red-200" : "bg-emerald-900/60 text-emerald-200"
-          }`}
+      {canExpand ? (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className={`${headerClassName} hover:bg-zinc-900/60`}
         >
-          {run.outcome}
-        </span>
-        <span className="text-xs text-zinc-500">
-          {run.model} · v{run.prompt_version}
-        </span>
-        <span className="ml-auto text-xs text-zinc-500">
-          {run.latency_ms ?? "—"} ms · {run.tokens_in ?? 0}↓ / {run.tokens_out ?? 0}↑ ·
-          ${run.cost_usd?.toFixed(4) ?? "0.0000"} · attempts {run.attempts}
-        </span>
-      </button>
-      {open && (
+          {contents}
+        </button>
+      ) : (
+        <div className={headerClassName}>{contents}</div>
+      )}
+      {canExpand && open && (
         <div className="border-t border-zinc-800 px-4 py-3 space-y-4 text-xs">
           {run.error_message && (
             <Section title="Error">
@@ -110,15 +140,15 @@ function AgentRunPanel({ run }: { run: AgentRunPayload }): JSX.Element {
             </Section>
           )}
           <Section title="Input">
-            <JsonTreeView value={run.input_json} />
+            <JsonTreeView value={(run as AgentRunPayload).input_json} />
           </Section>
           <Section title="Output (parsed)">
-            <JsonTreeView value={run.output_json} />
+            <JsonTreeView value={(run as AgentRunPayload).output_json} />
           </Section>
-          {run.raw_text && (
+          {(run as AgentRunPayload).raw_text && (
             <Section title="Raw LLM response">
               <pre className="whitespace-pre-wrap break-all text-amber-200/80 max-h-96 overflow-auto rounded bg-black/40 p-3">
-                {run.raw_text}
+                {(run as AgentRunPayload).raw_text}
               </pre>
             </Section>
           )}
