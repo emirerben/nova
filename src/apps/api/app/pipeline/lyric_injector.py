@@ -462,6 +462,25 @@ def _inject_line(
     """
     base = _common_overlay_fields(cfg)
     base.setdefault("font_family", _LINE_DEFAULT_FONT_FAMILY)
+    # Default lyric font size sits between "small" (36) and "medium" (72). The
+    # libass LyricLine Style ships with Fontsize=90 — long lyrics at that size
+    # render past the 1080px frame edge because the lyric-line dialogue uses
+    # \q2 (no auto-wrap). 56px gives single-row fit for most lyrics while
+    # still looking like a real lyric video, not a subtitle. The wrap+shrink
+    # helper in text_overlay.py is the safety net for anything longer.
+    #
+    # We can't use setdefault on `base` because _common_overlay_fields does
+    # not read `text_size_px` / `position_y_frac` from cfg — base never holds
+    # the caller's override, so setdefault would clobber it. Read cfg here.
+    base["text_size_px"] = int(cfg["text_size_px"]) if cfg.get("text_size_px") is not None else 56
+    # Default vertical position clears the social-UI safe area at the bottom
+    # of TikTok/Reels (~y=1640 on 1920). 0.85 (the "bottom" keyword) put the
+    # baseline at 1632 — fine for one line, but a 2-line wrap dropped the
+    # second line under the platform controls. 0.80 lifts the block enough
+    # that two wrapped lines still sit above the safe boundary.
+    base["position_y_frac"] = (
+        float(cfg["position_y_frac"]) if cfg.get("position_y_frac") is not None else 0.80
+    )
     pre_roll = float(cfg.get("pre_roll_s", _LINE_PRE_ROLL_S))
     post_dwell = float(cfg.get("post_dwell_s", _LINE_POST_DWELL_S))
     fade_in_ms = max(0.0, float(cfg.get("fade_in_ms", _LINE_FADE_IN_MS)))

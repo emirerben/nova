@@ -303,6 +303,16 @@ FONT_CYCLE_SETTLE_RATIO = 0.30
 MAX_FONT_CYCLE_FRAMES = 100
 OVERLAY_FONT_SIZE = 90
 
+# Lyric-line auto-fit. The LyricLine ASS Style hardcodes Fontsize=90 in
+# `_build_ass_header`; we mirror it here so the wrap+shrink helper knows what
+# size libass would otherwise draw. The 24px floor mirrors Skia's
+# `_shrink_to_fit` MIN_FONT_SIZE so a stupendously long line still renders
+# (small but readable) instead of hard-failing.
+_LYRIC_LINE_STYLE_FONT_SIZE = 90
+_LYRIC_LINE_MIN_FONT_PX = 24
+_LYRIC_LINE_SHRINK_RATIO = 0.85
+_LYRIC_LINE_SHRINK_MAX_ITERS = 6
+
 
 def _build_cycle_contrast_names() -> list[str]:
     """Get font names with cycle_role='contrast' from the registry."""
@@ -465,6 +475,11 @@ def generate_animated_overlay_ass(
                 # back to the function defaults for any other call site.
                 fade_in_ms=_overlay_int(overlay, "fade_in_ms", 150),
                 fade_out_ms=_overlay_int(overlay, "fade_out_ms", 250),
+                # `lyric-line` effect only — px font-size override that the
+                # wrap+shrink helper uses as its starting base. Without this
+                # the helper starts from the Style's Fontsize=90 and never
+                # honours the injector's narrower default.
+                text_size_px=overlay.get("text_size_px"),
             )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
@@ -748,6 +763,47 @@ def _pre_wrap_for_scale_animation(text: str, font_family: str | None) -> str:
     return "\\N".join(lines)
 
 
+def _wrap_and_shrink_for_lyric_line(
+    text: str,
+    font_family: str | None,
+    base_size_px: int,
+) -> tuple[str, int]:
+    """Wrap with `\\N` at word boundaries + iteratively shrink the font so every
+    line fits in `CANVAS_W * _TEXT_MAX_LINE_W` (= 972px on the 1080-wide canvas).
+
+    Mirrors `text_overlay_skia._shrink_to_fit` so the libass `lyric-line` path
+    has the same fit-to-screen guarantee as the Skia renderer. Returns
+    `(wrapped_text_with_N_breaks, final_px_size)`. The caller emits `\\fs<px>`
+    inside the override block when `final_px_size != _LYRIC_LINE_STYLE_FONT_SIZE`.
+
+    Falls back to `(text, base_size_px)` when the font can't be resolved — the
+    line still renders, just without measurement-driven layout (the same
+    fail-soft contract as `_pre_wrap_for_scale_animation`).
+    """
+    if not text:
+        return text, base_size_px
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    family = font_family or "Playfair Display"
+    max_width = int(CANVAS_W * _TEXT_MAX_LINE_W)
+    dummy = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(dummy)
+
+    size = max(_LYRIC_LINE_MIN_FONT_PX, int(base_size_px))
+    lines: list[str] = [text]
+    for _ in range(_LYRIC_LINE_SHRINK_MAX_ITERS + 1):
+        font = _resolve_font_family(family, size)
+        if font is None:
+            return text, base_size_px
+        lines = _wrap_text_to_lines(text, font, max_width, draw)
+        widest = max((draw.textlength(ln, font=font) for ln in lines), default=0)
+        if widest <= max_width or size <= _LYRIC_LINE_MIN_FONT_PX:
+            break
+        size = max(_LYRIC_LINE_MIN_FONT_PX, int(size * _LYRIC_LINE_SHRINK_RATIO))
+
+    return "\\N".join(lines), size
+
+
 def _emit_lyric_line_alpha_tags(
     section_start_s: float,
     section_end_s: float,
@@ -802,6 +858,12 @@ def _write_animated_ass(
     # for effect-specific parameters in this function.
     fade_in_ms: int = 150,
     fade_out_ms: int = 250,
+    # Lyric-line only: pixel font size override. When set, the dialogue emits
+    # `\fs<px>` to override the LyricLine Style's hardcoded Fontsize=90. The
+    # wrap+shrink helper then further reduces this size if even the wrapped
+    # text would overflow the 90%-canvas safe width. None means "use the
+    # Style's Fontsize as-is, and only shrink if needed."
+    text_size_px: int | None = None,
 ) -> None:
     """Write an ASS file with animation tags for the given effect.
 
@@ -969,8 +1031,19 @@ def _write_animated_ass(
             bgr = _hex_to_ass_bgr(text_color)
             color_tag = f"\\1c&H{bgr}&"
         alpha_tags = _emit_lyric_line_alpha_tags(start_s, end_s, fade_in_ms, fade_out_ms)
-        inline = alpha_tags[:-1] + pos_or_align + r"\q2" + outline_tag + color_tag + "}"
-        dialogue_text = f"{inline}{text}"
+
+        # Wrap + shrink to keep lyrics inside the 90%-canvas safe width.
+        # libass uses \q2 below (explicit \N breaks only), so we MUST insert
+        # \N ourselves — otherwise long lines render as a single row that
+        # overflows the 1080px frame. Shrinking the font via \fs is the
+        # second line of defence when even the wrapped longest line is wider
+        # than the safe budget.
+        base_size = int(text_size_px) if text_size_px else _LYRIC_LINE_STYLE_FONT_SIZE
+        wrapped_text, fit_size = _wrap_and_shrink_for_lyric_line(text, font_family, base_size)
+        fs_tag = f"\\fs{fit_size}" if fit_size != _LYRIC_LINE_STYLE_FONT_SIZE else ""
+
+        inline = alpha_tags[:-1] + pos_or_align + r"\q2" + fs_tag + outline_tag + color_tag + "}"
+        dialogue_text = f"{inline}{wrapped_text}"
 
     elif effect == "bounce":
         # Squash-and-stretch: 100 → 125 (stretch) → 90 (squash) → 100 (settle).
