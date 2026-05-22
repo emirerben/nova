@@ -838,6 +838,7 @@ def _classified_phrases_to_output(
         "empty_group": 0,
         "single_word_overflow": 0,
         "line_overflow": 0,
+        "cumulative_overlap_suppressed": 0,
     }
     overlays: list[TemplateTextOverlay] = []
 
@@ -851,6 +852,19 @@ def _classified_phrases_to_output(
     for lg in line_groups:
         grouped_indices.update(lg.phrase_indices)
 
+    # Track (y_anchor, time_start, time_end) regions covered by emitted
+    # cumulative overlays. The ungrouped passthrough below uses this to
+    # suppress singleton phrases that overlap in time + y with a cumulative
+    # group — those singletons are visually redundant (the cumulative line
+    # already occupies that vertical band at that time) and previously
+    # rendered on top of the cumulative reveal, causing the "there clashes
+    # with 'The work to get'" pattern on template 89cde014. Y tolerance
+    # 0.10 (~192 px on a 1920-tall canvas) covers ~1.5 lines at 120 px so
+    # an ungrouped phrase rendered slightly below the cumulative anchor
+    # still gets suppressed.
+    cumulative_coverage: list[tuple[float, float, float]] = []  # (y, start_s, end_s)
+    _CUMULATIVE_Y_TOLERANCE = 0.10
+
     for lg in line_groups:
         cum_overlays = _emit_cumulative_line_overlays(
             lg,
@@ -859,6 +873,13 @@ def _classified_phrases_to_output(
             drops=drops,
         )
         overlays.extend(cum_overlays)
+        # Record one coverage tuple per LineGroup. Use lg.line_anchor_y_frac
+        # as the y, and the union span of the emitted overlays as the time
+        # window. Empty emission (validation failures) records nothing.
+        if cum_overlays:
+            cov_start = min(ov.start_s for ov in cum_overlays)
+            cov_end = max(ov.end_s for ov in cum_overlays)
+            cumulative_coverage.append((lg.line_anchor_y_frac, cov_start, cov_end))
 
     # ── Per-phrase passthrough (ungrouped only) ────────────────────────────
     # Sort classified phrases by start_t_s so we can extend each phrase's
@@ -883,6 +904,32 @@ def _classified_phrases_to_output(
 
     for i, cp in enumerate(classified_sorted):
         phrase = cp.phrase
+        # Suppress singletons that overlap a cumulative group in y + time.
+        # Without this, a phrase like "there" at y=0.44 / 5.5-6.17s renders
+        # on top of the "The work to get" cumulative reveal at y=0.44 /
+        # 5.26-5.80s, producing the visual clash reported on template
+        # 89cde014. The cumulative reveal is canonical; the singleton is
+        # redundant for that band of screen at that time.
+        if cumulative_coverage:
+            y_center = (phrase.aabb[1] + phrase.aabb[3]) / 2.0
+            p_start = float(phrase.start_t_s)
+            p_end = float(max(phrase.end_t_s, p_start + 0.01))
+            overlaps_cumulative = any(
+                abs(y_center - cov_y) <= _CUMULATIVE_Y_TOLERANCE
+                and p_start < cov_end
+                and p_end > cov_start
+                for cov_y, cov_start, cov_end in cumulative_coverage
+            )
+            if overlaps_cumulative:
+                log.info(
+                    "full_pipeline_singleton_suppressed_by_cumulative",
+                    phrase_index=i,
+                    sample_text=(phrase.sample_text or "")[:40],
+                    y_norm=y_center,
+                    phrase_window=(p_start, p_end),
+                )
+                drops["cumulative_overlap_suppressed"] += 1
+                continue
         normalized_text = _normalize_overlay_text(phrase.sample_text)
         if not normalized_text:
             log.warning(

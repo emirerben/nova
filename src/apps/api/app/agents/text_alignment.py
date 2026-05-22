@@ -265,6 +265,39 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
                     continue
                 last_end_by_text[key] = phrase.end_t_s
 
+        # ── 3c. Atomized-mode single-word defense ────────────────────────────
+        # Stage D atomized phrases carry exactly one OCR word per phrase. The
+        # prompt directive at runtime (`mode_directive`) explicitly says
+        # "NEVER concatenate multiple transcript words into a single output
+        # line" — but the LLM violates it, producing strings like "luck just
+        # is a" for an OCR phrase that was just ["luck"]. The downstream
+        # `_is_atomized` check (line_grouping.py) then rejects the phrase as
+        # non-atomized, so it falls out of cumulative-reveal grouping and
+        # emits as a multi-word singleton overlay — visually a different
+        # shape from the surrounding cumulative reveals, and often clashing
+        # with neighbours at similar y_norm.
+        #
+        # Revert any multi-word output for an atomized input back to the OCR
+        # text, which goes through the same single-word fallback path used
+        # when the LLM doesn't return an entry at all. Evidence: prod
+        # template 89cde014 reanalyze (2026-05-22 18:19): phrases #12-#18
+        # emerged as singletons because Stage E expanded single-word OCR
+        # ("luck", "just", "combination", "and", "good", "timing", "allow",
+        # "diminish", ...) into multi-word strings.
+        if input.atomize_mode:
+            multi_word_violations: list[tuple[int, list[str]]] = []
+            for original_idx, lines in list(corrected_lines_by_index.items()):
+                if any(len(ln.split()) > 1 for ln in lines):
+                    multi_word_violations.append((original_idx, lines))
+                    del corrected_lines_by_index[original_idx]
+            if multi_word_violations:
+                log.info(
+                    "text_alignment_atomized_multi_word_revert",
+                    count=len(multi_word_violations),
+                    sample=[(idx, lines[0][:40]) for idx, lines in multi_word_violations[:5]],
+                    template_id=input.template_id,
+                )
+
         # ── 4. Rebuild the Phrase list with corrected lines ───────────────────
         kept: list[Phrase] = []
         dropped = 0

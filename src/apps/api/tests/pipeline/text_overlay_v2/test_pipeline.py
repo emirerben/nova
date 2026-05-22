@@ -813,3 +813,153 @@ def test_stage_g_no_word_is_lost_in_line_split():
         for w in o.sample_text.split():
             all_words_in_overlays.add(w)
     assert all_words_in_overlays == set(words)
+
+
+def test_stage_g_suppresses_singleton_overlapping_cumulative():
+    """A singleton phrase that overlaps a cumulative LineGroup in time AND y
+    gets suppressed — the cumulative reveal is canonical for that band of
+    screen at that time, and rendering the singleton on top causes a visual
+    clash.
+
+    Reproduces the prod 89cde014 shape: "The work to get" cumulative at
+    y≈0.44 / 5.26-5.80s + "there" singleton at y≈0.44 / 5.50-6.17s.
+    Pre-fix both rendered simultaneously, "there" appearing on top of the
+    cumulative; post-fix the singleton is dropped.
+    """
+    from app.agents._schemas.text_classification import ClassifiedPhrase
+    from app.agents._schemas.text_overlay_pipeline import Phrase
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    cumulative = [
+        _make_atomized_classified("The", 4.547, x_min=0.05),
+        _make_atomized_classified("work", 4.967, x_min=0.05),
+        _make_atomized_classified("to", 5.257, x_min=0.05),
+        _make_atomized_classified("get", 5.647, x_min=0.05),
+    ]
+    # The orphan singleton: at the same y, overlapping in time.
+    orphan = ClassifiedPhrase(
+        phrase=Phrase(
+            lines=["there"],
+            start_t_s=5.5,
+            end_t_s=6.167,
+            aabb=(0.4, 0.7, 0.5, 0.85),
+            mean_confidence=0.9,
+        ),
+        effect="none",
+        role="reaction",
+        size_class="medium",
+        font_color_hex="#FFFFFF",
+    )
+    classified = [*cumulative, orphan]  # orphan at index 4 — NOT in lg
+    lg = LineGroup(
+        phrase_indices=[0, 1, 2, 3],
+        line_end_s=5.8,
+        line_anchor_x_frac=0.05,
+        line_anchor_y_frac=0.775,  # midpoint of aabb y=(0.7, 0.85)
+        line_height_frac=0.15,
+        transcript_word_indices=[0, 1, 2, 3],
+        word_start_s_list=[4.547, 4.967, 5.257, 5.647],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 10.0)], line_groups=[lg]
+    )
+    texts = [o.sample_text for o in out.overlays]
+    assert "there" not in texts, (
+        "orphan singleton overlapping the cumulative group in y+time must "
+        f"be suppressed; got overlays: {texts}"
+    )
+    # The cumulative stages must still all be there.
+    assert any("The work to get" in t for t in texts)
+
+
+def test_stage_g_keeps_singleton_outside_cumulative_y_band():
+    """A singleton at a DIFFERENT y from the cumulative group survives.
+    Suppression is scoped: same y_norm band + overlapping time triggers it,
+    a singleton at a remote y doesn't.
+    """
+    from app.agents._schemas.text_classification import ClassifiedPhrase
+    from app.agents._schemas.text_overlay_pipeline import Phrase
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    cumulative = [
+        _make_atomized_classified("good", 0.0, x_min=0.05),
+        _make_atomized_classified("morning", 1.0, x_min=0.05),
+    ]
+    # Singleton at the top of the screen (y≈0.15) while cumulative is at
+    # the bottom (aabb y=0.7-0.85, midpoint 0.775). Δy = 0.62, well beyond
+    # the 0.10 tolerance.
+    far_singleton = ClassifiedPhrase(
+        phrase=Phrase(
+            lines=["heads-up"],
+            start_t_s=0.5,
+            end_t_s=1.5,
+            aabb=(0.1, 0.1, 0.3, 0.2),
+            mean_confidence=0.9,
+        ),
+        effect="none",
+        role="reaction",
+        size_class="medium",
+        font_color_hex="#FFFFFF",
+    )
+    classified = [*cumulative, far_singleton]
+    lg = LineGroup(
+        phrase_indices=[0, 1],
+        line_end_s=2.0,
+        line_anchor_x_frac=0.05,
+        line_anchor_y_frac=0.775,
+        line_height_frac=0.15,
+        transcript_word_indices=[0, 1],
+        word_start_s_list=[0.0, 1.0],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 5.0)], line_groups=[lg]
+    )
+    texts = [o.sample_text for o in out.overlays]
+    assert "heads-up" in texts, (
+        "singleton at a remote y from the cumulative group must survive — "
+        f"suppression should be y-scoped; got overlays: {texts}"
+    )
+
+
+def test_stage_g_keeps_singleton_outside_cumulative_time_window():
+    """A singleton at the SAME y but OUTSIDE the cumulative group's time
+    window survives. The suppression check requires BOTH y proximity AND
+    time overlap.
+    """
+    from app.agents._schemas.text_classification import ClassifiedPhrase
+    from app.agents._schemas.text_overlay_pipeline import Phrase
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    cumulative = [
+        _make_atomized_classified("good", 0.0, x_min=0.05),
+        _make_atomized_classified("morning", 1.0, x_min=0.05),
+    ]
+    # Singleton at the same y but starting after the cumulative emit window.
+    later = ClassifiedPhrase(
+        phrase=Phrase(
+            lines=["coffee"],
+            start_t_s=5.0,
+            end_t_s=6.0,
+            aabb=(0.1, 0.7, 0.3, 0.85),
+            mean_confidence=0.9,
+        ),
+        effect="none",
+        role="reaction",
+        size_class="medium",
+        font_color_hex="#FFFFFF",
+    )
+    classified = [*cumulative, later]
+    lg = LineGroup(
+        phrase_indices=[0, 1],
+        line_end_s=2.0,
+        line_anchor_x_frac=0.05,
+        line_anchor_y_frac=0.775,
+        line_height_frac=0.15,
+        transcript_word_indices=[0, 1],
+        word_start_s_list=[0.0, 1.0],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 10.0)], line_groups=[lg]
+    )
+    texts = [o.sample_text for o in out.overlays]
+    assert "coffee" in texts
