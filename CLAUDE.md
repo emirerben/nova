@@ -64,6 +64,23 @@ Production uses repo-root `Dockerfile` (Python 3.11 + FFmpeg/libheif/libmagic) d
 - Frontend typecheck: `cd src/apps/web && npx tsc --noEmit`
 - Frontend tests: `cd src/apps/web && npm test` (Jest)
 
+## Admin API access (for automation / Claude Code)
+Use `scripts/admin.py` instead of curling `/admin/*` with a raw token — the token stays in `.env`, never in commands or transcripts.
+
+```bash
+python scripts/admin.py GET  /admin/templates                                 # local
+python scripts/admin.py GET  templates/abc123/debug                           # /admin/ auto-prefixed
+python scripts/admin.py POST templates/abc/reanalyze-agentic --json '{"use_layer2": true}'
+python scripts/admin.py --prod GET /admin/templates                           # Fly prod
+python scripts/admin.py --prod POST templates/abc/publish                     # prompts y/N
+```
+
+- Local uses `ADMIN_API_KEY`, `--prod` uses `ADMIN_PROD_API_KEY` (both in repo-root `.env`; example slots in `.env.example`).
+- Any `POST/PUT/PATCH/DELETE` against `--prod` prompts `Proceed? [y/N]` — pass `--yes` to skip in scripts you've reviewed.
+- `--dry-run` prints the resolved request without sending. `-v` shows headers (token always redacted).
+- Exits 0 on 2xx, 1 otherwise — safe in shell pipelines.
+- Stdlib-only (no `requests`/`dotenv`) so it runs with any Python 3 outside the API venv.
+
 ## Domain context
 - Target output: 9:16 aspect ratio, sub-60s, H.264/AAC, 1080x1920
 - Hook window: first 2-3 seconds must create a question in the viewer's mind
