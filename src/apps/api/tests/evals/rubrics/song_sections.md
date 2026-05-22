@@ -2,7 +2,7 @@
 
 Score each output on these dimensions, **integer 1-5**:
 
-1. **section_edit_worthiness** — Would a human editor actually cut to these sections? Are they hooks, drops, choruses, or memorable musical events — not arbitrary 30-second windows?
+1. **section_edit_worthiness** — Would a human editor actually cut to these short-form sections? Are they hooks, drops, choruses, or memorable musical events — not arbitrary windows?
    - 5: every section is a moment an editor would reach for first (the obvious chorus, the climactic drop, the standout bridge)
    - 3: rank 1 is a strong choice; ranks 2/3 are usable but less obvious
    - 1: picks feel mechanical (every-30-seconds-from-the-start) or land on dead air (filler, fade-out, intro silence)

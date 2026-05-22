@@ -26,9 +26,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
 from app.tasks.auto_music_orchestrate import (
     _load_matcher_candidates,
     _run_auto_music_job,
+    _track_config_for_best_section,
+    _track_slot_count,
     orchestrate_auto_music_job,
 )
 
@@ -59,8 +62,11 @@ def _make_track(
     track_id: str = "tr-001",
     *,
     label_version: str = "2026-05-15",
+    section_version: str = CURRENT_SECTION_VERSION,
+    best_sections: list[dict] | None = None,
     title: str = "Test Song",
     slot_count_hint: int = 8,
+    slot_every_n_beats: int = 4,
 ) -> MagicMock:
     """Build a MagicMock that quacks like a MusicTrack with current labels."""
     t = MagicMock()
@@ -72,7 +78,7 @@ def _make_track(
     t.track_config = {
         "best_start_s": 0.0,
         "best_end_s": 32.0,
-        "slot_every_n_beats": 4,
+        "slot_every_n_beats": slot_every_n_beats,
         "required_clips_max": slot_count_hint,
     }
     t.ai_labels = {
@@ -95,6 +101,18 @@ def _make_track(
     t.archived_at = None
     t.analysis_status = "ready"
     t.recipe_cached = {"slots": [{"position": i + 1} for i in range(slot_count_hint)]}
+    t.best_sections = best_sections if best_sections is not None else [
+        {
+            "rank": 1,
+            "start_s": 8.0,
+            "end_s": 22.0,
+            "label": "chorus",
+            "energy": "high",
+            "suggested_use": "hook",
+            "rationale": "short-form hook",
+        }
+    ]
+    t.section_version = section_version
     return t
 
 
@@ -546,8 +564,8 @@ def test_load_matcher_candidates_drops_tracks_with_too_many_slots() -> None:
     4 clips would produce a degenerate recipe. The pre-match filter must
     drop it so the matcher never even sees it.
     """
-    big_track = _make_track(track_id="big", slot_count_hint=24)
-    small_track = _make_track(track_id="small", slot_count_hint=4)
+    big_track = _make_track(track_id="big", slot_count_hint=24, slot_every_n_beats=1)
+    small_track = _make_track(track_id="small", slot_count_hint=4, slot_every_n_beats=8)
 
     mock_session = MagicMock()
     mock_session.__enter__ = lambda s: s
@@ -565,6 +583,75 @@ def test_load_matcher_candidates_drops_tracks_with_too_many_slots() -> None:
         "Track with 24 slots survived pre-match filter against 3 clips — "
         "Critical risk #4 is not mitigated."
     )
+
+
+def test_load_matcher_candidates_requires_current_best_sections_window() -> None:
+    """Auto-music must use only current-version song_sections rows.
+
+    A stale section_version would become invisible after the version bump;
+    a current row with an 8-20s rank-1 section remains selectable and its
+    render config points at that short-form window.
+    """
+    current = _make_track(
+        track_id="current",
+        best_sections=[
+            {
+                "rank": 1,
+                "start_s": 20.0,
+                "end_s": 36.0,
+                "label": "chorus",
+                "energy": "high",
+                "suggested_use": "hook",
+                "rationale": "tight chorus hook",
+            }
+        ],
+    )
+    stale = _make_track(
+        track_id="stale",
+        section_version="2026-05-15",
+        best_sections=[
+            {
+                "rank": 1,
+                "start_s": 20.0,
+                "end_s": 36.0,
+                "label": "chorus",
+                "energy": "high",
+                "suggested_use": "hook",
+                "rationale": "old version hook",
+            }
+        ],
+    )
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = lambda s: s
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalars.return_value.all.return_value = [current, stale]
+    mock_session.execute.return_value = mock_execute_result
+
+    with patch("app.tasks.auto_music_orchestrate._sync_session", return_value=mock_session):
+        out = _load_matcher_candidates(n_clips=4)
+
+    assert [t.id for t in out] == ["current"]
+    cfg = _track_config_for_best_section(out[0])
+    assert cfg["best_start_s"] == 20.0
+    assert cfg["best_end_s"] == 36.0
+    assert 0 < _track_slot_count(out[0]) <= 8
+
+
+def test_track_slot_count_memoizes_generated_current_section_recipe() -> None:
+    """Generating slots for the rank-1 section is cached per candidate pass."""
+    track = _make_track(track_id="memoized")
+    slot_count_cache: dict[str, int] = {}
+
+    with patch(
+        "app.tasks.auto_music_orchestrate.generate_music_recipe",
+        return_value={"shot_count": 2, "slots": [{"position": 1}, {"position": 2}]},
+    ) as mock_generate:
+        assert _track_slot_count(track, slot_count_cache=slot_count_cache) == 2
+        assert _track_slot_count(track, slot_count_cache=slot_count_cache) == 2
+
+    mock_generate.assert_called_once()
 
 
 # ── celery task wrapper: failure is swallowed (never raises) ─────────────────

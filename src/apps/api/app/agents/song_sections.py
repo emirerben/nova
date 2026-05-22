@@ -4,7 +4,7 @@ Producer of ``SongSectionsOutput`` (see
 ``app/agents/_schemas/song_sections.py``). Runs once per track at
 admin-analyze time alongside ``song_classifier``. The matcher (Phase 2)
 and the variant orchestrator (Phase 6) consume ``best_sections`` to pick
-a specific 15-60s window per ranked track instead of the mechanical
+a specific short-form-ready window per ranked track instead of the mechanical
 ``auto_best_section`` window.
 
 Inputs:
@@ -48,8 +48,8 @@ log = structlog.get_logger()
 # Section duration band — TikTok-shape constraint. Sections outside this
 # band get dropped in parse() (not failed: an over-long section is the
 # model's mistake, not a reason to throw away the other valid picks).
-MIN_SECTION_DURATION_S = 15.0
-MAX_SECTION_DURATION_S = 60.0
+MIN_SECTION_DURATION_S = 8.0
+MAX_SECTION_DURATION_S = 20.0
 
 # Float tolerance on the upper bound. Gemini sometimes returns end_s
 # slightly past duration_s due to rounding; 1s leeway avoids
@@ -59,8 +59,8 @@ END_S_TOLERANCE_S = 1.0
 # Two sections overlapping by more than this many seconds → drop the
 # lower-ranked one (= higher rank number) rather than reject the whole
 # response. Phase 6 variant diversity wants sections to be meaningfully
-# distinct, so > 5s of overlap signals the picks are too similar.
-MAX_OVERLAP_S = 5.0
+# distinct, so > 3s of overlap signals the picks are too similar.
+MAX_OVERLAP_S = 3.0
 
 
 class SongSectionsInput(BaseModel):
@@ -273,9 +273,10 @@ class SongSectionsAgent(Agent[SongSectionsInput, SongSectionsOutput]):
         return (
             "\n\nIMPORTANT: Return ONLY the JSON object described above. "
             "`sections` MUST be a list of 1 to 3 entries, ranked 1 (best) "
-            "to N. Each section MUST be 15-60 seconds long. Sections MUST "
-            "NOT overlap by more than 5 seconds. Every categorical field "
-            "MUST use one of the listed enum values verbatim."
+            f"to N. Each section MUST be {MIN_SECTION_DURATION_S:.0f}-"
+            f"{MAX_SECTION_DURATION_S:.0f} seconds long. Sections MUST "
+            f"NOT overlap by more than {MAX_OVERLAP_S:.0f} seconds. Every "
+            "categorical field MUST use one of the listed enum values verbatim."
         )
 
     def refusal_clarification(self) -> str:

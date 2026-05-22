@@ -10,7 +10,13 @@ import pytest
 
 from app.agents._runtime import RefusalError, SchemaError
 from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
-from app.agents.song_sections import SongSectionsAgent, SongSectionsInput
+from app.agents.song_sections import (
+    MAX_OVERLAP_S,
+    MAX_SECTION_DURATION_S,
+    MIN_SECTION_DURATION_S,
+    SongSectionsAgent,
+    SongSectionsInput,
+)
 
 
 def _input(duration_s: float = 180.0) -> SongSectionsInput:
@@ -50,9 +56,9 @@ def test_happy_path_3_sections() -> None:
     raw = json.dumps(
         {
             "sections": [
-                _section(1, 60.0, 90.0, label="chorus"),
-                _section(2, 120.0, 150.0, label="drop", use="climax"),
-                _section(3, 10.0, 30.0, label="hook", energy="medium"),
+                _section(1, 60.0, 78.0, label="chorus"),
+                _section(2, 120.0, 138.0, label="drop", use="climax"),
+                _section(3, 10.0, 28.0, label="hook", energy="medium"),
             ],
             "section_version": CURRENT_SECTION_VERSION,
         }
@@ -66,7 +72,7 @@ def test_happy_path_3_sections() -> None:
 def test_version_clamp_forces_current() -> None:
     raw = json.dumps(
         {
-            "sections": [_section(1, 60.0, 90.0)],
+            "sections": [_section(1, 60.0, 78.0)],
             "section_version": "ancient-version-string",
         }
     )
@@ -78,8 +84,8 @@ def test_bad_enum_label_drops_section() -> None:
     raw = json.dumps(
         {
             "sections": [
-                _section(1, 60.0, 90.0, label="chorus"),
-                _section(2, 120.0, 150.0, label="outropolis"),  # invalid enum
+                _section(1, 60.0, 78.0, label="chorus"),
+                _section(2, 120.0, 138.0, label="outropolis"),  # invalid enum
             ],
             "section_version": CURRENT_SECTION_VERSION,
         }
@@ -93,9 +99,9 @@ def test_four_sections_keeps_top_three_by_rank() -> None:
     raw = json.dumps(
         {
             "sections": [
-                _section(1, 20.0, 40.0),
-                _section(2, 60.0, 80.0),
-                _section(3, 100.0, 120.0),
+                _section(1, 20.0, 38.0),
+                _section(2, 60.0, 78.0),
+                _section(3, 100.0, 118.0),
                 # Fourth — Pydantic max_length=3 would error, but parse
                 # truncates to top-3-by-rank after sorting.
             ]
@@ -103,7 +109,7 @@ def test_four_sections_keeps_top_three_by_rank() -> None:
                 {
                     "rank": 3,
                     "start_s": 140.0,
-                    "end_s": 160.0,
+                    "end_s": 158.0,
                     "label": "bridge",
                     "energy": "medium",
                     "suggested_use": "build",
@@ -119,13 +125,13 @@ def test_four_sections_keeps_top_three_by_rank() -> None:
 
 
 def test_overlapping_sections_drop_lower_rank() -> None:
-    # Rank 2 overlaps rank 1 by 20s (> 5s tolerance) — should be dropped.
+    # Rank 2 overlaps rank 1 by 4s (> 3s tolerance) — should be dropped.
     raw = json.dumps(
         {
             "sections": [
-                _section(1, 60.0, 90.0),
-                _section(2, 70.0, 100.0),  # overlaps rank 1 by 20s
-                _section(3, 140.0, 165.0),  # disjoint
+                _section(1, 60.0, 78.0),
+                _section(2, 74.0, 92.0),  # overlaps rank 1 by 4s
+                _section(3, 140.0, 158.0),  # disjoint
             ],
             "section_version": CURRENT_SECTION_VERSION,
         }
@@ -137,12 +143,12 @@ def test_overlapping_sections_drop_lower_rank() -> None:
 
 
 def test_duration_below_min_drops() -> None:
-    # 10s window — under MIN_SECTION_DURATION_S (15s).
+    # 5s window — under MIN_SECTION_DURATION_S (8s).
     raw = json.dumps(
         {
             "sections": [
-                _section(1, 60.0, 70.0),  # 10s — too short
-                _section(2, 100.0, 120.0),  # 20s — OK
+                _section(1, 60.0, 65.0),  # 5s — too short
+                _section(2, 100.0, 118.0),  # 18s — OK
             ],
             "section_version": CURRENT_SECTION_VERSION,
         }
@@ -156,8 +162,8 @@ def test_duration_above_max_drops() -> None:
     raw = json.dumps(
         {
             "sections": [
-                _section(1, 30.0, 100.0),  # 70s — too long
-                _section(2, 110.0, 130.0),  # OK
+                _section(1, 30.0, 55.0),  # 25s — too long
+                _section(2, 110.0, 128.0),  # OK
             ],
             "section_version": CURRENT_SECTION_VERSION,
         }
@@ -173,7 +179,7 @@ def test_negative_start_drops() -> None:
         {
             "sections": [
                 _section(1, -5.0, 30.0),  # invalid
-                _section(2, 60.0, 90.0),
+                _section(2, 60.0, 78.0),
             ],
             "section_version": CURRENT_SECTION_VERSION,
         }
@@ -188,7 +194,7 @@ def test_end_s_past_duration_drops() -> None:
         {
             "sections": [
                 _section(1, 120.0, 200.0),  # invalid
-                _section(2, 60.0, 90.0),
+                _section(2, 60.0, 78.0),
             ],
             "section_version": CURRENT_SECTION_VERSION,
         }
@@ -201,7 +207,7 @@ def test_end_s_within_float_tolerance_kept() -> None:
     # duration_s=180.0, end_s=180.5 → within 1s tolerance → keep.
     raw = json.dumps(
         {
-            "sections": [_section(1, 130.0, 180.5)],
+            "sections": [_section(1, 160.5, 180.5)],
             "section_version": CURRENT_SECTION_VERSION,
         }
     )
@@ -213,9 +219,9 @@ def test_duplicate_ranks_keep_first() -> None:
     raw = json.dumps(
         {
             "sections": [
-                _section(1, 20.0, 40.0, label="chorus"),
-                _section(1, 100.0, 130.0, label="drop"),  # dup rank
-                _section(2, 60.0, 85.0, label="hook"),
+                _section(1, 20.0, 38.0, label="chorus"),
+                _section(1, 100.0, 118.0, label="drop"),  # dup rank
+                _section(2, 60.0, 78.0, label="hook"),
             ],
             "section_version": CURRENT_SECTION_VERSION,
         }
@@ -227,12 +233,81 @@ def test_duplicate_ranks_keep_first() -> None:
     assert rank_1.label == "chorus"
 
 
-def test_all_sections_invalid_raises_refusal() -> None:
+def test_parse_keeps_section_at_band_boundaries() -> None:
     raw = json.dumps(
         {
             "sections": [
-                _section(1, 60.0, 70.0),  # too short
-                _section(2, 30.0, 110.0),  # too long
+                _section(1, 10.0, 18.0),  # exactly MIN_SECTION_DURATION_S
+                _section(2, 30.0, 50.0),  # exactly MAX_SECTION_DURATION_S
+            ],
+            "section_version": CURRENT_SECTION_VERSION,
+        }
+    )
+    out = _agent().parse(raw, _input())
+    assert [s.end_s - s.start_s for s in out.sections] == [
+        MIN_SECTION_DURATION_S,
+        MAX_SECTION_DURATION_S,
+    ]
+
+
+def test_parse_drops_section_just_over_20s() -> None:
+    raw = json.dumps(
+        {
+            "sections": [
+                _section(1, 10.0, 30.1),
+                _section(2, 50.0, 68.0),
+            ],
+            "section_version": CURRENT_SECTION_VERSION,
+        }
+    )
+    out = _agent().parse(raw, _input())
+    assert [s.rank for s in out.sections] == [2]
+
+
+@pytest.mark.parametrize(
+    ("overlap_s", "expected_ranks"),
+    [
+        (MAX_OVERLAP_S, [1, 2]),
+        (MAX_OVERLAP_S + 0.1, [1]),
+    ],
+)
+def test_parse_overlap_rule(overlap_s: float, expected_ranks: list[int]) -> None:
+    # Rank 1 spans 10.0-28.0. Starting rank 2 at (28.0 - overlap_s)
+    # makes the shared window exactly overlap_s seconds: e.g. overlap_s=3.1
+    # creates a 24.9-28.0 overlap, which is just over the 3s drop threshold.
+    second_start = 28.0 - overlap_s
+    raw = json.dumps(
+        {
+            "sections": [
+                _section(1, 10.0, 28.0),
+                _section(2, second_start, second_start + 18.0),
+            ],
+            "section_version": CURRENT_SECTION_VERSION,
+        }
+    )
+    out = _agent().parse(raw, _input())
+    assert [s.rank for s in out.sections] == expected_ranks
+
+
+def test_render_prompt_substitutes_band() -> None:
+    prompt = _agent().render_prompt(_input())
+    assert f"{MIN_SECTION_DURATION_S:.0f} to {MAX_SECTION_DURATION_S:.0f} seconds" in prompt
+    assert f"{MAX_OVERLAP_S:.0f} seconds" in prompt
+
+
+def test_schema_clarification_uses_constants() -> None:
+    clar = _agent().schema_clarification()
+    assert f"{MIN_SECTION_DURATION_S:.0f}-{MAX_SECTION_DURATION_S:.0f} seconds" in clar
+    assert f"{MAX_OVERLAP_S:.0f} seconds" in clar
+
+
+def test_parse_refuses_when_all_sections_invalid() -> None:
+    raw = json.dumps(
+        {
+            "sections": [
+                _section(1, 10.0, 35.0),  # too long
+                _section(2, 40.0, 65.0),  # too long
+                _section(3, 70.0, 95.0),  # too long
             ],
             "section_version": CURRENT_SECTION_VERSION,
         }

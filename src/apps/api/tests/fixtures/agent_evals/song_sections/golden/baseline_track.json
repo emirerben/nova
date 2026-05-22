@@ -1,6 +1,6 @@
 {
   "agent": "nova.audio.song_sections",
-  "prompt_version": "2026-05-15",
+  "prompt_version": "2026-05-22",
   "input": {
     "file_uri": "files/golden-music-track",
     "file_mime": "audio/mp4",
@@ -11,49 +11,49 @@
       "pacing_style": "fast, anthemic with build-and-release dynamics",
       "subject_niche": "travel highlight reels",
       "slots": [
-        {"start_s": 0.0, "end_s": 8.0, "energy": "low"},
-        {"start_s": 8.0, "end_s": 24.0, "energy": "medium"},
-        {"start_s": 24.0, "end_s": 48.0, "energy": "medium"},
-        {"start_s": 48.0, "end_s": 78.0, "energy": "high"},
-        {"start_s": 78.0, "end_s": 120.0, "energy": "medium"},
-        {"start_s": 120.0, "end_s": 150.0, "energy": "peaks_high"},
-        {"start_s": 150.0, "end_s": 180.0, "energy": "medium"},
-        {"start_s": 180.0, "end_s": 195.0, "energy": "low"}
+        {"position": 1, "target_duration_s": 8.0, "energy": "low"},
+        {"position": 2, "target_duration_s": 16.0, "energy": "medium"},
+        {"position": 3, "target_duration_s": 24.0, "energy": "medium"},
+        {"position": 4, "target_duration_s": 30.0, "energy": "high"},
+        {"position": 5, "target_duration_s": 42.0, "energy": "medium"},
+        {"position": 6, "target_duration_s": 30.0, "energy": "peaks_high"},
+        {"position": 7, "target_duration_s": 30.0, "energy": "medium"},
+        {"position": 8, "target_duration_s": 15.0, "energy": "low"}
       ]
     }
   },
-  "raw_text": "{\"sections\": [{\"rank\": 1, \"start_s\": 48.0, \"end_s\": 78.0, \"label\": \"chorus\", \"energy\": \"peaks_high\", \"suggested_use\": \"climax\", \"rationale\": \"The first chorus lands at 0:48 with the full synth wash and the strongest vocal hook — it is the line viewers will remember.\"}, {\"rank\": 2, \"start_s\": 120.0, \"end_s\": 150.0, \"label\": \"drop\", \"energy\": \"peaks_high\", \"suggested_use\": \"climax\", \"rationale\": \"Second-act drop at 2:00 with a new percussive layer — a meaningfully different climax for variant B.\"}, {\"rank\": 3, \"start_s\": 24.0, \"end_s\": 48.0, \"label\": \"pre_chorus\", \"energy\": \"medium\", \"suggested_use\": \"build\", \"rationale\": \"Pre-chorus build with the bass entrance — strong opener for a hook-first edit that wants anticipation.\"}], \"section_version\": \"2026-05-15\"}",
+  "raw_text": "{\"sections\": [{\"rank\": 1, \"start_s\": 52.0, \"end_s\": 70.0, \"label\": \"chorus\", \"energy\": \"peaks_high\", \"suggested_use\": \"climax\", \"rationale\": \"The first chorus lands at 0:48 with the full synth wash and the strongest vocal hook — this tight center slice is the line viewers will remember.\"}, {\"rank\": 2, \"start_s\": 126.0, \"end_s\": 144.0, \"label\": \"drop\", \"energy\": \"peaks_high\", \"suggested_use\": \"climax\", \"rationale\": \"Second-act drop at 2:00 with a new percussive layer — the tight payoff window gives variant B a meaningfully different climax.\"}, {\"rank\": 3, \"start_s\": 28.0, \"end_s\": 46.0, \"label\": \"pre_chorus\", \"energy\": \"medium\", \"suggested_use\": \"build\", \"rationale\": \"Pre-chorus build with the bass entrance — a short anticipation window for a hook-first edit.\"}], \"section_version\": \"2026-05-22\"}",
   "output": {
     "sections": [
       {
         "rank": 1,
-        "start_s": 48.0,
-        "end_s": 78.0,
+        "start_s": 52.0,
+        "end_s": 70.0,
         "label": "chorus",
         "energy": "peaks_high",
         "suggested_use": "climax",
-        "rationale": "The first chorus lands at 0:48 with the full synth wash and the strongest vocal hook — it is the line viewers will remember."
+        "rationale": "The first chorus lands at 0:48 with the full synth wash and the strongest vocal hook — this tight center slice is the line viewers will remember."
       },
       {
         "rank": 2,
-        "start_s": 120.0,
-        "end_s": 150.0,
+        "start_s": 126.0,
+        "end_s": 144.0,
         "label": "drop",
         "energy": "peaks_high",
         "suggested_use": "climax",
-        "rationale": "Second-act drop at 2:00 with a new percussive layer — a meaningfully different climax for variant B."
+        "rationale": "Second-act drop at 2:00 with a new percussive layer — the tight payoff window gives variant B a meaningfully different climax."
       },
       {
         "rank": 3,
-        "start_s": 24.0,
-        "end_s": 48.0,
+        "start_s": 28.0,
+        "end_s": 46.0,
         "label": "pre_chorus",
         "energy": "medium",
         "suggested_use": "build",
-        "rationale": "Pre-chorus build with the bass entrance — strong opener for a hook-first edit that wants anticipation."
+        "rationale": "Pre-chorus build with the bass entrance — a short anticipation window for a hook-first edit."
       }
     ],
-    "section_version": "2026-05-15"
+    "section_version": "2026-05-22"
   },
   "meta": {
     "source": "hand_authored_golden",

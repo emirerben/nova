@@ -6,6 +6,10 @@ DB and GCS are mocked. Celery tasks are called directly (not via .delay()).
 import uuid
 from unittest.mock import MagicMock, patch
 
+import pytest
+from celery.exceptions import Retry
+
+from app.agents._runtime import RefusalError
 from app.tasks.music_orchestrate import (
     analyze_music_track_task,
     orchestrate_music_job,
@@ -29,6 +33,8 @@ def _make_mock_track(
     track.audio_gcs_path = audio_gcs_path
     track.duration_s = duration_s
     track.track_config = track_config or {}
+    track.best_sections = None
+    track.section_version = None
     return track
 
 
@@ -115,6 +121,66 @@ def test_analyze_music_track_task_zero_beats_fails_track() -> None:
 
     mock_fail.assert_called_once()
     assert "0 slots" in mock_fail.call_args[0][1]
+
+
+def test_analyze_music_track_retries_when_song_sections_all_invalid() -> None:
+    """All-invalid song_sections output is retried before permanent failure.
+
+    LLM constraint misses can be transient. The task should use Celery retry
+    first, not immediately mark the track failed on the first refusal.
+    """
+    mock_track = _make_mock_track(track_config={"slot_every_n_beats": 2})
+    mock_track.best_sections = [{"rank": 1, "start_s": 60.0, "end_s": 78.0}]
+    mock_track.section_version = "2026-05-15"
+    mock_beats = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+    mock_gemini_recipe = {
+        "shot_count": 2,
+        "total_duration_s": 5.0,
+        "slots": [
+            {"position": 1, "target_duration_s": 2.5, "energy": 7.0},
+            {"position": 2, "target_duration_s": 2.5, "energy": 5.0},
+        ],
+        "beat_timestamps_s": mock_beats,
+    }
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = lambda s: s
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = mock_track
+    mock_file_ref = MagicMock()
+
+    with (
+        patch("app.tasks.music_orchestrate._sync_session", return_value=mock_session),
+        patch("app.tasks.music_orchestrate.download_to_file"),
+        patch("app.tasks.music_orchestrate._detect_music_beats", return_value=mock_beats),
+        patch("app.tasks.music_orchestrate.auto_best_section", return_value=(0.0, 5.0)),
+        patch("app.tasks.music_orchestrate.gemini_upload_and_wait", return_value=mock_file_ref),
+        patch(
+            "app.tasks.music_orchestrate.analyze_audio_template",
+            return_value=mock_gemini_recipe,
+        ),
+        patch("app.tasks.music_orchestrate._run_song_classifier", return_value=None),
+        patch(
+            "app.tasks.music_orchestrate._run_song_sections",
+            side_effect=RefusalError("song_sections: no valid sections after filter"),
+        ),
+        patch("app.tasks.music_orchestrate._run_lyrics_extraction", return_value=None),
+        patch("app.tasks.music_orchestrate._fail_track") as mock_fail_track,
+        patch.object(analyze_music_track_task, "retry", side_effect=Retry("retry")) as mock_retry,
+        patch("tempfile.TemporaryDirectory") as mock_td,
+    ):
+        mock_td.return_value.__enter__ = lambda s: "/tmp/fake"
+        mock_td.return_value.__exit__ = MagicMock(return_value=False)
+
+        with pytest.raises(Retry):
+            analyze_music_track_task(TRACK_ID)
+
+    mock_retry.assert_called_once()
+    assert isinstance(mock_retry.call_args.kwargs["exc"], RefusalError)
+    mock_fail_track.assert_not_called()
+    assert mock_track.analysis_status == "analyzing"
+    assert mock_track.best_sections == [{"rank": 1, "start_s": 60.0, "end_s": 78.0}]
+    assert mock_track.section_version == "2026-05-15"
 
 
 # ── orchestrate_music_job ─────────────────────────────────────────────────────
