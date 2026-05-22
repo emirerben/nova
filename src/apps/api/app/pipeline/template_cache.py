@@ -129,17 +129,43 @@ TEXT_OVERLAY_VERSION_V1 = "v1"
 #     re-bumped, so reanalyze cache-hit on the v0.4.34.0 namespace and served
 #     the multi-word-stuffed recipes from that run unchanged.
 #   2026-05-20 (v2-2026-05-19-atomize → v2-2026-05-20-xphrase-dedup): Stage D
-#     `_dedup_overlapping_atomized_phrases` collapses same-text atomized
+#     `dedup_overlapping_atomized_phrases` collapses same-text atomized
 #     phrases whose intervals overlap or sit within 0.5s of each other.
 #     Caught after the v0.4.37.0 cache-fix reanalyze of Not Just Luck
 #     (job 673d26d7-edbf-43a8-ac58-50dd604baae0) produced 21 overlays with
 #     "and" appearing 5×, "combination" 3×, "to" 3×, "the" 2× — all stacked
 #     center-positioned because atomized mode skipped the within-cluster
 #     dedup loop in `_finalize`.
+#   2026-05-21 (v2-2026-05-20-xphrase-dedup → v2-2026-05-21-progressive-reveal):
+#     v0.4.39.0 progressive word-by-word reveal — Stage G now groups
+#     contiguous atomized phrases into LineGroups and emits cumulative
+#     reveal overlays via `build_line_groups` + `_emit_cumulative_line_overlays`.
+#     Overlay schema gains `text_anchor` + `pop_animated_suffix` fields
+#     which the recipe persists, so cached recipes from before this bump
+#     would miss the new fields and the renderer would default-position
+#     every reveal at canvas center.
+#   2026-05-22 (v2-2026-05-21-progressive-reveal → v2-2026-05-22-align-dedup-fallback):
+#     Stage E (text_alignment) was itself CREATING duplicates: when the
+#     transcript word count is smaller than the OCR phrase count, the LLM
+#     maps multiple distinct OCR phrases to the same transcript word,
+#     producing N copies of one word at overlapping timestamps that Stage D
+#     dedup never saw because it ran on a clean input. Two fixes shipped
+#     together: (A) pipeline.run_full_pipeline now re-runs
+#     `dedup_overlapping_atomized_phrases` on the OUTPUT of Stage E (BEFORE
+#     `build_line_groups` so the new progressive-reveal path sees a clean
+#     phrase set); and (B) the Stage E prompt was rewritten to keep the OCR
+#     phrase verbatim when no transcript word matches within ±0.5s, AND to
+#     assign each transcript word to at most one OCR phrase per overlapping
+#     time window — with a defense-in-depth post-parse pass that enforces
+#     both even if the LLM ignores the prompt. Evidence: prod template
+#     fdaf3bbc reanalyze at 05:23:44Z 2026-05-21 produced 20 overlays from
+#     31 input phrases ("allow" 3×, "anyone" 4×, "combination" 4×) —
+#     text_alignment output_dict in the agent_run table made the LLM-side
+#     duplication plainly visible.
 #
 # When you change anything that affects Layer-2 overlay output (Stage E
 # prompt, sanitizer logic, Stage D/G semantics), append a new suffix here.
-TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-21-progressive-reveal"
+TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-22-align-dedup-fallback"
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.

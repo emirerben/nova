@@ -471,7 +471,7 @@ def test_finalize_preserves_distinct_words_in_y_order():
 # output contained "the" twice with overlapping intervals, "to" three times
 # all at 5.5-6.0, "combination" three times spanning 8.0-9.5, and "and" five
 # times in the 9.5-10.5 window. Renderer stacked all 21 overlays
-# center-positioned. _dedup_overlapping_atomized_phrases collapses these
+# center-positioned. dedup_overlapping_atomized_phrases collapses these
 # OCR re-detections back into one phrase per visible word.
 
 
@@ -512,7 +512,7 @@ def test_atomize_preserves_legitimate_repeat_with_gap():
     # a real refrain or beat-synced re-display. Both must survive.
     events = _events(
         ("rain", 0.0, 1.0, 0.5, 0.5),
-        ("rain", 3.0, 4.0, 0.5, 0.5),  # 2s gap, well above _ATOMIZED_DEDUP_GAP_THRESHOLD_S
+        ("rain", 3.0, 4.0, 0.5, 0.5),  # 2s gap, well above ATOMIZED_DEDUP_GAP_THRESHOLD_S
     )
     phrases = reconstruct_phrases(events, atomize_per_event=True)
     assert len(phrases) == 2
