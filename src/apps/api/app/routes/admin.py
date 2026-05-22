@@ -1335,10 +1335,25 @@ async def update_template_overlays(
     await db.commit()
     await db.refresh(template)
 
+    # Invalidate every Redis cache entry tied to this template_id. Without
+    # this, the path `admin edits → admin clicks Reanalyze → agentic build
+    # cache-hits → returns pre-edit recipe → writes to DB → admin's edit
+    # gone` would silently destroy the edit on every NORMAL reanalyze (not
+    # just forced ones). The reanalyze will now regenerate from agents,
+    # which is the appropriate behavior when manual edits are in play —
+    # admins choosing to reanalyze deliberately accept the regenerated
+    # output, and they can always re-edit if needed.
+    from app.pipeline.template_cache import (  # noqa: PLC0415
+        invalidate_cache_for_template,
+    )
+
+    invalidated = invalidate_cache_for_template(template_id)
+
     log.info(
         "admin_template_overlays_edited",
         template_id=template_id,
         edit_count=len(planned),
+        cache_invalidated=invalidated,
         edits=[
             {"slot": s, "overlay": o, "old": old[:40], "new": new[:40]}
             for s, o, new, old in planned

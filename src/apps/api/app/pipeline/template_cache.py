@@ -372,6 +372,49 @@ def _is_degraded_recipe(recipe: TemplateRecipe) -> bool:
     return recipe.shot_count == 0 or not recipe.slots
 
 
+def invalidate_cache_for_template(template_id: str) -> int:
+    """Delete every cached recipe entry tied to this `template_id`.
+
+    Called from the admin overlay editor after a manual edit so a
+    subsequent reanalyze doesn't cache-hit and silently overwrite the
+    edit with the pre-edit recipe. Without this call, the path
+    `admin edits recipe_cached in DB → admin clicks Reanalyze (no force) →
+    agentic build cache-hits → returns pre-edit recipe → writes to DB →
+    admin's edit gone` would happen on every normal reanalyze, not just
+    forced ones.
+
+    SCAN-based to handle the multi-key surface (one cache entry per
+    {analysis_mode, agent_set, text_overlay_version} combination, all
+    keyed by template_id). Returns the number of keys deleted; 0 on
+    Redis failure or no-match. Best-effort — failures are logged, not
+    raised, because losing a stale cache is a quality issue not a
+    correctness one (the next build will just regenerate).
+    """
+    r = _get_redis()
+    if r is None:
+        return 0
+    pattern = f"template_analysis:*:{template_id}:*"
+    try:
+        deleted = 0
+        for key in r.scan_iter(match=pattern, count=200):
+            r.delete(key)
+            deleted += 1
+        if deleted:
+            log.info(
+                "template_cache_invalidated",
+                template_id=template_id,
+                deleted=deleted,
+            )
+        return deleted
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "template_cache_invalidate_failed",
+            template_id=template_id,
+            error=str(exc),
+        )
+        return 0
+
+
 def set_cached_recipe(
     template_hash: str,
     analysis_mode: str,

@@ -242,18 +242,21 @@ def build_line_groups(
         last_phrase_end_t_s = None
         matched_count = 0
 
-    def _open(phrase_idx: int, match_idx_or_none: int | None) -> None:
+    def _open(phrase_idx: int, match_idx: int) -> None:
+        """Open a new group on a MATCHED phrase. The caller MUST pass a real
+        transcript word index — opening on an unmatched phrase would leave
+        ``last_matched_tw_idx`` as None and the next iteration's boundary
+        checks (silence_gap, sentence_terminator, max_words) would fire
+        AttributeError when they dereference ``norm_words[None]``. Unmatched
+        phrases at the start of iteration are SKIPPED by the caller, not
+        passed in here."""
         nonlocal last_matched_tw_idx, last_phrase_end_t_s, matched_count
         phrase = phrases[phrase_idx]
         current.append(phrase_idx)
-        if match_idx_or_none is not None:
-            current_tw.append(match_idx_or_none)
-            current_word_starts.append(norm_words[match_idx_or_none]["start_s"])
-            last_matched_tw_idx = match_idx_or_none
-            matched_count += 1
-        else:
-            current_tw.append(None)
-            current_word_starts.append(float(phrase.start_t_s))
+        current_tw.append(match_idx)
+        current_word_starts.append(norm_words[match_idx]["start_s"])
+        last_matched_tw_idx = match_idx
+        matched_count += 1
         last_phrase_end_t_s = float(phrase.end_t_s)
 
     for phrase_idx, match_idx in enumerate(matches):
