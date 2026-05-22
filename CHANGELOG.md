@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.39.2] - 2026-05-22
+
+### Added
+- **`scripts/admin.py` — safe CLI for hitting `/admin/*` endpoints from automation (including Claude Code) without the operator ever typing or pasting the raw admin token.** Loads `ADMIN_API_KEY` (local) or `ADMIN_PROD_API_KEY` (prod) from repo-root `.env`, injects `X-Admin-Token`, and defaults to `http://localhost:8000`. Pass `--prod` to switch to `https://nova-video.fly.dev`. Any `POST/PUT/PATCH/DELETE` against `--prod` prompts `Proceed? [y/N]` — an aborted prompt exits 130 so CI scripts can detect refusals. `--dry-run` prints the resolved request without sending; `-v` shows headers with the token redacted to `***`. Auto-prefixes `/admin/` if you pass `templates/abc` as the path. Stdlib-only (no `requests` / `dotenv` deps), so it runs against any Python 3 outside the API venv. Discovery: documented in `CLAUDE.md` under "Admin API access (for automation / Claude Code)" so future agent sessions find it on their own.
+
 ## [0.4.39.1] - 2026-05-21
 
 ### Added
