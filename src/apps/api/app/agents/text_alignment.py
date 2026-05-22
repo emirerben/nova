@@ -104,7 +104,12 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.text_alignment",
         prompt_id="align_overlay_to_transcript",
-        prompt_version="2026-05-19-atomize",
+        # 2026-05-21: prompt rewrite — keep-OCR-on-no-match fallback +
+        # one-transcript-word-per-phrase uniqueness rule. Replaces the prior
+        # "drop on no match" guidance that was silently producing missing
+        # overlays AND stacked-duplicate overlays whenever the transcript
+        # was shorter than the OCR phrase set (template fdaf3bbc 2026-05-21).
+        prompt_version="2026-05-21-ocr-fallback",
         model="gemini-2.5-flash",
         # Alignment is a small focused call: ~1k tokens in, ~200 tokens out.
         # Cost estimate per design doc: ~$0.0005 per call.
@@ -152,10 +157,13 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
                 "closest to `phrase.start_t_s`, preferring a fuzzy text match "
                 "to the OCR line over pure timestamp proximity when the two "
                 "disagree. NEVER concatenate multiple transcript words into a "
-                "single output line. If no transcript word is within "
-                "[phrase.start_t_s - 0.5, phrase.start_t_s + 0.5] OR no "
-                "eligible word shares any letters with the OCR line, drop "
-                "the phrase."
+                "single output line. Each transcript word may be assigned to "
+                "AT MOST ONE phrase — see the Uniqueness section below. If no "
+                "transcript word is within [phrase.start_t_s - 0.5, "
+                "phrase.start_t_s + 0.5], OR no eligible word shares any "
+                "letters with the OCR line, OR every eligible word has been "
+                "claimed by an earlier phrase, fall back to OCR per the OCR "
+                "Fallback section — do NOT drop the phrase."
             )
         else:
             mode_directive = (
@@ -222,6 +230,41 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
                 continue
             corrected_lines_by_index[idx] = sanitized
 
+        # ── 3b. Atomized-mode uniqueness defense ─────────────────────────────
+        # The prompt instructs the LLM to assign each transcript word to at
+        # most one OCR phrase, but the LLM repeatedly violates this when the
+        # transcript is shorter than the OCR phrase set — see template
+        # fdaf3bbc 2026-05-21 ("allow" emitted 3× for phrases "allow" /
+        # "anyone" / "diminish" at 9.5-10.0). Walk phrases in start-order and
+        # strip later assignments of identical text when they overlap within
+        # the same window the Stage-D dedup uses, so the OCR-fallback path
+        # below takes over and the surviving overlay set stays distinct.
+        if input.atomize_mode:
+            from app.pipeline.text_overlay_v2.phrases import (  # noqa: PLC0415
+                ATOMIZED_DEDUP_GAP_THRESHOLD_S,
+            )
+
+            ordered = sorted(enumerate(input.phrases), key=lambda pair: pair[1].start_t_s)
+            last_end_by_text: dict[str, float] = {}
+            for original_idx, phrase in ordered:
+                assigned = corrected_lines_by_index.get(original_idx)
+                if assigned is None:
+                    continue
+                key = "\n".join(line.strip().casefold() for line in assigned)
+                prev_end = last_end_by_text.get(key)
+                if prev_end is not None and (
+                    phrase.start_t_s - prev_end <= ATOMIZED_DEDUP_GAP_THRESHOLD_S
+                ):
+                    log.info(
+                        "text_alignment_uniqueness_revert",
+                        phrase_index=original_idx,
+                        conflicting_text=key[:60],
+                        template_id=input.template_id,
+                    )
+                    del corrected_lines_by_index[original_idx]
+                    continue
+                last_end_by_text[key] = phrase.end_t_s
+
         # ── 4. Rebuild the Phrase list with corrected lines ───────────────────
         kept: list[Phrase] = []
         dropped = 0
@@ -229,14 +272,31 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
         for original_idx, original_phrase in enumerate(input.phrases):
             corrected = corrected_lines_by_index.get(original_idx)
             if corrected is None:
+                # Fix B (2026-05-21): keep OCR text when the LLM has no match
+                # to offer instead of dropping. Dropping produced missing
+                # overlays whenever the transcript was incomplete; the OCR
+                # text is what's actually visible on screen during that
+                # window, so showing it is strictly better than nothing.
+                # Run the same sanitiser the LLM output goes through so we
+                # don't slip ASS tags or controls through.
+                ocr_fallback = [_sanitize_aligned_line(ln) for ln in original_phrase.lines]
+                ocr_fallback = [ln for ln in ocr_fallback if ln]
+                if not ocr_fallback:
+                    log.info(
+                        "text_alignment_phrase_dropped_empty_ocr",
+                        phrase_index=original_idx,
+                        sample_text=original_phrase.sample_text[:60],
+                        template_id=input.template_id,
+                    )
+                    dropped += 1
+                    continue
                 log.info(
-                    "text_alignment_phrase_dropped",
+                    "text_alignment_phrase_kept_via_ocr_fallback",
                     phrase_index=original_idx,
-                    sample_text=original_phrase.sample_text[:60],
+                    ocr=original_phrase.sample_text[:60],
                     template_id=input.template_id,
                 )
-                dropped += 1
-                continue
+                corrected = ocr_fallback
 
             # Guard: LLM must return the same number of lines so line-break
             # structure is preserved.  If it collapses or splits lines, fall
