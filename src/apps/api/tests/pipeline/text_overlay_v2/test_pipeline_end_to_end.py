@@ -215,6 +215,46 @@ def test_run_pipeline_happy_path() -> None:
     assert result.overlays[1].sample_text == "if you put in"
 
 
+def test_run_pipeline_dedups_duplicates_created_by_stage_e() -> None:
+    """text_alignment can map several distinct OCR phrases to the same
+    transcript word when the transcript word count is smaller than the OCR
+    phrase count. The post-Stage-E dedup collapses those before classify.
+
+    Reproduces the failure shape from prod template fdaf3bbc reanalyze on
+    2026-05-21: alignment emitted "allow" 3× at 9.5-10.0, "anyone" 4× at
+    9.5-10.5, and "combination" 4× at 6.5-8.0 from a CLEAN Stage-D input.
+    """
+    from app.agents._schemas.text_alignment import TextAlignmentOutput
+
+    d_phrases = [
+        _make_phrase("allow", 9.5, 10.0),
+        _make_phrase("anyone", 9.5, 10.0),
+        _make_phrase("diminish", 9.5, 10.0),
+        _make_phrase("combination", 7.5, 7.5),
+        _make_phrase("of", 7.5, 7.5),
+    ]
+    # The LLM, given a shorter transcript, repeats the same word for distinct
+    # input phrases at overlapping timestamps.
+    aligned_with_dupes = [
+        _make_phrase("allow", 9.5, 10.0),
+        _make_phrase("allow", 9.5, 10.0),
+        _make_phrase("allow", 9.5, 10.0),
+        _make_phrase("combination", 7.5, 7.5),
+        _make_phrase("combination", 7.5, 7.5),
+    ]
+
+    class _DuplicatingAlignment:
+        def run(self, input, *, ctx=None):  # noqa: A002
+            return TextAlignmentOutput(phrases=aligned_with_dupes, dropped_count=0)
+
+    result = _run_with_mocks(d_phrases, alignment_agent=_DuplicatingAlignment())
+
+    sample_texts = sorted(o.sample_text for o in result.overlays)
+    assert sample_texts == ["allow", "combination"], (
+        f"post-Stage-E dedup should collapse aligned duplicates to one per word; got {sample_texts}"
+    )
+
+
 def test_run_pipeline_empty_phrases_skips_e_and_f() -> None:
     """When stage D produces no phrases, E and F are not called."""
     e_called = []
