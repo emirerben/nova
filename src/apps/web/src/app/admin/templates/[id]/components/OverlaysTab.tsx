@@ -24,16 +24,11 @@ import {
   adminGetTemplateDebug,
   adminUpdateTemplateOverlays,
 } from "@/lib/admin-api";
-
-interface OverlayRow {
-  slot_index: number;
-  overlay_index: number;
-  original_sample_text: string;
-  current_sample_text: string;
-  start_s: number | null;
-  end_s: number | null;
-  role: string | null;
-}
+import {
+  expandPhraseEditToMemberTexts,
+  groupOverlayRowsIntoPhrases,
+  type OverlayRow,
+} from "./phrase-grouping";
 
 function extractOverlayRows(
   recipe_cached: Record<string, unknown> | null,
@@ -105,15 +100,31 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
     [rows],
   );
 
-  const handleEdit = useCallback((slot: number, overlay: number, value: string) => {
-    setRows((prev) =>
-      prev.map((r) =>
-        r.slot_index === slot && r.overlay_index === overlay
-          ? { ...r, current_sample_text: value }
-          : r,
-      ),
-    );
-  }, []);
+  const phraseGroups = useMemo(() => groupOverlayRowsIntoPhrases(rows), [rows]);
+  const dirtyPhraseCount = useMemo(
+    () => phraseGroups.filter((g) => g.dirty).length,
+    [phraseGroups],
+  );
+
+  // Edit one phrase row → distribute the new text across its underlying
+  // overlays. `groupIndex` is into `phraseGroups`; the group carries
+  // member_row_indices into `rows` so the splice is unambiguous even when
+  // multiple phrases share a slot.
+  const handlePhraseEdit = useCallback(
+    (groupIndex: number, newText: string) => {
+      const group = phraseGroups[groupIndex];
+      if (!group) return;
+      const memberTexts = expandPhraseEditToMemberTexts(group, newText);
+      setRows((prev) => {
+        const next = prev.slice();
+        group.member_row_indices.forEach((rowIdx, k) => {
+          next[rowIdx] = { ...next[rowIdx], current_sample_text: memberTexts[k] };
+        });
+        return next;
+      });
+    },
+    [phraseGroups],
+  );
 
   const handleSave = useCallback(async () => {
     if (dirtyRows.length === 0) return;
@@ -162,23 +173,26 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
     );
   }
 
-  // Group rows by slot for visual structure.
-  const bySlot = new Map<number, OverlayRow[]>();
-  rows.forEach((r) => {
-    const existing = bySlot.get(r.slot_index) ?? [];
-    existing.push(r);
-    bySlot.set(r.slot_index, existing);
+  // Group phrases by slot for visual structure. `phraseGroups` is already
+  // ordered (rows come ordered, grouping preserves slot order), so we just
+  // bucket — no extra sort needed.
+  const phrasesBySlot = new Map<number, { group: typeof phraseGroups[number]; index: number }[]>();
+  phraseGroups.forEach((g, index) => {
+    const bucket = phrasesBySlot.get(g.slot_index) ?? [];
+    bucket.push({ group: g, index });
+    phrasesBySlot.set(g.slot_index, bucket);
   });
-  const slotOrder = Array.from(bySlot.keys()).sort((a, b) => a - b);
+  const slotOrder = Array.from(phrasesBySlot.keys()).sort((a, b) => a - b);
 
   return (
     <div className="space-y-6 max-w-4xl">
       <header className="space-y-2">
         <h2 className="text-base font-semibold text-white">Edit overlay text</h2>
         <p className="text-xs text-zinc-400 leading-relaxed">
-          Rewrite the on-screen text of any overlay. Changes apply
-          immediately and the next render against this template uses your
-          edits.{" "}
+          One row per on-screen phrase — type the full line once and the
+          cumulative word-by-word reveal still happens at render time.
+          Changes apply immediately and the next render against this
+          template uses your edits.{" "}
           <span className="text-amber-300">
             Reanalyzing the template will overwrite these edits
           </span>{" "}
@@ -200,7 +214,7 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
           disabled={saving || dirtyRows.length === 0}
           className="bg-emerald-700 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded font-medium"
         >
-          {saving ? "Saving…" : `Save ${dirtyRows.length} edit${dirtyRows.length === 1 ? "" : "s"}`}
+          {saving ? "Saving…" : `Save ${dirtyPhraseCount} phrase${dirtyPhraseCount === 1 ? "" : "s"}`}
         </button>
         <button
           type="button"
@@ -213,42 +227,55 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
         {lastSavedAt && (
           <span className="text-emerald-400">Saved at {lastSavedAt}</span>
         )}
-        <span className="text-zinc-500 ml-auto">{rows.length} overlays total</span>
+        <span className="text-zinc-500 ml-auto">
+          {phraseGroups.length} phrase{phraseGroups.length === 1 ? "" : "s"}
+          {" · "}
+          {rows.length} overlay{rows.length === 1 ? "" : "s"} total
+          {dirtyPhraseCount > 0 && (
+            <> · <span className="text-amber-400">{dirtyPhraseCount} phrase{dirtyPhraseCount === 1 ? "" : "s"} modified</span></>
+          )}
+        </span>
       </div>
 
       <div className="space-y-6">
         {slotOrder.map((slot_index) => {
-          const slotRows = bySlot.get(slot_index) ?? [];
+          const slotPhrases = phrasesBySlot.get(slot_index) ?? [];
           return (
             <section key={slot_index} className="space-y-2">
               <h3 className="text-xs uppercase tracking-wider text-zinc-500">
                 Slot {slot_index}
               </h3>
               <div className="space-y-2">
-                {slotRows.map((row) => {
-                  const dirty = row.current_sample_text !== row.original_sample_text;
+                {slotPhrases.map(({ group, index: groupIndex }) => {
+                  const memberCount = group.member_row_indices.length;
+                  const patternLabel =
+                    group.pattern === "cumulative"
+                      ? `cumulative reveal · ${memberCount} stages`
+                      : group.pattern === "per_word"
+                        ? `per-word reveal · ${memberCount} words`
+                        : "single overlay";
                   return (
                     <div
-                      key={`${row.slot_index}-${row.overlay_index}`}
+                      key={`s${slot_index}-g${groupIndex}`}
                       className={`rounded border px-3 py-2 ${
-                        dirty
+                        group.dirty
                           ? "border-amber-600 bg-amber-950/20"
                           : "border-zinc-800 bg-zinc-950"
                       }`}
                     >
                       <div className="flex items-center gap-3 text-[10px] text-zinc-500 mb-1.5">
-                        <span className="font-mono">#{row.overlay_index}</span>
-                        {row.role && (
+                        {group.role && (
                           <span className="px-1.5 py-0.5 bg-zinc-800 rounded">
-                            {row.role}
+                            {group.role}
                           </span>
                         )}
-                        {row.start_s !== null && row.end_s !== null && (
+                        {group.start_s !== null && group.end_s !== null && (
                           <span className="font-mono">
-                            {row.start_s.toFixed(2)}s → {row.end_s.toFixed(2)}s
+                            {group.start_s.toFixed(2)}s → {group.end_s.toFixed(2)}s
                           </span>
                         )}
-                        {dirty && (
+                        <span className="text-zinc-600">{patternLabel}</span>
+                        {group.dirty && (
                           <span className="text-amber-400 ml-auto">
                             Modified
                           </span>
@@ -256,16 +283,24 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
                       </div>
                       <input
                         type="text"
-                        value={row.current_sample_text}
-                        onChange={(e) =>
-                          handleEdit(row.slot_index, row.overlay_index, e.target.value)
-                        }
+                        value={group.display_text}
+                        onChange={(e) => handlePhraseEdit(groupIndex, e.target.value)}
                         placeholder="(empty — overlay hidden)"
                         className="w-full bg-zinc-900 border border-zinc-700 focus:border-emerald-600 outline-none rounded px-2 py-1.5 text-sm text-white font-mono"
                       />
-                      {dirty && (
+                      {group.dirty && memberCount > 1 && (
                         <div className="text-[10px] text-zinc-500 mt-1 font-mono">
-                          Was: {row.original_sample_text || "(empty)"}
+                          {group.member_row_indices.map((rowIdx, k) => {
+                            const r = rows[rowIdx];
+                            const txt = r.current_sample_text || "(hidden)";
+                            return (
+                              <span key={rowIdx}>
+                                {k > 0 && <span className="text-zinc-700"> · </span>}
+                                <span className="text-zinc-400">#{r.overlay_index}</span>{" "}
+                                {txt}
+                              </span>
+                            );
+                          })}
                         </div>
                       )}
                     </div>

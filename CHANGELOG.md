@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.41.3] - 2026-05-22
+
+### Changed
+- **Admin overlay text editor: one row per on-screen phrase instead of one row per word.** PR #278's `OverlaysTab` rendered every atomized cumulative-reveal overlay as its own input, so a single visible line like "the work to get there" forced the admin to edit five separate boxes ("the" / "the work" / "the work to" / "the work to get" / "the work to get there") and keep them consistent. The tab now groups consecutive overlays in a slot that share a cumulative-extension or per-word-atomized pattern into one phrase row with a single input field. Editing the phrase distributes the new text back across the underlying overlays' `sample_text` values — cumulative pattern rebuilds 1..N word stages, per-word pattern writes one word per member; trailing freed members get `""` so the renderer hides them; surplus words past the last member collapse into the last reveal stage so the full text always shows on screen. Trailing-empty overlays from prior edits get absorbed into the preceding phrase group so a phrase shrunk to "Hello" still shows as one row, not "Hello" + N ghost "single overlay" rows. The PATCH endpoint, the recipe schema, the renderer, and the Layer-2 pipeline are all untouched — the data the editor saves is exactly the same atomized shape as before, only the editor's view of it is grouped. New `phrase-grouping.ts` helper carries `groupOverlayRowsIntoPhrases` + `expandPhraseEditToMemberTexts` as pure functions covered by 17 unit tests against cumulative, per-word, singleton, multi-slot, mid-run termination, dirty-tracking, trailing-empty absorption, and the don't-fuse-two-phrases-through-a-stray-empty edge.
+
 ## [0.4.41.2] - 2026-05-22
 
 ### Fixed
