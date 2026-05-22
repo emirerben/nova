@@ -138,3 +138,58 @@ def test_agentic_path_skips_label_config_override():
     assert "font_cycle_accel_at_s" not in o or o["font_cycle_accel_at_s"] is None, (
         "Agentic path force-set font_cycle_accel_at_s via _LABEL_CONFIG."
     )
+
+
+def test_collect_absolute_overlays_forwards_text_anchor_and_pop_suffix():
+    """`text_anchor` and `pop_animated_suffix` from the recipe overlay must
+    survive _collect_absolute_overlays untouched.
+
+    Both fields drove a silent prod bug on template 89cde014: the Layer-2
+    bridge correctly wrote `text_anchor="left"` + `position_x_frac=0.05` into
+    the recipe, but the orchestrator's entry-dict construction omitted
+    text_anchor, so the renderer fell back to "center" via the
+    `overlay.get("text_anchor", "center")` default — re-centering Layer-2
+    overlays the bridge had marked left-anchored and clipping long phrases
+    off-screen. `pop_animated_suffix` had the same drop pattern.
+    """
+
+    class _Step:
+        def __init__(self, slot: dict) -> None:
+            self.slot = slot
+            self.clip_id = "fixture-clip"
+            self.moment = {"start_s": 0.0, "end_s": 5.0, "energy": 5.0, "description": ""}
+
+    slot = {
+        "position": 0,
+        "slot_type": "hook",
+        "text_overlays": [
+            {
+                "role": "reaction",
+                "sample_text": "the work to get there",
+                "text": "the work to get there",
+                "start_s": 0.0,
+                "end_s": 4.0,
+                "text_size": "large",
+                "text_size_px": 120,
+                "font_style": "sans",
+                "text_color": "#FFFFFF",
+                "effect": "pop-in",
+                "position": "center",
+                "position_x_frac": 0.05,
+                "position_y_frac": 0.44,
+                "text_anchor": "left",
+                "pop_animated_suffix": "there",
+                "_layer2_uniform": True,
+            }
+        ],
+    }
+    overlays = _collect_absolute_overlays([_Step(slot)], [4.0], None, subject=None, is_agentic=True)
+    assert len(overlays) == 1
+    o = overlays[0]
+    assert o.get("text_anchor") == "left", (
+        f"text_anchor was dropped on the way to the renderer (got {o.get('text_anchor')!r}). "
+        "Without this forward, every Layer-2 left-anchored overlay re-centers."
+    )
+    assert o.get("pop_animated_suffix") == "there", (
+        f"pop_animated_suffix was dropped (got {o.get('pop_animated_suffix')!r})."
+    )

@@ -3224,9 +3224,7 @@ def _assemble_clips(
     )
     if abs_overlays:
         # Skia for agentic templates; Pillow + libass for classic.
-        _burn_text_overlays(
-            joined_path, abs_overlays, output_path, tmpdir, use_skia=is_agentic
-        )
+        _burn_text_overlays(joined_path, abs_overlays, output_path, tmpdir, use_skia=is_agentic)
         _burned_dur = _probe_duration(output_path)
         log.info("debug_post_burn_duration", burned_dur=_burned_dur)
     else:
@@ -3668,6 +3666,13 @@ def _collect_absolute_overlays(
                 "text_color": ov.get("text_color", "#FFFFFF"),
                 "position_x_frac": ov.get("position_x_frac"),
                 "position_y_frac": ov.get("position_y_frac"),
+                # `text_anchor` and `pop_animated_suffix` must be forwarded so
+                # the renderer sees what the recipe stored. Dropping them here
+                # silently re-centers Layer-2 overlays that the bridge marked
+                # text_anchor="left", which clips long phrases off-screen even
+                # though the recipe is correct (prod template 89cde014 evidence).
+                "text_anchor": ov.get("text_anchor", "center"),
+                "pop_animated_suffix": ov.get("pop_animated_suffix"),
                 "stroke_width": int(ov.get("stroke_width", 0)),
                 "emoji_prefix": str(ov.get("emoji_prefix", "")),
             }
@@ -4145,6 +4150,11 @@ def _pre_burn_curtain_slot_text(
             "text_color": ov.get("text_color", "#FFFFFF"),
             "position_x_frac": ov.get("position_x_frac"),
             "position_y_frac": ov.get("position_y_frac"),
+            # See sibling entry-dict above for why these two are mandatory:
+            # the recipe stores them but the renderer reads defaults if they're
+            # not forwarded, silently breaking left-anchored progressive reveal.
+            "text_anchor": ov.get("text_anchor", "center"),
+            "pop_animated_suffix": ov.get("pop_animated_suffix"),
             # Carry recipe-side font_cycle_accel_at_s through to the renderer.
             # Without this, `_compute_font_cycle_frame_specs` falls back to its
             # default "cycle for first 70%, settle to STATIC for last 30%"
