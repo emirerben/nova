@@ -147,45 +147,49 @@ def test_alignment_fix_character_error(
     assert out.phrases[0].lines[1] == "allow anyone"  # "angone" → "anyone"
 
 
-def test_drop_hallucination_no_transcript_match(
+def test_missing_index_falls_back_to_ocr_not_dropped(
     agent: TextAlignmentAgent,
     mock_client: MockModelClient,
 ) -> None:
-    """Phrase with no plausible transcript match is dropped.
-    `dropped_count` reflects the omission.
+    """Phrase the LLM omits is kept with its OCR text, not dropped.
+
+    Fix B (2026-05-21): the old behavior dropped omitted indices as
+    "hallucinations" but in practice this discarded legitimate on-screen
+    text whenever the transcript was incomplete (Whisper missed a word,
+    music-bed mumble, etc.). The OCR text IS what's visible on screen;
+    showing it is strictly better than nothing.
     """
     phrases = [
         _make_phrase(["real caption"], 1.0, 3.0),
-        _make_phrase(["@WatermarkHandle"], 0.0, 10.0),  # never spoken — hallucination
+        _make_phrase(["@WatermarkHandle"], 5.0, 10.0),  # speaker silent here
     ]
     transcript_words = [
         _make_word("real", 1.1, 1.3),
         _make_word("caption", 1.4, 1.6),
     ]
-    # LLM returns only the matched phrase (omits the hallucination)
+    # LLM returns only the matched phrase (omits index 1)
     mock_client.queue(
         "gemini-2.5-flash",
         _aligned_response(
             [
                 {"index": 0, "lines": ["real caption"]},
-                # index 1 is absent → dropped
+                # index 1 is absent → OCR fallback under Fix B
             ]
         ),
     )
     out = agent.run(TextAlignmentInput(phrases=phrases, transcript_words=transcript_words))
 
-    assert out.dropped_count == 1
-    assert len(out.phrases) == 1
+    assert out.dropped_count == 0
+    assert len(out.phrases) == 2
     assert out.phrases[0].sample_text == "real caption"
+    assert out.phrases[1].sample_text == "@WatermarkHandle"
 
 
-def test_partial_output_missing_phrases(
+def test_partial_output_missing_phrases_kept_via_ocr(
     agent: TextAlignmentAgent,
     mock_client: MockModelClient,
 ) -> None:
-    """Gemini returns valid JSON but for only some input phrases.
-    The agent does not crash; missing phrases are silently dropped.
-    """
+    """LLM omits a middle index → that phrase is kept via OCR fallback."""
     phrases = [
         _make_phrase(["hook text"], 0.0, 1.5),
         _make_phrase(["body copy"], 2.0, 4.0),
@@ -199,23 +203,142 @@ def test_partial_output_missing_phrases(
         _make_word("cta", 5.1, 5.3),
         _make_word("phrase", 5.4, 5.6),
     ]
-    # Only first and last phrases returned
     mock_client.queue(
         "gemini-2.5-flash",
         _aligned_response(
             [
                 {"index": 0, "lines": ["hook text"]},
-                # index 1 missing
+                # index 1 missing → kept via OCR fallback
                 {"index": 2, "lines": ["cta phrase"]},
             ]
         ),
     )
     out = agent.run(TextAlignmentInput(phrases=phrases, transcript_words=transcript_words))
 
-    assert len(out.phrases) == 2
+    assert len(out.phrases) == 3
+    assert out.dropped_count == 0
+    assert [p.sample_text for p in out.phrases] == ["hook text", "body copy", "cta phrase"]
+
+
+def test_ocr_fallback_runs_sanitizer(
+    agent: TextAlignmentAgent,
+    mock_client: MockModelClient,
+) -> None:
+    """OCR fallback for omitted indices must strip ASS tags, debug markers,
+    and escape sequences just like the aligned-output path does.
+    """
+    phrases = [
+        _make_phrase([r"{\an5}garbage[overlap_truncated]"], 1.0, 2.0),
+    ]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response([]),  # LLM omits index 0
+    )
+    out = agent.run(
+        TextAlignmentInput(phrases=phrases, transcript_words=[_make_word("something", 1.0, 1.5)])
+    )
+    assert len(out.phrases) == 1
+    # ASS tag and debug marker stripped; "garbage" survives as the actual word.
+    assert out.phrases[0].sample_text == "garbage"
+
+
+def test_ocr_fallback_drops_when_sanitizer_empties(
+    agent: TextAlignmentAgent,
+    mock_client: MockModelClient,
+) -> None:
+    """OCR fallback only kicks in when OCR has real content. If sanitisation
+    reduces the OCR lines to nothing, the phrase is genuinely dropped.
+    """
+    phrases = [
+        _make_phrase([r"{\an5}{\fs120}"], 1.0, 2.0),  # ASS tags only
+    ]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response([]),
+    )
+    out = agent.run(
+        TextAlignmentInput(phrases=phrases, transcript_words=[_make_word("something", 1.0, 1.5)])
+    )
+    assert len(out.phrases) == 0
     assert out.dropped_count == 1
-    assert out.phrases[0].sample_text == "hook text"
-    assert out.phrases[1].sample_text == "cta phrase"
+
+
+def test_atomized_uniqueness_revert_overlapping_duplicates(
+    agent: TextAlignmentAgent,
+    mock_client: MockModelClient,
+) -> None:
+    """LLM maps three distinct OCR phrases to the same transcript word.
+    The first survives as the LLM's pick; the rest revert to OCR text.
+
+    Reproduces the prod failure shape on template fdaf3bbc 2026-05-21
+    where "allow", "anyone", and "diminish" at 9.5-10.0 were all relabeled
+    to "allow" because the transcript only had "allow" in that window.
+    """
+    phrases = [
+        _make_phrase(["allow"], 9.5, 10.0),
+        _make_phrase(["anyone"], 9.5, 10.0),
+        _make_phrase(["diminish"], 9.5, 10.0),
+    ]
+    transcript_words = [_make_word("allow", 9.5, 9.7)]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response(
+            [
+                {"index": 0, "lines": ["allow"]},
+                {"index": 1, "lines": ["allow"]},  # collision — must revert to OCR
+                {"index": 2, "lines": ["allow"]},  # collision — must revert to OCR
+            ]
+        ),
+    )
+    out = agent.run(
+        TextAlignmentInput(
+            phrases=phrases,
+            transcript_words=transcript_words,
+            atomize_mode=True,
+        )
+    )
+    sample_texts = [p.sample_text for p in out.phrases]
+    assert sample_texts == ["allow", "anyone", "diminish"], (
+        "phrase 0 keeps the LLM's 'allow'; phrases 1 and 2 revert to OCR "
+        f"because 'allow' was already assigned; got {sample_texts}"
+    )
+    assert out.dropped_count == 0
+
+
+def test_atomized_uniqueness_preserves_legitimate_repeat_with_gap(
+    agent: TextAlignmentAgent,
+    mock_client: MockModelClient,
+) -> None:
+    """Two phrases at the same text with a gap above the dedup threshold
+    survive — uniqueness defense only fires on overlapping or near-adjacent
+    windows.
+    """
+    phrases = [
+        _make_phrase(["rain"], 0.0, 1.0),
+        _make_phrase(["rain"], 3.0, 4.0),  # 2s gap, far above 0.5s threshold
+    ]
+    transcript_words = [
+        _make_word("rain", 0.1, 0.5),
+        _make_word("rain", 3.1, 3.5),
+    ]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response(
+            [
+                {"index": 0, "lines": ["rain"]},
+                {"index": 1, "lines": ["rain"]},
+            ]
+        ),
+    )
+    out = agent.run(
+        TextAlignmentInput(
+            phrases=phrases,
+            transcript_words=transcript_words,
+            atomize_mode=True,
+        )
+    )
+    assert [p.sample_text for p in out.phrases] == ["rain", "rain"]
+    assert out.dropped_count == 0
 
 
 def test_malformed_json_raises_schema_error(
@@ -464,9 +587,14 @@ def test_sanitizer_strips_literal_newline_and_truncation_markers(
     assert text == "the work to get there"
 
 
-def test_sanitizer_drops_phrase_when_only_forbidden_content_returned(
+def test_sanitizer_emptied_llm_output_falls_back_to_ocr(
     agent: TextAlignmentAgent, mock_client: MockModelClient
 ):
+    """LLM returns only forbidden content → sanitiser empties it → OCR
+    fallback path runs (same code path as a fully-omitted index). Under
+    Fix B (2026-05-21) the phrase is kept with its OCR text rather than
+    dropped — same rationale as the omission case.
+    """
     phrase = _make_phrase(["watermark"], start_t_s=0.0, end_t_s=1.0)
     transcript_words = [_make_word("hello", 0.0, 1.0)]
     mock_client.queue(
@@ -475,7 +603,26 @@ def test_sanitizer_drops_phrase_when_only_forbidden_content_returned(
     )
     out = agent.run(TextAlignmentInput(phrases=[phrase], transcript_words=transcript_words))
 
-    # Phrase dropped: sanitizer emptied the only line.
+    assert len(out.phrases) == 1
+    assert out.phrases[0].sample_text == "watermark"
+    assert out.dropped_count == 0
+
+
+def test_sanitizer_drops_when_both_llm_and_ocr_are_empty(
+    agent: TextAlignmentAgent, mock_client: MockModelClient
+):
+    """Only when BOTH the LLM output AND the OCR fallback sanitise to
+    nothing does the phrase actually drop. This is the only true-drop path
+    after Fix B.
+    """
+    phrase = _make_phrase(["[overlap_truncated]"], start_t_s=0.0, end_t_s=1.0)
+    transcript_words = [_make_word("hello", 0.0, 1.0)]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response([{"index": 0, "lines": ["[overlap_truncated]"]}]),
+    )
+    out = agent.run(TextAlignmentInput(phrases=[phrase], transcript_words=transcript_words))
+
     assert out.phrases == []
     assert out.dropped_count == 1
 

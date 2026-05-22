@@ -55,7 +55,9 @@ from app.pipeline.text_overlay_v2.line_grouping import (
     build_line_groups,
 )
 from app.pipeline.text_overlay_v2.phrases import (
+    ATOMIZED_DEDUP_GAP_THRESHOLD_S,
     DEFAULT_X_BAND_THRESHOLD,
+    dedup_overlapping_atomized_phrases,
     reconstruct_phrases,
 )
 from app.pipeline.text_overlay_v2.tokenize import tokenize_detections_into_words
@@ -288,6 +290,31 @@ def run_full_pipeline(
                 template_id=template_id,
             )
             return TemplateTextOutput(overlays=[])
+
+        # Stage-E creates duplicates that Stage-D dedup never sees: when the
+        # transcript word count is smaller than the OCR phrase count, the LLM
+        # maps multiple distinct OCR phrases onto the same transcript word —
+        # producing N copies of one word at overlapping timestamps. The same
+        # function used at the tail of `reconstruct_phrases` collapses these
+        # post-alignment. Only runs in atomized mode because phrase-mode
+        # alignment never re-labels (it just rewrites characters within a
+        # phrase). Evidence: prod template fdaf3bbc 2026-05-21 reanalyze
+        # emitted "allow" 3×, "anyone" 4×, "combination" 4× from a CLEAN
+        # 31-phrase Stage-D output paired with a 15-word transcript.
+        if atomize_words and len(aligned_phrases) > 1:
+            pre_dedup_count = len(aligned_phrases)
+            aligned_phrases = dedup_overlapping_atomized_phrases(
+                aligned_phrases, gap_threshold_s=ATOMIZED_DEDUP_GAP_THRESHOLD_S
+            )
+            if len(aligned_phrases) != pre_dedup_count:
+                log.info(
+                    "full_pipeline_stage_e_post_dedup",
+                    pre_dedup=pre_dedup_count,
+                    post_dedup=len(aligned_phrases),
+                    collapsed=pre_dedup_count - len(aligned_phrases),
+                    job_id=job_id,
+                )
+                _dump_stage(dump_dir, "stage_e_post_dedup", aligned_phrases)
 
         # Rebuild frame_paths after E may have dropped phrases (indices shift).
         # Re-derive by position: aligned phrase i corresponds to the i-th

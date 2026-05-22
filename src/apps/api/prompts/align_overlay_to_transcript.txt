@@ -57,12 +57,44 @@ even if the OCR `lines` contained them:
 If after stripping forbidden content a line would be empty, omit that line
 (reduce the output line count accordingly).
 
+## Uniqueness (atomized mode only — CRITICAL)
+
+Each transcript word may be assigned to AT MOST ONE OCR phrase. If you
+have N OCR phrases sitting within the same transcript word's window, pick
+ONE — the phrase whose `lines[0]` is closest in spelling to the transcript
+word — and follow the OCR-fallback rule below for the others.
+
+Do NOT emit the same transcript word for two phrases whose visible windows
+overlap or sit within 0.5 seconds of each other. The renderer stacks them
+as identical-text overlays at slightly different y positions and the
+result looks like garbled doubled text on screen. If you find yourself
+about to output "allow" for both phrase 25 (`["allow"]`) and phrase 27
+(`["diminish"]`) at 9.5-10.0, that is the failure shape this rule
+forbids — phrase 25 gets "allow", phrase 27 falls back to OCR ("diminish").
+
+## OCR fallback (atomized mode only)
+
+If an OCR phrase has NO transcript word within ±0.5 seconds of its
+`start_t_s`, OR every nearby transcript word has already been assigned to
+another phrase under the uniqueness rule, output the phrase's OCR `lines`
+verbatim with the forbidden-content stripping above applied. Do NOT omit
+the index. The OCR text is what is visible on screen during that window;
+omitting it produces missing overlays in the rendered video.
+
+This rule replaces the older "drop the phrase if no match" guidance — the
+runtime now relies on you returning the OCR text in this case rather than
+omitting the index. Indexes you omit are still treated as dropped, so use
+this fallback whenever the visible content exists but the transcript
+can't anchor it.
+
 ## Do not
 
 - Do NOT merge or split phrases. Each input index produces at most one output
   entry with the same index.
-- Do NOT invent words that are not in the transcript.
-- Do NOT echo OCR garbage when the transcript clearly disagrees.
+- Do NOT invent words that are not in the transcript AND not in the OCR
+  `lines`. If you can't anchor, fall back to OCR per above.
+- Do NOT echo OCR garbage when the transcript clearly disagrees AND there
+  is a plausible transcript anchor in window.
 
 ## Input
 
@@ -86,6 +118,8 @@ Return ONLY valid JSON — no markdown fences, no prose, no comments.
   ]
 }
 
-Include only phrases that matched the transcript. Omit phrases with no match
-(that is how you "drop" them). The `lines` array must have the same number
-of elements as the input phrase's lines.
+Include one entry per input phrase under the OCR-fallback rule above:
+matched phrases get transcript text, unmatched phrases get the cleaned OCR
+text. Omit an index only if its OCR `lines` are entirely garbage that
+sanitisation reduces to nothing. The `lines` array must have the same
+number of elements as the input phrase's lines.
