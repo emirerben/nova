@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.42.0] - 2026-05-22
+
+### Fixed
+- **Admin music and job debug pages now stay within the proxy budget on large production datasets.** `/admin/music-tracks` now returns a strict list shape and computes beat counts in Postgres instead of shipping beat arrays, lyrics, section data, and other JSONB blobs to the browser. `/admin/jobs/{id}/debug` now caps template/track context runs at the 200 newest rows, defers full LLM I/O for those context rows, returns explicit `has_more` metadata, and keeps full input/output/raw text only for the job's own agent runs. New concurrent partial indexes on `agent_run(template_id, created_at DESC)` and `agent_run(music_track_id, created_at DESC)` support those newest-first context lookups without blocking writes.
+- **The admin frontend now matches the slimmer debug contracts.** Context agent rows render as non-expandable summary rows with a truncation note when older runs exist, while job-time agent rows keep their full expandable input/output/raw view. The music list consumes the new slim track item type, leaving full music detail data on the detail route.
+- **Regression coverage locks the performance-sensitive shapes.** API tests assert the music list projection omits heavy JSONB keys, beat counts are passed as integers, debug context runs are capped and summary-only, the summary serializer does not touch deferred I/O fields, and null template/track ids do not issue broad `IS NULL` context queries.
+
 ## [0.4.41.4] - 2026-05-22
 
 ### Added
