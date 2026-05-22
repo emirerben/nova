@@ -50,12 +50,24 @@ DEFAULT_X_BAND_THRESHOLD = 0.15
 # typical word's display duration.
 ATOMIZED_DEDUP_GAP_THRESHOLD_S = 0.5
 
-# One-letter English words that legitimately appear as standalone OCR. The
-# artifact filter keeps these; every other single-character alphanumeric
-# token is treated as OCR noise (e.g. "W" — confidence 0.634 — appearing
-# alone between "there" and "luck" on job 09f56ee3 broke the cumulative
-# reveal for "the work to get there"). Casefolded for matching.
-_ATOMIZED_SINGLE_CHAR_WHITELIST = frozenset({"i", "a", "o"})
+# Single characters the artifact filter keeps when they appear as standalone
+# atomized OCR phrases. Everything else single-char is treated as noise.
+#
+#  - {i, a, o} — one-letter English words. Casefolded for matching.
+#  - {0..9} — counter/step digits ("DAY 1", "ROUND 2", or animated step
+#    counters where each digit is its own atomized phrase). A standalone
+#    digit is more often legitimate text than OCR noise; the artifact
+#    pattern we're targeting (prod template 89cde014, the spurious "W"
+#    with confidence 0.634) is single ALPHABETIC chars outside the
+#    one-letter-word set, not digits.
+#
+# Latin-script-biased: a single CJK / Arabic / Hebrew character would
+# satisfy `isalnum()` and fail this whitelist, so it currently drops. For
+# non-English templates, revisit — probably extend with
+# `unicodedata.category(ch) == 'Lo'` (Letter, other) or similar.
+_ATOMIZED_SINGLE_CHAR_WHITELIST = frozenset(
+    {"i", "a", "o", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
+)
 
 
 def reconstruct_phrases(

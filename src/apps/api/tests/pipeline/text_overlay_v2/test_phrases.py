@@ -684,10 +684,9 @@ def test_is_atomized_ocr_artifact_unit():
             mean_confidence=0.9,
         )
 
-    # Drops:
+    # Drops — single ALPHABETIC chars outside the one-letter-word whitelist.
     assert _is_atomized_ocr_artifact(_p("W")) is True
     assert _is_atomized_ocr_artifact(_p("M")) is True
-    assert _is_atomized_ocr_artifact(_p("8")) is True
     assert _is_atomized_ocr_artifact(_p('"')) is True
     assert _is_atomized_ocr_artifact(_p("...")) is True
     assert _is_atomized_ocr_artifact(_p("x..")) is True
@@ -701,6 +700,13 @@ def test_is_atomized_ocr_artifact_unit():
     assert _is_atomized_ocr_artifact(_p('luck"')) is False  # 4 alnum / 5 chars
     assert _is_atomized_ocr_artifact(_p("don't")) is False
     assert _is_atomized_ocr_artifact(_p("it's")) is False
+    # Single digits — counter/step text ('DAY 1', 'ROUND 2', animated step
+    # counters). More often legitimate than OCR noise; the artifact pattern
+    # was single alphabetic chars, not digits.
+    assert _is_atomized_ocr_artifact(_p("0")) is False
+    assert _is_atomized_ocr_artifact(_p("1")) is False
+    assert _is_atomized_ocr_artifact(_p("7")) is False
+    assert _is_atomized_ocr_artifact(_p("9")) is False
 
     # Multi-line phrase: never an artifact (only atomized one-word phrases
     # are eligible).
