@@ -11,12 +11,12 @@ Routing — the orchestrators decide which renderer to use:
   - Classic non-music + non-agentic templates → app/pipeline/text_overlay.py
     (Pillow + libass), unchanged.
 
-Kill switch: `settings.text_renderer_skia_enabled`. When False, the two public
-entry points (`burn_text_overlays_skia`, `pre_burn_curtain_slot_text_skia`)
-delegate to the Pillow + libass implementations transparently. Flip the env
-var `TEXT_RENDERER_SKIA_ENABLED=false` on Fly and restart workers — agentic +
-music jobs revert to Pillow immediately. Per-process; no in-flight job is
-mid-rendered with a switched-on flag.
+Kill switch: `settings.text_renderer_skia_enabled` (read in the orchestrator
+wrappers `_burn_text_overlays` and `_pre_burn_curtain_slot_text`). This module
+itself is a pure renderer — the orchestrator decides whether to call it. Flip
+`TEXT_RENDERER_SKIA_ENABLED=false` on Fly and restart workers; agentic + music
+jobs revert to Pillow + libass per-process. No in-flight job is mid-rendered
+with a switched-on flag because the flag is read at burn time, not job start.
 
 Design notes:
   - ONE renderer for all effects. Static, font-cycle, pop-in, karaoke, etc.
@@ -49,9 +49,10 @@ import skia
 import structlog
 from PIL import Image
 
-from app.config import settings
 from app.pipeline.text_overlay import (
-    ASS_ANIMATED_EFFECTS,
+    _FONT_REGISTRY,
+    _FONT_SIZE_MAP,
+    _POSITION_Y,
     CANVAS_H,
     CANVAS_W,
     FONT_CYCLE_FAST_INTERVAL_S,
@@ -61,10 +62,7 @@ from app.pipeline.text_overlay import (
     MAX_FONT_CYCLE_FRAMES,
     _emoji_codepoint,
     _emoji_png_path,
-    _FONT_REGISTRY,
-    _FONT_SIZE_MAP,
     _hex_to_rgba,
-    _POSITION_Y,
     _validate_overlay,
 )
 
@@ -337,7 +335,8 @@ def _draw_centered_text(
     first_baseline = block_top + block["ascent_offset"]
 
     # Emoji prefix: composite to the left of line 0
-    emoji_metrics = _resolve_emoji_metrics(overlay, block["widths"][0] if block["widths"] else 0, font)
+    first_w = block["widths"][0] if block["widths"] else 0
+    emoji_metrics = _resolve_emoji_metrics(overlay, first_w, font)
 
     base_color = _skia_color_from_hex(
         overlay.get("text_color", "#FFFFFF"), int(255 * alpha)
@@ -674,14 +673,16 @@ def _draw_with_animation(
     visible_text = text
 
     if effect == "scale-up":
-        progress = (
-            min(1.0, t_local / 0.6) if duration_s > 0.6 else min(1.0, t_local / max(duration_s, 0.01))
-        )
+        if duration_s > 0.6:
+            progress = min(1.0, t_local / 0.6)
+        else:
+            progress = min(1.0, t_local / max(duration_s, 0.01))
         scale = 0.6 + 0.4 * _ease_out_cubic(progress)
     elif effect == "fade-in":
-        progress = (
-            min(1.0, t_local / 0.4) if duration_s > 0.4 else min(1.0, t_local / max(duration_s, 0.01))
-        )
+        if duration_s > 0.4:
+            progress = min(1.0, t_local / 0.4)
+        else:
+            progress = min(1.0, t_local / max(duration_s, 0.01))
         alpha = _ease_out_cubic(progress)
     elif effect == "typewriter":
         chars_per_s = 12.0
