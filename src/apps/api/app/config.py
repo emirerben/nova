@@ -110,6 +110,25 @@ class Settings(BaseSettings):
     # enough labeled tracks for the matcher to do real work (~15+).
     enable_auto_music_mode: bool = False
 
+    # Skia text renderer for agentic templates + music lyrics. When True
+    # (default), agentic-template and music-job text overlays render via
+    # `app.pipeline.text_overlay_skia` instead of Pillow + libass. Classic
+    # non-music templates are unaffected either way. Flip to False on Fly
+    # (`fly secrets set TEXT_RENDERER_SKIA_ENABLED=false --app nova-video`
+    # then restart workers) to revert agentic + music jobs to the Pillow +
+    # libass path instantly. The kill switch is read per render call —
+    # no in-flight job is mid-rendered with a switched-on flag.
+    text_renderer_skia_enabled: bool = True
+
+    # agent_run retention (days). Rows with job_id IS NOT NULL and
+    # created_at older than this are deleted by the daily
+    # `tasks.cleanup_agent_runs` Beat task. Template- and track-scoped rows
+    # (job_id IS NULL) are kept indefinitely — they back the per-template
+    # debug view and aren't growth-bound to job volume. Default 30d keeps
+    # the job-debug "what did each agent see?" window meaningful while
+    # bounding table size. Set higher temporarily during incident triage.
+    agent_run_retention_days: int = 30
+
     # Security
     token_encryption_key: str = ""
 

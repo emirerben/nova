@@ -54,8 +54,12 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
-      - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install FFmpeg and Skia runtime libs
+        # libegl1 + libgl1 are needed by skia-python (used by
+        # app/pipeline/text_overlay_skia.py). On macOS these ship with the OS;
+        # the Ubuntu runner needs them installed explicitly or the module
+        # import fails with `libEGL.so.1: cannot open shared object file`.
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg libegl1 libgl1
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"

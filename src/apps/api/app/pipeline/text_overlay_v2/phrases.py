@@ -48,7 +48,7 @@ DEFAULT_X_BAND_THRESHOLD = 0.15
 # "and / and / and / and / and" stutter on template Not Just Luck. Tuned
 # to be a touch above sub-second neighbor sampling without swallowing a
 # typical word's display duration.
-_ATOMIZED_DEDUP_GAP_THRESHOLD_S = 0.5
+ATOMIZED_DEDUP_GAP_THRESHOLD_S = 0.5
 
 
 def reconstruct_phrases(
@@ -74,7 +74,7 @@ def reconstruct_phrases(
     (after `tokenize_detections_into_words`) where each event already
     represents a single word and same-line same-time words must NOT be
     re-merged into a multi-line phrase. After per-event finalize, the
-    output passes through `_dedup_overlapping_atomized_phrases` so the
+    output passes through `dedup_overlapping_atomized_phrases` so the
     same on-screen word captured by OCR across multiple frame samples
     collapses back to a single phrase covering the union of its
     appearances.
@@ -87,8 +87,8 @@ def reconstruct_phrases(
         sorted_events = sorted(events, key=lambda e: (e.start_t_s, e.aabb[1]))
         finalized = [_finalize([ev]) for ev in sorted_events]
         dedup_in = len(finalized)
-        out = _dedup_overlapping_atomized_phrases(
-            finalized, gap_threshold_s=_ATOMIZED_DEDUP_GAP_THRESHOLD_S
+        out = dedup_overlapping_atomized_phrases(
+            finalized, gap_threshold_s=ATOMIZED_DEDUP_GAP_THRESHOLD_S
         )
         _emit_stage_d_summary(
             events_in=len(events),
@@ -203,7 +203,7 @@ def _finalize(phrase_events: list[TextEvent]) -> Phrase:
     )
 
 
-def _dedup_overlapping_atomized_phrases(
+def dedup_overlapping_atomized_phrases(
     phrases: list[Phrase],
     *,
     gap_threshold_s: float,
@@ -211,13 +211,13 @@ def _dedup_overlapping_atomized_phrases(
     """Collapse same-text phrases whose time intervals overlap or sit within
     `gap_threshold_s` of each other.
 
-    The atomized path produces one phrase per `TextEvent` to keep
-    word-by-word overlays distinct. But OCR routinely fires the same
-    on-screen word in multiple sampled frames, yielding multiple events
-    whose `text` is identical and whose time intervals overlap or sit
-    near-adjacent. The atomize short-circuit in `reconstruct_phrases`
-    skips the cluster-then-dedup loop in `_finalize`, so those duplicates
-    survive all the way to the renderer.
+    Reused from two call sites: (1) the tail of `reconstruct_phrases` in
+    atomized mode — kills OCR re-detection duplicates BEFORE alignment; and
+    (2) `pipeline.run_full_pipeline` after Stage E (text_alignment) — kills
+    duplicates the LLM CREATES when transcript is shorter than the OCR
+    phrase set and multiple distinct OCR phrases get assigned the same
+    transcript word. Stage-D dedup alone is not enough because Stage E
+    introduces new collisions on a clean input.
 
     Concrete failure mode (prod job 673d26d7-edbf-43a8-ac58-50dd604baae0
     on template Not Just Luck, 2026-05-20): atomized output contained
@@ -225,6 +225,13 @@ def _dedup_overlapping_atomized_phrases(
     times all at 5.5-6.0, "combination" three times spanning 8.0-9.5, and
     "and" five times in the 9.5-10.5 window. Renderer stacked all 21
     overlays center-positioned on top of each other.
+
+    Second failure mode (prod template fdaf3bbc reanalyze 2026-05-21,
+    AFTER the above fix): 31 clean Stage-D phrases + 15 transcript words →
+    text_alignment emitted "allow" 3× at 9.5-10.0 (with "anyone" and
+    "diminish" both relabeled to "allow"), plus "combination" 4× and
+    "anyone" 4×. Stage-D dedup ran on a clean input so the duplicates
+    only appeared post-alignment.
 
     Algorithm: group by casefolded-stripped text key, sort each group by
     start time, then merge intervals where the next start is within

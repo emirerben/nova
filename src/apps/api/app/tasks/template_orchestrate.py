@@ -3223,7 +3223,10 @@ def _assemble_clips(
         is_agentic=is_agentic,
     )
     if abs_overlays:
-        _burn_text_overlays(joined_path, abs_overlays, output_path, tmpdir)
+        # Skia for agentic templates; Pillow + libass for classic.
+        _burn_text_overlays(
+            joined_path, abs_overlays, output_path, tmpdir, use_skia=is_agentic
+        )
         _burned_dur = _probe_duration(output_path)
         log.info("debug_post_burn_duration", burned_dur=_burned_dur)
     else:
@@ -4213,6 +4216,21 @@ def _pre_burn_curtain_slot_text(
     if not slot_overlays:
         return clip_path
 
+    # Skia dispatch for agentic templates. Music doesn't hit this function
+    # (no curtain-close on music jobs), so the gate is purely `is_agentic`.
+    from app.config import settings  # noqa: PLC0415
+
+    if is_agentic and settings.text_renderer_skia_enabled:
+        from app.pipeline.text_overlay_skia import (  # noqa: PLC0415
+            pre_burn_curtain_slot_text_skia,
+        )
+
+        burned_path = os.path.join(tmpdir, f"slot_{slot_idx}_textburned.mp4")
+        pre_burn_curtain_slot_text_skia(
+            clip_path, slot_overlays, burned_path, tmpdir, slot_dur, slot_idx
+        )
+        return burned_path
+
     # Generate PNGs with slot-relative timestamps
     png_configs = generate_text_overlay_png(slot_overlays, slot_dur, tmpdir, slot_index=slot_idx)
     if not png_configs:
@@ -4282,10 +4300,19 @@ def _burn_text_overlays(
     overlays: list[dict],
     output_path: str,
     tmpdir: str,
+    *,
+    use_skia: bool = False,
 ) -> None:
     """Burn text overlays onto the joined video.
 
-    Two-pass overlay model:
+    Renderer dispatch:
+      - When `use_skia=True` AND `settings.text_renderer_skia_enabled`,
+        delegates to `text_overlay_skia.burn_text_overlays_skia`. Used for
+        agentic templates and music jobs.
+      - Otherwise (classic non-music + non-agentic OR kill switch off),
+        runs the Pillow + libass two-pass overlay model below.
+
+    Two-pass overlay model (Pillow path):
       1. Static + font-cycle overlays → PNG composites via overlay filter.
       2. ASS-animated overlays (fade-in, typewriter, slide-up, slide-down,
          pop-in, bounce) → libass-rendered .ass files chained via the
@@ -4302,6 +4329,16 @@ def _burn_text_overlays(
     animation moving the same glyph from off-canvas, and the static layer
     wins visually.
     """
+    from app.config import settings  # noqa: PLC0415
+
+    if use_skia and settings.text_renderer_skia_enabled:
+        from app.pipeline.text_overlay_skia import (  # noqa: PLC0415
+            burn_text_overlays_skia,
+        )
+
+        burn_text_overlays_skia(input_path, overlays, output_path, tmpdir)
+        return
+
     from app.pipeline.text_overlay import (  # noqa: PLC0415
         ASS_ANIMATED_EFFECTS,
         FONTS_DIR,

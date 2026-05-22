@@ -1276,7 +1276,11 @@ def _run_templated_music_job(job_id: str) -> None:
         )
         if abs_overlays:
             burned_path = os.path.join(tmpdir, "burned.mp4")
-            _burn_text_overlays(assembled_path, abs_overlays, burned_path, tmpdir)
+            # Music jobs use Skia for lyrics rendering (karaoke-line, per-word-pop).
+            # Gated globally by settings.text_renderer_skia_enabled inside _burn_text_overlays.
+            _burn_text_overlays(
+                assembled_path, abs_overlays, burned_path, tmpdir, use_skia=True
+            )
             if os.path.exists(burned_path) and os.path.getsize(burned_path) > 0:
                 assembled_path = burned_path
             else:

@@ -41,6 +41,7 @@ from fastapi import (
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.agents._schemas.song_sections import SongSection
 from app.config import settings
@@ -616,7 +617,16 @@ async def list_music_tracks(
     offset: int = Query(default=0, ge=0),
 ) -> MusicTrackListResponse:
     """List all music tracks (including unpublished and archived)."""
-    base_query = select(MusicTrack)
+    # Defer the JSONB columns that _to_response doesn't surface. recipe_cached
+    # (Gemini audio-analysis recipe for audio-only template creation) and
+    # ai_labels (song-classifier output) are large and unused by the list UI.
+    # beat_timestamps_s / track_config / lyrics_cached / best_sections stay
+    # loaded because _to_response includes them; trimming the response shape
+    # is a separate, frontend-coordinated change.
+    base_query = select(MusicTrack).options(
+        defer(MusicTrack.recipe_cached),
+        defer(MusicTrack.ai_labels),
+    )
 
     count_result = await db.execute(select(func.count()).select_from(base_query.subquery()))
     total = count_result.scalar() or 0

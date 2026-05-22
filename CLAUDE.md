@@ -64,6 +64,23 @@ Production uses repo-root `Dockerfile` (Python 3.11 + FFmpeg/libheif/libmagic) d
 - Frontend typecheck: `cd src/apps/web && npx tsc --noEmit`
 - Frontend tests: `cd src/apps/web && npm test` (Jest)
 
+## Admin API access (for automation / Claude Code)
+Use `scripts/admin.py` instead of curling `/admin/*` with a raw token — the token stays in `.env`, never in commands or transcripts.
+
+```bash
+python scripts/admin.py GET  /admin/templates                                 # local
+python scripts/admin.py GET  templates/abc123/debug                           # /admin/ auto-prefixed
+python scripts/admin.py POST templates/abc/reanalyze-agentic --json '{"use_layer2": true}'
+python scripts/admin.py --prod GET /admin/templates                           # Fly prod
+python scripts/admin.py --prod POST templates/abc/publish                     # prompts y/N
+```
+
+- Local uses `ADMIN_API_KEY`, `--prod` uses `ADMIN_PROD_API_KEY` (both in repo-root `.env`; example slots in `.env.example`).
+- Any `POST/PUT/PATCH/DELETE` against `--prod` prompts `Proceed? [y/N]` — pass `--yes` to skip in scripts you've reviewed.
+- `--dry-run` prints the resolved request without sending. `-v` shows headers (token always redacted).
+- Exits 0 on 2xx, 1 otherwise — safe in shell pipelines.
+- Stdlib-only (no `requests`/`dotenv`) so it runs with any Python 3 outside the API venv.
+
 ## Domain context
 - Target output: 9:16 aspect ratio, sub-60s, H.264/AAC, 1080x1920
 - Hook window: first 2-3 seconds must create a question in the viewer's mind
@@ -104,7 +121,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Transitions: `app/pipeline/transitions.py` translates Gemini vocabulary (whip-pan, zoom-in, dissolve) to internal FFmpeg xfade types
 - Single-pass CFR-before-xfade invariant: every per-clip chain in `app/pipeline/single_pass.py` (`_per_clip_filter_chain`) must end with `fps={output_fps}, setpts=PTS-STARTPTS, settb=AVTB` before its labelled output. `_build_video_filter` already adds `framerate=fps=N` at the head, but `framerate=` (interpolates against source PTS) silently fails on inputs reporting `avg_frame_rate=1/0` ("unknown rate" — some phone HEVC, HEIF-derived video, screen recordings); xfade then rejects with `current rate of 1/0 is invalid` and the whole single-pass run aborts. The `fps=` filter drops/duplicates frames independent of PTS coherence so it works where `framerate=` can't. Locked by `test_per_clip_chain_forces_cfr_before_xfade` in `tests/pipeline/test_single_pass.py`. History: caught in prod job `856daa32-…` on the BAD BUNNY music template (2026-05-18); see `git log -- src/apps/api/app/pipeline/single_pass.py` for the fix commit.
 - Font bundle: Playfair Display (Bold + Regular) in `assets/fonts/`, referenced via `fontsdir` in ASS subtitle filters
-- Text overlays: `app/pipeline/text_overlay.py` renders gaussian-shadow text (no hard outlines), supports font-cycle and ASS animated overlays
+- Text overlays: `app/pipeline/text_overlay.py` renders gaussian-shadow text (no hard outlines), supports font-cycle and ASS animated overlays. **Renderer split** (since v0.4.41.x): agentic templates + music-job lyrics render via `app/pipeline/text_overlay_skia.py` (skia-python, HarfBuzz shaping, real kerning, paint-based shadows, uniform per-frame PNG sequences instead of libass ASS files); classic non-music + non-agentic templates stay on Pillow + libass. Dispatch is inside `_burn_text_overlays(use_skia=...)` and `_pre_burn_curtain_slot_text(is_agentic=...)` in `template_orchestrate.py`. Kill switch: `TEXT_RENDERER_SKIA_ENABLED=false` reverts agentic + music to Pillow + libass per process — flip the Fly secret and restart workers if a Skia render bug ships to prod. Skia output produces per-overlay PNG sequences fed to FFmpeg's `image2` demuxer + `setpts` shift, so file-descriptor pressure is O(overlay_count) regardless of frame count (the Pillow path's `MAX_FONT_CYCLE_FRAMES=100` cap exists because Pillow returns one config per font frame and the ffmpeg `-i` list can otherwise blow past `ulimit -n`).
 - Placeholder substitution: `_resolve_overlay_text()` + `_is_subject_placeholder()` in `template_orchestrate.py` can rewrite short title-case or ALL-CAPS overlay text to the user's subject (e.g. Brazil's `PERU` → user's location). Literal text overlays SHOULD still set `"subject_substitute": False` as defense-in-depth; the per-seed audit in `tests/scripts/test_seed_overlays_literal.py` fails on any new overlay that matches the heuristic without declaring intent.
 - **Gemini metadata never becomes on-screen overlay text** (architectural invariant, scoped). The overlay substitution input is exclusively user-provided (`inputs.location` via `_resolve_user_subject`). The `_consensus_subject(clip_metas)` fallback and the empty-hook `clip_meta.hook_text` fallback were both removed after job a1091488 (Rule of Thirds, 2026-05-13) rendered "pilot in cockpit" — Gemini's `detected_subject` from a cockpit clip — in place of "The"/"Thirds". `TestNoGeminiTextLeaks` in `tests/tasks/test_template_orchestrate.py` is the sentinel; reintroducing either fallback fails that test. **This invariant does NOT cover `copy_writer`** — `_extract_hook_text` (template_orchestrate.py:3577) still pipes `clip_meta.hook_text` into platform captions (TikTok/IG/YouTube) via `generate_copy`. Caption text is a separate trust surface; treat clip-derived hook text there as untrusted input to the caption LLM, not as content to reproduce verbatim.
 - Font-cycle: acceleration syncs with curtain-close (`font_cycle_accel_at_s`), `text_color` passthrough for colored text, per-size font caching in `_resolve_cycle_fonts()`, `MAX_FONT_CYCLE_FRAMES` (60) safety cap prevents PNG explosion, gap-fill PNG bridges frame cap to cycle_end

@@ -72,11 +72,11 @@ class TestFontRegistryFile:
             )
 
     def test_expected_font_count(self):
-        """Registry has 18 active + 9 soft-deprecated fonts."""
+        """Registry has 24 active + 9 soft-deprecated fonts."""
         fonts = _FONT_REGISTRY.get("fonts", {})
-        assert len(fonts) == 27
+        assert len(fonts) == 33
         assert sum(1 for entry in fonts.values() if entry.get("deprecated") is True) == 9
-        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is not True) == 18
+        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is not True) == 24
 
     def test_expected_styles(self):
         """All 5 font styles should have defaults."""
@@ -110,6 +110,33 @@ class TestFontRegistryFile:
             if "deprecated" in entry and entry.get("deprecated") is not True
         }
         assert invalid == {}
+
+    def test_active_font_internal_family_matches_ass_name(self):
+        # libass picks fonts from fontsdir by internal family name (nameID 1) or
+        # typographic family (nameID 16). If the .ttf's internal family doesn't
+        # match the registry's `ass_name`, libass silently falls back to a system
+        # font and renders the wrong glyphs. Caught in prod after a variable-font
+        # instancer left family="Montserrat Thin" on the static Regular cut.
+        from fontTools.ttLib import TTFont
+        fonts = _FONT_REGISTRY.get("fonts", {})
+        mismatches = []
+        for name, entry in fonts.items():
+            if entry.get("deprecated") is True:
+                continue
+            ass_name = entry["ass_name"]
+            path = os.path.join(FONTS_DIR, entry["file"])
+            tt = TTFont(path)
+            nt = tt["name"]
+            internal_names = set()
+            for nid in (1, 16):
+                rec = nt.getName(nid, 3, 1, 1033) or nt.getName(nid, 1, 0, 0)
+                if rec is not None:
+                    internal_names.add(str(rec))
+            if ass_name not in internal_names:
+                mismatches.append(
+                    f"{name}: ass_name='{ass_name}' not in internal names {internal_names}"
+                )
+        assert not mismatches, "\n".join(mismatches)
 
     def test_style_defaults_point_to_active_fonts(self):
         fonts = _FONT_REGISTRY.get("fonts", {})
