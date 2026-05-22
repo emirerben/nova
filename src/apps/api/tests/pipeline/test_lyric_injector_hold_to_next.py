@@ -1,3 +1,5 @@
+import pytest
+
 from app.pipeline.lyric_injector import inject_lyric_overlays
 
 
@@ -34,26 +36,26 @@ def _overlays(lines: list[tuple[str, float, float]], threshold_ms: int = 500) ->
     return out["slots"][0]["text_overlays"]
 
 
-def test_hold_to_next_suppresses_current_fade_out() -> None:
+def test_hold_to_next_threshold_is_deprecated_noop_for_current_fade_out() -> None:
     overlays = _overlays([("First", 1.0, 2.0), ("Second", 2.3, 3.0)])
-    assert overlays[0]["fade_out_ms"] == 0
-
-
-def test_hold_to_next_suppresses_next_fade_in_and_pre_roll() -> None:
-    overlays = _overlays([("First", 1.0, 2.0), ("Second", 2.3, 3.0)])
-    assert overlays[1]["fade_in_ms"] == 0
-    assert overlays[1]["start_s"] == 2.3
-
-
-def test_hold_to_next_section_end_equals_next_line_start() -> None:
-    overlays = _overlays([("First", 1.0, 2.0), ("Second", 2.3, 3.0)])
-    assert overlays[0]["end_s"] == 2.3
-
-
-def test_hold_to_next_at_exact_threshold_does_not_fire() -> None:
-    overlays = _overlays([("First", 1.0, 2.0), ("Second", 2.5, 3.0)])
     assert overlays[0]["fade_out_ms"] == 250
+
+
+def test_hold_to_next_threshold_is_deprecated_noop_for_next_fade_in_and_pre_roll() -> None:
+    overlays = _overlays([("First", 1.0, 2.0), ("Second", 2.3, 3.0)])
     assert overlays[1]["fade_in_ms"] == 150
+    assert overlays[1]["start_s"] == pytest.approx(2.2, abs=1e-3)
+
+
+def test_hold_to_next_no_longer_forces_section_end_to_next_line_start() -> None:
+    overlays = _overlays([("First", 1.0, 2.0), ("Second", 2.3, 3.0)])
+    assert overlays[0]["end_s"] == pytest.approx(2.6, abs=1e-3)
+
+
+def test_hold_to_next_threshold_value_does_not_change_output() -> None:
+    threshold_0 = _overlays([("First", 1.0, 2.0), ("Second", 2.3, 3.0)], threshold_ms=0)
+    threshold_500 = _overlays([("First", 1.0, 2.0), ("Second", 2.3, 3.0)], threshold_ms=500)
+    assert threshold_500 == threshold_0
 
 
 def test_negative_gap_does_not_trigger_hold_to_next() -> None:
@@ -72,7 +74,7 @@ def test_min_line_visible_s_guard() -> None:
     assert overlays[0]["fade_out_ms"] == 250
 
 
-def test_rapid_sequence_has_zero_dead_frames() -> None:
+def test_rapid_sequence_uses_overlap_budget() -> None:
     overlays = _overlays(
         [
             ("One", 1.0, 1.2),
@@ -80,5 +82,5 @@ def test_rapid_sequence_has_zero_dead_frames() -> None:
             ("Three", 1.8, 2.0),
         ]
     )
-    assert overlays[0]["end_s"] == overlays[1]["start_s"]
-    assert overlays[1]["end_s"] == overlays[2]["start_s"]
+    assert overlays[0]["end_s"] == pytest.approx(overlays[1]["start_s"] + 0.4, abs=1e-3)
+    assert overlays[1]["end_s"] == pytest.approx(overlays[2]["start_s"] + 0.4, abs=1e-3)

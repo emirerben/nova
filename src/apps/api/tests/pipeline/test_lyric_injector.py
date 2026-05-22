@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+
+from app.pipeline import lyric_injector
 from app.pipeline.lyric_injector import inject_lyric_overlays
 
 
@@ -54,7 +57,7 @@ def test_karaoke_injects_one_overlay_per_line_in_correct_slot() -> None:
     ov0 = out["slots"][0]["text_overlays"][0]
     assert ov0["effect"] == "karaoke-line"
     assert ov0["text"] == "Hello world"
-    assert ov0["start_s"] == 0.5  # rebased into slot 0
+    assert ov0["start_s"] == pytest.approx(0.5, abs=1e-3)  # rebased into slot 0
     # Per-word timings carry duration_cs
     assert "word_timings" in ov0
     assert len(ov0["word_timings"]) == 2
@@ -65,7 +68,7 @@ def test_karaoke_injects_one_overlay_per_line_in_correct_slot() -> None:
     ov1 = out["slots"][1]["text_overlays"][0]
     # Line 2 starts at video time 6.0; slot 1 starts at video time 5.0,
     # so the overlay's slot-relative start is 1.0.
-    assert abs(ov1["start_s"] - 1.0) < 1e-3
+    assert ov1["start_s"] == pytest.approx(1.0, abs=1e-3)
 
 
 def test_per_word_pop_accumulates_cumulative_line_text() -> None:
@@ -137,12 +140,12 @@ def test_per_word_pop_overlays_are_butted_with_no_gap_or_overlap() -> None:
     overlays = out["slots"][0]["text_overlays"]
     assert len(overlays) == 3
     # Middle stages butt edge-to-edge: stage[i].end_s == stage[i+1].start_s.
-    assert abs(overlays[0]["end_s"] - overlays[1]["start_s"]) < 1e-6
-    assert abs(overlays[1]["end_s"] - overlays[2]["start_s"]) < 1e-6
+    assert overlays[0]["end_s"] == pytest.approx(overlays[1]["start_s"], abs=1e-6)
+    assert overlays[1]["end_s"] == pytest.approx(overlays[2]["start_s"], abs=1e-6)
     # Last stage extends past line.end_s by _LAST_WORD_DWELL_S (0.30s).
     # line.end_s = 1.5 → expected last_end = 1.8 (slot-relative == section-
     # relative here since slot starts at 0).
-    assert abs(overlays[2]["end_s"] - 1.8) < 1e-3
+    assert overlays[2]["end_s"] == pytest.approx(1.8, abs=1e-3)
 
 
 def test_per_word_pop_drops_sub_renderable_middle_stage() -> None:
@@ -178,8 +181,8 @@ def test_per_word_pop_drops_sub_renderable_middle_stage() -> None:
     assert [o["text"] for o in overlays] == ["a", "a b c"]
     # The kept stages are still butted: stage 0 ends right at "c"'s start
     # (where the dropped "b" stage would have begun).
-    assert abs(overlays[0]["end_s"] - 0.52) < 1e-6
-    assert abs(overlays[1]["start_s"] - 0.52) < 1e-6
+    assert overlays[0]["end_s"] == pytest.approx(0.52, abs=1e-6)
+    assert overlays[1]["start_s"] == pytest.approx(0.52, abs=1e-6)
 
 
 def test_section_filter_drops_lines_outside_window() -> None:
@@ -198,7 +201,7 @@ def test_section_filter_drops_lines_outside_window() -> None:
     assert len(overlays) == 1
     assert overlays[0]["text"] == "In section"
     # 5.5s in absolute time → 0.5s in section-relative → 0.5s in slot-relative
-    assert abs(overlays[0]["start_s"] - 0.5) < 1e-3
+    assert overlays[0]["start_s"] == pytest.approx(0.5, abs=1e-3)
 
 
 def test_partial_overlap_line_is_dropped() -> None:
@@ -227,8 +230,9 @@ def test_unknown_style_is_noop() -> None:
 # ── `"line"` style ────────────────────────────────────────────────────────────
 #
 # These lock the YouTube-lyric-video behavior: plain line, pre-roll, post-dwell
-# past the vocal end, no per-word color sweep. Defaults: pre_roll=0.10s,
-# post_dwell=1.00s, next_line_gap=0.10s, fade=150/250ms.
+# past the vocal end, no per-word color sweep. Dense lines may cross-dissolve
+# inside the fade-bound overlap budget. Defaults: pre_roll=0.10s,
+# post_dwell=1.00s, max_overlap=0.40s, fade=150/250ms.
 
 
 def test_line_emits_one_overlay_per_line_with_lyric_line_effect() -> None:
@@ -266,7 +270,7 @@ def test_line_applies_pre_roll_to_start() -> None:
     out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
     ov = out["slots"][0]["text_overlays"][0]
     # Default pre_roll=0.10 → start_s = 1.0 - 0.10 = 0.90
-    assert abs(ov["start_s"] - 0.9) < 1e-3
+    assert ov["start_s"] == pytest.approx(0.9, abs=1e-3)
 
 
 def test_line_clamps_pre_roll_to_section_start() -> None:
@@ -278,16 +282,17 @@ def test_line_clamps_pre_roll_to_section_start() -> None:
     out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
     ov = out["slots"][0]["text_overlays"][0]
     assert ov["start_s"] >= 0.0
-    assert ov["start_s"] == 0.0
+    assert ov["start_s"] == pytest.approx(0.0, abs=1e-3)
 
 
-def test_line_post_dwell_capped_by_next_line_start() -> None:
-    """When the next line is close, current line ends just before it."""
+def test_line_post_dwell_extends_into_overlap_budget() -> None:
+    """Dense lines extend into the fade-bound overlap budget."""
     recipe = _make_recipe([10.0])
     # First line ends at 2.0; second line starts at 2.3.
-    # Natural post-dwell would end first line at 2.0 + 1.0 = 3.0.
-    # next_line cap: 2.3 - 0.10 = 2.20.
-    # Expected end: min(2.75, 2.20) = 2.20.
+    # Natural post-dwell would end first line at 2.0 + 2.0 = 4.0.
+    # next_visual_start = 2.3 - 0.10 = 2.20.
+    # overlap_budget = min(0.4, 0.15 + 0.10) = 0.25.
+    # Expected end: min(4.0, 2.20 + 0.25) = 2.45.
     cache = _make_lyrics_cache(
         [
             ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
@@ -299,10 +304,201 @@ def test_line_post_dwell_capped_by_next_line_start() -> None:
         cache,
         0.0,
         10.0,
-        {"enabled": True, "style": "line", "hold_to_next_threshold_ms": 0},
+        {
+            "enabled": True,
+            "style": "line",
+            "pre_roll_s": 0.1,
+            "post_dwell_s": 2.0,
+            "fade_in_ms": 150,
+            "fade_out_ms": 100,
+            "max_overlap_s": 0.4,
+        },
     )
     ov0 = out["slots"][0]["text_overlays"][0]
-    assert abs(ov0["end_s"] - 2.20) < 1e-3
+    next_visual_start = 2.3 - 0.1
+    overlap_budget = min(0.4, 0.15 + 0.10)
+    assert ov0["end_s"] == pytest.approx(next_visual_start + overlap_budget, abs=1e-3)
+
+
+def test_line_post_dwell_honored_when_section_has_slack() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
+            ("Second", 3.5, 4.0, [("Second", 3.5, 4.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {
+            "enabled": True,
+            "style": "line",
+            "pre_roll_s": 0.1,
+            "post_dwell_s": 0.5,
+            "fade_in_ms": 150,
+            "fade_out_ms": 250,
+        },
+    )
+    ov0 = out["slots"][0]["text_overlays"][0]
+    assert ov0["end_s"] == pytest.approx(2.0 + 0.5, abs=1e-3)
+
+
+def test_line_post_dwell_capped_by_static_overlap_budget() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
+            ("Second", 2.3, 3.0, [("Second", 2.3, 3.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {
+            "enabled": True,
+            "style": "line",
+            "pre_roll_s": 0.1,
+            "post_dwell_s": 2.0,
+            "fade_in_ms": 300,
+            "fade_out_ms": 300,
+            "max_overlap_s": lyric_injector._LINE_MAX_OVERLAP_S,
+        },
+    )
+    ov0 = out["slots"][0]["text_overlays"][0]
+    next_visual_start = 2.3 - 0.1
+    visual_overlap_s = ov0["end_s"] - next_visual_start
+    assert ov0["end_s"] == pytest.approx(
+        next_visual_start + lyric_injector._LINE_MAX_OVERLAP_S,
+        abs=1e-3,
+    )
+    assert visual_overlap_s <= lyric_injector._LINE_MAX_OVERLAP_S + 1e-9
+
+
+def test_line_overlap_bounded_by_short_fades() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
+            ("Second", 2.3, 3.0, [("Second", 2.3, 3.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {
+            "enabled": True,
+            "style": "line",
+            "pre_roll_s": 0.1,
+            "post_dwell_s": 2.0,
+            "fade_in_ms": 50,
+            "fade_out_ms": 50,
+            "max_overlap_s": lyric_injector._LINE_MAX_OVERLAP_S,
+        },
+    )
+    ov0 = out["slots"][0]["text_overlays"][0]
+    next_visual_start = 2.3 - 0.1
+    visual_overlap_s = ov0["end_s"] - next_visual_start
+    assert ov0["end_s"] == pytest.approx(next_visual_start + 0.1, abs=1e-3)
+    assert visual_overlap_s == pytest.approx(0.1, abs=1e-3)
+
+
+def test_line_zero_fades_yields_zero_visual_overlap() -> None:
+    """Zero fades cap against visual start, stronger than capping at audio start."""
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
+            ("Second", 2.3, 3.0, [("Second", 2.3, 3.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {
+            "enabled": True,
+            "style": "line",
+            "pre_roll_s": 0.1,
+            "post_dwell_s": 2.0,
+            "fade_in_ms": 0,
+            "fade_out_ms": 0,
+            "max_overlap_s": lyric_injector._LINE_MAX_OVERLAP_S,
+        },
+    )
+    ov0, ov1 = out["slots"][0]["text_overlays"]
+    next_visual_start = 2.3 - 0.1
+    assert ov0["end_s"] <= next_visual_start + 1e-9
+    assert ov1["start_s"] >= ov0["end_s"]
+
+
+def test_tight_lines_keep_their_fades() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
+            ("Second", 2.3, 3.0, [("Second", 2.3, 3.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {
+            "enabled": True,
+            "style": "line",
+            "pre_roll_s": 0.1,
+            "post_dwell_s": 2.0,
+            "fade_in_ms": 150,
+            "fade_out_ms": 100,
+            "max_overlap_s": lyric_injector._LINE_MAX_OVERLAP_S,
+        },
+    )
+    ov0, ov1 = out["slots"][0]["text_overlays"]
+    assert ov0["fade_out_ms"] == 100
+    assert ov1["fade_in_ms"] == 150
+
+
+def test_default_fades_when_keys_missing_do_not_disable_overlap() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
+            ("Second", 2.3, 3.0, [("Second", 2.3, 3.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {
+            "enabled": True,
+            "style": "line",
+            "pre_roll_s": 0.1,
+            "post_dwell_s": 2.0,
+        },
+    )
+    ov0 = out["slots"][0]["text_overlays"][0]
+    next_visual_start = 2.3 - 0.1
+    expected_overlap_s = min(
+        lyric_injector._LINE_MAX_OVERLAP_S,
+        (lyric_injector._LINE_FADE_IN_MS + lyric_injector._LINE_FADE_OUT_MS) / 1000.0,
+    )
+    assert expected_overlap_s == pytest.approx(
+        (lyric_injector._LINE_FADE_IN_MS + lyric_injector._LINE_FADE_OUT_MS) / 1000.0,
+        abs=1e-3,
+    )
+    assert ov0["end_s"] - next_visual_start == pytest.approx(expected_overlap_s, abs=1e-3)
+    assert ov0["end_s"] > next_visual_start
 
 
 def test_line_last_line_uses_full_post_dwell() -> None:
@@ -312,7 +508,7 @@ def test_line_last_line_uses_full_post_dwell() -> None:
     out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
     ov = out["slots"][0]["text_overlays"][0]
     # 2.0 + 1.0 = 3.0
-    assert abs(ov["end_s"] - 3.0) < 1e-3
+    assert ov["end_s"] == pytest.approx(3.0, abs=1e-3)
 
 
 def test_line_reads_tuning_from_config() -> None:
@@ -328,8 +524,8 @@ def test_line_reads_tuning_from_config() -> None:
     }
     out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, cfg)
     ov = out["slots"][0]["text_overlays"][0]
-    assert abs(ov["start_s"] - 0.70) < 1e-3  # 1.0 - 0.30
-    assert abs(ov["end_s"] - 3.50) < 1e-3  # 2.0 + 1.50
+    assert ov["start_s"] == pytest.approx(0.70, abs=1e-3)  # 1.0 - 0.30
+    assert ov["end_s"] == pytest.approx(3.50, abs=1e-3)  # 2.0 + 1.50
     assert ov["fade_in_ms"] == 200
     assert ov["fade_out_ms"] == 400
 
