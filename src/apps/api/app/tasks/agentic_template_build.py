@@ -352,36 +352,52 @@ def _fetch_transcript_words_for_layer2(
     *,
     template_id: str,
     use_layer2: bool,
-) -> list[dict]:
+) -> tuple[list[dict], bool]:
     """Best-effort transcript fetch for Stage E of the Layer-2 OCR pipeline.
 
-    Without per-word timestamps the alignment LLM short-circuits via its
-    empty-transcript early return and OCR garbage (duplicated tokens like
-    "if you if you put put in" from prod template fdaf3bbc) passes through
-    unchanged into the cached recipe.
+    Returns ``(words, transcript_failed)``:
+
+      - ``(words, False)`` with ``len(words) > 0`` → Stage E can ground OCR.
+      - ``([], False)`` → Layer-2 was not requested (Layer-1 build), OR
+        ``transcribe()`` succeeded with zero words and ``low_confidence=False``
+        (music-only / caption-only template — no speech ever existed). Stage E's
+        empty-transcript passthrough is the correct behavior.
+      - ``([], True)`` → Transcription was expected but degraded
+        (``transcribe()`` raised, returned ``low_confidence=True``, or both).
+        Callers must treat this as a hard signal that Layer-2 cannot ground
+        its OCR output and must NOT overwrite ``template_recipe``'s overlays
+        with broken atomized OCR (prod incident: template 89cde014 on
+        2026-05-22, "luck\\"" / "W" / duplicated tokens reaching the render).
 
     Gated on Layer-2 routing — the Gemini transcribe call only fires when
     Layer-2 will actually run (`use_layer2=True` admin override OR
     `settings.text_overlay_v2_enabled=True`). Layer-1 builds skip entirely
     so the Gemini cost isn't wasted on a transcript no consumer will read.
 
-    A transcription failure must NOT abort the agentic build. Returns an
-    empty list on any error; Stage E falls back to its existing
-    empty-transcript passthrough.
+    A transcription failure must NOT abort the agentic build — the failure
+    signal is the second tuple element, not a raised exception.
     """
     if not (use_layer2 or settings.text_overlay_v2_enabled):
-        return []
+        return [], False
     try:
         from app.pipeline.agents.gemini_analyzer import transcribe  # noqa: PLC0415
 
         transcript = transcribe(file_ref, job_id=f"template:{template_id}:agentic")
         words = [{"text": w.text, "start_s": w.start_s, "end_s": w.end_s} for w in transcript.words]
+        # `low_confidence=True` is the shim's universal "I tried and failed"
+        # signal (Gemini terminal_refusal, Whisper exception, both falling
+        # through to the degraded sentinel — see
+        # gemini_analyzer.transcribe). Empty words alone is NOT failure:
+        # music-only templates legitimately return words=[] with
+        # low_confidence=False.
+        failed = bool(transcript.low_confidence)
         log.info(
             "agentic_build_transcript_ready",
             template_id=template_id,
             word_count=len(words),
+            transcript_failed=failed,
         )
-        return words
+        return words, failed
     except (TypeError, AttributeError, ImportError, NameError):
         # Programming errors must not be silently degraded — they indicate
         # a refactor broke the transcribe() contract and every Layer-2 build
@@ -393,13 +409,15 @@ def _fetch_transcript_words_for_layer2(
         # to empty transcript so the build doesn't abort. Stage E handles
         # the empty case via its existing passthrough. error_type lets
         # log-based alerts distinguish quota errors from other transients.
+        # transcript_failed=True so the caller skips the Layer-2 merge and
+        # preserves template_recipe's overlays.
         log.warning(
             "agentic_build_transcript_failed",
             template_id=template_id,
             error_type=type(exc).__name__,
             error=str(exc),
         )
-        return []
+        return [], True
 
 
 @celery_app.task(
@@ -606,7 +624,7 @@ def agentic_template_build_task(
                 # promises text-agent overlays. Caching that would pin stale data for
                 # the full TTL. Skip the cache on failure; the next reanalyze gets
                 # another shot at producing the proper merged recipe.
-                transcript_words = _fetch_transcript_words_for_layer2(
+                transcript_words, transcript_failed = _fetch_transcript_words_for_layer2(
                     file_ref, template_id=template_id, use_layer2=use_layer2
                 )
 
@@ -617,6 +635,7 @@ def agentic_template_build_task(
                     force_layer2=use_layer2,
                     gcs_path=gcs_path,
                     transcript_words=transcript_words,
+                    transcript_failed=transcript_failed,
                 )
                 if template_hash is not None and text_success:
                     set_cached_recipe(

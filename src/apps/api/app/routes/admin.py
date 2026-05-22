@@ -21,7 +21,7 @@ from typing import Literal
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
@@ -1201,6 +1201,191 @@ async def update_template(
         # _LIST_CACHE_TTL_S of staleness, which is by design.
         invalidate_templates_cache()
     return _template_response(template)
+
+
+class OverlayTextEdit(BaseModel):
+    """One edit targeting a single overlay's text content.
+
+    `slot_index` is 0-based into `recipe_cached.slots[]`. `overlay_index`
+    is 0-based into the matching slot's `text_overlays[]`. `sample_text`
+    becomes the new on-screen text — an empty string is allowed and
+    effectively hides the overlay (renderer skips empty strings).
+    """
+
+    slot_index: int = Field(..., ge=0)
+    overlay_index: int = Field(..., ge=0)
+    sample_text: str
+
+
+class UpdateOverlaysRequest(BaseModel):
+    """Bulk edit of overlay `sample_text` values across one template.
+
+    Edits apply atomically: validation runs against all edits first, then
+    every update commits in one transaction. A failure on any edit leaves
+    the recipe untouched.
+    """
+
+    edits: list[OverlayTextEdit] = Field(..., min_length=1, max_length=200)
+
+
+@router.patch(
+    "/templates/{template_id}/overlays",
+    response_model=TemplateDebugResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def update_template_overlays(
+    template_id: str,
+    req: UpdateOverlaysRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateDebugResponse:
+    """Bulk-edit `sample_text` on existing overlays in a template's
+    `recipe_cached`.
+
+    Escape hatch for the Layer-2 cumulative-reveal pipeline: when the
+    automated extraction merges adjacent on-screen phrases incorrectly or
+    drops words the transcript missed, the admin can rewrite each overlay's
+    text in place. The pipeline's structural fields (timing, position,
+    effect, font color, bbox) are NOT editable here — those carry physical
+    constraints the renderer relies on. Future iteration may expose timing
+    edits behind validation.
+
+    Caveat: a subsequent `reanalyze-agentic` call may overwrite manual
+    edits when it produces a new recipe. The next iteration will surface
+    a "manually edited" flag so reanalyze can preserve specific overlays.
+    The frontend MUST warn the user before reanalyzing an edited template.
+    """
+    template = await get_template_or_404(template_id, db)
+
+    if not template.recipe_cached or not isinstance(template.recipe_cached, dict):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Template has no recipe to edit — wait for analysis to complete.",
+        )
+    slots = template.recipe_cached.get("slots")
+    if not isinstance(slots, list) or not slots:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Template recipe has no slots — nothing to edit.",
+        )
+
+    # Validate every edit against the recipe BEFORE mutating. A partial
+    # write that succeeds for edits 1-3 and fails on edit 4 would leave
+    # the template in a state the admin didn't intend. Compute the
+    # mutations first, apply only if all are valid.
+    planned: list[tuple[int, int, str, str]] = []  # (slot, overlay, new_text, old_text)
+    for i, edit in enumerate(req.edits):
+        if edit.slot_index >= len(slots):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"edits[{i}].slot_index={edit.slot_index} out of range "
+                    f"(template has {len(slots)} slots)"
+                ),
+            )
+        slot = slots[edit.slot_index]
+        text_overlays = slot.get("text_overlays") if isinstance(slot, dict) else None
+        if not isinstance(text_overlays, list):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"edits[{i}].slot_index={edit.slot_index} has no text_overlays",
+            )
+        if edit.overlay_index >= len(text_overlays):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"edits[{i}].overlay_index={edit.overlay_index} out of range "
+                    f"(slot {edit.slot_index} has {len(text_overlays)} overlays)"
+                ),
+            )
+        overlay = text_overlays[edit.overlay_index]
+        if not isinstance(overlay, dict):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"edits[{i}] target is not a dict overlay (type={type(overlay).__name__})",
+            )
+        old_text = str(overlay.get("sample_text") or overlay.get("text") or "")
+        planned.append((edit.slot_index, edit.overlay_index, edit.sample_text, old_text))
+
+    # Apply the mutations on a copy of recipe_cached, then reassign the
+    # whole dict so SQLAlchemy's JSONB change detection fires. (Same
+    # pattern as `has_intro_slot` updates above — in-place dict mutations
+    # of a JSONB column are NOT tracked by the ORM.)
+    new_recipe = dict(template.recipe_cached)
+    new_slots = [dict(s) if isinstance(s, dict) else s for s in new_recipe.get("slots", [])]
+    for slot_idx, ov_idx, new_text, _old in planned:
+        slot_copy = dict(new_slots[slot_idx])
+        overlays_copy = [
+            dict(ov) if isinstance(ov, dict) else ov for ov in slot_copy.get("text_overlays", [])
+        ]
+        target = dict(overlays_copy[ov_idx])
+        target["sample_text"] = new_text
+        # Some legacy paths read `text` rather than `sample_text`; keep
+        # them in sync so the renderer's fallback (`overlay.get("text")`
+        # at template_orchestrate._resolve_overlay_text) doesn't serve
+        # stale text after a manual edit.
+        if "text" in target:
+            target["text"] = new_text
+        overlays_copy[ov_idx] = target
+        slot_copy["text_overlays"] = overlays_copy
+        new_slots[slot_idx] = slot_copy
+    new_recipe["slots"] = new_slots
+    template.recipe_cached = new_recipe
+    template.recipe_cached_at = datetime.now(UTC)
+
+    await db.commit()
+    await db.refresh(template)
+
+    # Invalidate every Redis cache entry tied to this template_id. Without
+    # this, the path `admin edits → admin clicks Reanalyze → agentic build
+    # cache-hits → returns pre-edit recipe → writes to DB → admin's edit
+    # gone` would silently destroy the edit on every NORMAL reanalyze (not
+    # just forced ones). The reanalyze will now regenerate from agents,
+    # which is the appropriate behavior when manual edits are in play —
+    # admins choosing to reanalyze deliberately accept the regenerated
+    # output, and they can always re-edit if needed.
+    from app.pipeline.template_cache import (  # noqa: PLC0415
+        invalidate_cache_for_template,
+    )
+
+    invalidated = invalidate_cache_for_template(template_id)
+
+    log.info(
+        "admin_template_overlays_edited",
+        template_id=template_id,
+        edit_count=len(planned),
+        cache_invalidated=invalidated,
+        edits=[
+            {"slot": s, "overlay": o, "old": old[:40], "new": new[:40]}
+            for s, o, new, old in planned
+        ],
+    )
+
+    # Surface the updated recipe + agent_run history so the admin UI can
+    # refresh inline without an extra GET.
+    runs_res = await db.execute(
+        select(AgentRun)
+        .where(AgentRun.template_id == template_id)
+        .order_by(AgentRun.created_at.desc())
+        .limit(_TEMPLATE_DEBUG_RUN_LIMIT)
+    )
+    runs = list(runs_res.scalars().all())
+    return TemplateDebugResponse(
+        template=TemplateDebugSummary(
+            id=template.id,
+            name=template.name,
+            analysis_status=template.analysis_status,
+            template_type=template.template_type,
+            is_agentic=template.is_agentic,
+            gcs_path=template.gcs_path,
+            audio_gcs_path=template.audio_gcs_path,
+            music_track_id=template.music_track_id,
+            error_detail=template.error_detail,
+            recipe_cached_at=template.recipe_cached_at,
+            created_at=template.created_at,
+        ),
+        template_agent_runs=[agent_run_to_payload(r) for r in runs],
+        recipe_cached=template.recipe_cached,
+    )
 
 
 @router.post(

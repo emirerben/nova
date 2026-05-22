@@ -28,6 +28,7 @@ from app.agents.template_text import (
     TemplateTextInput,
     TemplateTextOverlay,
 )
+from app.config import settings
 
 log = structlog.get_logger()
 
@@ -191,6 +192,7 @@ def extract_template_text_overlays(
     force_layer2: bool = False,
     gcs_path: str | None = None,
     transcript_words: list[dict] | None = None,
+    transcript_failed: bool = False,
 ) -> tuple[bool, int]:
     """Run TemplateTextAgent and merge results into recipe.slots in place.
 
@@ -213,6 +215,19 @@ def extract_template_text_overlays(
     agents and caches the merged result. `TEMPLATE_PROMPT_VERSION` is bumped
     when this agent ships so pre-existing caches (which lack text-agent
     overlays) are invalidated automatically.
+
+    ``transcript_failed`` is the load-bearing failure-mode signal for the
+    Layer-2 path: when the caller's transcribe step degraded
+    (low_confidence, terminal_refusal, raised exception), Stage E cannot
+    ground OCR against ground-truth Whisper words, and the Layer-2 pipeline
+    falls back to its music-only passthrough — which emits raw OCR
+    artifacts ("luck\\"", "W", duplicated tokens). To prevent that garbage
+    from overwriting template_recipe's clean phrases, this function
+    short-circuits to ``(False, 0)`` BEFORE running the agent when
+    ``transcript_failed`` is True and Layer-2 routing is active. Layer-1
+    callers are unaffected (no transcript dependency). Prod incident:
+    template 89cde014 on 2026-05-22 (transcript terminal_refusal →
+    "luck\\""/"W" rendered to pixels).
     """
     if not file_ref or not getattr(file_ref, "uri", None):
         log.warning(
@@ -222,6 +237,18 @@ def extract_template_text_overlays(
         return False, 0
     if not recipe.slots:
         log.info("template_text_extraction_skipped_no_slots", job_id=job_id)
+        return False, 0
+
+    # Hard guard: Layer-2 needs a working transcript to ground Stage E. Without
+    # it, OCR garbage passes through and clobbers template_recipe's overlays.
+    # Skip the agent entirely so recipe.slots keep template_recipe's text and
+    # the caller's `text_success=False` branch skips the cache write.
+    if transcript_failed and (force_layer2 or settings.text_overlay_v2_enabled):
+        log.warning(
+            "template_text_extraction_skipped_transcript_failed",
+            job_id=job_id,
+            force_layer2=force_layer2,
+        )
         return False, 0
 
     boundaries = _build_slot_boundaries(recipe.slots)

@@ -162,10 +162,32 @@ TEXT_OVERLAY_VERSION_V1 = "v1"
 #     31 input phrases ("allow" 3×, "anyone" 4×, "combination" 4×) —
 #     text_alignment output_dict in the agent_run table made the LLM-side
 #     duplication plainly visible.
+#   2026-05-22 (v2-2026-05-22-align-dedup-fallback → v2-2026-05-22-reveal-cohesion):
+#     Three related Layer-2 fixes ship together — all three change overlay
+#     output for the same input, so the namespace bump must cover all of
+#     them at once. (A) `extract_template_text_overlays` refuses to
+#     overwrite template_recipe overlays when transcribe degrades
+#     (terminal_refusal, low_confidence=True, or raised). Without it,
+#     Stage E's music-only passthrough fires on speech videos with a
+#     failed transcript and raw OCR artifacts reach the render. (B) Stage
+#     D drops single-character non-whitelisted alphanumerics ("W", "M",
+#     "8"), pure-punctuation tokens, and punctuation-dominant tokens
+#     BEFORE Stage E sees them. (C) `build_line_groups` skips unmatched
+#     phrases mid-group instead of closing the running group, so an OCR
+#     artifact between two matched transcript words can't fragment the
+#     cumulative reveal — groups close only on real terminators (sentence
+#     punctuation in the transcript, silence gap, max-words cap).
+#     Evidence: prod template 89cde014 reanalyze at 2026-05-22 09:13 had
+#     transcript=terminal_refusal and rendered "luck\""/"W" to pixels in
+#     job d5083a2c; the 07:42 job before it (good transcript) showed
+#     partial progressive reveal — "The work to get" cumulative + "there"
+#     fragmented because an unmatched OCR closed the group. After all
+#     three fixes the full source phrases reveal cumulatively. Bumping
+#     orphans every Layer-2 cache entry built under the broken behavior.
 #
 # When you change anything that affects Layer-2 overlay output (Stage E
 # prompt, sanitizer logic, Stage D/G semantics), append a new suffix here.
-TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-22-align-dedup-fallback"
+TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-22-reveal-cohesion"
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.
@@ -348,6 +370,49 @@ def _is_degraded_recipe(recipe: TemplateRecipe) -> bool:
     `clip_cache.set_cached_meta`'s `analysis_degraded`/`failed` gate — without
     this guard a single bad reanalyze would pin a broken recipe for 30 days."""
     return recipe.shot_count == 0 or not recipe.slots
+
+
+def invalidate_cache_for_template(template_id: str) -> int:
+    """Delete every cached recipe entry tied to this `template_id`.
+
+    Called from the admin overlay editor after a manual edit so a
+    subsequent reanalyze doesn't cache-hit and silently overwrite the
+    edit with the pre-edit recipe. Without this call, the path
+    `admin edits recipe_cached in DB → admin clicks Reanalyze (no force) →
+    agentic build cache-hits → returns pre-edit recipe → writes to DB →
+    admin's edit gone` would happen on every normal reanalyze, not just
+    forced ones.
+
+    SCAN-based to handle the multi-key surface (one cache entry per
+    {analysis_mode, agent_set, text_overlay_version} combination, all
+    keyed by template_id). Returns the number of keys deleted; 0 on
+    Redis failure or no-match. Best-effort — failures are logged, not
+    raised, because losing a stale cache is a quality issue not a
+    correctness one (the next build will just regenerate).
+    """
+    r = _get_redis()
+    if r is None:
+        return 0
+    pattern = f"template_analysis:*:{template_id}:*"
+    try:
+        deleted = 0
+        for key in r.scan_iter(match=pattern, count=200):
+            r.delete(key)
+            deleted += 1
+        if deleted:
+            log.info(
+                "template_cache_invalidated",
+                template_id=template_id,
+                deleted=deleted,
+            )
+        return deleted
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "template_cache_invalidate_failed",
+            template_id=template_id,
+            error=str(exc),
+        )
+        return 0
 
 
 def set_cached_recipe(

@@ -599,3 +599,155 @@ def test_extract_gcs_path_defaults_to_none(
     recipe = _StubRecipe(slots=[{"target_duration_s": 3.0, "text_overlays": []}])
     extract_template_text_overlays(_StubFileRef(), recipe, job_id="t-gcs-default")
     assert captured_input["input"].gcs_path is None
+
+
+# ── transcript_failed guard ──────────────────────────────────────────────────
+
+
+def test_extract_skips_merge_when_transcript_failed_with_force_layer2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for prod template 89cde014 on 2026-05-22 09:13:
+    `nova.audio.transcript` returned terminal_refusal, Stage E saw
+    transcript_words=[] and fell into its music-only passthrough — which
+    overwrote template_recipe's clean phrases with broken atomized OCR
+    ('luck"', 'W', duplicates). The guard must short-circuit BEFORE the
+    agent runs so the agent never gets to mutate recipe.slots.
+    """
+    from app.tasks import template_text_extraction as mod
+
+    class _AgentMustNotRun:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, *_args, **_kwargs):
+            raise AssertionError(
+                "extract_template_text_overlays must NOT invoke the agent "
+                "when transcript_failed=True and Layer-2 is the chosen path"
+            )
+
+    monkeypatch.setattr(mod, "TemplateTextAgent", _AgentMustNotRun)
+    monkeypatch.setattr(mod, "default_client", lambda: object())
+
+    pre_existing = [{"role": "label", "sample_text": "The work", "start_s": 0, "end_s": 1}]
+    recipe = _StubRecipe(slots=[{"target_duration_s": 3.0, "text_overlays": list(pre_existing)}])
+
+    success, merged = extract_template_text_overlays(
+        _StubFileRef(),
+        recipe,
+        job_id="t-89cde014",
+        force_layer2=True,
+        transcript_words=[],
+        transcript_failed=True,
+    )
+
+    assert success is False  # gates the cache write upstream
+    assert merged == 0
+    # template_recipe's overlays must survive intact.
+    assert recipe.slots[0]["text_overlays"] == pre_existing
+
+
+def test_extract_skips_merge_when_transcript_failed_with_settings_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard also fires when Layer-2 is enabled via
+    ``settings.text_overlay_v2_enabled=True`` (not just the admin
+    force_layer2 override). Both paths must protect template_recipe overlays.
+    """
+    from app.tasks import template_text_extraction as mod
+
+    monkeypatch.setattr(mod.settings, "text_overlay_v2_enabled", True)
+
+    class _AgentMustNotRun:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, *_args, **_kwargs):
+            raise AssertionError("agent must not run when transcript_failed=True")
+
+    monkeypatch.setattr(mod, "TemplateTextAgent", _AgentMustNotRun)
+    monkeypatch.setattr(mod, "default_client", lambda: object())
+
+    recipe = _StubRecipe(slots=[{"target_duration_s": 3.0, "text_overlays": []}])
+    success, merged = extract_template_text_overlays(
+        _StubFileRef(),
+        recipe,
+        job_id="t-flag",
+        force_layer2=False,  # not the admin override
+        transcript_failed=True,
+    )
+    assert success is False
+    assert merged == 0
+
+
+def test_extract_proceeds_when_transcript_failed_but_layer1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Layer-1 callers (no force_layer2 AND settings flag False) have no
+    Stage E and therefore no transcript dependency. The transcript_failed
+    signal is meaningless to them and must NOT block the agent run, or
+    Layer-1 templates would stop receiving template_text overlays whenever
+    a (Layer-2-only) transcribe call happened to fail.
+    """
+    from app.tasks import template_text_extraction as mod
+
+    monkeypatch.setattr(mod.settings, "text_overlay_v2_enabled", False)
+
+    ran = {"count": 0}
+
+    class _StubAgent:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, inp: TemplateTextInput, ctx=None):  # noqa: ARG002
+            ran["count"] += 1
+            return TemplateTextOutput(overlays=[])
+
+    monkeypatch.setattr(mod, "TemplateTextAgent", _StubAgent)
+    monkeypatch.setattr(mod, "default_client", lambda: object())
+
+    recipe = _StubRecipe(slots=[{"target_duration_s": 3.0, "text_overlays": []}])
+    success, _ = extract_template_text_overlays(
+        _StubFileRef(),
+        recipe,
+        job_id="t-layer1",
+        force_layer2=False,
+        transcript_failed=True,  # ignored on Layer-1
+    )
+    assert success is True
+    assert ran["count"] == 1
+
+
+def test_extract_proceeds_when_transcript_ok_layer2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sanity-baseline: with transcript_failed=False, Layer-2 is unaffected
+    and the agent runs as before. Locks the happy-path so the guard's
+    early-return can't accidentally widen.
+    """
+    from app.tasks import template_text_extraction as mod
+
+    ran = {"count": 0}
+
+    class _StubAgent:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self, inp: TemplateTextInput, ctx=None):  # noqa: ARG002
+            ran["count"] += 1
+            return TemplateTextOutput(overlays=[])
+
+    monkeypatch.setattr(mod, "TemplateTextAgent", _StubAgent)
+    monkeypatch.setattr(mod, "default_client", lambda: object())
+
+    recipe = _StubRecipe(slots=[{"target_duration_s": 3.0, "text_overlays": []}])
+    success, _ = extract_template_text_overlays(
+        _StubFileRef(),
+        recipe,
+        job_id="t-ok",
+        force_layer2=True,
+        transcript_words=[{"text": "ok", "start_s": 0.0, "end_s": 0.5}],
+        transcript_failed=False,
+    )
+    assert success is True
+    assert ran["count"] == 1

@@ -636,9 +636,14 @@ def test_run_text_designer_styles_body_overlays() -> None:
 
 @dataclass
 class _StubTranscript:
-    """Minimal Transcript stand-in carrying the .words attribute used by the helper."""
+    """Minimal Transcript stand-in carrying the .words and .low_confidence
+    attributes the helper reads. `low_confidence=False` (the default) means
+    the transcribe call succeeded; `True` is the universal "I tried and
+    failed" signal documented on `gemini_analyzer.transcribe`.
+    """
 
     words: list[Any]
+    low_confidence: bool = False
 
 
 @dataclass
@@ -662,8 +667,12 @@ def test_fetch_transcript_skips_when_layer2_disabled(
         raise AssertionError("transcribe must not be called when Layer-2 is off")
 
     monkeypatch.setattr("app.pipeline.agents.gemini_analyzer.transcribe", _should_not_be_called)
-    words = _fetch_transcript_words_for_layer2(object(), template_id="t-off", use_layer2=False)
+    words, failed = _fetch_transcript_words_for_layer2(
+        object(), template_id="t-off", use_layer2=False
+    )
     assert words == []
+    # Not a failure — we just didn't try.
+    assert failed is False
 
 
 def test_fetch_transcript_fires_when_use_layer2_true(
@@ -689,11 +698,14 @@ def test_fetch_transcript_fires_when_use_layer2_true(
 
     monkeypatch.setattr("app.pipeline.agents.gemini_analyzer.transcribe", _fake_transcribe)
 
-    words = _fetch_transcript_words_for_layer2(object(), template_id="t-forced", use_layer2=True)
+    words, failed = _fetch_transcript_words_for_layer2(
+        object(), template_id="t-forced", use_layer2=True
+    )
     assert words == [
         {"text": "if", "start_s": 3.0, "end_s": 3.2},
         {"text": "you", "start_s": 3.2, "end_s": 3.5},
     ]
+    assert failed is False
     # job_id is namespaced for agent_run attribution.
     assert captured["job_id"] == "template:t-forced:agentic"
 
@@ -714,16 +726,20 @@ def test_fetch_transcript_fires_when_settings_flag_on(
         ),
     )
 
-    words = _fetch_transcript_words_for_layer2(object(), template_id="t-global", use_layer2=False)
+    words, failed = _fetch_transcript_words_for_layer2(
+        object(), template_id="t-global", use_layer2=False
+    )
     assert len(words) == 1
     assert words[0]["text"] == "hello"
+    assert failed is False
 
 
 def test_fetch_transcript_swallows_transcribe_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Transcribe failure must NOT abort the build. The helper returns an empty
-    list and lets Stage E fall back to its empty-transcript passthrough.
+    """Transcribe exception must NOT abort the build. The helper returns
+    ``([], True)`` so the caller refuses the Layer-2 merge instead of
+    letting Stage E passthrough emit broken OCR.
     """
     from app.tasks import agentic_template_build as mod
 
@@ -733,8 +749,91 @@ def test_fetch_transcript_swallows_transcribe_failures(
         raise RuntimeError("Gemini quota exceeded")
 
     monkeypatch.setattr("app.pipeline.agents.gemini_analyzer.transcribe", _boom)
-    words = _fetch_transcript_words_for_layer2(object(), template_id="t-fail", use_layer2=True)
+    words, failed = _fetch_transcript_words_for_layer2(
+        object(), template_id="t-fail", use_layer2=True
+    )
     assert words == []
+    assert failed is True
+
+
+def test_fetch_transcript_low_confidence_marks_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: prod template 89cde014 on 2026-05-22 09:13 had
+    ``nova.audio.transcript`` outcome=terminal_refusal, which the transcribe
+    shim downgrades into ``Transcript(low_confidence=True, words=[])``.
+    The helper must surface that as ``failed=True`` so the caller skips the
+    Layer-2 merge — otherwise Stage E passthrough emits OCR garbage
+    (`"luck\\""`, `"W"`) into recipe_cached.
+    """
+    from app.tasks import agentic_template_build as mod
+
+    monkeypatch.setattr(mod.settings, "text_overlay_v2_enabled", True)
+    monkeypatch.setattr(
+        "app.pipeline.agents.gemini_analyzer.transcribe",
+        lambda file_ref, *, job_id=None: _StubTranscript(words=[], low_confidence=True),
+    )
+
+    words, failed = _fetch_transcript_words_for_layer2(
+        object(), template_id="t-lowconf", use_layer2=True
+    )
+    assert words == []
+    assert failed is True
+
+
+def test_fetch_transcript_low_confidence_with_words_still_marks_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Edge case: ``transcribe()`` returns words AND ``low_confidence=True``
+    (model transcribed but flagged itself as uncertain — possible when audio
+    is unclear). Treat as failed: Stage E grounding OCR against shaky
+    transcript words risks producing wrong overlays, and the user-stated
+    preference is for ``template_recipe``'s clean phrases over Stage E
+    output produced from low-confidence ground truth. Locks the conservative
+    behavior so a future loosening is an explicit, reviewed decision.
+    """
+    from app.tasks import agentic_template_build as mod
+
+    monkeypatch.setattr(mod.settings, "text_overlay_v2_enabled", True)
+    monkeypatch.setattr(
+        "app.pipeline.agents.gemini_analyzer.transcribe",
+        lambda file_ref, *, job_id=None: _StubTranscript(
+            words=[_StubTranscriptWord("uncertain", 0.0, 0.5)],
+            low_confidence=True,
+        ),
+    )
+
+    words, failed = _fetch_transcript_words_for_layer2(
+        object(), template_id="t-shaky", use_layer2=True
+    )
+    # Words ARE returned (caller may inspect them) but `failed=True` tells
+    # the caller to skip the Layer-2 merge regardless.
+    assert len(words) == 1
+    assert words[0]["text"] == "uncertain"
+    assert failed is True
+
+
+def test_fetch_transcript_music_only_template_still_passes_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Genuine no-speech templates (music-only, caption-only) succeed with
+    ``words=[]`` AND ``low_confidence=False``. The helper must NOT mark
+    these as failed — Stage E's empty-transcript passthrough is the
+    correct behavior, the agent built it for exactly this case.
+    """
+    from app.tasks import agentic_template_build as mod
+
+    monkeypatch.setattr(mod.settings, "text_overlay_v2_enabled", True)
+    monkeypatch.setattr(
+        "app.pipeline.agents.gemini_analyzer.transcribe",
+        lambda file_ref, *, job_id=None: _StubTranscript(words=[], low_confidence=False),
+    )
+
+    words, failed = _fetch_transcript_words_for_layer2(
+        object(), template_id="t-music-only", use_layer2=True
+    )
+    assert words == []
+    assert failed is False
 
 
 @pytest.mark.parametrize("exc_class", [TypeError, AttributeError, NameError])

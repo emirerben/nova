@@ -572,3 +572,149 @@ def test_atomize_dedup_collapses_full_not_just_luck_run():
         "to",
         "work",
     ]
+
+
+# ── OCR artifact filter (atomized mode) ──────────────────────────────────────
+#
+# Regression for prod template 89cde014 / job 09f56ee3 (2026-05-22): a
+# single-character OCR artifact "W" (confidence 0.634) survived Stage D and
+# broke Stage G's cumulative-reveal grouping for "the work to get there".
+# The filter drops single-char alphanumerics outside the English one-letter
+# whitelist, pure-punctuation tokens, and punctuation-dominant tokens BEFORE
+# the line-group builder sees them.
+
+
+def test_atomize_filters_single_char_artifact():
+    """'W' alone is OCR noise — drop it. Whitelisted single-letter words
+    ('I', 'A', 'O') survive."""
+    detections = [
+        make_detection(0.0, "the", x_center=0.3, y_center=0.5),
+        make_detection(1.0, "W", x_center=0.5, y_center=0.5),  # OCR artifact
+        make_detection(2.0, "work", x_center=0.6, y_center=0.5),
+        make_detection(3.0, "I", x_center=0.7, y_center=0.5),  # legit one-letter
+        make_detection(4.0, "a", x_center=0.8, y_center=0.5),  # legit (casefold)
+    ]
+    events = group_detections_into_events(detections)
+    phrases = reconstruct_phrases(events, atomize_per_event=True)
+    texts = [p.sample_text for p in phrases]
+    assert "W" not in texts, f"single-char 'W' must be filtered as artifact: {texts}"
+    assert "the" in texts
+    assert "work" in texts
+    assert "I" in texts, "single-letter English word 'I' must survive"
+    assert "a" in texts, "single-letter English word 'a' must survive"
+
+
+def test_atomize_filters_pure_punctuation():
+    """Tokens with zero alphanumeric characters (stray quote, dashes,
+    ellipsis) are OCR noise. Drop unconditionally."""
+    detections = [
+        make_detection(0.0, "hello", x_center=0.3, y_center=0.5),
+        make_detection(1.0, '"', x_center=0.5, y_center=0.5),  # stray quote
+        make_detection(2.0, "--", x_center=0.5, y_center=0.5),  # dashes
+        make_detection(3.0, "world", x_center=0.7, y_center=0.5),
+    ]
+    events = group_detections_into_events(detections)
+    phrases = reconstruct_phrases(events, atomize_per_event=True)
+    texts = [p.sample_text for p in phrases]
+    assert texts == ["hello", "world"]
+
+
+def test_atomize_filters_punctuation_dominant_token():
+    """Token where >50% of chars are non-alphanumeric (e.g. 'x..') drops."""
+    detections = [
+        make_detection(0.0, "real", x_center=0.3, y_center=0.5),
+        make_detection(1.0, "x..", x_center=0.5, y_center=0.5),  # 1 alnum / 3 chars
+        make_detection(2.0, ",,a", x_center=0.5, y_center=0.5),  # 1 alnum / 3 chars
+        make_detection(3.0, "text", x_center=0.7, y_center=0.5),
+    ]
+    events = group_detections_into_events(detections)
+    phrases = reconstruct_phrases(events, atomize_per_event=True)
+    texts = [p.sample_text for p in phrases]
+    assert texts == ["real", "text"]
+
+
+def test_atomize_does_not_filter_real_word_with_trailing_punctuation():
+    """Multi-char real word with a stray trailing quote (e.g. 'luck"' from
+    prod template 89cde014) is NOT an artifact — alnum count is high.
+    Stage E's transcript alignment normalizes the punctuation. Dropping it
+    here would lose real text.
+    """
+    detections = [
+        make_detection(0.0, 'luck"', x_center=0.3, y_center=0.5),
+        make_detection(1.0, "don't", x_center=0.5, y_center=0.5),
+        make_detection(2.0, "it's", x_center=0.7, y_center=0.5),
+    ]
+    events = group_detections_into_events(detections)
+    phrases = reconstruct_phrases(events, atomize_per_event=True)
+    texts = [p.sample_text for p in phrases]
+    assert sorted(texts) == sorted(['luck"', "don't", "it's"])
+
+
+def test_non_atomized_path_does_not_filter_artifacts():
+    """The artifact filter ONLY runs in atomize_per_event mode. Default
+    phrase clustering (multi-line build-ups) is unaffected. Whatever
+    Stage D's non-atomized clustering returns must still contain 'W' —
+    the artifact filter doesn't reach into this code path. This keeps
+    the filter's blast radius limited to the word-by-word pipeline.
+    """
+    detections = [
+        make_detection(1.0, "W", x_center=0.42, y_center=0.5),
+        make_detection(1.0, "hello", x_center=0.58, y_center=0.5),
+    ]
+    events = group_detections_into_events(detections)
+    phrases = reconstruct_phrases(events)  # atomize_per_event=False by default
+    all_texts = " ".join(p.sample_text for p in phrases)
+    assert "W" in all_texts, "non-atomized path must not filter 'W' (filter is atomize-only)"
+    assert "hello" in all_texts
+
+
+def test_is_atomized_ocr_artifact_unit():
+    """Direct unit on the predicate so future regressions in atomized
+    pipeline behavior fall back to a tight rule check rather than an
+    integration assert."""
+    from app.agents._schemas.text_overlay_pipeline import Phrase
+    from app.pipeline.text_overlay_v2.phrases import _is_atomized_ocr_artifact
+
+    def _p(text: str) -> Phrase:
+        return Phrase(
+            lines=[text],
+            start_t_s=0.0,
+            end_t_s=1.0,
+            aabb=(0.1, 0.4, 0.3, 0.5),
+            mean_confidence=0.9,
+        )
+
+    # Drops — single ALPHABETIC chars outside the one-letter-word whitelist.
+    assert _is_atomized_ocr_artifact(_p("W")) is True
+    assert _is_atomized_ocr_artifact(_p("M")) is True
+    assert _is_atomized_ocr_artifact(_p('"')) is True
+    assert _is_atomized_ocr_artifact(_p("...")) is True
+    assert _is_atomized_ocr_artifact(_p("x..")) is True
+    assert _is_atomized_ocr_artifact(_p(" ")) is True
+
+    # Keeps:
+    assert _is_atomized_ocr_artifact(_p("I")) is False
+    assert _is_atomized_ocr_artifact(_p("a")) is False
+    assert _is_atomized_ocr_artifact(_p("o")) is False  # casefold
+    assert _is_atomized_ocr_artifact(_p("hello")) is False
+    assert _is_atomized_ocr_artifact(_p('luck"')) is False  # 4 alnum / 5 chars
+    assert _is_atomized_ocr_artifact(_p("don't")) is False
+    assert _is_atomized_ocr_artifact(_p("it's")) is False
+    # Single digits — counter/step text ('DAY 1', 'ROUND 2', animated step
+    # counters). More often legitimate than OCR noise; the artifact pattern
+    # was single alphabetic chars, not digits.
+    assert _is_atomized_ocr_artifact(_p("0")) is False
+    assert _is_atomized_ocr_artifact(_p("1")) is False
+    assert _is_atomized_ocr_artifact(_p("7")) is False
+    assert _is_atomized_ocr_artifact(_p("9")) is False
+
+    # Multi-line phrase: never an artifact (only atomized one-word phrases
+    # are eligible).
+    multi = Phrase(
+        lines=["W", "hello"],
+        start_t_s=0.0,
+        end_t_s=1.0,
+        aabb=(0.1, 0.4, 0.3, 0.5),
+        mean_confidence=0.9,
+    )
+    assert _is_atomized_ocr_artifact(multi) is False

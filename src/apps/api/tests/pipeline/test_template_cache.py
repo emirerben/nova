@@ -481,9 +481,7 @@ def test_manual_analyze_task_gates_cache_read_on_force():
     from app.tasks import template_orchestrate
 
     src = inspect.getsource(template_orchestrate.analyze_template_task)
-    assert "not force" in src, (
-        "analyze_template_task must gate get_cached_recipe on `not force`"
-    )
+    assert "not force" in src, "analyze_template_task must gate get_cached_recipe on `not force`"
 
 
 def test_admin_reanalyze_routes_pass_force_true():
@@ -705,3 +703,15 @@ def test_resolve_v2_when_both_true():
 
 def test_resolve_v1_when_both_false():
     assert _resolve_text_overlay_version(force_layer2=False, settings_flag=False) == "v1"
+
+
+def test_text_overlay_version_v2_locked():
+    """Lock the current namespace string so future devs don't bump it without
+    intending to. The constant orphans cached recipes — every bump must be a
+    conscious decision documented in the history block in template_cache.py.
+    Bumped on 2026-05-22 with three related Layer-2 fixes:
+    transcript-fail guard, Stage D OCR-artifact filter, and
+    build_line_groups skip-unmatched (template 89cde014 / jobs d5083a2c
+    and 09f56ee3).
+    """
+    assert TEXT_OVERLAY_VERSION_V2 == "v2-2026-05-22-reveal-cohesion"
