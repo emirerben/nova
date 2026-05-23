@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.43.8] - 2026-05-23
+
+### Added
+- **Editing a cumulative-reveal phrase's text now reflows its reveal — stages + timings recompute from the new wording.** Before, the overlay editor only rewrote `sample_text` on the existing member overlays (fixed count, stale timings), so changing a phrase from 2 words to 4 left "2 stages" with the old per-word timings, and growing a phrase past the window produced overlapping/negative spans (`10.30→10.00`). New `POST /admin/templates/{id}/retime-phrase` endpoint re-derives the whole phrase: stage COUNT = word count, and per-word reveal timing is laid end-to-end from the phrase's anchor `start_s` at a fixed beat (`_RETIME_DEFAULT_BEAT_S=0.40s`, `_RETIME_DWELL_S=0.40s`). Empty text deletes the phrase. The `OverlaysTab` save handler now routes every edited phrase through this endpoint (processed in reverse slot/index order so a count change can't invalidate an earlier phrase's indices), replacing the text-only PATCH for multi-stage phrases. Pure helper `_recompute_phrase_overlays` is unit-tested; endpoint covered by expand/shrink/delete/validation tests; frontend client `adminRetimeTemplatePhrase`.
+
+### Fixed
+- **Wide pop-in-with-suffix lines wrap instead of clipping off the right edge.** The Skia `_draw_centered_text` path already wrapped + shrank over-wide lines, but `_draw_pop_in_with_suffix` (the Layer-2 cumulative reveal) laid prefix + suffix on a single baseline, so a manually-edited phrase grown past ~90% canvas width (e.g. "combination of hard work" at 120 px) ran off the right edge. It now falls back to the wrapping path when the line needs more than one line — the whole line pops together, but nothing clips. Regression test `test_pop_in_suffix_wide_line_wraps_instead_of_clipping`.
+
 ## [0.4.43.7] - 2026-05-23
 
 ### Fixed
