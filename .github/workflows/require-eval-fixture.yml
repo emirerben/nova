@@ -1,0 +1,112 @@
+name: Require eval fixture (T8)
+
+# Pre-merge gate (Lane C / T8 in plans/what-are-we-doing-quiet-clock.md).
+#
+# Any change to an agent prompt, agent module, or agent schema must ship with
+# either a new/updated eval fixture or an explicit `[skip-eval-check]` marker.
+# T8 exists because T2 (ground-truth autobuilder) makes fixtures cheap, but
+# without enforcement nothing forces their use — the eval ratio (eval coverage
+# vs admin tooling vs pipeline fixes) stays upside-down.
+#
+# This workflow checks "did the PR change at least one file in the eval fixture
+# tree OR the eval suite tree." It does NOT verify the fixture is correct
+# (that's an out-of-band reviewer concern, captured in the failure-modes
+# registry in the plan).
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited]
+
+concurrency:
+  group: require-eval-fixture-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  require-eval-fixture:
+    name: Require eval fixture for prompt/schema/agent changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: List changed files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" > /tmp/changed.txt
+          echo "Changed files:"
+          cat /tmp/changed.txt
+          echo "---"
+
+      - name: Detect agent-input touches
+        id: input
+        run: |
+          chmod +x scripts/ci/check-touched-paths.sh
+          matched=$(scripts/ci/check-touched-paths.sh eval-input < /tmp/changed.txt || true)
+          if [[ -n "$matched" ]]; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+            echo "Agent-input paths touched:"
+            printf '%s\n' "$matched"
+          else
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+            echo "No agent-input paths touched — gate is a no-op."
+          fi
+
+      - name: Detect eval-coverage touches
+        id: coverage
+        if: steps.input.outputs.touched == 'true'
+        run: |
+          matched=$(scripts/ci/check-touched-paths.sh eval-coverage < /tmp/changed.txt || true)
+          if [[ -n "$matched" ]]; then
+            echo "covered=true" >> "$GITHUB_OUTPUT"
+            echo "Eval coverage paths also touched:"
+            printf '%s\n' "$matched"
+          else
+            echo "covered=false" >> "$GITHUB_OUTPUT"
+            echo "No eval coverage paths touched."
+          fi
+
+      - name: Verify fixture coverage or skip-marker
+        if: steps.input.outputs.touched == 'true'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          COVERED: ${{ steps.coverage.outputs.covered }}
+        run: |
+          if [[ "$COVERED" == "true" ]]; then
+            echo "OK — PR updates eval fixtures or eval suite alongside agent inputs."
+            exit 0
+          fi
+
+          chmod +x scripts/ci/check-pr-body.sh
+          # Skip-marker only; there's no positive PR-body form here — coverage
+          # is shown by changed files, not by a body line.
+          # Required-regex is set to a never-matching pattern so only the
+          # skip-marker path can pass.
+          if printf '%s' "$PR_BODY" | scripts/ci/check-pr-body.sh \
+              --required-regex '^__never_matches__$' \
+              --skip-marker '[skip-eval-check]'; then
+            echo "OK — PR body carries [skip-eval-check] with a justification."
+            exit 0
+          fi
+
+          cat <<'EOF'
+          ERROR: This PR changes an agent prompt, agent module, or agent schema
+          but does not add or update any eval fixture / eval suite.
+
+          Add or update a fixture under:
+            src/apps/api/tests/fixtures/agent_evals/**
+
+          OR update the eval suite itself:
+            src/apps/api/tests/evals/**
+
+          If the change is genuinely a no-op for evals (e.g. comment, docstring,
+          refactor with no behavior delta), add this line to the PR body:
+
+            [skip-eval-check] <reason of 10+ characters>
+              -- example: `[skip-eval-check] regenerating fixtures offline in follow-up`
+
+          See plans/what-are-we-doing-quiet-clock.md (T8) for context.
+          EOF
+          exit 1
