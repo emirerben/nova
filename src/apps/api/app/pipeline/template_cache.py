@@ -238,7 +238,20 @@ TEXT_OVERLAY_VERSION_V1 = "v1"
 #   (D) Stage E `_sanitize_aligned_line` strips unmatched trailing quote /
 #       escape characters that OCR leaks on phrase boundaries (the dangling
 #       `"` on `luck"` was rendering literally on screen).
-TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-23-cumulative-stack-floor"
+#
+# 2026-05-23 (b) — Stage E mis-mapped-duplicate defense. The v2-2026-05-23
+# cumulative-stack fix shipped, but the next prod reanalyze of 89cde014 still
+# rendered jumbled sub-groups ("and combination" at y=0.51, "good don't allow"
+# stacked). Root cause was UPSTREAM of the cumulative emit: Stage E's Gemini
+# call violated its uniqueness rule, mapping OCR "timing" → "combination" and
+# OCR "don't" → "and" (both duplicates of earlier phrases) 1s+ apart, so the
+# existing time-gap dedup (0.5 s) missed them. The wrong words entered the
+# cumulative LineGroup and the emit faithfully rendered nonsense. The 3b
+# uniqueness defense now also reverts a duplicate to OCR when the LLM output
+# disagrees with the phrase's own OCR word, regardless of time gap. Bumping
+# again so 89cde014 (and any template that hit the broken emit) reanalyzes
+# through the corrected Stage E.
+TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-23b-stage-e-dupe-revert"
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.
