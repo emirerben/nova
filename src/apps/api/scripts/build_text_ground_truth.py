@@ -1,12 +1,40 @@
 """Build OCR-derived ground truth for template-text evals.
 
-Usage:
+Two modes:
+
+1. Single-video (legacy, interactive)::
+
     python scripts/build_text_ground_truth.py \\
         --video /path/to/template.mp4 \\
         --slot-boundaries 0.0:3.0,3.0:7.5,7.5:12.0 \\
         --out tests/fixtures/agent_evals/template_text/ground_truth/<slug>.json
 
-Pipeline:
+2. Autobuilder (Lane B / T2): cross-verified ground truth for every
+   published template::
+
+    python scripts/build_text_ground_truth.py --all-published [--limit N] [--dry-run]
+
+   The autobuilder:
+     - queries ``video_templates`` for every ``published_at IS NOT NULL
+       AND archived_at IS NULL`` row,
+     - downloads each template video from GCS,
+     - samples frames at ``--frame-interval`` seconds,
+     - runs two independent OCR engines (pytesseract + Cloud Vision),
+     - keeps only the frames where the engines agree above a Levenshtein
+       similarity threshold (default 0.85 — see
+       :mod:`app.services.ocr.cross_check`),
+     - writes the agreed-on tokens into ``ground_truth/<slug>.json``
+       in the same shape the eval already consumes,
+     - dumps the rest to ``disagreements/<slug>.json`` for human review,
+     - skips templates whose fixture is already up-to-date for the
+       same GCS blob generation (idempotent re-runs).
+
+   Whisper transcript: optional, runs the project's
+   ``nova.audio.transcript`` agent against the template's Gemini
+   file_uri when ``GEMINI_API_KEY`` is set. Best-effort — fixtures
+   still write without transcript words when the agent is unavailable.
+
+Pipeline (single-video mode):
     1. Sample frames every N seconds (default 0.25s — fine enough to catch
        brief overlays without exploding OCR cost)
     2. pytesseract OCR each frame → (text, bbox) detections
@@ -26,7 +54,8 @@ Outputs are hand-validated artifacts, not raw OCR — commit them to git.
 Why tesseract: already a project dep (pyproject.toml), no auth required, no
 network round-trip per frame, runs on dev machines without setup. For
 production-grade OCR (Google Cloud Vision, AWS Textract, PaddleOCR), swap
-`_run_tesseract` for the alternative implementation.
+``_run_tesseract`` for the alternative implementation — or use
+``--all-published`` which cross-checks both engines automatically.
 """
 
 from __future__ import annotations
@@ -162,8 +191,7 @@ def _run_tesseract(frame_path: str) -> list[FrameDetection]:
         from PIL import Image  # noqa: PLC0415
     except ImportError as exc:
         raise SystemExit(
-            f"pytesseract/Pillow not installed: {exc}. "
-            "Install with: pip install pytesseract Pillow"
+            f"pytesseract/Pillow not installed: {exc}. Install with: pip install pytesseract Pillow"
         ) from exc
 
     img = Image.open(frame_path)
@@ -237,9 +265,7 @@ def _sample_text_color(img, box: tuple[int, int, int, int]) -> str:
         pairs = sorted(zip(brightnesses, pixels, strict=True), key=lambda x: x[0])
         q = max(1, len(pairs) // 4)
         text_pixels = (
-            [p for _, p in pairs[:q]]
-            if mean_brightness > 128
-            else [p for _, p in pairs[-q:]]
+            [p for _, p in pairs[:q]] if mean_brightness > 128 else [p for _, p in pairs[-q:]]
         )
         r = sum(p[0] for p in text_pixels) // len(text_pixels)
         g = sum(p[1] for p in text_pixels) // len(text_pixels)
@@ -430,6 +456,353 @@ def _interactive_review(overlays: list[GroundTruthOverlay]) -> list[GroundTruthO
     return kept
 
 
+# ── Autobuilder (Lane B / T2) ────────────────────────────────────────────────
+
+
+def _slugify(name: str, template_id: str) -> str:
+    """Produce a stable, filename-safe slug for a template.
+
+    Falls back to the template UUID's first segment when the name has no
+    alphanumeric content (e.g. emoji-only template names exist in prod).
+    Keeping the UUID prefix as suffix-of-last-resort means two templates
+    with identical names don't collide in the fixtures directory.
+    """
+    import re  # noqa: PLC0415 — only used in this helper
+
+    cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", name or "").strip("_").lower()
+    if not cleaned:
+        return template_id.split("-", 1)[0]
+    # Always suffix the short id so renames don't orphan a fixture and so
+    # name-collisions can't silently overwrite each other.
+    short = template_id.split("-", 1)[0]
+    return f"{cleaned}_{short}"
+
+
+def _fetch_blob_generation(gcs_path: str) -> str | None:
+    """Return the GCS object generation number for ``gcs_path``.
+
+    Used to skip re-OCRing templates whose video hasn't changed. Returns
+    None on any failure — the caller treats that as "unknown, do the
+    work" so a transient GCS error never silently leaves stale fixtures.
+    """
+    try:
+        from app.config import settings  # noqa: PLC0415
+        from app.storage import _get_client  # type: ignore[attr-defined]  # noqa: PLC0415
+
+        bucket = _get_client().bucket(settings.storage_bucket)
+        blob = bucket.blob(gcs_path)
+        blob.reload()
+        return str(blob.generation) if blob.generation else None
+    except Exception as exc:  # pragma: no cover — env-dependent
+        print(f"  [warn] could not read GCS generation for {gcs_path!r}: {exc}")
+        return None
+
+
+def _download_template_video(gcs_path: str, dest: str) -> None:
+    """Download a GCS object to ``dest`` using the project's storage helper."""
+    from app.storage import download_to_file  # noqa: PLC0415
+
+    download_to_file(gcs_path, dest)
+
+
+def _fetch_published_templates() -> list[dict]:
+    """Read all published, non-archived templates straight from the DB.
+
+    Returns a list of plain dicts (id, name, gcs_path) so the autobuilder
+    doesn't depend on the SQLAlchemy session lifecycle for its main loop.
+    """
+    from sqlalchemy import create_engine, text  # noqa: PLC0415
+
+    from app.config import settings  # noqa: PLC0415
+
+    # The async DATABASE_URL ships with the asyncpg driver; for this
+    # one-shot script we want sync. Strip the driver suffix so the
+    # default psycopg2 driver kicks in.
+    url = settings.database_url
+    if url.startswith("postgresql+asyncpg://"):
+        url = "postgresql://" + url.removeprefix("postgresql+asyncpg://")
+    engine = create_engine(url)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT id, name, gcs_path
+                FROM video_templates
+                WHERE published_at IS NOT NULL
+                  AND archived_at IS NULL
+                  AND gcs_path IS NOT NULL
+                ORDER BY created_at DESC
+                """
+            )
+        ).fetchall()
+    return [{"id": r[0], "name": r[1], "gcs_path": r[2]} for r in rows]
+
+
+def _build_engines() -> tuple[object, object]:
+    """Instantiate (pytesseract, cloud_vision) — fail fast with a clear
+    error message if either runtime prereq is missing. Returning a tuple
+    instead of a dict makes the cross-check call site one line."""
+    from app.services.ocr.engines import CloudVisionEngine, PytesseractEngine  # noqa: PLC0415
+
+    return PytesseractEngine(), CloudVisionEngine()
+
+
+def _fetch_transcript_for_template(
+    template: dict,
+) -> list[dict] | None:
+    """Best-effort: run the project's nova.audio.transcript agent against
+    the template's Gemini file_uri. Returns a list of {text, start_s,
+    end_s, confidence} dicts, or None if the agent can't run (no key,
+    SDK missing, etc.). Failures are non-fatal — the fixture still
+    writes without transcript data.
+    """
+    if not os.environ.get("GEMINI_API_KEY"):
+        return None
+    try:
+        # Imports deferred so the script's --help works even when the
+        # agent runtime isn't fully wired (e.g. missing optional deps
+        # in a fresh dev checkout).
+        import asyncio  # noqa: PLC0415
+
+        from app.agents.transcript import TranscriptAgent, TranscriptInput  # noqa: PLC0415
+
+        gcs_path = template["gcs_path"]
+        if not gcs_path:
+            return None
+        agent_input = TranscriptInput(file_uri=gcs_path, file_mime="video/mp4")
+        agent = TranscriptAgent()
+        result = asyncio.run(agent.run(agent_input))
+        return [
+            {
+                "text": w.text,
+                "start_s": w.start_s,
+                "end_s": w.end_s,
+                "confidence": w.confidence,
+            }
+            for w in result.words
+        ]
+    except Exception as exc:  # pragma: no cover — best-effort
+        print(f"  [warn] transcript agent failed for {template['id']}: {exc}")
+        return None
+
+
+def _autobuild_one_template(
+    template: dict,
+    *,
+    frame_interval_s: float,
+    threshold: float,
+    ground_truth_dir: Path,
+    disagreements_dir: Path,
+    dry_run: bool,
+) -> str:
+    """Cross-OCR one template; write to fixture or disagreements.
+
+    Returns a one-word status: 'skipped', 'agreed', 'disagreed', 'failed'.
+    The autobuilder loop aggregates these for the final summary.
+    """
+    from app.services.ocr.cross_check import _cross_check_from_words  # noqa: PLC0415
+
+    slug = _slugify(template["name"] or "", template["id"])
+    fixture_path = ground_truth_dir / f"{slug}.json"
+    disagreement_path = disagreements_dir / f"{slug}.json"
+
+    # Cache key: GCS object generation. When a template video is replaced
+    # at the same path, GCS bumps the generation; we re-OCR. When it
+    # hasn't changed, we skip.
+    generation = _fetch_blob_generation(template["gcs_path"])
+    if fixture_path.exists():
+        try:
+            existing = json.loads(fixture_path.read_text())
+        except json.JSONDecodeError:
+            existing = {}
+        prior_gen = (existing.get("_meta") or {}).get("gcs_generation")
+        if generation and prior_gen == generation:
+            print(f"  skip {slug}: same GCS generation ({generation})")
+            return "skipped"
+
+    if dry_run:
+        print(f"  [dry-run] would OCR {slug} (gcs_path={template['gcs_path']})")
+        return "skipped"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        video_path = os.path.join(tmpdir, "template.mp4")
+        try:
+            _download_template_video(template["gcs_path"], video_path)
+        except Exception as exc:
+            print(f"  [error] download failed for {slug}: {exc}")
+            return "failed"
+
+        try:
+            engine_a, engine_b = _build_engines()
+        except Exception as exc:
+            print(f"  [error] engine init failed: {exc}")
+            return "failed"
+
+        frames = _sample_frames(video_path, frame_interval_s, tmpdir)
+        print(f"  {slug}: sampled {len(frames)} frames")
+
+        per_frame_results: list[dict] = []
+        agreed_frames = 0
+        for t, png in frames:
+            try:
+                a_words = engine_a.recognize(png)
+                b_words = engine_b.recognize(png)
+            except Exception as exc:
+                print(f"    [warn] OCR failure on t={t:.2f}: {exc}")
+                continue
+            result = _cross_check_from_words(
+                engine_a.name, a_words, engine_b.name, b_words, threshold=threshold
+            )
+            per_frame_results.append(
+                {
+                    "frame_t": round(t, 3),
+                    "status": result.status,
+                    "agreement": round(result.agreement, 4),
+                    "tokens": result.tokens,
+                    "engine_a": {
+                        "name": result.engine_a_name,
+                        "tokens": result.engine_a_tokens,
+                    },
+                    "engine_b": {
+                        "name": result.engine_b_name,
+                        "tokens": result.engine_b_tokens,
+                    },
+                }
+            )
+            if result.status == "agreed":
+                agreed_frames += 1
+
+        if not per_frame_results:
+            print(f"  [warn] no frames produced any OCR for {slug}; skipping")
+            return "failed"
+
+        agreement_ratio = agreed_frames / len(per_frame_results)
+        print(
+            f"  {slug}: {agreed_frames}/{len(per_frame_results)} frames agreed "
+            f"({agreement_ratio:.0%})"
+        )
+
+    transcript_words = _fetch_transcript_for_template(template)
+
+    meta = {
+        "template_id": template["id"],
+        "template_name": template["name"],
+        "gcs_path": template["gcs_path"],
+        "gcs_generation": generation,
+        "frame_interval_s": frame_interval_s,
+        "agreement_threshold": threshold,
+        "agreed_frames": agreed_frames,
+        "total_frames": len(per_frame_results),
+        "agreement_ratio": round(agreement_ratio, 4),
+    }
+
+    if agreement_ratio >= threshold:
+        # Convert agreed-frame tokens into an overlay-shaped ground truth.
+        # The agreed-tokens-per-frame are token-set granular; downstream
+        # human review (operator opens the fixture) can refine into
+        # per-overlay records with the same shape the eval expects.
+        # We emit one "overlay" per agreed frame as a candidate so the
+        # eval has something concrete to score against immediately —
+        # the operator collapses adjacent frames into one overlay if
+        # needed.
+        overlays: list[dict] = []
+        for entry in per_frame_results:
+            if entry["status"] != "agreed" or not entry["tokens"]:
+                continue
+            overlays.append(
+                {
+                    "slot_index": 1,  # operator override; no per-slot
+                    # boundaries in autobuilder mode
+                    "sample_text": " ".join(entry["tokens"]),
+                    "start_s": entry["frame_t"],
+                    "end_s": round(entry["frame_t"] + frame_interval_s, 3),
+                    "bbox": {
+                        "x_norm": 0.5,
+                        "y_norm": 0.5,
+                        "w_norm": 0.0,
+                        "h_norm": 0.0,
+                        "sample_frame_t": entry["frame_t"],
+                    },
+                    "font_color_hex": "#FFFFFF",
+                    "effect": "none",
+                    "role": "label",
+                    "size_class": "medium",
+                }
+            )
+        payload: dict = {"_meta": meta, "overlays": overlays}
+        if transcript_words is not None:
+            payload["transcript"] = {"words": transcript_words}
+        ground_truth_dir.mkdir(parents=True, exist_ok=True)
+        fixture_path.write_text(json.dumps(payload, indent=2))
+        print(f"  wrote {fixture_path}")
+        return "agreed"
+
+    # Below threshold — dump both engines' raw output for human review.
+    payload = {
+        "_meta": meta,
+        "frames": per_frame_results,
+    }
+    if transcript_words is not None:
+        payload["transcript"] = {"words": transcript_words}
+    disagreements_dir.mkdir(parents=True, exist_ok=True)
+    disagreement_path.write_text(json.dumps(payload, indent=2))
+    print(f"  disagreement → {disagreement_path}")
+    return "disagreed"
+
+
+def _run_autobuilder(args: argparse.Namespace) -> int:
+    """Top-level driver for ``--all-published`` mode."""
+    if not 0.0 <= args.agreement_threshold <= 1.0:
+        print(
+            f"--agreement-threshold must be in [0, 1]; got {args.agreement_threshold}",
+            file=sys.stderr,
+        )
+        return 2
+
+    print("Autobuilder: querying published templates …")
+    try:
+        templates = _fetch_published_templates()
+    except Exception as exc:
+        print(f"DB query failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"  → {len(templates)} candidate templates")
+    if args.limit is not None:
+        templates = templates[: args.limit]
+        print(f"  --limit {args.limit}: capping to {len(templates)} templates")
+
+    gt_dir = Path(args.ground_truth_dir)
+    dis_dir = Path(args.disagreements_dir)
+    summary: dict[str, int] = {
+        "agreed": 0,
+        "disagreed": 0,
+        "skipped": 0,
+        "failed": 0,
+    }
+    for i, t in enumerate(templates, start=1):
+        print(f"\n[{i}/{len(templates)}] {t['id']} — {t['name']!r}")
+        try:
+            status = _autobuild_one_template(
+                t,
+                frame_interval_s=args.frame_interval,
+                threshold=args.agreement_threshold,
+                ground_truth_dir=gt_dir,
+                disagreements_dir=dis_dir,
+                dry_run=args.dry_run,
+            )
+        except KeyboardInterrupt:
+            print("interrupted by operator", file=sys.stderr)
+            return 130
+        except Exception as exc:  # noqa: BLE001 — keep the loop alive
+            print(f"  [error] {exc}")
+            status = "failed"
+        summary[status] = summary.get(status, 0) + 1
+
+    print("\n── Autobuilder summary ──")
+    for k, v in summary.items():
+        print(f"  {k}: {v}")
+    return 0
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 
@@ -458,9 +831,7 @@ def _parse_boundaries(spec: str) -> list[tuple[float, float]]:
         try:
             s, e = float(parts[0]), float(parts[1])
         except ValueError as exc:
-            raise SystemExit(
-                f"--slot-boundaries chunk {chunk!r}: {exc}"
-            ) from exc
+            raise SystemExit(f"--slot-boundaries chunk {chunk!r}: {exc}") from exc
         if s < 0 or e <= s:
             raise SystemExit(
                 f"--slot-boundaries chunk {chunk!r}: start must be >= 0 and end > start "
@@ -471,14 +842,19 @@ def _parse_boundaries(spec: str) -> list[tuple[float, float]]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--video", required=True, help="Local path to the template video.")
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument(
+        "--video",
+        help="Local path to the template video (single-video mode).",
+    )
     p.add_argument(
         "--slot-boundaries",
-        required=True,
-        help="Comma-separated 'start:end' pairs, e.g. '0:3,3:7.5,7.5:12'",
+        help=("Comma-separated 'start:end' pairs for single-video mode, e.g. '0:3,3:7.5,7.5:12'"),
     )
-    p.add_argument("--out", required=True, help="Output JSON path.")
+    p.add_argument("--out", help="Output JSON path (single-video mode).")
     p.add_argument(
         "--frame-interval",
         type=float,
@@ -496,7 +872,61 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip interactive operator review (use OCR output as-is — for batch mode).",
     )
+    # ── Autobuilder (Lane B / T2) flags ──
+    p.add_argument(
+        "--all-published",
+        action="store_true",
+        help=(
+            "Run the cross-engine autobuilder over every published, non-archived "
+            "video_templates row. Writes agreed fixtures to "
+            "tests/fixtures/agent_evals/template_text/ground_truth/<slug>.json "
+            "and disagreements to disagreements/<slug>.json."
+        ),
+    )
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Autobuilder: stop after N templates (testing aid).",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Autobuilder: print what would be written without touching disk "
+            "or running OCR. Useful for sanity-checking the candidate set."
+        ),
+    )
+    p.add_argument(
+        "--agreement-threshold",
+        type=float,
+        default=0.85,
+        help=(
+            "Autobuilder: minimum Levenshtein-similarity ratio (0..1) between "
+            "the two OCR engines for a frame to count as agreed. Default 0.85."
+        ),
+    )
+    p.add_argument(
+        "--ground-truth-dir",
+        default="tests/fixtures/agent_evals/template_text/ground_truth",
+        help="Autobuilder: output dir for agreed fixtures (default matches eval).",
+    )
+    p.add_argument(
+        "--disagreements-dir",
+        default="tests/fixtures/agent_evals/template_text/disagreements",
+        help="Autobuilder: output dir for disagreements (human-review queue).",
+    )
     args = p.parse_args(argv)
+
+    if args.all_published:
+        return _run_autobuilder(args)
+
+    # Single-video mode requires the legacy positional-ish flags.
+    if not args.video or not args.slot_boundaries or not args.out:
+        p.error(
+            "Single-video mode requires --video, --slot-boundaries, and --out. "
+            "For batch mode use --all-published."
+        )
 
     boundaries = _parse_boundaries(args.slot_boundaries)
     print(f"Slot boundaries: {boundaries}")
@@ -521,9 +951,7 @@ def main(argv: list[str] | None = None) -> int:
         tracks = _group_detections(per_frame)
         overlays = [_track_to_overlay(t, boundaries) for t in tracks]
         # Filter by min visibility
-        overlays = [
-            ov for ov in overlays if (ov.end_s - ov.start_s) >= args.min_visibility
-        ]
+        overlays = [ov for ov in overlays if (ov.end_s - ov.start_s) >= args.min_visibility]
         print(f"Grouped into {len(overlays)} overlays.")
 
         if not args.no_review:
