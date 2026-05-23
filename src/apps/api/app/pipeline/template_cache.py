@@ -113,6 +113,8 @@ AGENT_SET_RECIPE_PLUS_TEXT = "recipe+text"
 # v2 is now CONTENT-HASHED. Pre-2026-05-23 this was a manually-bumped string
 # (`v2-2026-05-22-atomized-single-word`) that every Stage-E prompt edit had
 # to be remembered to update; missing the bump silently served stale recipes.
+# The full narrative of pre-2026-05-23 bumps (prod incidents, job IDs,
+# evidence) lives in `docs/cache-history.md`.
 # It is now derived deterministically from:
 #   - the SHA-256 of every prompt file Layer-2 actually consumes
 #   - the SHA-256 of every schema module Layer-2 actually consumes
