@@ -158,18 +158,21 @@ def test_duration_below_min_drops() -> None:
     assert out.sections[0].rank == 2
 
 
-def test_duration_above_max_drops() -> None:
+def test_duration_above_max_caps_to_20s() -> None:
     raw = json.dumps(
         {
             "sections": [
-                _section(1, 30.0, 55.0),  # 25s — too long
+                _section(1, 30.0, 55.0),  # 25s — cap to 20s
                 _section(2, 110.0, 128.0),  # OK
             ],
             "section_version": CURRENT_SECTION_VERSION,
         }
     )
     out = _agent().parse(raw, _input())
-    assert len(out.sections) == 1
+    assert len(out.sections) == 2
+    assert out.sections[0].rank == 1
+    assert out.sections[0].start_s == 30.0
+    assert out.sections[0].end_s == 50.0
 
 
 def test_negative_start_drops() -> None:
@@ -250,7 +253,7 @@ def test_parse_keeps_section_at_band_boundaries() -> None:
     ]
 
 
-def test_parse_drops_section_just_over_20s() -> None:
+def test_parse_caps_section_just_over_20s() -> None:
     raw = json.dumps(
         {
             "sections": [
@@ -261,7 +264,8 @@ def test_parse_drops_section_just_over_20s() -> None:
         }
     )
     out = _agent().parse(raw, _input())
-    assert [s.rank for s in out.sections] == [2]
+    assert [s.rank for s in out.sections] == [1, 2]
+    assert out.sections[0].end_s == 30.0
 
 
 @pytest.mark.parametrize(
@@ -301,19 +305,23 @@ def test_schema_clarification_uses_constants() -> None:
     assert f"{MAX_OVERLAP_S:.0f} seconds" in clar
 
 
-def test_parse_refuses_when_all_sections_invalid() -> None:
+def test_parse_keeps_all_overlong_sections_by_capping() -> None:
     raw = json.dumps(
         {
             "sections": [
-                _section(1, 10.0, 35.0),  # too long
-                _section(2, 40.0, 65.0),  # too long
-                _section(3, 70.0, 95.0),  # too long
+                _section(1, 10.0, 35.0),  # cap to 30.0
+                _section(2, 40.0, 65.0),  # cap to 60.0
+                _section(3, 70.0, 95.0),  # cap to 90.0
             ],
             "section_version": CURRENT_SECTION_VERSION,
         }
     )
-    with pytest.raises(RefusalError):
-        _agent().parse(raw, _input())
+    out = _agent().parse(raw, _input())
+    assert [(s.rank, s.start_s, s.end_s) for s in out.sections] == [
+        (1, 10.0, 30.0),
+        (2, 40.0, 60.0),
+        (3, 70.0, 90.0),
+    ]
 
 
 def test_empty_sections_raises_refusal() -> None:

@@ -38,18 +38,19 @@ from pydantic import BaseModel, Field, ValidationError
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents._schemas.song_sections import (
     CURRENT_SECTION_VERSION,
+    MAX_SECTION_DURATION_S,
     SongSection,
     SongSectionsOutput,
+    cap_song_section_duration,
 )
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-# Section duration band — TikTok-shape constraint. Sections outside this
-# band get dropped in parse() (not failed: an over-long section is the
-# model's mistake, not a reason to throw away the other valid picks).
+# Section duration band — TikTok-shape constraint. Sections below this band
+# get dropped in parse(); sections above the max are capped so a strong
+# long chorus/drop still becomes a valid short-form window.
 MIN_SECTION_DURATION_S = 8.0
-MAX_SECTION_DURATION_S = 20.0
 
 # Float tolerance on the upper bound. Gemini sometimes returns end_s
 # slightly past duration_s due to rounding; 1s leeway avoids
@@ -204,8 +205,11 @@ class SongSectionsAgent(Agent[SongSectionsInput, SongSectionsOutput]):
                     duration_s=duration_s,
                 )
                 continue
+            if section.end_s > duration_s:
+                section = section.model_copy(update={"end_s": duration_s})
+            section = cap_song_section_duration(section, track_duration_s=duration_s)
             dur = section.end_s - section.start_s
-            if dur < MIN_SECTION_DURATION_S or dur > MAX_SECTION_DURATION_S:
+            if dur < MIN_SECTION_DURATION_S:
                 log.debug(
                     "song_sections_drop_duration",
                     index=i,
