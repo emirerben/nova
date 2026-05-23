@@ -1245,6 +1245,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             output_fit=getattr(recipe, "output_fit", None) or "crop",
             force_single_pass=effective_single_pass,
             is_agentic=is_agentic,
+            transition_duration_s=getattr(recipe, "transition_duration_s", None),
         )
 
         record_phase(
@@ -1496,6 +1497,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
             output_fit=getattr(recipe, "output_fit", None) or "crop",
             force_single_pass=effective_single_pass,
             is_agentic=is_agentic,
+            transition_duration_s=getattr(recipe, "transition_duration_s", None),
         )
 
         # Mix template audio if available
@@ -2801,6 +2803,7 @@ def _build_single_pass_spec(
     abs_pngs: list[dict] | None = None,
     abs_ass_paths: list[str] | None = None,
     fonts_dir: str = "",
+    transition_duration_s: float | None = None,
 ) -> SinglePassSpec:
     """Convert orchestrator plans + interstitials → SinglePassSpec.
 
@@ -2936,6 +2939,7 @@ def _build_single_pass_spec(
         abs_ass_paths=abs_ass_paths or [],
         fonts_dir=fonts_dir,
         output_duration_s=total_dur,
+        transition_duration_s=transition_duration_s,
     )
 
 
@@ -2955,6 +2959,7 @@ def _assemble_clips(
     output_fit: str = "crop",
     force_single_pass: bool = False,
     is_agentic: bool = False,
+    transition_duration_s: float | None = None,
 ) -> None:
     """Assemble clips in slot order: plan, parallel-render, then join with transitions.
 
@@ -3050,6 +3055,7 @@ def _assemble_clips(
                 abs_pngs=abs_pngs,
                 abs_ass_paths=abs_ass_paths,
                 fonts_dir=fonts_dir,
+                transition_duration_s=transition_duration_s,
             )
             # Single ffmpeg invocation — when overlays exist AND
             # base_output_path is set, run_single_pass emits a 2-output
@@ -3303,6 +3309,7 @@ def _assemble_clips(
             joined_path,
             tmpdir,
             has_interstitials=bool(interstitial_map),
+            transition_duration_s=transition_duration_s,
         )
     _phase_done("join", _phase_t0, job_id=job_id, clips=len(reframed_paths))
 
@@ -3423,6 +3430,7 @@ def _join_or_concat(
     output_path: str,
     tmpdir: str,
     has_interstitials: bool = False,
+    transition_duration_s: float | None = None,
 ) -> None:
     """Join slots, splitting hard-cut runs from real visual transitions.
 
@@ -3519,6 +3527,7 @@ def _join_or_concat(
             boundary_transitions,
             group_durs,
             output_path,
+            transition_duration_s=transition_duration_s,
         )
     except Exception as exc:
         # Last-resort fallback: drop visual transitions, concat all original

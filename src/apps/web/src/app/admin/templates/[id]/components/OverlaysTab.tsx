@@ -204,25 +204,30 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
   }, []);
 
   // "Fix timings": re-sequence every slot so phrases play one at a time with no
-  // overlap, without changing any wording. Discards unsaved text edits first
-  // (they'd be clobbered by the server-recomputed recipe).
-  const handleResequence = useCallback(async () => {
-    setResequencing(true);
-    setSaveError(null);
-    setReflowPushed(0);
-    try {
-      const updated = await adminResequenceTemplateSlots(templateId);
-      setData(updated);
-      setRows(extractOverlayRows(updated.recipe_cached));
-      setEditBuffers({});
-      setReflowPushed(updated.reflow_warning?.overlays_pushed_past_target ?? 0);
-      setLastSavedAt(new Date().toLocaleTimeString());
-    } catch (e) {
-      setSaveError((e as Error).message);
-    } finally {
-      setResequencing(false);
-    }
-  }, [templateId]);
+  // overlap, without changing any wording. "Fit to time" (fitToDuration) also
+  // compresses each slot's per-word reveal pacing so the phrases fit within the
+  // slot's target duration. Both discard unsaved text edits first (they'd be
+  // clobbered by the server-recomputed recipe).
+  const handleResequence = useCallback(
+    async (fitToDuration = false) => {
+      setResequencing(true);
+      setSaveError(null);
+      setReflowPushed(0);
+      try {
+        const updated = await adminResequenceTemplateSlots(templateId, undefined, fitToDuration);
+        setData(updated);
+        setRows(extractOverlayRows(updated.recipe_cached));
+        setEditBuffers({});
+        setReflowPushed(updated.reflow_warning?.overlays_pushed_past_target ?? 0);
+        setLastSavedAt(new Date().toLocaleTimeString());
+      } catch (e) {
+        setSaveError((e as Error).message);
+      } finally {
+        setResequencing(false);
+      }
+    },
+    [templateId],
+  );
 
   const handleOverwriteFromAgents = useCallback(async () => {
     if (
@@ -341,12 +346,21 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
         </button>
         <button
           type="button"
-          onClick={handleResequence}
+          onClick={() => handleResequence(false)}
           disabled={saving || overwriting || resequencing}
           title="Lay every phrase end-to-end so they play one at a time with no overlap (no wording changes)"
           className="bg-sky-700 hover:bg-sky-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded font-medium"
         >
           {resequencing ? "Fixing…" : "Fix timings"}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleResequence(true)}
+          disabled={saving || overwriting || resequencing}
+          title="Lay phrases end-to-end AND speed up the per-word reveals so they fit within each slot's selected duration (no wording changes)"
+          className="bg-sky-800 hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded font-medium"
+        >
+          {resequencing ? "Fitting…" : "Fit to time"}
         </button>
         <button
           type="button"

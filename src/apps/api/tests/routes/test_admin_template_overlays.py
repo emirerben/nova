@@ -976,3 +976,71 @@ def test_resequence_slots_already_sequential_is_noop(client: TestClient) -> None
     overlays = t.recipe_cached["slots"][0]["text_overlays"]
     assert [round(o["start_s"], 2) for o in overlays] == [0.0, 1.0]
     assert res.json()["reflow_warning"] is None
+
+
+# ── fit_to_duration ("Fit to time") ──────────────────────────────────────────
+
+
+def test_fit_to_duration_compresses_reveals_to_fit(client: TestClient) -> None:
+    """fit_to_duration=true sequences the phrases AND speeds up the per-word
+    pacing so the last overlay ends within the slot's target duration — without
+    changing any wording."""
+    t = _template_with_overlapping_phrases()
+    # Sequenced, these four 1.0s stages run end-to-end to 4.0s. Squeeze into 2.0.
+    t.recipe_cached["slots"][0]["target_duration_s"] = 2.0
+    original_texts = [o["sample_text"] for o in t.recipe_cached["slots"][0]["text_overlays"]]
+    with _patch_get_template(t):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/resequence-slots",
+            headers=_headers(),
+            json={"fit_to_duration": True},
+        )
+    assert res.status_code == 200, res.text
+    overlays = t.recipe_cached["slots"][0]["text_overlays"]
+    assert [o["sample_text"] for o in overlays] == original_texts  # wording untouched
+    last_end = max(o["end_s"] for o in overlays)
+    assert last_end <= 2.0 + 1e-6, f"slot still overflows after fit: last end {last_end}"
+    # Compressed (not just sequenced): the timeline shrank from 4.0 toward 2.0.
+    assert last_end < 4.0
+    assert res.json()["reflow_warning"] is None
+
+
+def test_fit_to_duration_respects_legibility_floor(client: TestClient) -> None:
+    """When the target is so tight that fitting would push reveals below the
+    legibility floor, compression stops at the floor and the residual overflow
+    is still reported (non-blocking) rather than producing unreadable flashes."""
+    t = _template_with_overlapping_phrases()
+    t.recipe_cached["slots"][0]["target_duration_s"] = 0.15  # 4×1.0s stages can't fit legibly
+    with _patch_get_template(t):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/resequence-slots",
+            headers=_headers(),
+            json={"fit_to_duration": True},
+        )
+    assert res.status_code == 200, res.text
+    overlays = t.recipe_cached["slots"][0]["text_overlays"]
+    last_end = max(o["end_s"] for o in overlays)
+    # Compressed substantially from 4.0, but floored above the 0.15 target — the
+    # second phrase still starts past the slot end, so the overflow notice fires.
+    assert last_end < 4.0
+    assert last_end > 0.15
+    assert res.json()["reflow_warning"] is not None
+
+
+def test_fit_to_duration_noop_when_already_fits(client: TestClient) -> None:
+    """If the sequenced phrases already fit the slot, fit_to_duration leaves the
+    timeline alone (no needless compression)."""
+    t = _template_with_overlapping_phrases()
+    t.recipe_cached["slots"][0]["target_duration_s"] = 10.0  # sequenced end (4.0) fits easily
+    with _patch_get_template(t):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/resequence-slots",
+            headers=_headers(),
+            json={"fit_to_duration": True},
+        )
+    assert res.status_code == 200, res.text
+    overlays = t.recipe_cached["slots"][0]["text_overlays"]
+    # Sequenced (phrase 2 rippled to 2.0) but NOT compressed past that.
+    assert round(overlays[2]["start_s"], 2) == 2.0
+    assert max(o["end_s"] for o in overlays) == 4.0
+    assert res.json()["reflow_warning"] is None

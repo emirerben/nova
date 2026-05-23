@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.44.8] - 2026-05-23
+
+### Fixed
+- **Multi-line word-reveal phrases no longer re-render all prior words when a new word appears.** On prod template `89cde014` ("not just luck 2"), cumulative reveal phrases that wrapped to more than one line — or carried no `pop_animated_suffix` — re-laid-out and re-vertically-centered the *whole* on-screen block every time a word was revealed, so the earlier words visibly jumped instead of staying constant ("It's not just luck", "Don't allow anyone to diminish you hard work", "and good timing so..."). Root cause was a Skia/Pillow parity gap: Pillow already top-anchors left-anchored text (`position_y_frac` = block top, lines grow downward), but the Skia renderer vertically *centered* every block. Skia now mirrors Pillow via a shared `_vertical_block_top` helper across `_draw_centered_text`, `_draw_pop_in_with_suffix`, and `_draw_karaoke_line` — left-anchored cumulative phrases keep their block top fixed and only grow down, so prior words stay pinned. A new renderer-parity guard (`test_both_renderers_honor_vertical_anchor`) closes the vertical leg of the #296 class so this can't silently regress.
+
+### Added
+- **"Fit to time" button in the admin Overlays tab.** Companion to "Fix timings" (`POST /admin/templates/{id}/resequence-slots` with `fit_to_duration=true`): after sequencing phrase blocks end-to-end, it compresses each slot's per-word reveal pacing uniformly so the phrases fit within the slot's selected `target_duration_s` — **without changing any wording**. A legibility floor caps the speed-up; if a slot still overflows at the floor, the existing non-blocking overflow notice fires. This is the fix for "the reveals run past the slot — make them faster to fit the selected time."
+- **Recipe-level clip transition-duration override.** A new `transition_duration_s` field on the recipe (editable in the admin editor's Global Settings, `0` = renderer default 0.3s) speeds up every clip xfade so footage fits the selected time. Threaded through both the multi-pass (`join_with_transitions` → `_build_xfade_filter`) and single-pass (`SinglePassSpec` → `_build_xfade_chain`) render paths, and always clamped to 30% of the shorter adjacent slot so a too-large value can never eat the footage.
+
 ## [0.4.44.7] - 2026-05-23
 
 ### Fixed
