@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.43.0] - 2026-05-23
+
+### Added
+- **`make local-render` — high-fidelity local render that matches Fly.io output.** Today the two non-prod paths (`dev-auto.sh`, `docker-compose up`) both produce visually different output than Fly: `dev-auto.sh` runs API + worker on the Mac host (brew ffmpeg ≠ Debian apt ffmpeg, host fontconfig ≠ container fonts), and `docker-compose.yml` builds `src/apps/api/Dockerfile` + `Dockerfile.worker` which are missing `fonts-dejavu-core`, `libheif1`, and the prod root `Dockerfile`'s explicit torch+torchvision CPU-only install. The new path uses the **repo-root prod `Dockerfile`** verbatim via a new `docker-compose.local-render.yml` (project name `nova-render` so it coexists with `make dev` and `dev-auto.sh`), brings up `db` + `redis` + `api` + `worker` containers, drives a real template or music job through the public API, and writes the rendered MP4 to `.local-render/<job-id>.mp4`. One command: `make local-render CLIP=/path/to/video.mp4 TEMPLATE=<uuid> [MODE=template|music] [INPUTS='{"location":"Tokyo"}']`. Driver script (`scripts/local-render.py`) is stdlib-only, prints a settings snapshot read from the running api container before submitting, and tails `ffprobe` on the output. Residual divergence sources (LLM nondeterminism mitigated via `template_cache`, DB seed drift, signed-URL host differences) documented under `## Local dev → Local-render parity` in `CLAUDE.md`.
+
 ## [0.4.42.4] - 2026-05-23
 
 ### Fixed

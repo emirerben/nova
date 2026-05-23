@@ -57,6 +57,28 @@ Alternatives:
 
 Production uses repo-root `Dockerfile` (Python 3.11 + FFmpeg/libheif/libmagic) deployed to Fly.io as both `api` and `worker` processes. Note: `src/apps/api/Dockerfile` and `src/apps/web/Dockerfile` are only referenced by docker-compose; production does not build them.
 
+### Local-render parity (high-fidelity, slow iteration)
+
+`dev-auto.sh` is for fast iteration but does NOT match prod output: the API + worker run on the Mac host with brew ffmpeg, host fonts, and a host Python. Brew ffmpeg ≠ Debian apt ffmpeg, and host fontconfig will resolve ASS subtitle fallbacks differently. The plain `docker-compose.yml` doesn't fix this either — it builds `src/apps/api/Dockerfile` + `Dockerfile.worker`, both of which are missing `fonts-dejavu-core`, `libheif1`, and the prod root `Dockerfile`'s explicit torch+torchvision CPU-only install.
+
+Use `make local-render` when you need byte-equivalent (or close-to) output before merging a render-affecting change:
+
+```bash
+cp .env.local-render.example .env.local-render   # fill in GCS + AI keys
+make local-render CLIP=/path/to/clip.mp4 TEMPLATE=<uuid> [MODE=template|music] [INPUTS='{"location":"Tokyo"}']
+```
+
+This brings up `db` + `redis` + `api` + `worker` containers built from the repo-root `Dockerfile` (the Fly image), waits for `/health` on host port 8001, runs migrations, drives the job through the public API, downloads the rendered MP4 to `.local-render/<job-id>.mp4`, and prints `ffprobe`. The `nova-render` compose project name lets this stack coexist with `make dev` and `dev-auto.sh` on the same machine. Stop with `make local-render-down`; tail with `make local-render-logs`.
+
+**Residual divergence sources** even Docker can't eliminate:
+
+- **LLM nondeterminism** — Gemini and OpenAI calls vary call-to-call. Mitigated by `template_cache` (cache key includes `prompt_version` + `TEXT_OVERLAY_VERSION_V2`), so re-runs of the same `(template_id, source_video)` after the first reanalysis hit cache and produce identical recipes. First-run drift is intrinsic — render twice locally to see what's cached vs what's LLM jitter.
+- **DB seed drift** — your local Postgres has whatever templates `seed_*.py` last ran; Fly has prod data. If you're comparing against a prod render, seed the same template version locally first (`src/apps/api/scripts/seed_<name>.py`).
+- **Signed-URL host + expiry** — local and Fly produce signed URLs against the same bucket but with different host metadata; the MP4 bytes pointed at are identical, the URL strings are not.
+- **Feature flags** — `text_overlay_v2_enabled`, `ORIENTATION_NORMALIZE_ENABLED`, `SINGLE_PASS_ENCODE_ENABLED`, `TEXT_RENDERER_SKIA_ENABLED`. `.env.local-render.example` enumerates them with Fly defaults; the driver script prints active values from the running api container before submitting the job. If a value differs from `fly secrets list --app nova-video`, your render won't match.
+
+**Cache busting:** the BuildKit layer cache invalidates automatically when `pyproject.toml` or the `Dockerfile` changes. To force a from-scratch rebuild (e.g. apt-package divergence suspected): `docker-compose -f docker-compose.local-render.yml build --no-cache`.
+
 ## Quality checks
 - Backend tests: `cd src/apps/api && pytest` (asyncio mode auto; tests live in `src/apps/api/tests/`)
 - Backend lint: `cd src/apps/api && ruff check . && ruff format --check .`
