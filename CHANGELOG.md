@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.43.9] - 2026-05-23
+
+### Fixed
+- **Right-anchored agentic/music overlays no longer center silently in the burned video.** #297 fixed `text_anchor="left"` in the Skia renderer but left two gaps: the `karaoke-line` draw path still centered every line on `position_x_frac` unconditionally, and `text_anchor="right"` was collapsed to center while the Pillow path (classic templates + admin preview) honored it. So a right-anchored overlay rendered correctly in the preview and on classic templates but centered in the burned agentic/music video — the same "looks right locally, clips in prod" class as the original left-clip bug (#296). Fix: `_resolve_text_anchor` now returns `left`/`right`/`center`, and a single `_anchored_left_x(anchor, cx, width)` helper centralizes the anchor math across all four Skia draw sites (`_draw_centered_text` + emoji block, `_draw_pop_in_with_suffix`, `_draw_karaoke_line`) so they can't drift apart again. New cross-renderer parity guard `test_both_renderers_honor_text_anchor` renders the same overlay through Skia AND Pillow and asserts they place left/center/right identically — a renderer that drops a field fails CI instead of shipping. Plus a `karaoke-line` left-anchor regression test. CLAUDE.md documents the renderer-parity invariant and the rule that agentic/music overlays must be verified on the burned video, not the admin preview.
+
 ## [0.4.43.8] - 2026-05-23
 
 ### Fixed
