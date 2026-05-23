@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.43.6] - 2026-05-23
+
+### Fixed
+- **Left-anchored text overlays no longer clip off the left edge of the frame.** The template burn path (`_collect_absolute_overlays` + `_pre_burn_curtain_slot_text` in `template_orchestrate.py`) built its renderer `entry` dict without copying `text_anchor`, so the renderer fell back to its `"center"` default. For a left-anchored overlay that meant `position_x_frac` (Layer-2 pins it to 0.05) was treated as the line's CENTER instead of its left edge, pushing the left half of every line off-screen — prod template `89cde014` rendered "It's not just luck" as "s not just luck", "combination of" as "nation of". The admin-preview path (`render_overlays_at_time`) already passed `text_anchor`, which is why the WYSIWYG preview and local overlay renders looked correct while the actual burned video did not. Both burn-path `entry` builders now carry `text_anchor`. Verified end-to-end: `_draw_text_png("It's not just luck", text_anchor="center", position_x_frac=0.05)` clips to bbox x=0 (left cut off), while `text_anchor="left"` fits at x=35→955 inside the 1080 px frame. This is a render-path fix only — no `TEXT_OVERLAY_VERSION_V2` bump, existing cached recipes render correctly without reanalysis. Regression test `test_text_anchor_passes_through_to_renderer` locks the pass-through.
+
 ## [0.4.43.5] - 2026-05-23
 
 ### Fixed
