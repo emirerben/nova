@@ -2583,6 +2583,37 @@ class TestAssembleClipsTextOverlays:
         # Text doesn't get rewritten to "Morocco" because subject_substitute=False.
         assert entry["text"] == "AFRICA"
 
+    def test_text_anchor_passes_through_to_renderer(self):
+        """REGRESSION: a left-anchored overlay's `text_anchor` MUST reach the
+        renderer entry dict. The orchestrator's hand-rolled entry builder
+        omitted `text_anchor`, so the renderer defaulted to "center" and a
+        left-anchored overlay's `position_x_frac` (Layer-2 uses 0.05) was
+        treated as the line CENTER instead of its left edge — the left half of
+        every cumulative line clipped off-screen ("It's not" → "s not" on prod
+        template 89cde014). The admin-preview path passed text_anchor, which
+        masked the bug during local verification."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=[{
+            "role": "label",
+            "start_s": 0.0,
+            "end_s": 2.4,
+            "position": "center",
+            "sample_text": "It's not just luck",
+            "text_anchor": "left",
+            "position_x_frac": 0.05,
+            "text_size_px": 120,
+            "subject_substitute": False,
+        }])
+        result = _collect_absolute_overlays([step], [2.4], None, "")
+        assert len(result) == 1
+        entry = result[0]
+        assert entry.get("text_anchor") == "left", (
+            "text_anchor must survive to the renderer entry dict; "
+            f"got {entry.get('text_anchor')!r}"
+        )
+        assert entry.get("position_x_frac") == 0.05
+
     def test_curtain_close_slots_skipped_in_collect(self):
         """Curtain-close slot overlays are pre-burned, so skipped in _collect."""
         from app.tasks.template_orchestrate import _collect_absolute_overlays

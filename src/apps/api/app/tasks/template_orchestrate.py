@@ -3712,6 +3712,15 @@ def _collect_absolute_overlays(
                 "text_color": ov.get("text_color", "#FFFFFF"),
                 "position_x_frac": ov.get("position_x_frac"),
                 "position_y_frac": ov.get("position_y_frac"),
+                # text_anchor MUST be carried through. Without it the renderer
+                # defaults to "center", so a left-anchored overlay's
+                # position_x_frac (e.g. Layer-2's 0.05) is treated as the line
+                # CENTER instead of its left edge — the left half of every
+                # cumulative line clips off-screen ("It's not" → "s not" on
+                # prod template 89cde014). The admin-preview path
+                # (render_overlays_at_time) already passes it, which masked the
+                # bug during local verification.
+                "text_anchor": ov.get("text_anchor", "center"),
                 "stroke_width": int(ov.get("stroke_width", 0)),
                 "emoji_prefix": str(ov.get("emoji_prefix", "")),
             }
@@ -4189,6 +4198,11 @@ def _pre_burn_curtain_slot_text(
             "text_color": ov.get("text_color", "#FFFFFF"),
             "position_x_frac": ov.get("position_x_frac"),
             "position_y_frac": ov.get("position_y_frac"),
+            # Carry text_anchor or the renderer defaults to "center" and a
+            # left-anchored overlay's position_x_frac is treated as the line
+            # CENTER, clipping the left half off-screen. See the matching
+            # comment on the other entry-build site above.
+            "text_anchor": ov.get("text_anchor", "center"),
             # Carry recipe-side font_cycle_accel_at_s through to the renderer.
             # Without this, `_compute_font_cycle_frame_specs` falls back to its
             # default "cycle for first 70%, settle to STATIC for last 30%"

@@ -709,10 +709,13 @@ def test_text_overlay_version_v2_locked():
     """Lock the current namespace string so future devs don't bump it without
     intending to. The constant orphans cached recipes — every bump must be a
     conscious decision documented in the history block in template_cache.py.
-    Bumped on 2026-05-22 with Stage E atomized-mode single-word defense:
-    multi-word LLM outputs for atomized-input phrases now revert to OCR
-    text so downstream `_is_atomized` stays true and `build_line_groups`
-    can still group the phrase into a cumulative reveal (template 89cde014
-    evidence — singleton overlays at 6.5s+ that broke the reveal pattern).
+    Bumped 2026-05-23c with cumulative-reveal de-clustering: OCR first-seen
+    timestamps cluster (coarse frame sampling stamps every word in a held
+    frame at the same t), so the reveal popped 2-4 words at once. The emit now
+    de-spaces each sub-group's word reveals to >= 0.30 s apart before building
+    stages. Folds in the 2026-05-23b Stage E mis-mapped-duplicate defense
+    (reverts a duplicate to OCR when the LLM output disagrees with the
+    phrase's own OCR word) — no prod deploy happened between b and c, so both
+    ship under this one namespace string.
     """
-    assert TEXT_OVERLAY_VERSION_V2 == "v2-2026-05-22-atomized-single-word"
+    assert TEXT_OVERLAY_VERSION_V2 == "v2-2026-05-23c-declustered-reveal"

@@ -67,6 +67,44 @@ def _strip_unicode_controls(text: str) -> str:
     )
 
 
+# Characters OCR sometimes appends to a phrase without a matched opening.
+# A literal closing `"` on "luck"" is the canonical leak (prod 89cde014:
+# input phrase #3 carried `lines=['luck"']` through Stage E's OCR fallback
+# path unchanged and the renderer drew the trailing quote on screen).
+# Strip when the count is ODD — a matched pair (e.g. a real quoted phrase)
+# survives unchanged.
+_UNMATCHED_TRAILING_CHARS = ('"', "'", "`", "\\")
+
+
+def _strip_unmatched_trailing_chars(text: str) -> str:
+    """Strip trailing quote/escape characters whose opening counterpart is
+    missing from the same line.
+
+    Strict count check: a character is stripped only when it appears at the
+    end of the line AND the total occurrences are ODD. This preserves
+    legitimate balanced quotes ("hello world" with a matched pair). Smart
+    quotes (U+201C / U+201D) and apostrophes inside words ("It's") are
+    treated as their own characters, not the ASCII straight forms — typed
+    quotes are the artifact we're targeting. Runs until the line is stable
+    so cascading trailing artifacts (e.g. `it's\\"`) collapse together.
+    """
+    if not text:
+        return text
+    out = text
+    while True:
+        changed = False
+        stripped = out.rstrip()
+        for ch in _UNMATCHED_TRAILING_CHARS:
+            if stripped.endswith(ch) and stripped.count(ch) % 2 == 1:
+                stripped = stripped[: -len(ch)].rstrip()
+                changed = True
+                break
+        out = stripped
+        if not changed:
+            break
+    return out
+
+
 def _sanitize_aligned_line(line: str) -> str:
     """Deterministic cleanup of structurally forbidden content in LLM output.
 
@@ -84,6 +122,11 @@ def _sanitize_aligned_line(line: str) -> str:
     here would corrupt legitimate transcript content like song refrains
     ("rain rain go away", "Whoa whoa whoa") where the repetition IS the
     intended on-screen text.
+
+    Also strips unmatched trailing quote/escape characters that OCR leaks
+    on phrase boundaries — Stage E's OCR-fallback path passes these through
+    when the transcript has no plausible match. The trailing `"` from
+    `'luck"'` was rendering on screen in prod template 89cde014.
     """
     if not line:
         return line
@@ -95,6 +138,7 @@ def _sanitize_aligned_line(line: str) -> str:
     for esc in _ESCAPE_SEQUENCES:
         cleaned = cleaned.replace(esc, " ")
     cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
+    cleaned = _strip_unmatched_trailing_chars(cleaned)
     return cleaned
 
 
@@ -232,38 +276,79 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
 
         # ── 3b. Atomized-mode uniqueness defense ─────────────────────────────
         # The prompt instructs the LLM to assign each transcript word to at
-        # most one OCR phrase, but the LLM repeatedly violates this when the
-        # transcript is shorter than the OCR phrase set — see template
-        # fdaf3bbc 2026-05-21 ("allow" emitted 3× for phrases "allow" /
-        # "anyone" / "diminish" at 9.5-10.0). Walk phrases in start-order and
-        # strip later assignments of identical text when they overlap within
-        # the same window the Stage-D dedup uses, so the OCR-fallback path
-        # below takes over and the surviving overlay set stays distinct.
+        # most one OCR phrase, but the LLM repeatedly violates this. Two
+        # distinct failure shapes, both reverted to OCR (the OCR-fallback path
+        # below takes over so the surviving overlay set stays distinct):
+        #
+        #   (1) RECENT re-detection — the same word assigned to two phrases
+        #       within `ATOMIZED_DEDUP_GAP_THRESHOLD_S`. Template fdaf3bbc
+        #       2026-05-21 emitted "allow" 3× for phrases "allow" / "anyone"
+        #       / "diminish" at 9.5-10.0. Here the LLM AGREES with OCR on the
+        #       repeats; the duplication is genuine OCR fan-out, so dedup by
+        #       time proximity.
+        #
+        #   (2) MIS-MAPPED duplicate — the LLM assigns an already-used
+        #       transcript word to a phrase whose OCR says something else,
+        #       regardless of time gap. Template 89cde014 2026-05-23 mapped
+        #       OCR "timing" → "combination" (dup of an earlier phrase) and
+        #       OCR "don't" → "and" (also a dup), 1s+ apart so the time-gap
+        #       check (1) missed them. The wrong word then landed in the
+        #       cumulative LineGroup and rendered as "and combination" /
+        #       jumbled sub-groups. When the LLM output duplicates an earlier
+        #       assignment AND disagrees with this phrase's own OCR word, the
+        #       LLM mis-mapped it — revert to OCR. Legit on-screen repeats
+        #       (e.g. "just"/"just", "luck"/"luck", "work"/"work.") survive
+        #       because there the LLM output matches the OCR word.
         if input.atomize_mode:
+            from app.pipeline.text_overlay_v2.line_grouping import (  # noqa: PLC0415
+                _normalize_word,
+            )
             from app.pipeline.text_overlay_v2.phrases import (  # noqa: PLC0415
                 ATOMIZED_DEDUP_GAP_THRESHOLD_S,
             )
 
             ordered = sorted(enumerate(input.phrases), key=lambda pair: pair[1].start_t_s)
-            last_end_by_text: dict[str, float] = {}
+            # Track the FINAL normalized word each kept phrase will display
+            # (LLM word when kept, OCR word when reverted) plus its end time.
+            # Tracking the reverted OCR word is load-bearing: when phrase #22
+            # reverts "and" → OCR "don't", a later phrase #23 whose LLM ALSO
+            # said "don't" (but whose OCR is "to") must then be caught as a
+            # duplicate of #22's reverted word and revert to "to" in turn.
+            last_end_by_word: dict[str, float] = {}
+            seen_words: set[str] = set()
             for original_idx, phrase in ordered:
                 assigned = corrected_lines_by_index.get(original_idx)
                 if assigned is None:
                     continue
-                key = "\n".join(line.strip().casefold() for line in assigned)
-                prev_end = last_end_by_text.get(key)
-                if prev_end is not None and (
+                # Normalize with surrounding punctuation stripped, so "work" vs
+                # "work." counts as agreement (a legit correction, not a mis-map).
+                llm_word = _normalize_word(assigned[0]) if assigned else ""
+                ocr_word = _normalize_word(phrase.lines[0]) if phrase.lines else ""
+                prev_end = last_end_by_word.get(llm_word)
+                is_recent_dup = prev_end is not None and (
                     phrase.start_t_s - prev_end <= ATOMIZED_DEDUP_GAP_THRESHOLD_S
-                ):
+                )
+                is_mismapped_dup = (
+                    llm_word in seen_words and llm_word != ocr_word and ocr_word != ""
+                )
+                if is_recent_dup or is_mismapped_dup:
                     log.info(
                         "text_alignment_uniqueness_revert",
                         phrase_index=original_idx,
-                        conflicting_text=key[:60],
+                        reason="recent_redetect" if is_recent_dup else "mismapped_ocr_mismatch",
+                        llm_word=llm_word[:40],
+                        ocr_word=ocr_word[:40],
                         template_id=input.template_id,
                     )
                     del corrected_lines_by_index[original_idx]
+                    # The phrase falls back to OCR below — register the OCR word
+                    # so a later LLM mis-map onto the same word is also caught.
+                    if ocr_word:
+                        seen_words.add(ocr_word)
+                        last_end_by_word[ocr_word] = phrase.end_t_s
                     continue
-                last_end_by_text[key] = phrase.end_t_s
+                seen_words.add(llm_word)
+                last_end_by_word[llm_word] = phrase.end_t_s
 
         # ── 3c. Atomized-mode single-word defense ────────────────────────────
         # Stage D atomized phrases carry exactly one OCR word per phrase. The

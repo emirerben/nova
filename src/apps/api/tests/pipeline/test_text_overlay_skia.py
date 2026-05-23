@@ -463,3 +463,62 @@ def test_dispatch_keeps_classic_on_pillow(tmp_workdir):
             use_skia=False,
         )
         skia_fn.assert_not_called()
+
+
+# -- Left-anchor positioning (prod 89cde014 left-clip regression) ------------
+
+
+def _frame_bbox(overlay: dict, t_local: float = 1.0, duration_s: float = 2.0):
+    """Render one frame via _draw_frame and return the opaque-content bbox."""
+    import io
+
+    img = tos._draw_frame(overlay, t_local, duration_s)
+    im = Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA")
+    return im.getbbox(), im.width
+
+
+def test_left_anchor_does_not_clip_off_left_edge():
+    """REGRESSION: a left-anchored wide line (Layer-2 uses text_anchor='left'
+    + position_x_frac=0.05) must render its full text inside the frame. Before
+    the fix, Skia centered every line on position_x_frac, so the 5% point
+    became the line CENTER and the left half clipped off-screen — prod
+    template 89cde014 rendered "It's not just luck" as "s not just luck"."""
+    base = {
+        "text": "It's not just luck",
+        "effect": "pop-in",
+        "pop_animated_suffix": "luck",
+        "text_size_px": 120,
+        "position_x_frac": 0.05,
+        "position_y_frac": 0.44,
+        "text_color": "#FFFFFF",
+    }
+    # Center-anchor (old behavior) clips: content starts at x=0.
+    center_bbox, _ = _frame_bbox({**base, "text_anchor": "center"})
+    assert center_bbox is not None and center_bbox[0] <= 1, (
+        "expected center-anchor to clip at the left edge (the bug); "
+        f"got bbox {center_bbox}"
+    )
+    # Left-anchor (fixed) fits: content starts well inside the frame and ends
+    # before the right edge.
+    left_bbox, width = _frame_bbox({**base, "text_anchor": "left"})
+    assert left_bbox is not None
+    assert left_bbox[0] > 10, f"left-anchored text should not touch left edge; bbox {left_bbox}"
+    assert left_bbox[2] < width, f"left-anchored text should fit inside frame; bbox {left_bbox}"
+
+
+def test_left_anchor_static_overlay_not_clipped():
+    """Same guarantee for a non-animated (static) left-anchored overlay, which
+    routes through _draw_centered_text directly."""
+    overlay = {
+        "text": "combination of",
+        "effect": "none",
+        "text_size_px": 120,
+        "position_x_frac": 0.05,
+        "position_y_frac": 0.41,
+        "text_color": "#FFFFFF",
+        "text_anchor": "left",
+    }
+    bbox, width = _frame_bbox(overlay)
+    assert bbox is not None
+    assert bbox[0] > 10, f"left edge clipped; bbox {bbox}"
+    assert bbox[2] < width, f"right edge overflow; bbox {bbox}"
