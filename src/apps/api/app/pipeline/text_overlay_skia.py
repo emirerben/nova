@@ -553,9 +553,19 @@ def _draw_pop_in_with_suffix(
     typeface = _typeface_for_overlay(overlay)
     initial_size = _resolve_font_size_px(overlay)
     # Lay out the FULL line so prefix + suffix stay in their original positions
-    full_font, full_size, _ = _shrink_to_fit(
+    full_font, full_size, full_lines = _shrink_to_fit(
         text, typeface, initial_size, CANVAS_W * _MAX_LINE_W_FRAC
     )
+    # The suffix-pop layout puts prefix + suffix on ONE baseline. If the line
+    # is too wide to fit on a single line (a manually-edited phrase grew past
+    # ~90% canvas, or the analysis-time line-split didn't apply), that layout
+    # would clip off the right edge ("combination of hard work" → "combination
+    # of har"). Fall back to the wrapping/shrinking path, which stacks lines
+    # and honors text_anchor — the whole line pops together instead of just
+    # the suffix, but nothing clips.
+    if len(full_lines) > 1:
+        _draw_with_animation(canvas, overlay, t_local, duration_s, effect="pop-in")
+        return
     full_w = full_font.measureText(text)
     prefix_w = full_font.measureText((prefix + " ") if prefix else "")
     suffix_w = full_font.measureText(suffix)

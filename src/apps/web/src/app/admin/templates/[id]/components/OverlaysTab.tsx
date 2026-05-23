@@ -19,10 +19,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
-  type OverlayTextEdit,
   type TemplateDebugResponse,
   adminGetTemplateDebug,
-  adminUpdateTemplateOverlays,
+  adminRetimeTemplatePhrase,
 } from "@/lib/admin-api";
 import {
   expandPhraseEditToMemberTexts,
@@ -127,25 +126,47 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
   );
 
   const handleSave = useCallback(async () => {
-    if (dirtyRows.length === 0) return;
+    const dirtyGroups = phraseGroups.filter((g) => g.dirty);
+    if (dirtyGroups.length === 0) return;
     setSaving(true);
     setSaveError(null);
     try {
-      const edits: OverlayTextEdit[] = dirtyRows.map((r) => ({
-        slot_index: r.slot_index,
-        overlay_index: r.overlay_index,
-        sample_text: r.current_sample_text,
-      }));
-      const updated = await adminUpdateTemplateOverlays(templateId, edits);
-      setData(updated);
-      setRows(extractOverlayRows(updated.recipe_cached));
+      // Route every edited phrase through retime-phrase: the backend re-derives
+      // the stage COUNT (= word count) and per-word timings, so changing the
+      // wording reflows the reveal (a text-only PATCH would leave stale stages
+      // and timings). Process in reverse order (slot desc, then first
+      // overlay_index desc) so replacing a later phrase's overlays — which can
+      // change the count — never invalidates the overlay_index of an earlier,
+      // not-yet-processed phrase.
+      const sorted = [...dirtyGroups].sort((a, b) => {
+        if (a.slot_index !== b.slot_index) return b.slot_index - a.slot_index;
+        return (
+          rows[b.member_row_indices[0]].overlay_index -
+          rows[a.member_row_indices[0]].overlay_index
+        );
+      });
+      let updated: TemplateDebugResponse | null = data;
+      for (const g of sorted) {
+        const member_overlay_indices = g.member_row_indices.map(
+          (ri) => rows[ri].overlay_index,
+        );
+        updated = await adminRetimeTemplatePhrase(templateId, {
+          slot_index: g.slot_index,
+          member_overlay_indices,
+          new_text: g.display_text,
+        });
+      }
+      if (updated) {
+        setData(updated);
+        setRows(extractOverlayRows(updated.recipe_cached));
+      }
       setLastSavedAt(new Date().toLocaleTimeString());
     } catch (e) {
       setSaveError((e as Error).message);
     } finally {
       setSaving(false);
     }
-  }, [dirtyRows, templateId]);
+  }, [phraseGroups, rows, data, templateId]);
 
   const handleRevert = useCallback(() => {
     setRows((prev) => prev.map((r) => ({ ...r, current_sample_text: r.original_sample_text })));
