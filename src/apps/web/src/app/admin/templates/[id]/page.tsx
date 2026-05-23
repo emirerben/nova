@@ -198,9 +198,10 @@ export default function TemplateDetailPage() {
     if (
       !confirm(
         "Re-run Gemini analysis?\n\n" +
-          "WARNING: this OVERWRITES the saved recipe with a fresh analysis. " +
-          "Any text-size, position, or other manual edits you've made will be LOST. " +
-          "(The previous version is kept in history but is not used at render time.)\n\n" +
+          "This rebuilds the recipe from a fresh analysis. Your text overlays " +
+          "are PRESERVED — to regenerate them from the agent output, use " +
+          "'Overwrite overlays from agents' in the Overlays tab. " +
+          "(The previous version is kept in history.)\n\n" +
           "Takes a few minutes. Continue?",
       )
     ) {
@@ -223,7 +224,9 @@ export default function TemplateDetailPage() {
         "Re-run the full agent stack?\n\n" +
           "This regenerates the recipe end-to-end (creative direction → " +
           "template recipe → per-slot text_designer) using the Layer-2 " +
-          "text-overlay pipeline. The previous recipe is preserved in history.\n\n" +
+          "text-overlay pipeline. Your existing text overlays are PRESERVED — " +
+          "use 'Overwrite overlays from agents' in the Overlays tab to " +
+          "regenerate them. The previous recipe is preserved in history.\n\n" +
           "Takes a few minutes. Continue?",
       )
     ) {

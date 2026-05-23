@@ -20,6 +20,7 @@ all errors caught → job.status = 'processing_failed'
 """
 
 import bisect
+import copy
 import dataclasses
 import os
 import re
@@ -243,6 +244,55 @@ def _stage(name: str, on_fail: str, *, job_id: str) -> Iterator[None]:
         )
 
 
+def _carry_forward_overlays(new_slots: list, prior_slots: list | None) -> None:
+    """Copy each prior slot's ``text_overlays`` onto the freshly-built slots,
+    in place, matched positionally by slot index.
+
+    This is what makes "Re-run agents" non-destructive to overlay edits: the
+    rebuild produces fresh clips/timing/transitions, but every slot's overlays
+    are carried over from the recipe that was just replaced. Overlays are
+    addressed by slot index everywhere else (the retime-phrase editor uses the
+    same coordinate), so positional carry-forward is the consistent contract.
+
+    Edge cases:
+      - new recipe has FEWER slots → prior overlays for dropped slots are lost
+        (those slots no longer render — nowhere to put them).
+      - new recipe has MORE slots → genuinely-new slots keep their fresh agent
+        overlays (no prior to carry).
+      - prior overlays empty/missing → carried as ``[]``.
+
+    Carried overlays are also clamped to the new slot's ``target_duration_s``
+    (and any overlay whose start is already past the new clip is dropped) so a
+    shorter rebuilt clip never leaves an out-of-range overlay that the renderer
+    would silently drop — the text would just vanish.
+    """
+    if not prior_slots:
+        return
+    for i, new_slot in enumerate(new_slots):
+        if not isinstance(new_slot, dict) or i >= len(prior_slots):
+            continue
+        prior = prior_slots[i]
+        if not isinstance(prior, dict):
+            continue
+        carried = copy.deepcopy(prior.get("text_overlays", []) or [])
+        slot_dur = new_slot.get("target_duration_s")
+        if isinstance(slot_dur, (int, float)) and slot_dur > 0:
+            clamped: list = []
+            for ov in carried:
+                if not isinstance(ov, dict):
+                    clamped.append(ov)
+                    continue
+                start = ov.get("start_s")
+                if isinstance(start, (int, float)) and start >= slot_dur:
+                    continue  # overlay begins past the new clip — drop it
+                end = ov.get("end_s")
+                if isinstance(end, (int, float)) and end > slot_dur:
+                    ov["end_s"] = round(float(slot_dur), 3)
+                clamped.append(ov)
+            carried = clamped
+        new_slot["text_overlays"] = carried
+
+
 # ── analyze_template_task ─────────────────────────────────────────────────────
 
 
@@ -262,12 +312,18 @@ def _stage(name: str, on_fail: str, *, job_id: str) -> Iterator[None]:
     soft_time_limit=840,
     time_limit=900,
 )
-def analyze_template_task(self, template_id: str, *, force: bool = False) -> None:
+def analyze_template_task(
+    self, template_id: str, *, force: bool = False, overwrite_overlays: bool = False
+) -> None:
     """Download template video, analyze with Gemini, cache recipe in DB.
 
     `force=True` skips the cache READ (still writes on success). Reanalyze
     enqueues with force=True so the user-visible "Reanalyze" gesture always
     reruns the agent; a fresh entry replaces the old one for future hits.
+
+    `overwrite_overlays=False` (default) preserves the template's existing
+    overlays across the rebuild (see `_carry_forward_overlays`). Pass True to
+    keep the freshly-generated agent overlays.
     """
     # Captured once at task entry and written to TemplateRecipeVersion.build_started_at
     # at the end of the happy path. Paired with the DB-generated `created_at` (end),
@@ -524,6 +580,15 @@ def analyze_template_task(self, template_id: str, *, force: bool = False) -> Non
                         "sync_style": recipe.sync_style,
                         "interstitials": recipe.interstitials,
                     }
+
+                    # Preserve manual overlay edits across a re-run unless the
+                    # caller explicitly asked to overwrite them. `recipe_cached`
+                    # still holds the PRIOR recipe here. Done before the version
+                    # row so history records what was actually persisted.
+                    if not overwrite_overlays and isinstance(template.recipe_cached, dict):
+                        _carry_forward_overlays(
+                            recipe_dict["slots"], template.recipe_cached.get("slots")
+                        )
 
                     # Save recipe version before updating cached recipe
                     version = TemplateRecipeVersion(
@@ -3268,9 +3333,7 @@ def _assemble_clips(
     )
     if abs_overlays:
         # Skia for agentic templates; Pillow + libass for classic.
-        _burn_text_overlays(
-            joined_path, abs_overlays, output_path, tmpdir, use_skia=is_agentic
-        )
+        _burn_text_overlays(joined_path, abs_overlays, output_path, tmpdir, use_skia=is_agentic)
         _burned_dur = _probe_duration(output_path)
         log.info("debug_post_burn_duration", burned_dur=_burned_dur)
     else:
