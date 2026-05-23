@@ -28,6 +28,7 @@ import {
   adminGetTemplateDebug,
   adminReanalyzeAgentic,
   adminReanalyzeTemplate,
+  adminResequenceTemplateSlots,
   adminRetimeTemplatePhrase,
 } from "@/lib/admin-api";
 import {
@@ -94,6 +95,7 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [overwriting, setOverwriting] = useState(false);
+  const [resequencing, setResequencing] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   // How many overlays the server's slot reflow pushed past their slot duration
   // on the last save (they render truncated). 0 = no notice.
@@ -201,6 +203,27 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
     setEditBuffers({});
   }, []);
 
+  // "Fix timings": re-sequence every slot so phrases play one at a time with no
+  // overlap, without changing any wording. Discards unsaved text edits first
+  // (they'd be clobbered by the server-recomputed recipe).
+  const handleResequence = useCallback(async () => {
+    setResequencing(true);
+    setSaveError(null);
+    setReflowPushed(0);
+    try {
+      const updated = await adminResequenceTemplateSlots(templateId);
+      setData(updated);
+      setRows(extractOverlayRows(updated.recipe_cached));
+      setEditBuffers({});
+      setReflowPushed(updated.reflow_warning?.overlays_pushed_past_target ?? 0);
+      setLastSavedAt(new Date().toLocaleTimeString());
+    } catch (e) {
+      setSaveError((e as Error).message);
+    } finally {
+      setResequencing(false);
+    }
+  }, [templateId]);
+
   const handleOverwriteFromAgents = useCallback(async () => {
     if (
       !confirm(
@@ -303,7 +326,7 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
         <button
           type="button"
           onClick={handleSave}
-          disabled={saving || overwriting || dirtyPhraseCount === 0}
+          disabled={saving || overwriting || resequencing || dirtyPhraseCount === 0}
           className="bg-emerald-700 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded font-medium"
         >
           {saving ? "Saving…" : `Save ${dirtyPhraseCount} phrase${dirtyPhraseCount === 1 ? "" : "s"}`}
@@ -311,15 +334,24 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
         <button
           type="button"
           onClick={handleRevert}
-          disabled={saving || overwriting || dirtyPhraseCount === 0}
+          disabled={saving || overwriting || resequencing || dirtyPhraseCount === 0}
           className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-200 px-3 py-1.5 rounded"
         >
           Revert
         </button>
         <button
           type="button"
+          onClick={handleResequence}
+          disabled={saving || overwriting || resequencing}
+          title="Lay every phrase end-to-end so they play one at a time with no overlap (no wording changes)"
+          className="bg-sky-700 hover:bg-sky-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded font-medium"
+        >
+          {resequencing ? "Fixing…" : "Fix timings"}
+        </button>
+        <button
+          type="button"
           onClick={handleOverwriteFromAgents}
-          disabled={saving || overwriting}
+          disabled={saving || overwriting || resequencing}
           title="Re-run the agents and replace these overlays with freshly generated ones"
           className="bg-amber-800 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed text-amber-100 px-3 py-1.5 rounded"
         >
