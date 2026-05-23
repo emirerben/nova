@@ -594,17 +594,12 @@ def _draw_pop_in_with_suffix(
             shadow_alpha=160,
         )
 
-    # Compute suffix scale envelope. Keyframes: 0ms → 30%, 150ms → 115%, 250ms → 100%.
-    t_ms = t_local * 1000.0
-    if t_ms < 150:
-        # 30 → 115 over 0..150ms, ease-out
-        p = t_ms / 150.0
-        scale = 0.30 + (1.15 - 0.30) * _ease_out_cubic(p)
-    elif t_ms < 250:
-        p = (t_ms - 150.0) / 100.0
-        scale = 1.15 - (1.15 - 1.00) * _ease_out_cubic(p)
-    else:
-        scale = 1.0
+    # No bounce: the revealed word appears at full size. The word-by-word
+    # reveal comes from the per-stage timing (each stage adds one word), not
+    # from a scale animation — so dropping the 30→115→100 overshoot keeps the
+    # progressive reveal but removes the springy pop the words used to do as
+    # they showed up.
+    scale = 1.0
 
     # Suffix is centered on its slot; scale around that center so the suffix
     # doesn't visibly shift its baseline x while it pops.
@@ -724,15 +719,8 @@ def _draw_with_animation(
         direction = -1.0 if effect == "slide-up" else 1.0
         y_translate = direction * 220.0 * (1.0 - eased)
     elif effect == "pop-in":
-        animate_for = min(0.30, duration_s * 0.7)
-        if t_local < animate_for:
-            p = t_local / animate_for
-            if p < 0.55:
-                scale = 0.30 + (1.15 - 0.30) * (p / 0.55)
-            else:
-                scale = 1.15 - (1.15 - 1.00) * ((p - 0.55) / 0.45)
-        else:
-            scale = 1.0
+        # No bounce: word appears at full size (see _draw_pop_in_with_suffix).
+        scale = 1.0
     elif effect == "bounce":
         animate_for = min(0.5, duration_s * 0.8)
         if t_local < animate_for:
