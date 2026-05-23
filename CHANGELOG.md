@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.42.4] - 2026-05-23
+
+### Fixed
+- **Layer-2 (`text_overlay_v2`) cumulative-reveal lines no longer pile up at the same y, never flash for a single frame, and never render dangling OCR quote marks.** PR #286 (v0.4.42.2) added a Stage G renderer baseline anchor, a Stage E single-word defense, and a Stage G singleton-overlap guard, then verified the fix with a hand-built single-pass demo that exercised only the renderer. The cumulative-emit path was never exercised by the demo, and the next prod reanalyze of template `89cde014` still rendered overlays #7–#12 ("THE work to get" and "there just") at byte-identical bboxes, overlays #16/#19 at 50 ms / zero-duration flashes, and a "luck\"" overlay with the OCR's unmatched trailing quote drawn on screen.
+  - **Pass-1 width measurement** in `_emit_cumulative_line_overlays` now uses the uniform Layer-2 render size (120 px) instead of the classifier's per-phrase `size_class`. The bridge in `tasks/template_text_extraction._overlay_to_recipe_dict` overrides every overlay's render size to that constant, so measuring against the classified size (often "small" = 36 px) under-counted rendered width by ~3.3× and let a 9-word cumulative escape the 90% canvas split. Long lines now actually split into sub-groups.
+  - **Pass-2 sub-group stacking**: each split sub-group now offsets its `anchor_y` by `sub_group_idx * line_step_norm`, where `line_step_norm` reads the renderer's intrinsic `(ascent + descent) * 1.15` for Playfair Display at 120 px. Previously every sub-group reused `lg.line_anchor_y_frac`, so a split LineGroup rendered both sub-groups on top of each other at the same y.
+  - **Cumulative-stage min-duration floor**: `_emit_cumulative_line_overlays` now calls `build_cumulative_stages` with `min_renderable_s=0.2` instead of the lyric-injector's 0.05. Layer-2 emits each stage as an independent overlay (vs the music-lyric injector's butted ASS block), so a 50 ms middle stage becomes a one-frame flash; the dropped word still appears in the next surviving stage's cumulative text.
+  - **Stage E unmatched-quote sanitizer**: `_sanitize_aligned_line` now strips trailing `"` / `'` / `` ` `` / `\` when the line contains an odd count of that character (matched pairs survive). Stage E's OCR-fallback path was passing the dangling `"` from `'luck"'` through unchanged on prod 89cde014.
+  - **Shared uniform-size constants**: the uniform-render size literals are now defined once in `app/pipeline/text_overlay_v2/constants.py` and imported by both the cumulative-emit path and the bridge, so a future bump (e.g. 150 px / "xlarge") lands in both places automatically. The bridge ↔ cumulative-emit drift was the root cause this PR fixes.
+  - `TEXT_OVERLAY_VERSION_V2` bumped to `v2-2026-05-23-cumulative-stack-floor` so prior Layer-2 cache entries written under the broken emit reanalyze through the corrected path.
+  - Seven new regression tests lock sub-group y stacking, the unsplit-group no-offset path, the 0.2 s min-duration floor, the no-prefix-carryover invariant across sub-groups, and the Stage E quote-stripping (unmatched trailing strip + matched-pair preservation + apostrophe-inside-word preservation).
+
 ## [0.4.42.3] - 2026-05-22
 
 ### Fixed
