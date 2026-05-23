@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.43.4] - 2026-05-23
+
+### Fixed
+- **Layer-2 (`text_overlay_v2`) cumulative reveals no longer render jumbled words when the Stage E alignment LLM violates its uniqueness rule.** After v0.4.42.4 fixed the cumulative emit (sub-group y stacking, min-duration floor, quote strip), the next prod reanalyze of template `89cde014` still rendered nonsense — "and combination" at y=0.51, "good don't allow" stacked, a zero-duration "work your hard" overlay. The v0.4.42.4 fixes were all firing correctly; the bad data came from UPSTREAM. The Gemini-Flash Stage E call mapped OCR `"timing"` → `"combination"` and OCR `"don't"` → `"and"` — both duplicates of earlier phrases, 1s+ apart, so the existing time-gap dedup (`ATOMIZED_DEDUP_GAP_THRESHOLD_S=0.5`) never caught them. The wrong words entered the cumulative LineGroup and the emit faithfully rendered them.
+  - The Stage E atomized-mode uniqueness defense (`text_alignment.py` step 3b) now reverts a duplicate to its OCR word in two cases: **(1)** recent re-detection within 0.5 s (existing behavior, for genuine OCR fan-out where the LLM agrees with OCR), and **(2)** mis-mapped duplicate — the LLM output duplicates an earlier assignment AND disagrees with the phrase's own OCR word, regardless of time gap (new). Legit on-screen repeats survive because there the LLM output matches OCR (`"just"`/`"just"`, `"luck"`/`"luck"`, `"work"`/`"work."` with punctuation-stripped comparison).
+  - New regression test replays the **verbatim prod LLM output** captured from the `89cde014` agent_run (`tests/fixtures/text_overlay_v2/89cde014_stage_e.json`) through Stage E and asserts the mis-mapped duplicates revert to OCR while legit repeats survive. This is the end-to-end test the v0.4.42.4 work should have had — it uses real Stage E output, not synthetic fixtures, so it catches LLM-shaped failures the hand-built tests couldn't.
+  - `TEXT_OVERLAY_VERSION_V2` bumped to `v2-2026-05-23b-stage-e-dupe-revert` so `89cde014` (and any template that hit the broken emit) reanalyzes through the corrected Stage E.
+
 ## [0.4.43.0] - 2026-05-23
 
 ### Added

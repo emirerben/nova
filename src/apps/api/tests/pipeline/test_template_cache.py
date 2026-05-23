@@ -709,13 +709,13 @@ def test_text_overlay_version_v2_locked():
     """Lock the current namespace string so future devs don't bump it without
     intending to. The constant orphans cached recipes — every bump must be a
     conscious decision documented in the history block in template_cache.py.
-    Bumped on 2026-05-23 with the PR #286 follow-up: Pass-1 width measurement
-    uses the uniform Layer-2 render size (120 px) so cumulative reveals
-    actually split, Pass-2 stacks split sub-groups vertically by the
-    renderer's intrinsic ascent+descent line step, cumulative emit floors
-    stage duration at 0.2 s, and Stage E strips unmatched trailing OCR
-    quote characters. Prod template 89cde014 emitted "THE work to get" and
-    "there just" at identical bbox y=0.44 — the prior bump's renderer fix
-    never exercised the cumulative emit.
+    Bumped 2026-05-23b with the Stage E mis-mapped-duplicate defense: when
+    the alignment LLM assigns an already-used transcript word to a phrase
+    whose OCR says something else (prod 89cde014 mapped OCR "timing" →
+    "combination", "don't" → "and", 1s+ apart so the 0.5 s time-gap dedup
+    missed them), the duplicate now reverts to OCR regardless of time gap.
+    The prior 2026-05-23 bump fixed the cumulative emit (sub-group y stacking,
+    min-duration floor, quote strip) but the jumbled words came from upstream
+    Stage E, so the emit faithfully rendered nonsense ("and combination").
     """
-    assert TEXT_OVERLAY_VERSION_V2 == "v2-2026-05-23-cumulative-stack-floor"
+    assert TEXT_OVERLAY_VERSION_V2 == "v2-2026-05-23b-stage-e-dupe-revert"
