@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.43.7] - 2026-05-23
+
+### Fixed
+- **Skia renderer now honors `text_anchor="left"` — the actual fix for left-clipped overlays.** v0.4.43.6 (#296) carried `text_anchor` through the orchestrator's burn entry dict, but agentic templates and music jobs render via the **Skia** path (`text_overlay_skia.py`), which ignored `text_anchor` entirely: `_resolve_anchor` + `_draw_centered_text` always centered each line on `position_x_frac`. For a Layer-2 overlay (`text_anchor="left"`, `position_x_frac=0.05`) that put the line's CENTER at 5% of the frame, clipping the left half off-screen — prod template `89cde014` rendered "It's not just luck" as "s not just luck", "combination of" as "nation of", even after #296 deployed. The Pillow path and admin preview both anchored correctly, which is why local verification (which used those) looked right. Added `_resolve_text_anchor` and branched the glyph-x computation in both `_draw_centered_text` (covers static, font-cycle, and all `_draw_with_animation` effects) and `_draw_pop_in_with_suffix` (the Layer-2 cumulative reveal): left-anchored lines pin their left edge at `position_x_frac * CANVAS_W` instead of centering. Verified through the real Skia renderer: `_draw_frame("It's not just luck", text_anchor="center", x=0.05)` clips to bbox x=0; `text_anchor="left"` fits at x=34→960 in the 1080 px frame. Render-path fix only — no cache bump, no reanalyze. Regression tests `test_left_anchor_does_not_clip_off_left_edge` + `test_left_anchor_static_overlay_not_clipped`.
+
 ## [0.4.43.6] - 2026-05-23
 
 ### Fixed
