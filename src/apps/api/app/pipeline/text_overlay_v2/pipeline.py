@@ -671,45 +671,6 @@ _LINE_SPACING_MULT = 1.15
 # cumulative) and the terminal stage's defensive bridge is wider too.
 _CUMULATIVE_MIN_RENDERABLE_S = 0.2
 
-# Minimum on-screen time each word gets before the next word in the same
-# cumulative reveal appears. OCR first-seen timestamps cluster badly — a
-# coarse frame-sample rate means a frame holding "good timing" stamps BOTH
-# words at the same t (prod 89cde014: idx 13-16 "just"/"luck"/"is"/"a" all
-# at t=6.50, idx 27-29 "your"/"hard"/"work." all at t=10.00). A cumulative
-# reveal driven by clustered times drops the sub-renderable intermediate
-# stages, so words pop in 2-4 at a time ("It's not" → "It's not just luck")
-# instead of one-by-one — the "jumping" the reveal is supposed to avoid.
-# De-spacing pushes each word to at least this gap after the previous reveal,
-# preserving naturally well-spaced words and only fixing the clusters. Larger
-# than `_CUMULATIVE_MIN_RENDERABLE_S` so every de-spaced stage clears the
-# render floor with margin.
-_MIN_WORD_REVEAL_STEP_S = 0.30
-
-
-def _despace_word_starts(
-    starts: list[float],
-    line_end_s: float,
-    *,
-    min_step_s: float = _MIN_WORD_REVEAL_STEP_S,
-) -> tuple[list[float], float]:
-    """Enforce a minimum gap between consecutive cumulative word reveals.
-
-    Walk left-to-right; push each word to at least `min_step_s` after the
-    previous (already-placed) reveal. Naturally well-spaced words keep their
-    timing; clustered words get spread so each lands its own reveal beat.
-    Returns the de-spaced starts plus a `line_end_s` extended so the final
-    word still has a full `min_step_s` of screen time before the line clears.
-
-    Monotonic and order-preserving. Empty input returns unchanged.
-    """
-    if not starts:
-        return starts, line_end_s
-    spaced = [float(starts[0])]
-    for t in starts[1:]:
-        spaced.append(max(float(t), spaced[-1] + min_step_s))
-    new_line_end = max(line_end_s, spaced[-1] + min_step_s)
-    return spaced, new_line_end
-
 
 def _compute_line_step_norm() -> float:
     """Return per-sub-group vertical offset in canvas-height fraction.
@@ -860,20 +821,14 @@ def _emit_cumulative_line_overlays(
     # Pass 2: cumulative emit per sub-group.
     out: list = []
     for sub_group_idx, (sub_indices, sub_line_end_s) in enumerate(sub_groups):
-        # De-cluster word reveal times BEFORE building stages so clustered
-        # OCR timestamps don't collapse into multi-word pops. Preserves order
-        # and well-spaced words; only spreads the clusters.
-        sub_texts = [word_texts[k] for k in sub_indices if word_texts[k]]
-        sub_starts = [
-            float(lg.word_start_s_list[k]) for k in sub_indices if word_texts[k]
-        ]
-        if not sub_texts:
-            drops["empty_group"] += 1
-            continue
-        spaced_starts, sub_line_end_s = _despace_word_starts(sub_starts, sub_line_end_s)
         words = [
-            Word(text=t, start_s=s, end_s=s)  # end_s informational only
-            for t, s in zip(sub_texts, spaced_starts, strict=True)
+            Word(
+                text=word_texts[k],
+                start_s=lg.word_start_s_list[k],
+                end_s=lg.word_start_s_list[k],  # informational only
+            )
+            for k in sub_indices
+            if word_texts[k]
         ]
         if not words:
             drops["empty_group"] += 1

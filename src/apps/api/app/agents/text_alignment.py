@@ -308,47 +308,38 @@ class TextAlignmentAgent(Agent[TextAlignmentInput, TextAlignmentOutput]):
             )
 
             ordered = sorted(enumerate(input.phrases), key=lambda pair: pair[1].start_t_s)
-            # Track the FINAL normalized word each kept phrase will display
-            # (LLM word when kept, OCR word when reverted) plus its end time.
-            # Tracking the reverted OCR word is load-bearing: when phrase #22
-            # reverts "and" → OCR "don't", a later phrase #23 whose LLM ALSO
-            # said "don't" (but whose OCR is "to") must then be caught as a
-            # duplicate of #22's reverted word and revert to "to" in turn.
-            last_end_by_word: dict[str, float] = {}
-            seen_words: set[str] = set()
+            last_end_by_text: dict[str, float] = {}
+            seen_texts: set[str] = set()
             for original_idx, phrase in ordered:
                 assigned = corrected_lines_by_index.get(original_idx)
                 if assigned is None:
                     continue
-                # Normalize with surrounding punctuation stripped, so "work" vs
-                # "work." counts as agreement (a legit correction, not a mis-map).
-                llm_word = _normalize_word(assigned[0]) if assigned else ""
-                ocr_word = _normalize_word(phrase.lines[0]) if phrase.lines else ""
-                prev_end = last_end_by_word.get(llm_word)
+                key = "\n".join(line.strip().casefold() for line in assigned)
+                prev_end = last_end_by_text.get(key)
                 is_recent_dup = prev_end is not None and (
                     phrase.start_t_s - prev_end <= ATOMIZED_DEDUP_GAP_THRESHOLD_S
                 )
+                # Compare the LLM word to the phrase's own OCR word with
+                # surrounding punctuation stripped, so "work" vs "work." counts
+                # as agreement (a legit correction, not a mis-map).
+                llm_word = _normalize_word(assigned[0]) if assigned else ""
+                ocr_word = _normalize_word(phrase.lines[0]) if phrase.lines else ""
                 is_mismapped_dup = (
-                    llm_word in seen_words and llm_word != ocr_word and ocr_word != ""
+                    key in seen_texts and llm_word != ocr_word and ocr_word != ""
                 )
                 if is_recent_dup or is_mismapped_dup:
                     log.info(
                         "text_alignment_uniqueness_revert",
                         phrase_index=original_idx,
                         reason="recent_redetect" if is_recent_dup else "mismapped_ocr_mismatch",
-                        llm_word=llm_word[:40],
+                        conflicting_text=key[:60],
                         ocr_word=ocr_word[:40],
                         template_id=input.template_id,
                     )
                     del corrected_lines_by_index[original_idx]
-                    # The phrase falls back to OCR below — register the OCR word
-                    # so a later LLM mis-map onto the same word is also caught.
-                    if ocr_word:
-                        seen_words.add(ocr_word)
-                        last_end_by_word[ocr_word] = phrase.end_t_s
                     continue
-                seen_words.add(llm_word)
-                last_end_by_word[llm_word] = phrase.end_t_s
+                last_end_by_text[key] = phrase.end_t_s
+                seen_texts.add(key)
 
         # ── 3c. Atomized-mode single-word defense ────────────────────────────
         # Stage D atomized phrases carry exactly one OCR word per phrase. The

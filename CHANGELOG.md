@@ -2,15 +2,6 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.43.5] - 2026-05-23
-
-### Fixed
-- **Layer-2 (`text_overlay_v2`) cumulative reveals now appear one word at a time instead of popping 2-4 words at once, and the Stage E duplicate defense handles chained mis-maps.** v0.4.43.4 (#293) fixed Stage E's first mis-mapped duplicate but landed before the de-clustering work — this PR brings it in. OCR first-seen timestamps cluster badly: coarse frame sampling stamps every word in a held frame at the same `t` (template `89cde014` had `"just"`/`"luck"`/`"is"`/`"a"` all at t=6.50, `"your"`/`"hard"`/`"work."` all at t=10.00). A cumulative reveal driven by clustered times dropped the sub-renderable intermediate stages, so `"It's not"` jumped straight to `"It's not just luck"`.
-  - `_emit_cumulative_line_overlays` now de-spaces each sub-group's word reveal times to at least 0.30 s apart (`_despace_word_starts`) before building stages, preserving naturally well-spaced words and only spreading the clusters, so each word lands its own reveal beat.
-  - The Stage E mis-mapped-duplicate defense (`text_alignment.py` 3b) now tracks the FINAL word each phrase displays (LLM word when kept, OCR word when reverted), so chained mis-maps are caught: when phrase #22 reverts `"and"` → OCR `"don't"`, a later phrase #23 whose LLM also said `"don't"` (OCR `"to"`) is caught as a duplicate of #22's reverted word and reverts to `"to"` in turn.
-  - New end-to-end replay test (`test_pipeline_e2e_89cde014.py`) drives the verbatim prod Stage D OCR + Stage E LLM output through D→E→G and asserts all three product goals: text fits (no line exceeds the 90%-canvas budget at 120 px), no jumping (every stage adds exactly one word, reveals ≥ 0.30 s apart), proper timing (no zero/negative-duration overlays). Verified visually by rendering the real overlay set through the production renderer (`render_overlays_at_time`).
-  - `TEXT_OVERLAY_VERSION_V2` bumped to `v2-2026-05-23c-declustered-reveal` so `89cde014` reanalyzes through the corrected emit.
-
 ## [0.4.43.4] - 2026-05-23
 
 ### Fixed
