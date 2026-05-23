@@ -349,3 +349,95 @@ def test_empty_edit_list_rejected_by_validator(client: TestClient) -> None:
             json={"edits": []},
         )
     assert res.status_code == 422
+
+
+# ── POST /admin/templates/{id}/retime-phrase ─────────────────────────────────
+#
+# Unlike the text-only PATCH, retime-phrase re-derives the stage COUNT (= word
+# count) and per-word timings from a fixed beat, so editing a phrase's wording
+# reflows the reveal.
+
+
+def test_retime_phrase_expands_stages_and_recomputes_timing(client: TestClient) -> None:
+    """Slot 0's 2-member cumulative phrase ("It's"/"not") retimed to a 4-word
+    line becomes 4 stages with per-word beat timing from the anchor's start."""
+    template = _template_with_overlays()
+    with _patch_get_template(template):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={
+                "slot_index": 0,
+                "member_overlay_indices": [0, 1],
+                "new_text": "It's not just luck",
+                "beat_s": 0.4,
+            },
+        )
+    assert res.status_code == 200, res.text
+    overlays = template.recipe_cached["slots"][0]["text_overlays"]
+    assert [o["sample_text"] for o in overlays] == [
+        "It's",
+        "It's not",
+        "It's not just",
+        "It's not just luck",
+    ]
+    # Anchor start (0.0) preserved; each word +0.4s; last holds +0.4 dwell.
+    starts = [round(o["start_s"], 2) for o in overlays]
+    assert starts == [0.0, 0.4, 0.8, 1.2]
+    assert round(overlays[-1]["end_s"], 2) == round(0.0 + 4 * 0.4 + 0.4, 2)  # 2.0
+    # Stages butt edge-to-edge.
+    for a, b in zip(overlays, overlays[1:]):
+        assert round(a["end_s"], 3) == round(b["start_s"], 3)
+    # Per-stage pop suffix is the newly-revealed word.
+    assert [o["pop_animated_suffix"] for o in overlays] == ["It's", "not", "just", "luck"]
+    # legacy `text` kept in sync (anchor had it).
+    assert overlays[0]["text"] == "It's"
+
+
+def test_retime_phrase_shrink_reduces_stage_count(client: TestClient) -> None:
+    """Editing the 2-member phrase down to one word yields a single stage."""
+    template = _template_with_overlays()
+    with _patch_get_template(template):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={"slot_index": 0, "member_overlay_indices": [0, 1], "new_text": "Hello"},
+        )
+    assert res.status_code == 200, res.text
+    overlays = template.recipe_cached["slots"][0]["text_overlays"]
+    assert [o["sample_text"] for o in overlays] == ["Hello"]
+
+
+def test_retime_phrase_empty_text_deletes_phrase(client: TestClient) -> None:
+    """Empty new_text removes the phrase's overlays from the slot."""
+    template = _template_with_overlays()
+    with _patch_get_template(template):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={"slot_index": 0, "member_overlay_indices": [0, 1], "new_text": "   "},
+        )
+    assert res.status_code == 200, res.text
+    assert template.recipe_cached["slots"][0]["text_overlays"] == []
+
+
+def test_retime_phrase_rejects_non_contiguous_indices(client: TestClient) -> None:
+    template = _template_with_overlays()
+    with _patch_get_template(template):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={"slot_index": 0, "member_overlay_indices": [0, 2], "new_text": "a b"},
+        )
+    assert res.status_code == 400, res.text
+
+
+def test_retime_phrase_rejects_out_of_range(client: TestClient) -> None:
+    template = _template_with_overlays()
+    with _patch_get_template(template):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={"slot_index": 0, "member_overlay_indices": [5], "new_text": "x"},
+        )
+    assert res.status_code == 400, res.text

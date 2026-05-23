@@ -567,9 +567,19 @@ def _draw_pop_in_with_suffix(
     typeface = _typeface_for_overlay(overlay)
     initial_size = _resolve_font_size_px(overlay)
     # Lay out the FULL line so prefix + suffix stay in their original positions
-    full_font, full_size, _ = _shrink_to_fit(
+    full_font, full_size, full_lines = _shrink_to_fit(
         text, typeface, initial_size, CANVAS_W * _MAX_LINE_W_FRAC
     )
+    # The suffix-pop layout puts prefix + suffix on ONE baseline. If the line
+    # is too wide to fit on a single line (a manually-edited phrase grew past
+    # ~90% canvas, or the analysis-time line-split didn't apply), that layout
+    # would clip off the right edge ("combination of hard work" → "combination
+    # of har"). Fall back to the wrapping/shrinking path, which stacks lines
+    # and honors text_anchor — the whole line pops together instead of just
+    # the suffix, but nothing clips.
+    if len(full_lines) > 1:
+        _draw_with_animation(canvas, overlay, t_local, duration_s, effect="pop-in")
+        return
     full_w = full_font.measureText(text)
     prefix_w = full_font.measureText((prefix + " ") if prefix else "")
     suffix_w = full_font.measureText(suffix)
@@ -598,17 +608,12 @@ def _draw_pop_in_with_suffix(
             shadow_alpha=160,
         )
 
-    # Compute suffix scale envelope. Keyframes: 0ms → 30%, 150ms → 115%, 250ms → 100%.
-    t_ms = t_local * 1000.0
-    if t_ms < 150:
-        # 30 → 115 over 0..150ms, ease-out
-        p = t_ms / 150.0
-        scale = 0.30 + (1.15 - 0.30) * _ease_out_cubic(p)
-    elif t_ms < 250:
-        p = (t_ms - 150.0) / 100.0
-        scale = 1.15 - (1.15 - 1.00) * _ease_out_cubic(p)
-    else:
-        scale = 1.0
+    # No bounce: the revealed word appears at full size. The word-by-word
+    # reveal comes from the per-stage timing (each stage adds one word), not
+    # from a scale animation — so dropping the 30→115→100 overshoot keeps the
+    # progressive reveal but removes the springy pop the words used to do as
+    # they showed up.
+    scale = 1.0
 
     # Suffix is centered on its slot; scale around that center so the suffix
     # doesn't visibly shift its baseline x while it pops.
@@ -731,15 +736,8 @@ def _draw_with_animation(
         direction = -1.0 if effect == "slide-up" else 1.0
         y_translate = direction * 220.0 * (1.0 - eased)
     elif effect == "pop-in":
-        animate_for = min(0.30, duration_s * 0.7)
-        if t_local < animate_for:
-            p = t_local / animate_for
-            if p < 0.55:
-                scale = 0.30 + (1.15 - 0.30) * (p / 0.55)
-            else:
-                scale = 1.15 - (1.15 - 1.00) * ((p - 0.55) / 0.45)
-        else:
-            scale = 1.0
+        # No bounce: word appears at full size (see _draw_pop_in_with_suffix).
+        scale = 1.0
     elif effect == "bounce":
         animate_for = min(0.5, duration_s * 0.8)
         if t_local < animate_for:

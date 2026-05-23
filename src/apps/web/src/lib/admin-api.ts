@@ -253,6 +253,28 @@ export async function adminUpdateTemplateOverlays(
   return res.json();
 }
 
+export interface RetimePhraseRequest {
+  slot_index: number;
+  member_overlay_indices: number[];
+  new_text: string;
+  beat_s?: number;
+}
+
+// Recompute a cumulative-reveal phrase's stages + per-word timings from edited
+// text. Unlike the text-only PATCH /overlays, this re-derives the stage COUNT
+// (= word count) and the reveal timing, so changing a phrase's wording reflows
+// the reveal. Used for cumulative / per-word phrases; singletons keep the PATCH.
+export async function adminRetimeTemplatePhrase(
+  id: string,
+  req: RetimePhraseRequest,
+): Promise<TemplateDebugResponse> {
+  const res = await adminFetch(`/admin/templates/${id}/retime-phrase`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+  return res.json();
+}
+
 export async function adminCreateTemplate(data: {
   name: string;
   gcs_path: string;

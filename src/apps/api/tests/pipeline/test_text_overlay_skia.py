@@ -524,6 +524,57 @@ def test_left_anchor_static_overlay_not_clipped():
     assert bbox[2] < width, f"right edge overflow; bbox {bbox}"
 
 
+def test_pop_in_suffix_wide_line_wraps_instead_of_clipping():
+    """REGRESSION: a pop-in-with-suffix line too wide for one line must wrap
+    (fall back to the whole-line pop) instead of clipping off the right edge.
+    A manually-edited cumulative phrase grown past ~90% canvas width
+    ("combination of hard work" at 120px) overflowed because the suffix-pop
+    layout placed prefix+suffix on a single baseline."""
+    import io
+
+    overlay = {
+        "text": "combination of hard work",
+        "effect": "pop-in",
+        "pop_animated_suffix": "work",
+        "text_size_px": 120,
+        "position_x_frac": 0.05,
+        "position_y_frac": 0.40,
+        "text_color": "#FFFFFF",
+        "text_anchor": "left",
+    }
+    img = tos._draw_frame(overlay, 0.9, 1.5)  # past the pop animation
+    im = Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA")
+    bbox = im.getbbox()
+    assert bbox is not None
+    assert bbox[2] < im.width, f"wide pop-in line clipped the right edge; bbox {bbox}"
+    # Wrapped to >1 line: content spans more vertical room than a single line.
+    assert bbox[3] - bbox[1] > 200, f"expected multi-line wrap; bbox {bbox}"
+
+
+def test_pop_in_suffix_has_no_bounce_full_size_from_start():
+    """The revealed word appears at full size immediately — no 30→115→100
+    scale bounce. The word-by-word reveal comes from per-stage timing, not a
+    springy pop. Asserts the suffix bbox is identical early (t=0.02) and
+    settled (t=0.9)."""
+    import io
+
+    ov = {
+        "text": "the work",
+        "effect": "pop-in",
+        "pop_animated_suffix": "work",
+        "text_size_px": 120,
+        "position_x_frac": 0.05,
+        "position_y_frac": 0.44,
+        "text_color": "#FFFFFF",
+        "text_anchor": "left",
+    }
+
+    def bbox(t):
+        img = tos._draw_frame(ov, t, 1.0)
+        return Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA").getbbox()
+
+    early, settled = bbox(0.02), bbox(0.9)
+    assert early == settled, f"word scaled (bounce) between t=0.02 {early} and t=0.9 {settled}"
 def test_left_anchor_karaoke_line_not_clipped():
     """karaoke-line was the last Skia draw path that still centered every line
     on position_x_frac unconditionally (text_overlay_skia._draw_karaoke_line),
