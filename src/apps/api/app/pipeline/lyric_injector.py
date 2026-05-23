@@ -108,6 +108,13 @@ _LINE_DEFAULT_FONT_FAMILY = "Inter Tight"
 _MIN_LINE_VISIBLE_S = 0.20
 
 
+def _resolve_fade_ms(cfg: dict, *, s_key: str, ms_key: str, default_ms: int) -> int:
+    """Resolve fade duration, preferring the seconds alias over legacy ms."""
+    if cfg.get(s_key) is not None:
+        return max(0, int(round(float(cfg[s_key]) * 1000)))
+    return max(0, int(float(cfg.get(ms_key, default_ms))))
+
+
 @dataclass(slots=True)
 class _LineOverlayWindow:
     text: str
@@ -458,12 +465,12 @@ def _inject_line(
     Tunable via lyrics_config:
       - `pre_roll_s` (default `_LINE_PRE_ROLL_S`)
       - `post_dwell_s` (default `_LINE_POST_DWELL_S`)
+      - `next_line_gap_s` (default `_LINE_NEXT_LINE_GAP_S`)
       - `max_overlap_s` (default `_LINE_MAX_OVERLAP_S`)
-      - `fade_in_ms` (default `_LINE_FADE_IN_MS`)
-      - `fade_out_ms` (default `_LINE_FADE_OUT_MS`)
+      - `fade_in_s` / `fade_in_ms` (default `_LINE_FADE_IN_MS`)
+      - `fade_out_s` / `fade_out_ms` (default `_LINE_FADE_OUT_MS`)
 
     Deprecated config fields still accepted as no-ops for one release:
-      - `next_line_gap_s`
       - `hold_to_next_threshold_ms`
     """
     base = _common_overlay_fields(cfg)
@@ -489,8 +496,13 @@ def _inject_line(
     )
     pre_roll = float(cfg.get("pre_roll_s", _LINE_PRE_ROLL_S))
     post_dwell = float(cfg.get("post_dwell_s", _LINE_POST_DWELL_S))
-    fade_in_ms = max(0.0, float(cfg.get("fade_in_ms", _LINE_FADE_IN_MS)))
-    fade_out_ms = max(0.0, float(cfg.get("fade_out_ms", _LINE_FADE_OUT_MS)))
+    next_line_gap_s = max(0.0, float(cfg.get("next_line_gap_s", _LINE_NEXT_LINE_GAP_S)))
+    fade_in_ms = _resolve_fade_ms(
+        cfg, s_key="fade_in_s", ms_key="fade_in_ms", default_ms=_LINE_FADE_IN_MS
+    )
+    fade_out_ms = _resolve_fade_ms(
+        cfg, s_key="fade_out_s", ms_key="fade_out_ms", default_ms=_LINE_FADE_OUT_MS
+    )
 
     fade_in_s = fade_in_ms / 1000.0
     fade_out_s = fade_out_ms / 1000.0
@@ -508,20 +520,21 @@ def _inject_line(
     line_windows: list[_LineOverlayWindow] = []
 
     for i, line in enumerate(section_lines):
-        # Expand the visible window. Pre-roll is clamped to 0 (don't go
-        # negative into the previous section). Post-dwell is capped against
-        # the next line's visual start plus the fade-bound overlap budget.
+        # Expand the visible window. Caps only erode added post-dwell; they
+        # never cut the line's own audio span. next_line_gap_s is measured
+        # against the next line's audio start, while visual overlap is bounded
+        # separately by max_overlap_s and the active fade durations.
         line_start = float(line["start_s"])
         line_end = float(line["end_s"])
         section_start = max(0.0, line_start - pre_roll)
         natural_end = line_end + post_dwell
         if i + 1 < n:
             next_audio_start = float(section_lines[i + 1]["start_s"])
-            # Cap against the next line's effective VISUAL start (after its
-            # own pre_roll), not its audio start. With dynamic_max_overlap = 0
-            # this guarantees zero visual overlap between adjacent lines.
             next_visual_start = max(0.0, next_audio_start - pre_roll)
-            section_end = min(natural_end, next_visual_start + dynamic_max_overlap)
+            overlap_cap = next_visual_start + dynamic_max_overlap
+            gap_cap = next_audio_start - next_line_gap_s
+            section_end = min(natural_end, overlap_cap, gap_cap)
+            section_end = max(section_end, line_end)
         else:
             section_end = natural_end
 
