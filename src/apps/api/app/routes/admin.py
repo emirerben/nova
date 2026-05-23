@@ -1431,7 +1431,6 @@ def _recompute_phrase_overlays(
     beat_s: float,
     dwell_s: float,
     pattern: str | None = None,
-    max_end_s: float | None = None,
 ) -> list[dict]:
     """Rebuild a phrase's member overlays from edited text.
 
@@ -1439,19 +1438,21 @@ def _recompute_phrase_overlays(
     color, anchor, and `start_s` are inherited by every recomputed stage.
     Empty text returns `[]` (deletes the phrase).
 
+    Timing is driven entirely by word count from the anchor's `start_s`: each
+    word gets `beat_s` of screen time and the line holds `dwell_s` past the
+    last word. We deliberately do NOT clamp against neighbouring overlays —
+    overlays in a slot are layered at different on-screen positions and legit-
+    imately overlap in time, and the renderer already clamps `end_s` to the
+    clip duration and de-dups true same-position collisions. Editing a phrase
+    therefore always succeeds; word count alone sets its length and timestamps.
+
     `pattern`:
       - ``"singleton"`` → exactly ONE static overlay showing the full text, no
-        per-word pop. Its duration scales with word count but is bounded.
+        per-word pop. Duration = `n*beat_s + dwell_s` (floored positive).
       - anything else (cumulative / per_word / None) → N overlay dicts
         (N = word count): stage k shows words[0..k], revealing at
         `start + k*beat_s`. Consecutive stages butt edge-to-edge; the terminal
         stage holds `dwell_s` longer.
-
-    `max_end_s` (if given) is the hard upper bound for the phrase's last
-    `end_s` — the start of the next overlay in the slot, or the slot's
-    duration, whichever binds. The window is compressed (cumulative) or clamped
-    (singleton) to fit, so the recomputed overlays never overlap the next
-    overlay nor overflow the clip. Callers must ensure `max_end_s > start`.
     """
     words = new_text.split()
     n = len(words)
@@ -1461,36 +1462,17 @@ def _recompute_phrase_overlays(
 
     if pattern == "singleton":
         dur = max(_RETIME_MIN_OVERLAY_S, n * beat_s + dwell_s)
-        end = start + dur
-        if max_end_s is not None and end > max_end_s:
-            end = max_end_s
-        if end <= start:  # degenerate bound — keep a positive sliver
-            end = start + _RETIME_MIN_OVERLAY_S
         return [
             _retime_overlay_from_anchor(
-                anchor, text=new_text.strip(), start_s=start, end_s=end, suffix=None
+                anchor, text=new_text.strip(), start_s=start, end_s=start + dur, suffix=None
             )
         ]
-
-    # Cumulative reveal. Compress beat/dwell proportionally if the natural
-    # end-to-end window would exceed max_end_s, so every stage keeps a strictly
-    # positive duration and the last stage lands on/under the bound.
-    eff_beat, eff_dwell = beat_s, dwell_s
-    natural_span = n * eff_beat + eff_dwell
-    if max_end_s is not None:
-        avail = max_end_s - start
-        # 1e-9 tolerance so float dust (e.g. 4*0.4+0.4 == 2.0000000000000004)
-        # doesn't trigger a no-op "compression" against an equal bound.
-        if avail < natural_span - 1e-9 and natural_span > 0:
-            scale = avail / natural_span
-            eff_beat *= scale
-            eff_dwell *= scale
 
     out: list[dict] = []
     for k in range(n):
         cum = " ".join(words[: k + 1])
-        st = start + k * eff_beat
-        en = (start + (k + 1) * eff_beat) if k < n - 1 else (start + n * eff_beat + eff_dwell)
+        st = start + k * beat_s
+        en = (start + (k + 1) * beat_s) if k < n - 1 else (start + n * beat_s + dwell_s)
         out.append(
             _retime_overlay_from_anchor(anchor, text=cum, start_s=st, end_s=en, suffix=words[k])
         )
@@ -1581,43 +1563,17 @@ async def retime_template_phrase(
         )
     beat_s = req.beat_s if req.beat_s is not None else _RETIME_DEFAULT_BEAT_S
 
-    # Window-safety bound: the recomputed phrase must not overlap the next
-    # overlay in the slot, nor overflow the slot's clip. Without this a grown
-    # phrase pushes its last stage past the next overlay (overlapping
-    # timestamps) or past the clip (the renderer would silently drop it and the
-    # text vanishes). The next-overlay bound is shrunk by a small gap so the two
-    # windows never touch; the slot-end bound is exact (butting against the clip
-    # end is fine — the renderer clamps end_s to the slot duration).
-    _GAP_S = 0.05
-    bounds: list[float] = []
-    next_idx = idxs[-1] + 1
-    if next_idx < len(overlays) and isinstance(overlays[next_idx], dict):
-        nxt = overlays[next_idx].get("start_s")
-        if isinstance(nxt, (int, float)):
-            bounds.append(float(nxt) - _GAP_S)
-    slot_dur = slot.get("target_duration_s") if isinstance(slot, dict) else None
-    if isinstance(slot_dur, (int, float)) and slot_dur > 0:
-        bounds.append(float(slot_dur))
-    max_end_s = min(bounds) if bounds else None
-
-    anchor_start = float(anchor.get("start_s") or 0.0)
-    if max_end_s is not None and req.new_text.split() and max_end_s <= anchor_start:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Edited phrase has no room before the next overlay or the end of "
-                f"its slot (anchor start {anchor_start:.2f}s, available end "
-                f"{max_end_s:.2f}s). Shorten the text or move the next overlay."
-            ),
-        )
-
+    # Timing is driven purely by word count from the anchor's start (each word =
+    # one beat). We don't clamp against neighbouring overlays: same-slot overlays
+    # are layered at different on-screen positions and legitimately overlap in
+    # time, so editing a phrase always succeeds. The renderer clamps end_s to the
+    # clip duration and de-dups true same-position collisions downstream.
     new_members = _recompute_phrase_overlays(
         anchor,
         req.new_text,
         beat_s=beat_s,
         dwell_s=_RETIME_DWELL_S,
         pattern=req.pattern,
-        max_end_s=max_end_s,
     )
 
     # Rebuild the recipe (copy for JSONB change detection).

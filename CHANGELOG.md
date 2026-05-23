@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.44.1] - 2026-05-23
+
+### Fixed
+- **Saving overlay edits no longer fails with "Edited phrase has no room before the next overlay."** v0.4.44.0 added a window-safety bound to `retime-phrase` that treated the next overlay in a slot's array as a hard wall and rejected the whole save when a phrase didn't fit. But same-slot overlays are layered at different on-screen positions and legitimately overlap in time (the source recipe already has e.g. "if you put in" at 1.46–2.07 overlapping "the work to get there." at 1.50–2.40), so the bound blocked routine edits. `_recompute_phrase_overlays` now drops the `max_end_s` clamp/rejection entirely: each phrase's length and timestamps are driven purely by word count from its anchor (`word_count × beat + dwell`), and editing always succeeds. The renderer still clamps `end_s` to the clip duration and de-dups true same-position collisions downstream, so nothing crashes. Singleton duration is likewise word-count driven (no neighbour clamp). Tests updated: word-count-driven timing (not clamped), and a tight-neighbour edit that previously 400'd now saves.
+
 ## [0.4.44.0] - 2026-05-23
 
 ### Changed

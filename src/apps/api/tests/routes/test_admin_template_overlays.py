@@ -460,7 +460,6 @@ def test_retime_phrase_singleton_stays_one_overlay(client: TestClient) -> None:
             },
         )
     assert res.status_code == 200, res.text
-    # Slot 1, member [0]; next overlay (#1) starts at 0.5 → bound 0.45.
     overlays = template.recipe_cached["slots"][1]["text_overlays"]
     # Original overlay #1 still present → exactly 2 overlays, not 5.
     assert len(overlays) == 2
@@ -468,14 +467,17 @@ def test_retime_phrase_singleton_stays_one_overlay(client: TestClient) -> None:
     assert edited["sample_text"] == "the whole line at once"
     assert "pop_animated_suffix" not in edited
     assert edited["start_s"] == 0.0
-    # Clamped under the next overlay's start (0.5 − 0.05 gap).
-    assert edited["end_s"] <= 0.45
+    # Duration is word-count driven (5 words × 0.4 beat + 0.4 dwell = 2.4),
+    # NOT clamped against the neighbouring overlay.
+    assert round(edited["end_s"], 2) == 2.4
     assert edited["end_s"] > edited["start_s"]
 
 
-def test_retime_phrase_clamps_to_next_overlay_no_overlap(client: TestClient) -> None:
-    """Growing a phrase that sits before another overlay compresses its reveal
-    so the last stage never overlaps the next overlay's start."""
+def test_retime_phrase_timing_is_word_count_driven_not_clamped(client: TestClient) -> None:
+    """Growing a phrase lays its reveal end-to-end at the beat from the anchor.
+    Timing follows word count alone — it is NOT clamped against a neighbouring
+    overlay (same-slot overlays sit at different on-screen positions and may
+    overlap in time)."""
     template = _template_with_overlays()
     with _patch_get_template(template):
         res = client.post(
@@ -500,18 +502,18 @@ def test_retime_phrase_clamps_to_next_overlay_no_overlap(client: TestClient) -> 
         "one two three four five",
         "one two three four five six",
     ]
-    # Strictly monotonic, non-overlapping, edge-to-edge.
+    # Strictly monotonic, edge-to-edge, each stage a positive window.
     for a, b in zip(stages, stages[1:]):
         assert a["start_s"] < a["end_s"]
         assert round(a["end_s"], 3) == round(b["start_s"], 3)
-    # Last stage must not overlap the next overlay (start 0.5).
-    next_start = overlays[-1]["start_s"]
-    assert stages[-1]["end_s"] <= next_start
+    # Last stage runs past the next overlay's start (0.5) — by design.
+    assert round(stages[-1]["end_s"], 2) == round(6 * 0.4 + 0.4, 2)  # 2.8
+    assert stages[-1]["end_s"] > overlays[-1]["start_s"]
 
 
-def test_retime_phrase_rejects_when_no_room(client: TestClient) -> None:
-    """If the anchor starts at/after the available bound, reject rather than
-    emit a negative/zero window."""
+def test_retime_phrase_never_rejects_for_tight_neighbour(client: TestClient) -> None:
+    """A phrase whose anchor sits right next to another overlay still saves —
+    editing recomputes timing from word count and never blocks."""
     t = _template_with_overlays()
     t.recipe_cached = {
         "slots": [
@@ -528,7 +530,12 @@ def test_retime_phrase_rejects_when_no_room(client: TestClient) -> None:
         res = client.post(
             "/admin/templates/tpl-overlay-001/retime-phrase",
             headers=_headers(),
-            # member [0] anchor start 0.5; next overlay start 0.5 → bound 0.45 < 0.5.
-            json={"slot_index": 0, "member_overlay_indices": [0], "new_text": "too late"},
+            json={"slot_index": 0, "member_overlay_indices": [0], "new_text": "now this works"},
         )
-    assert res.status_code == 400, res.text
+    assert res.status_code == 200, res.text
+    overlays = t.recipe_cached["slots"][0]["text_overlays"]
+    stages = overlays[:-1]
+    assert [o["sample_text"] for o in stages] == ["now", "now this", "now this works"]
+    assert stages[0]["start_s"] == 0.5  # anchor start preserved
+    for s in stages:
+        assert s["end_s"] > s["start_s"]
