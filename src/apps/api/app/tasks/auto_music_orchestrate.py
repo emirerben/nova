@@ -276,8 +276,20 @@ def _run_auto_music_job(job_id: str) -> None:
             failed=failed_count,
         )
 
-        clip_id_to_gcs = {ref.name: gcs for ref, gcs in zip(file_refs, clip_paths_gcs)}
-        clip_id_to_local = {ref.name: path for ref, path in zip(file_refs, local_clip_paths)}
+        # Failed uploads (None refs) get the same `clip_{idx}` synthetic id
+        # the Whisper-fallback ClipMeta uses — see _analyze_clips_parallel
+        # in template_orchestrate.py. Keeps the assembly maps aligned with
+        # whatever clip_id the matcher actually assigned.
+        def _clip_id_for(ref: object | None, idx: int) -> str:
+            return ref.name if ref is not None else f"clip_{idx}"
+
+        clip_id_to_gcs = {
+            _clip_id_for(ref, i): gcs for i, (ref, gcs) in enumerate(zip(file_refs, clip_paths_gcs))
+        }
+        clip_id_to_local = {
+            _clip_id_for(ref, i): path
+            for i, (ref, path) in enumerate(zip(file_refs, local_clip_paths))
+        }
 
         # [3] Status: matching
         _set_status(job_id, "matching")

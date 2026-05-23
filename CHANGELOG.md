@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.43.8] - 2026-05-23
+
+### Fixed
+- **One Gemini-FAILED clip no longer kills the whole music job.** Prod job `04c5d656` (admin music test-job, 10 clips) failed with `Gemini file processing failed: files/e9u0ycvcn58a` — Gemini's File API marked one upload FAILED post-upload, the polling loop raised, and `_upload_clips_parallel` re-raised through `future.result()` so the orchestrator marked the entire job failed even though 9 clips uploaded fine. The very next step, `_analyze_clips_parallel`, already tolerated per-clip failures up to 50% with a Whisper fallback; the upload step was asymmetrically brittle. Two fixes: (1) `gemini_upload_and_wait` now deletes the bad ref and re-uploads the same bytes ONCE on FAILED state before raising — Gemini's FAILED is often a one-shot processing hiccup, not a deterministic codec rejection. (2) `_upload_clips_parallel` catches `GeminiAnalysisError`/`GeminiRefusalError`/`PollingTimeoutError` per clip and returns `None` for failures; `_analyze_one` treats a `None` ref as "skip Gemini, run Whisper fallback" so the clip still produces a usable degraded `ClipMeta`. `music_orchestrate.py` and `auto_music_orchestrate.py` map fallback `clip_id="clip_{idx}"` to the right GCS/local path so the assembly step finds the file. Same 50% job-level threshold the analyze step uses — too many failures still abort. Re-upload doubles a clip's max wall time to 2 × `timeout` (240 s default) for the rare FAILED case. Regression tests: `test_failed_state_reuploads_once_then_succeeds`, `test_failed_state_raises_after_one_reupload`, `test_failed_state_delete_failure_does_not_block_reupload`, `test_upload_clips_parallel_tolerates_per_clip_failure` (replays the prod scenario), `test_upload_clips_parallel_tolerates_polling_timeout`, `test_analyze_clips_parallel_falls_back_to_whisper_for_none_ref`.
+
 ## [0.4.43.7] - 2026-05-23
 
 ### Fixed

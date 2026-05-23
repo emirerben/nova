@@ -604,7 +604,17 @@ def _run_music_job(job_id: str) -> None:
         except TemplateMismatchError as exc:
             raise ValueError(f"{exc.code}: {exc.message}") from exc
 
-        clip_id_to_gcs = {ref.name: gcs for ref, gcs in zip(file_refs, clip_paths_gcs)}
+        # Failed uploads come back as None refs; their fallback ClipMeta uses
+        # `clip_{idx}` as clip_id (see _analyze_clips_parallel's Whisper-fallback
+        # branch in template_orchestrate.py). Mirror that key here so the
+        # matcher's assigned clip_id resolves to a real GCS path / local file
+        # for both Gemini-successful and Whisper-fallback clips.
+        def _clip_id_for(ref: object | None, idx: int) -> str:
+            return ref.name if ref is not None else f"clip_{idx}"
+
+        clip_id_to_gcs = {
+            _clip_id_for(ref, i): gcs for i, (ref, gcs) in enumerate(zip(file_refs, clip_paths_gcs))
+        }
         plan_data = {
             "steps": [
                 {
@@ -626,7 +636,10 @@ def _run_music_job(job_id: str) -> None:
         # [9] FFmpeg assemble
         log.info("ffmpeg_assemble_start", job_id=job_id)
         assembled_path = os.path.join(tmpdir, "assembled.mp4")
-        clip_id_to_local = {ref.name: path for ref, path in zip(file_refs, local_clip_paths)}
+        clip_id_to_local = {
+            _clip_id_for(ref, i): path
+            for i, (ref, path) in enumerate(zip(file_refs, local_clip_paths))
+        }
         # Music jobs always take the multi-pass path for Phase 1 of the
         # single-pass rollout (env flag + video_templates.single_pass_enabled).
         # MusicTrack has no equivalent per-track allow-list flag, and music
