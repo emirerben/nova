@@ -1510,23 +1510,44 @@ def _eff_end(o: dict) -> float:
     return float((v if v is not None else o.get("end_s")) or 0.0)
 
 
-def _overlay_slot_key(o: dict) -> tuple:
-    """Screen-slot key: position + y_frac + x_frac.
+def _is_cumulative_extension(prev_text: str, cur_text: str) -> bool:
+    """True if ``cur_text`` extends ``prev_text`` (cumulative reveal stage).
 
-    MUST mirror ``_slot_key`` in ``app/tasks/template_orchestrate.py`` (the
-    render-time Dedup 2 key). Overlays sharing only ``position="center"`` but
-    stacked at different y_frac occupy DIFFERENT screen slots and legitimately
-    overlap in time — the reflow must not ripple them against each other (that
-    is exactly the layering #304 preserves). Map a missing fraction to -1.0 so
-    None and floats don't crash the lexicographic sort.
+    Layer-2 reveal phrases hold the full line built up to and including each
+    word, so stage k+1's text starts with stage k's text and is longer. Mirrors
+    the cumulative-continuation rule in web ``phrase-grouping.ts``.
     """
-    y_frac = o.get("position_y_frac")
-    x_frac = o.get("position_x_frac")
-    return (
-        o.get("position", "center"),
-        y_frac if y_frac is not None else -1.0,
-        x_frac if x_frac is not None else -1.0,
-    )
+    if not prev_text:
+        return False
+    return cur_text.startswith(prev_text) and len(cur_text) > len(prev_text)
+
+
+def _group_phrase_index_blocks(overlays: list[dict]) -> list[list[int]]:
+    """Group overlay indices into phrase blocks (one on-screen phrase each).
+
+    A phrase is a maximal run of consecutive overlays where each member's text
+    is a cumulative extension of the previous member's; any overlay that doesn't
+    extend the previous one starts a new phrase. Singleton/non-extending
+    overlays become one-member blocks. This is what lets the re-sequencer move a
+    whole reveal phrase as a rigid block instead of fragmenting its stages.
+    """
+    blocks: list[list[int]] = []
+    cur: list[int] = []
+    prev_text: str | None = None
+    for i, o in enumerate(overlays):
+        text = ""
+        if isinstance(o, dict):
+            text = str(o.get("sample_text") or o.get("text") or "").strip()
+        if cur and prev_text is not None and _is_cumulative_extension(prev_text, text):
+            cur.append(i)
+        else:
+            if cur:
+                blocks.append(cur)
+            cur = [i]
+        prev_text = text
+    if cur:
+        blocks.append(cur)
+    return blocks
 
 
 def _shift_overlay(o: dict, delta: float) -> None:
@@ -1547,41 +1568,57 @@ def _shift_overlay(o: dict, delta: float) -> None:
         o["font_cycle_accel_at_s"] = round(max(lo, min(float(accel) + delta, hi - 1e-3)), 3)
 
 
-def _reflow_slot_overlays(
+def _slot_target_duration(slot: dict) -> float | None:
+    """Coerce a slot's ``target_duration_s`` to float, or None if unusable."""
+    raw = slot.get("target_duration_s") if isinstance(slot, dict) else None
+    try:
+        return float(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _resequence_slot_overlays(
     overlays: list[dict], *, target_duration_s: float | None
 ) -> tuple[list[dict], dict]:
-    """Ripple-forward overlays so none sharing a screen slot overlap in time.
+    """Lay phrase blocks end-to-end so no two overlays in the slot overlap.
 
-    Groups overlays by screen slot (``_overlay_slot_key``) and, within each
-    group ordered by effective start, pushes any overlay that starts before the
-    previous one ends just far enough to clear it. Only ever moves overlays
-    LATER (never earlier, never compressed) — so an edit always succeeds and the
-    edited phrase keeps its full per-word timing. Adjacency (start == prev_end)
-    is not an overlap. Overlays carrying agentic ``start_pct``/``end_pct``
-    timing are skipped: shifting their seconds fields is a render no-op.
+    Groups overlays into phrase blocks (``_group_phrase_index_blocks``) and
+    walks them in array order — the authored reading order — ripple-forwarding
+    each whole block so it starts no earlier than the previous block ended. Only
+    ever moves blocks LATER (never earlier, never compressed); a block already
+    clear of the previous one (a gap) is left untouched, so intentional pauses
+    survive. Each phrase keeps its internal per-word pacing — only the block as a
+    unit moves, which resolves interleaved phrases instead of fragmenting them.
+
+    This is slot-wide and position-agnostic: a multi-lane (e.g. two-line) layout
+    collapses to a single sequential read where only one phrase is on screen at
+    a time. Phrase blocks carrying agentic ``start_pct``/``end_pct`` timing are
+    skipped (a seconds-shift is a render no-op) and don't advance the cursor.
 
     Returns ``(new_overlays, warnings)`` where ``warnings`` reports how many
     overlays were pushed so their start exceeds ``target_duration_s`` (the
     renderer clamps end_s to the clip, so these render truncated, not dropped).
     """
     out = [dict(o) if isinstance(o, dict) else o for o in overlays]
-    groups: dict[tuple, list[int]] = {}
-    for i, o in enumerate(out):
-        if not isinstance(o, dict):
-            continue
-        if o.get("start_pct") is not None or o.get("end_pct") is not None:
-            continue  # agentic-relative timing — seconds-shift is a no-op
-        groups.setdefault(_overlay_slot_key(o), []).append(i)
-
     pushed_past_target = 0
-    for idxs in groups.values():
-        idxs.sort(key=lambda i: _eff_start(out[i]))
-        for a, b in zip(idxs, idxs[1:]):
-            overlap = _eff_end(out[a]) - _eff_start(out[b])
-            if overlap > _REFLOW_EPS:  # strict overlap only; adjacency is fine
-                _shift_overlay(out[b], overlap)
-                if target_duration_s is not None and _eff_start(out[b]) > target_duration_s:
-                    pushed_past_target += 1
+    cursor: float | None = None
+    for block in _group_phrase_index_blocks(out):
+        members = [out[i] for i in block if isinstance(out[i], dict)]
+        if not members:
+            continue
+        if any(m.get("start_pct") is not None or m.get("end_pct") is not None for m in members):
+            continue  # agentic-relative timing — leave as-is, don't advance cursor
+        block_start = min(_eff_start(m) for m in members)
+        block_end = max(_eff_end(m) for m in members)
+        if cursor is not None and block_start < cursor - _REFLOW_EPS:
+            delta = cursor - block_start
+            for m in members:
+                _shift_overlay(m, delta)
+            block_start += delta
+            block_end += delta
+        cursor = block_end
+        if target_duration_s is not None and block_start > target_duration_s:
+            pushed_past_target += len(members)
     return out, {"overlays_pushed_past_target": pushed_past_target}
 
 
@@ -1670,10 +1707,8 @@ async def retime_template_phrase(
     beat_s = req.beat_s if req.beat_s is not None else _RETIME_DEFAULT_BEAT_S
 
     # Timing is driven purely by word count from the anchor's start (each word =
-    # one beat). The edited phrase always succeeds; the slot reflow below then
-    # ripples any following overlay later so no two overlays in the slot overlap
-    # in time (per-screen-slot — legitimately layered overlays at different
-    # y/x fractions are left alone).
+    # one beat). The edited phrase always succeeds; the slot is then re-sequenced
+    # so phrases play one at a time with no overlap (see _resequence_slot_overlays).
     new_members = _recompute_phrase_overlays(
         anchor,
         req.new_text,
@@ -1690,15 +1725,10 @@ async def retime_template_phrase(
         dict(ov) if isinstance(ov, dict) else ov for ov in slot_copy.get("text_overlays", [])
     ]
     overlays_copy[idxs[0] : idxs[-1] + 1] = new_members
-    # Ripple-forward so the (possibly grown) edited phrase doesn't overlap a
-    # later overlay sharing its screen slot. Editing the text never overlaps.
-    raw_target = slot_copy.get("target_duration_s")
-    try:
-        target_duration_s = float(raw_target) if raw_target is not None else None
-    except (TypeError, ValueError):
-        target_duration_s = None
-    overlays_copy, reflow_warnings = _reflow_slot_overlays(
-        overlays_copy, target_duration_s=target_duration_s
+    # Re-sequence the whole slot: lay phrase blocks end-to-end so the (possibly
+    # grown) edit and every other phrase play sequentially with no overlap.
+    overlays_copy, reflow_warnings = _resequence_slot_overlays(
+        overlays_copy, target_duration_s=_slot_target_duration(slot_copy)
     )
     slot_copy["text_overlays"] = overlays_copy
     new_slots[req.slot_index] = slot_copy
@@ -1750,6 +1780,117 @@ async def retime_template_phrase(
         recipe_cached=template.recipe_cached,
         reflow_warning=(
             reflow_warnings if reflow_warnings["overlays_pushed_past_target"] else None
+        ),
+    )
+
+
+class ResequenceSlotsRequest(BaseModel):
+    """Re-sequence overlay timings so phrases never overlap, without changing any
+    text. ``slot_index=None`` re-sequences every slot; otherwise just that one.
+    Backs the "Fix timings" button in the OverlaysTab — the escape hatch when
+    analysis timings overlap and the admin hasn't edited any wording.
+    """
+
+    slot_index: int | None = Field(default=None, ge=0)
+
+
+@router.post(
+    "/templates/{template_id}/resequence-slots",
+    response_model=TemplateDebugResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def resequence_template_slots(
+    template_id: str,
+    req: ResequenceSlotsRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateDebugResponse:
+    """Lay each targeted slot's phrases end-to-end so none overlap in time.
+
+    Unlike ``retime-phrase`` (recomputes ONE phrase's wording + timing), this
+    only re-sequences existing phrases — every phrase keeps its text and internal
+    per-word pacing; whole phrase blocks are rippled forward so the slot reads one
+    phrase at a time. No-op-safe: a slot already sequential is returned unchanged.
+    """
+    template = await get_template_or_404(template_id, db)
+    if not template.recipe_cached or not isinstance(template.recipe_cached, dict):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Template has no recipe to edit — wait for analysis to complete.",
+        )
+    slots = template.recipe_cached.get("slots")
+    if not isinstance(slots, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="recipe has no slots",
+        )
+    if req.slot_index is not None and req.slot_index >= len(slots):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"slot_index={req.slot_index} out of range",
+        )
+
+    targets = [req.slot_index] if req.slot_index is not None else list(range(len(slots)))
+    new_recipe = dict(template.recipe_cached)
+    new_slots = [dict(s) if isinstance(s, dict) else s for s in new_recipe.get("slots", [])]
+    pushed_past_target = 0
+    for si in targets:
+        slot = new_slots[si]
+        if not isinstance(slot, dict):
+            continue
+        overlays = slot.get("text_overlays")
+        if not isinstance(overlays, list) or not overlays:
+            continue
+        overlays_copy = [dict(ov) if isinstance(ov, dict) else ov for ov in overlays]
+        overlays_copy, warns = _resequence_slot_overlays(
+            overlays_copy, target_duration_s=_slot_target_duration(slot)
+        )
+        slot["text_overlays"] = overlays_copy
+        new_slots[si] = slot
+        pushed_past_target += warns["overlays_pushed_past_target"]
+    new_recipe["slots"] = new_slots
+    template.recipe_cached = new_recipe
+    template.recipe_cached_at = datetime.now(UTC)
+
+    await db.commit()
+    await db.refresh(template)
+
+    from app.pipeline.template_cache import (  # noqa: PLC0415
+        invalidate_cache_for_template,
+    )
+
+    invalidate_cache_for_template(template_id)
+    log.info(
+        "admin_template_slots_resequenced",
+        template_id=template_id,
+        slots=targets,
+        pushed_past_target=pushed_past_target,
+    )
+
+    runs_res = await db.execute(
+        select(AgentRun)
+        .where(AgentRun.template_id == template_id)
+        .order_by(AgentRun.created_at.desc())
+        .limit(_TEMPLATE_DEBUG_RUN_LIMIT)
+    )
+    runs = list(runs_res.scalars().all())
+    return TemplateDebugResponse(
+        template=TemplateDebugSummary(
+            id=template.id,
+            name=template.name,
+            analysis_status=template.analysis_status,
+            template_type=template.template_type,
+            is_agentic=template.is_agentic,
+            gcs_path=template.gcs_path,
+            audio_gcs_path=template.audio_gcs_path,
+            music_track_id=template.music_track_id,
+            error_detail=template.error_detail,
+            recipe_cached_at=template.recipe_cached_at,
+            created_at=template.created_at,
+        ),
+        template_agent_runs=[agent_run_to_payload(r) for r in runs],
+        recipe_cached=template.recipe_cached,
+        reflow_warning=(
+            {"overlays_pushed_past_target": pushed_past_target} if pushed_past_target else None
         ),
     )
 

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.44.5] - 2026-05-23
+
+### Changed
+- **Overlay timings are now sequenced one-phrase-at-a-time, slot-wide, and there's a "Fix timings" button.** v0.4.44.3 only de-overlapped overlays sharing the *same* on-screen position, so templates whose analysis stacked lines across two vertical lanes (e.g. prod `89cde014` "not just luck 2") still showed heavily overlapping, interleaved timings. The re-sequencer is now **phrase-aware and position-agnostic**: it groups overlays into phrase blocks (cumulative-reveal runs + singletons) and lays whole blocks end-to-end in reading order, so the slot reads one phrase at a time with no overlap anywhere — and interleaved phrases (where two phrases' reveal stages were intercut in time) are separated as blocks instead of fragmented. Each phrase keeps its internal per-word pacing; blocks only ever ripple *later*. Editing a phrase re-sequences its whole slot, and a new **"Fix timings"** button in the admin Overlays tab (`POST /admin/templates/{id}/resequence-slots`) re-sequences every slot on demand **without changing any wording** — the fix for "analysis timings overlap and I don't want to retype anything." When sequencing pushes a phrase past its slot duration, the edit/fix still succeeds and the tab shows a non-blocking notice (the renderer clamps to the clip). This supersedes the same-position scoping shipped in 0.4.44.3.
+
 ## [0.4.44.4] - 2026-05-23
 
 ### Fixed
