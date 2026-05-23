@@ -95,6 +95,9 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
   const [saving, setSaving] = useState(false);
   const [overwriting, setOverwriting] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  // How many overlays the server's slot reflow pushed past their slot duration
+  // on the last save (they render truncated). 0 = no notice.
+  const [reflowPushed, setReflowPushed] = useState(0);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -147,6 +150,7 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
     if (dirtyGroups.length === 0) return;
     setSaving(true);
     setSaveError(null);
+    setReflowPushed(0);
     try {
       // Route every edited phrase through retime-phrase: the backend re-derives
       // the stage COUNT (= word count) and per-word timings, so changing the
@@ -163,6 +167,7 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
         );
       });
       let updated: TemplateDebugResponse | null = data;
+      let pushed = 0;
       for (const g of sorted) {
         const member_overlay_indices = g.member_row_indices.map(
           (ri) => rows[ri].overlay_index,
@@ -176,11 +181,13 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
           // (cumulative/per_word) or keep ONE static overlay (singleton).
           pattern: g.pattern,
         });
+        pushed += updated.reflow_warning?.overlays_pushed_past_target ?? 0;
       }
       if (updated) {
         setData(updated);
         setRows(extractOverlayRows(updated.recipe_cached));
       }
+      setReflowPushed(pushed);
       setEditBuffers({});
       setLastSavedAt(new Date().toLocaleTimeString());
     } catch (e) {
@@ -281,6 +288,14 @@ export function OverlaysTab({ templateId }: { templateId: string }): JSX.Element
       {saveError && (
         <div className="rounded border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-300">
           {saveError}
+        </div>
+      )}
+
+      {reflowPushed > 0 && (
+        <div className="rounded border border-amber-800 bg-amber-950/40 px-4 py-3 text-sm text-amber-300">
+          {reflowPushed} overlay{reflowPushed === 1 ? "" : "s"} pushed past the
+          slot duration to avoid overlap and may be clipped on screen. Shorten an
+          earlier phrase or trim wording to fit.
         </div>
       )}
 

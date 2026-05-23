@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.44.3] - 2026-05-23
+
+### Fixed
+- **Editing an overlay phrase now reflows the slot so overlays never overlap in time.** Analysis-derived overlay timings are often wrong, and growing a phrase (each word = one beat) could push it over a later overlay. `retime-phrase` now runs a slot-wide ripple after recomputing the edited phrase: overlays sharing the same on-screen position are pushed *later* (never earlier, never compressed, edit never rejected) so none overlap. Overlays at a different `position_y_frac`/`position_x_frac` are left alone — legitimately-layered overlays still overlap in time, preserving the v0.4.44.1 behavior. If the ripple pushes an overlay past its slot's `target_duration_s`, the edit still succeeds and the admin Overlays tab shows a non-blocking notice (the renderer clamps `end_s` to the clip, so those render truncated rather than dropped). Also fixes a latent bug where recomputed reveal stages inherited the anchor's `start_s_override`/`end_s_override`, which would have pinned every stage to one fixed window; recomputed members now carry only their freshly-derived timing. The render-time same-position dedup remains as a safety net for any non-reflowed overlap that reaches the renderer.
+
 ## [0.4.44.2] - 2026-05-23
 
 ### Fixed
