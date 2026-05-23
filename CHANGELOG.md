@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.43.6] - 2026-05-23
+
+### Reverted
+- **Reverted the v0.4.43.5 Layer-2 cumulative-reveal de-clustering (#294).** The de-spacing of clustered word reveal times made real renders worse, not better, so it is rolled back. Stage G's cumulative emit returns to the v0.4.43.4 behavior (no `_despace_word_starts` pass) and `TEXT_OVERLAY_VERSION_V2` returns to `v2-2026-05-23b-stage-e-dupe-revert` — the namespace change re-orphans any template that reanalyzed under `v2-2026-05-23c`, so the next reanalyze renders with the restored behavior. The Stage E mis-mapped-duplicate revert from v0.4.43.4 (#293) is unaffected and stays in place.
+
 ## [0.4.43.4] - 2026-05-23
 
 ### Fixed
