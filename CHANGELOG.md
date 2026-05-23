@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.43.11] - 2026-05-23
+
+### Added
+- **CI guard: Layer-2 changes must bump the cache version.** `TEXT_OVERLAY_VERSION_V2` in `template_cache.py` is the only thing that invalidates Layer-2 cached recipes — the Stage E/F agent `prompt_version`s are NOT in the cache key. So editing a Layer-2 stage/prompt without bumping the constant ships a change that's invisible in prod (every access cache-hits a pre-change recipe). New workflow `.github/workflows/layer2-cache-guard.yml` (script `scripts/check_layer2_cache_bump.sh`) fails any PR touching `text_overlay_v2/`, the Stage E/F agents/schemas, or their prompts without a bump. Escape hatch for non-semantic edits: `[skip-layer2-cache-bump]` in a commit message.
+
+### Changed
+- **CLAUDE.md documents the remaining Layer-2 "stale in prod" traps**: the cache-version bump rule (now CI-enforced) plus OCR backend divergence — Stage B uses Cloud Vision in prod but Apple Vision on local macOS, so a Layer-2 result verified locally won't match the prod render. Pin the backend via `run_full_pipeline(backend=...)` or build fixtures against Cloud Vision.
+
 ## [0.4.43.10] - 2026-05-23
 
 ### Added
