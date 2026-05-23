@@ -67,6 +67,44 @@ def _strip_unicode_controls(text: str) -> str:
     )
 
 
+# Characters OCR sometimes appends to a phrase without a matched opening.
+# A literal closing `"` on "luck"" is the canonical leak (prod 89cde014:
+# input phrase #3 carried `lines=['luck"']` through Stage E's OCR fallback
+# path unchanged and the renderer drew the trailing quote on screen).
+# Strip when the count is ODD — a matched pair (e.g. a real quoted phrase)
+# survives unchanged.
+_UNMATCHED_TRAILING_CHARS = ('"', "'", "`", "\\")
+
+
+def _strip_unmatched_trailing_chars(text: str) -> str:
+    """Strip trailing quote/escape characters whose opening counterpart is
+    missing from the same line.
+
+    Strict count check: a character is stripped only when it appears at the
+    end of the line AND the total occurrences are ODD. This preserves
+    legitimate balanced quotes ("hello world" with a matched pair). Smart
+    quotes (U+201C / U+201D) and apostrophes inside words ("It's") are
+    treated as their own characters, not the ASCII straight forms — typed
+    quotes are the artifact we're targeting. Runs until the line is stable
+    so cascading trailing artifacts (e.g. `it's\\"`) collapse together.
+    """
+    if not text:
+        return text
+    out = text
+    while True:
+        changed = False
+        stripped = out.rstrip()
+        for ch in _UNMATCHED_TRAILING_CHARS:
+            if stripped.endswith(ch) and stripped.count(ch) % 2 == 1:
+                stripped = stripped[: -len(ch)].rstrip()
+                changed = True
+                break
+        out = stripped
+        if not changed:
+            break
+    return out
+
+
 def _sanitize_aligned_line(line: str) -> str:
     """Deterministic cleanup of structurally forbidden content in LLM output.
 
@@ -84,6 +122,11 @@ def _sanitize_aligned_line(line: str) -> str:
     here would corrupt legitimate transcript content like song refrains
     ("rain rain go away", "Whoa whoa whoa") where the repetition IS the
     intended on-screen text.
+
+    Also strips unmatched trailing quote/escape characters that OCR leaks
+    on phrase boundaries — Stage E's OCR-fallback path passes these through
+    when the transcript has no plausible match. The trailing `"` from
+    `'luck"'` was rendering on screen in prod template 89cde014.
     """
     if not line:
         return line
@@ -95,6 +138,7 @@ def _sanitize_aligned_line(line: str) -> str:
     for esc in _ESCAPE_SEQUENCES:
         cleaned = cleaned.replace(esc, " ")
     cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
+    cleaned = _strip_unmatched_trailing_chars(cleaned)
     return cleaned
 
 

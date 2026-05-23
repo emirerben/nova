@@ -217,7 +217,28 @@ TEXT_OVERLAY_VERSION_V1 = "v1"
 #
 # When you change anything that affects Layer-2 overlay output (Stage E
 # prompt, sanitizer logic, Stage D/G semantics), append a new suffix here.
-TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-22-atomized-single-word"
+#
+# 2026-05-23 — PR #286 follow-up. The v2-2026-05-22 fix only verified the
+# renderer baseline anchor (PR #286 part C) locally; the cumulative-emit
+# fixes (parts A/B) never exercised. Prod template 89cde014 still rendered
+# split sub-groups stacked on top of each other at the same y, sub-frame
+# cumulative flashes, and trailing OCR quote artifacts. This bump orphans
+# the v2-2026-05-22 cache entries that were written under the broken emit:
+#   (A) `_emit_cumulative_line_overlays` Pass-1 now measures widths at the
+#       uniform Layer-2 render size (large=120 px) so long lines actually
+#       split — previously it measured at the classifier's `size_class`
+#       (often "small"=36 px) and never overflowed, emitting one massive
+#       multi-line overlay.
+#   (B) Pass-2 stacks split sub-groups vertically via the renderer's intrinsic
+#       ascent+descent line step. Each sub-group's anchor_y now offsets by
+#       `sub_group_idx * line_step_norm` so split lines render at distinct y.
+#   (C) The cumulative emit floors stage duration at 0.2 s (vs the lyric
+#       injector's 0.05 s) so a 50-ms middle stage drops out of the reveal
+#       instead of flashing for one frame on screen.
+#   (D) Stage E `_sanitize_aligned_line` strips unmatched trailing quote /
+#       escape characters that OCR leaks on phrase boundaries (the dangling
+#       `"` on `luck"` was rendering literally on screen).
+TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-23-cumulative-stack-floor"
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.

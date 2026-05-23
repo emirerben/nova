@@ -471,13 +471,18 @@ def _make_atomized_classified(word: str, start_s: float, x_min: float = 0.1):
 def test_stage_g_line_group_emits_n_cumulative_overlays():
     """A LineGroup of 3 atomized phrases emits 3 cumulative overlays where
     each carries the cumulative text up to and including its word. This is
-    the core progressive-reveal behavior the user requested."""
+    the core progressive-reveal behavior the user requested.
+
+    Uses short words so the cumulative line stays under 90% of the
+    1080-px canvas at the uniform Layer-2 render size (120 px) and the
+    Pass-1 width-overflow split does not fire.
+    """
     from app.pipeline.text_overlay_v2.line_grouping import LineGroup
 
     classified = [
-        _make_atomized_classified("good", 0.0),
-        _make_atomized_classified("morning", 1.0),
-        _make_atomized_classified("everyone", 2.0),
+        _make_atomized_classified("hi", 0.0),
+        _make_atomized_classified("on", 1.0),
+        _make_atomized_classified("it", 2.0),
     ]
     lg = LineGroup(
         phrase_indices=[0, 1, 2],
@@ -493,7 +498,7 @@ def test_stage_g_line_group_emits_n_cumulative_overlays():
     )
     assert len(out.overlays) == 3
     cumulative_texts = [o.sample_text for o in out.overlays]
-    assert cumulative_texts == ["good", "good morning", "good morning everyone"]
+    assert cumulative_texts == ["hi", "hi on", "hi on it"]
 
 
 def test_stage_g_line_group_overlays_are_left_anchored():
@@ -963,3 +968,180 @@ def test_stage_g_keeps_singleton_outside_cumulative_time_window():
     )
     texts = [o.sample_text for o in out.overlays]
     assert "coffee" in texts
+
+
+# ── PR #286 follow-up: sub-group Y stacking + min-duration floor ─────────────
+
+
+def test_stage_g_split_sub_groups_stack_vertically():
+    """When a LineGroup splits into multiple sub-groups via the Pass-1
+    width-overflow check, each sub-group MUST render at a distinct y. Prod
+    template 89cde014 emitted "THE work to get" and "there just" sub-groups
+    at the SAME y=0.44 (bbox identical byte-for-byte) — the two reveals
+    visually clashed. Each sub-group's anchor_y must offset by the renderer's
+    line-step so split lines stack instead of overlap.
+    """
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    # Six words that together overflow 90% canvas at the uniform Layer-2
+    # render size (large=120 px). Mirrors the prod "THE work to get there
+    # just" split.
+    words = ["THE", "work", "to", "get", "there", "just"]
+    classified = [_make_atomized_classified(w, float(i), x_min=0.05) for i, w in enumerate(words)]
+    lg = LineGroup(
+        phrase_indices=list(range(len(words))),
+        line_end_s=float(len(words)),
+        line_anchor_x_frac=0.05,
+        line_anchor_y_frac=0.44,
+        line_height_frac=0.05,
+        transcript_word_indices=list(range(len(words))),
+        word_start_s_list=[float(i) for i in range(len(words))],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 20.0)], line_groups=[lg]
+    )
+    y_norms = {round(o.bbox.y_norm, 4) for o in out.overlays}
+    assert len(y_norms) > 1, (
+        "split sub-groups must render at distinct y values; got "
+        f"single y={y_norms}"
+    )
+    # The first sub-group must keep the line group's original anchor (no
+    # offset for sub_group_idx=0).
+    assert any(o.bbox.y_norm == pytest.approx(0.44) for o in out.overlays), (
+        "first sub-group must stay at line_anchor_y_frac"
+    )
+    # Every later sub-group must land strictly BELOW the original anchor
+    # (text reveals stack downward like wrapped lines do inside one overlay).
+    assert max(o.bbox.y_norm for o in out.overlays) > 0.44
+
+
+def test_stage_g_unsplit_line_group_keeps_single_anchor_y():
+    """Regression guard: a SHORT LineGroup that fits in one sub-group must
+    NOT introduce any y offset. Confirms sub_group_idx=0 path is the
+    no-op identity at the original anchor.
+    """
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    classified = [
+        _make_atomized_classified("hi", 0.0, x_min=0.05),
+        _make_atomized_classified("there", 1.0, x_min=0.05),
+    ]
+    lg = LineGroup(
+        phrase_indices=[0, 1],
+        line_end_s=2.0,
+        line_anchor_x_frac=0.05,
+        line_anchor_y_frac=0.62,
+        line_height_frac=0.05,
+        transcript_word_indices=[0, 1],
+        word_start_s_list=[0.0, 1.0],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 5.0)], line_groups=[lg]
+    )
+    assert all(o.bbox.y_norm == pytest.approx(0.62) for o in out.overlays), (
+        f"single sub-group must keep anchor y={0.62}; "
+        f"got {[o.bbox.y_norm for o in out.overlays]}"
+    )
+
+
+def test_stage_g_cumulative_overlays_meet_min_duration():
+    """Sub-frame cumulative emits (`stage.end_s - stage.start_s` < 50 ms in
+    prod 89cde014 overlays #16, #19) flash for a single frame and look
+    broken on screen. The cumulative emit must enforce the same minimum
+    render duration the per-phrase passthrough already does.
+    """
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    # Pack four words into a 50-ms span so the natural per-word stage
+    # duration is far below the renderable floor — without the floor the
+    # emit produces 50-ms / zero-duration flashes.
+    words = ["combination", "of", "and", "good"]
+    starts = [9.500, 9.510, 9.520, 9.530]
+    classified = [
+        _make_atomized_classified(w, s, x_min=0.05) for w, s in zip(words, starts, strict=True)
+    ]
+    lg = LineGroup(
+        phrase_indices=[0, 1, 2, 3],
+        line_end_s=9.560,
+        line_anchor_x_frac=0.05,
+        line_anchor_y_frac=0.41,
+        line_height_frac=0.05,
+        transcript_word_indices=[0, 1, 2, 3],
+        word_start_s_list=starts,
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 15.0)], line_groups=[lg]
+    )
+    # Every emitted overlay must be visible long enough to read.
+    for ov in out.overlays:
+        duration = ov.end_s - ov.start_s
+        assert duration >= 0.2 - 1e-6, (
+            f"cumulative overlay {ov.sample_text!r} duration {duration:.3f}s "
+            "below 0.2s floor"
+        )
+
+
+def test_stage_g_cumulative_prefix_does_not_carry_across_sub_groups():
+    """When a LineGroup splits into multiple sub-groups, each sub-group's
+    cumulative text starts fresh. The plan's prod 89cde014 finding shows
+    "combination of and good timing don't to allow anyone" rendering as a
+    single overlay — this guards against that by asserting no emitted
+    sample_text contains words from a prior sub-group's word list.
+    """
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    # 9 words that will split at ~90% canvas / 120 px into multiple
+    # sub-groups. Use distinct words so prefix-carry would show up obvious.
+    words = [
+        "combination",
+        "of",
+        "and",
+        "good",
+        "timing",
+        "don't",
+        "to",
+        "allow",
+        "anyone",
+    ]
+    classified = [
+        _make_atomized_classified(w, float(i) * 2.0, x_min=0.05) for i, w in enumerate(words)
+    ]
+    lg = LineGroup(
+        phrase_indices=list(range(len(words))),
+        line_end_s=float(len(words)) * 2.0,
+        line_anchor_x_frac=0.05,
+        line_anchor_y_frac=0.41,
+        line_height_frac=0.05,
+        transcript_word_indices=list(range(len(words))),
+        word_start_s_list=[float(i) * 2.0 for i in range(len(words))],
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 30.0)], line_groups=[lg]
+    )
+
+    # Group overlays by their y-band — sub-groups stack at different y,
+    # so each band is one sub-group's cumulative reveal.
+    by_y: dict[float, list[str]] = {}
+    for ov in out.overlays:
+        key = round(ov.bbox.y_norm, 3)
+        by_y.setdefault(key, []).append(ov.sample_text)
+
+    # If the split fires (line measured at uniform 120 px overflows), at
+    # least two sub-groups exist.
+    if len(by_y) > 1:
+        sub_group_word_sets: list[set[str]] = []
+        for texts in by_y.values():
+            words_in_sub = set()
+            for t in texts:
+                words_in_sub.update(t.split())
+            sub_group_word_sets.append(words_in_sub)
+        # Each sub-group's words must be DISJOINT from earlier sub-groups —
+        # no prefix carryover.
+        seen_before: set[str] = set()
+        for sub_words in sub_group_word_sets:
+            overlap = seen_before & sub_words
+            assert not overlap, (
+                f"sub-group cumulative text leaked prior words {overlap} — "
+                "prefix accumulator did not reset between sub-groups"
+            )
+            seen_before |= sub_words
