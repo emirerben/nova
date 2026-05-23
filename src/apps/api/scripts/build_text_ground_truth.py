@@ -29,10 +29,13 @@ Two modes:
      - skips templates whose fixture is already up-to-date for the
        same GCS blob generation (idempotent re-runs).
 
-   Whisper transcript: optional, runs the project's
-   ``nova.audio.transcript`` agent against the template's Gemini
-   file_uri when ``GEMINI_API_KEY`` is set. Best-effort — fixtures
-   still write without transcript words when the agent is unavailable.
+   Scope: OCR-only ground truth. The autobuilder does NOT produce a
+   transcript portion — adding that requires uploading the video to
+   the Gemini File API to obtain a ``file_uri`` (the project's
+   ``TranscriptAgent`` expects a Gemini-hosted URI, not a raw GCS
+   path). The existing hand-verified fixtures
+   (``fdaf3bbc.json``, ``rich_in_life_v2.json``) have no transcript
+   field; the eval consumes them as-is.
 
 Pipeline (single-video mode):
     1. Sample frames every N seconds (default 0.25s — fine enough to catch
@@ -547,43 +550,15 @@ def _build_engines() -> tuple[object, object]:
     return PytesseractEngine(), CloudVisionEngine()
 
 
-def _fetch_transcript_for_template(
-    template: dict,
-) -> list[dict] | None:
-    """Best-effort: run the project's nova.audio.transcript agent against
-    the template's Gemini file_uri. Returns a list of {text, start_s,
-    end_s, confidence} dicts, or None if the agent can't run (no key,
-    SDK missing, etc.). Failures are non-fatal — the fixture still
-    writes without transcript data.
-    """
-    if not os.environ.get("GEMINI_API_KEY"):
-        return None
-    try:
-        # Imports deferred so the script's --help works even when the
-        # agent runtime isn't fully wired (e.g. missing optional deps
-        # in a fresh dev checkout).
-        import asyncio  # noqa: PLC0415
-
-        from app.agents.transcript import TranscriptAgent, TranscriptInput  # noqa: PLC0415
-
-        gcs_path = template["gcs_path"]
-        if not gcs_path:
-            return None
-        agent_input = TranscriptInput(file_uri=gcs_path, file_mime="video/mp4")
-        agent = TranscriptAgent()
-        result = asyncio.run(agent.run(agent_input))
-        return [
-            {
-                "text": w.text,
-                "start_s": w.start_s,
-                "end_s": w.end_s,
-                "confidence": w.confidence,
-            }
-            for w in result.words
-        ]
-    except Exception as exc:  # pragma: no cover — best-effort
-        print(f"  [warn] transcript agent failed for {template['id']}: {exc}")
-        return None
+# NOTE: a transcript-fetch helper was removed during the F1 follow-up of
+# the Lane B review (see plans/what-are-we-doing-quiet-clock.md). The
+# autobuilder's stated goal of "Whisper transcript ground truth" needs
+# the video uploaded to the Gemini File API first; passing a raw GCS
+# path as `file_uri` (the prior approach) silently fails for every
+# template. The autobuilder now produces OCR-only ground truth — the
+# existing fixtures (`fdaf3bbc.json`, `rich_in_life_v2.json`) confirm
+# this is the format the eval already consumes. Re-introducing the
+# transcript step needs the Gemini upload wired in.
 
 
 def _autobuild_one_template(
@@ -682,8 +657,6 @@ def _autobuild_one_template(
             f"({agreement_ratio:.0%})"
         )
 
-    transcript_words = _fetch_transcript_for_template(template)
-
     meta = {
         "template_id": template["id"],
         "template_name": template["name"],
@@ -730,8 +703,6 @@ def _autobuild_one_template(
                 }
             )
         payload: dict = {"_meta": meta, "overlays": overlays}
-        if transcript_words is not None:
-            payload["transcript"] = {"words": transcript_words}
         ground_truth_dir.mkdir(parents=True, exist_ok=True)
         fixture_path.write_text(json.dumps(payload, indent=2))
         print(f"  wrote {fixture_path}")
@@ -742,8 +713,6 @@ def _autobuild_one_template(
         "_meta": meta,
         "frames": per_frame_results,
     }
-    if transcript_words is not None:
-        payload["transcript"] = {"words": transcript_words}
     disagreements_dir.mkdir(parents=True, exist_ok=True)
     disagreement_path.write_text(json.dumps(payload, indent=2))
     print(f"  disagreement → {disagreement_path}")
