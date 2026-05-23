@@ -316,11 +316,7 @@ def test_admin_test_job_accepts_track_scoped_presigned_paths(client: TestClient)
             mock_enqueue.return_value = str(new_job.id)
             resp = client.post(
                 f"/admin/music-tracks/{track_id}/test-job",
-                json={
-                    "clip_gcs_paths": [
-                        f"music-uploads/{track_id}/abc123def456/clip_000.mov"
-                    ]
-                },
+                json={"clip_gcs_paths": [f"music-uploads/{track_id}/abc123def456/clip_000.mov"]},
                 headers=_admin_headers(),
             )
     finally:
@@ -423,7 +419,14 @@ def test_admin_test_job_stores_lyrics_override_on_job(client: TestClient) -> Non
                 f"/admin/music-tracks/{track.id}/test-job",
                 json={
                     "clip_gcs_paths": ["music-uploads/u1/a.mp4"],
-                    "lyrics_config_override": {"fade_in_ms": 50},
+                    "lyrics_config_override": {
+                        "pre_roll_s": 0.1,
+                        "post_dwell_s": 2.0,
+                        "next_line_gap_s": 0.2,
+                        "fade_in_ms": 50,
+                        "fade_out_ms": 250,
+                        "hold_to_next_threshold_ms": 500,
+                    },
                 },
                 headers=_admin_headers(),
             )
@@ -432,7 +435,12 @@ def test_admin_test_job_stores_lyrics_override_on_job(client: TestClient) -> Non
 
     assert resp.status_code == 201, resp.text
     assert mock_job.call_args.kwargs["all_candidates"]["lyrics_config_override"] == {
-        "fade_in_ms": 50
+        "pre_roll_s": 0.1,
+        "post_dwell_s": 2.0,
+        "next_line_gap_s": 0.2,
+        "fade_in_ms": 50,
+        "fade_out_ms": 250,
+        "hold_to_next_threshold_ms": 500,
     }
 
 
@@ -643,6 +651,80 @@ def test_admin_rerender_copies_clip_paths(client: TestClient) -> None:
     }
     assert added_job.music_track_id == track.id
     assert added_job.selected_platforms == ["tiktok"]
+
+
+def test_admin_rerender_stores_lyrics_override_on_job(client: TestClient) -> None:
+    track = _ready_unpublished_track(
+        track_config={
+            "required_clips_min": 1,
+            "required_clips_max": 20,
+            "lyrics_config": {"enabled": True, "style": "line", "post_dwell_s": 1.0},
+        }
+    )
+    source_job = MagicMock()
+    source_job.id = uuid4()
+    source_job.job_type = "music"
+    source_job.music_track_id = track.id
+    source_job.all_candidates = {"clip_paths": ["music-uploads/u1/a.mp4"]}
+    source_job.selected_platforms = ["tiktok"]
+
+    track_result = MagicMock()
+    track_result.scalar_one_or_none.return_value = track
+    job_result = MagicMock()
+    job_result.scalar_one_or_none.return_value = source_job
+
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(side_effect=[track_result, job_result])
+    mock_session.add = MagicMock()
+    mock_session.commit = AsyncMock()
+    new_job_id = uuid4()
+
+    def _set_id(obj):
+        obj.id = new_job_id
+
+    mock_session.refresh = AsyncMock(side_effect=_set_id)
+
+    async def _override():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = _override
+    try:
+        with patch(
+            "app.services.job_dispatch.enqueue_orchestrator",
+            new_callable=AsyncMock,
+        ) as mock_enqueue:
+            mock_enqueue.return_value = str(new_job_id)
+            resp = client.post(
+                f"/admin/music-tracks/{track.id}/rerender-job",
+                json={
+                    "source_job_id": str(source_job.id),
+                    "lyrics_config_override": {
+                        "pre_roll_s": 0.1,
+                        "post_dwell_s": 2.0,
+                        "next_line_gap_s": 0.2,
+                        "fade_in_ms": 150,
+                        "fade_out_ms": 250,
+                        "hold_to_next_threshold_ms": 500,
+                    },
+                },
+                headers=_admin_headers(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 201, resp.text
+    added_job = mock_session.add.call_args[0][0]
+    assert added_job.all_candidates == {
+        "clip_paths": ["music-uploads/u1/a.mp4"],
+        "lyrics_config_override": {
+            "pre_roll_s": 0.1,
+            "post_dwell_s": 2.0,
+            "next_line_gap_s": 0.2,
+            "fade_in_ms": 150,
+            "fade_out_ms": 250,
+            "hold_to_next_threshold_ms": 500,
+        },
+    }
 
 
 def test_admin_rerender_422_when_source_has_no_clips(client: TestClient) -> None:

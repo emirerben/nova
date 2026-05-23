@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.44.5] - 2026-05-23
+
+### Fixed
+- **Line-style lyric segments now merge back into one final render event after slot splitting.** v0.4.44.4 kept lyrics alive across short beat-synced slots, but the final overlay collector still treated each bridge segment as an independent lyric line. That made production full renders fade/restart at clip boundaries even though the lyrics-only preview looked correct. `_inject_line` now tags every per-slot segment with a stable `lyric_line_id`; `_collect_absolute_overlays` uses that identity to merge continuations, preserve the first fade-in and final fade-out, and exclude line lyrics from generic same-position truncation. This specifically protects the `ee59910a-d751-4a48-a520-40ddcf81a9e0` class of "comes, leaves, comes again" failures.
+- **Admin music re-renders now use the same unsaved lyric timing snapshot as preview/full-test creation.** The Test tab already sent timing overrides for "Preview lyrics only" and "Render full test job", but "Re-render with same clips" dropped the current panel values and fell back to saved config. `LyricsTimingPanel` now reports its current timing snapshot to `TestTab`, and re-render requests pass that override through to `/rerender-job`, so line-configured templates keep the same audio/lyric dynamics between the black preview, fresh full render, and re-render.
+
 ## [0.4.44.4] - 2026-05-23
 
 ### Fixed
