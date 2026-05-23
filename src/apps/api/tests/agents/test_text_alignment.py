@@ -837,3 +837,72 @@ def test_atomize_mode_defaults_to_false():
     """
     inp = TextAlignmentInput(phrases=[], transcript_words=[])
     assert inp.atomize_mode is False
+
+
+# ── Unmatched trailing-quote artifact (prod 89cde014) ────────────────────────
+
+
+def test_sanitizer_strips_unmatched_trailing_double_quote(
+    agent: TextAlignmentAgent, mock_client: MockModelClient
+):
+    """OCR sometimes appends a stray closing quote with no opening pair.
+    Prod 89cde014 leaked `lines=['luck"']` through Stage E's OCR-fallback
+    path unchanged and the renderer drew the dangling " on screen.
+    """
+    phrase = _make_phrase(['luck"'], start_t_s=1.5, end_t_s=2.0)
+    transcript_words = [_make_word("luck", 1.5, 2.0)]
+    # LLM returns the OCR text verbatim (no transcript correction needed).
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response([{"index": 0, "lines": ['luck"']}]),
+    )
+    out = agent.run(TextAlignmentInput(phrases=[phrase], transcript_words=transcript_words))
+
+    text = out.phrases[0].sample_text
+    assert text == "luck", f"expected unmatched trailing quote stripped; got {text!r}"
+
+
+def test_sanitizer_preserves_matched_quote_pair(
+    agent: TextAlignmentAgent, mock_client: MockModelClient
+):
+    """A legitimately quoted phrase (matched pair) survives the unmatched
+    sanitizer. Even count of `"` ⇒ no strip.
+    """
+    phrase = _make_phrase(['"hello world"'], start_t_s=0.0, end_t_s=1.0)
+    transcript_words = [_make_word("hello", 0.0, 0.4), _make_word("world", 0.5, 1.0)]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response([{"index": 0, "lines": ['"hello world"']}]),
+    )
+    out = agent.run(TextAlignmentInput(phrases=[phrase], transcript_words=transcript_words))
+
+    text = out.phrases[0].sample_text
+    assert text == '"hello world"', (
+        f"matched quote pair must survive; got {text!r}"
+    )
+
+
+def test_sanitizer_preserves_apostrophe_inside_word(
+    agent: TextAlignmentAgent, mock_client: MockModelClient
+):
+    """An apostrophe inside a contraction (`It's`) is a single occurrence at
+    a non-trailing position. The sanitizer only strips characters AT THE END
+    of the line, so contractions are unaffected.
+    """
+    phrase = _make_phrase(["It's not just luck"], start_t_s=1.0, end_t_s=2.5)
+    transcript_words = [
+        _make_word("it's", 1.0, 1.2),
+        _make_word("not", 1.3, 1.4),
+        _make_word("just", 1.5, 1.8),
+        _make_word("luck", 2.0, 2.5),
+    ]
+    mock_client.queue(
+        "gemini-2.5-flash",
+        _aligned_response([{"index": 0, "lines": ["It's not just luck"]}]),
+    )
+    out = agent.run(TextAlignmentInput(phrases=[phrase], transcript_words=transcript_words))
+
+    text = out.phrases[0].sample_text
+    assert text == "It's not just luck", (
+        f"non-trailing apostrophe must survive; got {text!r}"
+    )

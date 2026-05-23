@@ -29,6 +29,12 @@ from app.agents.template_text import (
     TemplateTextOverlay,
 )
 from app.config import settings
+from app.pipeline.text_overlay_v2.constants import (
+    LAYER2_RENDER_TEXT_SIZE as _LAYER2_UNIFORM_TEXT_SIZE,
+)
+from app.pipeline.text_overlay_v2.constants import (
+    LAYER2_RENDER_TEXT_SIZE_PX as _LAYER2_UNIFORM_TEXT_SIZE_PX,
+)
 
 log = structlog.get_logger()
 
@@ -56,8 +62,10 @@ def _build_slot_boundaries(slots: list[dict[str, Any]]) -> list[tuple[float, flo
     return boundaries
 
 
-_LAYER2_UNIFORM_TEXT_SIZE = "large"
-_LAYER2_UNIFORM_TEXT_SIZE_PX = 120
+# Uniform Layer-2 render size and left margin. `_LAYER2_UNIFORM_TEXT_SIZE` /
+# `_LAYER2_UNIFORM_TEXT_SIZE_PX` are imported at module top from
+# `app.pipeline.text_overlay_v2.constants` so the cumulative-emit
+# line-overflow split measures widths at the same size this bridge renders.
 _LAYER2_UNIFORM_LEFT_MARGIN_FRAC = 0.05
 
 

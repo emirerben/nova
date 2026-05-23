@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.local-render.example
 
 # Video files — never commit (large, contain user content)
 *.mp4 *.mov *.mkv *.avi *.webm *.hevc *.m4v *.3gp *.heic
@@ -12,6 +13,9 @@ tmp/
 
 # Dev environment runtime state (dev-auto.sh logs + PIDs)
 .dev/
+
+# Local-render outputs (downloaded MP4s from `make local-render`)
+.local-render/
 
 # Python
 __pycache__/
