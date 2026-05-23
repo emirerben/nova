@@ -2540,6 +2540,38 @@ class TestAssembleClipsTextOverlays:
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert result == []
 
+    def test_dedup2_still_truncates_same_position_overlap(self):
+        """Render-time safety net: even though the admin overlay-editor reflow
+        now ripples same-screen-slot overlaps apart at save time, Dedup 2 must
+        still truncate a pathological same-position overlap that reaches the
+        renderer (e.g. from a non-reflowed source). Two center overlays
+        overlapping in time → the earlier is truncated to end before the later
+        starts."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=[
+            {
+                "role": "hook",
+                "start_s": 0.5,
+                "end_s": 3.0,
+                "position": "center",
+                "sample_text": "alpha",
+            },
+            {
+                "role": "hook",
+                "start_s": 2.0,
+                "end_s": 4.0,
+                "position": "center",
+                "sample_text": "beta",
+            },
+        ])
+        result = _collect_absolute_overlays([step], [5.0], None, "")
+        by_text = {o["text"]: o for o in result}
+        assert set(by_text) == {"alpha", "beta"}
+        # Earlier overlay truncated to end before the later one starts.
+        assert by_text["alpha"]["end_s"] <= by_text["beta"]["start_s"]
+        assert by_text["alpha"]["end_s"] > by_text["alpha"]["start_s"]
+
     def test_cycle_fonts_pass_through_to_renderer(self):
         """REGRESSION: recipe-level `cycle_fonts` MUST reach the renderer
         entry dict. Earlier the orchestrator's hand-rolled entry builder

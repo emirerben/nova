@@ -473,26 +473,45 @@ def test_retime_phrase_singleton_stays_one_overlay(client: TestClient) -> None:
     assert edited["end_s"] > edited["start_s"]
 
 
-def test_retime_phrase_timing_is_word_count_driven_not_clamped(client: TestClient) -> None:
+def test_retime_phrase_timing_is_word_count_driven_for_a_different_position_neighbour(
+    client: TestClient,
+) -> None:
     """Growing a phrase lays its reveal end-to-end at the beat from the anchor.
-    Timing follows word count alone — it is NOT clamped against a neighbouring
-    overlay (same-slot overlays sit at different on-screen positions and may
-    overlap in time)."""
-    template = _template_with_overlays()
-    with _patch_get_template(template):
+    Timing follows word count alone, and an overlay at a DIFFERENT on-screen
+    position (different screen slot) is NOT rippled — it legitimately overlaps in
+    time. This guards the #304 layering invariant against the slot reflow."""
+    t = _template_with_overlays()
+    # Neighbour at a distinct y_frac → different screen slot from the edited phrase.
+    t.recipe_cached = {
+        "slots": [
+            {
+                "target_duration_s": 3.0,
+                "text_overlays": [
+                    {"sample_text": "anchor", "start_s": 0.0, "end_s": 0.5},
+                    {
+                        "sample_text": "layered",
+                        "start_s": 0.5,
+                        "end_s": 1.0,
+                        "position_y_frac": 0.85,
+                    },
+                ],
+            }
+        ]
+    }
+    with _patch_get_template(t):
         res = client.post(
             "/admin/templates/tpl-overlay-001/retime-phrase",
             headers=_headers(),
             json={
-                "slot_index": 1,
+                "slot_index": 0,
                 "member_overlay_indices": [0],
                 "new_text": "one two three four five six",
                 "beat_s": 0.4,
             },
         )
     assert res.status_code == 200, res.text
-    overlays = template.recipe_cached["slots"][1]["text_overlays"]
-    # 6 reveal stages + the untouched overlay #1.
+    overlays = t.recipe_cached["slots"][0]["text_overlays"]
+    # 6 reveal stages + the untouched layered overlay (last).
     stages = overlays[:-1]
     assert [o["sample_text"] for o in stages] == [
         "one",
@@ -506,9 +525,12 @@ def test_retime_phrase_timing_is_word_count_driven_not_clamped(client: TestClien
     for a, b in zip(stages, stages[1:]):
         assert a["start_s"] < a["end_s"]
         assert round(a["end_s"], 3) == round(b["start_s"], 3)
-    # Last stage runs past the next overlay's start (0.5) — by design.
     assert round(stages[-1]["end_s"], 2) == round(6 * 0.4 + 0.4, 2)  # 2.8
-    assert stages[-1]["end_s"] > overlays[-1]["start_s"]
+    # The different-position neighbour is untouched (legitimate temporal overlap).
+    layered = overlays[-1]
+    assert layered["sample_text"] == "layered"
+    assert layered["start_s"] == 0.5
+    assert layered["end_s"] == 1.0
 
 
 def test_retime_phrase_never_rejects_for_tight_neighbour(client: TestClient) -> None:
@@ -539,3 +561,273 @@ def test_retime_phrase_never_rejects_for_tight_neighbour(client: TestClient) -> 
     assert stages[0]["start_s"] == 0.5  # anchor start preserved
     for s in stages:
         assert s["end_s"] > s["start_s"]
+
+
+# ── Slot reflow: ripple following overlays, never overlap ─────────────────────
+#
+# Editing a phrase must never leave two overlays in the same screen slot
+# overlapping in time. The reflow ripples FOLLOWING overlays later (never moves
+# them earlier, never compresses the edited phrase, never rejects the edit).
+
+
+def _template_with_sequential_phrases() -> VideoTemplate:
+    """One slot, all overlays at the same (default) screen position: phrase A
+    (2 cumulative members, [0,0.8]) followed by phrase B (2 members, [0.8,1.6]).
+    Editing phrase A so it grows must ripple phrase B later as a block."""
+    t = _template_with_overlays()
+    t.recipe_cached = {
+        "slots": [
+            {
+                "target_duration_s": 4.0,
+                "text_overlays": [
+                    {"sample_text": "a", "start_s": 0.0, "end_s": 0.4},
+                    {"sample_text": "a b", "start_s": 0.4, "end_s": 0.8},
+                    {"sample_text": "X", "start_s": 0.8, "end_s": 1.2},
+                    {"sample_text": "X Y", "start_s": 1.2, "end_s": 1.6},
+                ],
+            }
+        ]
+    }
+    return t
+
+
+def test_reflow_pushes_following_overlay_when_edit_grows(client: TestClient) -> None:
+    """Growing phrase A (2→3 stages, ending at 1.2) ripples phrase B so it starts
+    exactly where A ends, with B's own duration preserved."""
+    t = _template_with_sequential_phrases()
+    with _patch_get_template(t):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={
+                "slot_index": 0,
+                "member_overlay_indices": [0, 1],
+                "new_text": "a b c",
+                "beat_s": 0.4,
+            },
+        )
+    assert res.status_code == 200, res.text
+    overlays = t.recipe_cached["slots"][0]["text_overlays"]
+    samples = [o["sample_text"] for o in overlays]
+    assert samples == ["a", "a b", "a b c", "X", "X Y"]
+    # Phrase A keeps its full per-word timing (not compressed). The last stage
+    # holds the +0.4s dwell, so "a b c" ends at 0.8 + 0.4 + 0.4 = 1.6.
+    a_stages = overlays[:3]
+    assert [round(o["start_s"], 2) for o in a_stages] == [0.0, 0.4, 0.8]
+    assert round(a_stages[-1]["end_s"], 2) == 1.6
+    # Phrase B rippled to butt against A's end; B's 0.4s windows preserved.
+    b = overlays[3:]
+    assert round(b[0]["start_s"], 2) == 1.6
+    assert round(b[0]["end_s"], 2) == 2.0
+    assert round(b[1]["start_s"], 2) == 2.0
+    assert round(b[1]["end_s"], 2) == 2.4
+    # No overlap anywhere in the slot.
+    for x, y in zip(overlays, overlays[1:]):
+        assert y["start_s"] >= x["end_s"] - 1e-6
+
+
+def test_reflow_no_shift_when_edit_shrinks(client: TestClient) -> None:
+    """Shrinking phrase A frees space — following overlays are never moved
+    earlier (ripple is forward-only)."""
+    t = _template_with_sequential_phrases()
+    with _patch_get_template(t):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={
+                "slot_index": 0,
+                "member_overlay_indices": [0, 1],
+                "new_text": "a",
+                "beat_s": 0.4,
+            },
+        )
+    assert res.status_code == 200, res.text
+    overlays = t.recipe_cached["slots"][0]["text_overlays"]
+    assert [o["sample_text"] for o in overlays] == ["a", "X", "X Y"]
+    # X and X Y stay put (0.8 / 1.2) — not pulled earlier into the freed space.
+    assert round(overlays[1]["start_s"], 2) == 0.8
+    assert round(overlays[2]["start_s"], 2) == 1.2
+
+
+def test_reflow_recompute_strips_anchor_overrides(client: TestClient) -> None:
+    """When the anchor carries a timing override, recomputed members must NOT
+    inherit it (overrides would win over the freshly computed beat timing)."""
+    t = _template_with_overlays()
+    t.recipe_cached = {
+        "slots": [
+            {
+                "target_duration_s": 3.0,
+                "text_overlays": [
+                    {
+                        "sample_text": "x",
+                        "start_s": 0.2,
+                        "end_s": 0.6,
+                        "start_s_override": 0.2,
+                        "end_s_override": 0.6,
+                    }
+                ],
+            }
+        ]
+    }
+    with _patch_get_template(t):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={"slot_index": 0, "member_overlay_indices": [0], "new_text": "one two three"},
+        )
+    assert res.status_code == 200, res.text
+    overlays = t.recipe_cached["slots"][0]["text_overlays"]
+    assert len(overlays) == 3
+    for o in overlays:
+        assert "start_s_override" not in o
+        assert "end_s_override" not in o
+
+
+def test_reflow_overflow_warning_surfaced(client: TestClient) -> None:
+    """When ripple pushes an overlay's start past the slot's target duration, the
+    response carries a non-blocking warning and the edit still succeeds (200)."""
+    t = _template_with_overlays()
+    t.recipe_cached = {
+        "slots": [
+            {
+                "target_duration_s": 2.0,
+                "text_overlays": [
+                    {"sample_text": "a", "start_s": 0.0, "end_s": 0.4},
+                    {"sample_text": "tail", "start_s": 0.4, "end_s": 0.8},
+                ],
+            }
+        ]
+    }
+    with _patch_get_template(t):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={
+                "slot_index": 0,
+                "member_overlay_indices": [0],
+                "new_text": "one two three four five six",
+                "beat_s": 0.4,
+            },
+        )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["reflow_warning"] is not None
+    assert body["reflow_warning"]["overlays_pushed_past_target"] >= 1
+
+
+def test_reflow_warning_absent_when_nothing_overflows(client: TestClient) -> None:
+    """No overflow → reflow_warning is null (default)."""
+    t = _template_with_sequential_phrases()
+    with _patch_get_template(t):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={"slot_index": 0, "member_overlay_indices": [0, 1], "new_text": "a b c"},
+        )
+    assert res.status_code == 200, res.text
+    assert res.json()["reflow_warning"] is None
+
+
+# ── Direct unit tests on the pure reflow helper ──────────────────────────────
+
+
+def test_unit_reflow_strict_overlap_only_adjacency_ok() -> None:
+    from app.routes.admin import _reflow_slot_overlays
+
+    # Butted (start == prev_end) is adjacency, not overlap → no shift.
+    ovs = [
+        {"sample_text": "a", "start_s": 0.0, "end_s": 0.4},
+        {"sample_text": "b", "start_s": 0.4, "end_s": 0.8},
+    ]
+    out, w = _reflow_slot_overlays(ovs, target_duration_s=2.0)
+    assert [o["start_s"] for o in out] == [0.0, 0.4]
+    assert w["overlays_pushed_past_target"] == 0
+
+
+def test_unit_reflow_does_not_ripple_across_different_y_frac() -> None:
+    from app.routes.admin import _reflow_slot_overlays
+
+    ovs = [
+        {"sample_text": "big", "start_s": 0.0, "end_s": 2.8},
+        {"sample_text": "other", "start_s": 0.5, "end_s": 1.0, "position_y_frac": 0.85},
+    ]
+    out, _ = _reflow_slot_overlays(ovs, target_duration_s=2.0)
+    # Different screen slot → untouched despite temporal overlap.
+    assert out[1]["start_s"] == 0.5
+    assert out[1]["end_s"] == 1.0
+
+
+def test_unit_reflow_skips_agentic_pct_overlays() -> None:
+    from app.routes.admin import _reflow_slot_overlays
+
+    ovs = [
+        {"sample_text": "p", "start_s": 0.0, "end_s": 5.0, "start_pct": 0.0, "end_pct": 0.5},
+        {"sample_text": "q", "start_s": 0.1, "end_s": 0.2, "start_pct": 0.5, "end_pct": 0.6},
+    ]
+    out, _ = _reflow_slot_overlays(ovs, target_duration_s=None)
+    # pct-timed overlays are skipped (seconds-shift is a render no-op).
+    assert out[0]["start_s"] == 0.0
+    assert out[1]["start_s"] == 0.1
+
+
+def test_unit_reflow_shifts_overrides_with_base() -> None:
+    from app.routes.admin import _reflow_slot_overlays
+
+    # Follower's effective window is driven by its override; both base and
+    # override must shift by the same delta when rippled.
+    ovs = [
+        {"sample_text": "a", "start_s": 0.0, "end_s": 1.0},
+        {
+            "sample_text": "b",
+            "start_s": 0.5,
+            "end_s": 0.9,
+            "start_s_override": 0.5,
+            "end_s_override": 0.9,
+        },
+    ]
+    out, _ = _reflow_slot_overlays(ovs, target_duration_s=2.0)
+    b = out[1]
+    # Overlap was 1.0 - 0.5 = 0.5 → shift by 0.5.
+    assert round(b["start_s_override"], 2) == 1.0
+    assert round(b["end_s_override"], 2) == 1.4
+    assert round(b["start_s"], 2) == 1.0
+    assert round(b["end_s"], 2) == 1.4
+
+
+def test_unit_reflow_accel_stays_in_window() -> None:
+    from app.routes.admin import _eff_end, _eff_start, _reflow_slot_overlays
+
+    ovs = [
+        {"sample_text": "a", "start_s": 0.0, "end_s": 1.0},
+        {"sample_text": "b", "start_s": 0.5, "end_s": 1.5, "font_cycle_accel_at_s": 0.6},
+    ]
+    out, _ = _reflow_slot_overlays(ovs, target_duration_s=3.0)
+    b = out[1]
+    accel = b["font_cycle_accel_at_s"]
+    assert _eff_start(b) <= accel < _eff_end(b)
+
+
+def test_unit_reflow_cascades_multiple_followers_preserving_gaps() -> None:
+    from app.routes.admin import _reflow_slot_overlays
+
+    # Edited phrase [0,1.2]; two followers each 0.4s. Both ripple, gaps preserved.
+    ovs = [
+        {"sample_text": "p", "start_s": 0.0, "end_s": 1.2},
+        {"sample_text": "q", "start_s": 0.8, "end_s": 1.2},
+        {"sample_text": "r", "start_s": 1.2, "end_s": 1.6},
+    ]
+    out, _ = _reflow_slot_overlays(ovs, target_duration_s=4.0)
+    assert round(out[1]["start_s"], 2) == 1.2
+    assert round(out[1]["end_s"], 2) == 1.6
+    assert round(out[2]["start_s"], 2) == 1.6
+    assert round(out[2]["end_s"], 2) == 2.0
+
+
+def test_unit_reflow_single_overlay_noop() -> None:
+    from app.routes.admin import _reflow_slot_overlays
+
+    ovs = [{"sample_text": "solo", "start_s": 0.0, "end_s": 1.0}]
+    out, w = _reflow_slot_overlays(ovs, target_duration_s=2.0)
+    assert out[0]["start_s"] == 0.0
+    assert out[0]["end_s"] == 1.0
+    assert w["overlays_pushed_past_target"] == 0
