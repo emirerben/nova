@@ -637,6 +637,75 @@ def test_line_next_line_gap_never_cuts_current_audio() -> None:
     assert ov0["end_s"] == pytest.approx(2.0, abs=1e-3)
 
 
+def test_line_continues_across_short_music_slots_until_audio_end() -> None:
+    # Regression for prod job 5390c7ef-a3eb-448d-bb80-b6c1e292d16c:
+    # the line starts near the end of slot 2 but the vocal continues through
+    # slots 3 and 4. It must not disappear at slot 2's clip cut.
+    recipe = _make_recipe([6.997, 2.176, 2.155, 1.493, 2.027, 1.579])
+    cache = _make_lyrics_cache(
+        [
+            ("We ain't stressing 'bout the loot (yeah)", 8.54, 12.32, [("We", 8.54, 12.32)]),
+            ("My block made of quesería", 12.07, 13.52, [("My", 12.07, 13.52)]),
+            ("This not the molly, this the boot", 14.70, 16.76, [("This", 14.70, 16.76)]),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        17.3,
+        {
+            "enabled": True,
+            "style": "line",
+            "pre_roll_s": 0.1,
+            "post_dwell_s": 2.0,
+            "next_line_gap_s": 0.2,
+            "fade_in_ms": 150,
+            "fade_out_ms": 250,
+        },
+    )
+
+    slots = out["slots"]
+    we_segments = [
+        (idx, ov)
+        for idx, slot in enumerate(slots)
+        for ov in slot["text_overlays"]
+        if ov["text"].startswith("We ain't")
+    ]
+    assert [idx for idx, _ in we_segments] == [1, 2, 3]
+
+    # Slot 2 carries the start, slot 3 bridges the middle, and slot 4 carries
+    # through the aligned audio end at t=12.32.
+    assert we_segments[0][1]["start_s"] == pytest.approx(1.443, abs=1e-3)
+    assert we_segments[0][1]["end_s"] == pytest.approx(2.176, abs=1e-3)
+    assert we_segments[1][1]["start_s"] == pytest.approx(0.0, abs=1e-3)
+    assert we_segments[1][1]["end_s"] == pytest.approx(2.155, abs=1e-3)
+    assert we_segments[2][1]["start_s"] == pytest.approx(0.0, abs=1e-3)
+    assert we_segments[2][1]["end_s"] == pytest.approx(0.992, abs=1e-3)
+
+    assert we_segments[0][1]["fade_in_ms"] == 150
+    assert we_segments[0][1]["fade_out_ms"] == 0
+    assert we_segments[1][1]["fade_in_ms"] == 0
+    assert we_segments[1][1]["fade_out_ms"] == 0
+    assert we_segments[2][1]["fade_in_ms"] == 0
+    assert we_segments[2][1]["fade_out_ms"] == 250
+
+    my_block_segments = [
+        idx
+        for idx, slot in enumerate(slots)
+        for ov in slot["text_overlays"]
+        if ov["text"].startswith("My block")
+    ]
+    this_not_segments = [
+        idx
+        for idx, slot in enumerate(slots)
+        for ov in slot["text_overlays"]
+        if ov["text"].startswith("This not")
+    ]
+    assert my_block_segments == [3, 4]
+    assert this_not_segments == [4, 5]
+
+
 def test_line_max_overlap_s_is_reachable_when_fades_are_long_enough() -> None:
     recipe = _make_recipe([10.0])
     cache = _make_lyrics_cache(
