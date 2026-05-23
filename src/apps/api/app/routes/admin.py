@@ -1040,6 +1040,10 @@ class TemplateDebugResponse(BaseModel):
     template: TemplateDebugSummary
     template_agent_runs: list[AgentRunPayload]
     recipe_cached: dict | None
+    # Set by /retime-phrase only when the slot reflow pushed one or more
+    # overlays past the slot's target duration ({"overlays_pushed_past_target":
+    # int}). None on /debug and /overlays (no reflow runs there).
+    reflow_warning: dict | None = None
 
 
 # Cap so a template with hundreds of re-runs doesn't bloat the payload.
@@ -1407,6 +1411,14 @@ def _retime_overlay_from_anchor(
     anchor. ``suffix`` is the pop-reveal tail (``None`` removes the field, i.e.
     a static overlay with no per-word pop)."""
     ov = dict(anchor)
+    # Drop any timing override carried by the anchor. Overrides win over the
+    # base start_s/end_s at render time (template_orchestrate applies them on
+    # top of the beat math), so inheriting the anchor's override would pin
+    # every recomputed stage to one fixed window — and would also collapse the
+    # effective-start sort the slot reflow relies on. Recomputed timings are
+    # authoritative; the override is meaningless here.
+    ov.pop("start_s_override", None)
+    ov.pop("end_s_override", None)
     ov["sample_text"] = text
     if "text" in ov:
         ov["text"] = text
@@ -1477,6 +1489,100 @@ def _recompute_phrase_overlays(
             _retime_overlay_from_anchor(anchor, text=cum, start_s=st, end_s=en, suffix=words[k])
         )
     return out
+
+
+# Slot reflow: adjacency tolerance. Two overlays whose windows touch
+# (start == prev_end, as cumulative reveal stages do) are NOT overlapping; only
+# a genuine overlap (start strictly before prev_end by more than this epsilon)
+# triggers a ripple.
+_REFLOW_EPS = 1e-6
+
+
+def _eff_start(o: dict) -> float:
+    """Effective start: override wins over base (matches the render path)."""
+    v = o.get("start_s_override")
+    return float((v if v is not None else o.get("start_s")) or 0.0)
+
+
+def _eff_end(o: dict) -> float:
+    """Effective end: override wins over base (matches the render path)."""
+    v = o.get("end_s_override")
+    return float((v if v is not None else o.get("end_s")) or 0.0)
+
+
+def _overlay_slot_key(o: dict) -> tuple:
+    """Screen-slot key: position + y_frac + x_frac.
+
+    MUST mirror ``_slot_key`` in ``app/tasks/template_orchestrate.py`` (the
+    render-time Dedup 2 key). Overlays sharing only ``position="center"`` but
+    stacked at different y_frac occupy DIFFERENT screen slots and legitimately
+    overlap in time — the reflow must not ripple them against each other (that
+    is exactly the layering #304 preserves). Map a missing fraction to -1.0 so
+    None and floats don't crash the lexicographic sort.
+    """
+    y_frac = o.get("position_y_frac")
+    x_frac = o.get("position_x_frac")
+    return (
+        o.get("position", "center"),
+        y_frac if y_frac is not None else -1.0,
+        x_frac if x_frac is not None else -1.0,
+    )
+
+
+def _shift_overlay(o: dict, delta: float) -> None:
+    """Move an overlay forward in time by ``delta`` seconds in place.
+
+    Shifts base and override timings together so the effective window moves
+    correctly whichever pair is set, and carries ``font_cycle_accel_at_s`` along
+    (clamped to stay inside the new window, matching Dedup 2's accel contract).
+    """
+    for base, ovr in (("start_s", "start_s_override"), ("end_s", "end_s_override")):
+        if o.get(base) is not None:
+            o[base] = round(float(o[base]) + delta, 3)
+        if o.get(ovr) is not None:
+            o[ovr] = round(float(o[ovr]) + delta, 3)
+    accel = o.get("font_cycle_accel_at_s")
+    if accel is not None:
+        lo, hi = _eff_start(o), _eff_end(o)
+        o["font_cycle_accel_at_s"] = round(max(lo, min(float(accel) + delta, hi - 1e-3)), 3)
+
+
+def _reflow_slot_overlays(
+    overlays: list[dict], *, target_duration_s: float | None
+) -> tuple[list[dict], dict]:
+    """Ripple-forward overlays so none sharing a screen slot overlap in time.
+
+    Groups overlays by screen slot (``_overlay_slot_key``) and, within each
+    group ordered by effective start, pushes any overlay that starts before the
+    previous one ends just far enough to clear it. Only ever moves overlays
+    LATER (never earlier, never compressed) — so an edit always succeeds and the
+    edited phrase keeps its full per-word timing. Adjacency (start == prev_end)
+    is not an overlap. Overlays carrying agentic ``start_pct``/``end_pct``
+    timing are skipped: shifting their seconds fields is a render no-op.
+
+    Returns ``(new_overlays, warnings)`` where ``warnings`` reports how many
+    overlays were pushed so their start exceeds ``target_duration_s`` (the
+    renderer clamps end_s to the clip, so these render truncated, not dropped).
+    """
+    out = [dict(o) if isinstance(o, dict) else o for o in overlays]
+    groups: dict[tuple, list[int]] = {}
+    for i, o in enumerate(out):
+        if not isinstance(o, dict):
+            continue
+        if o.get("start_pct") is not None or o.get("end_pct") is not None:
+            continue  # agentic-relative timing — seconds-shift is a no-op
+        groups.setdefault(_overlay_slot_key(o), []).append(i)
+
+    pushed_past_target = 0
+    for idxs in groups.values():
+        idxs.sort(key=lambda i: _eff_start(out[i]))
+        for a, b in zip(idxs, idxs[1:]):
+            overlap = _eff_end(out[a]) - _eff_start(out[b])
+            if overlap > _REFLOW_EPS:  # strict overlap only; adjacency is fine
+                _shift_overlay(out[b], overlap)
+                if target_duration_s is not None and _eff_start(out[b]) > target_duration_s:
+                    pushed_past_target += 1
+    return out, {"overlays_pushed_past_target": pushed_past_target}
 
 
 class RetimePhraseRequest(BaseModel):
@@ -1564,10 +1670,10 @@ async def retime_template_phrase(
     beat_s = req.beat_s if req.beat_s is not None else _RETIME_DEFAULT_BEAT_S
 
     # Timing is driven purely by word count from the anchor's start (each word =
-    # one beat). We don't clamp against neighbouring overlays: same-slot overlays
-    # are layered at different on-screen positions and legitimately overlap in
-    # time, so editing a phrase always succeeds. The renderer clamps end_s to the
-    # clip duration and de-dups true same-position collisions downstream.
+    # one beat). The edited phrase always succeeds; the slot reflow below then
+    # ripples any following overlay later so no two overlays in the slot overlap
+    # in time (per-screen-slot — legitimately layered overlays at different
+    # y/x fractions are left alone).
     new_members = _recompute_phrase_overlays(
         anchor,
         req.new_text,
@@ -1584,6 +1690,16 @@ async def retime_template_phrase(
         dict(ov) if isinstance(ov, dict) else ov for ov in slot_copy.get("text_overlays", [])
     ]
     overlays_copy[idxs[0] : idxs[-1] + 1] = new_members
+    # Ripple-forward so the (possibly grown) edited phrase doesn't overlap a
+    # later overlay sharing its screen slot. Editing the text never overlaps.
+    raw_target = slot_copy.get("target_duration_s")
+    try:
+        target_duration_s = float(raw_target) if raw_target is not None else None
+    except (TypeError, ValueError):
+        target_duration_s = None
+    overlays_copy, reflow_warnings = _reflow_slot_overlays(
+        overlays_copy, target_duration_s=target_duration_s
+    )
     slot_copy["text_overlays"] = overlays_copy
     new_slots[req.slot_index] = slot_copy
     new_recipe["slots"] = new_slots
@@ -1606,6 +1722,7 @@ async def retime_template_phrase(
         new_member_count=len(new_members),
         beat_s=beat_s,
         new_text=req.new_text[:60],
+        pushed_past_target=reflow_warnings["overlays_pushed_past_target"],
     )
 
     runs_res = await db.execute(
@@ -1631,6 +1748,9 @@ async def retime_template_phrase(
         ),
         template_agent_runs=[agent_run_to_payload(r) for r in runs],
         recipe_cached=template.recipe_cached,
+        reflow_warning=(
+            reflow_warnings if reflow_warnings["overlays_pushed_past_target"] else None
+        ),
     )
 
 

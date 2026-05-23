@@ -205,6 +205,9 @@ export interface TemplateDebugResponse {
   template: TemplateDebugSummary;
   template_agent_runs: AgentRunPayload[];
   recipe_cached: Record<string, unknown> | null;
+  // Set by retime-phrase only when the slot reflow pushed overlays past the
+  // slot's target duration (they render truncated, not dropped). null otherwise.
+  reflow_warning?: { overlays_pushed_past_target: number } | null;
 }
 
 export async function adminGetTemplateDebug(

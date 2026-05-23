@@ -2,10 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.44.3] - 2026-05-23
+## [0.4.44.4] - 2026-05-23
 
 ### Fixed
 - **Line-style lyric overlays now survive short beat-synced video cuts.** Prod job `5390c7ef-a3eb-448d-bb80-b6c1e292d16c` proved the prior timing fix reached production but still disappeared early: `_inject_line` computed the correct audio-safe window, then assigned the overlay only to the slot where the line started and clipped it at that slot's end. Lines like "We ain't stressing 'bout the loot", "My block made of quesería", and "This not the molly, this the boot" start near the end of one short slot and continue through later clips. `_inject_line` now emits one lyric-line segment per overlapping slot, with fade-in only on the first segment and fade-out only on the final segment, so the line persists across clip cuts without flickering at every boundary. Regression test uses the exact production slot durations and line timings from the failed job.
+
+## [0.4.44.3] - 2026-05-23
+
+### Fixed
+- **Editing an overlay phrase now reflows the slot so overlays never overlap in time.** Analysis-derived overlay timings are often wrong, and growing a phrase (each word = one beat) could push it over a later overlay. `retime-phrase` now runs a slot-wide ripple after recomputing the edited phrase: overlays sharing the same on-screen position are pushed *later* (never earlier, never compressed, edit never rejected) so none overlap. Overlays at a different `position_y_frac`/`position_x_frac` are left alone — legitimately-layered overlays still overlap in time, preserving the v0.4.44.1 behavior. If the ripple pushes an overlay past its slot's `target_duration_s`, the edit still succeeds and the admin Overlays tab shows a non-blocking notice (the renderer clamps `end_s` to the clip, so those render truncated rather than dropped). Also fixes a latent bug where recomputed reveal stages inherited the anchor's `start_s_override`/`end_s_override`, which would have pinned every stage to one fixed window; recomputed members now carry only their freshly-derived timing. The render-time same-position dedup remains as a safety net for any non-reflowed overlap that reaches the renderer.
 
 ## [0.4.44.2] - 2026-05-23
 
