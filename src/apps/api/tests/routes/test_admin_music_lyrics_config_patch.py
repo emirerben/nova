@@ -53,7 +53,7 @@ def test_patch_lyrics_config_deep_merges_and_preserves_track_config(client: Test
     try:
         resp = client.patch(
             f"/admin/music-tracks/{track.id}/lyrics-config",
-            json={"fade_in_ms": 75},
+            json={"fade_in_ms": 75, "fade_in_s": 0.1, "fade_out_s": 0.4, "max_overlap_s": 0.5},
             headers=_admin_headers(),
         )
     finally:
@@ -62,6 +62,9 @@ def test_patch_lyrics_config_deep_merges_and_preserves_track_config(client: Test
     assert resp.status_code == 200, resp.text
     assert resp.json()["lyrics_config"]["post_dwell_s"] == 1.0
     assert resp.json()["lyrics_config"]["fade_in_ms"] == 75
+    assert resp.json()["lyrics_config"]["fade_in_s"] == 0.1
+    assert resp.json()["lyrics_config"]["fade_out_s"] == 0.4
+    assert resp.json()["lyrics_config"]["max_overlap_s"] == 0.5
     assert track.track_config["best_start_s"] == 12.0
     assert track.track_config["slot_every_n_beats"] == 8
 

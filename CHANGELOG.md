@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.44.2] - 2026-05-23
+
+### Fixed
+- **Line-style lyric timing controls are now fully configurable from `lyrics_config`.** `max_overlap_s`, `next_line_gap_s`, and seconds-based fade aliases now flow through validation, admin overrides, persistence normalization, and `_inject_line`. The line renderer caps only added visual dwell, never the aligned audio span itself, so tightly spaced lines no longer disappear before their own `line.end_s`. Style-scoped validation now rejects line-only timing keys unless `style="line"` so karaoke and per-word-pop configs do not silently accept no-op line controls.
+- **Vercel preview builds no longer depend on the API being reachable while prerendering `/`.** The homepage now renders dynamically and fetches templates at request time, so a missing/unreachable preview `NEXT_PUBLIC_API_URL` cannot fail the deployment during static generation.
+
 ## [0.4.44.1] - 2026-05-23
 
 ### Fixed
