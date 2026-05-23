@@ -709,13 +709,13 @@ def test_text_overlay_version_v2_locked():
     """Lock the current namespace string so future devs don't bump it without
     intending to. The constant orphans cached recipes — every bump must be a
     conscious decision documented in the history block in template_cache.py.
-    Bumped 2026-05-23b with the Stage E mis-mapped-duplicate defense: when
-    the alignment LLM assigns an already-used transcript word to a phrase
-    whose OCR says something else (prod 89cde014 mapped OCR "timing" →
-    "combination", "don't" → "and", 1s+ apart so the 0.5 s time-gap dedup
-    missed them), the duplicate now reverts to OCR regardless of time gap.
-    The prior 2026-05-23 bump fixed the cumulative emit (sub-group y stacking,
-    min-duration floor, quote strip) but the jumbled words came from upstream
-    Stage E, so the emit faithfully rendered nonsense ("and combination").
+    Bumped 2026-05-23c with cumulative-reveal de-clustering: OCR first-seen
+    timestamps cluster (coarse frame sampling stamps every word in a held
+    frame at the same t), so the reveal popped 2-4 words at once. The emit now
+    de-spaces each sub-group's word reveals to >= 0.30 s apart before building
+    stages. Folds in the 2026-05-23b Stage E mis-mapped-duplicate defense
+    (reverts a duplicate to OCR when the LLM output disagrees with the
+    phrase's own OCR word) — no prod deploy happened between b and c, so both
+    ship under this one namespace string.
     """
-    assert TEXT_OVERLAY_VERSION_V2 == "v2-2026-05-23b-stage-e-dupe-revert"
+    assert TEXT_OVERLAY_VERSION_V2 == "v2-2026-05-23c-declustered-reveal"
