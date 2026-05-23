@@ -251,7 +251,18 @@ TEXT_OVERLAY_VERSION_V1 = "v1"
 # disagrees with the phrase's own OCR word, regardless of time gap. Bumping
 # again so 89cde014 (and any template that hit the broken emit) reanalyzes
 # through the corrected Stage E.
-TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-23b-stage-e-dupe-revert"
+#
+# 2026-05-23 (c) — Cumulative reveal de-clustering. Same prod reanalyze still
+# revealed words in 2-4 word pops, not one-by-one ("It's not" jumped straight
+# to "It's not just luck"). Root cause: OCR first-seen timestamps cluster
+# (coarse frame sampling stamps every word in a held frame at the same t —
+# 89cde014 had "just"/"luck"/"is"/"a" all at t=6.50, "your"/"hard"/"work."
+# all at t=10.00). `build_cumulative_stages` then dropped the sub-renderable
+# intermediate stages. `_emit_cumulative_line_overlays` now de-spaces each
+# sub-group's word reveal times (min 0.30 s apart) before building stages, so
+# every word lands its own reveal beat. No prod deploy happened between (b)
+# and (c), so both ship under this one namespace string.
+TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-23c-declustered-reveal"
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.

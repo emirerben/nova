@@ -1145,3 +1145,68 @@ def test_stage_g_cumulative_prefix_does_not_carry_across_sub_groups():
                 "prefix accumulator did not reset between sub-groups"
             )
             seen_before |= sub_words
+
+
+# ── De-clustering: clustered OCR timestamps reveal one word at a time ────────
+
+
+def test_despace_word_starts_spreads_clusters():
+    """Words sharing a timestamp get pushed to a minimum gap apart; naturally
+    spaced words keep their timing."""
+    from app.pipeline.text_overlay_v2.pipeline import _despace_word_starts
+
+    # "It's" 0.0, "not" 0.9 (well-spaced), then "just"/"luck" both clustered.
+    starts = [0.0, 0.9, 1.5, 1.5]
+    spaced, line_end = _despace_word_starts(starts, line_end_s=1.7, min_step_s=0.3)
+    # Strictly increasing, each gap >= 0.3.
+    for a, b in zip(spaced, spaced[1:]):
+        assert b - a >= 0.3 - 1e-9, f"gap too small: {spaced}"
+    # Well-spaced prefix preserved.
+    assert spaced[0] == 0.0
+    assert spaced[1] == pytest.approx(0.9)
+    # line_end extended so the final word has a beat.
+    assert line_end >= spaced[-1] + 0.3 - 1e-9
+
+
+def test_stage_g_clustered_timestamps_reveal_one_word_at_a_time():
+    """Prod 89cde014 sentence 1 ("It's not just luck") had "just"/"luck"
+    OCR-clustered at the same timestamp, so the cumulative reveal jumped from
+    "It's not" straight to "It's not just luck". After de-clustering, every
+    cumulative stage adds exactly one word and every stage is renderable.
+    """
+    from app.pipeline.text_overlay_v2.line_grouping import LineGroup
+
+    words = ["It's", "not", "just", "luck"]
+    # "just" and "luck" share a timestamp (prod OCR clustering).
+    starts = [0.0, 0.9, 1.5, 1.5]
+    classified = [
+        _make_atomized_classified(w, s, x_min=0.05)
+        for w, s in zip(words, starts, strict=True)
+    ]
+    lg = LineGroup(
+        phrase_indices=[0, 1, 2, 3],
+        line_end_s=1.7,
+        line_anchor_x_frac=0.05,
+        line_anchor_y_frac=0.44,
+        line_height_frac=0.05,
+        transcript_word_indices=[0, 1, 2, 3],
+        word_start_s_list=starts,
+    )
+    out = _classified_phrases_to_output(
+        classified, slot_boundaries_s=[(0.0, 10.0)], line_groups=[lg]
+    )
+    texts = [o.sample_text for o in out.overlays]
+    # Every cumulative stage present — no dropped intermediate, no multi-word jump.
+    assert texts == ["It's", "It's not", "It's not just", "It's not just luck"], (
+        f"reveal must add one word per stage; got {texts}"
+    )
+    # Every stage is renderable (>= floor) and reveals in order.
+    for ov in out.overlays:
+        assert ov.end_s - ov.start_s >= 0.2 - 1e-6, (
+            f"stage {ov.sample_text!r} below render floor: {ov.start_s}-{ov.end_s}"
+        )
+    starts_emitted = [o.start_s for o in out.overlays]
+    assert starts_emitted == sorted(starts_emitted), "reveals must be monotonic in time"
+    # Consecutive reveals are at least the min step apart.
+    for a, b in zip(starts_emitted, starts_emitted[1:]):
+        assert b - a >= 0.3 - 1e-6, f"reveals too close: {starts_emitted}"
