@@ -61,6 +61,7 @@ from app.services.template_poster import (
 )
 from app.storage import download_to_file, upload_public_read
 from app.tasks.template_orchestrate import (
+    _carry_forward_overlays,
     _detect_audio_beats,
     _enrich_slots_with_energy,
     _extract_template_audio,
@@ -450,6 +451,7 @@ def agentic_template_build_task(
     *,
     use_layer2: bool = False,
     force: bool = False,
+    overwrite_overlays: bool = False,
 ) -> None:
     """Build a full recipe end-to-end using agents. No human edits.
 
@@ -469,6 +471,12 @@ def agentic_template_build_task(
     and any pipeline changes that don't bump a cache version constant are
     invisible. The cache write still produces a fresh entry for future
     non-forced hits.
+
+    `overwrite_overlays=False` (default) preserves the template's existing
+    `slots[*].text_overlays` across the rebuild — re-running agents rebuilds
+    everything else (clip matching, timing, transitions) but never resets
+    manual overlay edits. Pass True (the explicit "Overwrite overlays from
+    agents" action) to keep the freshly-generated agent overlays instead.
     """
     # Captured once at task entry and written to TemplateRecipeVersion.build_started_at
     # at the end of the happy path. Paired with the DB-generated `created_at` (end),
@@ -762,6 +770,15 @@ def agentic_template_build_task(
                     "interstitials": recipe.interstitials,
                     "font_default": recipe.font_default,
                 }
+
+                # Preserve manual overlay edits across a re-run unless the
+                # caller explicitly asked to overwrite them. `recipe_cached`
+                # still holds the PRIOR recipe here. Done before the version
+                # row so history records what was actually persisted.
+                if not overwrite_overlays and isinstance(template.recipe_cached, dict):
+                    _carry_forward_overlays(
+                        recipe_dict["slots"], template.recipe_cached.get("slots")
+                    )
 
                 version = TemplateRecipeVersion(
                     template_id=template_id,

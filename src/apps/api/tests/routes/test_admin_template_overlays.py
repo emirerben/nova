@@ -441,3 +441,101 @@ def test_retime_phrase_rejects_out_of_range(client: TestClient) -> None:
             json={"slot_index": 0, "member_overlay_indices": [5], "new_text": "x"},
         )
     assert res.status_code == 400, res.text
+
+
+def test_retime_phrase_singleton_stays_one_overlay(client: TestClient) -> None:
+    """A singleton phrase edited to multiple words stays ONE static overlay
+    (duration recomputed) — not exploded into per-word reveal stages, and with
+    no pop_animated_suffix."""
+    template = _template_with_overlays()
+    with _patch_get_template(template):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={
+                "slot_index": 1,
+                "member_overlay_indices": [0],
+                "new_text": "the whole line at once",
+                "pattern": "singleton",
+            },
+        )
+    assert res.status_code == 200, res.text
+    overlays = template.recipe_cached["slots"][1]["text_overlays"]
+    # Original overlay #1 still present → exactly 2 overlays, not 5.
+    assert len(overlays) == 2
+    edited = overlays[0]
+    assert edited["sample_text"] == "the whole line at once"
+    assert "pop_animated_suffix" not in edited
+    assert edited["start_s"] == 0.0
+    # Duration is word-count driven (5 words × 0.4 beat + 0.4 dwell = 2.4),
+    # NOT clamped against the neighbouring overlay.
+    assert round(edited["end_s"], 2) == 2.4
+    assert edited["end_s"] > edited["start_s"]
+
+
+def test_retime_phrase_timing_is_word_count_driven_not_clamped(client: TestClient) -> None:
+    """Growing a phrase lays its reveal end-to-end at the beat from the anchor.
+    Timing follows word count alone — it is NOT clamped against a neighbouring
+    overlay (same-slot overlays sit at different on-screen positions and may
+    overlap in time)."""
+    template = _template_with_overlays()
+    with _patch_get_template(template):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={
+                "slot_index": 1,
+                "member_overlay_indices": [0],
+                "new_text": "one two three four five six",
+                "beat_s": 0.4,
+            },
+        )
+    assert res.status_code == 200, res.text
+    overlays = template.recipe_cached["slots"][1]["text_overlays"]
+    # 6 reveal stages + the untouched overlay #1.
+    stages = overlays[:-1]
+    assert [o["sample_text"] for o in stages] == [
+        "one",
+        "one two",
+        "one two three",
+        "one two three four",
+        "one two three four five",
+        "one two three four five six",
+    ]
+    # Strictly monotonic, edge-to-edge, each stage a positive window.
+    for a, b in zip(stages, stages[1:]):
+        assert a["start_s"] < a["end_s"]
+        assert round(a["end_s"], 3) == round(b["start_s"], 3)
+    # Last stage runs past the next overlay's start (0.5) — by design.
+    assert round(stages[-1]["end_s"], 2) == round(6 * 0.4 + 0.4, 2)  # 2.8
+    assert stages[-1]["end_s"] > overlays[-1]["start_s"]
+
+
+def test_retime_phrase_never_rejects_for_tight_neighbour(client: TestClient) -> None:
+    """A phrase whose anchor sits right next to another overlay still saves —
+    editing recomputes timing from word count and never blocks."""
+    t = _template_with_overlays()
+    t.recipe_cached = {
+        "slots": [
+            {
+                "target_duration_s": 1.0,
+                "text_overlays": [
+                    {"sample_text": "a", "start_s": 0.5, "end_s": 0.6},
+                    {"sample_text": "b", "start_s": 0.5, "end_s": 0.9},
+                ],
+            }
+        ]
+    }
+    with _patch_get_template(t):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={"slot_index": 0, "member_overlay_indices": [0], "new_text": "now this works"},
+        )
+    assert res.status_code == 200, res.text
+    overlays = t.recipe_cached["slots"][0]["text_overlays"]
+    stages = overlays[:-1]
+    assert [o["sample_text"] for o in stages] == ["now", "now this", "now this works"]
+    assert stages[0]["start_s"] == 0.5  # anchor start preserved
+    for s in stages:
+        assert s["end_s"] > s["start_s"]

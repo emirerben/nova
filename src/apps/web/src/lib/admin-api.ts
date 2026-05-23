@@ -258,12 +258,18 @@ export interface RetimePhraseRequest {
   member_overlay_indices: number[];
   new_text: string;
   beat_s?: number;
+  // Phrase rendering pattern. "singleton" recomputes ONE static overlay
+  // (duration recalculated, no per-word pop); "cumulative" / "per_word" /
+  // omitted reflow into N per-word reveal stages.
+  pattern?: string;
 }
 
-// Recompute a cumulative-reveal phrase's stages + per-word timings from edited
-// text. Unlike the text-only PATCH /overlays, this re-derives the stage COUNT
-// (= word count) and the reveal timing, so changing a phrase's wording reflows
-// the reveal. Used for cumulative / per-word phrases; singletons keep the PATCH.
+// Recompute a phrase's overlays + timings from edited text. Unlike the
+// text-only PATCH /overlays, this re-derives the stage COUNT and reveal timing,
+// so changing a phrase's wording reflows it. Cumulative/per-word phrases reflow
+// into N reveal stages; singletons (pattern="singleton") stay one overlay with
+// a recalculated duration. The backend also clamps the recomputed window so it
+// never overlaps the next overlay nor overflows the slot.
 export async function adminRetimeTemplatePhrase(
   id: string,
   req: RetimePhraseRequest,
@@ -306,8 +312,12 @@ export async function adminCreateTemplateFromUrl(data: {
   return res.json();
 }
 
-export async function adminReanalyzeTemplate(id: string): Promise<AdminTemplate> {
-  const res = await adminFetch(`/admin/templates/${id}/reanalyze`, {
+export async function adminReanalyzeTemplate(
+  id: string,
+  overwriteOverlays = false,
+): Promise<AdminTemplate> {
+  const qs = overwriteOverlays ? "?overwrite_overlays=true" : "";
+  const res = await adminFetch(`/admin/templates/${id}/reanalyze${qs}`, {
     method: "POST",
   });
   return res.json();
@@ -323,12 +333,21 @@ export async function adminReanalyzeTemplate(id: string): Promise<AdminTemplate>
  *
  * The backend always reruns the agent stack on this endpoint (force=True is
  * applied server-side), so each click produces fresh agent_run rows.
+ *
+ * `overwriteOverlays` defaults to `false`: a re-run preserves the template's
+ * existing text overlays (manual edits survive). Pass `true` only for the
+ * explicit "Overwrite overlays from agents" action, which regenerates overlays
+ * from the fresh agent output.
  */
 export async function adminReanalyzeAgentic(
   id: string,
   useLayer2: boolean | undefined = true,
+  overwriteOverlays = false,
 ): Promise<AdminTemplate> {
-  const qs = useLayer2 === undefined ? "" : `?use_layer2=${useLayer2 ? "true" : "false"}`;
+  const params = new URLSearchParams();
+  if (useLayer2 !== undefined) params.set("use_layer2", useLayer2 ? "true" : "false");
+  if (overwriteOverlays) params.set("overwrite_overlays", "true");
+  const qs = params.toString() ? `?${params.toString()}` : "";
   const res = await adminFetch(`/admin/templates/${id}/reanalyze-agentic${qs}`, {
     method: "POST",
   });

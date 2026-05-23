@@ -2,10 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.43.12] - 2026-05-23
+## [0.4.44.2] - 2026-05-23
 
 ### Fixed
 - **Line-style lyric timing controls are now fully configurable from `lyrics_config`.** `max_overlap_s`, `next_line_gap_s`, and seconds-based fade aliases now flow through validation, admin overrides, persistence normalization, and `_inject_line`. The line renderer caps only added visual dwell, never the aligned audio span itself, so tightly spaced lines no longer disappear before their own `line.end_s`. Style-scoped validation now rejects line-only timing keys unless `style="line"` so karaoke and per-word-pop configs do not silently accept no-op line controls.
+
+## [0.4.44.1] - 2026-05-23
+
+### Fixed
+- **Saving overlay edits no longer fails with "Edited phrase has no room before the next overlay."** v0.4.44.0 added a window-safety bound to `retime-phrase` that treated the next overlay in a slot's array as a hard wall and rejected the whole save when a phrase didn't fit. But same-slot overlays are layered at different on-screen positions and legitimately overlap in time (the source recipe already has e.g. "if you put in" at 1.46–2.07 overlapping "the work to get there." at 1.50–2.40), so the bound blocked routine edits. `_recompute_phrase_overlays` now drops the `max_end_s` clamp/rejection entirely: each phrase's length and timestamps are driven purely by word count from its anchor (`word_count × beat + dwell`), and editing always succeeds. The renderer still clamps `end_s` to the clip duration and de-dups true same-position collisions downstream, so nothing crashes. Singleton duration is likewise word-count driven (no neighbour clamp). Tests updated: word-count-driven timing (not clamped), and a tight-neighbour edit that previously 400'd now saves.
+
+## [0.4.44.0] - 2026-05-23
+
+### Changed
+- **Re-running agents no longer resets your overlay edits.** A normal "Re-run agents" / "Reanalyze" now rebuilds everything else (clip matching, timing, transitions) but carries the template's existing `slots[*].text_overlays` forward unchanged — manual overlay edits survive the rebuild. Implemented as a positional (by slot index) carry-forward in both build tasks (`_carry_forward_overlays` in `template_orchestrate.py`, called from `analyze_template_task` and `agentic_template_build_task` right before the recipe is persisted, so version history records what actually shipped). Carried overlays are clamped to the rebuilt slot's `target_duration_s` (and any overlay starting past the new clip is dropped) so a shorter rebuilt clip can't leave an out-of-range overlay the renderer would silently drop. To intentionally regenerate overlays from the agent output, use the new button below.
+
+### Added
+- **"Overwrite overlays from agents" button in the Overlays tab.** Explicit opt-in that re-runs the agent stack and replaces the current overlays with freshly generated ones (threads `overwrite_overlays=true` to `POST /reanalyze-agentic` / `/reanalyze`, which skips the carry-forward). Re-run preserves; this button regenerates. The amber "reanalyze overwrites your edits" warning is rewritten accordingly, and the action-bar reanalyze confirm dialogs no longer claim edits will be lost.
+
+### Fixed
+- **Trailing/typed spaces are no longer stripped while editing a slot's text.** The phrase input was re-derived from tokens on every keystroke (`tokenize()` did `.trim().split()`), so a space vanished as you typed, making multi-word edits impossible. The editor now holds a raw per-phrase edit buffer and only tokenizes at save time (`OverlaysTab` `editBuffers`).
+- **Adding words to a single static overlay no longer explodes it into per-word reveal stages.** Singleton phrases were forced through the cumulative-reveal retime path (1 overlay → N word-reveal stages). `retime-phrase` now accepts a `pattern`; `pattern="singleton"` recomputes ONE static overlay with a duration scaled to the word count and no per-word pop. Cumulative/per-word phrases still reflow into N stages.
+- **Retimed overlays can no longer overlap the next overlay or overflow the clip.** `_recompute_phrase_overlays` takes a `max_end_s` bound (the next overlay's start, gap-shrunk, or the slot's `target_duration_s`) and compresses the per-word beat/dwell (cumulative) or clamps the duration (singleton) to fit, with a strictly-positive floor so no stage collapses to a zero-length window the renderer would drop. The endpoint rejects an edit with no room before the next overlay rather than emit a negative window. New tests cover singleton retime, next-overlay clamping (no overlap), no-room rejection, and the carry-forward edge cases.
 
 ## [0.4.43.11] - 2026-05-23
 

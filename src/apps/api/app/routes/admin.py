@@ -1395,6 +1395,33 @@ async def update_template_overlays(
 # editing the text re-derives a valid window (no stale/negative end_s).
 _RETIME_DEFAULT_BEAT_S = 0.40
 _RETIME_DWELL_S = 0.40
+# Floor for a single static (singleton) overlay so a one-word edit never
+# collapses to a zero-length, undisplayable window.
+_RETIME_MIN_OVERLAY_S = 0.20
+
+
+def _retime_overlay_from_anchor(
+    anchor: dict, *, text: str, start_s: float, end_s: float, suffix: str | None
+) -> dict:
+    """Build one recomputed overlay, inheriting position/style/color from the
+    anchor. ``suffix`` is the pop-reveal tail (``None`` removes the field, i.e.
+    a static overlay with no per-word pop)."""
+    ov = dict(anchor)
+    ov["sample_text"] = text
+    if "text" in ov:
+        ov["text"] = text
+    ov["start_s"] = round(start_s, 3)
+    ov["end_s"] = round(end_s, 3)
+    if suffix is None:
+        ov.pop("pop_animated_suffix", None)
+    else:
+        ov["pop_animated_suffix"] = suffix
+    bbox = ov.get("text_bbox")
+    if isinstance(bbox, dict):
+        bbox = dict(bbox)
+        bbox["sample_frame_t"] = round(start_s, 3)
+        ov["text_bbox"] = bbox
+    return ov
 
 
 def _recompute_phrase_overlays(
@@ -1403,41 +1430,52 @@ def _recompute_phrase_overlays(
     *,
     beat_s: float,
     dwell_s: float,
+    pattern: str | None = None,
 ) -> list[dict]:
-    """Rebuild a cumulative-reveal phrase's member overlays from edited text.
+    """Rebuild a phrase's member overlays from edited text.
 
     `anchor` is the phrase's first member overlay — its position, style,
     color, anchor, and `start_s` are inherited by every recomputed stage.
-    Returns N overlay dicts (N = word count): stage k shows words[0..k],
-    revealing at `anchor.start_s + k*beat_s`. Consecutive stages butt
-    edge-to-edge; the terminal stage holds `dwell_s` longer. Empty text
-    returns `[]` (deletes the phrase).
+    Empty text returns `[]` (deletes the phrase).
+
+    Timing is driven entirely by word count from the anchor's `start_s`: each
+    word gets `beat_s` of screen time and the line holds `dwell_s` past the
+    last word. We deliberately do NOT clamp against neighbouring overlays —
+    overlays in a slot are layered at different on-screen positions and legit-
+    imately overlap in time, and the renderer already clamps `end_s` to the
+    clip duration and de-dups true same-position collisions. Editing a phrase
+    therefore always succeeds; word count alone sets its length and timestamps.
+
+    `pattern`:
+      - ``"singleton"`` → exactly ONE static overlay showing the full text, no
+        per-word pop. Duration = `n*beat_s + dwell_s` (floored positive).
+      - anything else (cumulative / per_word / None) → N overlay dicts
+        (N = word count): stage k shows words[0..k], revealing at
+        `start + k*beat_s`. Consecutive stages butt edge-to-edge; the terminal
+        stage holds `dwell_s` longer.
     """
     words = new_text.split()
     n = len(words)
     if n == 0:
         return []
     start = float(anchor.get("start_s") or 0.0)
+
+    if pattern == "singleton":
+        dur = max(_RETIME_MIN_OVERLAY_S, n * beat_s + dwell_s)
+        return [
+            _retime_overlay_from_anchor(
+                anchor, text=new_text.strip(), start_s=start, end_s=start + dur, suffix=None
+            )
+        ]
+
     out: list[dict] = []
     for k in range(n):
         cum = " ".join(words[: k + 1])
         st = start + k * beat_s
         en = (start + (k + 1) * beat_s) if k < n - 1 else (start + n * beat_s + dwell_s)
-        ov = dict(anchor)  # inherit position / style / anchor / color
-        ov["sample_text"] = cum
-        if "text" in ov:
-            ov["text"] = cum
-        ov["start_s"] = round(st, 3)
-        ov["end_s"] = round(en, 3)
-        # pop_animated_suffix is the word revealed at this stage (renderer
-        # pops only the new tail). Empty-suffix overlays pop the whole line.
-        ov["pop_animated_suffix"] = words[k]
-        bbox = ov.get("text_bbox")
-        if isinstance(bbox, dict):
-            bbox = dict(bbox)
-            bbox["sample_frame_t"] = round(st, 3)
-            ov["text_bbox"] = bbox
-        out.append(ov)
+        out.append(
+            _retime_overlay_from_anchor(anchor, text=cum, start_s=st, end_s=en, suffix=words[k])
+        )
     return out
 
 
@@ -1458,6 +1496,10 @@ class RetimePhraseRequest(BaseModel):
     member_overlay_indices: list[int] = Field(..., min_length=1, max_length=64)
     new_text: str
     beat_s: float | None = Field(default=None, gt=0.05, le=2.0)
+    # Phrase rendering pattern from the OverlaysTab grouping. "singleton" keeps
+    # the edit as ONE static overlay (duration recalculated, no word reveal);
+    # cumulative / per_word / None reflow into N per-word reveal stages.
+    pattern: str | None = Field(default=None)
 
 
 @router.post(
@@ -1520,8 +1562,18 @@ async def retime_template_phrase(
             detail="anchor overlay is not a dict",
         )
     beat_s = req.beat_s if req.beat_s is not None else _RETIME_DEFAULT_BEAT_S
+
+    # Timing is driven purely by word count from the anchor's start (each word =
+    # one beat). We don't clamp against neighbouring overlays: same-slot overlays
+    # are layered at different on-screen positions and legitimately overlap in
+    # time, so editing a phrase always succeeds. The renderer clamps end_s to the
+    # clip duration and de-dups true same-position collisions downstream.
     new_members = _recompute_phrase_overlays(
-        anchor, req.new_text, beat_s=beat_s, dwell_s=_RETIME_DWELL_S
+        anchor,
+        req.new_text,
+        beat_s=beat_s,
+        dwell_s=_RETIME_DWELL_S,
+        pattern=req.pattern,
     )
 
     # Rebuild the recipe (copy for JSONB change detection).
@@ -1590,6 +1642,15 @@ async def retime_template_phrase(
 async def reanalyze_template(
     template_id: str,
     db: AsyncSession = Depends(get_db),
+    overwrite_overlays: bool = Query(
+        default=False,
+        description=(
+            "When false (default), the rebuilt recipe keeps the template's existing "
+            "text overlays — re-running agents never resets manual overlay edits. "
+            "Pass true to regenerate overlays from the agent output (the explicit "
+            "'Overwrite overlays from agents' action)."
+        ),
+    ),
 ) -> TemplateResponse:
     """Re-run Gemini analysis on an existing manual template."""
     template = await get_template_or_404(template_id, db)
@@ -1622,9 +1683,13 @@ async def reanalyze_template(
 
     # force=True so reanalyze always reruns the agent stack. Without this the
     # task cache-hits on the prior recipe and the user sees nothing change.
-    analyze_template_task.delay(template_id, force=True)
+    analyze_template_task.delay(template_id, force=True, overwrite_overlays=overwrite_overlays)
 
-    log.info("template_reanalyzed", template_id=template_id)
+    log.info(
+        "template_reanalyzed",
+        template_id=template_id,
+        overwrite_overlays=overwrite_overlays,
+    )
     return _template_response(template)
 
 
@@ -1644,6 +1709,15 @@ async def reanalyze_template_agentic(
             "When omitted, falls back to template.use_layer2_default, then "
             "settings.text_overlay_v2_enabled. "
             "Passing an explicit value always wins, regardless of per-template or global flags."
+        ),
+    ),
+    overwrite_overlays: bool = Query(
+        default=False,
+        description=(
+            "When false (default), the rebuilt recipe keeps the template's existing "
+            "text overlays — re-running agents never resets manual overlay edits. "
+            "Pass true to regenerate overlays from the agent output (the explicit "
+            "'Overwrite overlays from agents' action)."
         ),
     ),
 ) -> TemplateResponse:
@@ -1694,13 +1768,19 @@ async def reanalyze_template_agentic(
     # Debug tab, and any Layer-2 pipeline edits that don't bump a cache version
     # constant are invisible. The cache write still produces a fresh entry for
     # future non-forced hits.
-    agentic_template_build_task.delay(template_id, use_layer2=effective_layer2, force=True)
+    agentic_template_build_task.delay(
+        template_id,
+        use_layer2=effective_layer2,
+        force=True,
+        overwrite_overlays=overwrite_overlays,
+    )
 
     log.info(
         "template_reanalyzed_agentic",
         template_id=template_id,
         use_layer2_param=use_layer2,
         effective_layer2=effective_layer2,
+        overwrite_overlays=overwrite_overlays,
     )
     return _template_response(template)
 
