@@ -89,7 +89,7 @@ describe("LyricsTimingPanel", () => {
     expect(screen.getByText("Save as track defaults")).toBeDisabled();
   });
 
-  it("submits preview and full test actions with current values", () => {
+  it("submits preview and full test actions with the complete current timing snapshot", () => {
     const onSubmit = jest.fn();
     render(
       <LyricsTimingPanel
@@ -102,19 +102,69 @@ describe("LyricsTimingPanel", () => {
     fireEvent.change(screen.getByLabelText("Fade in"), {
       target: { value: "50" },
     });
+    fireEvent.change(screen.getByLabelText("Post-dwell"), {
+      target: { value: "2" },
+    });
+    fireEvent.change(screen.getByLabelText("Next-line gap"), {
+      target: { value: "0.2" },
+    });
     fireEvent.click(screen.getByText("Preview lyrics only"));
     fireEvent.click(screen.getByText("Render full test job"));
 
+    const expectedSnapshot = {
+      pre_roll_s: 0.1,
+      post_dwell_s: 2,
+      next_line_gap_s: 0.2,
+      fade_in_ms: 50,
+      fade_out_ms: 250,
+      hold_to_next_threshold_ms: 500,
+    };
     expect(onSubmit).toHaveBeenNthCalledWith(
       1,
       "preview",
-      expect.objectContaining({ fade_in_ms: 50 }),
+      expectedSnapshot,
     );
     expect(onSubmit).toHaveBeenNthCalledWith(
       2,
       "full_test",
-      expect.objectContaining({ fade_in_ms: 50 }),
+      expectedSnapshot,
     );
+  });
+
+  it("reports the current timing snapshot to the parent for re-render actions", async () => {
+    const onWorkingChange = jest.fn();
+    render(
+      <LyricsTimingPanel
+        trackId="track-1"
+        savedConfig={savedConfig}
+        onSubmit={jest.fn()}
+        onWorkingChange={onWorkingChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(onWorkingChange).toHaveBeenLastCalledWith(
+        expect.objectContaining({ post_dwell_s: 1 }),
+      );
+    });
+
+    fireEvent.change(screen.getByLabelText("Post-dwell"), {
+      target: { value: "2" },
+    });
+    fireEvent.change(screen.getByLabelText("Next-line gap"), {
+      target: { value: "0.2" },
+    });
+
+    await waitFor(() => {
+      expect(onWorkingChange).toHaveBeenLastCalledWith({
+        pre_roll_s: 0.1,
+        post_dwell_s: 2,
+        next_line_gap_s: 0.2,
+        fade_in_ms: 150,
+        fade_out_ms: 250,
+        hold_to_next_threshold_ms: 500,
+      });
+    });
   });
 
   it("saves track defaults and clears dirty state", async () => {

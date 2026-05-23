@@ -689,6 +689,9 @@ def test_line_continues_across_short_music_slots_until_audio_end() -> None:
     assert we_segments[1][1]["fade_out_ms"] == 0
     assert we_segments[2][1]["fade_in_ms"] == 0
     assert we_segments[2][1]["fade_out_ms"] == 250
+    assert {ov["lyric_line_id"] for _, ov in we_segments} == {"line:0:8.540:12.320"}
+    assert [ov["lyric_segment_index"] for _, ov in we_segments] == [0, 1, 2]
+    assert [ov["lyric_segment_count"] for _, ov in we_segments] == [3, 3, 3]
 
     my_block_segments = [
         idx

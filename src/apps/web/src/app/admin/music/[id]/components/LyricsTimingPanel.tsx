@@ -16,6 +16,7 @@ interface LyricsTimingPanelProps {
   fullTestDisabled?: boolean;
   fullTestHint?: string | null;
   onSubmit: (action: TimingAction, override: LyricsConfigOverride) => void;
+  onWorkingChange?: (override: LyricsConfigOverride) => void;
   onSaved?: (savedConfig: Partial<LyricsConfig>) => void;
 }
 
@@ -93,6 +94,7 @@ export function LyricsTimingPanel({
   fullTestDisabled = false,
   fullTestHint = null,
   onSubmit,
+  onWorkingChange,
   onSaved,
 }: LyricsTimingPanelProps): JSX.Element {
   const [saved, setSaved] = useState<Partial<LyricsConfig>>(savedConfig);
@@ -114,6 +116,10 @@ export function LyricsTimingPanel({
     [working, saved],
   );
 
+  useEffect(() => {
+    onWorkingChange?.({ ...working });
+  }, [working, onWorkingChange]);
+
   function setField(key: keyof typeof DEFAULTS, value: string) {
     const numeric = value === "" ? DEFAULTS[key] : Number(value);
     setWorking((prev) => ({
@@ -126,7 +132,7 @@ export function LyricsTimingPanel({
     setSaving(true);
     setMessage(null);
     try {
-      const resp = await adminPatchLyricsConfig(trackId, working);
+      const resp = await adminPatchLyricsConfig(trackId, { ...working });
       setSaved(resp.lyrics_config);
       setWorking(coerceTimingConfig(resp.lyrics_config));
       onSaved?.(resp.lyrics_config);
@@ -173,7 +179,7 @@ export function LyricsTimingPanel({
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button
           type="button"
-          onClick={() => onSubmit("preview", working)}
+          onClick={() => onSubmit("preview", { ...working })}
           className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-600"
         >
           Preview lyrics only
@@ -181,7 +187,7 @@ export function LyricsTimingPanel({
         <button
           type="button"
           disabled={fullTestDisabled}
-          onClick={() => onSubmit("full_test", working)}
+          onClick={() => onSubmit("full_test", { ...working })}
           className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Render full test job
