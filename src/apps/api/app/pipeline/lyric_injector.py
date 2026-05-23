@@ -117,6 +117,7 @@ def _resolve_fade_ms(cfg: dict, *, s_key: str, ms_key: str, default_ms: int) -> 
 
 @dataclass(slots=True)
 class _LineOverlayWindow:
+    lyric_line_id: str
     text: str
     line_start_s: float
     line_end_s: float
@@ -543,6 +544,7 @@ def _inject_line(
 
         line_windows.append(
             _LineOverlayWindow(
+                lyric_line_id=f"line:{i}:{line_start:.3f}:{line_end:.3f}",
                 text=line["text"],
                 line_start_s=line_start,
                 line_end_s=line_end,
@@ -588,6 +590,9 @@ def _inject_line(
                     "end_s": round(rel_end, 3),
                     "fade_in_ms": line.fade_in_ms if segment_idx == 0 else 0,
                     "fade_out_ms": line.fade_out_ms if segment_idx == len(segments) - 1 else 0,
+                    "lyric_line_id": line.lyric_line_id,
+                    "lyric_segment_index": segment_idx,
+                    "lyric_segment_count": len(segments),
                 }
             )
             _ensure_overlay_list(slots[slot_win.index]).append(overlay)

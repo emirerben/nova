@@ -68,6 +68,8 @@ export function TestTab({ trackId, track }: TestTabProps) {
   const [savedLyricsConfig, setSavedLyricsConfig] = useState<Partial<LyricsConfig>>(
     track.track_config?.lyrics_config ?? {},
   );
+  const [currentLyricsOverride, setCurrentLyricsOverride] =
+    useState<LyricsConfigOverride | null>(null);
   const [prevJobs, setPrevJobs] = useState<AdminMusicTestJobSummary[]>([]);
   const [loadingPrev, setLoadingPrev] = useState(false);
 
@@ -180,7 +182,11 @@ export function TestTab({ trackId, track }: TestTabProps) {
   async function rerenderFrom(sourceJobId: string) {
     setSubmitError(null);
     try {
-      const resp = await adminRerenderMusicJob(trackId, sourceJobId);
+      const resp = await adminRerenderMusicJob(
+        trackId,
+        sourceJobId,
+        currentLyricsOverride ?? undefined,
+      );
       setActiveJobKind("full");
       setActiveJobId(resp.job_id);
     } catch (e) {
@@ -314,6 +320,7 @@ export function TestTab({ trackId, track }: TestTabProps) {
         fullTestDisabled={submitDisabled}
         fullTestHint={fullTestHint}
         onSaved={setSavedLyricsConfig}
+        onWorkingChange={setCurrentLyricsOverride}
         onSubmit={(action, override) => {
           if (action === "preview") {
             previewLyrics(override);

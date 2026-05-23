@@ -3815,6 +3815,15 @@ def _collect_absolute_overlays(
                 entry["fade_in_ms"] = ov["fade_in_ms"]
             if ov.get("fade_out_ms") is not None:
                 entry["fade_out_ms"] = ov["fade_out_ms"]
+            # Line-style lyrics can be split across multiple beat-synced slots.
+            # Keep their stable identity until dedup so the full renderer can
+            # stitch those continuations back into one absolute ASS event.
+            if ov.get("lyric_line_id"):
+                entry["lyric_line_id"] = ov["lyric_line_id"]
+            if ov.get("lyric_segment_index") is not None:
+                entry["lyric_segment_index"] = ov["lyric_segment_index"]
+            if ov.get("lyric_segment_count") is not None:
+                entry["lyric_segment_count"] = ov["lyric_segment_count"]
             # Pass through player-card fields so the renderer receives
             # jersey_no + player_name (the special-effect path needs both).
             if ov.get("jersey_no"):
@@ -3956,7 +3965,11 @@ def _collect_absolute_overlays(
             x_frac if x_frac is not None else -1.0,
         )
 
+    def _is_lyric_line(o: dict) -> bool:
+        return o.get("effect") == "lyric-line"
+
     _MERGE_GAP_THRESHOLD_S = 2.0
+    _LYRIC_LINE_CONTINUATION_GAP_S = 0.12
     raw.sort(key=lambda o: (o["text"].lower().strip(), _slot_key(o), o["start_s"]))
     unique: list[dict] = []
     for ov in raw:
@@ -3965,7 +3978,7 @@ def _collect_absolute_overlays(
         # Check if we can merge with an existing entry
         for prev in unique:
             prev_key = prev["text"].lower().strip()
-            if (
+            same_visual_style = (
                 prev_key == key
                 and _slot_key(prev) == _slot_key(ov)
                 and prev.get("font_family") == ov.get("font_family")
@@ -3977,21 +3990,34 @@ def _collect_absolute_overlays(
                 and prev.get("text_color") == ov.get("text_color")
                 and not prev.get("spans")
                 and not ov.get("spans")
+            )
+            same_lyric_line = (
+                same_visual_style
+                and _is_lyric_line(prev)
+                and _is_lyric_line(ov)
+                and prev.get("lyric_line_id")
+                and prev.get("lyric_line_id") == ov.get("lyric_line_id")
+                and ov["start_s"] - prev["end_s"] < _LYRIC_LINE_CONTINUATION_GAP_S
+            )
+            same_text_overlay = (
+                same_visual_style
                 # Karaoke lines carry per-overlay word timings tied to a
                 # specific [start_s, end_s] window; merging two karaoke
                 # overlays would invalidate the word timings on whichever
                 # one got absorbed. Lyric injector already places each line
                 # at its own timestamp, so dedup never applies here.
-                # `lyric-line` is excluded for the same reason: each line
-                # needs its own fade-in/fade-out window. Merging two adjacent
-                # lyric-line overlays would collapse them into one block
-                # with a single fade, losing the per-line transition.
+                # `lyric-line` only merges through the explicit lyric_line_id
+                # path above; text equality alone is not enough because the
+                # same lyric can repeat later in a song.
                 and ov.get("effect") not in ("karaoke-line", "lyric-line")
                 and prev.get("effect") not in ("karaoke-line", "lyric-line")
                 and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
-            ):
+            )
+            if same_lyric_line or same_text_overlay:
                 # Merge: extend previous overlay's end time
                 prev["end_s"] = max(prev["end_s"], ov["end_s"])
+                if same_lyric_line and ov.get("fade_out_ms") is not None:
+                    prev["fade_out_ms"] = ov["fade_out_ms"]
                 # If current has font-cycle effect, upgrade previous
                 if ov.get("effect") == "font-cycle":
                     prev["effect"] = "font-cycle"
@@ -4022,6 +4048,8 @@ def _collect_absolute_overlays(
     unique.sort(key=lambda o: (_slot_key(o), o["start_s"]))
     for i in range(len(unique) - 1):
         if _slot_key(unique[i]) == _slot_key(unique[i + 1]):
+            if _is_lyric_line(unique[i]) or _is_lyric_line(unique[i + 1]):
+                continue
             if unique[i]["end_s"] > unique[i + 1]["start_s"]:
                 unique[i]["end_s"] = unique[i + 1]["start_s"] - 0.1
                 unique[i]["_clamped_by"] = "overlap_truncated"
@@ -4058,6 +4086,7 @@ def _collect_absolute_overlays(
                     "position": o.get("position"),
                     "position_y_frac": o.get("position_y_frac"),
                     "effect": o.get("effect"),
+                    "lyric_line_id": o.get("lyric_line_id"),
                     "text_size": o.get("text_size"),
                     "text_color": o.get("text_color"),
                     "font_cycle_accel_at_s": o.get("font_cycle_accel_at_s"),
@@ -4072,6 +4101,9 @@ def _collect_absolute_overlays(
     for o in result:
         o.pop("_origin_slots", None)
         o.pop("_clamped_by", None)
+        o.pop("lyric_line_id", None)
+        o.pop("lyric_segment_index", None)
+        o.pop("lyric_segment_count", None)
 
     log.info("text_overlays_collected", raw=len(raw), deduped=len(result))
     return result
