@@ -2,10 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.43.9] - 2026-05-23
+## [0.4.43.12] - 2026-05-23
 
 ### Fixed
 - **Right-anchored agentic/music overlays no longer center silently in the burned video.** #297 fixed `text_anchor="left"` in the Skia renderer but left two gaps: the `karaoke-line` draw path still centered every line on `position_x_frac` unconditionally, and `text_anchor="right"` was collapsed to center while the Pillow path (classic templates + admin preview) honored it. So a right-anchored overlay rendered correctly in the preview and on classic templates but centered in the burned agentic/music video — the same "looks right locally, clips in prod" class as the original left-clip bug (#296). Fix: `_resolve_text_anchor` now returns `left`/`right`/`center`, and a single `_anchored_left_x(anchor, cx, width)` helper centralizes the anchor math across all four Skia draw sites (`_draw_centered_text` + emoji block, `_draw_pop_in_with_suffix`, `_draw_karaoke_line`) so they can't drift apart again. New cross-renderer parity guard `test_both_renderers_honor_text_anchor` renders the same overlay through Skia AND Pillow and asserts they place left/center/right identically — a renderer that drops a field fails CI instead of shipping. Plus a `karaoke-line` left-anchor regression test. CLAUDE.md documents the renderer-parity invariant and the rule that agentic/music overlays must be verified on the burned video, not the admin preview.
+
+## [0.4.43.10] - 2026-05-23
+
+### Added
+- **Editing a cumulative-reveal phrase's text now reflows its reveal — stages + timings recompute from the new wording.** Before, the overlay editor only rewrote `sample_text` on the existing member overlays (fixed count, stale timings), so changing a phrase from 2 words to 4 left "2 stages" with the old per-word timings, and growing a phrase past the window produced overlapping/negative spans (`10.30→10.00`). New `POST /admin/templates/{id}/retime-phrase` endpoint re-derives the whole phrase: stage COUNT = word count, and per-word reveal timing is laid end-to-end from the phrase's anchor `start_s` at a fixed beat (`_RETIME_DEFAULT_BEAT_S=0.40s`, `_RETIME_DWELL_S=0.40s`). Empty text deletes the phrase. The `OverlaysTab` save handler now routes every edited phrase through this endpoint (processed in reverse slot/index order so a count change can't invalidate an earlier phrase's indices), replacing the text-only PATCH for multi-stage phrases. Pure helper `_recompute_phrase_overlays` is unit-tested; endpoint covered by expand/shrink/delete/validation tests; frontend client `adminRetimeTemplatePhrase`.
+
+### Changed
+- **Word reveals no longer bounce when they appear.** The cumulative-reveal `pop-in` effect scaled each new word 30%→115%→100% (a springy overshoot). The Skia renderer now draws the revealed word at full size immediately — the word-by-word reveal still comes from the per-stage timing, just without the scale bounce. Both `_draw_pop_in_with_suffix` and the `_draw_with_animation` pop-in branch are updated; regression test `test_pop_in_suffix_has_no_bounce_full_size_from_start`.
+
+### Fixed
+- **Wide pop-in-with-suffix lines wrap instead of clipping off the right edge.** The Skia `_draw_centered_text` path already wrapped + shrank over-wide lines, but `_draw_pop_in_with_suffix` (the Layer-2 cumulative reveal) laid prefix + suffix on a single baseline, so a manually-edited phrase grown past ~90% canvas width (e.g. "combination of hard work" at 120 px) ran off the right edge. It now falls back to the wrapping path when the line needs more than one line — the whole line pops together, but nothing clips. Regression test `test_pop_in_suffix_wide_line_wraps_instead_of_clipping`.
 
 ## [0.4.43.8] - 2026-05-23
 

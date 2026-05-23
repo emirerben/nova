@@ -1388,6 +1388,200 @@ async def update_template_overlays(
     )
 
 
+# Default per-word reveal beat + final-word dwell for retiming an edited
+# cumulative phrase. Each word in the phrase gets `beat_s` of screen time
+# before the next appears; the completed line holds `_RETIME_DWELL_S` longer.
+# Chosen model: words laid end-to-end from the phrase's anchor start, so
+# editing the text re-derives a valid window (no stale/negative end_s).
+_RETIME_DEFAULT_BEAT_S = 0.40
+_RETIME_DWELL_S = 0.40
+
+
+def _recompute_phrase_overlays(
+    anchor: dict,
+    new_text: str,
+    *,
+    beat_s: float,
+    dwell_s: float,
+) -> list[dict]:
+    """Rebuild a cumulative-reveal phrase's member overlays from edited text.
+
+    `anchor` is the phrase's first member overlay — its position, style,
+    color, anchor, and `start_s` are inherited by every recomputed stage.
+    Returns N overlay dicts (N = word count): stage k shows words[0..k],
+    revealing at `anchor.start_s + k*beat_s`. Consecutive stages butt
+    edge-to-edge; the terminal stage holds `dwell_s` longer. Empty text
+    returns `[]` (deletes the phrase).
+    """
+    words = new_text.split()
+    n = len(words)
+    if n == 0:
+        return []
+    start = float(anchor.get("start_s") or 0.0)
+    out: list[dict] = []
+    for k in range(n):
+        cum = " ".join(words[: k + 1])
+        st = start + k * beat_s
+        en = (start + (k + 1) * beat_s) if k < n - 1 else (start + n * beat_s + dwell_s)
+        ov = dict(anchor)  # inherit position / style / anchor / color
+        ov["sample_text"] = cum
+        if "text" in ov:
+            ov["text"] = cum
+        ov["start_s"] = round(st, 3)
+        ov["end_s"] = round(en, 3)
+        # pop_animated_suffix is the word revealed at this stage (renderer
+        # pops only the new tail). Empty-suffix overlays pop the whole line.
+        ov["pop_animated_suffix"] = words[k]
+        bbox = ov.get("text_bbox")
+        if isinstance(bbox, dict):
+            bbox = dict(bbox)
+            bbox["sample_frame_t"] = round(st, 3)
+            ov["text_bbox"] = bbox
+        out.append(ov)
+    return out
+
+
+class RetimePhraseRequest(BaseModel):
+    """Replace a cumulative-reveal phrase's member overlays with a recomputed
+    set derived from `new_text`.
+
+    `member_overlay_indices` are the 0-based indices (into the slot's
+    `text_overlays[]`) of the phrase's current member overlays — they must be
+    contiguous and ascending (the OverlaysTab phrase group always is). The
+    first index's overlay is the style/position/timing anchor. The phrase is
+    replaced by N new overlays where N = word count of `new_text`, with
+    per-word timings re-derived from `beat_s` (default 0.40 s) laid end-to-end
+    from the anchor's `start_s`. Empty `new_text` deletes the phrase.
+    """
+
+    slot_index: int = Field(..., ge=0)
+    member_overlay_indices: list[int] = Field(..., min_length=1, max_length=64)
+    new_text: str
+    beat_s: float | None = Field(default=None, gt=0.05, le=2.0)
+
+
+@router.post(
+    "/templates/{template_id}/retime-phrase",
+    response_model=TemplateDebugResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def retime_template_phrase(
+    template_id: str,
+    req: RetimePhraseRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TemplateDebugResponse:
+    """Recompute a cumulative-reveal phrase's stages + timings from edited text.
+
+    Unlike `PATCH /overlays` (text-only, fixed overlay count), this re-derives
+    the whole phrase: the stage COUNT follows the new word count, and per-word
+    timings are recomputed from a fixed beat. This is what makes the reveal
+    update when the admin changes a phrase's wording — adding a word adds a
+    reveal stage and extends the window; removing one shortens it.
+    """
+    template = await get_template_or_404(template_id, db)
+    if not template.recipe_cached or not isinstance(template.recipe_cached, dict):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Template has no recipe to edit — wait for analysis to complete.",
+        )
+    slots = template.recipe_cached.get("slots")
+    if not isinstance(slots, list) or req.slot_index >= len(slots):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"slot_index={req.slot_index} out of range",
+        )
+    slot = slots[req.slot_index]
+    overlays = slot.get("text_overlays") if isinstance(slot, dict) else None
+    if not isinstance(overlays, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"slot {req.slot_index} has no text_overlays",
+        )
+
+    idxs = sorted(req.member_overlay_indices)
+    if idxs != list(range(idxs[0], idxs[0] + len(idxs))):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="member_overlay_indices must be contiguous and ascending",
+        )
+    if idxs[-1] >= len(overlays):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"member_overlay_indices {idxs} exceed slot {req.slot_index} "
+                f"overlay count ({len(overlays)})"
+            ),
+        )
+
+    anchor = overlays[idxs[0]]
+    if not isinstance(anchor, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="anchor overlay is not a dict",
+        )
+    beat_s = req.beat_s if req.beat_s is not None else _RETIME_DEFAULT_BEAT_S
+    new_members = _recompute_phrase_overlays(
+        anchor, req.new_text, beat_s=beat_s, dwell_s=_RETIME_DWELL_S
+    )
+
+    # Rebuild the recipe (copy for JSONB change detection).
+    new_recipe = dict(template.recipe_cached)
+    new_slots = [dict(s) if isinstance(s, dict) else s for s in new_recipe.get("slots", [])]
+    slot_copy = dict(new_slots[req.slot_index])
+    overlays_copy = [
+        dict(ov) if isinstance(ov, dict) else ov for ov in slot_copy.get("text_overlays", [])
+    ]
+    overlays_copy[idxs[0] : idxs[-1] + 1] = new_members
+    slot_copy["text_overlays"] = overlays_copy
+    new_slots[req.slot_index] = slot_copy
+    new_recipe["slots"] = new_slots
+    template.recipe_cached = new_recipe
+    template.recipe_cached_at = datetime.now(UTC)
+
+    await db.commit()
+    await db.refresh(template)
+
+    from app.pipeline.template_cache import (  # noqa: PLC0415
+        invalidate_cache_for_template,
+    )
+
+    invalidate_cache_for_template(template_id)
+    log.info(
+        "admin_template_phrase_retimed",
+        template_id=template_id,
+        slot_index=req.slot_index,
+        old_member_count=len(idxs),
+        new_member_count=len(new_members),
+        beat_s=beat_s,
+        new_text=req.new_text[:60],
+    )
+
+    runs_res = await db.execute(
+        select(AgentRun)
+        .where(AgentRun.template_id == template_id)
+        .order_by(AgentRun.created_at.desc())
+        .limit(_TEMPLATE_DEBUG_RUN_LIMIT)
+    )
+    runs = list(runs_res.scalars().all())
+    return TemplateDebugResponse(
+        template=TemplateDebugSummary(
+            id=template.id,
+            name=template.name,
+            analysis_status=template.analysis_status,
+            template_type=template.template_type,
+            is_agentic=template.is_agentic,
+            gcs_path=template.gcs_path,
+            audio_gcs_path=template.audio_gcs_path,
+            music_track_id=template.music_track_id,
+            error_detail=template.error_detail,
+            recipe_cached_at=template.recipe_cached_at,
+            created_at=template.created_at,
+        ),
+        template_agent_runs=[agent_run_to_payload(r) for r in runs],
+        recipe_cached=template.recipe_cached,
+    )
+
+
 @router.post(
     "/templates/{template_id}/reanalyze",
     response_model=TemplateResponse,
