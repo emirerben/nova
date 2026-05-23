@@ -575,3 +575,106 @@ def test_pop_in_suffix_has_no_bounce_full_size_from_start():
 
     early, settled = bbox(0.02), bbox(0.9)
     assert early == settled, f"word scaled (bounce) between t=0.02 {early} and t=0.9 {settled}"
+def test_left_anchor_karaoke_line_not_clipped():
+    """karaoke-line was the last Skia draw path that still centered every line
+    on position_x_frac unconditionally (text_overlay_skia._draw_karaoke_line),
+    so a left-anchored music-lyric line would clip exactly like 89cde014. With
+    the anchor branch it must fit inside the frame at every word."""
+    overlay = {
+        "text": "rain rain go away come again",
+        "effect": "karaoke-line",
+        "text_size_px": 100,
+        "position_x_frac": 0.05,
+        "position_y_frac": 0.45,
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A",
+        "text_anchor": "left",
+        "word_timings": [
+            {"text": "rain", "duration_cs": 40},
+            {"text": "go", "duration_cs": 40},
+            {"text": "away", "duration_cs": 40},
+            {"text": "now", "duration_cs": 40},
+        ],
+    }
+    # Mid-line time so a mix of sung/unsung words is drawn — all words render
+    # regardless of sung state, so the bbox covers the full line. Before the
+    # fix the line centered on x_frac=0.05 and the left half clipped to x<=1.
+    bbox, width = _frame_bbox(overlay, t_local=1.0, duration_s=1.6)
+    assert bbox is not None
+    assert bbox[0] > 10, f"karaoke left edge clipped; bbox {bbox}"
+    assert bbox[2] < width, f"karaoke right edge overflow; bbox {bbox}"
+
+
+# -- Skia / Pillow renderer parity guard -------------------------------------
+#
+# The #296 class of bug: a field carried through the burn dict but honored by
+# only ONE of the two renderers. Agentic templates + music jobs render via
+# Skia; classic templates and the admin overlay-preview render via Pillow.
+# Every local check (preview, Pillow) looked right while the burned Skia video
+# clipped, because the two renderers disagreed on `text_anchor`. This guard
+# renders the SAME overlay through both and asserts they honor the anchor
+# contract the same way, so a field added to one renderer and dropped by the
+# other fails CI instead of shipping.
+
+
+def _pillow_bbox(overlay: dict):
+    """Render one overlay through the Pillow path used by export + admin
+    preview (render_overlays_at_time) and return the opaque-content bbox."""
+    from app.pipeline.text_overlay import render_overlays_at_time
+
+    with tempfile.TemporaryDirectory(prefix="pillow_parity_") as d:
+        out = os.path.join(d, "p.png")
+        render_overlays_at_time([overlay], 2.0, 1.0, out)
+        im = Image.open(out).convert("RGBA")
+        return im.getbbox(), im.width
+
+
+@pytest.mark.parametrize("renderer", ["skia", "pillow"])
+def test_both_renderers_honor_text_anchor(renderer):
+    """All three anchors must place the line consistently in BOTH renderers:
+    center→left shifts the left edge RIGHT by ~half the line width, and
+    center→right shifts it LEFT by ~half. A renderer that ignores text_anchor
+    produces a ~0 delta on the affected side and fails here — exactly the
+    #296/ff0d2e1c regression class (left was the live bug; right was a latent
+    sibling — Skia silently collapsed it to center while Pillow honored it),
+    caught before it can ship.
+
+    Anchored at x_frac=0.5 with a single non-wrapping ~400px line so all three
+    anchorings fit fully in-frame (left ~540..940, center ~340..740, right
+    ~140..540) and the contract is a clean half-line-width shift, not muddied
+    by edge clipping (which floors the edge at 0) or word-wrap. The line must
+    stay under ~half the frame width or right- and left-anchor can't both fit."""
+    base = {
+        "text": "HELLO WORLD",
+        "effect": "none",
+        "text_size_px": 50,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.45,
+        "text_color": "#FFFFFF",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    bbox_fn = _frame_bbox if renderer == "skia" else _pillow_bbox
+
+    center_bbox, width = bbox_fn({**base, "text_anchor": "center"})
+    left_bbox, _ = bbox_fn({**base, "text_anchor": "left"})
+    right_bbox, _ = bbox_fn({**base, "text_anchor": "right"})
+    assert center_bbox and left_bbox and right_bbox
+
+    # All three fit fully inside the frame at the center position.
+    for name, b in (("center", center_bbox), ("left", left_bbox), ("right", right_bbox)):
+        assert b[0] > 0 and b[2] < width, f"{renderer}: {name} bbox {b} clips the frame"
+
+    line_w = center_bbox[2] - center_bbox[0]
+    left_delta = left_bbox[0] - center_bbox[0]   # left anchor sits RIGHT of center
+    right_delta = right_bbox[0] - center_bbox[0]  # right anchor sits LEFT of center
+    assert left_delta > 100, (
+        f"{renderer} ignores text_anchor='left': center→left shifted the left "
+        f"edge by only {left_delta}px (line {line_w}px wide, expected ~half). "
+        f"This is the #296 class — a field honored by one renderer, dropped by the other."
+    )
+    assert right_delta < -100, (
+        f"{renderer} ignores text_anchor='right': center→right shifted the left "
+        f"edge by only {right_delta}px (line {line_w}px wide, expected ~-half). "
+        f"This is the #296 class — a field honored by one renderer, dropped by the other."
+    )

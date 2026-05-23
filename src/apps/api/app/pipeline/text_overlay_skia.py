@@ -226,13 +226,27 @@ def _resolve_anchor(overlay: dict) -> tuple[float, float]:
 
 def _resolve_text_anchor(overlay: dict) -> str:
     """Horizontal anchor: "left" pins the line's left edge at position_x_frac,
-    "center" (default) centers the line on it.
+    "right" pins the right edge, "center" (default) centers the line on it.
 
     Layer-2 overlays set `text_anchor="left"` + `position_x_frac=0.05`. Before
     this was honored, Skia centered every line on the 5% point, pushing the
     left half of each cumulative line off-screen ("It's not just luck" →
-    "s not just luck" on prod template 89cde014)."""
-    return "left" if overlay.get("text_anchor") == "left" else "center"
+    "s not just luck" on prod template 89cde014). The schema also permits
+    "right" (app/agents/_schemas/template_text.py); both renderers must honor
+    all three or the same class of clip recurs on the un-handled value."""
+    anchor = overlay.get("text_anchor")
+    return anchor if anchor in ("left", "right") else "center"
+
+
+def _anchored_left_x(anchor: str, cx: float, width: float) -> float:
+    """Left edge of a `width`-wide line anchored at cx. Mirrors the anchor
+    math in text_overlay.py: left → cx, right → cx-width, center → cx-width/2.
+    Centralized so every Skia draw path (centered, pop-in, karaoke) agrees."""
+    if anchor == "left":
+        return cx
+    if anchor == "right":
+        return cx - width
+    return cx - width / 2.0
 
 
 def _wrap_text_to_lines(text: str, font: skia.Font, max_width: float) -> list[str]:
@@ -373,10 +387,10 @@ def _draw_centered_text(
         line_w = block["widths"][i]
         if i == 0 and emoji_metrics is not None:
             combined_w = emoji_metrics["size"] + emoji_metrics["gap"] + line_w
-            block_left = cx if anchor == "left" else cx - combined_w / 2.0
+            block_left = _anchored_left_x(anchor, cx, combined_w)
             line_x = block_left + emoji_metrics["size"] + emoji_metrics["gap"]
         else:
-            line_x = cx if anchor == "left" else cx - line_w / 2.0
+            line_x = _anchored_left_x(anchor, cx, line_w)
 
         _draw_line_with_layers(
             canvas,
@@ -393,7 +407,7 @@ def _draw_centered_text(
     if emoji_metrics is not None and lines:
         first_line_h = block["line_step"]
         combined_w = emoji_metrics["size"] + emoji_metrics["gap"] + block["widths"][0]
-        combined_x = cx if anchor == "left" else cx - combined_w / 2.0
+        combined_x = _anchored_left_x(anchor, cx, combined_w)
         emoji_x = combined_x
         emoji_y = block_top + (first_line_h - emoji_metrics["size"]) / 2.0
         _draw_skia_image(canvas, emoji_metrics["img"], emoji_x, emoji_y, alpha=alpha)
@@ -572,7 +586,7 @@ def _draw_pop_in_with_suffix(
 
     cx, cy = _resolve_anchor(overlay)
     anchor = _resolve_text_anchor(overlay)
-    line_start_x = cx if anchor == "left" else cx - full_w / 2.0
+    line_start_x = _anchored_left_x(anchor, cx, full_w)
 
     metrics = full_font.getMetrics()
     line_height_raw = metrics.fDescent - metrics.fAscent
@@ -657,7 +671,10 @@ def _draw_karaoke_line(
     total_w = sum(word_widths) + space_w * max(0, len(words) - 1)
 
     cx, cy = _resolve_anchor(overlay)
-    x = cx - total_w / 2.0
+    # Mirror _draw_centered_text: left/right-anchored overlays pin the line's
+    # left/right edge at position_x_frac; centered overlays center on cx.
+    anchor = _resolve_text_anchor(overlay)
+    x = _anchored_left_x(anchor, cx, total_w)
     metrics = font.getMetrics()
     line_height_raw = metrics.fDescent - metrics.fAscent
     baseline_y = cy - line_height_raw / 2.0 + (-metrics.fAscent)

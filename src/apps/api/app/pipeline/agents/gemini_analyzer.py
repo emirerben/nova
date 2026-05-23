@@ -201,9 +201,21 @@ def gemini_upload_and_wait(path: str, timeout: int = 120) -> Any:
     Google errors (503 ServerError from genai SDK, 429 rate-limit
     ClientError). Same shape as analyze_clip — every Gemini call
     should survive a ~99s capacity dip without failing the whole job.
+
+    FAILED-state re-upload: if Gemini's File API marks the uploaded file
+    as FAILED during post-upload processing, the function deletes the
+    bad ref and re-uploads the same bytes ONCE. The Gemini docs don't
+    document FAILED reasons, but in practice a fresh upload of the same
+    local file frequently succeeds — the FAILED state is often a
+    one-shot processing hiccup, not a deterministic codec rejection. The
+    polling deadline is reset after the re-upload, so a clip that hits
+    FAILED can take up to 2 × `timeout` total wall time before either
+    succeeding or being marked FAILED a second time and raising.
+
     Raises PollingTimeoutError if the file doesn't become ACTIVE
-    within `timeout` seconds. Raises immediately on permanent 4xx
-    errors (InvalidArgument etc.) or after retry exhaustion.
+    within `timeout` seconds (or 2 × `timeout` if the re-upload path
+    was taken). Raises immediately on permanent 4xx errors
+    (InvalidArgument etc.) or after retry exhaustion.
 
     Catches `google.genai.errors.APIError` subclasses (NOT
     `google.api_core.exceptions`) since the genai SDK has its own
@@ -224,38 +236,44 @@ def gemini_upload_and_wait(path: str, timeout: int = 120) -> Any:
         code = getattr(exc, "code", None)
         return code == 429 or (isinstance(code, int) and 500 <= code < 600)
 
-    # Upload with retry for rate limits and 503 spikes
     backoff_schedule = [3.0, 9.0, 27.0, 60.0]
     max_attempts = len(backoff_schedule) + 1  # 5 total
-    file_ref = None
-    for attempt in range(max_attempts):
-        try:
-            file_ref = client.files.upload(
-                file=path,
-                config=genai_types.UploadFileConfig(mime_type=mime_type),
-            )
-            break
-        except genai_errors.APIError as exc:
-            if not _is_transient_api_error(exc):
-                raise  # permanent 4xx → fail immediately
-            if attempt >= max_attempts - 1:
-                raise
-            backoff_s = backoff_schedule[attempt]
-            log.warning(
-                "gemini_upload_transient_retry",
-                attempt=attempt + 1,
-                of=max_attempts,
-                backoff_s=backoff_s,
-                error_type=type(exc).__name__,
-                http_code=getattr(exc, "code", None),
-                path=path,
-            )
-            time.sleep(backoff_s)
 
-    if file_ref is None:
-        raise GeminiAnalysisError("Failed to upload file after retries")
+    def _do_upload() -> Any:
+        """Upload `path` with the 5-attempt 503/429 retry. Returns the file ref."""
+        ref = None
+        for attempt in range(max_attempts):
+            try:
+                ref = client.files.upload(
+                    file=path,
+                    config=genai_types.UploadFileConfig(mime_type=mime_type),
+                )
+                break
+            except genai_errors.APIError as exc:
+                if not _is_transient_api_error(exc):
+                    raise  # permanent 4xx → fail immediately
+                if attempt >= max_attempts - 1:
+                    raise
+                backoff_s = backoff_schedule[attempt]
+                log.warning(
+                    "gemini_upload_transient_retry",
+                    attempt=attempt + 1,
+                    of=max_attempts,
+                    backoff_s=backoff_s,
+                    error_type=type(exc).__name__,
+                    http_code=getattr(exc, "code", None),
+                    path=path,
+                )
+                time.sleep(backoff_s)
+        if ref is None:
+            raise GeminiAnalysisError("Failed to upload file after retries")
+        return ref
 
-    # Poll until ACTIVE — same retry shape on transient errors
+    file_ref = _do_upload()
+    failed_reuploads_remaining = 1
+
+    # Poll until ACTIVE — same retry shape on transient errors. On a
+    # FAILED state, delete the bad ref and re-upload once before raising.
     deadline = time.time() + timeout
     poll_attempt = 0
     while time.time() < deadline:
@@ -283,6 +301,28 @@ def gemini_upload_and_wait(path: str, timeout: int = 120) -> Any:
             log.info("gemini_file_active", name=file_ref.name)
             return file_ref
         if state_name == "FAILED":
+            if failed_reuploads_remaining > 0:
+                failed_reuploads_remaining -= 1
+                failed_name = file_ref.name
+                log.warning(
+                    "gemini_file_failed_reuploading",
+                    failed_name=failed_name,
+                    path=path,
+                )
+                # Best-effort delete of the failed ref; we don't care if it
+                # fails (Gemini garbage-collects unreferenced files).
+                try:
+                    client.files.delete(name=failed_name)
+                except Exception as delete_exc:  # noqa: BLE001
+                    log.debug(
+                        "gemini_failed_ref_delete_failed",
+                        name=failed_name,
+                        error=str(delete_exc),
+                    )
+                file_ref = _do_upload()
+                deadline = time.time() + timeout  # fresh timeout for the re-upload
+                poll_attempt = 0
+                continue
             raise GeminiAnalysisError(f"Gemini file processing failed: {file_ref.name}")
 
         log.debug("gemini_file_polling", state=state_name, name=file_ref.name)

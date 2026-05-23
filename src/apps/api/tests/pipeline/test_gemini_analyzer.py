@@ -84,21 +84,66 @@ class TestGeminiUploadAndWait:
                 with pytest.raises(PollingTimeoutError):
                     gemini_upload_and_wait("/tmp/test.mp4", timeout=120)
 
-    def test_failed_state_raises_gemini_analysis_error(self):
-        failed_ref = _make_file_ref("FAILED")
+    def test_failed_state_reuploads_once_then_succeeds(self):
+        """FAILED on the first poll → delete + re-upload + poll again → ACTIVE."""
+        failed_ref = _make_file_ref("FAILED", name="files/failed-1")
+        active_ref = _make_file_ref("ACTIVE", name="files/active-2")
 
         with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client:
             mock_client = MagicMock()
             mock_get_client.return_value = mock_client
-            mock_client.files.upload.return_value = failed_ref
-            mock_client.files.get.return_value = failed_ref
+            # First upload returns the ref that will end up FAILED; second
+            # upload (after the FAILED-trigger re-upload) returns the ACTIVE one.
+            mock_client.files.upload.side_effect = [failed_ref, active_ref]
+            # files.get always reflects the most recent uploaded ref's state.
+            mock_client.files.get.side_effect = [failed_ref, active_ref]
 
             with patch("time.sleep"):
-                with pytest.raises(GeminiAnalysisError, match="processing failed"):
+                result = gemini_upload_and_wait("/tmp/test.mp4")
+
+        assert result.name == "files/active-2"
+        assert mock_client.files.upload.call_count == 2
+        # The FAILED ref was best-effort deleted.
+        mock_client.files.delete.assert_called_once_with(name="files/failed-1")
+
+    def test_failed_state_raises_after_one_reupload(self):
+        """FAILED on both uploads → no more retries → raise."""
+        failed_ref_1 = _make_file_ref("FAILED", name="files/failed-1")
+        failed_ref_2 = _make_file_ref("FAILED", name="files/failed-2")
+
+        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client:
+            mock_client = MagicMock()
+            mock_get_client.return_value = mock_client
+            mock_client.files.upload.side_effect = [failed_ref_1, failed_ref_2]
+            mock_client.files.get.side_effect = [failed_ref_1, failed_ref_2]
+
+            with patch("time.sleep"):
+                with pytest.raises(GeminiAnalysisError, match="processing failed: files/failed-2"):
                     gemini_upload_and_wait("/tmp/test.mp4")
+
+        assert mock_client.files.upload.call_count == 2
+
+    def test_failed_state_delete_failure_does_not_block_reupload(self):
+        """If client.files.delete on the failed ref raises, re-upload still happens."""
+        failed_ref = _make_file_ref("FAILED", name="files/failed-1")
+        active_ref = _make_file_ref("ACTIVE", name="files/active-2")
+
+        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client:
+            mock_client = MagicMock()
+            mock_get_client.return_value = mock_client
+            mock_client.files.upload.side_effect = [failed_ref, active_ref]
+            mock_client.files.get.side_effect = [failed_ref, active_ref]
+            mock_client.files.delete.side_effect = RuntimeError("delete unavailable")
+
+            with patch("time.sleep"):
+                result = gemini_upload_and_wait("/tmp/test.mp4")
+
+        assert result.name == "files/active-2"
+        assert mock_client.files.upload.call_count == 2
 
 
 # ── _check_refusal ─────────────────────────────────────────────────────────────
+
 
 class TestCheckRefusal:
     def test_safety_refusal_raises(self):
@@ -131,6 +176,7 @@ class TestCheckRefusal:
 
 
 # ── analyze_clip ──────────────────────────────────────────────────────────────
+
 
 class TestAnalyzeClip:
     def test_happy_path_returns_clip_meta(self):
@@ -225,6 +271,7 @@ class TestAnalyzeClip:
 
 
 # ── analyze_template ──────────────────────────────────────────────────────────
+
 
 class TestAnalyzeTemplate:
     def test_happy_path_returns_template_recipe(self):
@@ -358,12 +405,30 @@ class TestAnalyzeTemplate:
                     "priority": 5,
                     "slot_type": "hook",
                     "text_overlays": [
-                        {"role": "invalid_role", "start_s": 0.0, "end_s": 2.0,
-                         "position": "center", "effect": "none", "sample_text": "x"},
-                        {"role": "hook", "start_s": 3.0, "end_s": -1.0,  # unsalvageable
-                         "position": "center", "effect": "none", "sample_text": "y"},
-                        {"role": "hook", "start_s": 0.0, "end_s": 2.0,  # valid
-                         "position": "center", "effect": "fade-in", "sample_text": "z"},
+                        {
+                            "role": "invalid_role",
+                            "start_s": 0.0,
+                            "end_s": 2.0,
+                            "position": "center",
+                            "effect": "none",
+                            "sample_text": "x",
+                        },
+                        {
+                            "role": "hook",
+                            "start_s": 3.0,
+                            "end_s": -1.0,  # unsalvageable
+                            "position": "center",
+                            "effect": "none",
+                            "sample_text": "y",
+                        },
+                        {
+                            "role": "hook",
+                            "start_s": 0.0,
+                            "end_s": 2.0,  # valid
+                            "position": "center",
+                            "effect": "fade-in",
+                            "sample_text": "z",
+                        },
                     ],
                 }
             ],
@@ -384,6 +449,7 @@ class TestAnalyzeTemplate:
 
 
 # ── transcribe ────────────────────────────────────────────────────────────────
+
 
 class TestTranscribe:
     def test_happy_path_returns_transcript(self):
@@ -431,8 +497,10 @@ class TestTranscribe:
         mock_transcript.words = []
         mock_transcript.low_confidence = False
 
-        with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client, \
-             patch("app.pipeline.transcribe.transcribe_whisper") as mock_whisper:
+        with (
+            patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_get_client,
+            patch("app.pipeline.transcribe.transcribe_whisper") as mock_whisper,
+        ):
             mock_client = MagicMock()
             mock_get_client.return_value = mock_client
             mock_client.models.generate_content.side_effect = Exception("API down")
@@ -445,6 +513,7 @@ class TestTranscribe:
 
 
 # ── Prompt improvement tests ─────────────────────────────────────────────────
+
 
 def _base_template_data(**overrides):
     """Minimal valid template response data with optional overrides."""
@@ -665,8 +734,14 @@ class TestNewSlotFields:
         file_ref = _make_file_ref()
         data = _base_template_data()
         data["slots"][0]["text_overlays"] = [
-            {"role": "label", "start_s": 0.0, "end_s": 2.0,
-             "position": "center", "effect": "font-cycle", "sample_text": "TOKYO"},
+            {
+                "role": "label",
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "position": "center",
+                "effect": "font-cycle",
+                "sample_text": "TOKYO",
+            },
         ]
 
         with patch("app.pipeline.agents.gemini_analyzer._get_client") as mock_gc:
@@ -888,22 +963,40 @@ def _valid_audio_recipe() -> dict:
         "hook_duration_s": 4.0,
         "slots": [
             {
-                "position": 1, "target_duration_s": 4.0, "slot_type": "hook",
-                "energy": 7.0, "priority": 8, "transition_in": "hard-cut",
-                "color_hint": "warm", "speed_factor": 1.0,
-                "camera_movement": "static", "text_overlays": [],
+                "position": 1,
+                "target_duration_s": 4.0,
+                "slot_type": "hook",
+                "energy": 7.0,
+                "priority": 8,
+                "transition_in": "hard-cut",
+                "color_hint": "warm",
+                "speed_factor": 1.0,
+                "camera_movement": "static",
+                "text_overlays": [],
             },
             {
-                "position": 2, "target_duration_s": 4.0, "slot_type": "broll",
-                "energy": 9.0, "priority": 5, "transition_in": "whip-pan",
-                "color_hint": "high-contrast", "speed_factor": 1.0,
-                "camera_movement": "handheld", "text_overlays": [],
+                "position": 2,
+                "target_duration_s": 4.0,
+                "slot_type": "broll",
+                "energy": 9.0,
+                "priority": 5,
+                "transition_in": "whip-pan",
+                "color_hint": "high-contrast",
+                "speed_factor": 1.0,
+                "camera_movement": "handheld",
+                "text_overlays": [],
             },
             {
-                "position": 3, "target_duration_s": 4.0, "slot_type": "broll",
-                "energy": 5.0, "priority": 5, "transition_in": "dissolve",
-                "color_hint": "cool", "speed_factor": 1.0,
-                "camera_movement": "static", "text_overlays": [],
+                "position": 3,
+                "target_duration_s": 4.0,
+                "slot_type": "broll",
+                "energy": 5.0,
+                "priority": 5,
+                "transition_in": "dissolve",
+                "color_hint": "cool",
+                "speed_factor": 1.0,
+                "camera_movement": "static",
+                "text_overlays": [],
             },
         ],
         "copy_tone": "energetic",

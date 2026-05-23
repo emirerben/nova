@@ -49,6 +49,7 @@ from app.pipeline.agents.gemini_analyzer import (
     ClipMeta,
     GeminiAnalysisError,
     GeminiRefusalError,
+    PollingTimeoutError,
     TemplateRecipe,
     analyze_clip,
     analyze_template,
@@ -1840,18 +1841,56 @@ def _upload_clips_parallel(
 ) -> list:
     """Upload all clips to Gemini File API in parallel. Returns file refs in order.
 
+    Per-clip upload failure is tolerated: a clip whose Gemini upload raises
+    (FAILED state after one re-upload, permanent 4xx, polling timeout) is
+    replaced with `None` in the returned list. Downstream `_analyze_clips_parallel`
+    treats a `None` ref as "skip Gemini analysis, run Whisper fallback", and the
+    caller applies the 50% per-job failure threshold. This matches the per-clip
+    tolerance the analyze step has had since day one — one bad file should not
+    kill an N-clip job (see the matching threshold in `_analyze_clips_parallel`).
+
     When record_sub_phases is true, each clip's upload+ACTIVE-poll wall time is
     appended to the job's phase_log as a sub_phase under analyze_clips so the
     admin test-tab UI can surface "stuck on clip N" while the job is still
     running. Off by default to keep prod jobs' phase_log untouched — the
     admin test endpoint sets it via the preview_mode flag.
     """
-    results: dict[int, object] = {}
+    results: dict[int, object | None] = {}
 
-    def _upload_one(idx_path: tuple[int, str]) -> tuple[int, object]:
+    def _upload_one(idx_path: tuple[int, str]) -> tuple[int, object | None]:
         idx, path = idx_path
         t0 = time.monotonic()
-        ref = gemini_upload_and_wait(path)
+        try:
+            ref = gemini_upload_and_wait(path)
+        except (GeminiAnalysisError, GeminiRefusalError, PollingTimeoutError) as exc:
+            file_size = None
+            try:
+                file_size = os.path.getsize(path)
+            except OSError:
+                pass
+            log.warning(
+                "gemini_upload_failed",
+                clip_idx=idx,
+                clip_path=os.path.basename(path),
+                file_size=file_size,
+                error_type=type(exc).__name__,
+                error=str(exc)[:300],
+                job_id=job_id,
+            )
+            if record_sub_phases and job_id is not None:
+                record_sub_phase(
+                    job_id,
+                    PHASE_ANALYZE_CLIPS,
+                    "gemini_upload_failed",
+                    elapsed_ms=int((time.monotonic() - t0) * 1000),
+                    detail={
+                        "clip_idx": idx,
+                        "clip_path": os.path.basename(path),
+                        "file_size": file_size,
+                        "error": str(exc)[:200],
+                    },
+                )
+            return idx, None
         if record_sub_phases and job_id is not None:
             record_sub_phase(
                 job_id,
@@ -2016,10 +2055,15 @@ def _analyze_clips_parallel(
     clip_metas: list[ClipMeta] = []
     failed_count = 0
 
-    def _analyze_one(args: tuple[int, object, str]) -> tuple[ClipMeta | None, str | None]:
+    def _analyze_one(args: tuple[int, object | None, str]) -> tuple[ClipMeta | None, str | None]:
         idx, ref, path = args
         t0 = time.monotonic()
         try:
+            if ref is None:
+                # Upload failed earlier — skip Gemini, go straight to the
+                # Whisper-fallback path in the except branch so the clip
+                # still produces a usable ClipMeta with default best_moments.
+                raise GeminiAnalysisError("gemini upload failed; skipping analysis")
             meta = analyze_clip(ref, filter_hint=filter_hint, job_id=job_id)
             if record_sub_phases and job_id is not None:
                 record_sub_phase(
