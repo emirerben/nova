@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.43.2] - 2026-05-23
+
+### Added
+- **Cross-verified Layer-2 OCR ground-truth autobuilder — scaling eval fixtures from a hand-authored two to every published template, in one command.** Layer-2 text-overlay evals previously had exactly two ground-truth fixtures (`fdaf3bbc`, `rich_in_life_v2`), both hand-verified, so the eval scaffolding (shipped earlier) skipped most of its work for lack of data. New `python scripts/build_text_ground_truth.py --all-published [--limit N] [--dry-run]` mode queries every `published_at IS NOT NULL AND archived_at IS NULL` template, downloads each video from GCS, samples frames, runs two independent OCR engines per frame (pytesseract + Google Cloud Vision), and commits a fixture only where the two engines agree above a token-level Levenshtein similarity threshold (default 0.85). Frames below the threshold are written to `tests/fixtures/agent_evals/template_text/disagreements/<slug>.json` for human adjudication instead of silently polluting ground truth. Idempotent: a template whose fixture matches the source video's current GCS object generation is skipped on re-run.
+- **`app/services/ocr/` package** — `OCREngine` Protocol (`recognize(image_path) -> list[OCRWord]`), `OCRWord` frozen dataclass with normalized `[0,1]` bboxes, and two adapters: `PytesseractEngine` (local, no auth) and `CloudVisionEngine` (reuses the existing `app.storage.get_gcp_credentials` service-account chain — same auth the production OCR backend uses). Adapter SDK imports are deferred to `__init__` so importing the package never triggers grpc / system-binary loads. `cross_check_engines()` normalizes tokens (lowercase + whitespace-collapse), scores order-invariant agreement via stdlib `difflib.SequenceMatcher.ratio()` (no new C-extension dep), and returns the agreed token set or a disagreement record.
+- Scope: **OCR ground truth only.** Whisper transcript ground truth is deferred — the `TranscriptAgent` requires a Gemini File API URI obtained by uploading the video (the production path at `gemini_analyzer.py` does this), not a raw GCS path. Wiring that upload into the autobuilder is a follow-up.
+- Test coverage: 10 unit tests on the cross-check decision logic, 7 adapter-contract tests, and 3 regression tests against the existing hand-verified fixtures that lock the UNION-mode token-merge behavior (so any future switch to intersection mode is a deliberate, visible diff rather than a silent change). 20 pass, 3 skip (the `fdaf3bbc` fixture carries no extractable overlay tokens).
+
 ## [0.4.43.0] - 2026-05-23
 
 ### Added
