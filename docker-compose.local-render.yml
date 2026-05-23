@@ -1,0 +1,75 @@
+# Local-render parity: runs the actual prod Dockerfile (the one Fly.io deploys),
+# not the dev-mode Dockerfiles under src/apps/api/. Use via `make local-render`.
+#
+# Why this exists: the default `docker-compose.yml` builds src/apps/api/Dockerfile
+# + Dockerfile.worker, which are missing libheif1, fonts-dejavu-core, and the
+# separate torch+torchvision CPU-only install that the prod image has. Output
+# from those images visually differs from prod. This file uses the repo-root
+# Dockerfile so local output should match Fly's render byte-for-byte (modulo
+# LLM nondeterminism and DB seeds; see CLAUDE.md → "Local-render parity").
+#
+# Project name is pinned so this stack runs side-by-side with `make dev` without
+# colliding on container names or networks.
+
+name: nova-render
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nova
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    # No host port exposed — api/worker reach db via the compose network.
+    # Avoids colliding with `make dev`'s db on 5432.
+    volumes:
+      - render_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d nova"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    # No host port exposed; same reason as db.
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nova-render-api:local
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: .env.local-render
+    environment:
+      # Override service hostnames — the env file ships with sensible defaults
+      # but explicit > implicit when the compose service names are non-default.
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/nova
+      REDIS_URL: redis://redis:6379
+    ports:
+      # Host 8001 → container 8000. Lets dev-auto.sh keep 8000 untouched.
+      - "8001:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nova-render-api:local
+    command: ["celery", "-A", "app.worker", "worker", "--loglevel=info", "--concurrency=2"]
+    env_file: .env.local-render
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/nova
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  render_pg_data:

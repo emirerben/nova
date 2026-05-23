@@ -709,10 +709,13 @@ def test_text_overlay_version_v2_locked():
     """Lock the current namespace string so future devs don't bump it without
     intending to. The constant orphans cached recipes — every bump must be a
     conscious decision documented in the history block in template_cache.py.
-    Bumped on 2026-05-22 with Stage E atomized-mode single-word defense:
-    multi-word LLM outputs for atomized-input phrases now revert to OCR
-    text so downstream `_is_atomized` stays true and `build_line_groups`
-    can still group the phrase into a cumulative reveal (template 89cde014
-    evidence — singleton overlays at 6.5s+ that broke the reveal pattern).
+    Bumped on 2026-05-23 with the PR #286 follow-up: Pass-1 width measurement
+    uses the uniform Layer-2 render size (120 px) so cumulative reveals
+    actually split, Pass-2 stacks split sub-groups vertically by the
+    renderer's intrinsic ascent+descent line step, cumulative emit floors
+    stage duration at 0.2 s, and Stage E strips unmatched trailing OCR
+    quote characters. Prod template 89cde014 emitted "THE work to get" and
+    "there just" at identical bbox y=0.44 — the prior bump's renderer fix
+    never exercised the cumulative emit.
     """
-    assert TEXT_OVERLAY_VERSION_V2 == "v2-2026-05-22-atomized-single-word"
+    assert TEXT_OVERLAY_VERSION_V2 == "v2-2026-05-23-cumulative-stack-floor"
