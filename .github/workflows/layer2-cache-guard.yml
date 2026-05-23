@@ -1,0 +1,22 @@
+name: Layer-2 cache-version guard
+
+# A Layer-2 text-overlay semantic change (any text_overlay_v2/ stage, the Stage
+# E/F agents or their schemas, or the Stage E/F prompts) MUST bump
+# app/pipeline/template_cache.py:TEXT_OVERLAY_VERSION_V2 in the same PR, or prod
+# serves stale cached recipes and the deploy is invisible. See CLAUDE.md
+# "Layer-2 cache namespace" and src/apps/api/scripts/check_layer2_cache_bump.sh.
+
+on: pull_request
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require TEXT_OVERLAY_VERSION_V2 bump on Layer-2 changes
+        run: bash src/apps/api/scripts/check_layer2_cache_bump.sh
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}

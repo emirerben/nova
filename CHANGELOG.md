@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Right-anchored agentic/music overlays no longer center silently in the burned video.** #297 fixed `text_anchor="left"` in the Skia renderer but left two gaps: the `karaoke-line` draw path still centered every line on `position_x_frac` unconditionally, and `text_anchor="right"` was collapsed to center while the Pillow path (classic templates + admin preview) honored it. So a right-anchored overlay rendered correctly in the preview and on classic templates but centered in the burned agentic/music video — the same "looks right locally, clips in prod" class as the original left-clip bug (#296). Fix: `_resolve_text_anchor` now returns `left`/`right`/`center`, and a single `_anchored_left_x(anchor, cx, width)` helper centralizes the anchor math across all four Skia draw sites (`_draw_centered_text` + emoji block, `_draw_pop_in_with_suffix`, `_draw_karaoke_line`) so they can't drift apart again. New cross-renderer parity guard `test_both_renderers_honor_text_anchor` renders the same overlay through Skia AND Pillow and asserts they place left/center/right identically — a renderer that drops a field fails CI instead of shipping. Plus a `karaoke-line` left-anchor regression test. CLAUDE.md documents the renderer-parity invariant and the rule that agentic/music overlays must be verified on the burned video, not the admin preview.
+## [0.4.43.11] - 2026-05-23
+
+### Added
+- **CI guard: Layer-2 changes must bump the cache version.** `TEXT_OVERLAY_VERSION_V2` in `template_cache.py` is the only thing that invalidates Layer-2 cached recipes — the Stage E/F agent `prompt_version`s are NOT in the cache key. So editing a Layer-2 stage/prompt without bumping the constant ships a change that's invisible in prod (every access cache-hits a pre-change recipe). New workflow `.github/workflows/layer2-cache-guard.yml` (script `scripts/check_layer2_cache_bump.sh`) fails any PR touching `text_overlay_v2/`, the Stage E/F agents/schemas, or their prompts without a bump. Escape hatch for non-semantic edits: `[skip-layer2-cache-bump]` in a commit message.
+
+### Changed
+- **CLAUDE.md documents the remaining Layer-2 "stale in prod" traps**: the cache-version bump rule (now CI-enforced) plus OCR backend divergence — Stage B uses Cloud Vision in prod but Apple Vision on local macOS, so a Layer-2 result verified locally won't match the prod render. Pin the backend via `run_full_pipeline(backend=...)` or build fixtures against Cloud Vision.
 
 ## [0.4.43.10] - 2026-05-23
 
