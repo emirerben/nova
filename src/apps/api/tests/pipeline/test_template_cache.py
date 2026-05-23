@@ -705,14 +705,24 @@ def test_resolve_v1_when_both_false():
     assert _resolve_text_overlay_version(force_layer2=False, settings_flag=False) == "v1"
 
 
-def test_text_overlay_version_v2_locked():
-    """Lock the current namespace string so future devs don't bump it without
-    intending to. The constant orphans cached recipes — every bump must be a
-    conscious decision documented in the history block in template_cache.py.
-    Bumped on 2026-05-22 with Stage E atomized-mode single-word defense:
-    multi-word LLM outputs for atomized-input phrases now revert to OCR
-    text so downstream `_is_atomized` stays true and `build_line_groups`
-    can still group the phrase into a cumulative reveal (template 89cde014
-    evidence — singleton overlays at 6.5s+ that broke the reveal pattern).
+def test_text_overlay_version_v2_is_content_hashed():
+    """Layer-2 cache version is now derived from the content of the prompts +
+    schemas + AgentSpec.prompt_versions it depends on, not a manually-bumped
+    string constant. Replaces the previous lock-the-literal test that fired
+    on every prompt change as a forcing function.
+
+    Contract pinned here:
+      - The value starts with ``"v2-"`` (so `_cache_key` continues to append
+        the v2 suffix per its existing ``!= TEXT_OVERLAY_VERSION_V1`` guard).
+      - The suffix is a stable hex short-hash (16 chars) — same inputs
+        produce the same output across imports.
+      - The value differs from ``TEXT_OVERLAY_VERSION_V1`` so v1 and v2
+        cache entries never collide.
     """
-    assert TEXT_OVERLAY_VERSION_V2 == "v2-2026-05-22-atomized-single-word"
+    v2 = TEXT_OVERLAY_VERSION_V2
+    assert isinstance(v2, str)
+    assert v2.startswith("v2-")
+    suffix = v2[len("v2-") :]
+    assert len(suffix) == 16, suffix
+    int(suffix, 16)  # raises ValueError if not hex
+    assert v2 != TEXT_OVERLAY_VERSION_V1

@@ -55,6 +55,7 @@ import hashlib
 import json
 import os
 import threading
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import redis as redis_lib
@@ -105,119 +106,161 @@ AGENT_SET_RECIPE_PLUS_TEXT = "recipe+text"
 # "v2" = multi-stage Layer-2 OCR pipeline (stages A–G) behind the
 #         `text_overlay_v2_enabled` flag or `?use_layer2=true` override.
 #
-# These two versions produce different overlays for the same template video,
-# so they must live in separate cache namespaces. Existing entries written
-# before this PR have no version suffix and are treated as "v1" (the default)
-# — they remain valid for Layer-1 builds with no migration needed.
+# v1 stays a stable literal: the single Gemini call's behavior is already
+# captured by the TEMPLATE_PROMPT_VERSION + CACHE_SCHEMA_VERSION namespace
+# bumps. Keeping it as "v1" preserves all pre-existing v1 cache entries.
+#
+# v2 is now CONTENT-HASHED. Pre-2026-05-23 this was a manually-bumped string
+# (`v2-2026-05-22-atomized-single-word`) that every Stage-E prompt edit had
+# to be remembered to update; missing the bump silently served stale recipes.
+# It is now derived deterministically from:
+#   - the SHA-256 of every prompt file Layer-2 actually consumes
+#   - the SHA-256 of every schema module Layer-2 actually consumes
+#   - the `prompt_version` field on the Layer-2 AgentSpecs
+#   - the JSON-encoded, sorted dict of relevant settings flags
+# Any of those changing produces a fresh `v2-<short-hash>` string; existing
+# entries become orphaned and recompute on next access.
 #
 # `recipe-only` builds (manual templates) never run the text agent and
 # therefore have no v1/v2 distinction — `text_overlay_version` is ignored for
 # that agent_set so their cache keys stay unchanged.
 TEXT_OVERLAY_VERSION_V1 = "v1"
-# IMPORTANT: bump this constant on EVERY Stage E (text_alignment) prompt
-# change. The cache key embeds this value but does NOT embed the
-# `text_alignment.prompt_version` field directly, so a prompt bump without
-# a constant bump silently serves stale recipes.
-#
-# History:
-#   2026-05-19 (v2 → v2-2026-05-19): v0.4.34.0 wired transcript_words into
-#     agentic builds, rewrote Stage E to transcript-authoritative, fixed
-#     Stage D dedup + Stage G newline normalize. Pre-fix recipes had garbage
-#     like "if you if you put put in" (prod job 87b7292b).
-#   2026-05-19 (v2-2026-05-19 → v2-2026-05-19-atomize): v0.4.34.2. v0.4.34.1
-#     shipped the atomize_mode prompt branching but the cache constant wasn't
-#     re-bumped, so reanalyze cache-hit on the v0.4.34.0 namespace and served
-#     the multi-word-stuffed recipes from that run unchanged.
-#   2026-05-20 (v2-2026-05-19-atomize → v2-2026-05-20-xphrase-dedup): Stage D
-#     `dedup_overlapping_atomized_phrases` collapses same-text atomized
-#     phrases whose intervals overlap or sit within 0.5s of each other.
-#     Caught after the v0.4.37.0 cache-fix reanalyze of Not Just Luck
-#     (job 673d26d7-edbf-43a8-ac58-50dd604baae0) produced 21 overlays with
-#     "and" appearing 5×, "combination" 3×, "to" 3×, "the" 2× — all stacked
-#     center-positioned because atomized mode skipped the within-cluster
-#     dedup loop in `_finalize`.
-#   2026-05-21 (v2-2026-05-20-xphrase-dedup → v2-2026-05-21-progressive-reveal):
-#     v0.4.39.0 progressive word-by-word reveal — Stage G now groups
-#     contiguous atomized phrases into LineGroups and emits cumulative
-#     reveal overlays via `build_line_groups` + `_emit_cumulative_line_overlays`.
-#     Overlay schema gains `text_anchor` + `pop_animated_suffix` fields
-#     which the recipe persists, so cached recipes from before this bump
-#     would miss the new fields and the renderer would default-position
-#     every reveal at canvas center.
-#   2026-05-22 (v2-2026-05-21-progressive-reveal → v2-2026-05-22-align-dedup-fallback):
-#     Stage E (text_alignment) was itself CREATING duplicates: when the
-#     transcript word count is smaller than the OCR phrase count, the LLM
-#     maps multiple distinct OCR phrases to the same transcript word,
-#     producing N copies of one word at overlapping timestamps that Stage D
-#     dedup never saw because it ran on a clean input. Two fixes shipped
-#     together: (A) pipeline.run_full_pipeline now re-runs
-#     `dedup_overlapping_atomized_phrases` on the OUTPUT of Stage E (BEFORE
-#     `build_line_groups` so the new progressive-reveal path sees a clean
-#     phrase set); and (B) the Stage E prompt was rewritten to keep the OCR
-#     phrase verbatim when no transcript word matches within ±0.5s, AND to
-#     assign each transcript word to at most one OCR phrase per overlapping
-#     time window — with a defense-in-depth post-parse pass that enforces
-#     both even if the LLM ignores the prompt. Evidence: prod template
-#     fdaf3bbc reanalyze at 05:23:44Z 2026-05-21 produced 20 overlays from
-#     31 input phrases ("allow" 3×, "anyone" 4×, "combination" 4×) —
-#     text_alignment output_dict in the agent_run table made the LLM-side
-#     duplication plainly visible.
-#   2026-05-22 (v2-2026-05-22-align-dedup-fallback → v2-2026-05-22-reveal-cohesion):
-#     Three related Layer-2 fixes ship together — all three change overlay
-#     output for the same input, so the namespace bump must cover all of
-#     them at once. (A) `extract_template_text_overlays` refuses to
-#     overwrite template_recipe overlays when transcribe degrades
-#     (terminal_refusal, low_confidence=True, or raised). Without it,
-#     Stage E's music-only passthrough fires on speech videos with a
-#     failed transcript and raw OCR artifacts reach the render. (B) Stage
-#     D drops single-character non-whitelisted alphanumerics ("W", "M",
-#     "8"), pure-punctuation tokens, and punctuation-dominant tokens
-#     BEFORE Stage E sees them. (C) `build_line_groups` skips unmatched
-#     phrases mid-group instead of closing the running group, so an OCR
-#     artifact between two matched transcript words can't fragment the
-#     cumulative reveal — groups close only on real terminators (sentence
-#     punctuation in the transcript, silence gap, max-words cap).
-#     Evidence: prod template 89cde014 reanalyze at 2026-05-22 09:13 had
-#     transcript=terminal_refusal and rendered "luck\""/"W" to pixels in
-#     job d5083a2c; the 07:42 job before it (good transcript) showed
-#     partial progressive reveal — "The work to get" cumulative + "there"
-#     fragmented because an unmatched OCR closed the group. After all
-#     three fixes the full source phrases reveal cumulatively. Bumping
-#     orphans every Layer-2 cache entry built under the broken behavior.
-#   2026-05-22 (v2-2026-05-22-reveal-cohesion → v2-2026-05-22-uniform-style):
-#     Stage-G overlays now ship with uniform styling — every overlay forced
-#     to text_size="large" (120 px), text_anchor="left", and a hard 5%
-#     left-edge anchor. Replaces the prior per-overlay size_class + role-
-#     based sizing path (different sizes per text block, centered text
-#     clipping on long phrases). The `_layer2_uniform` sentinel skips these
-#     overlays in `agentic_template_build._classify_overlay` so the body
-#     config + text_designer can't clobber the pinned fields. Evidence:
-#     prod template 89cde014 test render with varying sizes + center-anchor
-#     clipping. Bumping orphans every Layer-2 cache entry under the prior
-#     styling so the next access reanalyzes through the uniform bridge.
-#   2026-05-22 (v2-2026-05-22-uniform-style → v2-2026-05-22-atomized-single-word):
-#     Two related Stage-E/G changes ship together — both change overlay
-#     output for the same input. (A) Stage E (text_alignment) now reverts
-#     any multi-word LLM output back to the OCR single word when
-#     `atomize_mode=True`. The prompt already says "NEVER concatenate
-#     multiple transcript words into a single output line" but the LLM
-#     violates it (template 89cde014 reanalyze 18:19: single-word OCR
-#     ["luck"] returned as ["luck just is a"]). Multi-word outputs killed
-#     downstream `_is_atomized` so the phrases fell out of
-#     `build_line_groups`, emitting as multi-word singleton overlays.
-#     Defense walks atomized outputs after parse and drops corrected lines
-#     with whitespace — OCR fallback restores the single word. (B) Stage G
-#     now suppresses ungrouped singleton overlays that overlap a cumulative
-#     LineGroup in y + time. Without it, an unmatched OCR phrase like
-#     "there" rendered on top of the "The work to get" cumulative reveal
-#     (same y, overlapping time). Suppression keeps the cumulative reveal
-#     as the canonical rendering for that band of screen at that time.
-#     Bumping orphans every Layer-2 cache entry under the prior alignment
-#     and orphan-singleton behavior.
-#
-# When you change anything that affects Layer-2 overlay output (Stage E
-# prompt, sanitizer logic, Stage D/G semantics), append a new suffix here.
-TEXT_OVERLAY_VERSION_V2 = "v2-2026-05-22-atomized-single-word"
+
+# Paths of the prompt files Layer-2 depends on. Order is irrelevant — the
+# hashing helper sorts before concatenating — but keep this list narrow:
+# every file in here invalidates every Layer-2 cache entry when its bytes
+# change. Adding an unrelated prompt would cause spurious global invalidation.
+_API_ROOT = Path(__file__).resolve().parents[2]  # .../src/apps/api
+_LAYER2_PROMPT_PATHS: tuple[Path, ...] = (
+    _API_ROOT / "prompts" / "extract_template_text.txt",
+    _API_ROOT / "prompts" / "align_overlay_to_transcript.txt",
+    _API_ROOT / "prompts" / "classify_overlay.txt",
+    _API_ROOT / "prompts" / "transcribe.txt",
+)
+
+# Paths of the schema modules Layer-2 depends on. Same narrowness rule as the
+# prompt list — fields these modules declare end up in the cached recipe, so
+# any structural change must orphan prior entries.
+_LAYER2_SCHEMA_PATHS: tuple[Path, ...] = (
+    _API_ROOT / "app" / "agents" / "_schemas" / "template_text.py",
+    _API_ROOT / "app" / "agents" / "_schemas" / "text_alignment.py",
+    _API_ROOT / "app" / "agents" / "_schemas" / "text_classification.py",
+    _API_ROOT / "app" / "agents" / "_schemas" / "text_overlay_ocr.py",
+    _API_ROOT / "app" / "agents" / "_schemas" / "text_overlay_pipeline.py",
+)
+
+
+def _sha256_files(paths: tuple[Path, ...]) -> str:
+    """SHA-256 over the bytes of every file in ``paths``, in sorted-by-path order.
+
+    Stable across Python versions and OS file orderings. Missing files are
+    represented by a sentinel so an accidental rename surfaces as a key change
+    rather than a silent collision.
+    """
+    h = hashlib.sha256()
+    for p in sorted(paths, key=lambda x: str(x)):
+        h.update(str(p.name).encode("utf-8"))
+        h.update(b"\x00")
+        try:
+            h.update(p.read_bytes())
+        except OSError:
+            # Path moved or got renamed — record the absence rather than
+            # silently producing the same hash as before.
+            h.update(b"__MISSING__")
+        h.update(b"\x01")
+    return h.hexdigest()
+
+
+def compute_text_overlay_version(
+    *,
+    force_layer2: bool,
+    settings_flag: bool,
+    prompt_paths: tuple[Path, ...] = _LAYER2_PROMPT_PATHS,
+    schema_paths: tuple[Path, ...] = _LAYER2_SCHEMA_PATHS,
+    prompt_versions: tuple[str, ...] | None = None,
+    settings_dict: dict[str, Any] | None = None,
+) -> str:
+    """Derive the text_overlay_version cache dimension from inputs that
+    actually affect Layer-2 output.
+
+    Returns the literal ``"v1"`` when neither input signals Layer-2 — the
+    Layer-1 path is already content-namespaced by `TEMPLATE_PROMPT_VERSION` +
+    `CACHE_SCHEMA_VERSION` and does not need this hash.
+
+    For Layer-2, returns ``f"v2-{short_hash}"`` where ``short_hash`` is the
+    first 16 hex chars of:
+
+        sha256(
+            sha256(prompt files) ||
+            sha256(schema modules) ||
+            sorted prompt_version strings ||
+            sorted settings dict (JSON, sort_keys=True)
+        )
+
+    NOTE: Agent .py code edits that don't bump ``AgentSpec.prompt_version``
+    will NOT invalidate the cache. This is a known gap; mitigated by a
+    contributing-guide note and a future lint check (TODO — see
+    TODOS.md "Cache invariants").
+    """
+    if not (force_layer2 or settings_flag):
+        return TEXT_OVERLAY_VERSION_V1
+
+    # Lazy import — avoids a top-level cycle (agents → cache → agents).
+    if prompt_versions is None:
+        from app.agents.template_text import TemplateTextAgent
+        from app.agents.text_alignment import TextAlignmentAgent
+        from app.agents.text_classification import TextClassificationAgent
+        from app.agents.transcript import TranscriptAgent
+
+        prompt_versions = (
+            TemplateTextAgent.spec.prompt_version,
+            TextAlignmentAgent.spec.prompt_version,
+            TextClassificationAgent.spec.prompt_version,
+            TranscriptAgent.spec.prompt_version,
+        )
+
+    if settings_dict is None:
+        # Settings keys whose value affects Layer-2 routing/behavior. Keep
+        # narrow — every key here invalidates every Layer-2 cache entry on
+        # value change.
+        settings_dict = {
+            "text_overlay_v2_enabled": bool(getattr(settings, "text_overlay_v2_enabled", False)),
+        }
+
+    prompt_hash = _sha256_files(prompt_paths)
+    schema_hash = _sha256_files(schema_paths)
+    versions_blob = "|".join(sorted(prompt_versions)).encode("utf-8")
+    settings_blob = json.dumps(settings_dict, sort_keys=True).encode("utf-8")
+
+    h = hashlib.sha256()
+    h.update(prompt_hash.encode("ascii"))
+    h.update(b"\x00")
+    h.update(schema_hash.encode("ascii"))
+    h.update(b"\x00")
+    h.update(versions_blob)
+    h.update(b"\x00")
+    h.update(settings_blob)
+    short = h.hexdigest()[:16]
+    return f"v2-{short}"
+
+
+def __getattr__(name: str) -> str:
+    """Module-level ``__getattr__`` so existing imports of
+    ``TEXT_OVERLAY_VERSION_V2`` keep working — but resolve to the current
+    content-hashed value rather than a frozen string constant.
+
+    Lets call-site tests like ``test_agentic_build_cache_routing.py`` keep
+    importing the symbol while the underlying value is derived from the
+    Layer-2 prompt/schema content. Anything else is left to raise
+    ``AttributeError`` the normal way.
+    """
+    if name == "TEXT_OVERLAY_VERSION_V2":
+        return compute_text_overlay_version(
+            force_layer2=True,
+            settings_flag=False,
+        )
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # 30-day TTL. Template content is immutable per template_id+gcs_path; the
 # cache shouldn't grow unbounded.
@@ -271,9 +314,16 @@ def _resolve_text_overlay_version(
         force_layer2: per-request override from `?use_layer2=true` (PR #220).
         settings_flag: `settings.text_overlay_v2_enabled` global flag.
 
-    Returns "v2" when either input signals Layer-2; "v1" otherwise.
+    Returns "v1" when neither input signals Layer-2; otherwise a
+    content-hashed ``"v2-<short>"`` string derived from the Layer-2 prompt
+    files, schema modules, agent `prompt_version` fields, and the relevant
+    settings dict. See :func:`compute_text_overlay_version` for the hash
+    contract.
     """
-    return TEXT_OVERLAY_VERSION_V2 if (force_layer2 or settings_flag) else TEXT_OVERLAY_VERSION_V1
+    return compute_text_overlay_version(
+        force_layer2=force_layer2,
+        settings_flag=settings_flag,
+    )
 
 
 def _cache_key(
