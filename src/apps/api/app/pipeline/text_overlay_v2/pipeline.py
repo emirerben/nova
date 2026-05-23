@@ -45,6 +45,10 @@ import structlog
 from app.agents._runtime import TerminalError
 from app.agents._schemas.text_overlay_ocr import FrameDetection
 from app.agents._schemas.text_overlay_pipeline import Phrase
+from app.pipeline.text_overlay_v2.constants import (
+    LAYER2_RENDER_TEXT_SIZE,
+    LAYER2_RENDER_TEXT_SIZE_PX,
+)
 from app.pipeline.text_overlay_v2.grouping import (
     DEFAULT_IOU_MATCH,
     DEFAULT_JITTER_MAX_GAP_S,
@@ -638,6 +642,64 @@ def _normalize_overlay_text(text: str) -> str:
 # trigger the renderer's shrink-to-fit safety net.
 _CUMULATIVE_LINE_MAX_W_FRAC = 0.90
 _CANVAS_W_PX = 1080
+_CANVAS_H_PX = 1920
+
+# Layer-2 ships every overlay at the same large size — the classifier's
+# per-phrase `size_class` is overridden downstream by the uniform bridge,
+# so measuring Pass-1 widths against the (often "small") classifier output
+# would under-count rendered width and skip the line-overflow split.
+# Measure against the actual rendered size so Pass-1 splits accurately.
+# `LAYER2_RENDER_TEXT_SIZE_PX` is imported at module top from the shared
+# `constants` module so the bridge and the line-split path cannot drift
+# apart again. History: prod template 89cde014 ran with `size_class="small"`
+# (36 px) — a 9-word cumulative measured at 36 px fit comfortably under
+# 90% canvas, never split, and emitted a single "combination of and good
+# timing don't to allow anyone" overlay that physically overflowed the
+# 1080-px canvas at the rendered 120 px.
+
+# Line-step renderer constant — match `text_overlay._TEXT_LINE_SPACING`.
+# Used to stack split sub-groups vertically inside one LineGroup so two
+# sub-groups don't land at the same `line_anchor_y_frac`.
+_LINE_SPACING_MULT = 1.15
+
+# Floor on the emitted cumulative-stage duration. `text_reveal.MIN_RENDERABLE_S`
+# (0.05 s) is fine for *butted* lyric reveals where a single frame between
+# stages is invisible — but Layer-2 emits each stage as an independent
+# overlay, so a 50-ms emit becomes a one-frame flash on screen. Bump the
+# floor passed into `build_cumulative_stages` so middle stages narrower than
+# 0.2 s drop out (their text still appears in the next surviving stage's
+# cumulative) and the terminal stage's defensive bridge is wider too.
+_CUMULATIVE_MIN_RENDERABLE_S = 0.2
+
+
+def _compute_line_step_norm() -> float:
+    """Return per-sub-group vertical offset in canvas-height fraction.
+
+    Lifts `text_overlay`'s ascent+descent line-step calculation out of the
+    renderer so the two paths cannot drift. When sub-groups stack, they
+    must use the SAME spacing the renderer uses for wrapped lines or the
+    sub-group separation will look different from a natural multi-line
+    block.
+
+    Falls back to a conservative 0.08 (~150 px / 1920 — roughly correct for
+    Playfair Display at 120 px) when font metrics can't be read in test
+    environments without Pillow fonts.
+    """
+    try:
+        from app.pipeline.text_overlay import _load_styled_font  # noqa: PLC0415
+
+        font = _load_styled_font(
+            "display",
+            LAYER2_RENDER_TEXT_SIZE,
+            text_size_px=LAYER2_RENDER_TEXT_SIZE_PX,
+        )
+        if font is None:
+            return 0.08
+        ascent, descent = font.getmetrics()
+        line_step_px = (ascent + descent) * _LINE_SPACING_MULT
+        return line_step_px / _CANVAS_H_PX
+    except Exception:  # noqa: BLE001
+        return 0.08
 
 
 def _emit_cumulative_line_overlays(
@@ -695,13 +757,23 @@ def _emit_cumulative_line_overlays(
         word_texts.append(text)
 
     # Pass 1: line-split by measured cumulative width.
+    # Width measurement uses the UNIFORM Layer-2 render size (large/120 px)
+    # — not `first_cp.size_class` — because the bridge in
+    # `tasks/template_text_extraction._overlay_to_recipe_dict` overrides
+    # every Layer-2 overlay's render size to that constant. Measuring at
+    # the classifier's `size_class` (often "small"=36 px) under-counts
+    # rendered width by ~3.3× and lets long lines escape the split.
     max_w_px = int(_CANVAS_W_PX * _CUMULATIVE_LINE_MAX_W_FRAC)
     sub_groups: list[tuple[list[int], float]] = []  # (local indices into word_texts, line_end_s)
     current: list[int] = []
     for j in range(len(word_texts)):
         candidate = current + [j]
         cumulative_text = " ".join(word_texts[k] for k in candidate if word_texts[k])
-        width = measure_text_width(cumulative_text, text_size=size_class)
+        width = measure_text_width(
+            cumulative_text,
+            text_size=LAYER2_RENDER_TEXT_SIZE,
+            text_size_px=LAYER2_RENDER_TEXT_SIZE_PX,
+        )
         if width > max_w_px and current:
             # Adding word j overflows. Close current sub-group at j-1, open a
             # new sub-group starting at j. Sub-group's line_end_s is the next
@@ -716,7 +788,12 @@ def _emit_cumulative_line_overlays(
             singleton_text = word_texts[j]
             if (
                 singleton_text
-                and measure_text_width(singleton_text, text_size=size_class) > max_w_px
+                and measure_text_width(
+                    singleton_text,
+                    text_size=LAYER2_RENDER_TEXT_SIZE,
+                    text_size_px=LAYER2_RENDER_TEXT_SIZE_PX,
+                )
+                > max_w_px
             ):
                 drops["single_word_overflow"] += 1
         elif width > max_w_px and not current:
@@ -733,9 +810,17 @@ def _emit_cumulative_line_overlays(
     if len(sub_groups) > 1:
         drops["line_overflow"] += len(sub_groups) - 1
 
+    # Per-sub-group vertical step so split sub-groups DON'T render at the
+    # same y. Pre-fix, every sub-group used `lg.line_anchor_y_frac` and
+    # stacked on top of each other (prod 89cde014 had "THE work to get" and
+    # "there just" at identical y=0.44). Reading the renderer's intrinsic
+    # ascent+descent keeps the spacing consistent with the natural
+    # multi-line wrapping the renderer applies inside a single overlay.
+    line_step_norm = _compute_line_step_norm()
+
     # Pass 2: cumulative emit per sub-group.
     out: list = []
-    for sub_indices, sub_line_end_s in sub_groups:
+    for sub_group_idx, (sub_indices, sub_line_end_s) in enumerate(sub_groups):
         words = [
             Word(
                 text=word_texts[k],
@@ -748,7 +833,18 @@ def _emit_cumulative_line_overlays(
         if not words:
             drops["empty_group"] += 1
             continue
-        stages = build_cumulative_stages(words, line_end_s=sub_line_end_s)
+        # Use a higher floor than `text_reveal.MIN_RENDERABLE_S` because
+        # Layer-2 emits each stage as an INDEPENDENT overlay (vs the
+        # music-lyric injector where stages are butted into a single ASS
+        # block). A 50-ms emit becomes a one-frame flash on screen — drop
+        # those middle stages so the cumulative reveal shows readable beats
+        # only. The dropped word still appears in the next surviving
+        # stage's cumulative text.
+        stages = build_cumulative_stages(
+            words,
+            line_end_s=sub_line_end_s,
+            min_renderable_s=_CUMULATIVE_MIN_RENDERABLE_S,
+        )
         for stage in stages:
             slot_index = _assign_slot_index(stage.start_s, slot_boundaries_s)
             # Read positional metadata from the LineGroup so the cumulative
@@ -758,7 +854,11 @@ def _emit_cumulative_line_overlays(
             # to top/center/bottom correctly; without the real y the
             # renderer would default every reveal to canvas center.
             anchor_x = max(0.0, min(1.0, lg.line_anchor_x_frac))
-            anchor_y = max(0.0, min(1.0, lg.line_anchor_y_frac))
+            # Stack sub-groups vertically. The split happens BECAUSE the
+            # cumulative text exceeded 90% canvas width — render-time the
+            # sub-groups *cannot* share a y or they will visually overlap.
+            anchor_y_raw = lg.line_anchor_y_frac + sub_group_idx * line_step_norm
+            anchor_y = max(0.0, min(1.0, anchor_y_raw))
             # Tiny w_norm so the TextBBox extent stays in-frame for anchors
             # near 0.0 or 1.0. Layout for left-anchored cumulative overlays
             # is driven by position_x_frac + the renderer's measured text
