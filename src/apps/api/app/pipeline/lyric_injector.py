@@ -558,33 +558,39 @@ def _inject_line(
         if line.section_end_s <= line.section_start_s:
             continue
 
-        slot_win = _slot_for_time(line.section_start_s, windows)
-        if slot_win is None:
-            continue
+        # Music jobs cut the rendered video into independent slots. A lyric
+        # line can start near the end of one short beat-synced slot and keep
+        # singing through the next clip. Emit a segment for every slot the line
+        # overlaps so video cuts do not truncate the vocal span.
+        segments: list[tuple[_SlotWindow, float, float]] = []
+        for slot_win in windows:
+            overlap_start = max(line.section_start_s, slot_win.start_s)
+            overlap_end = min(line.section_end_s, slot_win.end_s)
+            if overlap_end <= overlap_start:
+                continue
 
-        # Rebase to slot-relative time, then clamp to the slot's own
-        # window. A line that spills past its slot is truncated at the
-        # slot end — the next slot's renderer pipeline is independent.
-        rel_start = max(0.0, line.section_start_s - slot_win.start_s)
-        slot_dur = slot_win.end_s - slot_win.start_s
-        rel_end = min(slot_dur, line.section_end_s - slot_win.start_s)
-        rel_end = max(rel_start + _MIN_OVERLAY_DURATION_S, rel_end)
-        rel_end = min(rel_end, slot_dur)
-        if rel_end <= rel_start:
-            continue
+            rel_start = max(0.0, overlap_start - slot_win.start_s)
+            slot_dur = slot_win.end_s - slot_win.start_s
+            rel_end = min(slot_dur, overlap_end - slot_win.start_s)
+            rel_end = max(rel_start + _MIN_OVERLAY_DURATION_S, rel_end)
+            rel_end = min(rel_end, slot_dur)
+            if rel_end <= rel_start:
+                continue
+            segments.append((slot_win, rel_start, rel_end))
 
-        overlay = dict(base)
-        overlay.update(
-            {
-                "text": line.text,
-                "effect": "lyric-line",
-                "start_s": round(rel_start, 3),
-                "end_s": round(rel_end, 3),
-                "fade_in_ms": line.fade_in_ms,
-                "fade_out_ms": line.fade_out_ms,
-            }
-        )
-        _ensure_overlay_list(slots[slot_win.index]).append(overlay)
-        injected += 1
+        for segment_idx, (slot_win, rel_start, rel_end) in enumerate(segments):
+            overlay = dict(base)
+            overlay.update(
+                {
+                    "text": line.text,
+                    "effect": "lyric-line",
+                    "start_s": round(rel_start, 3),
+                    "end_s": round(rel_end, 3),
+                    "fade_in_ms": line.fade_in_ms if segment_idx == 0 else 0,
+                    "fade_out_ms": line.fade_out_ms if segment_idx == len(segments) - 1 else 0,
+                }
+            )
+            _ensure_overlay_list(slots[slot_win.index]).append(overlay)
+            injected += 1
 
     return injected

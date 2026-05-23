@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.44.4] - 2026-05-23
+
+### Fixed
+- **Line-style lyric overlays now survive short beat-synced video cuts.** Prod job `5390c7ef-a3eb-448d-bb80-b6c1e292d16c` proved the prior timing fix reached production but still disappeared early: `_inject_line` computed the correct audio-safe window, then assigned the overlay only to the slot where the line started and clipped it at that slot's end. Lines like "We ain't stressing 'bout the loot", "My block made of quesería", and "This not the molly, this the boot" start near the end of one short slot and continue through later clips. `_inject_line` now emits one lyric-line segment per overlapping slot, with fade-in only on the first segment and fade-out only on the final segment, so the line persists across clip cuts without flickering at every boundary. Regression test uses the exact production slot durations and line timings from the failed job.
+
 ## [0.4.44.3] - 2026-05-23
 
 ### Fixed
