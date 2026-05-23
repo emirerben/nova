@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.44.7] - 2026-05-23
+
+### Fixed
+- **Music section picks are now capped at 20 seconds everywhere they are used.** Long agent-selected sections now keep their strong start point but clamp the end to the short-form budget, so admin previews and auto-music renders no longer use windows like `161.3s → 206.3s`. Existing production rows are normalized at read time and auto-music keeps the current `section_version`, so deployed tracks do not need a backfill just to stay selectable.
+
 ## [0.4.44.6] - 2026-05-23
 
 ### Changed

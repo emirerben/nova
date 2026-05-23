@@ -95,7 +95,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION, MusicLabels
-from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
+from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION, MAX_SECTION_DURATION_S
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, JobClip, MusicTrack
@@ -512,6 +512,7 @@ def _current_best_section(track: MusicTrack) -> tuple[float, float] | None:
         return None
     if end_s <= start_s:
         return None
+    end_s = min(end_s, start_s + MAX_SECTION_DURATION_S)
     return start_s, end_s
 
 

@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 # --include-stale``. Keep in sync with ``song_sections`` prompt version
 # when semantics shift.
 CURRENT_SECTION_VERSION = "2026-05-22"
+MAX_SECTION_DURATION_S = 20.0
 
 SectionLabel = Literal[
     "intro",
@@ -63,6 +64,21 @@ class SongSection(BaseModel):
     energy: SectionEnergy = Field(description="Section energy level.")
     suggested_use: SectionUse = Field(description="What the section is best as in an edit.")
     rationale: str = Field(min_length=1, description="1-2 sentences on why edit-worthy.")
+
+
+def cap_song_section_duration(
+    section: SongSection,
+    *,
+    track_duration_s: float | None = None,
+) -> SongSection:
+    """Return section with ``end_s`` capped to the short-form max window."""
+
+    capped_end_s = section.start_s + MAX_SECTION_DURATION_S
+    if track_duration_s is not None and track_duration_s > section.start_s:
+        capped_end_s = min(capped_end_s, track_duration_s)
+    if section.end_s <= capped_end_s:
+        return section
+    return section.model_copy(update={"end_s": round(capped_end_s, 3)})
 
 
 class SongSectionsOutput(BaseModel):
