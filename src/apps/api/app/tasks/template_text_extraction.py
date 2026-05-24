@@ -29,6 +29,7 @@ from app.agents.template_text import (
     TemplateTextOverlay,
 )
 from app.config import settings
+from app.pipeline.overlay_pacing import normalize_slot_overlay_pacing
 from app.pipeline.text_overlay_v2.constants import (
     LAYER2_RENDER_TEXT_SIZE as _LAYER2_UNIFORM_TEXT_SIZE,
 )
@@ -197,6 +198,18 @@ def _merge_overlays_into_slots(
             slot_relative_t = max(0.0, ov.bbox.sample_frame_t - cursor)
             d["text_bbox"]["sample_frame_t"] = min(max(slot_relative_t, d["start_s"]), d["end_s"])
             rendered.append(d)
+
+        # Enforce a per-word legibility floor and redistribute within the slot's
+        # fixed duration, so cumulative reveals never flash by faster than the
+        # eye can read (prod 89cde014: "the work to get there." crammed 5 words
+        # into 431 ms; "and good timing so..." showed for 25 ms). No-op for
+        # already-readable slots.
+        if dur > 0 and rendered:
+            rendered, pacing_warns = normalize_slot_overlay_pacing(rendered, slot_duration_s=dur)
+            if any(pacing_warns.get(k) for k in ("stages_expanded", "singletons_expanded")):
+                log.info(
+                    "layer2_legibility_pass", slot_index=i, slot_duration_s=dur, **pacing_warns
+                )
 
         slot["text_overlays"] = rendered
         merged_count += len(rendered)

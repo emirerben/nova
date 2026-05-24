@@ -360,6 +360,49 @@ def test_merge_overlays_empty_input_clears_slot_overlays() -> None:
     assert slots[0]["text_overlays"] == []
 
 
+def test_merge_applies_legibility_floor_to_crammed_reveal() -> None:
+    """A cumulative reveal whose words flash by below the readable floor (the
+    prod 89cde014 "the work to get there." case) is expanded by the merge so
+    every word clears MIN_PER_WORD_S, and nothing spills past the slot."""
+    from app.pipeline.overlay_pacing import MIN_PER_WORD_S
+
+    slot_dur = 6.0
+    # 4 cumulative stages crammed into ~0.34 s total (global, slot 1).
+    overlays = [
+        _make_overlay(slot_index=1, text="the work", start_s=0.0, end_s=0.086),
+        _make_overlay(slot_index=1, text="the work to", start_s=0.086, end_s=0.172),
+        _make_overlay(slot_index=1, text="the work to get", start_s=0.172, end_s=0.258),
+        _make_overlay(slot_index=1, text="the work to get there.", start_s=0.258, end_s=0.34),
+    ]
+    for ov, suffix in zip(overlays, ["work", "to", "get", "there."], strict=True):
+        ov.pop_animated_suffix = suffix
+    slots = [{"target_duration_s": slot_dur, "text_overlays": []}]
+    _merge_overlays_into_slots(slots, overlays)
+
+    rendered = slots[0]["text_overlays"]
+    assert len(rendered) == 4
+    for ov in rendered:
+        assert ov["end_s"] - ov["start_s"] >= MIN_PER_WORD_S - 1e-6
+    assert max(ov["end_s"] for ov in rendered) <= slot_dur + 1e-6
+
+
+def test_merge_leaves_well_paced_reveal_unchanged() -> None:
+    """The legibility pass is a no-op when every word is already readable."""
+    overlays = [
+        _make_overlay(slot_index=1, text="It's", start_s=0.0, end_s=0.5),
+        _make_overlay(slot_index=1, text="It's not", start_s=0.5, end_s=1.0),
+        _make_overlay(slot_index=1, text="It's not luck", start_s=1.0, end_s=2.0),
+    ]
+    for ov, suffix in zip(overlays, ["It's", "not", "luck"], strict=True):
+        ov.pop_animated_suffix = suffix
+    slots = [{"target_duration_s": 8.0, "text_overlays": []}]
+    _merge_overlays_into_slots(slots, overlays)
+
+    rendered = slots[0]["text_overlays"]
+    assert [round(o["start_s"], 3) for o in rendered] == [0.0, 0.5, 1.0]
+    assert [round(o["end_s"], 3) for o in rendered] == [0.5, 1.0, 2.0]
+
+
 # ── extract_template_text_overlays (top-level helper) ─────────────────────────
 
 
