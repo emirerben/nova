@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.44.9] - 2026-05-24
+## [0.4.44.10] - 2026-05-24
 
 ### Added
 - **Cross-verified Layer-2 OCR ground-truth autobuilder — scaling eval fixtures from a hand-authored two to every published template, in one command.** Layer-2 text-overlay evals previously had exactly two ground-truth fixtures (`fdaf3bbc`, `rich_in_life_v2`), both hand-verified, so the eval scaffolding (shipped earlier) skipped most of its work for lack of data. New `python scripts/build_text_ground_truth.py --all-published [--limit N] [--dry-run]` mode queries every `published_at IS NOT NULL AND archived_at IS NULL` template, downloads each video from GCS, samples frames, runs two independent OCR engines per frame (pytesseract + Google Cloud Vision), and commits a fixture only where the two engines agree above a token-level Levenshtein similarity threshold (default 0.85). Frames below the threshold are written to `tests/fixtures/agent_evals/template_text/disagreements/<slug>.json` for human adjudication instead of silently polluting ground truth. Idempotent: a template whose fixture matches the source video's current GCS object generation is skipped on re-run.
