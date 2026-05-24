@@ -433,10 +433,12 @@ def main() -> int:
                 print(f"  {v.get('variant_id')}: {v.get('render_status')} — {v.get('error')}")
             return 1
         out_paths = []
+        failed = []
         for v in variants:
             label = v.get("variant_id", "variant")
             if not (v.get("ok") and v.get("output_url")):
                 print(f"\n  [skip] {label}: {v.get('render_status')} — {v.get('error')}")
+                failed.append(label)
                 continue
             out_path = Path(args.out_dir) / f"{job_id}-{label}.mp4"
             song = v.get("track_title") or "original audio"
@@ -448,6 +450,11 @@ def main() -> int:
         print(f"\n✓ generative render complete: {len(out_paths)} variant(s) in {args.out_dir}/")
         for pth in out_paths:
             print(f"    {pth}")
+        # A verification run should not exit 0 when some variants failed — that
+        # would let a partial-render regression pass silently in CI/automation.
+        if failed:
+            print(f"\n⚠ {len(failed)} variant(s) failed: {', '.join(failed)}", file=sys.stderr)
+            return 1
         return 0
 
     if status not in {"template_ready", "music_ready", "done"}:

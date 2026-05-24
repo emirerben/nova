@@ -13,7 +13,7 @@
  */
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { AgentSection } from "@/app/admin/_shared/AgentSection";
 import { JsonTreeView } from "@/components/JsonTreeView";
@@ -277,6 +277,11 @@ function GenerativeVariants({
 }): JSX.Element | null {
   const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  // Variants we just triggered a re-render on. Keeps the tile in "Rendering…"
+  // optimistically until a poll shows the server flipped it back to a terminal
+  // state — the worker only sets render_status="rendering" once it dequeues.
+  const [optimistic, setOptimistic] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     getMusicTracks()
@@ -284,15 +289,60 @@ function GenerativeVariants({
       .catch(() => setTracks([]));
   }, []);
 
-  const plan = (job.assembly_plan ?? {}) as { variants?: GenerativeVariant[] };
-  const variants = plan.variants ?? [];
+  // Defensive: a generative job mid-flight may have a partial/odd assembly_plan.
+  // Only render entries that have a usable variant_id (the route key). Memoized so
+  // the effects below don't see a fresh array identity on every render.
+  const variants: GenerativeVariant[] = useMemo(() => {
+    const rawPlan = job.assembly_plan;
+    const plan = (rawPlan && typeof rawPlan === "object" ? rawPlan : {}) as { variants?: unknown };
+    return Array.isArray(plan.variants)
+      ? (plan.variants as GenerativeVariant[]).filter((v) => v && typeof v.variant_id === "string")
+      : [];
+  }, [job.assembly_plan]);
+
+  // Drop optimistic marks once the server reports the variant terminal.
+  useEffect(() => {
+    setOptimistic((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set(prev);
+      for (const v of variants) {
+        if (v.render_status === "ready" || v.render_status === "failed") next.delete(v.variant_id);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [variants]);
+
+  // The page-level poll only runs while job.status is cancellable; a generative
+  // job's terminal status (variants_ready) is not, so per-variant re-renders
+  // wouldn't otherwise be polled. Poll here while anything is (re-)rendering.
+  const anyRendering =
+    optimistic.size > 0 || variants.some((v) => v.render_status === "rendering");
+  useEffect(() => {
+    if (!anyRendering) return;
+    const t = setInterval(() => {
+      void onChanged();
+    }, 3000);
+    return () => clearInterval(t);
+  }, [anyRendering, onChanged]);
+
   if (variants.length === 0) return null;
 
   const run = async (variantId: string, fn: () => Promise<unknown>) => {
     setBusy(variantId);
+    setActionError(null);
+    setOptimistic((prev) => new Set(prev).add(variantId));
     try {
       await fn();
       await onChanged();
+    } catch (e) {
+      // Surface the failure instead of swallowing it — a silent throw here is
+      // exactly what made a misconfigured API base look like "nothing happens".
+      setActionError(e instanceof Error ? e.message : "Action failed");
+      setOptimistic((prev) => {
+        const next = new Set(prev);
+        next.delete(variantId);
+        return next;
+      });
     } finally {
       setBusy(null);
     }
@@ -303,9 +353,17 @@ function GenerativeVariants({
       <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">
         Generative variants ({variants.length})
       </div>
+      {actionError && (
+        <div className="mb-3 rounded border border-red-800 bg-red-950/40 px-3 py-2 text-sm text-red-300">
+          {actionError}
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {variants.map((v) => {
-          const rendering = v.render_status === "rendering" || busy === v.variant_id;
+          const rendering =
+            v.render_status === "rendering" ||
+            busy === v.variant_id ||
+            optimistic.has(v.variant_id);
           return (
             <div key={v.variant_id} className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
