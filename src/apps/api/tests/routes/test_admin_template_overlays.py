@@ -394,6 +394,36 @@ def test_retime_phrase_expands_stages_and_recomputes_timing(client: TestClient) 
     assert overlays[0]["text"] == "It's"
 
 
+def test_retime_phrase_enforces_legibility_floor(client: TestClient) -> None:
+    """Retiming with a beat so small the words would flash by faster than the
+    eye can read is corrected: each reveal stage is expanded to the per-word
+    legibility floor (retime never compresses neighbours, so it only spreads)."""
+    from app.pipeline.overlay_pacing import MIN_PER_WORD_S
+
+    template = _template_with_overlays()
+    with _patch_get_template(template):
+        res = client.post(
+            "/admin/templates/tpl-overlay-001/retime-phrase",
+            headers=_headers(),
+            json={
+                "slot_index": 0,
+                "member_overlay_indices": [0, 1],
+                "new_text": "It's not just luck",
+                "beat_s": 0.06,  # below the readable floor
+            },
+        )
+    assert res.status_code == 200, res.text
+    overlays = template.recipe_cached["slots"][0]["text_overlays"]
+    assert [o["sample_text"] for o in overlays][:4] == [
+        "It's",
+        "It's not",
+        "It's not just",
+        "It's not just luck",
+    ]
+    for o in overlays[:4]:
+        assert o["end_s"] - o["start_s"] >= MIN_PER_WORD_S - 1e-6
+
+
 def test_retime_phrase_shrink_reduces_stage_count(client: TestClient) -> None:
     """Editing the 2-member phrase down to one word yields a single stage."""
     template = _template_with_overlays()
@@ -730,7 +760,7 @@ def test_reflow_warning_absent_when_nothing_overflows(client: TestClient) -> Non
 
 
 def test_unit_reflow_strict_overlap_only_adjacency_ok() -> None:
-    from app.routes.admin import _resequence_slot_overlays
+    from app.pipeline.overlay_pacing import _resequence_slot_overlays
 
     # Butted (start == prev_end) is adjacency, not overlap → no shift.
     ovs = [
@@ -743,7 +773,7 @@ def test_unit_reflow_strict_overlap_only_adjacency_ok() -> None:
 
 
 def test_unit_resequence_ripples_across_positions() -> None:
-    from app.routes.admin import _resequence_slot_overlays
+    from app.pipeline.overlay_pacing import _resequence_slot_overlays
 
     # Slot-wide / position-agnostic: a phrase at a different y_frac still gets
     # sequenced (one phrase on screen at a time), not left overlapping.
@@ -758,7 +788,7 @@ def test_unit_resequence_ripples_across_positions() -> None:
 
 
 def test_unit_resequence_closes_intra_phrase_gaps() -> None:
-    from app.routes.admin import _resequence_slot_overlays
+    from app.pipeline.overlay_pacing import _resequence_slot_overlays
 
     # One cumulative phrase block with an intra-phrase gap (same anchor). The
     # block ripple leaves internal gaps; the trailing butt-join must close them
@@ -776,7 +806,7 @@ def test_unit_resequence_closes_intra_phrase_gaps() -> None:
 
 
 def test_unit_reflow_skips_agentic_pct_overlays() -> None:
-    from app.routes.admin import _resequence_slot_overlays
+    from app.pipeline.overlay_pacing import _resequence_slot_overlays
 
     ovs = [
         {"sample_text": "p", "start_s": 0.0, "end_s": 5.0, "start_pct": 0.0, "end_pct": 0.5},
@@ -789,7 +819,7 @@ def test_unit_reflow_skips_agentic_pct_overlays() -> None:
 
 
 def test_unit_reflow_shifts_overrides_with_base() -> None:
-    from app.routes.admin import _resequence_slot_overlays
+    from app.pipeline.overlay_pacing import _resequence_slot_overlays
 
     # Follower's effective window is driven by its override; both base and
     # override must shift by the same delta when rippled.
@@ -813,7 +843,7 @@ def test_unit_reflow_shifts_overrides_with_base() -> None:
 
 
 def test_unit_reflow_accel_stays_in_window() -> None:
-    from app.routes.admin import _eff_end, _eff_start, _resequence_slot_overlays
+    from app.pipeline.overlay_pacing import _eff_end, _eff_start, _resequence_slot_overlays
 
     ovs = [
         {"sample_text": "a", "start_s": 0.0, "end_s": 1.0},
@@ -826,7 +856,7 @@ def test_unit_reflow_accel_stays_in_window() -> None:
 
 
 def test_unit_reflow_cascades_multiple_followers_preserving_gaps() -> None:
-    from app.routes.admin import _resequence_slot_overlays
+    from app.pipeline.overlay_pacing import _resequence_slot_overlays
 
     # Edited phrase [0,1.2]; two followers each 0.4s. Both ripple, gaps preserved.
     ovs = [
@@ -842,7 +872,7 @@ def test_unit_reflow_cascades_multiple_followers_preserving_gaps() -> None:
 
 
 def test_unit_reflow_single_overlay_noop() -> None:
-    from app.routes.admin import _resequence_slot_overlays
+    from app.pipeline.overlay_pacing import _resequence_slot_overlays
 
     ovs = [{"sample_text": "solo", "start_s": 0.0, "end_s": 1.0}]
     out, w = _resequence_slot_overlays(ovs, target_duration_s=2.0)
@@ -855,7 +885,7 @@ def test_unit_reflow_single_overlay_noop() -> None:
 
 
 def test_unit_group_phrase_index_blocks_cumulative_and_singletons() -> None:
-    from app.routes.admin import group_phrase_index_blocks
+    from app.pipeline.text_reveal import group_phrase_index_blocks
 
     ovs = [
         {"sample_text": "a"},
@@ -869,7 +899,7 @@ def test_unit_group_phrase_index_blocks_cumulative_and_singletons() -> None:
 
 
 def test_unit_resequence_separates_interleaved_phrases_as_blocks() -> None:
-    from app.routes.admin import _eff_end, _eff_start, _resequence_slot_overlays
+    from app.pipeline.overlay_pacing import _eff_end, _eff_start, _resequence_slot_overlays
 
     # Two phrases whose reveal stages are interleaved in time (the real prod bug).
     # Re-sequencing must move each WHOLE phrase, not fragment them.

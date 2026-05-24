@@ -81,6 +81,14 @@ def _load_env_file_into_environ() -> None:
 
 _load_env_file_into_environ()
 
+_API_ROOT = Path(__file__).resolve().parents[1]
+if str(_API_ROOT) not in sys.path:
+    sys.path.insert(0, str(_API_ROOT))
+
+from app.services.yt_dlp_options import (  # noqa: E402
+    YtDlpCookieConfigError,
+    with_yt_dlp_cookiefile,
+)
 
 # ---------------------------------------------------------------------------
 # Constants — mirrored from app.pipeline.lyric_injector (single source of truth
@@ -165,8 +173,22 @@ def _sha_short(path: Path) -> str:
     return h.hexdigest()[:16]
 
 
-def _run(cmd: list[str], *, check: bool = True, quiet: bool = True) -> subprocess.CompletedProcess:
-    out = subprocess.run(cmd, check=False, capture_output=quiet, text=quiet)
+def _run(
+    cmd: list[str],
+    *,
+    check: bool = True,
+    quiet: bool = True,
+    pass_fds: tuple[int, ...] = (),
+) -> subprocess.CompletedProcess:
+    run_kwargs = {
+        "check": False,
+        "capture_output": quiet,
+        "text": quiet,
+    }
+    if pass_fds:
+        run_kwargs["pass_fds"] = pass_fds
+
+    out = subprocess.run(cmd, **run_kwargs)
     if check and out.returncode != 0:
         err = (out.stderr or "") if quiet else ""
         raise RuntimeError(f"command failed ({cmd[0]} exit {out.returncode}):\n{err}")
@@ -261,21 +283,31 @@ def _yt_dlp_download(url: str, dest: Path) -> None:
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     _log(f"yt-dlp → {dest.name}")
-    _run(
-        [
-            "yt-dlp",
-            "-f",
-            "bv*+ba/b",
-            "--merge-output-format",
-            "mp4",
-            "--no-playlist",
-            "--quiet",
-            "-o",
-            str(dest),
-            url,
-        ],
-        quiet=False,
-    )
+    try:
+        with with_yt_dlp_cookiefile(
+            cookie_path=os.environ.get("YTDLP_COOKIES_PATH"),
+            cookie_b64=os.environ.get("YTDLP_COOKIES_B64"),
+            subprocess_safe=True,
+            use_settings=False,
+        ) as cookie_file:
+            cmd = [
+                "yt-dlp",
+                "-f",
+                "bv*+ba/b",
+                "--merge-output-format",
+                "mp4",
+                "--no-playlist",
+                "--quiet",
+                "-o",
+                str(dest),
+            ]
+            if cookie_file is not None:
+                cmd.extend(["--cookies", str(cookie_file.path)])
+            cmd.append(url)
+
+            _run(cmd, quiet=False, pass_fds=cookie_file.pass_fds if cookie_file else ())
+    except YtDlpCookieConfigError as exc:
+        raise RuntimeError(f"yt-dlp cookie configuration is invalid: {exc}") from exc
     if not dest.exists():
         raise RuntimeError(f"yt-dlp produced no file at {dest}")
 

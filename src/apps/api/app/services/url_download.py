@@ -9,6 +9,7 @@ import structlog
 import yt_dlp
 
 from app.config import settings
+from app.services.yt_dlp_options import YtDlpCookieConfigError, with_yt_dlp_options
 from app.storage import _get_client
 
 log = structlog.get_logger()
@@ -60,8 +61,11 @@ def download_and_upload(url: str) -> str:
         log.info("url_download_start", url=url, gcs_path=gcs_path)
 
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+            with with_yt_dlp_options(ydl_opts, temp_dir=tmpdir) as resolved_opts:
+                with yt_dlp.YoutubeDL(resolved_opts) as ydl:
+                    ydl.download([url])
+        except YtDlpCookieConfigError as exc:
+            raise DownloadError(f"yt-dlp cookie configuration is invalid: {exc}") from exc
         except yt_dlp.utils.DownloadError as exc:
             log.warning("url_download_failed", url=url, error=str(exc))
             raise DownloadError(f"Failed to download video: {exc}") from exc

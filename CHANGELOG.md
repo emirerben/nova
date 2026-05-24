@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.45.0] - 2026-05-24
+
+### Fixed
+- **Admin YouTube imports can now use configured yt-dlp cookies instead of failing on bot challenges.** API downloads, playlist ingestion, and lyric-sync diagnostics all share one cookie helper that accepts either `YTDLP_COOKIES_B64` or `YTDLP_COOKIES_PATH`, rejects invalid or conflicting config, writes base64 cookies as short-lived `0600` files, and keeps subprocess cookie paths readable without leaving named files behind on Linux. YouTube bot-challenge errors now tell admins to refresh cookies or use file upload instead of returning a generic download failure.
+- **Pytest timeouts are now enforced during local API tests.** Pytest now requires `pytest-timeout>=2.3`, and the Makefile test targets install API dev dependencies into `src/apps/api/.venv` before running pytest, so `timeout = 30` is active instead of silently ignored. Tracked generated `nova_api.egg-info` metadata was removed so editable installs stop dirtying the repo during test runs.
+
+## [0.4.44.14] - 2026-05-24
+
+### Fixed
+- **Cumulative word reveals no longer flash by faster than the eye can read.** On prod template `89cde014` ("not just luck 2") the phrase "the work to get there." crammed 5 reveal stages into 431 ms (~86 ms/word) and the final "and good timing so..." singleton lasted 25 ms — never visible on screen. Root cause: nothing in the pipeline ever LENGTHENED a phrase whose words were below a readable floor — the de-clusterer (`_despace_word_starts`) and the admin "fit" pass only ever shrank or pushed timings, so a phrase the OCR/transcript timed faster than the eye can read stayed unreadable. New `app/pipeline/overlay_pacing.py::normalize_slot_overlay_pacing` floors every reveal stage to `MIN_PER_WORD_S=0.35` (standalone overlays to `0.5`), re-sequences, then — if the floored timeline overflows the slot — reclaims inter-phrase dead air and shrinks the SLOW phrases' slack (their time above the floor) proportionally so it fits, never pushing a word back below the floor. The slot's total duration is preserved: "make the slowest faster to fund the fastest." The pure timing helpers (resequence/eff/fit) moved out of `routes/admin.py` into the new module so the generation bridge and the admin editor share one implementation. Wired into Layer-2 generation (`_merge_overlays_into_slots`, fixes future templates), the admin `retime-phrase` endpoint (floor-only, `compress=False` — editing one phrase never speeds up its neighbours), and the admin `resequence-slots?fit_to_duration=true` "Fit to time" button (the in-place fix for already-cached recipes — no Gemini/transcript re-run). Verified against the real `89cde014` recipe: every "the work to get there." stage → 0.35 s, "and good timing so..." → 0.5 s, slot total preserved at 11.23 s. **Note:** existing cached recipes are not auto-invalidated (the change isn't a Layer-2 cache-hash input); fix a live template by hitting "Fit to time" on it, or it self-corrects on next reanalysis.
+
 ## [0.4.44.13] - 2026-05-24
 
 ### Fixed

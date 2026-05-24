@@ -29,6 +29,7 @@ from app.agents.template_text import (
     TemplateTextOverlay,
 )
 from app.config import settings
+from app.pipeline.overlay_pacing import normalize_slot_overlay_pacing
 from app.pipeline.text_overlay_v2.constants import (
     LAYER2_RENDER_TEXT_SIZE as _LAYER2_UNIFORM_TEXT_SIZE,
 )
@@ -206,6 +207,30 @@ def _merge_overlays_into_slots(
     return merged_count
 
 
+def _apply_legibility_pacing(slots: list[dict[str, Any]]) -> None:
+    """Enforce a per-word legibility floor + redistribute within each slot's
+    fixed duration, in place. Runs AFTER ``_merge_overlays_into_slots`` — which
+    stays timing-faithful so the eval-fixture export reconstructs the agent's
+    true output. Cumulative reveals never flash by faster than the eye can read
+    (prod 89cde014: "the work to get there." crammed 5 words into 431 ms; "and
+    good timing so..." showed for 25 ms). No-op for already-readable slots.
+    """
+    for i, slot in enumerate(slots, start=1):
+        if not isinstance(slot, dict):
+            continue
+        try:
+            dur = float(slot.get("target_duration_s", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            dur = 0.0
+        overlays = slot.get("text_overlays")
+        if dur <= 0 or not isinstance(overlays, list) or not overlays:
+            continue
+        paced, warns = normalize_slot_overlay_pacing(overlays, slot_duration_s=dur)
+        slot["text_overlays"] = paced
+        if any(warns.get(k) for k in ("stages_expanded", "singletons_expanded")):
+            log.info("layer2_legibility_pass", slot_index=i, slot_duration_s=dur, **warns)
+
+
 def extract_template_text_overlays(
     file_ref: Any,
     recipe: Any,
@@ -310,6 +335,7 @@ def extract_template_text_overlays(
         return False, 0
 
     merged = _merge_overlays_into_slots(recipe.slots, out.overlays)
+    _apply_legibility_pacing(recipe.slots)
     log.info(
         "template_text_overlays_merged",
         job_id=job_id,

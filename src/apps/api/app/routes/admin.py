@@ -29,9 +29,11 @@ from sqlalchemy.orm import defer
 from app.config import settings
 from app.database import get_db
 from app.models import AgentRun, Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
-from app.pipeline.text_reveal import (
-    butt_join_cumulative_phrases,
-    group_phrase_index_blocks,
+from app.pipeline.overlay_pacing import (
+    _fit_slot_overlays_to_duration,
+    _resequence_slot_overlays,
+    _slot_target_duration,
+    normalize_slot_overlay_pacing,
 )
 from app.routes._admin_schemas import AgentRunPayload, agent_run_to_payload
 from app.routes.templates import RequiredInput, invalidate_templates_cache
@@ -1410,11 +1412,6 @@ _RETIME_DWELL_S = 0.40
 # Floor for a single static (singleton) overlay so a one-word edit never
 # collapses to a zero-length, undisplayable window.
 _RETIME_MIN_OVERLAY_S = 0.20
-# Legibility floor for the "Fit to time" compress pass: a per-word reveal stage
-# is never sped up below this, even if the slot still overflows. Beyond this the
-# words flash by too fast to read, so we stop compressing and let the existing
-# overflow notice report the residual instead.
-_RETIME_MIN_BEAT_S = 0.10
 
 
 def _retime_overlay_from_anchor(
@@ -1502,167 +1499,6 @@ def _recompute_phrase_overlays(
             _retime_overlay_from_anchor(anchor, text=cum, start_s=st, end_s=en, suffix=words[k])
         )
     return out
-
-
-# Slot reflow: adjacency tolerance. Two overlays whose windows touch
-# (start == prev_end, as cumulative reveal stages do) are NOT overlapping; only
-# a genuine overlap (start strictly before prev_end by more than this epsilon)
-# triggers a ripple.
-_REFLOW_EPS = 1e-6
-
-
-def _eff_start(o: dict) -> float:
-    """Effective start: override wins over base (matches the render path)."""
-    v = o.get("start_s_override")
-    return float((v if v is not None else o.get("start_s")) or 0.0)
-
-
-def _eff_end(o: dict) -> float:
-    """Effective end: override wins over base (matches the render path)."""
-    v = o.get("end_s_override")
-    return float((v if v is not None else o.get("end_s")) or 0.0)
-
-
-def _shift_overlay(o: dict, delta: float) -> None:
-    """Move an overlay forward in time by ``delta`` seconds in place.
-
-    Shifts base and override timings together so the effective window moves
-    correctly whichever pair is set, and carries ``font_cycle_accel_at_s`` along
-    (clamped to stay inside the new window, matching Dedup 2's accel contract).
-    """
-    for base, ovr in (("start_s", "start_s_override"), ("end_s", "end_s_override")):
-        if o.get(base) is not None:
-            o[base] = round(float(o[base]) + delta, 3)
-        if o.get(ovr) is not None:
-            o[ovr] = round(float(o[ovr]) + delta, 3)
-    accel = o.get("font_cycle_accel_at_s")
-    if accel is not None:
-        lo, hi = _eff_start(o), _eff_end(o)
-        o["font_cycle_accel_at_s"] = round(max(lo, min(float(accel) + delta, hi - 1e-3)), 3)
-
-
-def _slot_target_duration(slot: dict) -> float | None:
-    """Coerce a slot's ``target_duration_s`` to float, or None if unusable."""
-    raw = slot.get("target_duration_s") if isinstance(slot, dict) else None
-    try:
-        return float(raw) if raw is not None else None
-    except (TypeError, ValueError):
-        return None
-
-
-def _resequence_slot_overlays(
-    overlays: list[dict], *, target_duration_s: float | None
-) -> tuple[list[dict], dict]:
-    """Lay phrase blocks end-to-end so no two overlays in the slot overlap.
-
-    Groups overlays into phrase blocks (``_group_phrase_index_blocks``) and
-    walks them in array order — the authored reading order — ripple-forwarding
-    each whole block so it starts no earlier than the previous block ended. Only
-    ever moves blocks LATER (never earlier, never compressed); a block already
-    clear of the previous one (a gap) is left untouched, so intentional pauses
-    survive. Each phrase keeps its internal per-word pacing — only the block as a
-    unit moves, which resolves interleaved phrases instead of fragmenting them.
-
-    This is slot-wide and position-agnostic: a multi-lane (e.g. two-line) layout
-    collapses to a single sequential read where only one phrase is on screen at
-    a time. Phrase blocks carrying agentic ``start_pct``/``end_pct`` timing are
-    skipped (a seconds-shift is a render no-op) and don't advance the cursor.
-
-    Returns ``(new_overlays, warnings)`` where ``warnings`` reports how many
-    overlays were pushed so their start exceeds ``target_duration_s`` (the
-    renderer clamps end_s to the clip, so these render truncated, not dropped).
-    """
-    out = [dict(o) if isinstance(o, dict) else o for o in overlays]
-    pushed_past_target = 0
-    cursor: float | None = None
-    for block in group_phrase_index_blocks(out):
-        members = [out[i] for i in block if isinstance(out[i], dict)]
-        if not members:
-            continue
-        if any(m.get("start_pct") is not None or m.get("end_pct") is not None for m in members):
-            continue  # agentic-relative timing — leave as-is, don't advance cursor
-        block_start = min(_eff_start(m) for m in members)
-        block_end = max(_eff_end(m) for m in members)
-        if cursor is not None and block_start < cursor - _REFLOW_EPS:
-            delta = cursor - block_start
-            for m in members:
-                _shift_overlay(m, delta)
-            block_start += delta
-            block_end += delta
-        cursor = block_end
-        if target_duration_s is not None and block_start > target_duration_s:
-            pushed_past_target += len(members)
-    # Close any intra-phrase gaps so a cumulative reveal never blanks out
-    # between words (the prod 89cde014 glitch). This only extends a member's
-    # end to the next member's start within the SAME phrase block — it never
-    # touches inter-phrase gaps, so the intentional pauses the ripple preserved
-    # above survive.
-    butt_join_cumulative_phrases(out)
-    return out, {"overlays_pushed_past_target": pushed_past_target}
-
-
-def _scale_overlay_time(o: dict, origin: float, scale: float) -> None:
-    """Compress an overlay's timing toward ``origin`` by ``scale`` in place
-    (``new_t = origin + (t - origin) * scale``). Scales base + override pairs
-    and ``font_cycle_accel_at_s`` together so the effective window stays
-    coherent whichever pair is set. Wording is untouched."""
-    for base, ovr in (("start_s", "start_s_override"), ("end_s", "end_s_override")):
-        if o.get(base) is not None:
-            o[base] = round(origin + (float(o[base]) - origin) * scale, 3)
-        if o.get(ovr) is not None:
-            o[ovr] = round(origin + (float(o[ovr]) - origin) * scale, 3)
-    accel = o.get("font_cycle_accel_at_s")
-    if accel is not None:
-        o["font_cycle_accel_at_s"] = round(origin + (float(accel) - origin) * scale, 3)
-
-
-def _fit_slot_overlays_to_duration(
-    overlays: list[dict], *, target_duration_s: float | None
-) -> tuple[list[dict], dict]:
-    """Re-sequence phrase blocks end-to-end (``_resequence_slot_overlays``) then
-    compress the per-word reveal pacing UNIFORMLY so the whole slot fits within
-    ``target_duration_s``. This is the "make the reveals faster to fit the
-    selected time" pass: only timestamps shrink (toward the first phrase's
-    start) — no phrase is reworded, reordered, or dropped, and the cumulative
-    butt-joins are preserved because every stage scales by the same factor.
-
-    A legibility floor (``_RETIME_MIN_BEAT_S`` per reveal stage) caps the
-    compression; if the slot still overflows at the floor, the residual is
-    reported in ``warnings`` exactly like the no-compress path so the existing
-    non-blocking overflow notice fires. With no usable ``target_duration_s`` (or
-    nothing to compress) this degrades to a plain re-sequence.
-    """
-    seq, warns = _resequence_slot_overlays(overlays, target_duration_s=target_duration_s)
-    if target_duration_s is None:
-        return seq, warns
-    # Only seconds-timed overlays participate; agentic pct-timed overlays are a
-    # render no-op for seconds math (mirrors _resequence_slot_overlays).
-    timed = [
-        o
-        for o in seq
-        if isinstance(o, dict) and o.get("start_pct") is None and o.get("end_pct") is None
-    ]
-    if not timed:
-        return seq, warns
-    origin = min(_eff_start(o) for o in timed)
-    end = max(_eff_end(o) for o in timed)
-    span = end - origin
-    avail = target_duration_s - origin
-    if span <= 0 or avail <= 0 or end <= target_duration_s:
-        return seq, warns  # already fits, or the start itself is past target
-    scale = avail / span
-    # Don't compress any reveal stage below the legibility floor.
-    stage_durs = [_eff_end(o) - _eff_start(o) for o in timed if _eff_end(o) > _eff_start(o)]
-    min_stage = min(stage_durs) if stage_durs else 0.0
-    if min_stage > 0:
-        scale = max(scale, min(1.0, _RETIME_MIN_BEAT_S / min_stage))
-    if scale >= 1.0:
-        return seq, warns
-    for o in timed:
-        _scale_overlay_time(o, origin, scale)
-    # Re-derive warnings against the compressed timeline (no-op shift; recounts
-    # any residual overflow that survived the legibility floor).
-    return _resequence_slot_overlays(seq, target_duration_s=target_duration_s)
 
 
 class RetimePhraseRequest(BaseModel):
@@ -1768,10 +1604,11 @@ async def retime_template_phrase(
         dict(ov) if isinstance(ov, dict) else ov for ov in slot_copy.get("text_overlays", [])
     ]
     overlays_copy[idxs[0] : idxs[-1] + 1] = new_members
-    # Re-sequence the whole slot: lay phrase blocks end-to-end so the (possibly
-    # grown) edit and every other phrase play sequentially with no overlap.
-    overlays_copy, reflow_warnings = _resequence_slot_overlays(
-        overlays_copy, target_duration_s=_slot_target_duration(slot_copy)
+    # Re-pace + re-sequence the whole slot: enforce the per-word legibility
+    # floor on the (possibly retimed-too-fast) edit, then lay phrase blocks
+    # end-to-end so every phrase plays sequentially with no overlap.
+    overlays_copy, reflow_warnings = normalize_slot_overlay_pacing(
+        overlays_copy, slot_duration_s=_slot_target_duration(slot_copy), compress=False
     )
     slot_copy["text_overlays"] = overlays_copy
     new_slots[req.slot_index] = slot_copy
@@ -1833,9 +1670,12 @@ class ResequenceSlotsRequest(BaseModel):
     Backs the "Fix timings" button in the OverlaysTab — the escape hatch when
     analysis timings overlap and the admin hasn't edited any wording.
 
-    ``fit_to_duration=True`` additionally compresses each slot's per-word reveal
-    pacing so the sequenced phrases fit within the slot's ``target_duration_s``
-    (the "Fit to time" button) — still without changing any wording.
+    ``fit_to_duration=True`` additionally normalizes each slot's per-word reveal
+    pacing (the "Fit to time" button) — still without changing any wording: it
+    enforces a per-word legibility floor (expanding reveals timed too fast to
+    read) and then compresses uniformly so the sequenced phrases fit within the
+    slot's ``target_duration_s``. This is the in-place fix for recipes whose
+    cumulative reveals flash by faster than the eye can read (prod 89cde014).
     """
 
     slot_index: int | None = Field(default=None, ge=0)
