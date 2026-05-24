@@ -94,6 +94,12 @@ class TemplateRecipe:
     # matches fell below the similarity floor — renderer falls back to the
     # existing default chain (font_family → font_style → Playfair Display).
     font_default: str = ""
+    # Recipe-level override of the clip xfade base duration (seconds). None →
+    # the renderer's DEFAULT_TRANSITION_DURATION_S (0.3s). Lets an admin speed
+    # up every transition to help footage fit the selected time. Always clamped
+    # to 30% of the shorter adjacent slot in the xfade builders, so a too-large
+    # value can never eat the footage.
+    transition_duration_s: float | None = None
 
 
 # Keys that live on `recipe_cached` JSON (and on the dict returned by

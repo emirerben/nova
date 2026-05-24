@@ -249,6 +249,21 @@ def _anchored_left_x(anchor: str, cx: float, width: float) -> float:
     return cx - width / 2.0
 
 
+def _vertical_block_top(anchor: str, cy: float, block_h: float) -> float:
+    """Top y of a `block_h`-tall text block anchored at cy. Mirrors Pillow's
+    _draw_text_png vertical anchoring: left-anchored text treats
+    position_y_frac as the block TOP, so wrapped lines grow DOWNWARD — a
+    cumulative reveal that wraps from 1 line to 2 keeps the earlier line
+    pinned instead of re-centering (the "all previous words re-appear" bug on
+    prod template 89cde014). Center/right keep the block vertically centered on
+    cy (historical default — changing it would shift existing centered
+    templates). Centralized so _draw_centered_text, _draw_pop_in_with_suffix,
+    and _draw_karaoke_line all agree on the vertical origin."""
+    if anchor == "left":
+        return cy
+    return cy - block_h / 2.0
+
+
 def _wrap_text_to_lines(text: str, font: skia.Font, max_width: float) -> list[str]:
     """Greedy word-wrap, mirrors text_overlay._wrap_text_to_lines.
 
@@ -362,7 +377,7 @@ def _draw_centered_text(
     cx, cy = _resolve_anchor(overlay)
     anchor = _resolve_text_anchor(overlay)
 
-    block_top = cy - block["block_h"] / 2.0
+    block_top = _vertical_block_top(anchor, cy, block["block_h"])
     first_baseline = block_top + block["ascent_offset"]
 
     # Emoji prefix: composite to the left of line 0
@@ -575,8 +590,11 @@ def _draw_pop_in_with_suffix(
     # ~90% canvas, or the analysis-time line-split didn't apply), that layout
     # would clip off the right edge ("combination of hard work" → "combination
     # of har"). Fall back to the wrapping/shrinking path, which stacks lines
-    # and honors text_anchor — the whole line pops together instead of just
-    # the suffix, but nothing clips.
+    # and honors text_anchor. Because pop-in no longer scales (scale=1.0, see
+    # below) and _draw_centered_text now top-anchors left-anchored blocks
+    # (_vertical_block_top), the wrapped fallback renders the prior words in
+    # the SAME positions as the previous stage — no whole-line re-pop, no
+    # vertical re-center. The cumulative reveal stays spatially stable.
     if len(full_lines) > 1:
         _draw_with_animation(canvas, overlay, t_local, duration_s, effect="pop-in")
         return
@@ -590,7 +608,13 @@ def _draw_pop_in_with_suffix(
 
     metrics = full_font.getMetrics()
     line_height_raw = metrics.fDescent - metrics.fAscent
-    baseline_y = cy - line_height_raw / 2.0 + (-metrics.fAscent)
+    # Top-anchor the single-line baseline for left/right (matching
+    # _vertical_block_top + _measure_block's single-line block_h) so a phrase's
+    # first stage (one line, here) sits at the SAME vertical position as the
+    # later stages that wrap to multiple lines via the bail above. Without
+    # this, stage 1 vertically centers and the line visibly jumps up when
+    # stage 2 wraps and top-anchors.
+    baseline_y = _vertical_block_top(anchor, cy, line_height_raw) + (-metrics.fAscent)
 
     fill_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
@@ -677,7 +701,10 @@ def _draw_karaoke_line(
     x = _anchored_left_x(anchor, cx, total_w)
     metrics = font.getMetrics()
     line_height_raw = metrics.fDescent - metrics.fAscent
-    baseline_y = cy - line_height_raw / 2.0 + (-metrics.fAscent)
+    # Match _vertical_block_top so a karaoke line shares the same vertical
+    # origin convention as the centered/pop-in paths (top for left/right,
+    # centered for center).
+    baseline_y = _vertical_block_top(anchor, cy, line_height_raw) + (-metrics.fAscent)
 
     primary_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
     highlight_color = _skia_color_from_hex(

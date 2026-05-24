@@ -287,13 +287,19 @@ export async function adminRetimeTemplatePhrase(
 // Re-sequence overlay timings so phrases never overlap, without changing any
 // text. Lays each slot's phrase blocks end-to-end (one phrase on screen at a
 // time). Omit slot_index to fix every slot. Backs the "Fix timings" button.
+// `fitToDuration` additionally compresses each slot's per-word reveal pacing so
+// the sequenced phrases fit within the slot's target duration ("Fit to time").
 export async function adminResequenceTemplateSlots(
   id: string,
   slotIndex?: number,
+  fitToDuration = false,
 ): Promise<TemplateDebugResponse> {
+  const body: { slot_index?: number; fit_to_duration?: boolean } = {};
+  if (slotIndex !== undefined) body.slot_index = slotIndex;
+  if (fitToDuration) body.fit_to_duration = true;
   const res = await adminFetch(`/admin/templates/${id}/resequence-slots`, {
     method: "POST",
-    body: JSON.stringify(slotIndex === undefined ? {} : { slot_index: slotIndex }),
+    body: JSON.stringify(body),
   });
   return res.json();
 }

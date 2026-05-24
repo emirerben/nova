@@ -628,6 +628,10 @@ class RecipeSchema(BaseModel):
     #   "letterbox_black" (preserve full frame, black bars).
     output_fit: Literal["crop", "letterbox", "letterbox_blur", "letterbox_black"] = "crop"
     clip_filter_hint: str = ""  # natural-language Gemini bias for best_moments
+    # Recipe-level clip xfade duration override (seconds). None → renderer
+    # default (0.3s). Lower = faster transitions, helps footage fit the
+    # selected time. Clamped to 30% of the shorter adjacent slot at render time.
+    transition_duration_s: float | None = Field(default=None, gt=0.0, le=2.0)
 
     @field_validator("slots")
     @classmethod
@@ -1402,6 +1406,11 @@ _RETIME_DWELL_S = 0.40
 # Floor for a single static (singleton) overlay so a one-word edit never
 # collapses to a zero-length, undisplayable window.
 _RETIME_MIN_OVERLAY_S = 0.20
+# Legibility floor for the "Fit to time" compress pass: a per-word reveal stage
+# is never sped up below this, even if the slot still overflows. Beyond this the
+# words flash by too fast to read, so we stop compressing and let the existing
+# overflow notice report the residual instead.
+_RETIME_MIN_BEAT_S = 0.10
 
 
 def _retime_overlay_from_anchor(
@@ -1622,6 +1631,70 @@ def _resequence_slot_overlays(
     return out, {"overlays_pushed_past_target": pushed_past_target}
 
 
+def _scale_overlay_time(o: dict, origin: float, scale: float) -> None:
+    """Compress an overlay's timing toward ``origin`` by ``scale`` in place
+    (``new_t = origin + (t - origin) * scale``). Scales base + override pairs
+    and ``font_cycle_accel_at_s`` together so the effective window stays
+    coherent whichever pair is set. Wording is untouched."""
+    for base, ovr in (("start_s", "start_s_override"), ("end_s", "end_s_override")):
+        if o.get(base) is not None:
+            o[base] = round(origin + (float(o[base]) - origin) * scale, 3)
+        if o.get(ovr) is not None:
+            o[ovr] = round(origin + (float(o[ovr]) - origin) * scale, 3)
+    accel = o.get("font_cycle_accel_at_s")
+    if accel is not None:
+        o["font_cycle_accel_at_s"] = round(origin + (float(accel) - origin) * scale, 3)
+
+
+def _fit_slot_overlays_to_duration(
+    overlays: list[dict], *, target_duration_s: float | None
+) -> tuple[list[dict], dict]:
+    """Re-sequence phrase blocks end-to-end (``_resequence_slot_overlays``) then
+    compress the per-word reveal pacing UNIFORMLY so the whole slot fits within
+    ``target_duration_s``. This is the "make the reveals faster to fit the
+    selected time" pass: only timestamps shrink (toward the first phrase's
+    start) — no phrase is reworded, reordered, or dropped, and the cumulative
+    butt-joins are preserved because every stage scales by the same factor.
+
+    A legibility floor (``_RETIME_MIN_BEAT_S`` per reveal stage) caps the
+    compression; if the slot still overflows at the floor, the residual is
+    reported in ``warnings`` exactly like the no-compress path so the existing
+    non-blocking overflow notice fires. With no usable ``target_duration_s`` (or
+    nothing to compress) this degrades to a plain re-sequence.
+    """
+    seq, warns = _resequence_slot_overlays(overlays, target_duration_s=target_duration_s)
+    if target_duration_s is None:
+        return seq, warns
+    # Only seconds-timed overlays participate; agentic pct-timed overlays are a
+    # render no-op for seconds math (mirrors _resequence_slot_overlays).
+    timed = [
+        o
+        for o in seq
+        if isinstance(o, dict) and o.get("start_pct") is None and o.get("end_pct") is None
+    ]
+    if not timed:
+        return seq, warns
+    origin = min(_eff_start(o) for o in timed)
+    end = max(_eff_end(o) for o in timed)
+    span = end - origin
+    avail = target_duration_s - origin
+    if span <= 0 or avail <= 0 or end <= target_duration_s:
+        return seq, warns  # already fits, or the start itself is past target
+    scale = avail / span
+    # Don't compress any reveal stage below the legibility floor.
+    stage_durs = [_eff_end(o) - _eff_start(o) for o in timed if _eff_end(o) > _eff_start(o)]
+    min_stage = min(stage_durs) if stage_durs else 0.0
+    if min_stage > 0:
+        scale = max(scale, min(1.0, _RETIME_MIN_BEAT_S / min_stage))
+    if scale >= 1.0:
+        return seq, warns
+    for o in timed:
+        _scale_overlay_time(o, origin, scale)
+    # Re-derive warnings against the compressed timeline (no-op shift; recounts
+    # any residual overflow that survived the legibility floor).
+    return _resequence_slot_overlays(seq, target_duration_s=target_duration_s)
+
+
 class RetimePhraseRequest(BaseModel):
     """Replace a cumulative-reveal phrase's member overlays with a recomputed
     set derived from `new_text`.
@@ -1789,9 +1862,14 @@ class ResequenceSlotsRequest(BaseModel):
     text. ``slot_index=None`` re-sequences every slot; otherwise just that one.
     Backs the "Fix timings" button in the OverlaysTab — the escape hatch when
     analysis timings overlap and the admin hasn't edited any wording.
+
+    ``fit_to_duration=True`` additionally compresses each slot's per-word reveal
+    pacing so the sequenced phrases fit within the slot's ``target_duration_s``
+    (the "Fit to time" button) — still without changing any wording.
     """
 
     slot_index: int | None = Field(default=None, ge=0)
+    fit_to_duration: bool = False
 
 
 @router.post(
@@ -1841,7 +1919,10 @@ async def resequence_template_slots(
         if not isinstance(overlays, list) or not overlays:
             continue
         overlays_copy = [dict(ov) if isinstance(ov, dict) else ov for ov in overlays]
-        overlays_copy, warns = _resequence_slot_overlays(
+        sequence_fn = (
+            _fit_slot_overlays_to_duration if req.fit_to_duration else _resequence_slot_overlays
+        )
+        overlays_copy, warns = sequence_fn(
             overlays_copy, target_duration_s=_slot_target_duration(slot)
         )
         slot["text_overlays"] = overlays_copy
@@ -1863,6 +1944,7 @@ async def resequence_template_slots(
         "admin_template_slots_resequenced",
         template_id=template_id,
         slots=targets,
+        fit_to_duration=req.fit_to_duration,
         pushed_past_target=pushed_past_target,
     )
 
