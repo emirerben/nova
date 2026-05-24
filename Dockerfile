@@ -16,7 +16,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libheif1 \
     curl \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# yt-dlp's YouTube extractor now needs an external JS runtime for signature
+# challenges. Deno is the runtime yt-dlp enables by default for EJS.
+ARG DENO_VERSION=2.7.13
+RUN curl -fsSL -o /tmp/deno.zip \
+      "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-x86_64-unknown-linux-gnu.zip" && \
+    unzip /tmp/deno.zip -d /usr/local/bin && \
+    chmod +x /usr/local/bin/deno && \
+    rm /tmp/deno.zip && \
+    deno --version
 
 # Non-root user
 RUN groupadd --gid 1000 nova && \

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.45.1] - 2026-05-24
+
+### Fixed
+- **Production YouTube imports can solve yt-dlp's current EJS challenges.** The Fly image now includes Deno, and the API installs `yt-dlp[default]` so the `yt-dlp-ejs` solver scripts ship with the Python package. This fixes the post-cookie production failure where the configured YouTube cookies were present but yt-dlp saw only image formats because signature/n-challenge solving had no runtime.
+
 ## [0.4.45.0] - 2026-05-24
 
 ### Fixed

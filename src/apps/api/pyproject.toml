@@ -43,7 +43,7 @@ dependencies = [
     # templates remain on Pillow + libass. Wheel is ~50MB; skia-python
     # ships pre-built binaries for linux + darwin amd64/arm64.
     "skia-python>=87,<200",
-    "yt-dlp>=2024.12",
+    "yt-dlp[default]>=2024.12",
     # numpy is a transitive of opencv-python-headless / scenedetect, but the
     # font-identification pipeline depends on it directly for embedding math.
     # Pinning explicitly so the resolver can't silently downgrade it.
