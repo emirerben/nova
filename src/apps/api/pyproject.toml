@@ -131,3 +131,4 @@ select = ["E", "F", "I", "UP"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 timeout = 30
+required_plugins = ["pytest-timeout>=2.3"]

@@ -54,6 +54,15 @@ def test_raise_descriptive_error_unavailable() -> None:
         _raise_descriptive_error("https://youtube.com/x", "This video is private")
 
 
+def test_raise_descriptive_error_youtube_bot_challenge() -> None:
+    raw = (
+        "ERROR: [youtube] Zi_XLOBDo_Y: Sign in to confirm you’re not a bot. "
+        "Use --cookies-from-browser or --cookies for the authentication."
+    )
+    with pytest.raises(DownloadError, match="blocked this server"):
+        _raise_descriptive_error("https://youtube.com/x", raw)
+
+
 def test_raise_descriptive_error_generic() -> None:
     with pytest.raises(DownloadError, match="Failed to download"):
         _raise_descriptive_error("https://youtube.com/x", "some other yt-dlp error")

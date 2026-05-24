@@ -1,7 +1,13 @@
-.PHONY: dev dev-web dev-api test build lint \
+.PHONY: dev dev-web dev-api api-install-dev test test-api test-quality build lint \
         local-render local-render-build local-render-up local-render-down \
         local-render-logs local-render-migrate verify-overlays \
         workspace-pull workspace-push workspace-status
+
+PYTHON ?= python3
+API_DIR := src/apps/api
+API_VENV ?= $(API_DIR)/.venv
+API_PYTHON := $(API_VENV)/bin/python
+API_LOCAL_PYTHON := .venv/bin/python
 
 # ── Local dev ──────────────────────────────────────────────────────────────────
 
@@ -89,12 +95,22 @@ verify-overlays:
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
-test:
-	(cd src/apps/web && pnpm test)
-	(cd src/apps/api && python -m pytest tests/ --ignore=tests/quality -v)
+api-install-dev:
+	@if [ ! -x "$(API_PYTHON)" ]; then \
+		$(PYTHON) -m venv "$(API_VENV)"; \
+	fi
+	$(API_PYTHON) -m pip install --upgrade pip setuptools
+	(cd $(API_DIR) && $(API_LOCAL_PYTHON) -m pip install -e ".[dev]")
 
-test-quality:
-	(cd src/apps/api && python -m pytest tests/quality/ -v)
+test: api-install-dev
+	(cd src/apps/web && pnpm test)
+	(cd $(API_DIR) && $(API_LOCAL_PYTHON) -m pytest tests/ --ignore=tests/quality -v)
+
+test-api: api-install-dev
+	(cd $(API_DIR) && $(API_LOCAL_PYTHON) -m pytest tests/ --ignore=tests/quality -v)
+
+test-quality: api-install-dev
+	(cd $(API_DIR) && $(API_LOCAL_PYTHON) -m pytest tests/quality/ -v)
 
 migrate:
 	(cd src/apps/api && alembic upgrade head)

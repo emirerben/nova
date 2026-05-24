@@ -17,6 +17,7 @@ import structlog
 import yt_dlp
 
 from app.config import settings
+from app.services.yt_dlp_options import YtDlpCookieConfigError, with_yt_dlp_options
 from app.storage import _get_client
 
 log = structlog.get_logger()
@@ -34,6 +35,11 @@ MAX_AUDIO_DURATION_S = 600  # 10 minutes
 _GEO_PATTERN = re.compile(r"not available in your country|geo.?restrict", re.IGNORECASE)
 _RATE_PATTERN = re.compile(r"429|too many requests|rate limit", re.IGNORECASE)
 _UNAVAILABLE_PATTERN = re.compile(r"unavailable|private|removed|deleted", re.IGNORECASE)
+_BOT_CHALLENGE_PATTERN = re.compile(
+    r"sign in to confirm (?:you(?:'|’)?re|you are) not a bot|"
+    r"confirm (?:you(?:'|’)?re|you are) not a bot",
+    re.IGNORECASE,
+)
 
 
 class DownloadError(Exception):
@@ -85,8 +91,11 @@ def download_audio_and_upload(url: str) -> tuple[str, float | None, str | None]:
 
         info: dict | None = None
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
+            with with_yt_dlp_options(ydl_opts, temp_dir=tmpdir) as resolved_opts:
+                with yt_dlp.YoutubeDL(resolved_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+        except YtDlpCookieConfigError as exc:
+            raise DownloadError(f"yt-dlp cookie configuration is invalid: {exc}") from exc
         except yt_dlp.utils.DownloadError as exc:
             _raise_descriptive_error(url, str(exc))
         except Exception as exc:
@@ -124,6 +133,12 @@ def download_audio_and_upload(url: str) -> tuple[str, float | None, str | None]:
 
 def _raise_descriptive_error(url: str, raw_error: str) -> None:
     """Parse yt-dlp error text and raise a descriptive DownloadError."""
+    if _BOT_CHALLENGE_PATTERN.search(raw_error):
+        raise DownloadError(
+            "YouTube blocked this server as automated traffic. Refresh the configured "
+            "YouTube cookies (YTDLP_COOKIES_B64 or YTDLP_COOKIES_PATH), then retry this "
+            "track. You can also use Upload file to bypass YouTube."
+        )
     if _GEO_PATTERN.search(raw_error):
         raise DownloadError(
             "This track is geo-restricted and cannot be downloaded from the server's region. "
