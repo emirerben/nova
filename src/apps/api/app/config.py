@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     # Admin
     admin_api_key: str = ""
 
+    # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
+    # environments (secret-safe, decoded into a short-lived 0600 temp file) or
+    # YTDLP_COOKIES_PATH for local development / mounted secret files.
+    ytdlp_cookies_b64: str = ""
+    ytdlp_cookies_path: str = ""
+
     # Transcription backend
     transcriber_backend: str = "gemini"  # "gemini" | "whisper"
 

@@ -40,6 +40,7 @@ import yt_dlp
 from app.database import sync_session as _sync_session
 from app.models import MusicTrack
 from app.services.audio_download import DownloadError, download_audio_and_upload
+from app.services.yt_dlp_options import YtDlpCookieConfigError, with_yt_dlp_options
 
 log = structlog.get_logger()
 
@@ -82,8 +83,11 @@ def _list_playlist(playlist_url: str) -> list[PlaylistEntry]:
         "skip_download": True,
     }
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(playlist_url, download=False)
+        with with_yt_dlp_options(opts) as resolved_opts:
+            with yt_dlp.YoutubeDL(resolved_opts) as ydl:
+                info = ydl.extract_info(playlist_url, download=False)
+    except YtDlpCookieConfigError as exc:
+        raise SystemExit(f"yt-dlp cookie configuration is invalid: {exc}") from exc
     except yt_dlp.utils.DownloadError as exc:
         raise SystemExit(f"Failed to list playlist: {exc}") from exc
 

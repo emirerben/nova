@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.45.0] - 2026-05-24
+
+### Fixed
+- **Admin YouTube imports can now use configured yt-dlp cookies instead of failing on bot challenges.** API downloads, playlist ingestion, and lyric-sync diagnostics all share one cookie helper that accepts either `YTDLP_COOKIES_B64` or `YTDLP_COOKIES_PATH`, rejects invalid or conflicting config, writes base64 cookies as short-lived `0600` files, and keeps subprocess cookie paths readable without leaving named files behind on Linux. YouTube bot-challenge errors now tell admins to refresh cookies or use file upload instead of returning a generic download failure.
+- **Pytest timeouts are now enforced during local API tests.** Pytest now requires `pytest-timeout>=2.3`, and the Makefile test targets install API dev dependencies into `src/apps/api/.venv` before running pytest, so `timeout = 30` is active instead of silently ignored. Tracked generated `nova_api.egg-info` metadata was removed so editable installs stop dirtying the repo during test runs.
+
 ## [0.4.44.14] - 2026-05-24
 
 ### Fixed
