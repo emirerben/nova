@@ -545,3 +545,13 @@ All items completed 2026-04-06:
 - ~~Disable Deployment Protection~~ — done, preview-only
 - ~~Update Google OAuth Redirect URIs~~ — done in Google Cloud Console
 - ~~GCS bucket CORS~~ — done via `gsutil cors set`
+
+## Cache invariants
+
+### Lint check: bump `AgentSpec.prompt_version` when agent code touches prompts/schemas
+**What:** The content-hash Layer-2 cache key (`compute_text_overlay_version` in `src/apps/api/app/pipeline/template_cache.py`, added 2026-05-23) is derived from the prompt-file bytes + schema-module bytes + `AgentSpec.prompt_version` strings + a settings dict. **Gap:** edits to an agent's Python file that don't touch its prompt file and don't bump `prompt_version` will NOT invalidate the cache — silent stale recipes in prod. Add a CI lint that fails a PR when `src/apps/api/app/agents/<name>.py` changes without a corresponding bump to that agent's `AgentSpec.prompt_version` value.
+**Why:** Documented as a known gap when T1 (Lane A) shipped content-hashed invalidation; the plan's failure-modes registry called this out as the "critical gap" in the narrow-hash approach. Mitigation deferred to this lint check so the wave-1 cache change could ship without scope creep. Without it, the cache claims correctness it can't guarantee whenever an agent's parse/validation logic moves.
+**How:** Touched-files check in a new `.github/workflows/require-prompt-version-bump.yml` (or fold into the existing `agent-evals.yml`). When `src/apps/api/app/agents/<agent>.py` is in the PR diff, parse the file's `AgentSpec(...).prompt_version` value at both base and head; fail if equal. Escape hatch: `[skip-prompt-version-check] <reason>` in PR body (parallels the eventual T8 escape hatch). Cover the runtime path (`_runtime.py` itself) too — edits there can change every agent's behavior without touching any single agent file.
+**Effort:** S (human: ~1h / CC: ~20 min)
+**Priority:** P2
+**Depends on:** none (the cache change itself is already merged; this just closes the known gap)

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.44.9] - 2026-05-24
+
+### Changed
+- **Layer-2 cache invalidation is now content-hashed — manual `TEXT_OVERLAY_VERSION_V2` bumps are no longer required.** The old pattern was a hand-edited string constant (last manually bumped to `v2-2026-05-23c-declustered-reveal` on main) that every Stage-E/D/G change had to remember to bump; a missed bump silently served stale recipes. Five-plus PRs in seven days were spent on Layer-2 cache invalidation (#221, #249, #250, #252, #261), with further manual bumps continuing right up to v0.4.44.x. The constant is replaced by `compute_text_overlay_version()`, which derives a `v2-<hex16>` string from the SHA-256 of every Layer-2 prompt file, the SHA-256 of every Layer-2 schema module, the Layer-2 agents' `AgentSpec.prompt_version` strings, and a sorted JSON dict of the relevant settings flags. Any of those changing produces a fresh cache namespace automatically — including every Stage-E/D/G change that previously needed a manual bump (#288, #293, #294, #310, etc.), which the hash now reflects with no string edit. Existing `from app.pipeline.template_cache import TEXT_OVERLAY_VERSION_V2` callers keep working via a module-level `__getattr__` that resolves the symbol to the live computed value.
+- **Known gap:** edits to agent `.py` source that do NOT bump `AgentSpec.prompt_version` will not invalidate the cache (the hash covers prompts, schemas, version strings, and settings — not arbitrary agent code). Mitigation is tracked in `TODOS.md` under "Cache invariants" (a contributing-guide note plus a future lint check). This is a deliberate tradeoff against wide agent-code hashing, which would invalidate the cache on cosmetic edits (comments, variable renames) and trigger needless Gemini re-analysis.
+- Migration: no dual-key path. Existing Layer-2 cache entries become orphaned on deploy and recompute on next access — a Redis miss already degrades cleanly to compute. Expect a one-time burst of re-analysis after rollout.
+
+### Added
+- **`docs/cache-history.md`** — preserves the prior ~80-line narrative of manual `TEXT_OVERLAY_VERSION_V2` bumps (prod job IDs, agent_run evidence, and the prompt/Stage evolution dates) that previously lived as a comment block in `template_cache.py`. Referenced from the cache module's intro so the archaeology stays accessible after the constant's removal.
+- **`tests/pipeline/test_template_cache_keying.py`** — 9 tests locking each hash input dimension's invalidation behavior: identical inputs → identical key; prompt-content change → new key; schema-content change → new key; `prompt_version` bump → new key; settings-flag flip → new key; settings-dict key-order stable; prompt-version tuple-order stable; real-files happy path; v1 short-circuit.
+
 ## [0.4.44.8] - 2026-05-23
 
 ### Fixed
