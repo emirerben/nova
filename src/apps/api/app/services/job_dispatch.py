@@ -47,6 +47,7 @@ ORCHESTRATOR_TASK_NAMES: tuple[str, ...] = (
     "orchestrate_single_video_job",
     "orchestrate_music_job",
     "orchestrate_auto_music_job",
+    "orchestrate_generative_job",
     "render_lyrics_preview_task",
 )
 
