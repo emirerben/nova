@@ -1,0 +1,16 @@
+{
+  "overlays": [
+    {
+      "text": "TOKYO",
+      "effect": "font-cycle",
+      "text_size_px": 120,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.42,
+      "text_color": "#F4D03F",
+      "text_anchor": "center",
+      "font_cycle_accel_at_s": 1.0,
+      "start_s": 0.0,
+      "end_s": 2.5
+    }
+  ]
+}

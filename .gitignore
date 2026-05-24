@@ -17,6 +17,9 @@ tmp/
 # Local-render outputs (downloaded MP4s from `make local-render`)
 .local-render/
 
+# Pre-PR overlay-verify outputs (reports + montages from `make verify-overlays`)
+.overlay-verify/
+
 # Python
 __pycache__/
 .venv/

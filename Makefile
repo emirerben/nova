@@ -1,6 +1,6 @@
 .PHONY: dev dev-web dev-api test build lint \
         local-render local-render-build local-render-up local-render-down \
-        local-render-logs local-render-migrate \
+        local-render-logs local-render-migrate verify-overlays \
         workspace-pull workspace-push workspace-status
 
 # ── Local dev ──────────────────────────────────────────────────────────────────
@@ -56,6 +56,36 @@ local-render: local-render-migrate
 		--template "$(TEMPLATE)" \
 		--mode "$(MODE)" \
 		--inputs '$(INPUTS)'
+
+# ── Pre-PR text-overlay verify (renders in the prod image, checks clipping) ──
+# Renders a recipe's text overlays through the REAL Skia path inside the prod
+# Docker image (so fonts + ffmpeg match prod), then asserts each overlay is
+# un-clipped and writes a montage for visual content review. This is CLAUDE.md's
+# rule as code: "an agentic/music overlay change is verified against the burned
+# Skia output, not the Pillow admin preview." Run BEFORE opening a text PR.
+#
+# Usage:
+#   make verify-overlays ARGS="--fixtures"                 # the regression set
+#   make verify-overlays ARGS="--recipe path/to/recipe.json"
+#   make verify-overlays ARGS="--template <uuid>"          # host-only (needs admin token)
+#
+# Outputs to .overlay-verify/: report.json (clipping verdicts) + montage.png.
+# Exits non-zero if any overlay is clipped. tesseract is not in the prod image,
+# so the content check is the montage (review it / let the agent read it); to
+# add automated OCR content matching, run the host stage afterward:
+#   cd src/apps/api && python -m app.cli.verify_overlays --stage ocr --out ../../../.overlay-verify
+OVERLAY_VERIFY_OUT ?= .overlay-verify
+
+verify-overlays:
+	@mkdir -p $(OVERLAY_VERIFY_OUT)
+	@# CLI reads no secrets for --fixtures/--recipe, but compose needs the file to parse the service.
+	@[ -f .env.local-render ] || touch .env.local-render
+	$(LOCAL_RENDER_COMPOSE) build api
+	$(LOCAL_RENDER_COMPOSE) run --rm --no-deps \
+		-e NOVA_IN_PROD_IMAGE=1 \
+		-v "$(CURDIR)/$(OVERLAY_VERIFY_OUT):/app/$(OVERLAY_VERIFY_OUT)" \
+		-v "$(CURDIR)/src/apps/api/tests/fixtures/overlay_verify:/app/tests/fixtures/overlay_verify:ro" \
+		api python -m app.cli.verify_overlays $(ARGS) --out /app/$(OVERLAY_VERIFY_OUT)
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 

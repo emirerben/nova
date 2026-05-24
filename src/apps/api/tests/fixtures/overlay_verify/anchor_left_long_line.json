@@ -1,0 +1,16 @@
+{
+  "overlays": [
+    {
+      "text": "It's not just luck",
+      "effect": "pop-in",
+      "pop_animated_suffix": "luck",
+      "text_size_px": 120,
+      "position_x_frac": 0.05,
+      "position_y_frac": 0.44,
+      "text_color": "#FFFFFF",
+      "text_anchor": "left",
+      "start_s": 0.0,
+      "end_s": 2.5
+    }
+  ]
+}
