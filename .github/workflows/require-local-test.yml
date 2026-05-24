@@ -1,0 +1,96 @@
+name: Require local test (T6)
+
+# Pre-merge gate (Lane C / T6 in plans/what-are-we-doing-quiet-clock.md).
+#
+# Layer-2 pipeline + the agents/tasks that drive it have produced a long tail
+# of fix-PRs that the structural eval suite can't catch (no ground truth for
+# most templates yet — see T2). Until that gap closes, the gate is honor-system:
+# the operator runs the `test-template-locally` skill against a real template,
+# the skill writes a ledger entry, and the PR cites the entry's `run_id` in
+# its body.
+#
+# This workflow does NOT yet verify the run_id is real. v0 is shape-check only;
+# the ledger lives in `~/.gstack/projects/$SLUG/test-runs.jsonl` (see
+# `docs/test-runs-ledger.md` for the contract). A follow-up will turn the
+# ledger into a CI-readable artifact and add real verification.
+#
+# Triggers on `edited` too — the operator usually opens the PR, runs the
+# skill, then edits the PR body. We want the check to re-run when they do.
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited]
+
+# Per-PR concurrency so a quick edit-then-sync doesn't leave two runs racing.
+concurrency:
+  group: require-local-test-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  require-local-test:
+    name: Require local-test marker for Layer-2 pipeline changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # We need both PR HEAD and merge-base to diff against.
+          fetch-depth: 0
+
+      - name: List changed files
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" > /tmp/changed.txt
+          echo "Changed files:"
+          cat /tmp/changed.txt
+          echo "---"
+
+      - name: Detect Layer-2 pipeline touches
+        id: touched
+        run: |
+          chmod +x scripts/ci/check-touched-paths.sh
+          matched=$(scripts/ci/check-touched-paths.sh local-test < /tmp/changed.txt || true)
+          if [[ -n "$matched" ]]; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+            echo "Layer-2 paths touched:"
+            printf '%s\n' "$matched"
+          else
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+            echo "No Layer-2 paths touched — gate is a no-op."
+          fi
+
+      - name: Verify PR body has Local test marker
+        if: steps.touched.outputs.touched == 'true'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          chmod +x scripts/ci/check-pr-body.sh
+          # `Local test: <run_id>` where run_id is a >=6-char hex/uuid-ish slug,
+          # OR `[skip-local-test] <reason ≥10 chars>` for cosmetic-only changes.
+          if printf '%s' "$PR_BODY" | scripts/ci/check-pr-body.sh \
+              --required-regex '^Local test: [a-f0-9-]{6,}$' \
+              --skip-marker '[skip-local-test]'; then
+            echo "OK — PR body satisfies the local-test gate."
+            exit 0
+          fi
+
+          cat <<'EOF'
+          ERROR: This PR touches the Layer-2 text-overlay pipeline (or its agents/tasks)
+          but the PR body has no local-test marker.
+
+          Run the test-template-locally skill against a real template, then add a
+          line to the PR body in one of these forms:
+
+            Local test: <run_id>
+              -- where <run_id> is the run_id printed by /test-template-locally
+                 (e.g. `Local test: a1091488-abcd-...`)
+
+            [skip-local-test] <reason of 10+ characters>
+              -- for cosmetic / comment-only changes that cannot affect output
+                 (e.g. `[skip-local-test] docstring typo, no behavior change`)
+
+          The ledger contract lives at docs/test-runs-ledger.md.
+          EOF
+          exit 1

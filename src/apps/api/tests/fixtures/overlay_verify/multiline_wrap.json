@@ -1,0 +1,15 @@
+{
+  "overlays": [
+    {
+      "text": "combination of hard work and patience",
+      "effect": "none",
+      "text_size_px": 120,
+      "position_x_frac": 0.05,
+      "position_y_frac": 0.4,
+      "text_color": "#FFFFFF",
+      "text_anchor": "left",
+      "start_s": 0.0,
+      "end_s": 2.5
+    }
+  ]
+}
