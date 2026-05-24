@@ -24,6 +24,12 @@ import {
   type JobRuntimePayload,
   type PipelineTraceEvent,
 } from "@/lib/admin-jobs-api";
+import {
+  retextVariant,
+  swapVariantSong,
+  type GenerativeVariant,
+} from "@/lib/generative-api";
+import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 
 import { Timeline } from "./Timeline";
 
@@ -155,6 +161,9 @@ export default function JobDebugPage({
         {data && (
           <>
             <Header data={data} />
+            {data.job.mode === "generative" && (
+              <GenerativeVariants jobId={id} job={data.job} onChanged={refetch} />
+            )}
             <WorkerStatePanel
               runtime={data.runtime}
               status={data.job.status}
@@ -242,6 +251,141 @@ function Field({ label, value }: { label: string; value: string }): JSX.Element 
         {value}
       </dd>
     </div>
+  );
+}
+
+// ── Generative variants ─────────────────────────────────────────────────────
+// Generative jobs store their variants in Job.assembly_plan["variants"] (not
+// JobClip rows), so the standard Header output slot can't render them. This
+// surfaces all variants as playable tiles with admin swap-song / retext controls
+// that call the public generative routes, then refetch the debug payload.
+
+const TEXT_MODE_LABEL: Record<string, string> = {
+  lyrics: "Lyrics",
+  agent_text: "AI text",
+  none: "No text",
+};
+
+function GenerativeVariants({
+  jobId,
+  job,
+  onChanged,
+}: {
+  jobId: string;
+  job: { assembly_plan: unknown };
+  onChanged: () => Promise<void>;
+}): JSX.Element | null {
+  const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    getMusicTracks()
+      .then((r) => setTracks(r.tracks))
+      .catch(() => setTracks([]));
+  }, []);
+
+  const plan = (job.assembly_plan ?? {}) as { variants?: GenerativeVariant[] };
+  const variants = plan.variants ?? [];
+  if (variants.length === 0) return null;
+
+  const run = async (variantId: string, fn: () => Promise<unknown>) => {
+    setBusy(variantId);
+    try {
+      await fn();
+      await onChanged();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="mt-6">
+      <div className="text-xs uppercase tracking-wider text-zinc-500 mb-2">
+        Generative variants ({variants.length})
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {variants.map((v) => {
+          const rendering = v.render_status === "rendering" || busy === v.variant_id;
+          return (
+            <div key={v.variant_id} className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300 truncate">
+                  {TEXT_MODE_LABEL[v.text_mode] ?? v.text_mode}
+                  {v.track_title ? ` · ${v.track_title}` : " · Original audio"}
+                </span>
+                <span className="text-[10px] uppercase tracking-wider text-zinc-500">
+                  {v.render_status ?? (v.ok ? "ready" : "—")}
+                </span>
+              </div>
+              <div className="aspect-[9/16] w-full overflow-hidden rounded bg-black">
+                {rendering ? (
+                  <div className="flex h-full items-center justify-center text-xs text-zinc-500">
+                    Rendering…
+                  </div>
+                ) : v.render_status === "failed" ? (
+                  <div className="flex h-full items-center justify-center px-3 text-center text-xs text-red-300">
+                    {v.error ?? "Render failed"}
+                  </div>
+                ) : v.output_url ? (
+                  <video src={v.output_url} controls className="h-full w-full object-contain" />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-xs text-zinc-600">
+                    No preview
+                  </div>
+                )}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  disabled={rendering}
+                  onClick={() => {
+                    const next = prompt("New intro text:");
+                    if (next && next.trim()) {
+                      void run(v.variant_id, () =>
+                        retextVariant(jobId, v.variant_id, { text: next.trim() }),
+                      );
+                    }
+                  }}
+                  className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40"
+                >
+                  Edit text
+                </button>
+                <button
+                  type="button"
+                  disabled={rendering}
+                  onClick={() =>
+                    void run(v.variant_id, () => retextVariant(jobId, v.variant_id, { remove: true }))
+                  }
+                  className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40"
+                >
+                  Remove text
+                </button>
+                {tracks.length > 0 && v.music_track_id !== null && (
+                  <select
+                    disabled={rendering}
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        const tid = e.target.value;
+                        void run(v.variant_id, () => swapVariantSong(jobId, v.variant_id, tid));
+                      }
+                    }}
+                    className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40"
+                  >
+                    <option value="">Swap song…</option>
+                    {tracks.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.title}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
