@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.44.11] - 2026-05-24
+
+### Added
+- **Pre-merge CI gates for Layer-2 pipeline and agent-input changes — `require-local-test` (T6) and `require-eval-fixture` (T8).** The Nova retrospective showed a ~60% fix-PR rate over the last month, much of it driven by two recurring patterns: Layer-2 (`text_overlay_v2`) changes that shipped without a real local render to catch what unit tests miss, and prompt/schema edits that shipped without a corresponding eval fixture update. Two new GitHub Actions workflows close that loop at the PR gate.
+  - **T6 — `require-local-test.yml`.** Trips when a PR touches `app/pipeline/text_overlay_v2/**`, `app/agents/{template_text,text_alignment,text_classification}.py`, or `app/tasks/{agentic_template_build,template_orchestrate}.py`. The PR body must then contain either a `Local test: <run_id>` line OR a `[skip-local-test] <reason>` marker with a justification of at least 10 characters. This is an honor-system gate for now — actual verification of the `run_id` against a structured ledger is a deliberate follow-up that depends on a `test-template-locally` skill update writing that ledger. The expected `~/.gstack/projects/$SLUG/test-runs.jsonl` schema the skill will implement against is documented at `docs/test-runs-ledger.md`.
+  - **T8 — `require-eval-fixture.yml`.** Trips when a PR touches `prompts/**`, `app/agents/*.py` (excluding `_runtime.py`), or `app/agents/_schemas/*.py`. The PR must ALSO touch `tests/fixtures/agent_evals/**` or `tests/evals/**`, OR carry a `[skip-eval-check] <reason>` marker (≥10-char justification) in the body. This makes "I changed a prompt but didn't update its eval" fail loudly at the gate instead of silently degrading agent quality in prod.
+  - **Architecture: no drift between what CI checks and what tests assert.** Path matching and PR-body validation are extracted into two reusable shell helpers — `scripts/ci/check-touched-paths.sh` (categories `local-test`, `eval-input`, `eval-coverage`; handles `**` glob collapse and the `_runtime.py` exclude pattern for the eval-input category) and `scripts/ci/check-pr-body.sh` (`--required-regex` + `--skip-marker` with a 10-char minimum justification, CRLF-tolerant). Both the workflow YAML and the test harness invoke these exact helpers, so the gate logic is the same code path in CI and in tests — the two cannot drift.
+  - **Tests: 18/18 passing** across `tests/workflows/test_require_local_test.sh` (9 cases) and `tests/workflows/test_require_eval_fixture.sh` (9 cases). Coverage includes every required case plus extras: per-agent path coverage, trailing-junk after a `Local test:` marker, CRLF PR bodies, and the `_runtime.py` exclusion.
 ## [0.4.44.10] - 2026-05-24
 
 ### Added
