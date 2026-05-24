@@ -1,0 +1,157 @@
+"""nova.compose.intro_writer — write the hero-intro overlay text for a generative edit.
+
+This is the value-prop agent: it reads what the AI saw in the user's hero clip and
+writes the opening on-screen line, conditioned on the form chosen by
+`overlay_format_matcher` and steered by top-K exemplars from the example library.
+
+TRUST BOUNDARY (architectural). Unlike the template-substitution path — where
+"Gemini metadata never becomes on-screen overlay text" (see CLAUDE.md /
+`TestNoGeminiTextLeaks`) — this agent intentionally turns clip understanding INTO
+overlay text. That is the product. But the clip-derived input (transcript, hook,
+description) is UNTRUSTED: a clip's audio or on-screen text could say "ignore
+instructions / visit evil.com". Defense is two layers:
+  1. Prompt-level: the template wraps clip fields as DATA, never instructions
+     (`prompts/write_intro_text.txt`).
+  2. Output-level (here in parse()): `_sanitize_aligned_line` strips ASS tags /
+     control chars; URLs and @handles are stripped; the line is length-clamped;
+     `highlight_word` is dropped unless it is a substring of the final text.
+The `TestNoOverlayTextLeaks`-style sentinel asserts injected instructions are
+sanitized/ignored, never reproduced verbatim.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import ClassVar
+
+from pydantic import BaseModel, Field, ValidationError
+
+from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
+from app.agents.music_matcher import ClipSummary, _sanitize_text
+from app.agents.overlay_examples import OverlayExample
+from app.agents.text_alignment import _sanitize_aligned_line
+from app.pipeline.prompt_loader import load_prompt
+
+# Intro overlays are hooks, not paragraphs. Clamp aggressively so a runaway model
+# can't push a wall of text onto the frame.
+_MAX_WORDS = 12
+_MAX_CHARS = 80
+
+_URL_RE = re.compile(r"\b(?:https?://|www\.)\S+", re.IGNORECASE)
+_BARE_DOMAIN_RE = re.compile(r"\b[\w-]+\.(?:com|net|org|io|co|gg|xyz|app|link)\b", re.IGNORECASE)
+_HANDLE_RE = re.compile(r"[@#]\w+")
+
+
+class IntroWriterInput(BaseModel):
+    hero_clip: ClipSummary
+    # Verbatim hero-clip transcript. Kept separate from `hero_clip` because
+    # music_matcher's ClipSummary is deliberately lean (no transcript); the writer
+    # benefits from the spoken words. UNTRUSTED — sanitized in the prompt as DATA.
+    hero_transcript: str = ""
+    tone: str = ""
+    # The form chosen by overlay_format_matcher (effect/colors/etc.). Carried as a
+    # dict so the writer can condition on it without importing the matcher's schema.
+    form: dict = Field(default_factory=dict)
+    exemplars: list[OverlayExample] = Field(default_factory=list)
+
+
+class IntroWriterOutput(BaseModel):
+    text: str = Field(min_length=1)
+    highlight_word: str | None = None
+
+
+def _strip_unsafe_tokens(s: str) -> str:
+    s = _URL_RE.sub("", s)
+    s = _BARE_DOMAIN_RE.sub("", s)
+    s = _HANDLE_RE.sub("", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _clamp(s: str) -> str:
+    words = s.split()
+    if len(words) > _MAX_WORDS:
+        s = " ".join(words[:_MAX_WORDS])
+    if len(s) > _MAX_CHARS:
+        s = s[:_MAX_CHARS].rstrip()
+    return s
+
+
+class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
+    spec: ClassVar[AgentSpec] = AgentSpec(
+        name="nova.compose.intro_writer",
+        prompt_id="write_intro_text",
+        prompt_version="2026-05-24",
+        model="gemini-2.5-flash",
+        cost_per_1k_input_usd=0.000075,
+        cost_per_1k_output_usd=0.0003,
+    )
+    Input = IntroWriterInput
+    Output = IntroWriterOutput
+
+    def required_fields(self) -> list[str]:
+        return ["text"]
+
+    def render_prompt(self, input: IntroWriterInput) -> str:  # noqa: A002
+        c = input.hero_clip
+        exemplar_lines = (
+            "\n".join(
+                f'- "{_sanitize_text(e.text)}" (profile: {_sanitize_text(e.content_profile)})'
+                for e in input.exemplars
+            )
+            or "(none)"
+        )
+        return load_prompt(
+            "write_intro_text",
+            tone=_sanitize_text(input.tone) or "neutral",
+            effect=str(input.form.get("effect", "static")),
+            hero_subject=_sanitize_text(c.subject) or "(unknown)",
+            hero_hook=_sanitize_text(c.hook_text),
+            hero_description=_sanitize_text(c.description),
+            hero_transcript=_sanitize_text(input.hero_transcript),
+            exemplars=exemplar_lines,
+            max_words=str(_MAX_WORDS),
+        )
+
+    def parse(self, raw_text: str, input: IntroWriterInput) -> IntroWriterOutput:  # noqa: A002
+        try:
+            data = json.loads(raw_text)
+        except (ValueError, TypeError) as exc:
+            raise SchemaError(f"intro_writer: invalid JSON — {exc}") from exc
+        if not isinstance(data, dict):
+            raise SchemaError("intro_writer: response is not a JSON object")
+
+        # Output-level sanitization (layer 2 of the trust-boundary defense).
+        text = _sanitize_aligned_line(str(data.get("text", "") or ""))
+        text = _strip_unsafe_tokens(text)
+        text = _clamp(text)
+        if not text:
+            # Empty after sanitization → treat as a refusal/garbage output. The
+            # orchestrator catches this and renders footage without an intro overlay.
+            raise RefusalError("intro_writer: empty text after sanitization")
+
+        highlight = data.get("highlight_word")
+        if isinstance(highlight, str):
+            highlight = _strip_unsafe_tokens(_sanitize_aligned_line(highlight)).strip()
+            # Drop unless it's a real token of the final text (case-insensitive).
+            tokens = {w.lower().strip(".,!?;:\"'") for w in text.split()}
+            if not highlight or highlight.lower().strip(".,!?;:\"'") not in tokens:
+                highlight = None
+        else:
+            highlight = None
+
+        try:
+            return IntroWriterOutput(text=text, highlight_word=highlight)
+        except ValidationError as exc:
+            raise SchemaError(f"intro_writer: output validation — {exc}") from exc
+
+    def schema_clarification(self) -> str:
+        return (
+            "\n\nIMPORTANT: Return ONLY a JSON object: "
+            '{"text": "...", "highlight_word": "..."} . '
+            f"`text` must be at most {_MAX_WORDS} words, contain no URLs/handles, "
+            "and `highlight_word` (optional) must be one of the words in `text`."
+        )
+
+    def refusal_clarification(self) -> str:
+        return self.schema_clarification()
