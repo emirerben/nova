@@ -108,8 +108,16 @@ _LINE_DEFAULT_FONT_FAMILY = "Inter Tight"
 _MIN_LINE_VISIBLE_S = 0.20
 
 
+def _resolve_fade_ms(cfg: dict, *, s_key: str, ms_key: str, default_ms: int) -> int:
+    """Resolve fade duration, preferring the seconds alias over legacy ms."""
+    if cfg.get(s_key) is not None:
+        return max(0, int(round(float(cfg[s_key]) * 1000)))
+    return max(0, int(float(cfg.get(ms_key, default_ms))))
+
+
 @dataclass(slots=True)
 class _LineOverlayWindow:
+    lyric_line_id: str
     text: str
     line_start_s: float
     line_end_s: float
@@ -458,12 +466,12 @@ def _inject_line(
     Tunable via lyrics_config:
       - `pre_roll_s` (default `_LINE_PRE_ROLL_S`)
       - `post_dwell_s` (default `_LINE_POST_DWELL_S`)
+      - `next_line_gap_s` (default `_LINE_NEXT_LINE_GAP_S`)
       - `max_overlap_s` (default `_LINE_MAX_OVERLAP_S`)
-      - `fade_in_ms` (default `_LINE_FADE_IN_MS`)
-      - `fade_out_ms` (default `_LINE_FADE_OUT_MS`)
+      - `fade_in_s` / `fade_in_ms` (default `_LINE_FADE_IN_MS`)
+      - `fade_out_s` / `fade_out_ms` (default `_LINE_FADE_OUT_MS`)
 
     Deprecated config fields still accepted as no-ops for one release:
-      - `next_line_gap_s`
       - `hold_to_next_threshold_ms`
     """
     base = _common_overlay_fields(cfg)
@@ -489,8 +497,13 @@ def _inject_line(
     )
     pre_roll = float(cfg.get("pre_roll_s", _LINE_PRE_ROLL_S))
     post_dwell = float(cfg.get("post_dwell_s", _LINE_POST_DWELL_S))
-    fade_in_ms = max(0.0, float(cfg.get("fade_in_ms", _LINE_FADE_IN_MS)))
-    fade_out_ms = max(0.0, float(cfg.get("fade_out_ms", _LINE_FADE_OUT_MS)))
+    next_line_gap_s = max(0.0, float(cfg.get("next_line_gap_s", _LINE_NEXT_LINE_GAP_S)))
+    fade_in_ms = _resolve_fade_ms(
+        cfg, s_key="fade_in_s", ms_key="fade_in_ms", default_ms=_LINE_FADE_IN_MS
+    )
+    fade_out_ms = _resolve_fade_ms(
+        cfg, s_key="fade_out_s", ms_key="fade_out_ms", default_ms=_LINE_FADE_OUT_MS
+    )
 
     fade_in_s = fade_in_ms / 1000.0
     fade_out_s = fade_out_ms / 1000.0
@@ -508,20 +521,21 @@ def _inject_line(
     line_windows: list[_LineOverlayWindow] = []
 
     for i, line in enumerate(section_lines):
-        # Expand the visible window. Pre-roll is clamped to 0 (don't go
-        # negative into the previous section). Post-dwell is capped against
-        # the next line's visual start plus the fade-bound overlap budget.
+        # Expand the visible window. Caps only erode added post-dwell; they
+        # never cut the line's own audio span. next_line_gap_s is measured
+        # against the next line's audio start, while visual overlap is bounded
+        # separately by max_overlap_s and the active fade durations.
         line_start = float(line["start_s"])
         line_end = float(line["end_s"])
         section_start = max(0.0, line_start - pre_roll)
         natural_end = line_end + post_dwell
         if i + 1 < n:
             next_audio_start = float(section_lines[i + 1]["start_s"])
-            # Cap against the next line's effective VISUAL start (after its
-            # own pre_roll), not its audio start. With dynamic_max_overlap = 0
-            # this guarantees zero visual overlap between adjacent lines.
             next_visual_start = max(0.0, next_audio_start - pre_roll)
-            section_end = min(natural_end, next_visual_start + dynamic_max_overlap)
+            overlap_cap = next_visual_start + dynamic_max_overlap
+            gap_cap = next_audio_start - next_line_gap_s
+            section_end = min(natural_end, overlap_cap, gap_cap)
+            section_end = max(section_end, line_end)
         else:
             section_end = natural_end
 
@@ -530,6 +544,7 @@ def _inject_line(
 
         line_windows.append(
             _LineOverlayWindow(
+                lyric_line_id=f"line:{i}:{line_start:.3f}:{line_end:.3f}",
                 text=line["text"],
                 line_start_s=line_start,
                 line_end_s=line_end,
@@ -545,33 +560,42 @@ def _inject_line(
         if line.section_end_s <= line.section_start_s:
             continue
 
-        slot_win = _slot_for_time(line.section_start_s, windows)
-        if slot_win is None:
-            continue
+        # Music jobs cut the rendered video into independent slots. A lyric
+        # line can start near the end of one short beat-synced slot and keep
+        # singing through the next clip. Emit a segment for every slot the line
+        # overlaps so video cuts do not truncate the vocal span.
+        segments: list[tuple[_SlotWindow, float, float]] = []
+        for slot_win in windows:
+            overlap_start = max(line.section_start_s, slot_win.start_s)
+            overlap_end = min(line.section_end_s, slot_win.end_s)
+            if overlap_end <= overlap_start:
+                continue
 
-        # Rebase to slot-relative time, then clamp to the slot's own
-        # window. A line that spills past its slot is truncated at the
-        # slot end — the next slot's renderer pipeline is independent.
-        rel_start = max(0.0, line.section_start_s - slot_win.start_s)
-        slot_dur = slot_win.end_s - slot_win.start_s
-        rel_end = min(slot_dur, line.section_end_s - slot_win.start_s)
-        rel_end = max(rel_start + _MIN_OVERLAY_DURATION_S, rel_end)
-        rel_end = min(rel_end, slot_dur)
-        if rel_end <= rel_start:
-            continue
+            rel_start = max(0.0, overlap_start - slot_win.start_s)
+            slot_dur = slot_win.end_s - slot_win.start_s
+            rel_end = min(slot_dur, overlap_end - slot_win.start_s)
+            rel_end = max(rel_start + _MIN_OVERLAY_DURATION_S, rel_end)
+            rel_end = min(rel_end, slot_dur)
+            if rel_end <= rel_start:
+                continue
+            segments.append((slot_win, rel_start, rel_end))
 
-        overlay = dict(base)
-        overlay.update(
-            {
-                "text": line.text,
-                "effect": "lyric-line",
-                "start_s": round(rel_start, 3),
-                "end_s": round(rel_end, 3),
-                "fade_in_ms": line.fade_in_ms,
-                "fade_out_ms": line.fade_out_ms,
-            }
-        )
-        _ensure_overlay_list(slots[slot_win.index]).append(overlay)
-        injected += 1
+        for segment_idx, (slot_win, rel_start, rel_end) in enumerate(segments):
+            overlay = dict(base)
+            overlay.update(
+                {
+                    "text": line.text,
+                    "effect": "lyric-line",
+                    "start_s": round(rel_start, 3),
+                    "end_s": round(rel_end, 3),
+                    "fade_in_ms": line.fade_in_ms if segment_idx == 0 else 0,
+                    "fade_out_ms": line.fade_out_ms if segment_idx == len(segments) - 1 else 0,
+                    "lyric_line_id": line.lyric_line_id,
+                    "lyric_segment_index": segment_idx,
+                    "lyric_segment_count": len(segments),
+                }
+            )
+            _ensure_overlay_list(slots[slot_win.index]).append(overlay)
+            injected += 1
 
     return injected

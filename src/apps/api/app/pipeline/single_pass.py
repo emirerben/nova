@@ -156,6 +156,10 @@ class SinglePassSpec:
     abs_ass_paths: list[str] = dataclasses.field(default_factory=list)
     fonts_dir: str = ""
     output_duration_s: float = 0.0
+    # Recipe-level override of the xfade base duration (the "fit to time" /
+    # faster-transitions knob). None → DEFAULT_TRANSITION_DURATION_S. Still
+    # clamped to 30% of the shorter adjacent group in _build_xfade_chain.
+    transition_duration_s: float | None = None
 
     def __post_init__(self) -> None:
         if len(self.inputs) < 1:
@@ -310,6 +314,7 @@ def _build_xfade_chain(
     durations: list[float],
     transitions: list[str],
     final_label: str = "vout",
+    transition_duration_s: float | None = None,
 ) -> tuple[list[str], str]:
     """Build the concat-then-xfade filter graph fragments.
 
@@ -357,16 +362,18 @@ def _build_xfade_chain(
             "use the M2 concat path instead"
         )
 
+    base_dur = transition_duration_s if transition_duration_s else DEFAULT_TRANSITION_DURATION_S
     cumulative_dur = group_durations[0]
     cumulative_trans = 0.0
     current_label = group_labels[0]
 
     for i, trans in enumerate(visual_transitions):
         # xfade overlap duration is bounded by 30% of the shorter adjacent
-        # group; clip to the default 0.3s. Mirrors
-        # transitions._build_xfade_filter so visual results match multi-pass.
+        # group; clip to base_dur (default 0.3s, or the recipe override).
+        # Mirrors transitions._build_xfade_filter so visual results match
+        # multi-pass.
         max_dur = min(group_durations[i], group_durations[i + 1]) * 0.3
-        trans_dur = min(DEFAULT_TRANSITION_DURATION_S, max_dur)
+        trans_dur = min(base_dur, max_dur)
         offset = max(0.0, cumulative_dur - cumulative_trans - trans_dur)
 
         xfade_type = XFADE_MAP.get(trans, "fade")
@@ -554,7 +561,11 @@ def build_single_pass_command(
     if has_visual_transition:
         durations = _compute_output_durations(spec)
         xfade_fragments, _ = _build_xfade_chain(
-            slot_labels, durations, spec.transitions, final_label=join_out_label
+            slot_labels,
+            durations,
+            spec.transitions,
+            final_label=join_out_label,
+            transition_duration_s=spec.transition_duration_s,
         )
         filter_chains.extend(xfade_fragments)
     else:

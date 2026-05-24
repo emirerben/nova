@@ -332,6 +332,147 @@ def test_overlap_truncation_marked_clamped_by_overlap():
     assert texts["SECOND"]["clamped_by"] is None
 
 
+def test_lyric_line_segments_merge_across_slots():
+    """Line lyrics split by short beat slots should burn as one ASS event.
+
+    The injector emits per-slot bridge segments so the text survives clip cuts.
+    The final overlay collector must stitch those segments back together before
+    same-position overlap truncation runs; otherwise the line visibly restarts at
+    every slot boundary.
+    """
+    overlays = [
+        {
+            "role": "lyrics",
+            "text": "We ain't stressing 'bout the loot",
+            "effect": "lyric-line",
+            "start_s": 1.0,
+            "end_s": 2.0,
+            "position": "bottom",
+            "position_y_frac": 0.8,
+            "font_family": "Inter Tight",
+            "text_color": "#FFFFFF",
+            "fade_in_ms": 150,
+            "fade_out_ms": 0,
+            "lyric_line_id": "line:0:3.000:5.800",
+            "lyric_segment_index": 0,
+            "lyric_segment_count": 3,
+        },
+        {
+            "role": "lyrics",
+            "text": "We ain't stressing 'bout the loot",
+            "effect": "lyric-line",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "position": "bottom",
+            "position_y_frac": 0.8,
+            "font_family": "Inter Tight",
+            "text_color": "#FFFFFF",
+            "fade_in_ms": 0,
+            "fade_out_ms": 0,
+            "lyric_line_id": "line:0:3.000:5.800",
+            "lyric_segment_index": 1,
+            "lyric_segment_count": 3,
+        },
+        {
+            "role": "lyrics",
+            "text": "We ain't stressing 'bout the loot",
+            "effect": "lyric-line",
+            "start_s": 0.0,
+            "end_s": 0.8,
+            "position": "bottom",
+            "position_y_frac": 0.8,
+            "font_family": "Inter Tight",
+            "text_color": "#FFFFFF",
+            "fade_in_ms": 0,
+            "fade_out_ms": 250,
+            "lyric_line_id": "line:0:3.000:5.800",
+            "lyric_segment_index": 2,
+            "lyric_segment_count": 3,
+        },
+    ]
+    steps = [
+        _step(1, [overlays[0]], duration_s=2.0),
+        _step(2, [overlays[1]], duration_s=2.0),
+        _step(3, [overlays[2]], duration_s=2.0),
+    ]
+
+    patcher, captured = _capture_events()
+    with patcher:
+        result = _collect_absolute_overlays(
+            steps,
+            slot_durations=[2.0, 2.0, 2.0],
+            clip_metas=None,
+            subject="X",
+        )
+
+    assert len(result) == 1
+    overlay = result[0]
+    assert overlay["text"] == "We ain't stressing 'bout the loot"
+    assert overlay["start_s"] == pytest.approx(1.0)
+    assert overlay["end_s"] == pytest.approx(4.8)
+    assert overlay["fade_in_ms"] == 150
+    assert overlay["fade_out_ms"] == 250
+    assert "lyric_line_id" not in overlay
+    assert "lyric_segment_index" not in overlay
+    assert "lyric_segment_count" not in overlay
+
+    render_events = [e for e in captured if e["event"] == "render_window"]
+    assert len(render_events) == 1
+    assert render_events[0]["data"]["merged_from_slots"] == [1, 2, 3]
+    assert render_events[0]["data"]["lyric_line_id"] == "line:0:3.000:5.800"
+
+
+def test_lyric_line_is_not_truncated_by_next_lyric_line_overlap():
+    """Line timing caps already own lyric overlap; generic text dedup must not."""
+    steps = [
+        _step(
+            1,
+            [
+                {
+                    "role": "lyrics",
+                    "text": "First lyric",
+                    "effect": "lyric-line",
+                    "start_s": 0.0,
+                    "end_s": 2.5,
+                    "position": "bottom",
+                    "position_y_frac": 0.8,
+                    "lyric_line_id": "line:0:0.000:2.000",
+                },
+                {
+                    "role": "lyrics",
+                    "text": "Second lyric",
+                    "effect": "lyric-line",
+                    "start_s": 1.5,
+                    "end_s": 3.0,
+                    "position": "bottom",
+                    "position_y_frac": 0.8,
+                    "lyric_line_id": "line:1:1.800:3.000",
+                },
+            ],
+            duration_s=3.0,
+        ),
+    ]
+
+    patcher, captured = _capture_events()
+    with patcher:
+        result = _collect_absolute_overlays(
+            steps,
+            slot_durations=[3.0],
+            clip_metas=None,
+            subject="X",
+        )
+
+    assert len(result) == 2
+    by_text = {overlay["text"]: overlay for overlay in result}
+    assert by_text["First lyric"]["end_s"] == pytest.approx(2.5)
+    assert by_text["Second lyric"]["start_s"] == pytest.approx(1.5)
+
+    render_events = [e for e in captured if e["event"] == "render_window"]
+    trace_by_text = {e["data"]["text"]: e["data"] for e in render_events}
+    assert trace_by_text["First lyric"]["clamped_by"] is None
+    assert trace_by_text["Second lyric"]["clamped_by"] is None
+
+
 def test_no_events_emitted_when_no_overlays():
     """An empty result must not emit phantom events."""
     steps = [_step(1, [])]

@@ -20,6 +20,7 @@ all errors caught → job.status = 'processing_failed'
 """
 
 import bisect
+import copy
 import dataclasses
 import os
 import re
@@ -49,6 +50,7 @@ from app.pipeline.agents.gemini_analyzer import (
     ClipMeta,
     GeminiAnalysisError,
     GeminiRefusalError,
+    PollingTimeoutError,
     TemplateRecipe,
     analyze_clip,
     analyze_template,
@@ -242,6 +244,55 @@ def _stage(name: str, on_fail: str, *, job_id: str) -> Iterator[None]:
         )
 
 
+def _carry_forward_overlays(new_slots: list, prior_slots: list | None) -> None:
+    """Copy each prior slot's ``text_overlays`` onto the freshly-built slots,
+    in place, matched positionally by slot index.
+
+    This is what makes "Re-run agents" non-destructive to overlay edits: the
+    rebuild produces fresh clips/timing/transitions, but every slot's overlays
+    are carried over from the recipe that was just replaced. Overlays are
+    addressed by slot index everywhere else (the retime-phrase editor uses the
+    same coordinate), so positional carry-forward is the consistent contract.
+
+    Edge cases:
+      - new recipe has FEWER slots → prior overlays for dropped slots are lost
+        (those slots no longer render — nowhere to put them).
+      - new recipe has MORE slots → genuinely-new slots keep their fresh agent
+        overlays (no prior to carry).
+      - prior overlays empty/missing → carried as ``[]``.
+
+    Carried overlays are also clamped to the new slot's ``target_duration_s``
+    (and any overlay whose start is already past the new clip is dropped) so a
+    shorter rebuilt clip never leaves an out-of-range overlay that the renderer
+    would silently drop — the text would just vanish.
+    """
+    if not prior_slots:
+        return
+    for i, new_slot in enumerate(new_slots):
+        if not isinstance(new_slot, dict) or i >= len(prior_slots):
+            continue
+        prior = prior_slots[i]
+        if not isinstance(prior, dict):
+            continue
+        carried = copy.deepcopy(prior.get("text_overlays", []) or [])
+        slot_dur = new_slot.get("target_duration_s")
+        if isinstance(slot_dur, (int, float)) and slot_dur > 0:
+            clamped: list = []
+            for ov in carried:
+                if not isinstance(ov, dict):
+                    clamped.append(ov)
+                    continue
+                start = ov.get("start_s")
+                if isinstance(start, (int, float)) and start >= slot_dur:
+                    continue  # overlay begins past the new clip — drop it
+                end = ov.get("end_s")
+                if isinstance(end, (int, float)) and end > slot_dur:
+                    ov["end_s"] = round(float(slot_dur), 3)
+                clamped.append(ov)
+            carried = clamped
+        new_slot["text_overlays"] = carried
+
+
 # ── analyze_template_task ─────────────────────────────────────────────────────
 
 
@@ -261,12 +312,18 @@ def _stage(name: str, on_fail: str, *, job_id: str) -> Iterator[None]:
     soft_time_limit=840,
     time_limit=900,
 )
-def analyze_template_task(self, template_id: str, *, force: bool = False) -> None:
+def analyze_template_task(
+    self, template_id: str, *, force: bool = False, overwrite_overlays: bool = False
+) -> None:
     """Download template video, analyze with Gemini, cache recipe in DB.
 
     `force=True` skips the cache READ (still writes on success). Reanalyze
     enqueues with force=True so the user-visible "Reanalyze" gesture always
     reruns the agent; a fresh entry replaces the old one for future hits.
+
+    `overwrite_overlays=False` (default) preserves the template's existing
+    overlays across the rebuild (see `_carry_forward_overlays`). Pass True to
+    keep the freshly-generated agent overlays.
     """
     # Captured once at task entry and written to TemplateRecipeVersion.build_started_at
     # at the end of the happy path. Paired with the DB-generated `created_at` (end),
@@ -523,6 +580,15 @@ def analyze_template_task(self, template_id: str, *, force: bool = False) -> Non
                         "sync_style": recipe.sync_style,
                         "interstitials": recipe.interstitials,
                     }
+
+                    # Preserve manual overlay edits across a re-run unless the
+                    # caller explicitly asked to overwrite them. `recipe_cached`
+                    # still holds the PRIOR recipe here. Done before the version
+                    # row so history records what was actually persisted.
+                    if not overwrite_overlays and isinstance(template.recipe_cached, dict):
+                        _carry_forward_overlays(
+                            recipe_dict["slots"], template.recipe_cached.get("slots")
+                        )
 
                     # Save recipe version before updating cached recipe
                     version = TemplateRecipeVersion(
@@ -1179,6 +1245,7 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             output_fit=getattr(recipe, "output_fit", None) or "crop",
             force_single_pass=effective_single_pass,
             is_agentic=is_agentic,
+            transition_duration_s=getattr(recipe, "transition_duration_s", None),
         )
 
         record_phase(
@@ -1430,6 +1497,7 @@ def _run_rerender(job_id: str, job: Job, force_single_pass: bool = False) -> Non
             output_fit=getattr(recipe, "output_fit", None) or "crop",
             force_single_pass=effective_single_pass,
             is_agentic=is_agentic,
+            transition_duration_s=getattr(recipe, "transition_duration_s", None),
         )
 
         # Mix template audio if available
@@ -1840,18 +1908,56 @@ def _upload_clips_parallel(
 ) -> list:
     """Upload all clips to Gemini File API in parallel. Returns file refs in order.
 
+    Per-clip upload failure is tolerated: a clip whose Gemini upload raises
+    (FAILED state after one re-upload, permanent 4xx, polling timeout) is
+    replaced with `None` in the returned list. Downstream `_analyze_clips_parallel`
+    treats a `None` ref as "skip Gemini analysis, run Whisper fallback", and the
+    caller applies the 50% per-job failure threshold. This matches the per-clip
+    tolerance the analyze step has had since day one — one bad file should not
+    kill an N-clip job (see the matching threshold in `_analyze_clips_parallel`).
+
     When record_sub_phases is true, each clip's upload+ACTIVE-poll wall time is
     appended to the job's phase_log as a sub_phase under analyze_clips so the
     admin test-tab UI can surface "stuck on clip N" while the job is still
     running. Off by default to keep prod jobs' phase_log untouched — the
     admin test endpoint sets it via the preview_mode flag.
     """
-    results: dict[int, object] = {}
+    results: dict[int, object | None] = {}
 
-    def _upload_one(idx_path: tuple[int, str]) -> tuple[int, object]:
+    def _upload_one(idx_path: tuple[int, str]) -> tuple[int, object | None]:
         idx, path = idx_path
         t0 = time.monotonic()
-        ref = gemini_upload_and_wait(path)
+        try:
+            ref = gemini_upload_and_wait(path)
+        except (GeminiAnalysisError, GeminiRefusalError, PollingTimeoutError) as exc:
+            file_size = None
+            try:
+                file_size = os.path.getsize(path)
+            except OSError:
+                pass
+            log.warning(
+                "gemini_upload_failed",
+                clip_idx=idx,
+                clip_path=os.path.basename(path),
+                file_size=file_size,
+                error_type=type(exc).__name__,
+                error=str(exc)[:300],
+                job_id=job_id,
+            )
+            if record_sub_phases and job_id is not None:
+                record_sub_phase(
+                    job_id,
+                    PHASE_ANALYZE_CLIPS,
+                    "gemini_upload_failed",
+                    elapsed_ms=int((time.monotonic() - t0) * 1000),
+                    detail={
+                        "clip_idx": idx,
+                        "clip_path": os.path.basename(path),
+                        "file_size": file_size,
+                        "error": str(exc)[:200],
+                    },
+                )
+            return idx, None
         if record_sub_phases and job_id is not None:
             record_sub_phase(
                 job_id,
@@ -2016,10 +2122,15 @@ def _analyze_clips_parallel(
     clip_metas: list[ClipMeta] = []
     failed_count = 0
 
-    def _analyze_one(args: tuple[int, object, str]) -> tuple[ClipMeta | None, str | None]:
+    def _analyze_one(args: tuple[int, object | None, str]) -> tuple[ClipMeta | None, str | None]:
         idx, ref, path = args
         t0 = time.monotonic()
         try:
+            if ref is None:
+                # Upload failed earlier — skip Gemini, go straight to the
+                # Whisper-fallback path in the except branch so the clip
+                # still produces a usable ClipMeta with default best_moments.
+                raise GeminiAnalysisError("gemini upload failed; skipping analysis")
             meta = analyze_clip(ref, filter_hint=filter_hint, job_id=job_id)
             if record_sub_phases and job_id is not None:
                 record_sub_phase(
@@ -2692,6 +2803,7 @@ def _build_single_pass_spec(
     abs_pngs: list[dict] | None = None,
     abs_ass_paths: list[str] | None = None,
     fonts_dir: str = "",
+    transition_duration_s: float | None = None,
 ) -> SinglePassSpec:
     """Convert orchestrator plans + interstitials → SinglePassSpec.
 
@@ -2827,6 +2939,7 @@ def _build_single_pass_spec(
         abs_ass_paths=abs_ass_paths or [],
         fonts_dir=fonts_dir,
         output_duration_s=total_dur,
+        transition_duration_s=transition_duration_s,
     )
 
 
@@ -2846,6 +2959,7 @@ def _assemble_clips(
     output_fit: str = "crop",
     force_single_pass: bool = False,
     is_agentic: bool = False,
+    transition_duration_s: float | None = None,
 ) -> None:
     """Assemble clips in slot order: plan, parallel-render, then join with transitions.
 
@@ -2941,6 +3055,7 @@ def _assemble_clips(
                 abs_pngs=abs_pngs,
                 abs_ass_paths=abs_ass_paths,
                 fonts_dir=fonts_dir,
+                transition_duration_s=transition_duration_s,
             )
             # Single ffmpeg invocation — when overlays exist AND
             # base_output_path is set, run_single_pass emits a 2-output
@@ -3194,6 +3309,7 @@ def _assemble_clips(
             joined_path,
             tmpdir,
             has_interstitials=bool(interstitial_map),
+            transition_duration_s=transition_duration_s,
         )
     _phase_done("join", _phase_t0, job_id=job_id, clips=len(reframed_paths))
 
@@ -3224,9 +3340,7 @@ def _assemble_clips(
     )
     if abs_overlays:
         # Skia for agentic templates; Pillow + libass for classic.
-        _burn_text_overlays(
-            joined_path, abs_overlays, output_path, tmpdir, use_skia=is_agentic
-        )
+        _burn_text_overlays(joined_path, abs_overlays, output_path, tmpdir, use_skia=is_agentic)
         _burned_dur = _probe_duration(output_path)
         log.info("debug_post_burn_duration", burned_dur=_burned_dur)
     else:
@@ -3316,6 +3430,7 @@ def _join_or_concat(
     output_path: str,
     tmpdir: str,
     has_interstitials: bool = False,
+    transition_duration_s: float | None = None,
 ) -> None:
     """Join slots, splitting hard-cut runs from real visual transitions.
 
@@ -3412,6 +3527,7 @@ def _join_or_concat(
             boundary_transitions,
             group_durs,
             output_path,
+            transition_duration_s=transition_duration_s,
         )
     except Exception as exc:
         # Last-resort fallback: drop visual transitions, concat all original
@@ -3668,6 +3784,15 @@ def _collect_absolute_overlays(
                 "text_color": ov.get("text_color", "#FFFFFF"),
                 "position_x_frac": ov.get("position_x_frac"),
                 "position_y_frac": ov.get("position_y_frac"),
+                # text_anchor MUST be carried through. Without it the renderer
+                # defaults to "center", so a left-anchored overlay's
+                # position_x_frac (e.g. Layer-2's 0.05) is treated as the line
+                # CENTER instead of its left edge — the left half of every
+                # cumulative line clips off-screen ("It's not" → "s not" on
+                # prod template 89cde014). The admin-preview path
+                # (render_overlays_at_time) already passes it, which masked the
+                # bug during local verification.
+                "text_anchor": ov.get("text_anchor", "center"),
                 "stroke_width": int(ov.get("stroke_width", 0)),
                 "emoji_prefix": str(ov.get("emoji_prefix", "")),
             }
@@ -3699,6 +3824,15 @@ def _collect_absolute_overlays(
                 entry["fade_in_ms"] = ov["fade_in_ms"]
             if ov.get("fade_out_ms") is not None:
                 entry["fade_out_ms"] = ov["fade_out_ms"]
+            # Line-style lyrics can be split across multiple beat-synced slots.
+            # Keep their stable identity until dedup so the full renderer can
+            # stitch those continuations back into one absolute ASS event.
+            if ov.get("lyric_line_id"):
+                entry["lyric_line_id"] = ov["lyric_line_id"]
+            if ov.get("lyric_segment_index") is not None:
+                entry["lyric_segment_index"] = ov["lyric_segment_index"]
+            if ov.get("lyric_segment_count") is not None:
+                entry["lyric_segment_count"] = ov["lyric_segment_count"]
             # Pass through player-card fields so the renderer receives
             # jersey_no + player_name (the special-effect path needs both).
             if ov.get("jersey_no"):
@@ -3840,7 +3974,11 @@ def _collect_absolute_overlays(
             x_frac if x_frac is not None else -1.0,
         )
 
+    def _is_lyric_line(o: dict) -> bool:
+        return o.get("effect") == "lyric-line"
+
     _MERGE_GAP_THRESHOLD_S = 2.0
+    _LYRIC_LINE_CONTINUATION_GAP_S = 0.12
     raw.sort(key=lambda o: (o["text"].lower().strip(), _slot_key(o), o["start_s"]))
     unique: list[dict] = []
     for ov in raw:
@@ -3849,7 +3987,7 @@ def _collect_absolute_overlays(
         # Check if we can merge with an existing entry
         for prev in unique:
             prev_key = prev["text"].lower().strip()
-            if (
+            same_visual_style = (
                 prev_key == key
                 and _slot_key(prev) == _slot_key(ov)
                 and prev.get("font_family") == ov.get("font_family")
@@ -3861,21 +3999,34 @@ def _collect_absolute_overlays(
                 and prev.get("text_color") == ov.get("text_color")
                 and not prev.get("spans")
                 and not ov.get("spans")
+            )
+            same_lyric_line = (
+                same_visual_style
+                and _is_lyric_line(prev)
+                and _is_lyric_line(ov)
+                and prev.get("lyric_line_id")
+                and prev.get("lyric_line_id") == ov.get("lyric_line_id")
+                and ov["start_s"] - prev["end_s"] < _LYRIC_LINE_CONTINUATION_GAP_S
+            )
+            same_text_overlay = (
+                same_visual_style
                 # Karaoke lines carry per-overlay word timings tied to a
                 # specific [start_s, end_s] window; merging two karaoke
                 # overlays would invalidate the word timings on whichever
                 # one got absorbed. Lyric injector already places each line
                 # at its own timestamp, so dedup never applies here.
-                # `lyric-line` is excluded for the same reason: each line
-                # needs its own fade-in/fade-out window. Merging two adjacent
-                # lyric-line overlays would collapse them into one block
-                # with a single fade, losing the per-line transition.
+                # `lyric-line` only merges through the explicit lyric_line_id
+                # path above; text equality alone is not enough because the
+                # same lyric can repeat later in a song.
                 and ov.get("effect") not in ("karaoke-line", "lyric-line")
                 and prev.get("effect") not in ("karaoke-line", "lyric-line")
                 and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
-            ):
+            )
+            if same_lyric_line or same_text_overlay:
                 # Merge: extend previous overlay's end time
                 prev["end_s"] = max(prev["end_s"], ov["end_s"])
+                if same_lyric_line and ov.get("fade_out_ms") is not None:
+                    prev["fade_out_ms"] = ov["fade_out_ms"]
                 # If current has font-cycle effect, upgrade previous
                 if ov.get("effect") == "font-cycle":
                     prev["effect"] = "font-cycle"
@@ -3906,6 +4057,8 @@ def _collect_absolute_overlays(
     unique.sort(key=lambda o: (_slot_key(o), o["start_s"]))
     for i in range(len(unique) - 1):
         if _slot_key(unique[i]) == _slot_key(unique[i + 1]):
+            if _is_lyric_line(unique[i]) or _is_lyric_line(unique[i + 1]):
+                continue
             if unique[i]["end_s"] > unique[i + 1]["start_s"]:
                 unique[i]["end_s"] = unique[i + 1]["start_s"] - 0.1
                 unique[i]["_clamped_by"] = "overlap_truncated"
@@ -3942,6 +4095,7 @@ def _collect_absolute_overlays(
                     "position": o.get("position"),
                     "position_y_frac": o.get("position_y_frac"),
                     "effect": o.get("effect"),
+                    "lyric_line_id": o.get("lyric_line_id"),
                     "text_size": o.get("text_size"),
                     "text_color": o.get("text_color"),
                     "font_cycle_accel_at_s": o.get("font_cycle_accel_at_s"),
@@ -3956,6 +4110,9 @@ def _collect_absolute_overlays(
     for o in result:
         o.pop("_origin_slots", None)
         o.pop("_clamped_by", None)
+        o.pop("lyric_line_id", None)
+        o.pop("lyric_segment_index", None)
+        o.pop("lyric_segment_count", None)
 
     log.info("text_overlays_collected", raw=len(raw), deduped=len(result))
     return result
@@ -4145,6 +4302,11 @@ def _pre_burn_curtain_slot_text(
             "text_color": ov.get("text_color", "#FFFFFF"),
             "position_x_frac": ov.get("position_x_frac"),
             "position_y_frac": ov.get("position_y_frac"),
+            # Carry text_anchor or the renderer defaults to "center" and a
+            # left-anchored overlay's position_x_frac is treated as the line
+            # CENTER, clipping the left half off-screen. See the matching
+            # comment on the other entry-build site above.
+            "text_anchor": ov.get("text_anchor", "center"),
             # Carry recipe-side font_cycle_accel_at_s through to the renderer.
             # Without this, `_compute_font_cycle_frame_specs` falls back to its
             # default "cycle for first 70%, settle to STATIC for last 30%"

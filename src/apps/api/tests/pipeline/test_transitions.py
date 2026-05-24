@@ -72,6 +72,26 @@ class TestBuildXfadeFilter:
         parts = result.split(";")
         assert len(parts) == 7
 
+    def test_duration_override_speeds_up_transition(self):
+        """A recipe-level transition_duration_s override replaces the 0.3s base
+        (the "fit to time" / faster-transitions knob)."""
+        result = _build_xfade_filter(["crossfade"], [5.0, 5.0], 0.1)
+        assert "duration=0.100" in result
+        # Offset = 5.0 - 0.1 = 4.9
+        assert "offset=4.900" in result
+
+    def test_duration_override_still_clamped_to_short_slot(self):
+        """Even with a large override, the 30%-of-shorter-slot clamp wins so a
+        too-large value can never eat the footage."""
+        result = _build_xfade_filter(["crossfade"], [0.8, 5.0], 1.5)
+        # max_dur = min(0.8, 5.0) * 0.3 = 0.24 — clamp beats the 1.5 override.
+        assert "duration=0.240" in result
+
+    def test_duration_override_none_falls_back_to_default(self):
+        """None override → the historical DEFAULT_TRANSITION_DURATION_S (0.3s)."""
+        result = _build_xfade_filter(["crossfade"], [5.0, 5.0], None)
+        assert "duration=0.300" in result
+
 
 # ── join_with_transitions integration tests ──────────────────────────────────
 

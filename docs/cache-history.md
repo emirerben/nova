@@ -127,6 +127,55 @@ the cumulative reveal as the canonical rendering for that band of
 screen at that time. Bumping orphans every Layer-2 cache entry under
 the prior alignment and orphan-singleton behavior.
 
+### 2026-05-23: `v2-2026-05-22-atomized-single-word` → `v2-2026-05-23-cumulative-stack`
+
+PR #286 follow-up. The `v2-2026-05-22` fix only verified the renderer
+baseline anchor (PR #286 part C) locally; the cumulative-emit fixes
+(parts A/B) never exercised. Prod template `89cde014` still rendered
+split sub-groups stacked on top of each other at the same y, sub-frame
+cumulative flashes, and trailing OCR quote artifacts. This bump orphans
+the `v2-2026-05-22` cache entries written under the broken emit:
+(A) `_emit_cumulative_line_overlays` Pass-1 now measures widths at the
+uniform Layer-2 render size (large=120 px) so long lines actually split —
+previously it measured at the classifier's `size_class` (often
+"small"=36 px) and never overflowed, emitting one massive multi-line
+overlay. (B) Pass-2 stacks split sub-groups vertically via the renderer's
+intrinsic ascent+descent line step. Each sub-group's anchor_y now offsets
+by `sub_group_idx * line_step_norm` so split lines render at distinct y.
+(C) The cumulative emit floors stage duration at 0.2 s (vs the lyric
+injector's 0.05 s) so a 50-ms middle stage drops out of the reveal
+instead of flashing for one frame. (D) Stage E `_sanitize_aligned_line`
+strips unmatched trailing quote / escape characters that OCR leaks on
+phrase boundaries (the dangling `"` on `luck"` was rendering literally).
+
+### 2026-05-23 (b): Stage E mis-mapped-duplicate defense
+
+The `v2-2026-05-23` cumulative-stack fix shipped, but the next prod
+reanalyze of `89cde014` still rendered jumbled sub-groups ("and
+combination" at y=0.51, "good don't allow" stacked). Root cause was
+UPSTREAM of the cumulative emit: Stage E's Gemini call violated its
+uniqueness rule, mapping OCR "timing" → "combination" and OCR "don't" →
+"and" (both duplicates of earlier phrases) 1s+ apart, so the existing
+time-gap dedup (0.5 s) missed them. The wrong words entered the
+cumulative LineGroup and the emit faithfully rendered nonsense. The 3b
+uniqueness defense now also reverts a duplicate to OCR when the LLM
+output disagrees with the phrase's own OCR word, regardless of time gap.
+
+### 2026-05-23 (c): Cumulative reveal de-clustering
+
+Same prod reanalyze still revealed words in 2-4 word pops, not one-by-one
+("It's not" jumped straight to "It's not just luck"). Root cause: OCR
+first-seen timestamps cluster (coarse frame sampling stamps every word in
+a held frame at the same t — `89cde014` had "just"/"luck"/"is"/"a" all at
+t=6.50, "your"/"hard"/"work." all at t=10.00). `build_cumulative_stages`
+then dropped the sub-renderable intermediate stages.
+`_emit_cumulative_line_overlays` now de-spaces each sub-group's word
+reveal times (min 0.30 s apart) before building stages, so every word
+lands its own reveal beat. No prod deploy happened between (b) and (c),
+so both shipped under one namespace string
+(`v2-2026-05-23c-declustered-reveal`) on main — these are the final
+manual-bump entries before this PR replaces the constant with a hash.
+
 ### 2026-05-23: content-hash (this PR)
 
 Manual bumps end here. `TEXT_OVERLAY_VERSION_V2` is now derived from

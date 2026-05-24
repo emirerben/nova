@@ -161,6 +161,10 @@ export interface Recipe {
   // is unset. null when no overlay had a text_bbox or all matches were below
   // the similarity floor.
   font_default?: string | null;
+  // Clip xfade duration override in seconds. null/undefined → renderer default
+  // (0.3s). Lower = faster transitions, helps footage fit the selected time.
+  // Clamped to 30% of the shorter adjacent slot at render time.
+  transition_duration_s?: number | null;
   analysis_pool_stale?: boolean;
   matcher_version?: string | null;
   registry_sha256?: string | null;

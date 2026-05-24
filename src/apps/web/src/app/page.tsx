@@ -3,12 +3,12 @@ import type { TemplateListItem } from "@/lib/api";
 import TemplateGrid from "./TemplateGrid";
 import TemplateGridSkeleton from "./TemplateGridSkeleton";
 
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
 
 async function fetchTemplates(): Promise<TemplateListItem[]> {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
   const res = await fetch(`${apiUrl}/templates`, {
-    next: { revalidate: 60, tags: ["templates"] },
+    cache: "no-store",
   });
   if (!res.ok) {
     throw new Error(`Failed to fetch templates: ${res.status}`);
