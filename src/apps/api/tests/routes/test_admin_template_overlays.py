@@ -757,6 +757,24 @@ def test_unit_resequence_ripples_across_positions() -> None:
     assert round(out[1]["end_s"], 2) == 3.3
 
 
+def test_unit_resequence_closes_intra_phrase_gaps() -> None:
+    from app.routes.admin import _resequence_slot_overlays
+
+    # One cumulative phrase block with an intra-phrase gap (same anchor). The
+    # block ripple leaves internal gaps; the trailing butt-join must close them
+    # so the reveal never blanks between words. Removing the
+    # butt_join_cumulative_phrases(out) call makes this assertion fail.
+    ovs = [
+        {"sample_text": "a", "start_s": 0.0, "end_s": 0.4},
+        {"sample_text": "a b", "start_s": 0.8, "end_s": 1.2},  # 0.4s gap before
+        {"sample_text": "a b c", "start_s": 1.6, "end_s": 2.0},  # 0.4s gap before
+    ]
+    out, _ = _resequence_slot_overlays(ovs, target_duration_s=4.0)
+    assert out[0]["end_s"] == pytest.approx(out[1]["start_s"])
+    assert out[1]["end_s"] == pytest.approx(out[2]["start_s"])
+    assert out[2]["end_s"] == pytest.approx(2.0)  # terminal dwell untouched
+
+
 def test_unit_reflow_skips_agentic_pct_overlays() -> None:
     from app.routes.admin import _resequence_slot_overlays
 
@@ -837,7 +855,7 @@ def test_unit_reflow_single_overlay_noop() -> None:
 
 
 def test_unit_group_phrase_index_blocks_cumulative_and_singletons() -> None:
-    from app.routes.admin import _group_phrase_index_blocks
+    from app.routes.admin import group_phrase_index_blocks
 
     ovs = [
         {"sample_text": "a"},
@@ -847,7 +865,7 @@ def test_unit_group_phrase_index_blocks_cumulative_and_singletons() -> None:
         {"sample_text": "X Y"},
         {"sample_text": "solo"},
     ]
-    assert _group_phrase_index_blocks(ovs) == [[0, 1, 2], [3, 4], [5]]
+    assert group_phrase_index_blocks(ovs) == [[0, 1, 2], [3, 4], [5]]
 
 
 def test_unit_resequence_separates_interleaved_phrases_as_blocks() -> None:

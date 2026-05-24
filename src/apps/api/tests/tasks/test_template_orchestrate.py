@@ -2540,6 +2540,51 @@ class TestAssembleClipsTextOverlays:
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert result == []
 
+    def _gappy_reveal_overlays(self):
+        return [
+            {"role": "hook", "start_s": 0.0, "end_s": 0.4, "position": "center",
+             "sample_text": "if"},
+            {"role": "hook", "start_s": 0.4, "end_s": 0.8, "position": "center",
+             "sample_text": "if you"},
+            {"role": "hook", "start_s": 1.2, "end_s": 1.6, "position": "center",
+             "sample_text": "if you put"},  # 0.4s gap before this
+        ]
+
+    def test_intra_phrase_gaps_closed_at_render_time(self):
+        """Render-time butt-join: a cumulative phrase whose stages aren't butted
+        (fixed start+0.4 windows with wider-spaced starts — the prod 89cde014
+        glitch) must render gap-free so the line never blanks between words."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=self._gappy_reveal_overlays())
+        result = _collect_absolute_overlays([step], [5.0], None, "", is_agentic=True)
+        by_text = {o["text"]: o for o in result}
+        # "if you" now holds until "if you put" opens — no blank frames.
+        assert by_text["if you"]["end_s"] == pytest.approx(by_text["if you put"]["start_s"])
+        assert by_text["if"]["end_s"] == pytest.approx(by_text["if you"]["start_s"])
+
+    def test_render_time_buttjoin_does_not_mutate_recipe(self):
+        """The recipe step's overlays must be untouched — butt-join runs on
+        copies so the cached recipe is never mutated in place."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        overlays = self._gappy_reveal_overlays()
+        step = self._make_step_with_overlays(overlays=overlays)
+        original_ends = [o["end_s"] for o in step.slot["text_overlays"]]
+        _collect_absolute_overlays([step], [5.0], None, "", is_agentic=True)
+        assert [o["end_s"] for o in step.slot["text_overlays"]] == original_ends
+
+    def test_render_time_buttjoin_skipped_for_classic_templates(self):
+        """Classic (non-agentic) templates have no Layer-2 reveals — gaps are
+        left exactly as authored (is_agentic defaults to False)."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=self._gappy_reveal_overlays())
+        result = _collect_absolute_overlays([step], [5.0], None, "")  # is_agentic=False
+        by_text = {o["text"]: o for o in result}
+        # Gap preserved: "if you" still ends at 0.8, NOT extended to 1.2.
+        assert by_text["if you"]["end_s"] == pytest.approx(0.8)
+
     def test_dedup2_still_truncates_same_position_overlap(self):
         """Render-time safety net: even though the admin overlay-editor reflow
         now ripples same-screen-slot overlaps apart at save time, Dedup 2 must

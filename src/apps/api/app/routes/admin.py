@@ -29,6 +29,10 @@ from sqlalchemy.orm import defer
 from app.config import settings
 from app.database import get_db
 from app.models import AgentRun, Job, MusicTrack, TemplateRecipeVersion, VideoTemplate
+from app.pipeline.text_reveal import (
+    butt_join_cumulative_phrases,
+    group_phrase_index_blocks,
+)
 from app.routes._admin_schemas import AgentRunPayload, agent_run_to_payload
 from app.routes.templates import RequiredInput, invalidate_templates_cache
 from app.services.lyrics_config_validation import validate_lyrics_config_dict
@@ -1519,46 +1523,6 @@ def _eff_end(o: dict) -> float:
     return float((v if v is not None else o.get("end_s")) or 0.0)
 
 
-def _is_cumulative_extension(prev_text: str, cur_text: str) -> bool:
-    """True if ``cur_text`` extends ``prev_text`` (cumulative reveal stage).
-
-    Layer-2 reveal phrases hold the full line built up to and including each
-    word, so stage k+1's text starts with stage k's text and is longer. Mirrors
-    the cumulative-continuation rule in web ``phrase-grouping.ts``.
-    """
-    if not prev_text:
-        return False
-    return cur_text.startswith(prev_text) and len(cur_text) > len(prev_text)
-
-
-def _group_phrase_index_blocks(overlays: list[dict]) -> list[list[int]]:
-    """Group overlay indices into phrase blocks (one on-screen phrase each).
-
-    A phrase is a maximal run of consecutive overlays where each member's text
-    is a cumulative extension of the previous member's; any overlay that doesn't
-    extend the previous one starts a new phrase. Singleton/non-extending
-    overlays become one-member blocks. This is what lets the re-sequencer move a
-    whole reveal phrase as a rigid block instead of fragmenting its stages.
-    """
-    blocks: list[list[int]] = []
-    cur: list[int] = []
-    prev_text: str | None = None
-    for i, o in enumerate(overlays):
-        text = ""
-        if isinstance(o, dict):
-            text = str(o.get("sample_text") or o.get("text") or "").strip()
-        if cur and prev_text is not None and _is_cumulative_extension(prev_text, text):
-            cur.append(i)
-        else:
-            if cur:
-                blocks.append(cur)
-            cur = [i]
-        prev_text = text
-    if cur:
-        blocks.append(cur)
-    return blocks
-
-
 def _shift_overlay(o: dict, delta: float) -> None:
     """Move an overlay forward in time by ``delta`` seconds in place.
 
@@ -1611,7 +1575,7 @@ def _resequence_slot_overlays(
     out = [dict(o) if isinstance(o, dict) else o for o in overlays]
     pushed_past_target = 0
     cursor: float | None = None
-    for block in _group_phrase_index_blocks(out):
+    for block in group_phrase_index_blocks(out):
         members = [out[i] for i in block if isinstance(out[i], dict)]
         if not members:
             continue
@@ -1628,6 +1592,12 @@ def _resequence_slot_overlays(
         cursor = block_end
         if target_duration_s is not None and block_start > target_duration_s:
             pushed_past_target += len(members)
+    # Close any intra-phrase gaps so a cumulative reveal never blanks out
+    # between words (the prod 89cde014 glitch). This only extends a member's
+    # end to the next member's start within the SAME phrase block — it never
+    # touches inter-phrase gaps, so the intentional pauses the ripple preserved
+    # above survive.
+    butt_join_cumulative_phrases(out)
     return out, {"overlays_pushed_past_target": pushed_past_target}
 
 
