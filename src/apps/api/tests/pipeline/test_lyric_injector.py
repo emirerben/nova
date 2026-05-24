@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import copy
+import inspect
+
 import pytest
 
 from app.pipeline import lyric_injector
@@ -290,9 +293,9 @@ def test_line_post_dwell_extends_into_overlap_budget() -> None:
     recipe = _make_recipe([10.0])
     # First line ends at 2.0; second line starts at 2.3.
     # Natural post-dwell would end first line at 2.0 + 2.0 = 4.0.
-    # next_visual_start = 2.3 - 0.10 = 2.20.
+    # next_visual_start = 2.3 - 0.40 = 1.90.
     # overlap_budget = min(0.4, 0.15 + 0.10) = 0.25.
-    # Expected end: min(4.0, 2.20 + 0.25) = 2.45.
+    # Expected end: min(4.0, 1.90 + 0.25, 2.3) = 2.15.
     cache = _make_lyrics_cache(
         [
             ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
@@ -307,15 +310,16 @@ def test_line_post_dwell_extends_into_overlap_budget() -> None:
         {
             "enabled": True,
             "style": "line",
-            "pre_roll_s": 0.1,
+            "pre_roll_s": 0.4,
             "post_dwell_s": 2.0,
             "fade_in_ms": 150,
             "fade_out_ms": 100,
             "max_overlap_s": 0.4,
+            "next_line_gap_s": 0.0,
         },
     )
     ov0 = out["slots"][0]["text_overlays"][0]
-    next_visual_start = 2.3 - 0.1
+    next_visual_start = 2.3 - 0.4
     overlap_budget = min(0.4, 0.15 + 0.10)
     assert ov0["end_s"] == pytest.approx(next_visual_start + overlap_budget, abs=1e-3)
 
@@ -362,15 +366,16 @@ def test_line_post_dwell_capped_by_static_overlap_budget() -> None:
         {
             "enabled": True,
             "style": "line",
-            "pre_roll_s": 0.1,
+            "pre_roll_s": 0.5,
             "post_dwell_s": 2.0,
             "fade_in_ms": 300,
             "fade_out_ms": 300,
             "max_overlap_s": lyric_injector._LINE_MAX_OVERLAP_S,
+            "next_line_gap_s": 0.0,
         },
     )
     ov0 = out["slots"][0]["text_overlays"][0]
-    next_visual_start = 2.3 - 0.1
+    next_visual_start = 2.3 - 0.5
     visual_overlap_s = ov0["end_s"] - next_visual_start
     assert ov0["end_s"] == pytest.approx(
         next_visual_start + lyric_injector._LINE_MAX_OVERLAP_S,
@@ -395,27 +400,28 @@ def test_line_overlap_bounded_by_short_fades() -> None:
         {
             "enabled": True,
             "style": "line",
-            "pre_roll_s": 0.1,
+            "pre_roll_s": 0.4,
             "post_dwell_s": 2.0,
             "fade_in_ms": 50,
             "fade_out_ms": 50,
             "max_overlap_s": lyric_injector._LINE_MAX_OVERLAP_S,
+            "next_line_gap_s": 0.0,
         },
     )
     ov0 = out["slots"][0]["text_overlays"][0]
-    next_visual_start = 2.3 - 0.1
+    next_visual_start = 2.3 - 0.4
     visual_overlap_s = ov0["end_s"] - next_visual_start
     assert ov0["end_s"] == pytest.approx(next_visual_start + 0.1, abs=1e-3)
     assert visual_overlap_s == pytest.approx(0.1, abs=1e-3)
 
 
-def test_line_zero_fades_yields_zero_visual_overlap() -> None:
-    """Zero fades cap against visual start, stronger than capping at audio start."""
+def test_line_zero_fades_yields_zero_visual_overlap_when_it_does_not_cut_audio() -> None:
+    """Zero fades cap against visual start when the audio span still fits."""
     recipe = _make_recipe([10.0])
     cache = _make_lyrics_cache(
         [
             ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
-            ("Second", 2.3, 3.0, [("Second", 2.3, 3.0)]),
+            ("Second", 2.6, 3.0, [("Second", 2.6, 3.0)]),
         ]
     )
     out = inject_lyric_overlays(
@@ -426,7 +432,7 @@ def test_line_zero_fades_yields_zero_visual_overlap() -> None:
         {
             "enabled": True,
             "style": "line",
-            "pre_roll_s": 0.1,
+            "pre_roll_s": 0.4,
             "post_dwell_s": 2.0,
             "fade_in_ms": 0,
             "fade_out_ms": 0,
@@ -434,7 +440,7 @@ def test_line_zero_fades_yields_zero_visual_overlap() -> None:
         },
     )
     ov0, ov1 = out["slots"][0]["text_overlays"]
-    next_visual_start = 2.3 - 0.1
+    next_visual_start = 2.6 - 0.4
     assert ov0["end_s"] <= next_visual_start + 1e-9
     assert ov1["start_s"] >= ov0["end_s"]
 
@@ -455,11 +461,12 @@ def test_tight_lines_keep_their_fades() -> None:
         {
             "enabled": True,
             "style": "line",
-            "pre_roll_s": 0.1,
+            "pre_roll_s": 0.4,
             "post_dwell_s": 2.0,
             "fade_in_ms": 150,
             "fade_out_ms": 100,
             "max_overlap_s": lyric_injector._LINE_MAX_OVERLAP_S,
+            "next_line_gap_s": 0.0,
         },
     )
     ov0, ov1 = out["slots"][0]["text_overlays"]
@@ -483,12 +490,13 @@ def test_default_fades_when_keys_missing_do_not_disable_overlap() -> None:
         {
             "enabled": True,
             "style": "line",
-            "pre_roll_s": 0.1,
+            "pre_roll_s": 0.4,
             "post_dwell_s": 2.0,
+            "next_line_gap_s": 0.0,
         },
     )
     ov0 = out["slots"][0]["text_overlays"][0]
-    next_visual_start = 2.3 - 0.1
+    next_visual_start = 2.3 - 0.4
     expected_overlap_s = min(
         lyric_injector._LINE_MAX_OVERLAP_S,
         (lyric_injector._LINE_FADE_IN_MS + lyric_injector._LINE_FADE_OUT_MS) / 1000.0,
@@ -530,6 +538,249 @@ def test_line_reads_tuning_from_config() -> None:
     assert ov["fade_out_ms"] == 400
 
 
+def test_line_no_overrides_preserves_default_timing_contract() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
+            ("Second", 3.0, 4.0, [("Second", 3.0, 4.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
+    ov0, ov1 = out["slots"][0]["text_overlays"]
+
+    assert ov0["start_s"] == pytest.approx(0.6, abs=1e-3)
+    assert ov0["end_s"] == pytest.approx(2.9, abs=1e-3)
+    assert ov0["fade_in_ms"] == 50
+    assert ov0["fade_out_ms"] == 250
+    assert ov1["start_s"] == pytest.approx(2.6, abs=1e-3)
+    assert ov1["end_s"] == pytest.approx(5.0, abs=1e-3)
+
+
+def test_line_post_dwell_can_hold_two_seconds_when_caps_have_slack() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
+            ("Second", 6.0, 7.0, [("Second", 6.0, 7.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {"enabled": True, "style": "line", "post_dwell_s": 2.0},
+    )
+    ov0 = out["slots"][0]["text_overlays"][0]
+    assert ov0["end_s"] <= 4.0
+    assert ov0["end_s"] == pytest.approx(4.0, abs=1e-3)
+
+
+def test_line_pre_roll_override_moves_visual_start_and_clamps_first_line() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("Edge", 0.5, 1.0, [("Edge", 0.5, 1.0)]),
+            ("Later", 2.0, 3.0, [("Later", 2.0, 3.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {"enabled": True, "style": "line", "pre_roll_s": 0.8},
+    )
+    ov0, ov1 = out["slots"][0]["text_overlays"]
+    assert ov0["start_s"] == pytest.approx(0.0, abs=1e-3)
+    assert ov1["start_s"] == pytest.approx(1.2, abs=1e-3)
+
+
+def test_line_next_line_gap_caps_post_dwell_when_there_is_slack() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
+            ("Second", 3.0, 4.0, [("Second", 3.0, 4.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {"enabled": True, "style": "line", "post_dwell_s": 2.0, "next_line_gap_s": 0.3},
+    )
+    ov0 = out["slots"][0]["text_overlays"][0]
+    assert ov0["end_s"] <= 3.0 - 0.3
+    assert ov0["end_s"] == pytest.approx(2.7, abs=1e-3)
+
+
+def test_line_next_line_gap_never_cuts_current_audio() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
+            ("Second", 2.1, 3.0, [("Second", 2.1, 3.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {"enabled": True, "style": "line", "post_dwell_s": 2.0, "next_line_gap_s": 0.3},
+    )
+    ov0 = out["slots"][0]["text_overlays"][0]
+    assert ov0["end_s"] >= 2.0
+    assert ov0["end_s"] == pytest.approx(2.0, abs=1e-3)
+
+
+def test_line_continues_across_short_music_slots_until_audio_end() -> None:
+    # Regression for prod job 5390c7ef-a3eb-448d-bb80-b6c1e292d16c:
+    # the line starts near the end of slot 2 but the vocal continues through
+    # slots 3 and 4. It must not disappear at slot 2's clip cut.
+    recipe = _make_recipe([6.997, 2.176, 2.155, 1.493, 2.027, 1.579])
+    cache = _make_lyrics_cache(
+        [
+            ("We ain't stressing 'bout the loot (yeah)", 8.54, 12.32, [("We", 8.54, 12.32)]),
+            ("My block made of quesería", 12.07, 13.52, [("My", 12.07, 13.52)]),
+            ("This not the molly, this the boot", 14.70, 16.76, [("This", 14.70, 16.76)]),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        17.3,
+        {
+            "enabled": True,
+            "style": "line",
+            "pre_roll_s": 0.1,
+            "post_dwell_s": 2.0,
+            "next_line_gap_s": 0.2,
+            "fade_in_ms": 150,
+            "fade_out_ms": 250,
+        },
+    )
+
+    slots = out["slots"]
+    we_segments = [
+        (idx, ov)
+        for idx, slot in enumerate(slots)
+        for ov in slot["text_overlays"]
+        if ov["text"].startswith("We ain't")
+    ]
+    assert [idx for idx, _ in we_segments] == [1, 2, 3]
+
+    # Slot 2 carries the start, slot 3 bridges the middle, and slot 4 carries
+    # through the aligned audio end at t=12.32.
+    assert we_segments[0][1]["start_s"] == pytest.approx(1.443, abs=1e-3)
+    assert we_segments[0][1]["end_s"] == pytest.approx(2.176, abs=1e-3)
+    assert we_segments[1][1]["start_s"] == pytest.approx(0.0, abs=1e-3)
+    assert we_segments[1][1]["end_s"] == pytest.approx(2.155, abs=1e-3)
+    assert we_segments[2][1]["start_s"] == pytest.approx(0.0, abs=1e-3)
+    assert we_segments[2][1]["end_s"] == pytest.approx(0.992, abs=1e-3)
+
+    assert we_segments[0][1]["fade_in_ms"] == 150
+    assert we_segments[0][1]["fade_out_ms"] == 0
+    assert we_segments[1][1]["fade_in_ms"] == 0
+    assert we_segments[1][1]["fade_out_ms"] == 0
+    assert we_segments[2][1]["fade_in_ms"] == 0
+    assert we_segments[2][1]["fade_out_ms"] == 250
+    assert {ov["lyric_line_id"] for _, ov in we_segments} == {"line:0:8.540:12.320"}
+    assert [ov["lyric_segment_index"] for _, ov in we_segments] == [0, 1, 2]
+    assert [ov["lyric_segment_count"] for _, ov in we_segments] == [3, 3, 3]
+
+    my_block_segments = [
+        idx
+        for idx, slot in enumerate(slots)
+        for ov in slot["text_overlays"]
+        if ov["text"].startswith("My block")
+    ]
+    this_not_segments = [
+        idx
+        for idx, slot in enumerate(slots)
+        for ov in slot["text_overlays"]
+        if ov["text"].startswith("This not")
+    ]
+    assert my_block_segments == [3, 4]
+    assert this_not_segments == [4, 5]
+
+
+def test_line_max_overlap_s_is_reachable_when_fades_are_long_enough() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
+            ("Second", 3.0, 4.0, [("Second", 3.0, 4.0)]),
+        ]
+    )
+    cfg = {
+        "enabled": True,
+        "style": "line",
+        "pre_roll_s": 1.2,
+        "post_dwell_s": 2.0,
+        "next_line_gap_s": 0.0,
+        "max_overlap_s": 1.0,
+        "fade_in_s": 0.4,
+        "fade_out_s": 0.6,
+    }
+    out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, cfg)
+    ov0 = out["slots"][0]["text_overlays"][0]
+    expected_end = min(
+        2.0 + 2.0,
+        3.0 - 1.2 + min(1.0, 0.4 + 0.6),
+        3.0 - 0.0,
+    )
+    expected_end = max(expected_end, 2.0)
+    assert ov0["end_s"] == pytest.approx(expected_end, abs=1e-3)
+    assert ov0["end_s"] - (3.0 - 1.2) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_line_fade_seconds_aliases_emit_milliseconds() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache([("Hi", 1.0, 2.0, [("Hi", 1.0, 2.0)])])
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {"enabled": True, "style": "line", "fade_in_s": 0.1, "fade_out_s": 0.4},
+    )
+    ov = out["slots"][0]["text_overlays"][0]
+    assert ov["fade_in_ms"] == 100
+    assert ov["fade_out_ms"] == 400
+
+
+def test_line_fade_seconds_alias_wins_over_legacy_ms() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache([("Hi", 1.0, 2.0, [("Hi", 1.0, 2.0)])])
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {"enabled": True, "style": "line", "fade_in_s": 0.1, "fade_in_ms": 200},
+    )
+    ov = out["slots"][0]["text_overlays"][0]
+    assert ov["fade_in_ms"] == 100
+
+
+def test_line_injection_does_not_mutate_cached_lyrics() -> None:
+    recipe = _make_recipe([10.0])
+    cache = _make_lyrics_cache(
+        [
+            ("First", 1.0, 2.0, [("First", 1.0, 2.0)]),
+            ("Second", 3.0, 4.0, [("Second", 3.0, 4.0)]),
+        ]
+    )
+    before = copy.deepcopy(cache)
+    inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
+    assert cache == before
+
+
 def test_line_style_does_not_affect_karaoke_path() -> None:
     """Template-scoping guard: switching to `line` must not emit karaoke fields.
 
@@ -557,3 +808,22 @@ def test_line_style_does_not_affect_karaoke_path() -> None:
     assert "word_timings" in ov_kar
     assert "fade_in_ms" not in ov_kar
     assert "fade_out_ms" not in ov_kar
+
+
+def test_line_only_timing_knobs_are_not_read_by_other_styles() -> None:
+    karaoke_source = inspect.getsource(lyric_injector._inject_karaoke)
+    pop_source = inspect.getsource(lyric_injector._inject_per_word_pop)
+    line_only_keys = (
+        "pre_roll_s",
+        "post_dwell_s",
+        "next_line_gap_s",
+        "max_overlap_s",
+        "fade_in_s",
+        "fade_out_s",
+        "fade_in_ms",
+        "fade_out_ms",
+        "hold_to_next_threshold_ms",
+    )
+    for key in line_only_keys:
+        assert key not in karaoke_source
+        assert key not in pop_source

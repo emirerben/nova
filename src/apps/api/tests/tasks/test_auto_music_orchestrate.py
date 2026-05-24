@@ -639,6 +639,31 @@ def test_load_matcher_candidates_requires_current_best_sections_window() -> None
     assert 0 < _track_slot_count(out[0]) <= 8
 
 
+def test_track_config_for_best_section_caps_overlong_current_rows() -> None:
+    """Production rows may already carry overlong current-version sections.
+    Auto-music must cap them instead of requiring a section_version bump/backfill.
+    """
+    track = _make_track(
+        track_id="overlong-current",
+        best_sections=[
+            {
+                "rank": 1,
+                "start_s": 161.3,
+                "end_s": 206.3,
+                "label": "drop",
+                "energy": "peaks_high",
+                "suggested_use": "climax",
+                "rationale": "legacy row longer than the short-form budget",
+            }
+        ],
+    )
+
+    cfg = _track_config_for_best_section(track)
+
+    assert cfg["best_start_s"] == 161.3
+    assert cfg["best_end_s"] == 181.3
+
+
 def test_track_slot_count_memoizes_generated_current_section_recipe() -> None:
     """Generating slots for the rank-1 section is cached per candidate pass."""
     track = _make_track(track_id="memoized")

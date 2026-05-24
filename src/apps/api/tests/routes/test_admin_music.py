@@ -279,6 +279,52 @@ def test_to_response_drops_invalid_section_rows() -> None:
     assert resp.section_version == "2026-05-15"
 
 
+def test_to_response_caps_overlong_best_sections() -> None:
+    """Legacy JSONB rows can predate the 20s cap. Admin responses normalize
+    them so the UI and preview button never expose an overlong chosen section.
+    """
+    from app.routes.admin_music import _to_response
+
+    track = MagicMock()
+    track.id = "track-overlong"
+    track.title = "Overlong"
+    track.artist = ""
+    track.source_url = "https://youtube.com/watch?v=overlong"
+    track.audio_gcs_path = "music/track-overlong/audio.m4a"
+    track.duration_s = 218.4
+    track.beat_timestamps_s = []
+    track.analysis_status = "ready"
+    track.error_detail = None
+    track.thumbnail_url = None
+    track.published_at = None
+    track.archived_at = None
+    track.track_config = None
+    track.best_sections = [
+        {
+            "rank": 1,
+            "start_s": 161.3,
+            "end_s": 206.3,
+            "label": "drop",
+            "energy": "peaks_high",
+            "suggested_use": "climax",
+            "rationale": "Legacy row longer than the short-form budget.",
+        }
+    ]
+    track.section_version = "2026-05-15"
+    track.lyrics_status = "pending"
+    track.lyrics_source = None
+    track.lyrics_error_detail = None
+    track.lyrics_cached = None
+    track.lyrics_extracted_at = None
+    track.created_at = datetime.now(UTC)
+
+    resp = _to_response(track)
+
+    assert resp.best_sections is not None
+    assert resp.best_sections[0].start_s == 161.3
+    assert resp.best_sections[0].end_s == 181.3
+
+
 def test_to_response_drops_all_when_every_section_invalid() -> None:
     """If every row is malformed, best_sections becomes None — the UI then
     shows the "no agent sections" placeholder, matching the empty-list case.

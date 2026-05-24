@@ -143,6 +143,104 @@ class TestOrchestratePipelineHelpers:
         # Result must preserve input order (not completion order)
         assert mock_upload.call_count == 3
 
+    def test_upload_clips_parallel_tolerates_per_clip_failure(self):
+        """One clip's Gemini upload raising should not fail the whole job —
+        the failed clip comes back as None and the rest continue.
+
+        Mirrors prod job 04c5d656 where one of 10 clips ended in FAILED
+        and aborted the entire music test-job. After this fix the same
+        scenario yields 9 refs + 1 None, and the analyze step + orchestrator
+        50% threshold decide whether the job can still produce output."""
+        from app.pipeline.agents.gemini_analyzer import GeminiAnalysisError
+        from app.tasks.template_orchestrate import _upload_clips_parallel
+
+        good_ref_a = MagicMock(name="files/good_a")
+        good_ref_c = MagicMock(name="files/good_c")
+
+        def fake_upload(path):
+            if path == "/tmp/b.mp4":
+                raise GeminiAnalysisError("Gemini file processing failed: files/bad_b")
+            if path == "/tmp/a.mp4":
+                return good_ref_a
+            if path == "/tmp/c.mp4":
+                return good_ref_c
+            raise AssertionError(f"unexpected path: {path}")
+
+        with patch(
+            "app.tasks.template_orchestrate.gemini_upload_and_wait",
+            side_effect=fake_upload,
+        ):
+            result = _upload_clips_parallel(["/tmp/a.mp4", "/tmp/b.mp4", "/tmp/c.mp4"])
+
+        assert len(result) == 3
+        assert result[0] is good_ref_a
+        assert result[1] is None  # the failed clip
+        assert result[2] is good_ref_c
+
+    def test_upload_clips_parallel_tolerates_polling_timeout(self):
+        """PollingTimeoutError is also caught — same per-clip tolerance applies."""
+        from app.pipeline.agents.gemini_analyzer import PollingTimeoutError
+        from app.tasks.template_orchestrate import _upload_clips_parallel
+
+        good_ref = MagicMock(name="files/good")
+
+        def fake_upload(path):
+            if path == "/tmp/slow.mp4":
+                raise PollingTimeoutError("file did not become ACTIVE within 120s")
+            return good_ref
+
+        with patch(
+            "app.tasks.template_orchestrate.gemini_upload_and_wait",
+            side_effect=fake_upload,
+        ):
+            result = _upload_clips_parallel(["/tmp/fast.mp4", "/tmp/slow.mp4"])
+
+        assert result[0] is good_ref
+        assert result[1] is None
+
+    def test_analyze_clips_parallel_falls_back_to_whisper_for_none_ref(self):
+        """An upload that returned None should still produce a ClipMeta via
+        the Whisper fallback path inside _analyze_clips_parallel."""
+        from app.pipeline.agents.gemini_analyzer import ClipMeta
+        from app.tasks.template_orchestrate import _analyze_clips_parallel
+
+        good_ref = MagicMock(name="files/good")
+        good_meta = ClipMeta(
+            clip_id="files/good",
+            transcript="ok",
+            hook_text="ok",
+            hook_score=7.0,
+            best_moments=[{"start_s": 0, "end_s": 5, "energy": 5, "description": "ok"}],
+            analysis_degraded=False,
+        )
+
+        fake_transcript = MagicMock(full_text="fallback transcript")
+
+        with (
+            patch(
+                "app.tasks.template_orchestrate.analyze_clip",
+                return_value=good_meta,
+            ),
+            patch(
+                "app.pipeline.transcribe.transcribe_whisper",
+                return_value=fake_transcript,
+            ),
+        ):
+            metas, failed = _analyze_clips_parallel(
+                [good_ref, None],
+                ["/tmp/good.mp4", "/tmp/bad.mp4"],
+                probe_map={"/tmp/bad.mp4": MagicMock(duration_s=12.0)},
+            )
+
+        # Both clips produced a meta — one real, one Whisper-fallback.
+        assert len(metas) == 2
+        assert failed == 0
+        # The Whisper-fallback meta is flagged degraded and gets the synthetic
+        # clip_id used by the music/auto-music orchestrators' map fallback.
+        fallback = next(m for m in metas if m.analysis_degraded)
+        assert fallback.clip_id == "clip_1"
+        assert fallback.clip_path == "/tmp/bad.mp4"
+
     def test_probe_and_upload_concurrent_returns_both(self):
         """Slice-5 contract: helper runs probe + upload concurrently and
         returns the same shape as the prior sequential calls."""
@@ -2442,6 +2540,38 @@ class TestAssembleClipsTextOverlays:
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert result == []
 
+    def test_dedup2_still_truncates_same_position_overlap(self):
+        """Render-time safety net: even though the admin overlay-editor reflow
+        now ripples same-screen-slot overlaps apart at save time, Dedup 2 must
+        still truncate a pathological same-position overlap that reaches the
+        renderer (e.g. from a non-reflowed source). Two center overlays
+        overlapping in time → the earlier is truncated to end before the later
+        starts."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=[
+            {
+                "role": "hook",
+                "start_s": 0.5,
+                "end_s": 3.0,
+                "position": "center",
+                "sample_text": "alpha",
+            },
+            {
+                "role": "hook",
+                "start_s": 2.0,
+                "end_s": 4.0,
+                "position": "center",
+                "sample_text": "beta",
+            },
+        ])
+        result = _collect_absolute_overlays([step], [5.0], None, "")
+        by_text = {o["text"]: o for o in result}
+        assert set(by_text) == {"alpha", "beta"}
+        # Earlier overlay truncated to end before the later one starts.
+        assert by_text["alpha"]["end_s"] <= by_text["beta"]["start_s"]
+        assert by_text["alpha"]["end_s"] > by_text["alpha"]["start_s"]
+
     def test_cycle_fonts_pass_through_to_renderer(self):
         """REGRESSION: recipe-level `cycle_fonts` MUST reach the renderer
         entry dict. Earlier the orchestrator's hand-rolled entry builder
@@ -2484,6 +2614,37 @@ class TestAssembleClipsTextOverlays:
         assert entry.get("font_family") == "Permanent Marker"
         # Text doesn't get rewritten to "Morocco" because subject_substitute=False.
         assert entry["text"] == "AFRICA"
+
+    def test_text_anchor_passes_through_to_renderer(self):
+        """REGRESSION: a left-anchored overlay's `text_anchor` MUST reach the
+        renderer entry dict. The orchestrator's hand-rolled entry builder
+        omitted `text_anchor`, so the renderer defaulted to "center" and a
+        left-anchored overlay's `position_x_frac` (Layer-2 uses 0.05) was
+        treated as the line CENTER instead of its left edge — the left half of
+        every cumulative line clipped off-screen ("It's not" → "s not" on prod
+        template 89cde014). The admin-preview path passed text_anchor, which
+        masked the bug during local verification."""
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(overlays=[{
+            "role": "label",
+            "start_s": 0.0,
+            "end_s": 2.4,
+            "position": "center",
+            "sample_text": "It's not just luck",
+            "text_anchor": "left",
+            "position_x_frac": 0.05,
+            "text_size_px": 120,
+            "subject_substitute": False,
+        }])
+        result = _collect_absolute_overlays([step], [2.4], None, "")
+        assert len(result) == 1
+        entry = result[0]
+        assert entry.get("text_anchor") == "left", (
+            "text_anchor must survive to the renderer entry dict; "
+            f"got {entry.get('text_anchor')!r}"
+        )
+        assert entry.get("position_x_frac") == 0.05
 
     def test_curtain_close_slots_skipped_in_collect(self):
         """Curtain-close slot overlays are pre-burned, so skipped in _collect."""

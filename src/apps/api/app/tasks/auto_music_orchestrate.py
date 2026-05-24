@@ -95,7 +95,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION, MusicLabels
-from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
+from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION, MAX_SECTION_DURATION_S
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, JobClip, MusicTrack
@@ -276,8 +276,20 @@ def _run_auto_music_job(job_id: str) -> None:
             failed=failed_count,
         )
 
-        clip_id_to_gcs = {ref.name: gcs for ref, gcs in zip(file_refs, clip_paths_gcs)}
-        clip_id_to_local = {ref.name: path for ref, path in zip(file_refs, local_clip_paths)}
+        # Failed uploads (None refs) get the same `clip_{idx}` synthetic id
+        # the Whisper-fallback ClipMeta uses — see _analyze_clips_parallel
+        # in template_orchestrate.py. Keeps the assembly maps aligned with
+        # whatever clip_id the matcher actually assigned.
+        def _clip_id_for(ref: object | None, idx: int) -> str:
+            return ref.name if ref is not None else f"clip_{idx}"
+
+        clip_id_to_gcs = {
+            _clip_id_for(ref, i): gcs for i, (ref, gcs) in enumerate(zip(file_refs, clip_paths_gcs))
+        }
+        clip_id_to_local = {
+            _clip_id_for(ref, i): path
+            for i, (ref, path) in enumerate(zip(file_refs, local_clip_paths))
+        }
 
         # [3] Status: matching
         _set_status(job_id, "matching")
@@ -500,6 +512,7 @@ def _current_best_section(track: MusicTrack) -> tuple[float, float] | None:
         return None
     if end_s <= start_s:
         return None
+    end_s = min(end_s, start_s + MAX_SECTION_DURATION_S)
     return start_s, end_s
 
 

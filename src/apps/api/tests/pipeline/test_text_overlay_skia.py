@@ -463,3 +463,322 @@ def test_dispatch_keeps_classic_on_pillow(tmp_workdir):
             use_skia=False,
         )
         skia_fn.assert_not_called()
+
+
+# -- Left-anchor positioning (prod 89cde014 left-clip regression) ------------
+
+
+def _frame_bbox(overlay: dict, t_local: float = 1.0, duration_s: float = 2.0):
+    """Render one frame via _draw_frame and return the opaque-content bbox."""
+    import io
+
+    img = tos._draw_frame(overlay, t_local, duration_s)
+    im = Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA")
+    return im.getbbox(), im.width
+
+
+def test_left_anchor_does_not_clip_off_left_edge():
+    """REGRESSION: a left-anchored wide line (Layer-2 uses text_anchor='left'
+    + position_x_frac=0.05) must render its full text inside the frame. Before
+    the fix, Skia centered every line on position_x_frac, so the 5% point
+    became the line CENTER and the left half clipped off-screen — prod
+    template 89cde014 rendered "It's not just luck" as "s not just luck"."""
+    base = {
+        "text": "It's not just luck",
+        "effect": "pop-in",
+        "pop_animated_suffix": "luck",
+        "text_size_px": 120,
+        "position_x_frac": 0.05,
+        "position_y_frac": 0.44,
+        "text_color": "#FFFFFF",
+    }
+    # Center-anchor (old behavior) clips: content starts at x=0.
+    center_bbox, _ = _frame_bbox({**base, "text_anchor": "center"})
+    assert center_bbox is not None and center_bbox[0] <= 1, (
+        "expected center-anchor to clip at the left edge (the bug); "
+        f"got bbox {center_bbox}"
+    )
+    # Left-anchor (fixed) fits: content starts well inside the frame and ends
+    # before the right edge.
+    left_bbox, width = _frame_bbox({**base, "text_anchor": "left"})
+    assert left_bbox is not None
+    assert left_bbox[0] > 10, f"left-anchored text should not touch left edge; bbox {left_bbox}"
+    assert left_bbox[2] < width, f"left-anchored text should fit inside frame; bbox {left_bbox}"
+
+
+def test_left_anchor_static_overlay_not_clipped():
+    """Same guarantee for a non-animated (static) left-anchored overlay, which
+    routes through _draw_centered_text directly."""
+    overlay = {
+        "text": "combination of",
+        "effect": "none",
+        "text_size_px": 120,
+        "position_x_frac": 0.05,
+        "position_y_frac": 0.41,
+        "text_color": "#FFFFFF",
+        "text_anchor": "left",
+    }
+    bbox, width = _frame_bbox(overlay)
+    assert bbox is not None
+    assert bbox[0] > 10, f"left edge clipped; bbox {bbox}"
+    assert bbox[2] < width, f"right edge overflow; bbox {bbox}"
+
+
+def test_pop_in_suffix_wide_line_wraps_instead_of_clipping():
+    """REGRESSION: a pop-in-with-suffix line too wide for one line must wrap
+    (fall back to the whole-line pop) instead of clipping off the right edge.
+    A manually-edited cumulative phrase grown past ~90% canvas width
+    ("combination of hard work" at 120px) overflowed because the suffix-pop
+    layout placed prefix+suffix on a single baseline."""
+    import io
+
+    overlay = {
+        "text": "combination of hard work",
+        "effect": "pop-in",
+        "pop_animated_suffix": "work",
+        "text_size_px": 120,
+        "position_x_frac": 0.05,
+        "position_y_frac": 0.40,
+        "text_color": "#FFFFFF",
+        "text_anchor": "left",
+    }
+    img = tos._draw_frame(overlay, 0.9, 1.5)  # past the pop animation
+    im = Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA")
+    bbox = im.getbbox()
+    assert bbox is not None
+    assert bbox[2] < im.width, f"wide pop-in line clipped the right edge; bbox {bbox}"
+    # Wrapped to >1 line: content spans more vertical room than a single line.
+    assert bbox[3] - bbox[1] > 200, f"expected multi-line wrap; bbox {bbox}"
+    # Top-anchored (not vertically centered): position_y_frac is the block TOP,
+    # so content starts at/below 0.40*1920=768 — a centered block would start
+    # well ABOVE that. Locks the _vertical_block_top fix on the wrap path.
+    assert bbox[1] > 700, f"wrapped left-anchored block should be top-anchored; bbox {bbox}"
+
+
+def test_left_anchor_cumulative_stage_prior_lines_stable():
+    """REGRESSION (the "all previous words re-appear" bug, prod 89cde014): a
+    cumulative left-anchored phrase that wraps to multiple lines must keep its
+    earlier lines PINNED as each new word is revealed. Skia used to vertically
+    CENTER the block, so adding a word re-centered everything and every prior
+    line jumped. With _vertical_block_top top-anchoring left-anchored text, the
+    block top stays fixed and the phrase only grows downward.
+
+    Renders two consecutive cumulative stages of the same phrase and asserts the
+    block TOP is identical, and the later (longer) stage extends further DOWN."""
+    base = {
+        "effect": "pop-in",
+        "text_size_px": 120,
+        "position_x_frac": 0.05,
+        "position_y_frac": 0.40,
+        "text_color": "#FFFFFF",
+        "text_anchor": "left",
+    }
+    stage_a = {**base, "text": "Don't allow anyone to diminish you", "pop_animated_suffix": "you"}
+    stage_b = {
+        **base,
+        "text": "Don't allow anyone to diminish you hard work and",
+        "pop_animated_suffix": "and",
+    }
+    a_bbox, _ = _frame_bbox(stage_a, t_local=0.9, duration_s=1.5)
+    b_bbox, _ = _frame_bbox(stage_b, t_local=0.9, duration_s=1.5)
+    assert a_bbox is not None and b_bbox is not None
+    # Both stages wrap to >1 line (the regression only manifests when wrapped).
+    assert a_bbox[3] - a_bbox[1] > 200, f"stage A should wrap; bbox {a_bbox}"
+    assert b_bbox[3] - b_bbox[1] > 200, f"stage B should wrap; bbox {b_bbox}"
+    # Core guarantee: the block top does NOT move between stages (prior words
+    # stay constant). Same font size + top anchor → identical top within AA.
+    assert abs(a_bbox[1] - b_bbox[1]) <= 3, (
+        f"cumulative reveal shifted the block top between stages: "
+        f"stage A top {a_bbox[1]} vs stage B top {b_bbox[1]} — prior words moved."
+    )
+    # The longer stage grows DOWNWARD (more text → equal-or-lower bottom).
+    assert b_bbox[3] >= a_bbox[3] - 1, (
+        f"later stage should extend down, not up; A bottom {a_bbox[3]}, B bottom {b_bbox[3]}"
+    )
+
+
+def test_both_renderers_honor_vertical_anchor():
+    """Parity guard, vertical leg of the #296 class: a wrapping left-anchored
+    block must be TOP-anchored (position_y_frac = block top) in BOTH Skia and
+    Pillow. Pillow already top-anchors left text; Skia did not until
+    _vertical_block_top. Renders the same 2-line phrase through both and asserts
+    each starts at/below position_y_frac*CANVAS_H (top-anchored, not centered)
+    and that the two agree within a small tolerance."""
+    cy = int(0.40 * tos.CANVAS_H)  # 768
+    overlay = {
+        "text": "combination of hard work",
+        "effect": "none",
+        "text_size_px": 120,
+        "position_x_frac": 0.05,
+        "position_y_frac": 0.40,
+        "text_color": "#FFFFFF",
+        "text_anchor": "left",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    skia_bbox, _ = _frame_bbox(overlay)
+    pillow_bbox, _ = _pillow_bbox(overlay)
+    assert skia_bbox is not None and pillow_bbox is not None
+    # Both wrap (multi-line) so the anchor mode is observable.
+    assert skia_bbox[3] - skia_bbox[1] > 200, f"skia should wrap; bbox {skia_bbox}"
+    assert pillow_bbox[3] - pillow_bbox[1] > 200, f"pillow should wrap; bbox {pillow_bbox}"
+    # Top-anchored: block starts at/below cy. A centered block would start well
+    # above cy (cy - block_h/2 ≈ cy - 140).
+    assert skia_bbox[1] > cy - 40, f"skia not top-anchored; top {skia_bbox[1]} vs cy {cy}"
+    assert pillow_bbox[1] > cy - 40, f"pillow not top-anchored; top {pillow_bbox[1]} vs cy {cy}"
+    # The two renderers agree on the vertical origin within AA / metric slack.
+    assert abs(skia_bbox[1] - pillow_bbox[1]) < 80, (
+        f"renderers disagree on vertical anchor: skia top {skia_bbox[1]} vs "
+        f"pillow top {pillow_bbox[1]} — the #296 class on the vertical axis."
+    )
+
+
+def test_center_anchor_stays_vertically_centered():
+    """Lock the preserved default: center-anchored text keeps position_y_frac as
+    the block CENTER (not the top). Guards against the _vertical_block_top fix
+    accidentally top-anchoring centered templates too."""
+    cy = 0.45 * tos.CANVAS_H
+    overlay = {
+        "text": "HELLO WORLD",
+        "effect": "none",
+        "text_size_px": 60,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.45,
+        "text_color": "#FFFFFF",
+        "text_anchor": "center",
+    }
+    bbox, _ = _frame_bbox(overlay)
+    assert bbox is not None
+    mid_y = (bbox[1] + bbox[3]) / 2.0
+    assert abs(mid_y - cy) < 40, (
+        f"center-anchored block should be centered on cy={cy:.0f}; got mid {mid_y:.0f}"
+    )
+
+
+def test_pop_in_suffix_has_no_bounce_full_size_from_start():
+    """The revealed word appears at full size immediately — no 30→115→100
+    scale bounce. The word-by-word reveal comes from per-stage timing, not a
+    springy pop. Asserts the suffix bbox is identical early (t=0.02) and
+    settled (t=0.9)."""
+    import io
+
+    ov = {
+        "text": "the work",
+        "effect": "pop-in",
+        "pop_animated_suffix": "work",
+        "text_size_px": 120,
+        "position_x_frac": 0.05,
+        "position_y_frac": 0.44,
+        "text_color": "#FFFFFF",
+        "text_anchor": "left",
+    }
+
+    def bbox(t):
+        img = tos._draw_frame(ov, t, 1.0)
+        return Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA").getbbox()
+
+    early, settled = bbox(0.02), bbox(0.9)
+    assert early == settled, f"word scaled (bounce) between t=0.02 {early} and t=0.9 {settled}"
+def test_left_anchor_karaoke_line_not_clipped():
+    """karaoke-line was the last Skia draw path that still centered every line
+    on position_x_frac unconditionally (text_overlay_skia._draw_karaoke_line),
+    so a left-anchored music-lyric line would clip exactly like 89cde014. With
+    the anchor branch it must fit inside the frame at every word."""
+    overlay = {
+        "text": "rain rain go away come again",
+        "effect": "karaoke-line",
+        "text_size_px": 100,
+        "position_x_frac": 0.05,
+        "position_y_frac": 0.45,
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A",
+        "text_anchor": "left",
+        "word_timings": [
+            {"text": "rain", "duration_cs": 40},
+            {"text": "go", "duration_cs": 40},
+            {"text": "away", "duration_cs": 40},
+            {"text": "now", "duration_cs": 40},
+        ],
+    }
+    # Mid-line time so a mix of sung/unsung words is drawn — all words render
+    # regardless of sung state, so the bbox covers the full line. Before the
+    # fix the line centered on x_frac=0.05 and the left half clipped to x<=1.
+    bbox, width = _frame_bbox(overlay, t_local=1.0, duration_s=1.6)
+    assert bbox is not None
+    assert bbox[0] > 10, f"karaoke left edge clipped; bbox {bbox}"
+    assert bbox[2] < width, f"karaoke right edge overflow; bbox {bbox}"
+
+
+# -- Skia / Pillow renderer parity guard -------------------------------------
+#
+# The #296 class of bug: a field carried through the burn dict but honored by
+# only ONE of the two renderers. Agentic templates + music jobs render via
+# Skia; classic templates and the admin overlay-preview render via Pillow.
+# Every local check (preview, Pillow) looked right while the burned Skia video
+# clipped, because the two renderers disagreed on `text_anchor`. This guard
+# renders the SAME overlay through both and asserts they honor the anchor
+# contract the same way, so a field added to one renderer and dropped by the
+# other fails CI instead of shipping.
+
+
+def _pillow_bbox(overlay: dict):
+    """Render one overlay through the Pillow path used by export + admin
+    preview (render_overlays_at_time) and return the opaque-content bbox."""
+    from app.pipeline.text_overlay import render_overlays_at_time
+
+    with tempfile.TemporaryDirectory(prefix="pillow_parity_") as d:
+        out = os.path.join(d, "p.png")
+        render_overlays_at_time([overlay], 2.0, 1.0, out)
+        im = Image.open(out).convert("RGBA")
+        return im.getbbox(), im.width
+
+
+@pytest.mark.parametrize("renderer", ["skia", "pillow"])
+def test_both_renderers_honor_text_anchor(renderer):
+    """All three anchors must place the line consistently in BOTH renderers:
+    center→left shifts the left edge RIGHT by ~half the line width, and
+    center→right shifts it LEFT by ~half. A renderer that ignores text_anchor
+    produces a ~0 delta on the affected side and fails here — exactly the
+    #296/ff0d2e1c regression class (left was the live bug; right was a latent
+    sibling — Skia silently collapsed it to center while Pillow honored it),
+    caught before it can ship.
+
+    Anchored at x_frac=0.5 with a single non-wrapping ~400px line so all three
+    anchorings fit fully in-frame (left ~540..940, center ~340..740, right
+    ~140..540) and the contract is a clean half-line-width shift, not muddied
+    by edge clipping (which floors the edge at 0) or word-wrap. The line must
+    stay under ~half the frame width or right- and left-anchor can't both fit."""
+    base = {
+        "text": "HELLO WORLD",
+        "effect": "none",
+        "text_size_px": 50,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.45,
+        "text_color": "#FFFFFF",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    bbox_fn = _frame_bbox if renderer == "skia" else _pillow_bbox
+
+    center_bbox, width = bbox_fn({**base, "text_anchor": "center"})
+    left_bbox, _ = bbox_fn({**base, "text_anchor": "left"})
+    right_bbox, _ = bbox_fn({**base, "text_anchor": "right"})
+    assert center_bbox and left_bbox and right_bbox
+
+    # All three fit fully inside the frame at the center position.
+    for name, b in (("center", center_bbox), ("left", left_bbox), ("right", right_bbox)):
+        assert b[0] > 0 and b[2] < width, f"{renderer}: {name} bbox {b} clips the frame"
+
+    line_w = center_bbox[2] - center_bbox[0]
+    left_delta = left_bbox[0] - center_bbox[0]   # left anchor sits RIGHT of center
+    right_delta = right_bbox[0] - center_bbox[0]  # right anchor sits LEFT of center
+    assert left_delta > 100, (
+        f"{renderer} ignores text_anchor='left': center→left shifted the left "
+        f"edge by only {left_delta}px (line {line_w}px wide, expected ~half). "
+        f"This is the #296 class — a field honored by one renderer, dropped by the other."
+    )
+    assert right_delta < -100, (
+        f"{renderer} ignores text_anchor='right': center→right shifted the left "
+        f"edge by only {right_delta}px (line {line_w}px wide, expected ~-half). "
+        f"This is the #296 class — a field honored by one renderer, dropped by the other."
+    )

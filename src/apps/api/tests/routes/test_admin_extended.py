@@ -618,7 +618,10 @@ class TestReanalyzeAgenticLayer2Param:
         assert res.status_code == 200
         # force=True so the reanalyze always reruns the agent stack instead of
         # cache-hitting on the prior recipe (Bug 2 fix, 2026-05-20).
-        mock_task.delay.assert_called_once_with(template.id, use_layer2=True, force=True)
+        # overwrite_overlays defaults False → re-run preserves manual overlays.
+        mock_task.delay.assert_called_once_with(
+            template.id, use_layer2=True, force=True, overwrite_overlays=False
+        )
 
     def test_reanalyze_agentic_use_layer2_false_enqueues_without_override(self, client):
         """`POST /admin/templates/{id}/reanalyze-agentic` (no param) must
@@ -649,7 +652,42 @@ class TestReanalyzeAgenticLayer2Param:
                 app.dependency_overrides.pop(get_db, None)
 
         assert res.status_code == 200
-        mock_task.delay.assert_called_once_with(template.id, use_layer2=False, force=True)
+        mock_task.delay.assert_called_once_with(
+            template.id, use_layer2=False, force=True, overwrite_overlays=False
+        )
+
+    def test_reanalyze_agentic_overwrite_overlays_threads_flag(self, client):
+        """`?overwrite_overlays=true` must reach the task so the rebuild
+        regenerates overlays instead of carrying the prior ones forward."""
+        template = _make_template(is_agentic=True, analysis_status="ready", use_layer2_default=None)
+        mock_redis_instance = MagicMock()
+        mock_task = MagicMock()
+
+        with (
+            patch("app.routes.admin.settings") as s,
+            patch("redis.from_url", return_value=mock_redis_instance),
+            patch(
+                "app.tasks.agentic_template_build.agentic_template_build_task",
+                mock_task,
+            ),
+        ):
+            s.admin_api_key = VALID_TOKEN
+            s.redis_url = "redis://localhost:6379"
+            s.text_overlay_v2_enabled = False
+            app.dependency_overrides[get_db] = _mock_db_with_template(template)
+            try:
+                res = client.post(
+                    f"/admin/templates/{template.id}/reanalyze-agentic"
+                    "?use_layer2=true&overwrite_overlays=true",
+                    headers=_admin_headers(),
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+
+        assert res.status_code == 200
+        mock_task.delay.assert_called_once_with(
+            template.id, use_layer2=True, force=True, overwrite_overlays=True
+        )
 
 
 # ── resolve_use_layer2 pure-function tests ────────────────────────────────────
@@ -726,7 +764,9 @@ class TestReanalyzeAgenticTemplateDefault:
 
         assert res.status_code == 200
         # template default overrides global flag
-        mock_task.delay.assert_called_once_with(template.id, use_layer2=True, force=True)
+        mock_task.delay.assert_called_once_with(
+            template.id, use_layer2=True, force=True, overwrite_overlays=False
+        )
 
     def test_query_param_false_beats_template_default_true(self, client):
         """?use_layer2=false wins even when template.use_layer2_default=True."""
@@ -756,7 +796,9 @@ class TestReanalyzeAgenticTemplateDefault:
 
         assert res.status_code == 200
         # query param=false wins over template_default=True and global=True
-        mock_task.delay.assert_called_once_with(template.id, use_layer2=False, force=True)
+        mock_task.delay.assert_called_once_with(
+            template.id, use_layer2=False, force=True, overwrite_overlays=False
+        )
 
 
 # ── PUT /admin/templates/{id}/use-layer2-default ──────────────────────────────

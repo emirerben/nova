@@ -4,8 +4,17 @@ from app.schemas.lyrics_config_override import LyricsConfigOverride
 
 
 def test_valid_partial_payload_parses() -> None:
-    parsed = LyricsConfigOverride(post_dwell_s=1.25, fade_in_ms=100)
+    parsed = LyricsConfigOverride(
+        post_dwell_s=1.25,
+        max_overlap_s=0.5,
+        fade_in_s=0.1,
+        fade_out_s=0.4,
+        fade_in_ms=100,
+    )
     assert parsed.post_dwell_s == 1.25
+    assert parsed.max_overlap_s == 0.5
+    assert parsed.fade_in_s == 0.1
+    assert parsed.fade_out_s == 0.4
     assert parsed.fade_in_ms == 100
 
 

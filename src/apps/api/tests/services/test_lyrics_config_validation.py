@@ -93,6 +93,104 @@ class TestValidateLyricsConfigDict:
     def test_accepts_line_style(self):
         validate_lyrics_config_dict({"style": "line"})
 
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("pre_roll_s", 0.2),
+            ("post_dwell_s", 1.0),
+            ("next_line_gap_s", 0.1),
+            ("max_overlap_s", 0.5),
+            ("fade_in_s", 0.1),
+            ("fade_out_s", 0.4),
+            ("fade_in_ms", 50),
+            ("fade_out_ms", 250),
+            ("hold_to_next_threshold_ms", 500),
+        ],
+    )
+    def test_line_style_accepts_line_timing_keys(self, key, value):
+        validate_lyrics_config_dict({"style": "line", key: value})
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "pre_roll_s",
+            "post_dwell_s",
+            "next_line_gap_s",
+            "max_overlap_s",
+            "fade_in_s",
+            "fade_out_s",
+            "fade_in_ms",
+            "fade_out_ms",
+            "hold_to_next_threshold_ms",
+        ],
+    )
+    def test_rejects_line_only_key_when_style_absent(self, key):
+        with pytest.raises(ValueError, match="absent style defaults to 'karaoke'"):
+            validate_lyrics_config_dict({key: 0})
+
+    def test_absent_style_allows_shared_non_timing_keys(self):
+        validate_lyrics_config_dict({"enabled": True, "text_color": "#FFFFFF"})
+
+    def test_rejects_line_timing_key_for_karaoke(self):
+        with pytest.raises(ValueError, match="post_dwell_s"):
+            validate_lyrics_config_dict({"style": "karaoke", "post_dwell_s": 1.0})
+
+    def test_rejects_line_timing_key_for_per_word_pop(self):
+        with pytest.raises(ValueError, match="fade_in_s"):
+            validate_lyrics_config_dict({"style": "per-word-pop", "fade_in_s": 0.1})
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "pre_roll_s",
+            "post_dwell_s",
+            "next_line_gap_s",
+            "max_overlap_s",
+            "fade_in_s",
+            "fade_out_s",
+            "fade_in_ms",
+            "fade_out_ms",
+            "hold_to_next_threshold_ms",
+        ],
+    )
+    def test_rejects_negative_line_numeric_values(self, key):
+        with pytest.raises(ValueError, match="between"):
+            validate_lyrics_config_dict({"style": "line", key: -1})
+
+    @pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])
+    @pytest.mark.parametrize("key", ["max_overlap_s", "fade_in_s", "fade_out_s"])
+    def test_rejects_non_finite_line_float_values(self, key, bad_value):
+        with pytest.raises(ValueError, match="finite"):
+            validate_lyrics_config_dict({"style": "line", key: bad_value})
+
+    @pytest.mark.parametrize(
+        ("key", "bad_value"),
+        [
+            ("max_overlap_s", 3.0),
+            ("fade_in_s", 3.0),
+            ("fade_out_s", 3.0),
+        ],
+    )
+    def test_rejects_out_of_range_new_line_float_values(self, key, bad_value):
+        with pytest.raises(ValueError, match="between"):
+            validate_lyrics_config_dict({"style": "line", key: bad_value})
+
+    @pytest.mark.parametrize("key", ["max_overlap_s", "fade_in_s", "fade_out_s"])
+    @pytest.mark.parametrize("bad_value", [True, False])
+    def test_rejects_booleans_for_float_line_values(self, key, bad_value):
+        with pytest.raises(ValueError, match="number"):
+            validate_lyrics_config_dict({"style": "line", key: bad_value})
+
+    @pytest.mark.parametrize("key", ["fade_in_ms", "fade_out_ms", "hold_to_next_threshold_ms"])
+    @pytest.mark.parametrize("bad_value", [True, False])
+    def test_rejects_booleans_for_integer_line_values(self, key, bad_value):
+        with pytest.raises(ValueError, match="integer"):
+            validate_lyrics_config_dict({"style": "line", key: bad_value})
+
+    def test_rejects_unknown_key_even_for_line_style(self):
+        with pytest.raises(ValueError, match="unknown"):
+            validate_lyrics_config_dict({"style": "line", "foo": 1})
+
     def test_accepts_all_known_positions(self):
         for pos in ("top", "bottom", "center", "center-above", "center-below", "center-label"):
             validate_lyrics_config_dict({"position": pos})

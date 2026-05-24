@@ -209,7 +209,12 @@ def _resolve_font_size_px(overlay: dict) -> int:
 
 
 def _resolve_anchor(overlay: dict) -> tuple[float, float]:
-    """Return (anchor_x_px, baseline_y_px) for the overlay's centered position."""
+    """Return (anchor_x_px, baseline_y_px) for the overlay's position.
+
+    For center-anchored overlays the x is the line CENTER; for left-anchored
+    overlays (`text_anchor="left"`) it is the line's LEFT edge. The draw
+    functions branch on `_resolve_text_anchor` to place glyphs accordingly.
+    """
     x_frac = overlay.get("position_x_frac")
     y_frac = overlay.get("position_y_frac")
     if y_frac is None:
@@ -217,6 +222,46 @@ def _resolve_anchor(overlay: dict) -> tuple[float, float]:
     if x_frac is None:
         x_frac = 0.5
     return float(x_frac) * CANVAS_W, float(y_frac) * CANVAS_H
+
+
+def _resolve_text_anchor(overlay: dict) -> str:
+    """Horizontal anchor: "left" pins the line's left edge at position_x_frac,
+    "right" pins the right edge, "center" (default) centers the line on it.
+
+    Layer-2 overlays set `text_anchor="left"` + `position_x_frac=0.05`. Before
+    this was honored, Skia centered every line on the 5% point, pushing the
+    left half of each cumulative line off-screen ("It's not just luck" →
+    "s not just luck" on prod template 89cde014). The schema also permits
+    "right" (app/agents/_schemas/template_text.py); both renderers must honor
+    all three or the same class of clip recurs on the un-handled value."""
+    anchor = overlay.get("text_anchor")
+    return anchor if anchor in ("left", "right") else "center"
+
+
+def _anchored_left_x(anchor: str, cx: float, width: float) -> float:
+    """Left edge of a `width`-wide line anchored at cx. Mirrors the anchor
+    math in text_overlay.py: left → cx, right → cx-width, center → cx-width/2.
+    Centralized so every Skia draw path (centered, pop-in, karaoke) agrees."""
+    if anchor == "left":
+        return cx
+    if anchor == "right":
+        return cx - width
+    return cx - width / 2.0
+
+
+def _vertical_block_top(anchor: str, cy: float, block_h: float) -> float:
+    """Top y of a `block_h`-tall text block anchored at cy. Mirrors Pillow's
+    _draw_text_png vertical anchoring: left-anchored text treats
+    position_y_frac as the block TOP, so wrapped lines grow DOWNWARD — a
+    cumulative reveal that wraps from 1 line to 2 keeps the earlier line
+    pinned instead of re-centering (the "all previous words re-appear" bug on
+    prod template 89cde014). Center/right keep the block vertically centered on
+    cy (historical default — changing it would shift existing centered
+    templates). Centralized so _draw_centered_text, _draw_pop_in_with_suffix,
+    and _draw_karaoke_line all agree on the vertical origin."""
+    if anchor == "left":
+        return cy
+    return cy - block_h / 2.0
 
 
 def _wrap_text_to_lines(text: str, font: skia.Font, max_width: float) -> list[str]:
@@ -330,8 +375,9 @@ def _draw_centered_text(
 
     block = _measure_block(font, lines)
     cx, cy = _resolve_anchor(overlay)
+    anchor = _resolve_text_anchor(overlay)
 
-    block_top = cy - block["block_h"] / 2.0
+    block_top = _vertical_block_top(anchor, cy, block["block_h"])
     first_baseline = block_top + block["ascent_offset"]
 
     # Emoji prefix: composite to the left of line 0
@@ -356,9 +402,10 @@ def _draw_centered_text(
         line_w = block["widths"][i]
         if i == 0 and emoji_metrics is not None:
             combined_w = emoji_metrics["size"] + emoji_metrics["gap"] + line_w
-            line_x = cx - combined_w / 2.0 + emoji_metrics["size"] + emoji_metrics["gap"]
+            block_left = _anchored_left_x(anchor, cx, combined_w)
+            line_x = block_left + emoji_metrics["size"] + emoji_metrics["gap"]
         else:
-            line_x = cx - line_w / 2.0
+            line_x = _anchored_left_x(anchor, cx, line_w)
 
         _draw_line_with_layers(
             canvas,
@@ -375,7 +422,7 @@ def _draw_centered_text(
     if emoji_metrics is not None and lines:
         first_line_h = block["line_step"]
         combined_w = emoji_metrics["size"] + emoji_metrics["gap"] + block["widths"][0]
-        combined_x = cx - combined_w / 2.0
+        combined_x = _anchored_left_x(anchor, cx, combined_w)
         emoji_x = combined_x
         emoji_y = block_top + (first_line_h - emoji_metrics["size"]) / 2.0
         _draw_skia_image(canvas, emoji_metrics["img"], emoji_x, emoji_y, alpha=alpha)
@@ -535,19 +582,39 @@ def _draw_pop_in_with_suffix(
     typeface = _typeface_for_overlay(overlay)
     initial_size = _resolve_font_size_px(overlay)
     # Lay out the FULL line so prefix + suffix stay in their original positions
-    full_font, full_size, _ = _shrink_to_fit(
+    full_font, full_size, full_lines = _shrink_to_fit(
         text, typeface, initial_size, CANVAS_W * _MAX_LINE_W_FRAC
     )
+    # The suffix-pop layout puts prefix + suffix on ONE baseline. If the line
+    # is too wide to fit on a single line (a manually-edited phrase grew past
+    # ~90% canvas, or the analysis-time line-split didn't apply), that layout
+    # would clip off the right edge ("combination of hard work" → "combination
+    # of har"). Fall back to the wrapping/shrinking path, which stacks lines
+    # and honors text_anchor. Because pop-in no longer scales (scale=1.0, see
+    # below) and _draw_centered_text now top-anchors left-anchored blocks
+    # (_vertical_block_top), the wrapped fallback renders the prior words in
+    # the SAME positions as the previous stage — no whole-line re-pop, no
+    # vertical re-center. The cumulative reveal stays spatially stable.
+    if len(full_lines) > 1:
+        _draw_with_animation(canvas, overlay, t_local, duration_s, effect="pop-in")
+        return
     full_w = full_font.measureText(text)
     prefix_w = full_font.measureText((prefix + " ") if prefix else "")
     suffix_w = full_font.measureText(suffix)
 
     cx, cy = _resolve_anchor(overlay)
-    line_start_x = cx - full_w / 2.0
+    anchor = _resolve_text_anchor(overlay)
+    line_start_x = _anchored_left_x(anchor, cx, full_w)
 
     metrics = full_font.getMetrics()
     line_height_raw = metrics.fDescent - metrics.fAscent
-    baseline_y = cy - line_height_raw / 2.0 + (-metrics.fAscent)
+    # Top-anchor the single-line baseline for left/right (matching
+    # _vertical_block_top + _measure_block's single-line block_h) so a phrase's
+    # first stage (one line, here) sits at the SAME vertical position as the
+    # later stages that wrap to multiple lines via the bail above. Without
+    # this, stage 1 vertically centers and the line visibly jumps up when
+    # stage 2 wraps and top-anchors.
+    baseline_y = _vertical_block_top(anchor, cy, line_height_raw) + (-metrics.fAscent)
 
     fill_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
@@ -565,17 +632,12 @@ def _draw_pop_in_with_suffix(
             shadow_alpha=160,
         )
 
-    # Compute suffix scale envelope. Keyframes: 0ms → 30%, 150ms → 115%, 250ms → 100%.
-    t_ms = t_local * 1000.0
-    if t_ms < 150:
-        # 30 → 115 over 0..150ms, ease-out
-        p = t_ms / 150.0
-        scale = 0.30 + (1.15 - 0.30) * _ease_out_cubic(p)
-    elif t_ms < 250:
-        p = (t_ms - 150.0) / 100.0
-        scale = 1.15 - (1.15 - 1.00) * _ease_out_cubic(p)
-    else:
-        scale = 1.0
+    # No bounce: the revealed word appears at full size. The word-by-word
+    # reveal comes from the per-stage timing (each stage adds one word), not
+    # from a scale animation — so dropping the 30→115→100 overshoot keeps the
+    # progressive reveal but removes the springy pop the words used to do as
+    # they showed up.
+    scale = 1.0
 
     # Suffix is centered on its slot; scale around that center so the suffix
     # doesn't visibly shift its baseline x while it pops.
@@ -633,10 +695,16 @@ def _draw_karaoke_line(
     total_w = sum(word_widths) + space_w * max(0, len(words) - 1)
 
     cx, cy = _resolve_anchor(overlay)
-    x = cx - total_w / 2.0
+    # Mirror _draw_centered_text: left/right-anchored overlays pin the line's
+    # left/right edge at position_x_frac; centered overlays center on cx.
+    anchor = _resolve_text_anchor(overlay)
+    x = _anchored_left_x(anchor, cx, total_w)
     metrics = font.getMetrics()
     line_height_raw = metrics.fDescent - metrics.fAscent
-    baseline_y = cy - line_height_raw / 2.0 + (-metrics.fAscent)
+    # Match _vertical_block_top so a karaoke line shares the same vertical
+    # origin convention as the centered/pop-in paths (top for left/right,
+    # centered for center).
+    baseline_y = _vertical_block_top(anchor, cy, line_height_raw) + (-metrics.fAscent)
 
     primary_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
     highlight_color = _skia_color_from_hex(
@@ -695,15 +763,8 @@ def _draw_with_animation(
         direction = -1.0 if effect == "slide-up" else 1.0
         y_translate = direction * 220.0 * (1.0 - eased)
     elif effect == "pop-in":
-        animate_for = min(0.30, duration_s * 0.7)
-        if t_local < animate_for:
-            p = t_local / animate_for
-            if p < 0.55:
-                scale = 0.30 + (1.15 - 0.30) * (p / 0.55)
-            else:
-                scale = 1.15 - (1.15 - 1.00) * ((p - 0.55) / 0.45)
-        else:
-            scale = 1.0
+        # No bounce: word appears at full size (see _draw_pop_in_with_suffix).
+        scale = 1.0
     elif effect == "bounce":
         animate_for = min(0.5, duration_s * 0.8)
         if t_local < animate_for:
