@@ -199,24 +199,36 @@ def _merge_overlays_into_slots(
             d["text_bbox"]["sample_frame_t"] = min(max(slot_relative_t, d["start_s"]), d["end_s"])
             rendered.append(d)
 
-        # Enforce a per-word legibility floor and redistribute within the slot's
-        # fixed duration, so cumulative reveals never flash by faster than the
-        # eye can read (prod 89cde014: "the work to get there." crammed 5 words
-        # into 431 ms; "and good timing so..." showed for 25 ms). No-op for
-        # already-readable slots.
-        if dur > 0 and rendered:
-            rendered, pacing_warns = normalize_slot_overlay_pacing(rendered, slot_duration_s=dur)
-            if any(pacing_warns.get(k) for k in ("stages_expanded", "singletons_expanded")):
-                log.info(
-                    "layer2_legibility_pass", slot_index=i, slot_duration_s=dur, **pacing_warns
-                )
-
         slot["text_overlays"] = rendered
         merged_count += len(rendered)
         if dur > 0:
             cursor += dur
 
     return merged_count
+
+
+def _apply_legibility_pacing(slots: list[dict[str, Any]]) -> None:
+    """Enforce a per-word legibility floor + redistribute within each slot's
+    fixed duration, in place. Runs AFTER ``_merge_overlays_into_slots`` — which
+    stays timing-faithful so the eval-fixture export reconstructs the agent's
+    true output. Cumulative reveals never flash by faster than the eye can read
+    (prod 89cde014: "the work to get there." crammed 5 words into 431 ms; "and
+    good timing so..." showed for 25 ms). No-op for already-readable slots.
+    """
+    for i, slot in enumerate(slots, start=1):
+        if not isinstance(slot, dict):
+            continue
+        try:
+            dur = float(slot.get("target_duration_s", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            dur = 0.0
+        overlays = slot.get("text_overlays")
+        if dur <= 0 or not isinstance(overlays, list) or not overlays:
+            continue
+        paced, warns = normalize_slot_overlay_pacing(overlays, slot_duration_s=dur)
+        slot["text_overlays"] = paced
+        if any(warns.get(k) for k in ("stages_expanded", "singletons_expanded")):
+            log.info("layer2_legibility_pass", slot_index=i, slot_duration_s=dur, **warns)
 
 
 def extract_template_text_overlays(
@@ -323,6 +335,7 @@ def extract_template_text_overlays(
         return False, 0
 
     merged = _merge_overlays_into_slots(recipe.slots, out.overlays)
+    _apply_legibility_pacing(recipe.slots)
     log.info(
         "template_text_overlays_merged",
         job_id=job_id,

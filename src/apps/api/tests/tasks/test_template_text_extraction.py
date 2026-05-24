@@ -22,6 +22,7 @@ from app.agents.template_text import (
     TemplateTextOverlay,
 )
 from app.tasks.template_text_extraction import (
+    _apply_legibility_pacing,
     _bbox_to_named_position,
     _build_slot_boundaries,
     _merge_overlays_into_slots,
@@ -360,10 +361,11 @@ def test_merge_overlays_empty_input_clears_slot_overlays() -> None:
     assert slots[0]["text_overlays"] == []
 
 
-def test_merge_applies_legibility_floor_to_crammed_reveal() -> None:
+def test_legibility_pass_floors_crammed_reveal() -> None:
     """A cumulative reveal whose words flash by below the readable floor (the
-    prod 89cde014 "the work to get there." case) is expanded by the merge so
-    every word clears MIN_PER_WORD_S, and nothing spills past the slot."""
+    prod 89cde014 "the work to get there." case) is expanded by
+    `_apply_legibility_pacing` (run after merge) so every word clears
+    MIN_PER_WORD_S, and nothing spills past the slot."""
     from app.pipeline.overlay_pacing import MIN_PER_WORD_S
 
     slot_dur = 6.0
@@ -378,6 +380,7 @@ def test_merge_applies_legibility_floor_to_crammed_reveal() -> None:
         ov.pop_animated_suffix = suffix
     slots = [{"target_duration_s": slot_dur, "text_overlays": []}]
     _merge_overlays_into_slots(slots, overlays)
+    _apply_legibility_pacing(slots)
 
     rendered = slots[0]["text_overlays"]
     assert len(rendered) == 4
@@ -386,7 +389,24 @@ def test_merge_applies_legibility_floor_to_crammed_reveal() -> None:
     assert max(ov["end_s"] for ov in rendered) <= slot_dur + 1e-6
 
 
-def test_merge_leaves_well_paced_reveal_unchanged() -> None:
+def test_merge_is_timing_faithful_before_pacing() -> None:
+    """`_merge_overlays_into_slots` alone must NOT retime — only convert global
+    to slot-relative — so the eval-fixture export round-trip reconstructs the
+    agent's true output. The pacing pass is a separate post-step."""
+    overlays = [
+        _make_overlay(slot_index=1, text="the work", start_s=0.0, end_s=0.086),
+        _make_overlay(slot_index=1, text="the work to", start_s=0.086, end_s=0.172),
+    ]
+    for ov, suffix in zip(overlays, ["work", "to"], strict=True):
+        ov.pop_animated_suffix = suffix
+    slots = [{"target_duration_s": 6.0, "text_overlays": []}]
+    _merge_overlays_into_slots(slots, overlays)
+    rendered = slots[0]["text_overlays"]
+    # Timings untouched by merge (slot starts at global 0, so identical).
+    assert [round(o["end_s"], 3) for o in rendered] == [0.086, 0.172]
+
+
+def test_legibility_pass_leaves_well_paced_reveal_unchanged() -> None:
     """The legibility pass is a no-op when every word is already readable."""
     overlays = [
         _make_overlay(slot_index=1, text="It's", start_s=0.0, end_s=0.5),
@@ -397,6 +417,7 @@ def test_merge_leaves_well_paced_reveal_unchanged() -> None:
         ov.pop_animated_suffix = suffix
     slots = [{"target_duration_s": 8.0, "text_overlays": []}]
     _merge_overlays_into_slots(slots, overlays)
+    _apply_legibility_pacing(slots)
 
     rendered = slots[0]["text_overlays"]
     assert [round(o["start_s"], 3) for o in rendered] == [0.0, 0.5, 1.0]

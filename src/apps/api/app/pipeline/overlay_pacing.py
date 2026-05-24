@@ -1,9 +1,10 @@
 """Slot overlay pacing — legibility floor + redistribution within a fixed slot.
 
 Pure dict transformations on one slot's ``text_overlays``. Shared by the
-Layer-2 generation bridge (``template_text_extraction._merge_overlays_into_slots``)
-and the admin overlay editor (``routes/admin.py``) so there is exactly ONE
-implementation of "how a slot's reveal timing is made readable and laid out".
+Layer-2 generation bridge (``template_text_extraction._apply_legibility_pacing``,
+run after the timing-faithful merge) and the admin overlay editor
+(``routes/admin.py``) so there is exactly ONE implementation of "how a slot's
+reveal timing is made readable and laid out".
 
 The three building blocks, smallest to largest:
 
