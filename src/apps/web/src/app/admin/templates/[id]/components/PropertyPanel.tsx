@@ -683,6 +683,18 @@ function GlobalProperties({
         onChange={(v) => set("creative_direction", v)}
       />
 
+      {/* Clip transition speed — lower fits more footage in the selected time.
+          0 = renderer default (0.3s); always clamped to 30% of the shorter
+          adjacent slot at render time. */}
+      <NumberInput
+        label="Transition Duration (s) — 0 = default 0.3s"
+        value={recipe.transition_duration_s ?? 0}
+        onChange={(v) => set("transition_duration_s", v > 0 ? v : null)}
+        step={0.05}
+        min={0}
+        max={2}
+      />
+
       {/* Interstitials */}
       <div className="border-t border-zinc-800 pt-3 mt-3">
         <div className="flex items-center justify-between mb-3">

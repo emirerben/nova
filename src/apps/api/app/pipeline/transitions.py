@@ -70,6 +70,7 @@ def join_with_transitions(
     transitions: list[str],
     slot_durations: list[float],
     output_path: str,
+    transition_duration_s: float | None = None,
 ) -> None:
     """Join slot video files with xfade transitions. Video-only output (-an).
 
@@ -128,7 +129,7 @@ def join_with_transitions(
     for path in slot_paths:
         cmd.extend(["-i", path])
 
-    filter_complex = _build_xfade_filter(transitions, slot_durations)
+    filter_complex = _build_xfade_filter(transitions, slot_durations, transition_duration_s)
 
     # The final output label is [v{N-1}] where N = len(slot_paths)
     final_label = f"[v{len(slot_paths) - 1}]"
@@ -165,13 +166,19 @@ def join_with_transitions(
 def _build_xfade_filter(
     transitions: list[str],
     slot_durations: list[float],
+    transition_duration_s: float | None = None,
 ) -> str:
     """Build the filter_complex string for chained xfade transitions.
 
     Caller guarantees every transition is a real visual effect (no "none"),
     so every boundary uses a proper duration. xfade offset for boundary i:
       offset_i = (sum of slot durations 0..i+1) - (sum of transition durations 0..i) - trans_dur_i
+
+    ``transition_duration_s`` overrides the default 0.3s base (the recipe-level
+    "fit to time" / faster-transitions knob); it is still clamped to 30% of the
+    shorter adjacent slot so a too-large value can never eat the footage.
     """
+    base_dur = transition_duration_s if transition_duration_s else DEFAULT_TRANSITION_DURATION_S
     parts: list[str] = []
     cumulative_dur = slot_durations[0]
     cumulative_trans = 0.0
@@ -179,7 +186,7 @@ def _build_xfade_filter(
     for i, trans_type in enumerate(transitions):
         # Clamp transition duration to 30% of the shorter adjacent slot.
         max_dur = min(slot_durations[i], slot_durations[i + 1]) * 0.3
-        trans_dur = min(DEFAULT_TRANSITION_DURATION_S, max_dur)
+        trans_dur = min(base_dur, max_dur)
 
         offset = max(0.0, cumulative_dur - cumulative_trans - trans_dur)
 

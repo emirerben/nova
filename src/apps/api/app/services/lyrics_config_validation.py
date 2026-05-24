@@ -15,6 +15,7 @@ Caller-side semantics:
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -42,11 +43,28 @@ LYRICS_CONFIG_KEYS = {
     "pre_roll_s",
     "post_dwell_s",
     "next_line_gap_s",
+    "max_overlap_s",
+    "fade_in_s",
+    "fade_out_s",
     "fade_in_ms",
     "fade_out_ms",
     "hold_to_next_threshold_ms",
     "font_family",
 }
+
+_LINE_ONLY_KEYS = frozenset(
+    {
+        "pre_roll_s",
+        "post_dwell_s",
+        "next_line_gap_s",
+        "max_overlap_s",
+        "fade_in_s",
+        "fade_out_s",
+        "fade_in_ms",
+        "fade_out_ms",
+        "hold_to_next_threshold_ms",
+    }
+)
 
 _FONT_REGISTRY_PATH = (
     Path(__file__).resolve().parents[2] / "assets" / "fonts" / "font-registry.json"
@@ -104,9 +122,17 @@ def validate_lyrics_config_dict(cfg: object) -> None:
     unknown = set(cfg) - LYRICS_CONFIG_KEYS
     if unknown:
         raise ValueError(f"lyrics_config contains unknown key(s): {sorted(unknown)}")
+    style = cfg.get("style")
+    if style != "line":
+        misplaced = sorted(k for k in _LINE_ONLY_KEYS if k in cfg)
+        if misplaced:
+            raise ValueError(
+                f"lyrics_config keys {misplaced} are only valid for style='line'; "
+                f"got style={style!r} (absent style defaults to 'karaoke' downstream)"
+            )
     if "enabled" in cfg and not isinstance(cfg["enabled"], bool):
         raise ValueError("lyrics_config.enabled must be a boolean")
-    if "style" in cfg and cfg["style"] not in LYRICS_STYLES:
+    if style is not None and style not in LYRICS_STYLES:
         raise ValueError(f"lyrics_config.style must be one of {sorted(LYRICS_STYLES)}")
     if "position" in cfg and cfg["position"] not in LYRICS_POSITIONS:
         raise ValueError(f"lyrics_config.position must be one of {sorted(LYRICS_POSITIONS)}")
@@ -127,6 +153,9 @@ def validate_lyrics_config_dict(cfg: object) -> None:
     _validate_number(cfg, "pre_roll_s", min_value=0.0, max_value=2.0)
     _validate_number(cfg, "post_dwell_s", min_value=0.0, max_value=5.0)
     _validate_number(cfg, "next_line_gap_s", min_value=0.0, max_value=2.0)
+    _validate_number(cfg, "max_overlap_s", min_value=0.0, max_value=2.0)
+    _validate_number(cfg, "fade_in_s", min_value=0.0, max_value=2.0)
+    _validate_number(cfg, "fade_out_s", min_value=0.0, max_value=2.0)
     _validate_number(cfg, "fade_in_ms", min_value=0, max_value=2000, integer=True)
     _validate_number(cfg, "fade_out_ms", min_value=0, max_value=2000, integer=True)
     _validate_number(cfg, "hold_to_next_threshold_ms", min_value=0, max_value=5000, integer=True)
@@ -146,7 +175,12 @@ def _validate_number(
     if integer:
         if not isinstance(value, int) or isinstance(value, bool):
             raise ValueError(f"lyrics_config.{key} must be an integer")
+        number = float(value)
     elif not isinstance(value, (int, float)) or isinstance(value, bool):
         raise ValueError(f"lyrics_config.{key} must be a number")
-    if not (min_value <= value <= max_value):
+    else:
+        number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"lyrics_config.{key} must be a finite number")
+    if not (min_value <= number <= max_value):
         raise ValueError(f"lyrics_config.{key} must be between {min_value} and {max_value}")

@@ -7,7 +7,14 @@ from typing import Any
 
 from app.services.lyrics_config_validation import validate_lyrics_config_dict
 
-_FLOAT_KEYS = {"pre_roll_s", "post_dwell_s", "next_line_gap_s"}
+_FLOAT_KEYS = {
+    "pre_roll_s",
+    "post_dwell_s",
+    "next_line_gap_s",
+    "max_overlap_s",
+    "fade_in_s",
+    "fade_out_s",
+}
 _INT_KEYS = {
     "fade_in_ms",
     "fade_out_ms",

@@ -43,7 +43,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
-from app.agents._schemas.song_sections import SongSection
+from app.agents._schemas.song_sections import SongSection, cap_song_section_duration
 from app.config import settings
 from app.database import get_db
 from app.models import Job, MusicTrack
@@ -231,7 +231,12 @@ def _to_response(t: MusicTrack) -> MusicTrackResponse:
         coerced_sections = []
         for raw in t.best_sections:
             try:
-                coerced_sections.append(SongSection.model_validate(raw))
+                coerced_sections.append(
+                    cap_song_section_duration(
+                        SongSection.model_validate(raw),
+                        track_duration_s=t.duration_s,
+                    )
+                )
             except Exception as exc:
                 log.warning(
                     "invalid_song_section_dropped",

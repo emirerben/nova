@@ -205,6 +205,9 @@ export interface TemplateDebugResponse {
   template: TemplateDebugSummary;
   template_agent_runs: AgentRunPayload[];
   recipe_cached: Record<string, unknown> | null;
+  // Set by retime-phrase only when the slot reflow pushed overlays past the
+  // slot's target duration (they render truncated, not dropped). null otherwise.
+  reflow_warning?: { overlays_pushed_past_target: number } | null;
 }
 
 export async function adminGetTemplateDebug(
@@ -253,6 +256,54 @@ export async function adminUpdateTemplateOverlays(
   return res.json();
 }
 
+export interface RetimePhraseRequest {
+  slot_index: number;
+  member_overlay_indices: number[];
+  new_text: string;
+  beat_s?: number;
+  // Phrase rendering pattern. "singleton" recomputes ONE static overlay
+  // (duration recalculated, no per-word pop); "cumulative" / "per_word" /
+  // omitted reflow into N per-word reveal stages.
+  pattern?: string;
+}
+
+// Recompute a phrase's overlays + timings from edited text. Unlike the
+// text-only PATCH /overlays, this re-derives the stage COUNT and reveal timing,
+// so changing a phrase's wording reflows it. Cumulative/per-word phrases reflow
+// into N reveal stages; singletons (pattern="singleton") stay one overlay with
+// a recalculated duration. The backend also clamps the recomputed window so it
+// never overlaps the next overlay nor overflows the slot.
+export async function adminRetimeTemplatePhrase(
+  id: string,
+  req: RetimePhraseRequest,
+): Promise<TemplateDebugResponse> {
+  const res = await adminFetch(`/admin/templates/${id}/retime-phrase`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+  return res.json();
+}
+
+// Re-sequence overlay timings so phrases never overlap, without changing any
+// text. Lays each slot's phrase blocks end-to-end (one phrase on screen at a
+// time). Omit slot_index to fix every slot. Backs the "Fix timings" button.
+// `fitToDuration` additionally compresses each slot's per-word reveal pacing so
+// the sequenced phrases fit within the slot's target duration ("Fit to time").
+export async function adminResequenceTemplateSlots(
+  id: string,
+  slotIndex?: number,
+  fitToDuration = false,
+): Promise<TemplateDebugResponse> {
+  const body: { slot_index?: number; fit_to_duration?: boolean } = {};
+  if (slotIndex !== undefined) body.slot_index = slotIndex;
+  if (fitToDuration) body.fit_to_duration = true;
+  const res = await adminFetch(`/admin/templates/${id}/resequence-slots`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
 export async function adminCreateTemplate(data: {
   name: string;
   gcs_path: string;
@@ -284,8 +335,12 @@ export async function adminCreateTemplateFromUrl(data: {
   return res.json();
 }
 
-export async function adminReanalyzeTemplate(id: string): Promise<AdminTemplate> {
-  const res = await adminFetch(`/admin/templates/${id}/reanalyze`, {
+export async function adminReanalyzeTemplate(
+  id: string,
+  overwriteOverlays = false,
+): Promise<AdminTemplate> {
+  const qs = overwriteOverlays ? "?overwrite_overlays=true" : "";
+  const res = await adminFetch(`/admin/templates/${id}/reanalyze${qs}`, {
     method: "POST",
   });
   return res.json();
@@ -301,12 +356,21 @@ export async function adminReanalyzeTemplate(id: string): Promise<AdminTemplate>
  *
  * The backend always reruns the agent stack on this endpoint (force=True is
  * applied server-side), so each click produces fresh agent_run rows.
+ *
+ * `overwriteOverlays` defaults to `false`: a re-run preserves the template's
+ * existing text overlays (manual edits survive). Pass `true` only for the
+ * explicit "Overwrite overlays from agents" action, which regenerates overlays
+ * from the fresh agent output.
  */
 export async function adminReanalyzeAgentic(
   id: string,
   useLayer2: boolean | undefined = true,
+  overwriteOverlays = false,
 ): Promise<AdminTemplate> {
-  const qs = useLayer2 === undefined ? "" : `?use_layer2=${useLayer2 ? "true" : "false"}`;
+  const params = new URLSearchParams();
+  if (useLayer2 !== undefined) params.set("use_layer2", useLayer2 ? "true" : "false");
+  if (overwriteOverlays) params.set("overwrite_overlays", "true");
+  const qs = params.toString() ? `?${params.toString()}` : "";
   const res = await adminFetch(`/admin/templates/${id}/reanalyze-agentic${qs}`, {
     method: "POST",
   });
