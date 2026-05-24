@@ -920,6 +920,16 @@ def _generate_overlay_sequence(
 
     n_frames = min(MAX_OVERLAY_FRAMES, max(1, int(round(duration_s * FPS))))
     frame_dur = 1.0 / FPS
+    # Render ONE extra "hold" frame past the logical end. FFmpeg's image2
+    # secondary stream EOFs at its last frame's PTS (not PTS + frame_dur), so
+    # without this the overlay disappears one frame (~33ms) before `end_s` —
+    # and because cumulative reveal stages butt edge-to-edge, that hole lands
+    # exactly at every word boundary, blanking the whole line for a frame
+    # before the next word's overlay opens (the prod 89cde014 flicker). The
+    # extra frame is the settled final state (animation progress clamps to 1.0
+    # at t_local >= duration), so it just holds the line through the seam; the
+    # `between(t, start, end)` enable still gates the overlay off at `end`.
+    n_render = min(MAX_OVERLAY_FRAMES, n_frames + 1)
 
     def _render_one(i: int) -> None:
         t_local = i * frame_dur
@@ -927,12 +937,12 @@ def _generate_overlay_sequence(
         _write_png_pillow(img, os.path.join(work_dir, f"{pattern_prefix}{i:04d}.png"))
 
     with ThreadPoolExecutor(max_workers=_ENCODE_WORKERS) as pool:
-        list(pool.map(_render_one, range(n_frames)))
+        list(pool.map(_render_one, range(n_render)))
 
     return {
         "pattern": os.path.join(work_dir, f"{pattern_prefix}%04d.png"),
         "first_frame": os.path.join(work_dir, f"{pattern_prefix}0000.png"),
-        "n_frames": n_frames,
+        "n_frames": n_render,
         "fps": FPS,
         "start_s": start_s,
         "end_s": end_s,

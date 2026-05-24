@@ -133,3 +133,141 @@ def test_all_middle_words_dropped_keeps_first_and_last():
 def test_returns_cumulative_stage_dataclass():
     stages = build_cumulative_stages([_w("x", 0.0, 1.0)], line_end_s=1.0)
     assert isinstance(stages[0], CumulativeStage)
+
+
+# --- butt_join_cumulative_phrases -------------------------------------------
+
+from app.pipeline.text_reveal import (  # noqa: E402
+    butt_join_cumulative_phrases,
+    group_phrase_index_blocks,
+)
+
+
+def _ov(text: str, start_s: float, end_s: float, **extra) -> dict:
+    return {"sample_text": text, "start_s": start_s, "end_s": end_s, **extra}
+
+
+def test_buttjoin_closes_intra_phrase_gaps_from_prod_recipe():
+    # The exact gappy slice from prod template 89cde014 (job 8eaee104): each
+    # stage is start+0.4, but starts are spaced wider, leaving blank holes.
+    ovs = [
+        _ov("if", 2.057, 2.457),
+        _ov("if you", 2.457, 2.857),
+        _ov("if you put", 3.257, 3.657),  # 0.4s gap before this
+        _ov("if you put in", 4.057, 4.857),  # 0.4s gap before this (terminal)
+    ]
+    extended = butt_join_cumulative_phrases(ovs)
+    assert extended == 2
+    # Every non-terminal end now equals the next start: continuous on screen.
+    assert ovs[0]["end_s"] == pytest.approx(ovs[1]["start_s"])
+    assert ovs[1]["end_s"] == pytest.approx(ovs[2]["start_s"])
+    assert ovs[2]["end_s"] == pytest.approx(ovs[3]["start_s"])
+    # Terminal dwell untouched; no start moved.
+    assert ovs[3]["end_s"] == pytest.approx(4.857)
+    assert [o["start_s"] for o in ovs] == pytest.approx([2.057, 2.457, 3.257, 4.057])
+
+
+def test_buttjoin_never_crosses_phrase_boundary():
+    # Two distinct phrases — the gap between them is intentional clear+dwell.
+    ovs = [
+        _ov("Luck", 5.288, 5.688),
+        _ov("Luck is", 6.088, 6.488),  # same phrase: gap closed
+        _ov("if", 9.000, 9.400),  # NEW phrase: gap before it preserved
+        _ov("if you", 9.400, 9.800),
+    ]
+    butt_join_cumulative_phrases(ovs)
+    assert ovs[0]["end_s"] == pytest.approx(ovs[1]["start_s"])  # closed
+    # "Luck is" (terminal of phrase 1) must NOT stretch to "if" (phrase 2).
+    assert ovs[1]["end_s"] == pytest.approx(6.488)
+    assert ovs[2]["start_s"] == pytest.approx(9.000)  # phrase 2 start untouched
+
+
+def test_buttjoin_idempotent_on_already_butted():
+    ovs = [_ov("a", 0.0, 0.4), _ov("a b", 0.4, 0.8), _ov("a b c", 0.8, 1.6)]
+    assert butt_join_cumulative_phrases(ovs) == 0
+    assert butt_join_cumulative_phrases(ovs) == 0
+
+
+def test_buttjoin_pct_timed_phrase():
+    # Agentic pct overlays: butt end_pct to the next start_pct.
+    ovs = [
+        _ov("x", 0.0, 0.1, start_pct=0.0, end_pct=0.1),
+        _ov("x y", 0.1, 0.2, start_pct=0.3, end_pct=0.4),  # gap in pct space
+    ]
+    assert butt_join_cumulative_phrases(ovs) == 1
+    assert ovs[0]["end_pct"] == pytest.approx(0.3)
+
+
+def test_buttjoin_pct_idempotent_when_already_butted():
+    ovs = [
+        _ov("x", 0.0, 0.1, start_pct=0.0, end_pct=0.3),
+        _ov("x y", 0.1, 0.2, start_pct=0.3, end_pct=0.4),
+    ]
+    assert butt_join_cumulative_phrases(ovs) == 0
+
+
+def test_buttjoin_pct_cur_with_seconds_only_next_does_not_corrupt_end_s():
+    # cur renders via pct (both pct fields present); nxt is a partially-retimed
+    # sibling with NO start_pct. We must NOT extend cur.end_s (which the renderer
+    # ignores for a pct overlay) and must NOT claim success.
+    ovs = [
+        _ov("x", 0.0, 0.1, start_pct=0.0, end_pct=0.1),
+        _ov("x y", 0.5, 0.9),  # seconds only, no start_pct
+    ]
+    assert butt_join_cumulative_phrases(ovs) == 0
+    assert ovs[0]["end_s"] == pytest.approx(0.1)  # untouched
+    assert ovs[0]["end_pct"] == pytest.approx(0.1)  # untouched
+
+
+def test_buttjoin_respects_end_override():
+    ovs = [
+        _ov("x", 0.0, 0.4, end_s_override=0.4),
+        _ov("x y", 1.0, 1.4, start_s_override=1.0),
+    ]
+    assert butt_join_cumulative_phrases(ovs) == 1
+    assert ovs[0]["end_s_override"] == pytest.approx(1.0)
+
+
+def test_buttjoin_override_idempotent_when_already_butted():
+    ovs = [
+        _ov("x", 0.0, 1.0, end_s_override=1.0),
+        _ov("x y", 1.0, 1.4, start_s_override=1.0),
+    ]
+    assert butt_join_cumulative_phrases(ovs) == 0
+
+
+def test_buttjoin_skips_cross_anchor_prefix_collision():
+    # Classic false-match: "Go" (top) then "Going home" (bottom) — text-prefix
+    # match but DIFFERENT anchors. Must NOT join (would flash both at the seam).
+    ovs = [
+        _ov("Go", 0.0, 0.4, position_x_frac=0.5, position_y_frac=0.20),
+        _ov("Going home", 1.0, 1.4, position_x_frac=0.5, position_y_frac=0.80),
+    ]
+    assert butt_join_cumulative_phrases(ovs) == 0
+    assert ovs[0]["end_s"] == pytest.approx(0.4)  # title left as authored
+
+
+def test_buttjoin_joins_same_anchor_reveal():
+    # Same prefix relationship, SAME anchor → genuine reveal → join.
+    ovs = [
+        _ov("Go", 0.0, 0.4, position_x_frac=0.05, position_y_frac=0.44),
+        _ov("Going home", 1.0, 1.4, position_x_frac=0.05, position_y_frac=0.44),
+    ]
+    assert butt_join_cumulative_phrases(ovs) == 1
+    assert ovs[0]["end_s"] == pytest.approx(1.0)
+
+
+def test_buttjoin_handles_non_dict_entries():
+    ovs = [_ov("a", 0.0, 0.4), "not-a-dict", _ov("a b", 1.0, 1.4)]
+    # The non-dict breaks the run into singletons → nothing to join, no crash.
+    assert butt_join_cumulative_phrases(ovs) == 0
+
+
+def test_buttjoin_singleton_and_empty_noop():
+    assert butt_join_cumulative_phrases([]) == 0
+    assert butt_join_cumulative_phrases([_ov("solo", 0.0, 1.0)]) == 0
+
+
+def test_group_phrase_index_blocks_moved_here():
+    ovs = [_ov("a", 0, 1), _ov("a b", 1, 2), _ov("a b c", 2, 3), _ov("new", 3, 4)]
+    assert group_phrase_index_blocks(ovs) == [[0, 1, 2], [3]]

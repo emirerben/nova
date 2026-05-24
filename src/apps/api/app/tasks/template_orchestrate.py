@@ -76,6 +76,7 @@ from app.pipeline.template_matcher import (
     consolidate_slots,
     match,
 )
+from app.pipeline.text_reveal import butt_join_cumulative_phrases
 from app.services.job_phases import (
     PHASE_ANALYZE_CLIPS,
     PHASE_ASSEMBLE,
@@ -3717,7 +3718,38 @@ def _collect_absolute_overlays(
             cumulative_s += float(inter.get("hold_s", 1.0))
             continue
 
-        for ov in slot.get("text_overlays", []):
+        # Close intra-phrase gaps before resolving windows: a cumulative reveal
+        # whose stages aren't butted (older fixed `start+beat` windows, or a
+        # phrase partially retimed while siblings kept stale timings) would
+        # otherwise blank out entirely between words and re-pop on the next
+        # one — the prod 89cde014 glitch (job 8eaee104: "Luck is" → blank →
+        # "Luck is just"). Operate on dict COPIES so the recipe step is never
+        # mutated, and run on the raw recipe timing fields (pct/seconds/override)
+        # the same window resolution below consumes.
+        slot_overlays = [
+            dict(o) if isinstance(o, dict) else o for o in slot.get("text_overlays", [])
+        ]
+        # Only agentic templates carry Layer-2 cumulative word-reveals; the
+        # `_same_overlay_anchor` guard inside butt_join already rejects classic
+        # text-prefix collisions, but gating here keeps classic renders byte-for-
+        # byte unchanged (defense-in-depth + zero classic blast radius).
+        gaps_closed = (
+            butt_join_cumulative_phrases([o for o in slot_overlays if isinstance(o, dict)])
+            if is_agentic
+            else 0
+        )
+        if gaps_closed:
+            from app.services.pipeline_trace import (  # noqa: PLC0415
+                record_pipeline_event,
+            )
+
+            record_pipeline_event(
+                stage="overlay",
+                event="cumulative_butt_join",
+                data={"slot_index": i, "stage_ends_extended": gaps_closed},
+            )
+
+        for ov in slot_overlays:
             clip_meta = _find_clip_meta_by_id(clip_id, clip_metas)
             text = _resolve_overlay_text(ov.get("role", "label"), clip_meta, ov, subject=subject)
             if not text or not text.strip():

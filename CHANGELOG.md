@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.44.13] - 2026-05-24
+
+### Fixed
+- **Cumulative word-reveal phrases no longer blank out between words.** On prod template `89cde014` ("not just luck 2", job `8eaee104`), accumulating reveals ("It's" → "It's not" → "It's not just luck") flickered to a blank screen and re-popped as each new word arrived. Two independent causes, both fixed: (1) the cached recipe held cumulative stages whose windows weren't butt-joined (each word ended a fixed 0.4s after its start while the next word started later, leaving 0.4–0.8s holes where nothing rendered); (2) even with butted stages, FFmpeg's image2 overlay stream EOFs at its last frame's PTS — one frame (~33ms) before the overlay's `end` — so the line vanished for a single frame at every word boundary. Fix (1): a render-time `butt_join_cumulative_phrases` pass (`app/pipeline/text_reveal.py`) extends each non-terminal reveal stage's end to the next stage's start, scoped to same-anchor stages within one phrase and gated to agentic templates, so it heals already-cached recipes with no reanalysis. Fix (2): the Skia renderer renders one extra held frame per animated overlay so its content reaches `end`. Verified on the real clip — a full-span frame scan went from a blank at every word transition to zero blank frames. The admin "Fix timings" button (`_resequence_slot_overlays`) closes intra-phrase gaps too.
+
 ## [0.4.44.12] - 2026-05-24
 
 ### Added

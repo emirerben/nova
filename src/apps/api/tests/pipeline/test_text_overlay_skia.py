@@ -59,6 +59,32 @@ def test_typeface_for_overlay_falls_back_when_font_unknown():
 # -- Static effect (effect=none) ---------------------------------------------
 
 
+def test_animated_overlay_renders_one_extra_hold_frame(tmp_workdir):
+    """Animated sequences render round(duration*FPS) + 1 frames. The extra
+    held frame keeps the overlay on screen through `end_s` — FFmpeg's image2
+    secondary EOFs at the last frame's PTS, so without it the overlay vanishes
+    ~1 frame early. With cumulative reveals butting edge-to-edge that hole
+    lands at every word boundary and blanks the line for a frame (the prod
+    89cde014 flicker). Locks the seam-continuity fix."""
+    overlay = {
+        "text": "hello",
+        "start_s": 0.0,
+        "end_s": 0.4,  # 0.4s * 30fps = 12 logical frames
+        "effect": "pop-in",
+        "pop_animated_suffix": "hello",
+        "font_family": "Playfair Display",
+        "text_size_px": 120,
+        "text_color": "#FFFFFF",
+    }
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
+    assert seq is not None
+    assert seq["is_animated"] is True
+    # 12 logical frames + 1 hold frame.
+    assert seq["n_frames"] == int(round(0.4 * tos.FPS)) + 1
+    frames = sorted(f for f in os.listdir(tmp_workdir) if f.endswith(".png"))
+    assert len(frames) == seq["n_frames"]
+
+
 def test_static_overlay_produces_single_png_with_alpha(tmp_workdir):
     overlay = {
         "text": "TEST",
