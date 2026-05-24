@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.44.9] - 2026-05-24
+## [0.4.44.11] - 2026-05-24
 
 ### Added
 - **Pre-merge CI gates for Layer-2 pipeline and agent-input changes — `require-local-test` (T6) and `require-eval-fixture` (T8).** The Nova retrospective showed a ~60% fix-PR rate over the last month, much of it driven by two recurring patterns: Layer-2 (`text_overlay_v2`) changes that shipped without a real local render to catch what unit tests miss, and prompt/schema edits that shipped without a corresponding eval fixture update. Two new GitHub Actions workflows close that loop at the PR gate.
