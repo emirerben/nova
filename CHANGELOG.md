@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.44.12] - 2026-05-24
+
+### Added
+- **Pre-PR text-overlay verify gate (`make verify-overlays`).** Catch "looks right locally, clips in prod" (the #296 class) *before* opening a PR instead of after a bad render ships. The gate renders a recipe's text overlays through the real Skia path inside the prod Docker image — so fonts (`fonts-dejavu-core` + bundled Playfair) and ffmpeg match prod — then asserts every overlay renders un-clipped and writes a border-coded `montage.png` + `report.json` to `.overlay-verify/`. The clipping check (opaque-pixel bbox vs frame edges) is the primary, font-independent signal and exits non-zero so it gates the PR; content correctness is the montage, reviewed visually (or by the agent, which reads PNGs — better than tesseract on stylized fonts). Run it as `make verify-overlays ARGS="--fixtures"` (committed regression set), `--recipe <path>`, or `--template <uuid>`. Optional automated OCR content matching runs as a host stage afterward. This turns CLAUDE.md's prose rule ("an agentic/music overlay change is verified against the burned Skia output, not the Pillow admin preview") into automation. New: `app/pipeline/overlay_verify.py`, `app/cli/verify_overlays.py`, fixtures under `tests/fixtures/overlay_verify/`, and the `test_overlay_verify.py` guard (synthetic-frame detector tests prove the verifier actually catches clipping/truncation, plus a real-Skia fixture regression suite).
 ## [0.4.44.11] - 2026-05-24
 
 ### Added

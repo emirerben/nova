@@ -1,0 +1,15 @@
+{
+  "overlays": [
+    {
+      "text": "every single day",
+      "effect": "karaoke-line",
+      "text_size_px": 96,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.5,
+      "text_color": "#FFFFFF",
+      "text_anchor": "center",
+      "start_s": 0.0,
+      "end_s": 2.5
+    }
+  ]
+}

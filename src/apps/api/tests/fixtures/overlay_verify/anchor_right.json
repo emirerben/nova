@@ -1,0 +1,15 @@
+{
+  "overlays": [
+    {
+      "text": "the hard way",
+      "effect": "none",
+      "text_size_px": 90,
+      "position_x_frac": 0.95,
+      "position_y_frac": 0.5,
+      "text_color": "#F4D03F",
+      "text_anchor": "right",
+      "start_s": 0.0,
+      "end_s": 2.5
+    }
+  ]
+}
