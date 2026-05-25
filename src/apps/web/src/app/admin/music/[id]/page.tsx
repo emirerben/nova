@@ -16,12 +16,14 @@ import {
 import { adminCreateTemplateFromMusicTrack } from "@/lib/admin-api";
 import LyricsConfigPanel from "@/app/admin/_shared/LyricsConfigPanel";
 import type { LyricsConfig } from "@/lib/music-api";
+import { LyricsTab } from "./components/LyricsTab";
 import { TestTab } from "./components/TestTab";
 
-type AdminMusicTabId = "config" | "test";
+type AdminMusicTabId = "config" | "test" | "lyrics";
 
 const ADMIN_MUSIC_TABS: { id: AdminMusicTabId; label: string }[] = [
   { id: "config", label: "Config" },
+  { id: "lyrics", label: "Lyrics" },
   { id: "test", label: "Test" },
 ];
 
@@ -674,6 +676,8 @@ export default function AdminMusicTrackPage({
 
       {activeTab === "test" ? (
         <TestTab trackId={id} track={track} />
+      ) : activeTab === "lyrics" ? (
+        <LyricsTab trackId={id} track={track} onTrackUpdated={setTrack} />
       ) : (
         <ConfigTabContent
           id={id}
