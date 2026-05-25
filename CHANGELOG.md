@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.45.2] - 2026-05-25
+
+### Fixed
+- **Music tracks with an unrecognized genre now label successfully instead of silently failing.** The song classifier previously refused any genre outside its fixed list (pop, hip-hop, electronic, cinematic, acoustic, comedy, other), so rock, R&B, Latin, jazz, and similar tracks ended up with no AI labels — which made them invisible to the auto-song matcher (including the new generative edits). Unrecognized genres are now mapped to the closest fit (rap/trap → hip-hop, EDM/house → electronic, orchestral/classical → cinematic, folk/country → acoustic) or to 'other', so every track gets labeled and can be matched.
+
 ## [0.4.45.1] - 2026-05-24
 
 ### Added
