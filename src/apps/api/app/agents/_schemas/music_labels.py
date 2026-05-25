@@ -17,6 +17,7 @@ labels when the schema or prompt evolves.
 
 from __future__ import annotations
 
+import re
 from typing import Literal, get_args
 
 from pydantic import BaseModel, Field, field_validator
@@ -39,8 +40,12 @@ Genre = Literal[
 
 # Map common out-of-enum genres the classifier emits onto the closest in-enum
 # value, preserving matching signal where there's an obvious home. Everything
-# else falls back to "other" (see `_coerce_genre`). Keys are lowercased.
+# else falls back to "other" (see `_coerce_genre`). Keys are in the SAME
+# normalized form `_coerce_genre` produces: lowercased, separators (space, -, /,
+# &, ,) collapsed to "_". So "hip-hop", "hip hop", "hiphop" all normalize before
+# lookup — don't add hyphen/space spellings here, they'd never be hit.
 _GENRE_ALIASES: dict[str, str] = {
+    "hiphop": "hip_hop",
     "rap": "hip_hop",
     "trap": "hip_hop",
     "drill": "hip_hop",
@@ -52,9 +57,10 @@ _GENRE_ALIASES: dict[str, str] = {
     "classical": "cinematic",
     "orchestral": "cinematic",
     "score": "cinematic",
+    "soundtrack": "cinematic",
     "ambient": "cinematic",
     "folk": "acoustic",
-    "singer-songwriter": "acoustic",
+    "singer_songwriter": "acoustic",
     "country": "acoustic",
 }
 
@@ -135,7 +141,19 @@ class MusicLabels(BaseModel):
         """
         if not isinstance(v, str):
             return v
-        g = v.strip().lower()
-        if g in get_args(Genre):
+        valid = set(get_args(Genre))
+        # Normalize separators so "hip-hop", "hip hop", "hip_hop", "HipHop" all
+        # collapse to the same key — the model emits genres in free natural form.
+        g = re.sub(r"[\s/&,_-]+", "_", v.strip().lower()).strip("_")
+        if g in valid:
             return g
-        return _GENRE_ALIASES.get(g, "other")
+        if g in _GENRE_ALIASES:
+            return _GENRE_ALIASES[g]
+        # Compound like "pop_rock" / "synth_pop" / "film_score": take the first
+        # token that maps to a real genre before defaulting to "other".
+        for tok in g.split("_"):
+            if tok in valid:
+                return tok
+            if tok in _GENRE_ALIASES:
+                return _GENRE_ALIASES[tok]
+        return "other"

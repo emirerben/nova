@@ -59,6 +59,23 @@ def test_high_signal_aliases_mapped(g, expected):
     assert _labels(g).genre == expected
 
 
+@pytest.mark.parametrize(
+    "g,expected",
+    [
+        ("hip-hop", "hip_hop"),  # hyphen — the most common rap spelling
+        ("hip hop", "hip_hop"),  # space
+        ("HipHop", "hip_hop"),  # camel → "hiphop" alias
+        ("Hip_Hop", "hip_hop"),
+        ("pop/rock", "pop"),  # compound → first known token
+        ("synth-pop", "pop"),
+        ("film score", "cinematic"),  # token "score" → cinematic
+        ("  Pop  ", "pop"),  # surrounding whitespace
+    ],
+)
+def test_separator_and_compound_normalization(g, expected):
+    assert _labels(g).genre == expected
+
+
 def test_non_string_genre_still_raises():
     with pytest.raises(ValidationError):
         _labels(123)
