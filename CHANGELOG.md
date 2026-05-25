@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.45.5] - 2026-05-25
+
+### Changed
+- **Generative edits can no longer run longer than the footage you upload.** The "Target length" slider is gone (public `/generative` + admin launch panel) — it only ever influenced the original-audio variant anyway, while the two song variants silently sized output to the matched track's full best-section window (45s+) and *stretched* short clips with slow-motion (`setpts`, down to 0.4×) to fill the beat slots. Output length is now **derived** and bounded by real footage in every case:
+  - **Music variants** clamp the song's best-section window to the total uploaded footage before slicing it into beat slots (`_fit_section_to_footage` in `generative_build.py`), so a 12s upload on a 45s song section produces a ~12s edit, not a 45s one. The audio offset (and lyric timing) are untouched, so beat alignment is preserved.
+  - **No-music variant** sizes its arrangement from the footage total instead of the slider.
+  - **No stretch-to-fill, ever.** `_assemble_clips`/`_plan_slots` gained an `allow_slowdown_fill` flag (default `True` — templates and music jobs are byte-for-byte unchanged); generative edits pass `False`, so a clip shorter than its slot now shrinks the slot to the real footage (at 1.0× speed, no frozen-frame pad) instead of being slowed down. A `clip_footage_exhausted_trimmed` event is recorded to the job-debug trace.
+  - AI still trims clips *shorter* when the matcher prefers it (weak / no-action sections) — only manufacturing extra runtime is forbidden.
+  - Stale frontends that still POST `target_duration_s` are tolerated (the field is dropped, not rejected). The admin generative list drops its now-vestigial "target length" column.
+  - Verified on a real prod-image local render (footage-bounded output + `clip_footage_exhausted_trimmed`, no slowdown). `make local-render MODE=generative CLIPS="..."` now drives this path.
+
 ## [0.4.45.4] - 2026-05-25
 
 ### Fixed

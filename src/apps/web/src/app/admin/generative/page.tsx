@@ -144,15 +144,7 @@ export default function AdminGenerativePage() {
                           </span>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-zinc-400">
-                        {job.clip_count}
-                        {job.target_duration_s != null && (
-                          <span className="text-zinc-600">
-                            {" "}
-                            · {job.target_duration_s}s
-                          </span>
-                        )}
-                      </td>
+                      <td className="px-3 py-2 text-zinc-400">{job.clip_count}</td>
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap gap-1">
                           {job.variants.length === 0 ? (
@@ -205,7 +197,6 @@ function VariantChip({ variant }: { variant: AdminGenerativeVariant }) {
 function LaunchPanel({ onLaunched }: { onLaunched: () => Promise<void> }) {
   const [uploads, setUploads] = useState<{ gcs_path: string; name: string }[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [targetDuration, setTargetDuration] = useState(20);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
@@ -233,10 +224,7 @@ function LaunchPanel({ onLaunched }: { onLaunched: () => Promise<void> }) {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await createGenerativeJob(
-        uploads.map((u) => u.gcs_path),
-        targetDuration,
-      );
+      const res = await createGenerativeJob(uploads.map((u) => u.gcs_path));
       setLastJobId(res.job_id);
       setUploads([]);
       await onLaunched();
@@ -245,7 +233,7 @@ function LaunchPanel({ onLaunched }: { onLaunched: () => Promise<void> }) {
     } finally {
       setSubmitting(false);
     }
-  }, [uploads, targetDuration, onLaunched]);
+  }, [uploads, onLaunched]);
 
   return (
     <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-5">
@@ -277,19 +265,10 @@ function LaunchPanel({ onLaunched }: { onLaunched: () => Promise<void> }) {
           )}
         </div>
 
-        <div>
-          <label className="block text-sm text-zinc-400 mb-2">
-            Target length: {targetDuration}s
-          </label>
-          <input
-            type="range"
-            min={5}
-            max={60}
-            value={targetDuration}
-            onChange={(e) => setTargetDuration(Number(e.target.value))}
-            className="w-56"
-          />
-        </div>
+        <p className="text-xs text-zinc-500">
+          Length is derived from the clips and the matched song — the edit is
+          never longer than the uploaded footage.
+        </p>
 
         <button
           type="button"

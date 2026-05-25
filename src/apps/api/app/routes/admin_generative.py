@@ -15,7 +15,6 @@ Auth: X-Admin-Token header (same gate as the rest of admin.py).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, Query
@@ -48,7 +47,6 @@ class AdminGenerativeListItem(BaseModel):
     updated_at: datetime
     error_detail: str | None = None
     clip_count: int
-    target_duration_s: float | None = None
     variants: list[AdminGenerativeVariant]
 
 
@@ -84,12 +82,10 @@ def _variant_summaries(job: Job) -> list[AdminGenerativeVariant]:
     return out
 
 
-def _clip_info(job: Job) -> tuple[int, float | None]:
+def _clip_count(job: Job) -> int:
     cand = job.all_candidates if isinstance(job.all_candidates, dict) else {}
     paths = cand.get("clip_paths")
-    clip_count = len(paths) if isinstance(paths, list) else 0
-    target: Any = cand.get("target_duration_s")
-    return clip_count, (float(target) if isinstance(target, (int, float)) else None)
+    return len(paths) if isinstance(paths, list) else 0
 
 
 @router.get("", response_model=AdminGenerativeListResponse)
@@ -106,7 +102,6 @@ async def list_generative_jobs(
 
     items: list[AdminGenerativeListItem] = []
     for job in jobs:
-        clip_count, target = _clip_info(job)
         items.append(
             AdminGenerativeListItem(
                 job_id=str(job.id),
@@ -114,8 +109,7 @@ async def list_generative_jobs(
                 created_at=job.created_at,
                 updated_at=job.updated_at,
                 error_detail=job.error_detail,
-                clip_count=clip_count,
-                target_duration_s=target,
+                clip_count=_clip_count(job),
                 variants=_variant_summaries(job),
             )
         )
