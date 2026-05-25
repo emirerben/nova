@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.46.3] - 2026-05-25
+
+### Fixed
+- **`make local-render` builds again on Apple Silicon.** The Deno install step added to the prod `Dockerfile` in #315 (for yt-dlp's EJS runtime) hardcoded the `x86_64` binary URL, so any arm64 build — including the dev-machine local-render parity stack on Apple Silicon — failed with `qemu-x86_64: Could not open '/lib64/ld-linux-x86-64.so.2'`. The step now picks the Deno asset from `dpkg --print-architecture` (amd64 → x86_64, arm64 → aarch64). Prod (Fly amd64) is byte-for-byte unchanged; local arm64 builds succeed. (The `docker-build.yml` PR check builds amd64, so it stayed green and never caught this.)
+
 ## [0.4.46.2] - 2026-05-25
 
 ### Changed
