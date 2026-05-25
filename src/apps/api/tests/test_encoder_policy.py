@@ -287,3 +287,48 @@ def test_each_final_output_site_individually(
         f"{callsite[0]}::{callsite[1]} uses preset(s) "
         f"{[m[3] for m in bad]} — must be in {sorted(PRESETS_FAST_OR_STRICTER)}"
     )
+
+
+def test_encoding_args_is_capped_crf_not_abr() -> None:
+    """Final-output encodes must be capped CRF, never ABR.
+
+    Passing `-b:v` puts x264 in ABR mode, which ignores `-crf` and holds a flat
+    average bitrate — that starves smooth dark gradients (twilight sky) and
+    macroblocks them. We want `-crf` (quality driver) + `-maxrate`/`-bufsize`
+    (ceiling) with NO `-b:v`. History: lisbon1.MOV HLG sunset, 2026-05-25.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.pipeline.reframe import _double_rate, _encoding_args  # noqa: PLC0415
+
+    args = _encoding_args("/tmp/out.mp4", preset="fast")
+
+    assert "-b:v" not in args, (
+        "_encoding_args emitted -b:v — that forces x264 into ABR and disables "
+        "capped CRF. Use -crf + -maxrate + -bufsize only."
+    )
+    assert "-crf" in args, "_encoding_args must keep -crf as the quality driver."
+    assert "-maxrate" in args, "_encoding_args must keep -maxrate as the ceiling."
+
+    # bufsize must be 2× maxrate, both derived from the configured ceiling.
+    maxrate = args[args.index("-maxrate") + 1]
+    bufsize = args[args.index("-bufsize") + 1]
+    assert maxrate == settings.output_video_bitrate
+    assert bufsize == _double_rate(settings.output_video_bitrate), (
+        f"bufsize {bufsize!r} must be 2× maxrate {maxrate!r} — a fixed bufsize "
+        "breaks the moment the bitrate ceiling moves."
+    )
+
+
+def test_hdr_downconvert_uses_error_diffusion_dither() -> None:
+    """The 10-bit HLG/HDR10 → 8-bit SDR collapse must dither.
+
+    Without error-diffusion dither the gradient stair-steps into visible contour
+    bands on smooth skies (zscale defaults to dither=none). This is the only
+    place in the pipeline a 10-bit gradient is quantized to 8-bit.
+    """
+    from app.pipeline.reframe import _ZSCALE_SDR_PIPELINE  # noqa: PLC0415
+
+    assert "dither=error_diffusion" in _ZSCALE_SDR_PIPELINE, (
+        "_ZSCALE_SDR_PIPELINE dropped error-diffusion dither — HDR skies will "
+        "band. See reframe.py history (lisbon1.MOV, 2026-05-25)."
+    )
