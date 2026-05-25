@@ -128,6 +128,45 @@ def test_highlight_word_stored_as_metadata():
     assert ov["highlight_word"] == "not"
 
 
+def test_style_set_passthrough_fields_on_overlay():
+    # Caller (._inject_agent_intro) resolves a style set and passes the concrete
+    # fields; build_intro_overlay must surface them in the Skia overlay dict.
+    ov = build_intro_overlay(
+        "hello world",
+        effect="typewriter",
+        start_s=0.0,
+        end_s=2.0,
+        font_family="Space Mono",
+        stroke_width=0,
+        text_size_px=56,
+        position_x_frac=0.06,
+    )
+    assert ov["effect"] == "typewriter"  # widened allowlist keeps the set's effect
+    assert ov["font_family"] == "Space Mono"
+    assert ov["stroke_width"] == 0
+    assert ov["text_size_px"] == 56
+    assert ov["position_x_frac"] == 0.06
+    # text_size_px is authoritative — the size_class bucket is dropped so it can't
+    # fight the px value at the renderer.
+    assert "text_size" not in ov
+
+
+def test_style_set_effect_survives_when_renderer_known():
+    # stream-in is a curated-set effect the Skia renderer draws; it must NOT be
+    # flattened to static the way a genuinely unknown effect is.
+    ov = build_intro_overlay("ai answer", effect="stream-in", start_s=0.0, end_s=2.0)
+    assert ov["effect"] == "stream-in"
+
+
+def test_no_style_fields_omits_keys():
+    # Without style-set passthrough the overlay stays exactly as before (size bucket,
+    # no font_family) — back-compat for the no-set / legacy path.
+    ov = build_intro_overlay("hi", effect="pop-in", start_s=0.0, end_s=2.0)
+    assert ov["text_size"] == "jumbo"
+    assert "font_family" not in ov
+    assert "text_size_px" not in ov
+
+
 def test_inject_into_hero_slot():
     recipe = {"slots": [{"position": 0}, {"position": 1, "text_overlays": []}]}
     ov = build_intro_overlay("hi", effect="static", start_s=0.0, end_s=1.0)

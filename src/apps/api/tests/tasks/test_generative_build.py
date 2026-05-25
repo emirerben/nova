@@ -323,6 +323,82 @@ def test_song_variant_calls_mix(monkeypatch, tmp_path):
     assert len(mix_calls) == 1  # song variant DOES mix the track audio
 
 
+# ── Style sets (curated typography) ────────────────────────────────────────────
+
+
+def test_render_variant_persists_style_set_id(monkeypatch, tmp_path):
+    _patch_render_helpers(monkeypatch, [])
+    vdir = tmp_path / "v"
+    vdir.mkdir()
+    spec = {"variant_id": "original_text", "rank": 3, "text_mode": "none", "track": None}
+    res = gb._render_generative_variant(
+        job_id="j",
+        rank=3,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "music-uploads/x.mp4"},
+        probe_map={},
+        available_footage_s=12.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+        style_set_id="film_mono",
+    )
+    assert res["style_set_id"] == "film_mono"
+
+
+def test_inject_agent_intro_applies_style_set():
+    # The curated set OWNS the look: its font/effect/size win over the agent_form
+    # advisory (here advisory says karaoke-line, high_fashion says fade-in + Bodoni).
+    recipe = {"slots": [{"position": 1, "target_duration_s": 3.0, "text_overlays": []}]}
+    agent_text = types.SimpleNamespace(text="hello world", highlight_word=None)
+    out = gb._inject_agent_intro(
+        recipe, agent_text, {"effect": "karaoke-line"}, [], style_set_id="high_fashion"
+    )
+    ov = out["slots"][0]["text_overlays"][0]
+    assert ov["font_family"] == "Bodoni Moda"
+    assert ov["effect"] == "fade-in"
+    assert ov["text_size_px"] == 80
+
+
+def test_inject_agent_intro_no_set_uses_agent_form():
+    recipe = {"slots": [{"position": 1, "target_duration_s": 3.0, "text_overlays": []}]}
+    agent_text = types.SimpleNamespace(text="hello", highlight_word=None)
+    out = gb._inject_agent_intro(recipe, agent_text, {"effect": "pop-in"}, [], style_set_id=None)
+    ov = out["slots"][0]["text_overlays"][0]
+    assert ov["effect"] == "pop-in"
+    assert "font_family" not in ov
+
+
+def test_inject_lyrics_passes_style_set_id(monkeypatch):
+    captured: dict = {}
+
+    def _fake_inject(recipe_dict, lyrics_cached, *, best_start_s, best_end_s, lyrics_config):
+        captured["cfg"] = lyrics_config
+        return recipe_dict
+
+    monkeypatch.setattr(
+        "app.pipeline.lyric_injector.inject_lyric_overlays", _fake_inject, raising=False
+    )
+    gb._inject_lyrics({"slots": []}, _track(), style_set_id="travel_editorial")
+    assert captured["cfg"]["enabled"] is True
+    assert captured["cfg"]["style_set_id"] == "travel_editorial"
+    # The set is authoritative — we do NOT inherit the track's saved lyric tuning.
+    assert "style" not in captured["cfg"]
+
+
+def test_select_style_set_falls_back_to_default_on_failure(monkeypatch):
+    def _boom():
+        raise RuntimeError("no api key")
+
+    monkeypatch.setattr("app.agents._model_client.default_client", _boom, raising=False)
+    out = gb._select_generative_style_set(
+        [_Meta("c1", 5.0)], types.SimpleNamespace(text="hi"), job_id="j1"
+    )
+    assert out == "default"
+
+
 # ── HDR pre-tonemap (cross-variant reframe cost collapse) ──────────────────────
 
 
@@ -431,15 +507,20 @@ class _FakeJob:
 
 def _patch_job_session(monkeypatch, job):
     """Make gb._sync_session() yield a session whose .get() returns `job`."""
+
     class _Sess:
         def __enter__(self):
             return self
+
         def __exit__(self, *a):
             return False
+
         def get(self, model, pk, **kw):
             return job
+
         def commit(self):
             pass
+
     monkeypatch.setattr(gb, "_sync_session", lambda: _Sess())
 
 
@@ -448,18 +529,24 @@ def test_upsert_variant_appends_then_replaces(monkeypatch):
     job = _FakeJob(assembly_plan={})
     _patch_job_session(monkeypatch, job)
 
-    gb._upsert_variant_entry("11111111-1111-1111-1111-111111111111",
-                             {"variant_id": "song_text", "ok": True, "output_url": "u1"})
+    gb._upsert_variant_entry(
+        "11111111-1111-1111-1111-111111111111",
+        {"variant_id": "song_text", "ok": True, "output_url": "u1"},
+    )
     assert [v["variant_id"] for v in job.assembly_plan["variants"]] == ["song_text"]
 
-    gb._upsert_variant_entry("11111111-1111-1111-1111-111111111111",
-                             {"variant_id": "original_text", "ok": True, "output_url": "u2"})
+    gb._upsert_variant_entry(
+        "11111111-1111-1111-1111-111111111111",
+        {"variant_id": "original_text", "ok": True, "output_url": "u2"},
+    )
     ids = [v["variant_id"] for v in job.assembly_plan["variants"]]
     assert ids == ["song_text", "original_text"]
 
     # Re-persist song_text → replace in place, no duplicate.
-    gb._upsert_variant_entry("11111111-1111-1111-1111-111111111111",
-                             {"variant_id": "song_text", "ok": True, "output_url": "u1b"})
+    gb._upsert_variant_entry(
+        "11111111-1111-1111-1111-111111111111",
+        {"variant_id": "song_text", "ok": True, "output_url": "u1b"},
+    )
     songs = [v for v in job.assembly_plan["variants"] if v["variant_id"] == "song_text"]
     assert len(songs) == 1 and songs[0]["output_url"] == "u1b"
 
@@ -475,6 +562,8 @@ def test_upsert_does_not_change_job_status(monkeypatch):
     """Persisting a variant mid-render must NOT flip the job to a terminal status."""
     job = _FakeJob(assembly_plan={})
     _patch_job_session(monkeypatch, job)
-    gb._upsert_variant_entry("11111111-1111-1111-1111-111111111111",
-                             {"variant_id": "song_text", "ok": True, "output_url": "u"})
+    gb._upsert_variant_entry(
+        "11111111-1111-1111-1111-111111111111",
+        {"variant_id": "song_text", "ok": True, "output_url": "u"},
+    )
     assert job.status == "rendering"

@@ -14,11 +14,18 @@ export interface GenerativeVariant {
   text_mode: GenerativeTextMode;
   music_track_id: string | null;
   track_title: string | null;
+  style_set_id: string | null;
   output_url: string | null;
   video_path: string | null;
   render_status: "ready" | "rendering" | "failed" | null;
   ok: boolean;
   error: string | null;
+}
+
+export interface GenerativeStyleSet {
+  id: string;
+  label: string;
+  tags: string[];
 }
 
 export interface GenerativeJobResponse {
@@ -110,6 +117,34 @@ export async function retextVariant(
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail ?? "Failed to update text");
+  }
+  return res.json();
+}
+
+/** The curated text style sets selectable for a generative edit (generative-eligible). */
+export async function getGenerativeStyleSets(): Promise<GenerativeStyleSet[]> {
+  const res = await fetch(`${API_BASE}/generative-jobs/style-sets`);
+  if (!res.ok) throw new Error(`Failed to load style sets: ${res.status}`);
+  const data = await res.json();
+  return data.style_sets;
+}
+
+export async function changeVariantStyle(
+  jobId: string,
+  variantId: string,
+  styleSetId: string,
+): Promise<GenerativeJobResponse> {
+  const res = await fetch(
+    `${API_BASE}/generative-jobs/${jobId}/variants/${variantId}/change-style`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ style_set_id: styleSetId }),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? "Failed to change style");
   }
   return res.json();
 }

@@ -29,8 +29,23 @@ from app.pipeline.word_timing import synthesize_word_timings
 log = structlog.get_logger()
 
 # Effects the Skia renderer can actually draw for a generated intro overlay.
-# karaoke-line drives the word-by-word reveal; the rest are single-block effects.
-_SKIA_EFFECTS = {"karaoke-line", "pop-in", "fade-in", "scale-up", "static"}
+# karaoke-line drives the word-by-word reveal; the rest are single-block effects
+# dispatched by `_draw_with_animation` in text_overlay_skia.py. This mirrors that
+# dispatch so a curated style set's effect (typewriter / stream-in / pop-in / …)
+# survives instead of being flattened to `static`. font-cycle/glitch are excluded:
+# font-cycle needs a `cycle_fonts` list, glitch has no Skia draw path.
+_SKIA_EFFECTS = {
+    "karaoke-line",
+    "pop-in",
+    "fade-in",
+    "scale-up",
+    "static",
+    "typewriter",
+    "stream-in",
+    "bounce",
+    "slide-up",
+    "slide-in",
+}
 _DEFAULT_EFFECT = "static"
 
 # Mirror of `text_overlay._FONT_SIZE_MAP` keys + `_POSITION_Y` keys + the anchor set.
@@ -72,6 +87,11 @@ def build_intro_overlay(
     end_s: float,
     beats: list[float] | None = None,
     highlight_word: str | None = None,
+    font_family: str | None = None,
+    stroke_width: int | None = None,
+    text_size_px: int | None = None,
+    position_x_frac: float | None = None,
+    position_y_frac: float | None = None,
 ) -> dict | None:
     """Build a single hero-intro overlay dict in the Skia overlay schema.
 
@@ -80,6 +100,12 @@ def build_intro_overlay(
 
     `effect`, `position`, `size_class`, `text_anchor` are defensively coerced to the
     renderer-known vocab; unknown values fall back to a safe default.
+
+    The trailing kwargs (`font_family`, `stroke_width`, `text_size_px`,
+    `position_x_frac`, `position_y_frac`) carry curated style-set fields resolved by
+    the caller (`_inject_agent_intro` → `resolve_overlay_style`). They are honored by
+    BOTH renderers (the #296 parity invariant), so an intro now picks up the set's
+    typography. When `text_size_px` is given it wins over the `size_class` bucket.
     """
     clean = (text or "").strip()
     if not clean:
@@ -108,6 +134,20 @@ def build_intro_overlay(
         # subject substitution must never rewrite agent-authored intro text.
         "subject_substitute": False,
     }
+
+    # Style-set passthrough. font_family is the headline win (the intro previously
+    # rendered with no explicit font); text_size_px overrides the size bucket.
+    if font_family:
+        overlay["font_family"] = font_family
+    if stroke_width is not None:
+        overlay["stroke_width"] = int(stroke_width)
+    if text_size_px is not None:
+        overlay["text_size_px"] = int(text_size_px)
+        overlay.pop("text_size", None)  # px is authoritative — drop the bucket
+    if position_x_frac is not None:
+        overlay["position_x_frac"] = float(position_x_frac)
+    if position_y_frac is not None:
+        overlay["position_y_frac"] = float(position_y_frac)
 
     # Only the karaoke-line effect consumes per-word timings. Synthesize them from the
     # overlay window (even split, beat-snapped when a song is present).
