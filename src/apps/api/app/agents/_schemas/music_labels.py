@@ -17,9 +17,9 @@ labels when the schema or prompt evolves.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Bump when the schema shape OR the enum value lists change. The matcher
 # filters tracks where ``label_version < CURRENT_LABEL_VERSION`` so a
@@ -36,6 +36,27 @@ Genre = Literal[
     "comedy",
     "other",
 ]
+
+# Map common out-of-enum genres the classifier emits onto the closest in-enum
+# value, preserving matching signal where there's an obvious home. Everything
+# else falls back to "other" (see `_coerce_genre`). Keys are lowercased.
+_GENRE_ALIASES: dict[str, str] = {
+    "rap": "hip_hop",
+    "trap": "hip_hop",
+    "drill": "hip_hop",
+    "edm": "electronic",
+    "house": "electronic",
+    "techno": "electronic",
+    "dance": "electronic",
+    "dubstep": "electronic",
+    "classical": "cinematic",
+    "orchestral": "cinematic",
+    "score": "cinematic",
+    "ambient": "cinematic",
+    "folk": "acoustic",
+    "singer-songwriter": "acoustic",
+    "country": "acoustic",
+}
 
 Energy = Literal["low", "medium", "high", "peaks_high"]
 
@@ -97,3 +118,24 @@ class MusicLabels(BaseModel):
         default="none",
         description="Short freeform color-grade hint for downstream.",
     )
+
+    @field_validator("genre", mode="before")
+    @classmethod
+    def _coerce_genre(cls, v: object) -> object:
+        """Coerce an out-of-enum genre to its closest in-enum value (or 'other').
+
+        The classifier (Gemini) freely emits genres like 'rock', 'r&b', 'latin',
+        'jazz' that aren't in `Genre`. Before this, an out-of-enum value raised a
+        ValidationError → song_classifier refused → the track got NO labels and
+        stayed invisible to the matcher (confirmed in prod: a Bruno Mars cover and
+        a Killers track both failed to label). Mapping unknown → 'other' (with a
+        few high-signal aliases) keeps the track labeled and matchable; the matcher
+        leans on vibe_tags/mood/energy anyway, so 'other' is a fine fallback. Only
+        a genuinely non-string value falls through to pydantic's normal error.
+        """
+        if not isinstance(v, str):
+            return v
+        g = v.strip().lower()
+        if g in get_args(Genre):
+            return g
+        return _GENRE_ALIASES.get(g, "other")
