@@ -11,7 +11,7 @@ All notable changes to this project will be documented in this file.
   - **Graceful worker drain on deploy.** `fly.toml` sets `kill_signal = "SIGTERM"` on the worker so a deploy gives Celery the clean warm-shutdown signal; combined with the existing 30-min `kill_timeout`, an in-flight render gets a chance to finish before the machine is replaced rather than being cut off.
 
 ### Fixed
-- **Production YouTube imports can solve yt-dlp's current EJS challenges.** The Fly image now includes Deno, and the API installs `yt-dlp[default]` so the `yt-dlp-ejs` solver scripts ship with the Python package. This fixes the post-cookie production failure where the configured YouTube cookies were present but yt-dlp saw only image formats because signature/n-challenge solving had no runtime.
+- **`make local-render` works again on Apple Silicon.** The Deno install step added to the prod `Dockerfile` (for yt-dlp's EJS runtime) hardcoded the `x86_64` binary URL, so any arm64 build — including the dev-machine local-render parity stack on Apple Silicon — failed with `qemu-x86_64: Could not open '/lib64/ld-linux-x86-64.so.2'`. The step now selects the Deno asset from `dpkg --print-architecture` (amd64 → x86_64, arm64 → aarch64), so prod (Fly amd64) is unchanged and local arm64 builds succeed.
 
 ## [0.4.46.0] - 2026-05-25
 
