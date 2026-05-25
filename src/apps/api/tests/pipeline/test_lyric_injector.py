@@ -207,14 +207,182 @@ def test_section_filter_drops_lines_outside_window() -> None:
     assert overlays[0]["start_s"] == pytest.approx(0.5, abs=1e-3)
 
 
-def test_partial_overlap_line_is_dropped() -> None:
-    """A line that straddles section boundary is dropped (v1 hard rule)."""
+def test_partial_overlap_left_edge_is_clamped_not_dropped() -> None:
+    """A line straddling best_start_s used to be dropped; now clamped + kept.
+
+    Regression target: job dc33d047 (2026-05-24, music track 9a5d0b3f-…). The
+    11.3s music section contained one fully-contained backing-vocal line and
+    several song lines straddling the section boundary. Hard full-containment
+    dropped the straddlers silently, producing a video with one parenthetical
+    lyric for 3.4s out of 11.3s. User reported "no lyrics" — file actually had
+    one. Clamping yields more visible lines per job at the cost of slightly
+    truncated leading/trailing fragments.
+    """
     recipe = _make_recipe([5.0])
     cache = _make_lyrics_cache(
         [("Crosses boundary", 4.0, 6.0, [("Crosses", 4.0, 5.0), ("boundary", 5.0, 6.0)])]
     )
     out = inject_lyric_overlays(recipe, cache, 5.0, 10.0, {"enabled": True, "style": "karaoke"})
+    overlays = out["slots"][0]["text_overlays"]
+    assert len(overlays) == 1
+    ov = overlays[0]
+    assert ov["text"] == "Crosses boundary"
+    # Clamped to section bounds: [max(4.0, 5.0), min(6.0, 10.0)] = [5.0, 6.0].
+    # Then rebased to section-relative: [0.0, 1.0]. Slot 0 starts at 0 so
+    # slot-relative == section-relative here.
+    assert ov["start_s"] == pytest.approx(0.0, abs=1e-3)
+    # Karaoke overlay's word_timings should drop the "Crosses" word (entirely
+    # outside the clamped window) and keep "boundary".
+    word_texts = [w.get("text") for w in ov.get("word_timings", [])]
+    assert word_texts == ["boundary"]
+
+
+def test_partial_overlap_right_edge_is_clamped() -> None:
+    """A line whose end_s > best_end_s is clamped at best_end_s, not dropped."""
+    recipe = _make_recipe([5.0])
+    cache = _make_lyrics_cache(
+        [("Bleeds out", 9.0, 11.0, [("Bleeds", 9.0, 10.0), ("out", 10.0, 11.0)])]
+    )
+    out = inject_lyric_overlays(recipe, cache, 5.0, 10.0, {"enabled": True, "style": "karaoke"})
+    overlays = out["slots"][0]["text_overlays"]
+    assert len(overlays) == 1
+    ov = overlays[0]
+    # Section is [5.0, 10.0]; clamped line is [9.0, 10.0]; section-relative
+    # [4.0, 5.0]; slot 0 covers section-relative [0, 5.0] so slot-relative
+    # start_s = 4.0.
+    assert ov["start_s"] == pytest.approx(4.0, abs=1e-3)
+    word_texts = [w.get("text") for w in ov.get("word_timings", [])]
+    assert word_texts == ["Bleeds"]
+
+
+def test_partial_overlap_dropped_when_clamped_below_min_visible() -> None:
+    """A line that collapses below _MIN_LINE_VISIBLE_S after clamping is dropped.
+
+    Prevents one-frame flashes when a long line barely overlaps the section.
+    """
+    recipe = _make_recipe([5.0])
+    # Section is [5.0, 5.10]. The line at 4.95-10.0 clamps to [5.0, 5.10] —
+    # a 0.10s window, below the 0.20s floor — so it should be dropped.
+    cache = _make_lyrics_cache(
+        [
+            (
+                "Just a sliver",
+                4.95,
+                10.0,
+                [("Just", 4.95, 5.0), ("a", 5.0, 7.0), ("sliver", 7.0, 10.0)],
+            )
+        ]
+    )
+    out = inject_lyric_overlays(recipe, cache, 5.0, 5.10, {"enabled": True, "style": "karaoke"})
     assert out["slots"][0]["text_overlays"] == []
+
+
+def test_section_filter_drops_lines_with_no_overlap() -> None:
+    """Lines that are wholly outside [best_start_s, best_end_s] still drop."""
+    recipe = _make_recipe([5.0])
+    cache = _make_lyrics_cache(
+        [
+            ("Way too early", 0.5, 1.0, [("Way", 0.5, 1.0)]),
+            ("Way too late", 20.0, 21.0, [("Way", 20.0, 21.0)]),
+        ]
+    )
+    out = inject_lyric_overlays(recipe, cache, 5.0, 10.0, {"enabled": True, "style": "karaoke"})
+    # Neither line overlaps [5.0, 10.0] — both dropped.
+    assert out["slots"][0]["text_overlays"] == []
+
+
+def test_dc33d047_regression_section_clamps_increase_coverage() -> None:
+    """Real-world: dc33d047 had one full-containment line. Clamping should
+    surface the straddlers too.
+
+    Track 9a5d0b3f had a section [0, 11.3]; the rendered output contained
+    only `(Do think twice, do think twice)` at song-time 5.84-8.65 because
+    other lines spanned across the boundary. With clamping enabled, we expect
+    those straddlers to land as well.
+    """
+    recipe = _make_recipe([4.117, 3.605, 3.093])  # the actual slot durations
+    cache = _make_lyrics_cache(
+        [
+            # Real survivor — fully contained.
+            (
+                "(Do think twice, do think twice)",
+                5.84,
+                8.65,
+                [("Do", 5.84, 6.5), ("think", 6.5, 7.0), ("twice", 7.0, 7.5)],
+            ),
+            # Straddles best_start_s — was dropped before, now clamps to [0, 2.0].
+            (
+                "Earlier line",
+                -1.5,
+                2.0,
+                [("Earlier", -1.5, 1.0), ("line", 1.0, 2.0)],
+            ),
+            # Straddles best_end_s — was dropped before, now clamps to [10.0, 11.3].
+            (
+                "Trailing line",
+                10.0,
+                12.5,
+                [("Trailing", 10.0, 11.0), ("line", 11.0, 12.5)],
+            ),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        11.3,
+        {"enabled": True, "style": "line", "pre_roll_s": 0.0, "post_dwell_s": 0.0},
+    )
+    all_texts = {ov["text"] for slot in out["slots"] for ov in slot["text_overlays"]}
+    # Pre-fix: only "(Do think twice...)" would have survived.
+    # Post-fix: all three lines surface (their text — timing is clamped).
+    assert "(Do think twice, do think twice)" in all_texts
+    assert "Earlier line" in all_texts
+    assert "Trailing line" in all_texts
+
+
+def test_per_word_pop_clamping_drops_pre_section_words_and_keeps_overlap() -> None:
+    """A line straddling best_start_s drops pre-section words and keeps the rest.
+
+    Locks the interaction: `_select_section_lines` clamps line.start_s up to
+    best_start_s and filters words entirely outside the clamped window.
+    `_inject_per_word_pop` then builds cumulative stages from only the
+    surviving words, so the on-screen cumulative text never references a
+    word that didn't actually play in the rendered section.
+
+    Also exercises the _MIN_RENDERABLE_S=0.05 guard inside the per-word-pop
+    consumer: the straddling word's clamped duration (5.0-5.2 = 0.2s,
+    section-relative 0.0-0.2) is well above the 0.05s floor so the first
+    stage survives.
+    """
+    recipe = _make_recipe([5.0])
+    cache = _make_lyrics_cache(
+        [
+            (
+                "Earlier words now late",
+                4.0,
+                8.0,
+                [
+                    ("Earlier", 4.0, 4.5),  # before section — dropped
+                    ("words", 4.5, 5.2),  # straddles best_start_s — clamped + kept
+                    ("now", 5.2, 6.5),
+                    ("late", 6.5, 8.0),
+                ],
+            )
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe, cache, 5.0, 10.0, {"enabled": True, "style": "per-word-pop"}
+    )
+    overlays = out["slots"][0]["text_overlays"]
+    texts = [o["text"] for o in overlays]
+    # "Earlier" was clamped out; cumulative stages build from surviving words
+    # only, so the on-screen text never references "Earlier".
+    assert all("Earlier" not in t for t in texts)
+    # The three surviving words appear in cumulative order.
+    assert texts == ["words", "words now", "words now late"]
+    # The trailing-word suffix on each stage matches the new word.
+    assert [o["pop_animated_suffix"] for o in overlays] == ["words", "now", "late"]
 
 
 def test_no_cache_is_noop() -> None:

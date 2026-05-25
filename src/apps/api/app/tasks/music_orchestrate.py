@@ -193,7 +193,33 @@ def analyze_music_track_task(self, track_id: str) -> None:
             beats = _detect_music_beats(local_audio)
             log.info("music_beats_detected", track_id=track_id, count=len(beats))
 
-            # Auto-select best section only if not already admin-configured
+            # ── Lyric extraction (fail-open, moved before section pick) ──
+            # Layer 3: feed full-track lyrics into auto_best_section so the
+            # picked window favors vocal-rich passages over beat-only peaks.
+            # `best_start_s`/`best_end_s` on LyricsInput are advisory (the agent
+            # transcribes the whole track regardless — see
+            # `app/agents/lyrics.py`), so passing full-track bounds here costs
+            # nothing extra and gives us the lines we need at scoring time.
+            # Reuses the already-downloaded audio file; any failure here is
+            # surfaced as `lyrics_status` but never blocks `analysis_status=ready`.
+            lyrics_result = _run_lyrics_extraction(
+                local_audio,
+                track_id,
+                best_start_s=0.0,
+                best_end_s=float(duration_s or 0.0),
+            )
+            # `_run_lyrics_extraction` is documented to never raise + always
+            # return a status dict, but tests mock it to return None and
+            # other call sites have done the same historically — guard so a
+            # None doesn't crash the analyze flow before Gemini gets a chance.
+            lyric_lines: list[dict] | None = None
+            if lyrics_result and lyrics_result.get("status") == "ready":
+                lyric_lines = (lyrics_result.get("output") or {}).get("lines") or None
+
+            # Auto-select best section only if not already admin-configured.
+            # Pass lyric_lines so the score becomes
+            # `beats + 0.5 * overlapping_lyric_lines` (see music_recipe.py:
+            # _LYRIC_LINE_WEIGHT). Backward-compat: None falls back to beat-only.
             best_start: float = float(existing_config.get("best_start_s", 0.0))
             best_end: float = float(existing_config.get("best_end_s", 0.0))
             if best_end <= best_start:
@@ -201,6 +227,7 @@ def analyze_music_track_task(self, track_id: str) -> None:
                     beats,
                     window_s=DEFAULT_WINDOW_S,
                     track_duration_s=float(duration_s or 0.0),
+                    lyric_lines=lyric_lines,
                 )
 
             # Slot count from best section
@@ -237,17 +264,6 @@ def analyze_music_track_task(self, track_id: str) -> None:
                     float(duration_s or 0.0),
                     track_id,
                 )
-
-            # ── Lyric extraction (new, fail-open) ────────────────────────
-            # Runs INSIDE the same temp dir so we reuse the already-downloaded
-            # audio file instead of re-downloading from GCS. Any failure here
-            # never blocks the track from being marked `analysis_status=ready`.
-            lyrics_result = _run_lyrics_extraction(
-                local_audio,
-                track_id,
-                best_start_s=new_config["best_start_s"],
-                best_end_s=new_config["best_end_s"],
-            )
 
         with _sync_session() as db:
             track = db.get(MusicTrack, track_id)

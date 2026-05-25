@@ -261,12 +261,20 @@ def _select_section_lines(
     best_start_s: float,
     best_end_s: float,
 ) -> list[dict]:
-    """Return only lines that fit fully inside [best_start_s, best_end_s].
+    """Return lines that overlap [best_start_s, best_end_s], clamped to the section.
 
     Returned lines have their `start_s`, `end_s`, and per-word `start_s`/`end_s`
     rebased so they're in **section-relative** coordinates (0 = best_start_s).
-    Partial lines (start before section / end after) are dropped — splitting
-    a karaoke line mid-word would look broken.
+    Lines that straddle a section boundary are clamped to the section bounds.
+    Used to be dropped — job dc33d047 surfaced the consequence: an 11.3s music
+    job got exactly one survivor (`(Do think twice, do think twice)`) because
+    every other lyric line in the song straddled best_start_s/best_end_s and
+    silently dropped.
+    Clamped lines whose remaining duration falls below `_MIN_LINE_VISIBLE_S`
+    are still dropped to avoid one-word flashes — structured-logged so a
+    coverage drift is debuggable from agent_run traces.
+    Words that fall entirely outside the clamped window are dropped; words
+    that straddle a clamp edge are clamped to the line bounds.
     """
     out: list[dict] = []
     for line in lines:
@@ -277,25 +285,53 @@ def _select_section_lines(
             continue
         if le <= ls or le <= best_start_s or ls >= best_end_s:
             continue
-        # v1: require full containment. Partial lyrics splits are tracked as
-        # a NOT in scope item in the plan.
-        if ls < best_start_s or le > best_end_s:
+
+        clamped_ls = max(ls, best_start_s)
+        clamped_le = min(le, best_end_s)
+        partial = ls < best_start_s or le > best_end_s
+        # The min-visible guard only applies to CLAMPED lines. A naturally
+        # short fully-contained line (e.g. a 0.2s ad-lib like "yeah!") should
+        # pass through unchanged — dropping it here would silently strip
+        # legitimate one-word lyrics. Float-imprecision near the threshold
+        # would also bite fully-contained lines if the guard ran unconditionally
+        # (1.2 - 1.0 == 0.19999... < 0.20).
+        if partial and clamped_le - clamped_ls < _MIN_LINE_VISIBLE_S:
+            log.info(
+                "lyric_inject_clamped_below_min_visible",
+                line_start_s=ls,
+                line_end_s=le,
+                clamped_duration_s=round(clamped_le - clamped_ls, 3),
+                min_visible_s=_MIN_LINE_VISIBLE_S,
+            )
             continue
+        if partial:
+            log.info(
+                "lyric_inject_clamped_partial",
+                line_text=str(line.get("text", ""))[:80],
+                line_start_s=ls,
+                line_end_s=le,
+                clamped_start_s=clamped_ls,
+                clamped_end_s=clamped_le,
+            )
 
         rebased_words: list[dict] = []
         for w in line.get("words") or []:
             try:
-                ws = float(w.get("start_s", 0.0)) - best_start_s
-                we = float(w.get("end_s", 0.0)) - best_start_s
+                ws_abs = float(w.get("start_s", 0.0))
+                we_abs = float(w.get("end_s", 0.0))
             except (TypeError, ValueError):
                 continue
+            if we_abs <= clamped_ls or ws_abs >= clamped_le:
+                continue
+            ws = max(ws_abs, clamped_ls) - best_start_s
+            we = min(we_abs, clamped_le) - best_start_s
             rebased_words.append({"text": str(w.get("text", "")), "start_s": ws, "end_s": we})
 
         out.append(
             {
                 "text": str(line.get("text", "")),
-                "start_s": ls - best_start_s,
-                "end_s": le - best_start_s,
+                "start_s": clamped_ls - best_start_s,
+                "end_s": clamped_le - best_start_s,
                 "words": rebased_words,
             }
         )
