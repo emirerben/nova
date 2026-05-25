@@ -10,6 +10,9 @@ Usage: python scripts/seed_demo_music_track.py <sample_video_path>
 Prints the track_id.
 """
 
+# Dev-only seed tool: long sample lyric strings exceed the line cap.
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 import os
@@ -17,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION
 from app.database import sync_session
@@ -67,7 +70,7 @@ def main() -> None:
         upload_public_read(audio, object_path, content_type="audio/mp4")
 
     beats = [round(i * BEAT_GAP_S, 3) for i in range(int(BEST_END_S / BEAT_GAP_S) + 1)]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     track = MusicTrack(
         id=track_id,

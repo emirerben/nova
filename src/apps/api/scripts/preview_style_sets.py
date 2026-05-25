@@ -12,6 +12,9 @@ Output: .devtest/preview/  (open index.html)
 No DB / Gemini / Docker needed — just fonts + Pillow.
 """
 
+# Dev-only preview tool: long illustrative sample strings exceed the line cap.
+# ruff: noqa: E501
+
 from __future__ import annotations
 
 import os
