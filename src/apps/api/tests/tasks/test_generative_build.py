@@ -321,3 +321,100 @@ def test_song_variant_calls_mix(monkeypatch, tmp_path):
     assert res["ok"] is True
     assert res["music_track_id"] == "t1"
     assert len(mix_calls) == 1  # song variant DOES mix the track audio
+
+
+# ── HDR pre-tonemap (cross-variant reframe cost collapse) ──────────────────────
+
+
+class _ClrProbe:
+    def __init__(self, color_trc="bt709"):
+        self.color_trc = color_trc
+        self.width = 1080
+        self.height = 1920
+
+
+def _patch_pretonemap(monkeypatch, *, zscale=True, run_side_effect=None):
+    """Patch the three external deps _pretonemap_hdr_clips reaches into.
+
+    Returns the list of recorded subprocess cmd lists.
+    """
+    import subprocess
+
+    import app.pipeline.reframe as reframe
+    import app.tasks.template_orchestrate as tmpl
+
+    monkeypatch.setattr(reframe, "_zscale_available", lambda: zscale)
+    monkeypatch.setattr(tmpl, "_probe_clips", lambda paths: {p: _ClrProbe("bt709") for p in paths})
+
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if run_side_effect is not None:
+            raise run_side_effect
+        # Simulate ffmpeg writing the output file.
+        out = cmd[-1]
+        with open(out, "wb") as f:
+            f.write(b"\x00")
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    return calls
+
+
+def test_pretonemap_converts_only_hdr_clips(tmp_path, monkeypatch):
+    """HLG/HDR10 clips get tonemapped once and repointed; SDR clips untouched."""
+    calls = _patch_pretonemap(monkeypatch)
+    clip_id_to_local = {"hlg": "/hlg.mp4", "sdr": "/sdr.mp4", "hdr10": "/hdr10.mp4"}
+    probe_map = {
+        "/hlg.mp4": _ClrProbe("arib-std-b67"),
+        "/sdr.mp4": _ClrProbe("bt709"),
+        "/hdr10.mp4": _ClrProbe("smpte2084"),
+    }
+
+    n = gb._pretonemap_hdr_clips(clip_id_to_local, probe_map, str(tmp_path))
+
+    assert n == 2  # both HDR clips, not the SDR one
+    assert len(calls) == 2
+    # SDR clip path is unchanged; HDR clips repointed to sdr_* intermediates.
+    assert clip_id_to_local["sdr"] == "/sdr.mp4"
+    assert clip_id_to_local["hlg"].startswith(str(tmp_path)) and "sdr_" in clip_id_to_local["hlg"]
+    assert clip_id_to_local["hdr10"] != "/hdr10.mp4"
+    # New intermediates carry a bt709 probe so the per-slot reframe skips tonemap.
+    assert probe_map[clip_id_to_local["hlg"]].color_trc == "bt709"
+
+
+def test_pretonemap_reuses_exact_tonemap_pipeline_and_keeps_audio(tmp_path, monkeypatch):
+    """Parity: the ffmpeg -vf must be reframe._ZSCALE_SDR_PIPELINE verbatim, and
+    audio must be stream-copied so the original-audio variant stays faithful."""
+    from app.pipeline.reframe import _ZSCALE_SDR_PIPELINE
+
+    calls = _patch_pretonemap(monkeypatch)
+    clip_id_to_local = {"hlg": "/hlg.mp4"}
+    probe_map = {"/hlg.mp4": _ClrProbe("arib-std-b67")}
+
+    gb._pretonemap_hdr_clips(clip_id_to_local, probe_map, str(tmp_path))
+
+    cmd = calls[0]
+    vf = cmd[cmd.index("-vf") + 1]
+    assert _ZSCALE_SDR_PIPELINE in vf, "tonemap must reuse reframe's pipeline (color parity)"
+    audio_codec = cmd[cmd.index("-c:a") + 1]
+    assert audio_codec == "copy", "source audio must survive for the original-audio variant"
+
+
+def test_pretonemap_failure_leaves_hdr_clip_in_place(tmp_path, monkeypatch):
+    """Best-effort: a failed tonemap must NOT abort — the HDR clip stays so the
+    per-slot path still tonemaps it (slow but correct)."""
+    import subprocess
+
+    _patch_pretonemap(
+        monkeypatch,
+        run_side_effect=subprocess.CalledProcessError(1, "ffmpeg", stderr=b"boom"),
+    )
+    clip_id_to_local = {"hlg": "/hlg.mp4"}
+    probe_map = {"/hlg.mp4": _ClrProbe("arib-std-b67")}
+
+    n = gb._pretonemap_hdr_clips(clip_id_to_local, probe_map, str(tmp_path))
+
+    assert n == 0
+    assert clip_id_to_local["hlg"] == "/hlg.mp4"  # untouched, no exception raised

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.46.1] - 2026-05-25
+
+### Changed
+- **Generative edits with HDR (iPhone) footage render ~2-3× faster.** A generative job renders three variants, and each one reframed every clip independently — so the expensive HLG/HDR10→SDR tonemap (the `zscale` linear-light + float-upconvert + mobius chain) ran on the same HDR frames up to three times. Measured on prod job `f91ebe67`: HDR slots took 70-123s each vs ~16s for SDR, and the full 6-clip job took ~23.5 min, brushing the 30-min worker time limit. `orchestrate_generative_job` now tonemaps each HDR source **once** up front (`_pretonemap_hdr_clips` in `app/tasks/generative_build.py`) into an SDR intermediate and repoints every variant at it, so each per-slot reframe sees a `bt709` input and skips the tonemap entirely. The conversion reuses `reframe._ZSCALE_SDR_PIPELINE` verbatim (the v0.4.45.7 sky-banding fix), so color output is unchanged; the geometry is identical (the intermediate is already `output_height` tall, making the per-slot `scale` a near-identity resample) at the cost of one high-quality (crf 16) encode generation per HDR clip. SDR clips are untouched. Best-effort: a failed pre-tonemap leaves the clip in place so the per-slot path still tonemaps it (slow but correct) — the job never aborts over the optimization. Source audio is stream-copied so the original-audio variant stays faithful.
+
 ## [0.4.46.0] - 2026-05-25
 
 ### Added
