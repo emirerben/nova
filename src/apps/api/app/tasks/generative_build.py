@@ -153,25 +153,53 @@ def _run_generative_job(job_id: str) -> None:
         # [Phase 4/5] Build the variant spec list and render each.
         _set_status(job_id, "rendering")
         specs = _variant_specs(best_track)
+
+        # Resume support. A prior run of THIS job (killed mid-render by a CI
+        # deploy / OOM, then redelivered via Celery acks_late) may have already
+        # rendered some variants and persisted them below. Reuse any persisted
+        # variant whose id AND matched track still apply — only render the rest.
+        # The track-id guard matters: _match_best_track re-runs on retry and
+        # Gemini may pick a different song, in which case the old song variant is
+        # stale and must re-render. The original-audio variant (no track) is
+        # always reusable. Net: a deploy that kills the job after two variants
+        # costs only the third on retry, not all three.
+        prior = {
+            v.get("variant_id"): v
+            for v in _existing_variants(job_id)
+            if v.get("ok") and v.get("output_url")
+        }
         results: list[dict[str, Any]] = []
         for rank, spec in enumerate(specs, start=1):
+            variant_id = spec["variant_id"]
+            spec_track_id = spec["track"].id if spec["track"] else None
+            reusable = prior.get(variant_id)
+            if reusable is not None and reusable.get("music_track_id") == spec_track_id:
+                record_pipeline_event(
+                    "assembly", "variant_resumed", {"variant_id": variant_id, "rank": rank}
+                )
+                results.append({**reusable, "rank": rank})
+                continue
+
             variant_dir = os.path.join(tmpdir, f"variant_{rank}")
             os.makedirs(variant_dir, exist_ok=True)
-            results.append(
-                _render_generative_variant(
-                    job_id=job_id,
-                    rank=rank,
-                    spec=spec,
-                    clip_metas=clip_metas,
-                    clip_id_to_local=clip_id_to_local,
-                    clip_id_to_gcs=clip_id_to_gcs,
-                    probe_map=probe_map,
-                    available_footage_s=available_footage_s,
-                    agent_text=agent_text,
-                    agent_form=agent_form,
-                    variant_dir=variant_dir,
-                )
+            result = _render_generative_variant(
+                job_id=job_id,
+                rank=rank,
+                spec=spec,
+                clip_metas=clip_metas,
+                clip_id_to_local=clip_id_to_local,
+                clip_id_to_gcs=clip_id_to_gcs,
+                probe_map=probe_map,
+                available_footage_s=available_footage_s,
+                agent_text=agent_text,
+                agent_form=agent_form,
+                variant_dir=variant_dir,
             )
+            # Persist immediately so a deploy/OOM after this point can't lose it,
+            # and so the status endpoint reveals variants as they finish rather
+            # than all-at-once at _finalize_job.
+            _upsert_variant_entry(job_id, result)
+            results.append(result)
 
     _finalize_job(job_id, results)
 
@@ -473,6 +501,42 @@ def _run_regenerate_variant(
         )
 
     _update_variant_entry(job_id, variant_id, result)
+
+
+def _existing_variants(job_id: str) -> list[dict[str, Any]]:
+    """Return the variants already persisted on this job (empty on first run)."""
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            return []
+        return list((job.assembly_plan or {}).get("variants") or [])
+
+
+def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> None:
+    """Insert or replace `result` in Job.assembly_plan['variants'] by variant_id.
+
+    Like `_update_variant_entry` but appends when the variant isn't present yet —
+    the full-job render starts with an empty variants list and adds entries as
+    each variant completes. Row-locked RMW (the worker runs --concurrency>1 and a
+    `regenerate_generative_variant` task may touch the same row). Does NOT change
+    job.status — the job stays `rendering` until `_finalize_job`.
+    """
+    variant_id = result.get("variant_id")
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return
+        plan = dict(job.assembly_plan or {})
+        variants = list(plan.get("variants") or [])
+        for i, v in enumerate(variants):
+            if v.get("variant_id") == variant_id:
+                variants[i] = result
+                break
+        else:
+            variants.append(result)
+        plan["variants"] = variants
+        job.assembly_plan = plan
+        db.commit()
 
 
 def _update_variant_entry(job_id: str, variant_id: str, patch: dict[str, Any]) -> None:

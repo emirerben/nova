@@ -149,3 +149,13 @@ primary_region = "iad"
   # base_output_path on the preview_mode path.
   memory_mb = 6144
   kill_timeout = "30m"
+  # SIGTERM (not Fly's SIGINT default) is Celery's clean warm-shutdown signal:
+  # the worker stops consuming new tasks and lets the in-flight task finish
+  # before exiting. Paired with the 30m kill_timeout above, a deploy then gives
+  # a long render (e.g. a multi-clip generative job) a chance to complete and
+  # persist rather than being cut off mid-variant. This is best-effort drain;
+  # the hard guarantee against deploy/OOM kills is the resumable-variant logic
+  # in orchestrate_generative_job (each variant is persisted as it finishes and
+  # reused on the acks_late retry) plus the reaper (#326) clearing any row a
+  # SIGKILL still strands.
+  kill_signal = "SIGTERM"

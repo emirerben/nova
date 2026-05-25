@@ -418,3 +418,63 @@ def test_pretonemap_failure_leaves_hdr_clip_in_place(tmp_path, monkeypatch):
 
     assert n == 0
     assert clip_id_to_local["hlg"] == "/hlg.mp4"  # untouched, no exception raised
+
+
+# ── Resumable variants (survive deploy/OOM kills) ──────────────────────────────
+
+
+class _FakeJob:
+    def __init__(self, assembly_plan=None):
+        self.assembly_plan = assembly_plan
+        self.status = "rendering"
+
+
+def _patch_job_session(monkeypatch, job):
+    """Make gb._sync_session() yield a session whose .get() returns `job`."""
+    class _Sess:
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def get(self, model, pk, **kw):
+            return job
+        def commit(self):
+            pass
+    monkeypatch.setattr(gb, "_sync_session", lambda: _Sess())
+
+
+def test_upsert_variant_appends_then_replaces(monkeypatch):
+    """First completed variant appends; re-persisting the same id replaces it."""
+    job = _FakeJob(assembly_plan={})
+    _patch_job_session(monkeypatch, job)
+
+    gb._upsert_variant_entry("11111111-1111-1111-1111-111111111111",
+                             {"variant_id": "song_text", "ok": True, "output_url": "u1"})
+    assert [v["variant_id"] for v in job.assembly_plan["variants"]] == ["song_text"]
+
+    gb._upsert_variant_entry("11111111-1111-1111-1111-111111111111",
+                             {"variant_id": "original_text", "ok": True, "output_url": "u2"})
+    ids = [v["variant_id"] for v in job.assembly_plan["variants"]]
+    assert ids == ["song_text", "original_text"]
+
+    # Re-persist song_text → replace in place, no duplicate.
+    gb._upsert_variant_entry("11111111-1111-1111-1111-111111111111",
+                             {"variant_id": "song_text", "ok": True, "output_url": "u1b"})
+    songs = [v for v in job.assembly_plan["variants"] if v["variant_id"] == "song_text"]
+    assert len(songs) == 1 and songs[0]["output_url"] == "u1b"
+
+
+def test_existing_variants_reads_persisted(monkeypatch):
+    job = _FakeJob(assembly_plan={"variants": [{"variant_id": "song_text", "ok": True}]})
+    _patch_job_session(monkeypatch, job)
+    got = gb._existing_variants("11111111-1111-1111-1111-111111111111")
+    assert got == [{"variant_id": "song_text", "ok": True}]
+
+
+def test_upsert_does_not_change_job_status(monkeypatch):
+    """Persisting a variant mid-render must NOT flip the job to a terminal status."""
+    job = _FakeJob(assembly_plan={})
+    _patch_job_session(monkeypatch, job)
+    gb._upsert_variant_entry("11111111-1111-1111-1111-111111111111",
+                             {"variant_id": "song_text", "ok": True, "output_url": "u"})
+    assert job.status == "rendering"
