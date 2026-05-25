@@ -756,6 +756,16 @@ def _draw_with_animation(
         chars_per_s = 12.0
         visible_chars = max(1, int(t_local * chars_per_s) + 1)
         visible_text = text[:visible_chars]
+    elif effect == "stream-in":
+        # "How an AI returns an answer" — reveal WORD by word (not char) with a
+        # blinking cursor while streaming. Pairs with text_anchor="left" so the
+        # answer grows rightward from a fixed margin like a chat response.
+        words = text.split()
+        words_per_s = 6.0
+        n = max(1, int(t_local * words_per_s) + 1)
+        visible_text = " ".join(words[:n])
+        if n < len(words) and int(t_local * 2) % 2 == 0:
+            visible_text = f"{visible_text} |"  # blink cursor at ~2 Hz
     elif effect in ("slide-up", "slide-down"):
         animate_for = min(0.35, duration_s * 0.5)
         progress = min(1.0, t_local / animate_for) if animate_for > 0 else 1.0
@@ -802,6 +812,7 @@ _ANIMATED_EFFECTS_SKIA = {
     "scale-up",
     "fade-in",
     "typewriter",
+    "stream-in",
     "slide-up",
     "slide-down",
     "pop-in",

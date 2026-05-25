@@ -73,6 +73,7 @@ _ALLOWED_EFFECTS: frozenset[str] = frozenset(
         "none",
         "karaoke-line",
         "lyric-line",
+        "stream-in",
     }
 )
 
