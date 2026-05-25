@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.45.7] - 2026-05-25
+
+### Fixed
+- **HDR iPhone footage no longer breaks up into blocky, banded skies.** Renders of 10-bit HLG / Dolby Vision clips (the standard iPhone format) showed chunky 16×16 macroblocking and stair-step color banding in smooth gradients like a sunset sky, while the original looked clean. Two compounding causes in `app/pipeline/reframe.py`, both fixed: (1) the encoder passed `-b:v` alongside `-crf 18`, which silently forced libx264 into ABR mode and held a flat ~4 Mbps ceiling — the bright part of the frame ate the bit budget and starved the dark sky into blocks. It now runs true capped CRF (`-crf` + `-maxrate` + `-bufsize`, no `-b:v`), with `bufsize` derived as 2× the ceiling instead of a hardcoded 8M that no longer matched. (2) The 10→8-bit HLG→SDR tonemap collapsed the gradient with `dither=none`, so smooth skies contoured; it now uses `dither=error_diffusion`. The output bitrate ceiling was raised 4M → 8M (`output_video_bitrate`); an A/B at 8M vs 12M showed 8M clears the blocking with no visible gain from 12M at phone-delivery scale. SDR (bt709) sources are unaffected — they never hit the tonemap path. Verified end-to-end on a real prod-image music-job render of HDR footage (achieved 8.4 Mbps capped CRF, clean sky through the full reframe → concat → audio-mix pipeline). Locked by two new invariants in `tests/test_encoder_policy.py`.
+
+### Changed
+- `make local-render MODE=music` now accepts multiple `--clip` flags, so multi-slot music tracks can be driven end-to-end locally (previously capped at one clip).
+
 ## [0.4.45.6] - 2026-05-25
 
 ### Changed

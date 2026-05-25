@@ -18,6 +18,7 @@ CRITICAL: Never use shell=True. Always pass args as a list.
 """
 
 import os
+import re
 import subprocess
 
 import structlog
@@ -42,6 +43,24 @@ class ReframeError(Exception):
     pass
 
 
+def _double_rate(rate: str) -> str:
+    """Double an ffmpeg bitrate string (e.g. "12M" -> "24M", "800K" -> "1600K").
+
+    Used to derive the VBV bufsize from the maxrate. A bufsize of ~2× maxrate
+    gives x264 enough of a buffer window to smooth complexity spikes (the bright
+    sunset band) without letting the average blow past the ceiling. Falls back
+    to the input unchanged if the format is unexpected.
+    """
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([KkMmGg]?)", rate.strip())
+    if not match:
+        return rate
+    value = float(match.group(1)) * 2
+    suffix = match.group(2).upper()
+    # Drop a trailing ".0" so "4M" -> "8M" not "8.0M".
+    num = f"{value:g}"
+    return f"{num}{suffix}"
+
+
 def _encoding_args(
     output_path: str,
     preset: str = "fast",
@@ -56,9 +75,24 @@ def _encoding_args(
              18 is visually lossless, 23 is default (too lossy for
              multi-pass pipelines with 3+ re-encodes).
 
+    Rate control: capped CRF, NOT ABR. We pass `-crf` + `-maxrate` + `-bufsize`
+    and deliberately do NOT pass `-b:v`. Passing `-b:v` forces x264 into ABR
+    mode, which IGNORES `-crf` entirely and holds a flat average bitrate — that
+    starves low-complexity-but-gradient regions (a dark twilight sky next to a
+    bright sunset band) and macroblocks them. Capped CRF means "CRF `crf`
+    quality unless it would exceed `settings.output_video_bitrate`," so smooth
+    skies stay clean while the ceiling still bounds file size. `bufsize` is
+    derived as 2× the ceiling (`_double_rate`) — the old hardcoded "8M" against
+    a 4M maxrate was a 2× window by accident and broke the moment the ceiling
+    moved. History: prod job rendering a 10-bit HLG iPhone sunset
+    (lisbon1.MOV, 2026-05-25) showed 16×16 blocking in the dark sky because the
+    4M `-b:v` ABR ceiling, not CRF 18, governed the encode.
+
     Color handling: HDR/HLG sources (bt2020, arib-std-b67) are converted
-    to SDR (bt709) via the colorspace filter in _build_video_filter. This
-    function tags the output as bt709 so players render colors correctly.
+    to SDR (bt709) via the colorspace filter in _build_video_filter. The
+    10→8-bit downconvert there uses error-diffusion dither (_ZSCALE_SDR_PIPELINE)
+    to avoid contour banding on smooth gradients. This function tags the output
+    as bt709 so players render colors correctly.
 
     Preset policy (locked by tests/test_encoder_policy.py — audit before
     flipping any of these):
@@ -139,9 +173,11 @@ def _encoding_args(
         "-color_primaries", "bt709",
         "-color_trc", "bt709",
         "-colorspace", "bt709",
-        "-b:v", settings.output_video_bitrate,
+        # Capped CRF, not ABR — see the rate-control note in the docstring.
+        # `-crf` (set above) is the quality driver; `-maxrate`/`-bufsize` are the
+        # ceiling. No `-b:v` here, on purpose.
         "-maxrate", settings.output_video_bitrate,
-        "-bufsize", "8M",
+        "-bufsize", _double_rate(settings.output_video_bitrate),
         "-r", str(settings.output_fps),
         # Force identical body-slot audio layout (44.1kHz stereo AAC 192k) so
         # the downstream concat can stream-copy. See app/pipeline/audio_layout.py
@@ -469,7 +505,13 @@ _ZSCALE_SDR_PIPELINE = (
     ",format=gbrpf32le"
     ",zscale=p=bt709"
     ",tonemap=tonemap=mobius"
-    ",zscale=t=bt709:m=bt709:r=tv"
+    # dither=error_diffusion: the only place a 10-bit HDR gradient collapses to
+    # 8-bit. Without error diffusion this stair-steps into visible contour
+    # bands on smooth skies (zscale defaults to dither=none). Error diffusion
+    # spreads quantization error into adjacent pixels so the gradient reads
+    # smooth. SDR (bt709) sources never reach this pipeline, so this is a no-op
+    # for non-HDR footage. History: lisbon1.MOV HLG sunset, 2026-05-25.
+    ",zscale=t=bt709:m=bt709:r=tv:dither=error_diffusion"
     ",format=yuv420p"
 )
 
