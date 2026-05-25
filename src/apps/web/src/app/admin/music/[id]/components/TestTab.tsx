@@ -19,6 +19,7 @@ import {
 } from "@/lib/music-api";
 import { JobIdChip } from "@/app/admin/_shared/JobIdChip";
 import { useJobPoller } from "@/hooks/useJobPoller";
+import { formatMSS } from "@/lib/format-time";
 import { LyricsTimingPanel } from "./LyricsTimingPanel";
 import { StatusPill, TERMINAL_STATUSES, resolveMusicJobOutputUrl } from "./musicJobStatus";
 
@@ -348,6 +349,23 @@ export function TestTab({ trackId, track }: TestTabProps) {
 
               {outputUrl && (
                 <div className="mt-4 space-y-3">
+                  {/* Resolved window the lyric preview rendered. Only present
+                      on lyrics_preview jobs — full music jobs assemble clips
+                      from t=0 and don't carry preview_start_s / _duration_s.
+                      Narrow on activeJobKind so TypeScript permits the field
+                      access (MusicJobStatus has no such fields). Without this
+                      caption, the auto-anchor change is silent: an admin
+                      previewing a song with a 30s instrumental intro would
+                      hear the body and assume the wrong track was loaded. */}
+                  {activeJobKind === "lyrics_preview" &&
+                    "preview_start_s" in currentJob &&
+                    currentJob.preview_start_s !== null &&
+                    currentJob.preview_duration_s !== null && (
+                      <p className="text-xs text-zinc-400 font-mono">
+                        Previewing {formatMSS(currentJob.preview_start_s)} –{" "}
+                        {formatMSS(currentJob.preview_start_s + currentJob.preview_duration_s)}
+                      </p>
+                    )}
                   <video
                     src={outputUrl}
                     controls

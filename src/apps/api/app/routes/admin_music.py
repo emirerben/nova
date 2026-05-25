@@ -212,6 +212,14 @@ class LyricsPreviewStatusResponse(BaseModel):
     output_url: str | None = None
     error_detail: str | None = None
     lyrics_config_effective: dict | None = None
+    # The resolved audio window the preview rendered. Anchored at the first
+    # lyric line minus a small lead-in (see `lyrics_preview.LEAD_IN_S`). The
+    # frontend surfaces these in a "Previewing m:ss – m:ss" caption so admins
+    # know which audio segment they're hearing — without it, the auto-anchor
+    # change is silent and an admin watching the preview of a song with a
+    # 30s instrumental intro would think the wrong song was loaded.
+    preview_start_s: float | None = None
+    preview_duration_s: float | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -798,6 +806,22 @@ async def create_admin_lyrics_preview(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Music track has no cached lyrics to preview.",
         )
+    # Defense in depth: `lyrics_cached` can be a truthy dict that carries
+    # metadata (source, language, lrclib_id) but an empty `lines` list — that
+    # passed the previous guard and burned a worker on a job that always failed
+    # with "no renderable lyric overlays". Reject upfront so the dashboard
+    # shows a clear, actionable error instead.
+    cached_lines = (
+        track.lyrics_cached.get("lines") if isinstance(track.lyrics_cached, dict) else None
+    )
+    if not cached_lines:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Music track has cached lyrics metadata but no lyric lines — "
+                "re-run extraction from the Config tab."
+            ),
+        )
 
     override = non_null_model_dict(req.lyrics_config_override)
     try:
@@ -861,6 +885,8 @@ async def get_admin_lyrics_preview_status(
         if isinstance(raw_url, str) and raw_url.startswith(("http://", "https://"))
         else None
     )
+    raw_start = plan.get("preview_start_s")
+    raw_dur = plan.get("preview_duration_s")
     return LyricsPreviewStatusResponse(
         job_id=str(job.id),
         status=job.status,
@@ -869,6 +895,8 @@ async def get_admin_lyrics_preview_status(
         lyrics_config_effective=plan.get("lyrics_config_effective")
         if isinstance(plan.get("lyrics_config_effective"), dict)
         else None,
+        preview_start_s=float(raw_start) if isinstance(raw_start, int | float) else None,
+        preview_duration_s=float(raw_dur) if isinstance(raw_dur, int | float) else None,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )

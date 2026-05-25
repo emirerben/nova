@@ -199,6 +199,10 @@ export interface LyricsPreviewStatus {
   output_url: string | null;
   error_detail: string | null;
   lyrics_config_effective: Record<string, unknown> | null;
+  // Window the preview rendered, anchored at the first lyric line minus a
+  // small lead-in. Null on legacy rows rendered before the auto-anchor PR.
+  preview_start_s: number | null;
+  preview_duration_s: number | null;
   created_at: string;
   updated_at: string;
 }
