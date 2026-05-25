@@ -24,7 +24,22 @@ from app.agents.clip_metadata import (
 )
 from app.agents.clip_router import ClipRouterInput, ClipRouterOutput
 from app.agents.creative_direction import CreativeDirectionOutput
+from app.agents.intro_writer import (
+    _MAX_WORDS as INTRO_MAX_WORDS,
+)
+from app.agents.intro_writer import (
+    IntroWriterInput,
+    IntroWriterOutput,
+)
 from app.agents.music_matcher import MusicMatcherInput, MusicMatcherOutput
+from app.agents.overlay_examples import load_overlay_examples
+from app.agents.overlay_format_matcher import (
+    _ANCHORS,
+    _POSITIONS,
+    _SIZE_CLASSES,
+    _SKIA_EFFECTS,
+    OverlayFormatMatcherOutput,
+)
 from app.agents.platform_copy import PlatformCopyOutput
 from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
 from app.agents.song_classifier import SongClassifierOutput
@@ -1059,9 +1074,7 @@ def check_template_text(
     seen_keys: set[tuple[str, int, int, int]] = set()
     for i, ov in enumerate(output.overlays):
         if ov.slot_index < 1 or ov.slot_index > max_slot:
-            failures.append(
-                f"overlay {i}: slot_index={ov.slot_index} outside [1, {max_slot}]"
-            )
+            failures.append(f"overlay {i}: slot_index={ov.slot_index} outside [1, {max_slot}]")
         if ov.bbox.sample_frame_t < ov.start_s or ov.bbox.sample_frame_t > ov.end_s:
             failures.append(
                 f"overlay {i}: bbox.sample_frame_t={ov.bbox.sample_frame_t} "
@@ -1087,8 +1100,72 @@ def check_template_text(
     return failures
 
 
+_HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+_URL_HANDLE_RE = re.compile(
+    r"https?://|www\.|[@#]\w|\b[\w-]+\.(?:com|net|org|io|co|gg|xyz|app|link)\b",
+    re.IGNORECASE,
+)
+
+
+def check_overlay_format_matcher(output: OverlayFormatMatcherOutput) -> list[str]:
+    """Structural floor for nova.compose.overlay_format_matcher.
+
+    The overlay is injected directly into the recipe (bypassing the template_text
+    VALID_EFFECTS gate), so the renderer trusts these values verbatim — they MUST
+    be in the Skia-known vocab and the colors must be real hex, or the burn breaks.
+    """
+    failures: list[str] = []
+    if output.effect not in _SKIA_EFFECTS:
+        failures.append(f"effect={output.effect!r} not in Skia-known set {_SKIA_EFFECTS}")
+    if output.position not in _POSITIONS:
+        failures.append(f"position={output.position!r} not in {_POSITIONS}")
+    if output.size_class not in _SIZE_CLASSES:
+        failures.append(f"size_class={output.size_class!r} not in {_SIZE_CLASSES}")
+    if output.text_anchor not in _ANCHORS:
+        failures.append(f"text_anchor={output.text_anchor!r} not in {_ANCHORS}")
+    for field_name in ("text_color", "highlight_color"):
+        val = getattr(output, field_name)
+        if not _HEX_RE.match(val):
+            failures.append(f"{field_name}={val!r} is not a valid #RGB/#RRGGBB hex")
+    valid_ids = {e.id for e in load_overlay_examples()}
+    for mid in output.matched_example_ids:
+        if mid not in valid_ids:
+            failures.append(f"matched_example_id={mid!r} not in the example library")
+    return failures
+
+
+def check_intro_writer(output: IntroWriterOutput, input: IntroWriterInput) -> list[str]:  # noqa: A002
+    """Structural floor for nova.compose.intro_writer.
+
+    The text is burned on-screen from untrusted clip-derived input, so parse()'s
+    guarantees must hold: non-empty, length-clamped, no URLs/handles/tags leaked,
+    and highlight_word (if present) is a real token of the text.
+    """
+    failures: list[str] = []
+    text = output.text.strip()
+    if not text:
+        failures.append("text is empty after strip")
+    if len(text.split()) > INTRO_MAX_WORDS:
+        failures.append(f"text has {len(text.split())} words > MAX_WORDS={INTRO_MAX_WORDS}")
+    if _URL_HANDLE_RE.search(text):
+        failures.append(f"text leaks a URL/handle/domain: {text!r}")
+    if "{" in text or "}" in text or "\\" in text:
+        failures.append(f"text leaks ASS-tag/escape characters: {text!r}")
+    if output.highlight_word is not None:
+        tokens = {w.lower().strip(".,!?;:\"'") for w in text.split()}
+        if output.highlight_word.lower().strip(".,!?;:\"'") not in tokens:
+            failures.append(
+                f"highlight_word={output.highlight_word!r} is not a token of text {text!r}"
+            )
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
+    if agent_name == "nova.compose.overlay_format_matcher":
+        return check_overlay_format_matcher(output)
+    if agent_name == "nova.compose.intro_writer":
+        return check_intro_writer(output, input)
     if agent_name == "nova.compose.template_recipe":
         return check_template_recipe(output)
     if agent_name == "nova.compose.template_text":

@@ -1,0 +1,240 @@
+"""Generative-edit job endpoints.
+
+POST /generative-jobs                                  — create a generative-mode job
+GET  /generative-jobs/{id}/status                      — poll status + variants
+POST /generative-jobs/{id}/variants/{vid}/swap-song    — async re-slot against a new song
+POST /generative-jobs/{id}/variants/{vid}/retext       — async re-render with new/removed text
+
+A generative job needs no pre-selected song or template — the orchestrator auto-matches
+a track, writes its own intro text, and renders three variants. Per-variant state lives
+in `Job.assembly_plan["variants"]`, which the status endpoint surfaces directly.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, field_validator
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
+from app.models import Job, MusicTrack
+from app.routes.admin_music import _validate_clip_path_prefixes
+
+log = structlog.get_logger()
+router = APIRouter()
+
+# Synthetic user for MVP (matches music_jobs.py / template_jobs.py).
+SYNTHETIC_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+_MAX_CLIPS = 20
+_MIN_TARGET_S = 5.0
+_MAX_TARGET_S = 60.0
+
+
+# ── Schemas ────────────────────────────────────────────────────────────────────
+
+
+class CreateGenerativeJobRequest(BaseModel):
+    clip_gcs_paths: list[str]
+    target_duration_s: float = 20.0
+    selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
+
+    @field_validator("clip_gcs_paths")
+    @classmethod
+    def validate_clips(cls, v: list[str]) -> list[str]:
+        if len(v) < 1:
+            raise ValueError("At least 1 clip is required")
+        if len(v) > _MAX_CLIPS:
+            raise ValueError(f"Maximum {_MAX_CLIPS} clips allowed")
+        # Reject arbitrary bucket keys — only upload-endpoint prefixes are allowed.
+        return _validate_clip_path_prefixes(v)
+
+    @field_validator("target_duration_s")
+    @classmethod
+    def validate_duration(cls, v: float) -> float:
+        if not (_MIN_TARGET_S <= v <= _MAX_TARGET_S):
+            raise ValueError(
+                f"target_duration_s must be between {_MIN_TARGET_S} and {_MAX_TARGET_S}"
+            )
+        return v
+
+
+class GenerativeJobResponse(BaseModel):
+    job_id: str
+    status: str
+
+
+class GenerativeJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    variants: list[dict]
+    error_detail: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SwapSongRequest(BaseModel):
+    new_track_id: str
+
+
+class RetextRequest(BaseModel):
+    # text=None + remove=True removes the overlay; text set replaces it.
+    text: str | None = None
+    remove: bool = False
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+
+async def _load_generative_job(job_id: str, db: AsyncSession) -> Job:
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    result = await db.execute(select(Job).where(Job.id == job_uuid))
+    job = result.scalar_one_or_none()
+    if job is None or job.mode != "generative":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    return job
+
+
+def _variants_of(job: Job) -> list[dict]:
+    return ((job.assembly_plan or {}).get("variants")) or []
+
+
+def _find_variant(job: Job, variant_id: str) -> dict | None:
+    return next((v for v in _variants_of(job) if v.get("variant_id") == variant_id), None)
+
+
+# ── Endpoints ──────────────────────────────────────────────────────────────────
+
+
+@router.post("", response_model=GenerativeJobResponse, status_code=status.HTTP_201_CREATED)
+async def create_generative_job(
+    req: CreateGenerativeJobRequest,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobResponse:
+    """Create a generative edit job (auto song + AI text, three variants)."""
+    job = Job(
+        user_id=SYNTHETIC_USER_ID,
+        job_type="generative",
+        mode="generative",
+        raw_storage_path=req.clip_gcs_paths[0],
+        selected_platforms=req.selected_platforms,
+        all_candidates={
+            "clip_paths": req.clip_gcs_paths,
+            "target_duration_s": req.target_duration_s,
+        },
+        status="queued",
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+
+    from app.services.job_dispatch import enqueue_orchestrator  # noqa: PLC0415
+    from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
+
+    await enqueue_orchestrator(orchestrate_generative_job, job.id, db)
+
+    log.info("generative_job_created", job_id=str(job.id), clips=len(req.clip_gcs_paths))
+    return GenerativeJobResponse(job_id=str(job.id), status="queued")
+
+
+@router.get("/{job_id}/status", response_model=GenerativeJobStatusResponse)
+async def get_generative_job_status(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobStatusResponse:
+    """Poll generative job status. `variants` carries the per-variant render state."""
+    job = await _load_generative_job(job_id, db)
+    return GenerativeJobStatusResponse(
+        job_id=str(job.id),
+        status=job.status,
+        variants=_variants_of(job),
+        error_detail=job.error_detail,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
+
+
+@router.post("/{job_id}/variants/{variant_id}/swap-song", response_model=GenerativeJobResponse)
+async def swap_song(
+    job_id: str,
+    variant_id: str,
+    req: SwapSongRequest,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobResponse:
+    """Re-render a variant against a different library song (async re-slot)."""
+    job = await _load_generative_job(job_id, db)
+    variant = _find_variant(job, variant_id)
+    if variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    if variant.get("render_status") == "rendering":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
+        )
+    # Swapping a song only makes sense on a song variant. The original-audio variant
+    # has no track; converting it to a song variant would silently change its identity.
+    if variant.get("variant_id") == "original_text" or variant.get("music_track_id") is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This is the original-audio edit — it has no song to swap.",
+        )
+
+    # The new track must exist and be ready (published not required — swap is a
+    # deliberate user pick from the gallery, mirroring admin test-job semantics).
+    track = (
+        await db.execute(select(MusicTrack).where(MusicTrack.id == req.new_track_id))
+    ).scalar_one_or_none()
+    if track is None or track.analysis_status != "ready" or not track.audio_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Requested song is not available for rendering.",
+        )
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.delay(str(job.id), variant_id, new_track_id=req.new_track_id)
+    log.info(
+        "generative_swap_song", job_id=str(job.id), variant_id=variant_id, track_id=req.new_track_id
+    )
+    return GenerativeJobResponse(job_id=str(job.id), status="rendering")
+
+
+@router.post("/{job_id}/variants/{variant_id}/retext", response_model=GenerativeJobResponse)
+async def retext(
+    job_id: str,
+    variant_id: str,
+    req: RetextRequest,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobResponse:
+    """Re-render a variant with user-supplied intro text, or remove the text."""
+    job = await _load_generative_job(job_id, db)
+    variant = _find_variant(job, variant_id)
+    if variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    if variant.get("render_status") == "rendering":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
+        )
+    if not req.remove and not (req.text and req.text.strip()):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide `text` to update, or set `remove=true` to clear the overlay.",
+        )
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.delay(
+        str(job.id),
+        variant_id,
+        override_text=(req.text.strip() if (req.text and not req.remove) else None),
+        remove_text=bool(req.remove),
+    )
+    log.info("generative_retext", job_id=str(job.id), variant_id=variant_id, remove=req.remove)
+    return GenerativeJobResponse(job_id=str(job.id), status="rendering")

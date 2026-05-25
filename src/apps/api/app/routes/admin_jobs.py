@@ -222,7 +222,7 @@ class QueueSnapshotResponse(BaseModel):
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 
-JobTypeFilter = Literal["all", "music", "template", "auto_music", "default"]
+JobTypeFilter = Literal["all", "music", "template", "auto_music", "generative", "default"]
 
 
 @router.get("", response_model=AdminJobListResponse)

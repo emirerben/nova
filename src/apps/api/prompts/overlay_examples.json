@@ -1,0 +1,93 @@
+{
+  "version": "2026-05-24",
+  "examples": [
+    {
+      "id": "pov-surprise-karaoke-01",
+      "content_profile": "first-person POV, high energy, a surprising reveal or unexpected outcome",
+      "effect": "karaoke-line",
+      "text": "i did NOT expect this to happen",
+      "highlight_word": "NOT",
+      "position": "center",
+      "size_class": "jumbo",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A"
+    },
+    {
+      "id": "travel-aspirational-popin-01",
+      "content_profile": "scenic travel or landscape b-roll, calm and aspirational, golden-hour or wide vistas",
+      "effect": "pop-in",
+      "text": "the view nobody told you about",
+      "highlight_word": "nobody",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#7FD1FF"
+    },
+    {
+      "id": "transformation-before-after-karaoke-01",
+      "content_profile": "before/after or transformation montage, process to payoff, satisfying result",
+      "effect": "karaoke-line",
+      "text": "watch how this turned out",
+      "highlight_word": "turned",
+      "position": "center",
+      "size_class": "jumbo",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A"
+    },
+    {
+      "id": "comedy-relatable-static-01",
+      "content_profile": "comedic, relatable everyday chaos, candid or self-deprecating",
+      "effect": "static",
+      "text": "nobody warned me about this part",
+      "highlight_word": "nobody",
+      "position": "top",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FF6B6B"
+    },
+    {
+      "id": "foodie-craving-popin-01",
+      "content_profile": "food close-ups, cooking or eating, appetizing and indulgent",
+      "effect": "pop-in",
+      "text": "this is dangerously good",
+      "highlight_word": "dangerously",
+      "position": "bottom",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A"
+    },
+    {
+      "id": "milestone-emotional-fadein-01",
+      "content_profile": "milestone or sentimental moment, family, celebration, emotional payoff",
+      "effect": "fade-in",
+      "text": "a year ago this felt impossible",
+      "highlight_word": "impossible",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFE08A"
+    },
+    {
+      "id": "fitness-grind-scaleup-01",
+      "content_profile": "fitness, training, athletic effort, high-intensity grind",
+      "effect": "scale-up",
+      "text": "the rep nobody sees",
+      "highlight_word": "nobody",
+      "position": "center",
+      "size_class": "jumbo",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#A6FF6B"
+    },
+    {
+      "id": "tutorial-tip-karaoke-01",
+      "content_profile": "how-to, tutorial, a useful tip or trick demonstrated step by step",
+      "effect": "karaoke-line",
+      "text": "the trick i wish i knew sooner",
+      "highlight_word": "sooner",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A"
+    }
+  ]
+}

@@ -2,7 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.45.0] - 2026-05-24
+## [0.4.45.1] - 2026-05-24
+
+### Added
+- **Generative edits — upload clips, get AI-made edits with no template.** A new edit type that needs no reference template and no pre-chosen song: you upload raw clips, and the system auto-matches a song from the library, writes its own opening text, and returns three versions to pick from — (1) song + the song's lyrics, (2) song + AI-written intro text, (3) your clips' original audio + AI-written intro text. Don't like the song? Swap it for any library track and the edit re-cuts to the new beats. Don't like the text? Edit it or remove it. New page at `/generative`. Built by re-anchoring on the existing auto-music engine (song matching, beat-derived slots, lyric injection) plus two new text agents (`overlay_format_matcher` picks the overlay style from a curated example library; `intro_writer` writes the words) and a deterministic word-reveal timing synthesizer that beat-snaps the karaoke sweep. The AI-written text is treated as untrusted input end to end: the writer prompt frames clip content as data, and output is sanitized (no URLs, handles, tags, or runaway length) before it can reach the screen.
+
+- **Inspect and iterate generative edits from admin.** The `/admin/jobs/{id}` debug view now renders a generative job's variants as playable tiles (video + text-mode/song badge + render status), with Edit-text, Remove-text, and Swap-song controls that kick off async re-renders and poll until they land. Failed actions surface an error instead of vanishing. The jobs list also gains a `generative` type filter.
+
+### Notes
+- The original-audio variant preserves each clip's source audio (no music mix). Song variants only offer a "Lyrics" version when the matched track actually has cached lyrics.
+- Local prod-parity verification: `python3 scripts/local-render.py --mode generative --clip a.mp4 --clip b.mp4 …` drives a real job through the Fly-image stack and downloads every variant.
 
 ### Fixed
 - **Admin YouTube imports can now use configured yt-dlp cookies instead of failing on bot challenges.** API downloads, playlist ingestion, and lyric-sync diagnostics all share one cookie helper that accepts either `YTDLP_COOKIES_B64` or `YTDLP_COOKIES_PATH`, rejects invalid or conflicting config, writes base64 cookies as short-lived `0600` files, and keeps subprocess cookie paths readable without leaving named files behind on Linux. YouTube bot-challenge errors now tell admins to refresh cookies or use file upload instead of returning a generic download failure.
