@@ -158,18 +158,6 @@ def test_template_text_eval(
     validated_input = agent.Input.model_validate(effective_input)
     structural_failures = run_structural(AGENT_NAME, output, validated_input)
 
-    # Style-set selection (Phase 3): the agent must pick a valid agentic-eligible
-    # set, or None (Layer-2 keeps uniform styling). An out-of-catalog id would
-    # silently fall back to "default" at parse time, so guard it here too.
-    from app.pipeline.style_sets import style_set_ids  # noqa: PLC0415
-
-    _valid_sets = set(style_set_ids(applies_to="agentic"))
-    if output.style_set_id is not None and output.style_set_id not in _valid_sets:
-        structural_failures = [
-            *structural_failures,
-            f"style_set_id {output.style_set_id!r} not in agentic catalog {sorted(_valid_sets)}",
-        ]
-
     # Ground-truth scoring (objective, deterministic).
     truth = _load_ground_truth(fixture_path)
     scoring: OverlayScores | None = None

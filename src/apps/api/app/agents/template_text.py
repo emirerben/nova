@@ -55,9 +55,7 @@ class TemplateTextAgent(Agent[TemplateTextInput, TemplateTextOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.template_text",
         prompt_id="extract_template_text",
-        # Bumped for the style-set selection field (agent now also picks a
-        # curated style_set_id; see prompts/extract_template_text.txt).
-        prompt_version="2026-05-25",
+        prompt_version="2026-05-17",
         model="gemini-2.5-flash",
         # Same per-token rates as template_recipe; this is a second focused
         # pass on the same uploaded video, so input tokens are dominated by
@@ -218,17 +216,9 @@ class TemplateTextAgent(Agent[TemplateTextInput, TemplateTextOutput]):
         return ["overlays"]
 
     def render_prompt(self, input: TemplateTextInput) -> str:  # noqa: A002
-        from app.pipeline.style_sets import list_style_sets  # noqa: PLC0415
-
-        options = "\n".join(
-            f"- {s['id']}: {s.get('label', s['id'])} — "
-            f"{', '.join(s.get('tags', [])) or '(no tags)'}"
-            for s in list_style_sets(applies_to="agentic")
-        )
         return load_prompt(
             "extract_template_text",
             slot_boundaries_context=_render_slot_boundaries(input.slot_boundaries_s),
-            style_set_options=options,
         )
 
     def parse(self, raw_text: str, input: TemplateTextInput) -> TemplateTextOutput:  # noqa: A002
@@ -323,20 +313,8 @@ class TemplateTextAgent(Agent[TemplateTextInput, TemplateTextOutput]):
         if dropped:
             log.info("template_text_overlays_dropped", count=dropped, kept=len(validated))
 
-        # Style set: the agent picks ONE id from the agentic-eligible catalog.
-        # An empty/hallucinated choice falls back to "default" rather than
-        # failing the build (the catalog always contains "default").
-        from app.pipeline.style_sets import style_set_ids  # noqa: PLC0415
-
-        valid_ids = set(style_set_ids(applies_to="agentic"))
-        chosen = str(data.get("style_set_id", "") or "").strip()
-        if chosen not in valid_ids:
-            if chosen:
-                log.warning("template_text_style_set_unknown", chosen=chosen)
-            chosen = "default"
-
         try:
-            return TemplateTextOutput(overlays=validated, style_set_id=chosen)
+            return TemplateTextOutput(overlays=validated)
         except ValidationError as exc:
             raise SchemaError(f"template_text: output validation — {exc}") from exc
 

@@ -273,6 +273,38 @@ def _apply_legibility_pacing(slots: list[dict[str, Any]]) -> None:
             log.info("layer2_legibility_pass", slot_index=i, slot_duration_s=dur, **warns)
 
 
+def _select_agentic_style_set(
+    overlays: list, recipe: Any, *, job_id: str | None = None
+) -> str | None:
+    """Best-effort: pick an agentic style set from the extracted overlay texts.
+
+    Returns the chosen set id, or ``None`` on any failure (→ the overlays keep
+    their uniform styling). Runs AFTER template_text so it sees the real on-screen
+    text; kept OUT of template_text itself so the extraction prompt is unchanged.
+    """
+    texts = [getattr(o, "sample_text", "") for o in overlays if getattr(o, "sample_text", "")]
+    if not texts:
+        return None
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.agentic_style_selector import (  # noqa: PLC0415
+            AgenticStyleSelectorAgent,
+            AgenticStyleSelectorInput,
+        )
+
+        theme = str(getattr(recipe, "theme", "") or getattr(recipe, "name", "") or "")
+        out = AgenticStyleSelectorAgent(default_client()).run(
+            AgenticStyleSelectorInput(overlay_texts=texts, template_theme=theme),
+            ctx=RunContext(job_id=None),
+        )
+        log.info("agentic_style_set_selected", style_set_id=out.style_set_id, job_id=job_id)
+        return out.style_set_id
+    except Exception as exc:  # noqa: BLE001 — selection is best-effort
+        log.warning("agentic_style_set_select_failed", error=str(exc), job_id=job_id)
+        return None
+
+
 def extract_template_text_overlays(
     file_ref: Any,
     recipe: Any,
@@ -376,7 +408,12 @@ def extract_template_text_overlays(
         )
         return False, 0
 
-    merged = _merge_overlays_into_slots(recipe.slots, out.overlays, style_set_id=out.style_set_id)
+    # Style set: chosen by a SEPARATE selector (not template_text — making the
+    # extraction agent also pick a set perturbed its bbox/effect/color
+    # extraction and regressed the eval). Best-effort; None → uniform styling.
+    style_set_id = _select_agentic_style_set(out.overlays, recipe, job_id=job_id)
+
+    merged = _merge_overlays_into_slots(recipe.slots, out.overlays, style_set_id=style_set_id)
     _apply_legibility_pacing(recipe.slots)
     log.info(
         "template_text_overlays_merged",

@@ -62,34 +62,6 @@ def test_parse_invalid_json_raises_schema_error() -> None:
         _agent().parse("not-json{", _input())
 
 
-# ── Style-set selection ─────────────────────────────────────────────────────
-
-
-def test_parse_valid_style_set_id_kept() -> None:
-    raw = json.dumps({"style_set_id": "travel_editorial", "overlays": [_valid_overlay()]})
-    out = _agent().parse(raw, _input())
-    assert out.style_set_id == "travel_editorial"
-
-
-def test_parse_unknown_style_set_id_falls_back_to_default() -> None:
-    raw = json.dumps({"style_set_id": "not-a-set", "overlays": [_valid_overlay()]})
-    out = _agent().parse(raw, _input())
-    assert out.style_set_id == "default"
-
-
-def test_parse_missing_style_set_id_defaults() -> None:
-    raw = json.dumps({"overlays": [_valid_overlay()]})
-    out = _agent().parse(raw, _input())
-    assert out.style_set_id == "default"
-
-
-def test_parse_music_only_set_rejected_for_agentic() -> None:
-    # lyric_karaoke_bold is music-only; not eligible for agentic templates.
-    raw = json.dumps({"style_set_id": "lyric_karaoke_bold", "overlays": [_valid_overlay()]})
-    out = _agent().parse(raw, _input())
-    assert out.style_set_id == "default"
-
-
 def test_parse_non_object_response_raises_schema_error() -> None:
     with pytest.raises(SchemaError, match="not a JSON object"):
         _agent().parse(json.dumps(["a", "b"]), _input())
