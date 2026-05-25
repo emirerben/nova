@@ -71,6 +71,11 @@ FINAL_OUTPUT_REQUIRED: set[tuple[str, str]] = {
     # as the Pillow path's `_burn_text_overlays` — these are the final bytes
     # that ship to users when `settings.text_renderer_skia_enabled` is on.
     ("app/pipeline/text_overlay_skia.py", "_ffmpeg_burn_pngs"),
+    # Lyric-only preview (Line Templates dashboard). Bytes the admin watches
+    # in the browser, so same banding policy as production renders. Was on
+    # ultrafast/CRF 28 before 2026-05-25 — flipped to fast/CRF 20 when the
+    # dashboard surfaced.
+    ("app/pipeline/lyrics_preview.py", "_build_preview_ffmpeg_cmd"),
 }
 
 # libx264 presets ordered from fastest to slowest. Anything at or stricter
@@ -93,6 +98,7 @@ FILES_TO_AUDIT: list[str] = [
     "app/tasks/template_orchestrate.py",
     "app/pipeline/single_pass.py",
     "app/pipeline/text_overlay_skia.py",
+    "app/pipeline/lyrics_preview.py",
 ]
 
 

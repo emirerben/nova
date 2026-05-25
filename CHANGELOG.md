@@ -4,8 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [0.4.46.3] - 2026-05-25
 
+### Added
+- **Dedicated "Line Lyric Templates" admin dashboard.** A new tab at `/admin/music/[id]?tab=lyrics` composes the existing `LyricsConfigPanel` + `LyricsTimingPanel` and routes through the existing `adminCreateLyricsPreview` → `lyrics_preview_task` pipeline. Surfaces line-style lyric tuning on its own focused dashboard instead of buried under clip-upload UI on the generic Test tab. Reuses every shipped piece — no new agent, no new LRCLIB client, no DB migration, no production lyric pipeline changes. The preview button always renders the `line` style (the backend forces it at `admin_music.py:818`); karaoke + per-word-pop remain available in the visual config for production music jobs.
+- **Strict 20s preview window cap.** `lyrics_preview.py:_build_preview_ffmpeg_cmd` now emits an explicit `-t {preview_duration_s}` flag (clamped to `PREVIEW_WINDOW_S = 20.0`) so the final MP4 stays ≤ 20s regardless of source-track length. The earlier `-shortest`-alone path with an infinite lavfi `color=...` source + full-track audio let preview output run the entire track length. Locked by a real-FFmpeg + ffprobe integration test that builds 60s sine-wave audio, runs the actual encode, and asserts output duration ∈ [19.5s, 20.5s].
+- **Shared `musicJobStatus` module.** `StatusPill`, `TERMINAL_STATUSES`, and `resolveMusicJobOutputUrl` extracted from inline copies in `TestTab.tsx` into a shared module so the new `LyricsTab` and the existing `TestTab` cannot drift. `resolveMusicJobOutputUrl` now collects candidates from both top-level `output_url` and `assembly_plan.output_url` and returns the **first valid http(s) match** — previously a legacy relative-path top-level masked a valid https `assembly_plan` URL, making admins see "legacy format, re-render to view" even when a working URL was available.
+
+### Changed
+- **Lyric-only preview encoder preset `ultrafast/CRF 28` → `fast/CRF 20` via `_encoding_args`.** Brings the preview path under the same banding-protection policy as production renders (CLAUDE.md final-output encoder policy). The new call site is locked by `tests/test_encoder_policy.py:FINAL_OUTPUT_REQUIRED` (preset class) and inline assertions in `test_lyrics_preview.py` pin the `-crf 20` literal + `-t` cap + `aac` codec. Encoder AST scan only locks preset class, not the CRF literal — the inline assertion catches a future silent CRF drift.
+- **`track_config.best_end_s` fallback now handles both dict and object shapes** via `_read_best_end_s()` helper. Production JSONB→dict shape was the only one used, but tests + future Pydantic callers would have hit `AttributeError` on object-shaped track_config.
+
 ### Fixed
 - **`make local-render` builds again on Apple Silicon.** The Deno install step added to the prod `Dockerfile` in #315 (for yt-dlp's EJS runtime) hardcoded the `x86_64` binary URL, so any arm64 build — including the dev-machine local-render parity stack on Apple Silicon — failed with `qemu-x86_64: Could not open '/lib64/ld-linux-x86-64.so.2'`. The step now picks the Deno asset from `dpkg --print-architecture` (amd64 → x86_64, arm64 → aarch64). Prod (Fly amd64) is byte-for-byte unchanged; local arm64 builds succeed. (The `docker-build.yml` PR check builds amd64, so it stayed green and never caught this.)
+
+### Notes
+- 25 backend pytest + 37 frontend Jest tests pass (37 includes 17 new `musicJobStatus.test.ts` cases covering the URL-resolution decision tree end-to-end including a regression guard for the legacy-mask bug + 1 new `LyricsTab.test.tsx` re-sync test for the `track.track_config?.lyrics_config` `useEffect`). Manual browser walkthrough is disclosed-not-run — requires the full dev stack (Postgres + Redis + API + Worker + Whisper key + a track at `lyrics_status=ready`); reproduction steps in PR description.
 
 ## [0.4.46.2] - 2026-05-25
 

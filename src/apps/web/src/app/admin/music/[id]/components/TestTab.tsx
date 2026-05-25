@@ -20,8 +20,8 @@ import {
 import { JobIdChip } from "@/app/admin/_shared/JobIdChip";
 import { useJobPoller } from "@/hooks/useJobPoller";
 import { LyricsTimingPanel } from "./LyricsTimingPanel";
+import { StatusPill, TERMINAL_STATUSES, resolveMusicJobOutputUrl } from "./musicJobStatus";
 
-const TERMINAL_STATUSES = new Set(["music_ready", "processing_failed"]);
 type ActiveJobKind = "full" | "lyrics_preview";
 type ActiveJobStatus = MusicJobStatus | LyricsPreviewStatus;
 
@@ -207,18 +207,8 @@ export function TestTab({ trackId, track }: TestTabProps) {
   const currentJob = poller.data;
   const isPolling = poller.polling;
   const pollError = poller.error;
-  // Legacy assembly_plan.output_url rows stored a relative GCS path before the
-  // orchestrator was fixed to capture the signed URL. Filter to http(s) so the
-  // <video src> never falls back to a same-origin path lookup.
-  const rawOutput =
-    currentJob?.status === "music_ready" && "output_url" in currentJob
-      ? (currentJob.output_url ?? undefined)
-      : currentJob?.status === "music_ready" && "assembly_plan" in currentJob && currentJob.assembly_plan
-        ? ((currentJob.assembly_plan as Record<string, unknown>).output_url as string | undefined)
-      : undefined;
-  const outputUrl =
-    typeof rawOutput === "string" && /^https?:\/\//.test(rawOutput) ? rawOutput : undefined;
-  const outputLegacy = rawOutput !== undefined && outputUrl === undefined;
+  // Shared resolver — see musicJobStatus.ts for the legacy-row defense.
+  const { outputUrl, outputLegacy } = resolveMusicJobOutputUrl(currentJob);
 
   if (track.analysis_status !== "ready") {
     return (
@@ -453,19 +443,3 @@ export function TestTab({ trackId, track }: TestTabProps) {
   );
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  queued: "bg-zinc-700 text-zinc-200",
-  processing: "bg-blue-900 text-blue-300",
-  music_ready: "bg-green-900 text-green-300",
-  processing_failed: "bg-red-900 text-red-300",
-  failed: "bg-red-900 text-red-300",
-};
-
-function StatusPill({ status }: { status: string }) {
-  const cls = STATUS_COLOR[status] ?? "bg-zinc-700 text-zinc-200";
-  return (
-    <span className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full ${cls}`}>
-      {status}
-    </span>
-  );
-}
