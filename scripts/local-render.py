@@ -9,9 +9,10 @@ Usage:
     python3 scripts/local-render.py --clip <path> --template <uuid> \\
         [--mode template|music] [--api-url URL] [--out-dir DIR]
 
-    # generative mode (no template; auto-matched song; downloads all 3 variants):
+    # generative mode (no template; auto-matched song; downloads all 3 variants).
+    # Output length is derived from the footage — there is no target-length knob:
     python3 scripts/local-render.py --mode generative \\
-        --clip a.mp4 --clip b.mp4 --clip c.mp4 [--target-duration 20]
+        --clip a.mp4 --clip b.mp4 --clip c.mp4
 
 Env overrides:
     LOCAL_RENDER_API_URL=http://localhost:8001
@@ -193,10 +194,13 @@ def _submit_music_job(api_url: str, track_id: str, gcs_paths: list[str]) -> str:
     return json.loads(body)["job_id"]
 
 
-def _submit_generative_job(api_url: str, gcs_paths: list[str], target_duration_s: float) -> str:
+def _submit_generative_job(api_url: str, gcs_paths: list[str]) -> str:
+    # No target length: the API derives output length from the uploaded footage
+    # (and the matched song's beat structure). The edit can never run longer than
+    # the clips uploaded here — that's exactly what this render verifies.
     code, body = _post_json(
         f"{api_url}/generative-jobs",
-        {"clip_gcs_paths": gcs_paths, "target_duration_s": target_duration_s},
+        {"clip_gcs_paths": gcs_paths},
     )
     if not (200 <= code < 300):
         print(f"ERROR: POST /generative-jobs failed: HTTP {code} {body[:500]!r}", file=sys.stderr)
@@ -334,12 +338,6 @@ def main() -> int:
         help="Pipeline path to exercise (default: template)",
     )
     p.add_argument(
-        "--target-duration",
-        type=float,
-        default=20.0,
-        help="Target edit length in seconds (generative mode only, default: 20)",
-    )
-    p.add_argument(
         "--inputs",
         default="{}",
         help='Template inputs as JSON, e.g. \'{"location":"Tokyo"}\'',
@@ -413,7 +411,7 @@ def main() -> int:
     elif args.mode == "music":
         job_id = _submit_music_job(args.api_url, args.template, gcs_paths)
     else:
-        job_id = _submit_generative_job(args.api_url, gcs_paths, args.target_duration)
+        job_id = _submit_generative_job(args.api_url, gcs_paths)
     print(f"  → job_id: {job_id}")
 
     print("\n[5/5] polling status…")

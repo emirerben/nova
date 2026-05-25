@@ -2,10 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.45.5] - 2026-05-25
+## [0.4.45.6] - 2026-05-25
 
 ### Changed
 - **Style sets restyled to an editorial look — serif fonts, smaller sizes.** The curated style-set library (`assets/style_sets/style-sets.json`) dropped the sans fonts (Montserrat / DM Sans / Space Grotesk read as cheap) for editorial serifs from the font registry: Playfair Display, Playfair Display Regular, Bodoni Moda (gold travel label + punchy per-word pop), Fraunces (karaoke sweep). Sizes pulled down from the coarse `large`/`xlarge` buckets (120–150px) to restrained explicit `text_size_px` (~44–92px: hooks ~88–92, labels ~58–62, cta ~44, lyrics ~58–64), and strokes thinned to 0 on agentic sets (relying on the renderer's gaussian shadow) / 2 on lyrics. `lifestyle_clean` uses Playfair Display Regular (the previously-tried Instrument Serif is a condensed face that read as horizontally squeezed). `lyric_word_pop_punchy` is now left-aligned (`text_anchor: left`, `position_x_frac: 0.06`) so the cumulative per-word reveal grows from the left edge instead of re-centering each word. Added a **`word_reveal`** set capturing the kinetic left-anchored pop-in look of agentic template `89cde014` ("not just luck 2") — Playfair serif, white, left edge at 6% — so that statement-reveal style is selectable/reusable (the per-word cumulative staging itself remains a pipeline behavior). Three more distinct aesthetics added: **`high_fashion`** (Bodoni Moda, magazine/luxury, white headline + gold label), **`bold_statement`** (Fraunces heavy serif, pop-in entrance), and **`film_mono`** (Space Mono, documentary/indie-film feel). Agentic set sizes normalized to a consistent scale (hook/intro 88, reaction 72, label 58, body 48, cta 44). Added two **typed-text animation** sets (Space Mono, left-anchored): **`typewriter`** (char-by-char reveal, the existing `typewriter` effect) and **`ai_answer`** (word-by-word stream with a blinking cursor — a new **`stream-in`** Skia effect that reveals ~6 words/s, like how an AI types out an answer; degrades to full static text on the Pillow path). Takes effect immediately for the live music-lyric path (resolved per job); `STYLE_SETS_VERSION` bumped `…-05-25a` → `…-05-25d`.
+
+## [0.4.45.5] - 2026-05-25
+
+### Changed
+- **Generative edits can no longer run longer than the footage you upload.** The "Target length" slider is gone (public `/generative` + admin launch panel) — it only ever influenced the original-audio variant anyway, while the two song variants silently sized output to the matched track's full best-section window (45s+) and *stretched* short clips with slow-motion (`setpts`, down to 0.4×) to fill the beat slots. Output length is now **derived** and bounded by real footage in every case:
+  - **Music variants** clamp the song's best-section window to the total uploaded footage before slicing it into beat slots (`_fit_section_to_footage` in `generative_build.py`), so a 12s upload on a 45s song section produces a ~12s edit, not a 45s one. The audio offset (and lyric timing) are untouched, so beat alignment is preserved.
+  - **No-music variant** sizes its arrangement from the footage total instead of the slider.
+  - **No stretch-to-fill, ever.** `_assemble_clips`/`_plan_slots` gained an `allow_slowdown_fill` flag (default `True` — templates and music jobs are byte-for-byte unchanged); generative edits pass `False`, so a clip shorter than its slot now shrinks the slot to the real footage (at 1.0× speed, no frozen-frame pad) instead of being slowed down. A `clip_footage_exhausted_trimmed` event is recorded to the job-debug trace.
+  - AI still trims clips *shorter* when the matcher prefers it (weak / no-action sections) — only manufacturing extra runtime is forbidden.
+  - Stale frontends that still POST `target_duration_s` are tolerated (the field is dropped, not rejected). The admin generative list drops its now-vestigial "target length" column.
+  - Verified on a real prod-image local render (footage-bounded output + `clip_footage_exhausted_trimmed`, no slowdown). `make local-render MODE=generative CLIPS="..."` now drives this path.
 
 ## [0.4.45.4] - 2026-05-25
 

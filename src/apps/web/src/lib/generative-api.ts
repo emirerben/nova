@@ -58,12 +58,14 @@ export async function uploadGenerativeClip(
 
 export async function createGenerativeJob(
   clip_gcs_paths: string[],
-  target_duration_s = 20,
 ): Promise<GenerativeJobResponse> {
+  // No target length: the backend derives output length from the uploaded
+  // footage (and the matched song's beat structure), so the edit can never run
+  // longer than the clips the user provided.
   const res = await fetch(`${API_BASE}/generative-jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ clip_gcs_paths, target_duration_s }),
+    body: JSON.stringify({ clip_gcs_paths }),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));

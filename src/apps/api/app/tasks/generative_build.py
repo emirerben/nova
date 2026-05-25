@@ -108,7 +108,6 @@ def _run_generative_job(job_id: str) -> None:
         db.commit()
         all_candidates = job.all_candidates or {}
         clip_paths_gcs: list[str] = all_candidates.get("clip_paths", []) or []
-        target_duration_s = float(all_candidates.get("target_duration_s", 20.0) or 20.0)
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
@@ -120,7 +119,15 @@ def _run_generative_job(job_id: str) -> None:
         clip_id_to_local = ingest["clip_id_to_local"]
         probe_map = ingest["probe_map"]
         hero = ingest["hero"]
-        record_pipeline_event("assembly", "clip_metadata_done", {"clips": len(clip_metas)})
+        # The edit can never be longer than the footage the user actually uploaded.
+        # This hard ceiling flows into every variant: it shrinks the song's
+        # best-section window (music variants) and sizes the no-music arrangement.
+        available_footage_s = _available_footage_s(probe_map)
+        record_pipeline_event(
+            "assembly",
+            "clip_metadata_done",
+            {"clips": len(clip_metas), "available_footage_s": round(available_footage_s, 3)},
+        )
 
         # [Phase 3] Agent text (best-effort).
         agent_text, agent_form = _run_text_agents(clip_metas, hero, job_id=job_id)
@@ -148,7 +155,7 @@ def _run_generative_job(job_id: str) -> None:
                     clip_id_to_local=clip_id_to_local,
                     clip_id_to_gcs=clip_id_to_gcs,
                     probe_map=probe_map,
-                    target_duration_s=target_duration_s,
+                    available_footage_s=available_footage_s,
                     agent_text=agent_text,
                     agent_form=agent_form,
                     variant_dir=variant_dir,
@@ -273,7 +280,6 @@ def _run_regenerate_variant(
             log.error("generative_regenerate_job_not_found", job_id=job_id)
             return
         clip_paths_gcs = (job.all_candidates or {}).get("clip_paths", []) or []
-        target_duration_s = float((job.all_candidates or {}).get("target_duration_s", 20.0) or 20.0)
         variants = ((job.assembly_plan or {}).get("variants")) or []
         existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
         if existing is None:
@@ -323,6 +329,7 @@ def _run_regenerate_variant(
         # and skip re-analysis here (only re-download + re-probe are truly needed for
         # the render). Follow-up once the feature is real-render-verified.
         ingest = _ingest_clips(clip_paths_gcs, tmpdir, job_id=job_id)
+        available_footage_s = _available_footage_s(ingest["probe_map"])
         agent_text: Any = None
         agent_form: dict = {}
         if text_mode == "agent_text":
@@ -354,7 +361,7 @@ def _run_regenerate_variant(
             clip_id_to_local=ingest["clip_id_to_local"],
             clip_id_to_gcs=ingest["clip_id_to_gcs"],
             probe_map=ingest["probe_map"],
-            target_duration_s=target_duration_s,
+            available_footage_s=available_footage_s,
             agent_text=agent_text,
             agent_form=agent_form,
             variant_dir=variant_dir,
@@ -478,6 +485,49 @@ def _match_best_track(clip_metas: list, *, job_id: str) -> MusicTrack | None:
         return None
 
 
+# ── Footage-derived sizing ───────────────────────────────────────────────────────
+
+
+def _available_footage_s(probe_map: dict) -> float:
+    """Total seconds of uploaded footage — the hard ceiling on every variant.
+
+    Summed across all probed clips. The output edit is sized against this so it
+    can never run longer than the content the user actually uploaded (a clip used
+    in more than one slot can't manufacture extra runtime — `allow_slowdown_fill=
+    False` forbids stretching, and the matcher prefers spreading clips across
+    slots). A probe failure contributes 0 for that clip rather than a fabricated
+    fallback, keeping the ceiling conservative.
+    """
+    total = 0.0
+    for probe in probe_map.values():
+        dur = float(getattr(probe, "duration_s", 0.0) or 0.0)
+        if dur > 0:
+            total += dur
+    return round(total, 3)
+
+
+def _fit_section_to_footage(track_config: dict, available_footage_s: float) -> dict:
+    """Shrink a song best-section window so it is no longer than the footage.
+
+    Returns a copy with `best_end_s` pulled in to `best_start_s + min(window,
+    available_footage_s)`. Never extends the window (a section shorter than the
+    footage is left alone — the song's own structure stays the ceiling there).
+    `best_start_s` is untouched so the audio offset in `_mix_template_audio`
+    stays aligned with the original best section.
+    """
+    cfg = dict(track_config or {})
+    if available_footage_s <= 0:
+        return cfg
+    start_s = float(cfg.get("best_start_s", 0.0) or 0.0)
+    end_s = float(cfg.get("best_end_s", 0.0) or 0.0)
+    window = end_s - start_s
+    if window <= 0:
+        return cfg
+    if window > available_footage_s:
+        cfg["best_end_s"] = round(start_s + available_footage_s, 3)
+    return cfg
+
+
 # ── Variant render ──────────────────────────────────────────────────────────────
 
 
@@ -490,7 +540,7 @@ def _render_generative_variant(
     clip_id_to_local: dict[str, str],
     clip_id_to_gcs: dict[str, str],
     probe_map: dict,
-    target_duration_s: float,
+    available_footage_s: float,
     agent_text,
     agent_form: dict,
     variant_dir: str,
@@ -532,9 +582,16 @@ def _render_generative_variant(
 
             if not track.audio_gcs_path:
                 raise ValueError(f"Track {track_id} has no audio_gcs_path")
+            # Clamp the song's best-section window to the uploaded footage BEFORE
+            # generating slots. The recipe slices [best_start, best_end] into
+            # beat-snapped slots, so capping the window here is what keeps a
+            # music variant from ever running longer than the content exists for.
+            track_config = _fit_section_to_footage(
+                _track_config_for_best_section(track), available_footage_s
+            )
             track_data = {
                 "beat_timestamps_s": track.beat_timestamps_s or [],
-                "track_config": _track_config_for_best_section(track),
+                "track_config": track_config,
                 "duration_s": track.duration_s,
             }
             recipe_dict = generate_music_recipe(track_data)
@@ -543,7 +600,7 @@ def _render_generative_variant(
                 recipe_dict["slots"], track_data["beat_timestamps_s"]
             )
         else:
-            recipe_dict = _build_no_music_recipe(clip_metas, target_duration_s)
+            recipe_dict = _build_no_music_recipe(clip_metas, available_footage_s)
 
         # Text injection per mode.
         if text_mode == "lyrics" and track is not None:
@@ -573,6 +630,10 @@ def _render_generative_variant(
             interstitials=[],
             force_single_pass=False,
             is_agentic=True,  # route overlays through the Skia renderer
+            # Generative edits must never stretch footage to fill a slot. When a
+            # clip is shorter than its slot, shrink the slot instead of slowing
+            # the clip down — the output stays bounded by real footage length.
+            allow_slowdown_fill=False,
         )
 
         final_path = os.path.join(variant_dir, "final.mp4")
@@ -661,15 +722,17 @@ def _inject_agent_intro(
     return inject_intro_overlay(recipe_dict, HERO_SLOT_INDEX, overlay)
 
 
-def _build_no_music_recipe(clip_metas: list, target_duration_s: float) -> dict:
-    """A song-free recipe: one slot per clip (capped), even-split of target_duration.
+def _build_no_music_recipe(clip_metas: list, available_footage_s: float) -> dict:
+    """A song-free recipe: one slot per clip (capped), even-split of the footage.
 
     Variant 3 keeps the clips' original audio, so there are no song beats to slice
-    against — we arrange the available clips evenly. `consolidate_slots` + `match`
-    handle the actual clip assignment downstream.
+    against — we arrange the available clips evenly across the uploaded footage's
+    total length. `consolidate_slots` + `match` handle the actual clip assignment
+    downstream, and `allow_slowdown_fill=False` trims any slot whose assigned clip
+    is shorter than its share, so the output never exceeds the real footage.
     """
     n = max(1, min(len(clip_metas), _MAX_NO_MUSIC_SLOTS))
-    per = max(0.5, round(float(target_duration_s) / n, 3))
+    per = max(0.5, round(float(available_footage_s) / n, 3))
     slots = [
         {
             "position": i + 1,

@@ -2,7 +2,7 @@
 
 Covers:
   - auth gate (X-Admin-Token)
-  - tailored list shape: clip_count, target_duration_s, per-variant summary
+  - tailored list shape: clip_count, per-variant summary
   - defensive variant filtering (malformed entries dropped)
   - empty/missing assembly_plan + all_candidates degrade gracefully
 """
@@ -35,7 +35,6 @@ def _gen_job(**overrides) -> SimpleNamespace:
         error_detail=None,
         all_candidates={
             "clip_paths": ["slot-uploads/a.mp4", "slot-uploads/b.mp4"],
-            "target_duration_s": 18.0,
         },
         assembly_plan={
             "variants": [
@@ -110,7 +109,7 @@ class TestList:
         assert item["job_id"] == str(job.id)
         assert item["status"] == "variants_ready"
         assert item["clip_count"] == 2
-        assert item["target_duration_s"] == 18.0
+        assert "target_duration_s" not in item  # slider removed; length is derived
         # Malformed variant entries dropped; valid ones preserved in order.
         assert [v["variant_id"] for v in item["variants"]] == [
             "song_lyrics",
@@ -132,7 +131,6 @@ class TestList:
         assert res.status_code == 200
         item = res.json()["items"][0]
         assert item["clip_count"] == 0
-        assert item["target_duration_s"] is None
         assert item["variants"] == []
 
     def test_empty(self, client):

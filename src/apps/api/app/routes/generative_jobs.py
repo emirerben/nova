@@ -32,16 +32,18 @@ router = APIRouter()
 SYNTHETIC_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 _MAX_CLIPS = 20
-_MIN_TARGET_S = 5.0
-_MAX_TARGET_S = 60.0
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
 
 class CreateGenerativeJobRequest(BaseModel):
+    # No `target_duration_s`: output length is DERIVED, never user-set. The edit
+    # is sized to the uploaded footage (and the matched song's beat structure) so
+    # it can never be longer than the content the user provided. A stale frontend
+    # that still posts `target_duration_s` is harmless — Pydantic drops the extra
+    # field (default `extra="ignore"`).
     clip_gcs_paths: list[str]
-    target_duration_s: float = 20.0
     selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
 
     @field_validator("clip_gcs_paths")
@@ -53,15 +55,6 @@ class CreateGenerativeJobRequest(BaseModel):
             raise ValueError(f"Maximum {_MAX_CLIPS} clips allowed")
         # Reject arbitrary bucket keys — only upload-endpoint prefixes are allowed.
         return _validate_clip_path_prefixes(v)
-
-    @field_validator("target_duration_s")
-    @classmethod
-    def validate_duration(cls, v: float) -> float:
-        if not (_MIN_TARGET_S <= v <= _MAX_TARGET_S):
-            raise ValueError(
-                f"target_duration_s must be between {_MIN_TARGET_S} and {_MAX_TARGET_S}"
-            )
-        return v
 
 
 class GenerativeJobResponse(BaseModel):
@@ -128,7 +121,6 @@ async def create_generative_job(
         selected_platforms=req.selected_platforms,
         all_candidates={
             "clip_paths": req.clip_gcs_paths,
-            "target_duration_s": req.target_duration_s,
         },
         status="queued",
     )
