@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.45.3] - 2026-05-25
+
+### Fixed
+- **Beat-sync music lyrics now render via Skia (not libass), and long lyric lines no longer clip off-screen.** Two bugs surfaced by a real local music render of the new style-set lyric selector:
+  - **Routing:** `_run_music_job` assembled clips without forwarding a Skia flag, so beat-sync music lyric overlays fell through to the libass/ASS path — contradicting the renderer-split intent (and the templated-music path, which already forces Skia). `_assemble_clips` gains a `use_skia` override (defaults to `is_agentic`, so every existing caller is unchanged) and `_run_music_job` passes `use_skia=True`. Beat-sync music lyrics now render with HarfBuzz shaping + paint shadows like the rest of the agentic/music output.
+  - **Single-line overflow:** the universal constraint pass measured text as if it would *wrap*, but karaoke-line / lyric-line effects render on a single un-wrapped line. A long lyric "fit" as 3 wrapped lines and was then drawn as one 3×-too-wide line, clipping off both edges. The constraint pass now fits single-line effects (`karaoke-line`, `lyric-line`, cumulative pop-in) to one line — verified on a real render: "city lights keep calling out my name" shrank 120px→46px and sits fully on-screen with the amber karaoke sweep intact.
+- Removed accidentally-committed `.devtest/` dev logs from version control and added `.devtest/` to `.gitignore`.
+
+### Added
+- `scripts/preview_style_sets.py` (renders a visual comparison grid of all style sets through the real renderer) and `scripts/seed_demo_music_track.py` (seeds a ready+published beat-sync track for local lyric-selector testing) — local dev tooling.
+
 ## [0.4.45.2] - 2026-05-25
 
 ### Added
