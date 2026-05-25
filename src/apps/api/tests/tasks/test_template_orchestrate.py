@@ -1226,6 +1226,54 @@ class TestBanSlowdownFill:
             assert kwargs["start_s"] == 0.0
             assert kwargs["end_s"] == pytest.approx(2.97, abs=0.01)
 
+    def test_multi_slot_timeline_stays_aligned_after_trim(self, tmp_path):
+        """The fragile bit: when a mid-edit slot is trimmed (no slowdown), the
+        `cumulative_s` pull-back must keep the rest of the timeline gap-free and
+        drift-free. Drives the REAL _plan_slots with beats + 4 slots where slot 2
+        has only 1.2s of footage for a 2.0s slot. Asserts: no slowdown anywhere,
+        no freeze-pad on any slot (rendered == slot_target), the short slot trims
+        to its 1.2s footage, and the final cumulative equals the summed slot
+        durations (i.e. total output == real footage, no overrun/gap)."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _plan_slots
+
+        beats = [round(0.5 * i, 3) for i in range(40)]
+        steps = [
+            self._make_step("A", 0.0, 2.0, 2.0),
+            self._make_step("B", 0.0, 1.2, 2.0),  # short: 1.2s footage, 2.0s slot
+            self._make_step("C", 0.0, 2.0, 2.0),
+            self._make_step("D", 0.0, 2.0, 2.0),
+        ]
+
+        def _probe(dur):
+            return VideoProbe(
+                duration_s=dur, fps=30.0, width=1920, height=1080,
+                has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+            )
+
+        durations = {"A": 10.0, "B": 1.2, "C": 10.0, "D": 10.0}
+        id2local, probes = {}, {}
+        for cid, dur in durations.items():
+            f = tmp_path / f"{cid}.mp4"
+            f.write_bytes(b"fake")
+            id2local[cid] = str(f)
+            probes[str(f)] = _probe(dur)
+
+        plans, _cursors, final_cumulative = _plan_slots(
+            steps, id2local, probes, beats, None, "none", str(tmp_path),
+            allow_slowdown_fill=False,
+        )
+
+        assert all(p.speed_factor == 1.0 for p in plans), "no slot may be slowed"
+        for p in plans:
+            rendered = (p.end_s - p.start_s) / (p.speed_factor or 1.0)
+            assert rendered == pytest.approx(p.slot_target_dur, abs=1e-6), "no freeze-pad"
+        b_slot = next(p for p in plans if p.clip_path == id2local["B"])
+        assert b_slot.slot_target_dur == pytest.approx(1.2, abs=1e-6)
+        assert final_cumulative == pytest.approx(
+            sum(p.slot_target_dur for p in plans), abs=1e-6
+        ), "timeline drift: cumulative must equal summed slot durations"
+
     def test_default_still_slows_down(self, tmp_path):
         """Regression guard: the default (allow_slowdown_fill=True) path —
         used by templates + music jobs — is unchanged and still slows down."""
