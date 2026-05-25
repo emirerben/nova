@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.45.3] - 2026-05-25
+## [0.4.45.4] - 2026-05-25
 
 ### Fixed
 - **Beat-sync music lyrics now render via Skia (not libass), and long lyric lines no longer clip off-screen.** Two bugs surfaced by a real local music render of the new style-set lyric selector:
@@ -12,6 +12,14 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - `scripts/preview_style_sets.py` (renders a visual comparison grid of all style sets through the real renderer) and `scripts/seed_demo_music_track.py` (seeds a ready+published beat-sync track for local lyric-selector testing) — local dev tooling.
+
+## [0.4.45.3] - 2026-05-25
+
+### Added
+- **A dedicated place to see and analyze generative edits in admin.** Generative edits were inspectable only by hunting for a job ID and opening `/admin/jobs/{id}` — there was no nav entry, no way to list them, and the jobs-list type filter had no `generative` option (the backend accepted it but the dropdown never offered it). This adds a **Generative** admin section (`/admin/generative`):
+  - A **recent generative jobs** table showing status, clip count + target length, and per-variant readiness chips (AI text / Lyrics / song, colored by render outcome) at a glance, each row linking into the existing `/admin/jobs/{id}` detail view (variant video tiles, agent runs, pipeline trace — reused, not duplicated).
+  - A **launch/test panel** to upload clips and kick off a generative job straight from admin (reuses the public generative endpoints), so you can drive a test edit and watch it render in the list.
+  - The `/admin/jobs` type-filter dropdown now offers **Generative**, backed by a new admin-gated `GET /admin/generative` endpoint that surfaces the per-variant summary the generic job list defers.
 
 ## [0.4.45.2] - 2026-05-25
 
