@@ -238,9 +238,7 @@ def test_karaoke_line_highlights_after_word_end_time(tmp_workdir):
     seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
     assert seq is not None
     # Frame at t=0.6s ≈ frame index 18 at 30fps
-    frame_18 = os.path.join(
-        tmp_workdir, f"skia_overlay_000_f{18:04d}.png"
-    )
+    frame_18 = os.path.join(tmp_workdir, f"skia_overlay_000_f{18:04d}.png")
     assert os.path.exists(frame_18)
     img = Image.open(frame_18)
     # Look for a gold-ish pixel anywhere in the middle band of the image
@@ -359,12 +357,13 @@ def test_kill_switch_routes_to_pillow_when_disabled(tmp_workdir):
 
     # A trivially-formatted overlay; the test doesn't actually need ffmpeg to
     # succeed — we only assert routing.
-    with mock.patch("app.pipeline.text_overlay_skia.burn_text_overlays_skia") as skia_fn, \
-         mock.patch("app.pipeline.text_overlay.generate_text_overlay_png") as pil_png, \
-         mock.patch("app.pipeline.text_overlay.generate_animated_overlay_ass") as pil_ass, \
-         mock.patch("subprocess.run") as run_, \
-         mock.patch("app.config.settings") as fake_settings:
-
+    with (
+        mock.patch("app.pipeline.text_overlay_skia.burn_text_overlays_skia") as skia_fn,
+        mock.patch("app.pipeline.text_overlay.generate_text_overlay_png") as pil_png,
+        mock.patch("app.pipeline.text_overlay.generate_animated_overlay_ass") as pil_ass,
+        mock.patch("subprocess.run") as run_,
+        mock.patch("app.config.settings") as fake_settings,
+    ):
         fake_settings.text_renderer_skia_enabled = False
         # Make the Pillow generators return empty so the orchestrator short-
         # circuits to a copy without actually invoking ffmpeg.
@@ -393,9 +392,10 @@ def test_dispatch_routes_to_skia_when_use_skia_true(tmp_workdir):
     """use_skia=True + settings.text_renderer_skia_enabled=True → Skia."""
     from app.tasks.template_orchestrate import _burn_text_overlays
 
-    with mock.patch(
-        "app.pipeline.text_overlay_skia.burn_text_overlays_skia"
-    ) as skia_fn, mock.patch("app.config.settings") as fake_settings:
+    with (
+        mock.patch("app.pipeline.text_overlay_skia.burn_text_overlays_skia") as skia_fn,
+        mock.patch("app.config.settings") as fake_settings,
+    ):
         fake_settings.text_renderer_skia_enabled = True
         in_path = os.path.join(tmp_workdir, "in.mp4")
         out_path = os.path.join(tmp_workdir, "out.mp4")
@@ -440,9 +440,10 @@ def test_pre_burn_curtain_routes_to_skia_when_agentic(tmp_workdir):
     with open(in_path, "wb") as f:
         f.write(b"\x00")
 
-    with mock.patch(
-        "app.pipeline.text_overlay_skia.pre_burn_curtain_slot_text_skia"
-    ) as skia_pre, mock.patch("app.config.settings") as fake_settings:
+    with (
+        mock.patch("app.pipeline.text_overlay_skia.pre_burn_curtain_slot_text_skia") as skia_pre,
+        mock.patch("app.config.settings") as fake_settings,
+    ):
         fake_settings.text_renderer_skia_enabled = True
         _pre_burn_curtain_slot_text(
             in_path,
@@ -463,15 +464,13 @@ def test_dispatch_keeps_classic_on_pillow(tmp_workdir):
     regardless of the kill-switch state."""
     from app.tasks.template_orchestrate import _burn_text_overlays
 
-    with mock.patch(
-        "app.pipeline.text_overlay_skia.burn_text_overlays_skia"
-    ) as skia_fn, mock.patch(
-        "app.pipeline.text_overlay.generate_text_overlay_png"
-    ) as pil_png, mock.patch(
-        "app.pipeline.text_overlay.generate_animated_overlay_ass"
-    ) as pil_ass, mock.patch("subprocess.run") as run_, mock.patch(
-        "app.config.settings"
-    ) as fake_settings:
+    with (
+        mock.patch("app.pipeline.text_overlay_skia.burn_text_overlays_skia") as skia_fn,
+        mock.patch("app.pipeline.text_overlay.generate_text_overlay_png") as pil_png,
+        mock.patch("app.pipeline.text_overlay.generate_animated_overlay_ass") as pil_ass,
+        mock.patch("subprocess.run") as run_,
+        mock.patch("app.config.settings") as fake_settings,
+    ):
         fake_settings.text_renderer_skia_enabled = True  # ON globally
         pil_png.return_value = None
         pil_ass.return_value = None
@@ -521,8 +520,7 @@ def test_left_anchor_does_not_clip_off_left_edge():
     # Center-anchor (old behavior) clips: content starts at x=0.
     center_bbox, _ = _frame_bbox({**base, "text_anchor": "center"})
     assert center_bbox is not None and center_bbox[0] <= 1, (
-        "expected center-anchor to clip at the left edge (the bug); "
-        f"got bbox {center_bbox}"
+        f"expected center-anchor to clip at the left edge (the bug); got bbox {center_bbox}"
     )
     # Left-anchor (fixed) fits: content starts well inside the frame and ends
     # before the right edge.
@@ -705,6 +703,8 @@ def test_pop_in_suffix_has_no_bounce_full_size_from_start():
 
     early, settled = bbox(0.02), bbox(0.9)
     assert early == settled, f"word scaled (bounce) between t=0.02 {early} and t=0.9 {settled}"
+
+
 def test_left_anchor_karaoke_line_not_clipped():
     """karaoke-line was the last Skia draw path that still centered every line
     on position_x_frac unconditionally (text_overlay_skia._draw_karaoke_line),
@@ -796,7 +796,7 @@ def test_both_renderers_honor_text_anchor(renderer):
         assert b[0] > 0 and b[2] < width, f"{renderer}: {name} bbox {b} clips the frame"
 
     line_w = center_bbox[2] - center_bbox[0]
-    left_delta = left_bbox[0] - center_bbox[0]   # left anchor sits RIGHT of center
+    left_delta = left_bbox[0] - center_bbox[0]  # left anchor sits RIGHT of center
     right_delta = right_bbox[0] - center_bbox[0]  # right anchor sits LEFT of center
     assert left_delta > 100, (
         f"{renderer} ignores text_anchor='left': center→left shifted the left "
@@ -808,3 +808,129 @@ def test_both_renderers_honor_text_anchor(renderer):
         f"edge by only {right_delta}px (line {line_w}px wide, expected ~-half). "
         f"This is the #296 class — a field honored by one renderer, dropped by the other."
     )
+
+
+# ── Renderer parity: display_text honored by both Skia and Pillow ────────────
+# Lock the CLAUDE.md renderer-parity invariant for the new `display_text`
+# field. Layer 2's `_finalize_lyric_audible_window` writes `display_text` on
+# partial lyric lines. Both renderers MUST prefer it over `text`. A regression
+# on either side silently degrades to rendering the full original (Bug B
+# returns).
+#
+# History: this is the #296-class invariant (see CLAUDE.md "Renderer-parity
+# invariant"). The admin preview uses Pillow; prod music renders use Skia. A
+# Skia-only break would pass the admin preview and only surface as misleading
+# text in the actual rendered video.
+
+
+def test_both_renderers_honor_display_text_skia():
+    """Skia: with display_text set, the burned frame must match what would be
+    burned if `text` itself were the display_text value."""
+    short_only = {
+        "text": "HI",
+        "effect": "none",
+        "text_size_px": 100,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFFFFF",
+        "text_anchor": "center",
+    }
+    long_with_short_display = {
+        **short_only,
+        "text": "THIS IS A VERY LONG ORIGINAL LINE",
+        "display_text": "HI",
+    }
+    bbox_short, _ = _frame_bbox(short_only)
+    bbox_long_short, _ = _frame_bbox(long_with_short_display)
+    assert bbox_short is not None and bbox_long_short is not None
+    short_w = bbox_short[2] - bbox_short[0]
+    long_short_w = bbox_long_short[2] - bbox_long_short[0]
+    # If display_text is honored, the two widths match within AA / kerning slack.
+    # If display_text is IGNORED, the second renders the LONG text and width
+    # explodes (long_short_w would be ~10× short_w).
+    assert abs(long_short_w - short_w) < 50, (
+        f"Skia did not honor display_text — expected ~{short_w}px (short text), "
+        f"got {long_short_w}px (likely rendered the long original). The fix in "
+        f"text_overlay_skia._overlay_text dropped or _draw_frame didn't route "
+        f"the static-effect path through it."
+    )
+
+
+def test_both_renderers_honor_display_text_pillow():
+    """Pillow: same parity assertion via render_overlays_at_time path used by
+    export + admin preview. _validate_overlay must read `display_text or
+    text` for the static path."""
+    short_only = {
+        "text": "HI",
+        "effect": "none",
+        "text_size_px": 100,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFFFFF",
+        "text_anchor": "center",
+        "start_s": 0.0,
+        "end_s": 5.0,
+    }
+    long_with_short_display = {
+        **short_only,
+        "text": "THIS IS A VERY LONG ORIGINAL LINE",
+        "display_text": "HI",
+    }
+    bbox_short, _ = _pillow_bbox(short_only)
+    bbox_long_short, _ = _pillow_bbox(long_with_short_display)
+    assert bbox_short is not None and bbox_long_short is not None
+    short_w = bbox_short[2] - bbox_short[0]
+    long_short_w = bbox_long_short[2] - bbox_long_short[0]
+    assert abs(long_short_w - short_w) < 50, (
+        f"Pillow did not honor display_text — expected ~{short_w}px, got "
+        f"{long_short_w}px. _validate_overlay reverted to `overlay.get('text')`?"
+    )
+
+
+def test_both_renderers_fall_back_to_text_when_display_text_absent():
+    """No display_text → renderers use overlay['text'] exactly as pre-PR.
+    Locks the byte-identical-fallback guarantee for non-music callers."""
+    base = {
+        "text": "FALLBACK",
+        "effect": "none",
+        "text_size_px": 100,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFFFFF",
+        "text_anchor": "center",
+        "start_s": 0.0,
+        "end_s": 5.0,
+    }
+    skia_bbox, _ = _frame_bbox(base)
+    pillow_bbox, _ = _pillow_bbox(base)
+    # Both render the "FALLBACK" text — non-empty bbox, comparable width.
+    assert skia_bbox is not None and pillow_bbox is not None
+    skia_w = skia_bbox[2] - skia_bbox[0]
+    pillow_w = pillow_bbox[2] - pillow_bbox[0]
+    # Cross-renderer width slack (different shapers): within 20%.
+    assert abs(skia_w - pillow_w) / max(skia_w, pillow_w) < 0.2, (
+        f"Renderers disagree on FALLBACK width: skia {skia_w}, pillow {pillow_w}"
+    )
+
+
+def test_display_text_empty_string_falls_back_to_text():
+    """`display_text=''` is falsy in Python; `_overlay_text(overlay)` should
+    treat it the same as missing and fall back to `text`. Prevents a render-
+    time blank when finalizer (or a future caller) sets display_text to an
+    empty string in error."""
+    overlay = {
+        "text": "VISIBLE",
+        "display_text": "",  # empty falsy string
+        "effect": "none",
+        "text_size_px": 100,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFFFFF",
+        "text_anchor": "center",
+        "start_s": 0.0,
+        "end_s": 5.0,
+    }
+    skia_bbox, _ = _frame_bbox(overlay)
+    # Should render "VISIBLE", not empty.
+    assert skia_bbox is not None, "Skia rendered nothing — empty display_text wasn't ignored"
+    assert (skia_bbox[2] - skia_bbox[0]) > 100, "rendered text too narrow for VISIBLE"

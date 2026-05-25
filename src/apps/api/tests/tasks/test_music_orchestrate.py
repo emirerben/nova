@@ -610,3 +610,28 @@ def test_music_job_time_limit_is_at_least_template_job_time_limit() -> None:
         "must move together with soft limits — a tight hard limit will "
         "SIGKILL the worker before the soft-limit grace period elapses."
     )
+
+
+# ── _coerce_best_start_s (review feedback #2: None-safe parser) ──────────────
+
+
+def test_coerce_best_start_s_handles_none_invalid_nan() -> None:
+    """Review #2: a None / non-numeric / NaN `best_start_s` must NOT crash
+    the music orchestrator. The DB column is nullable (admins who never set
+    the section leave it unset) and partial config writes may surface
+    pydantic-coerced NaN or string values. Crashing on `float(None)` would
+    brick the entire job — the helper returns 0.0 instead so the pipeline
+    keeps going with the sensible default."""
+    from app.tasks.music_orchestrate import _coerce_best_start_s
+
+    # The five cases the helper must absorb without raising:
+    assert _coerce_best_start_s(None) == 0.0
+    assert _coerce_best_start_s({}) == 0.0
+    assert _coerce_best_start_s({"best_start_s": None}) == 0.0
+    assert _coerce_best_start_s({"best_start_s": "garbage"}) == 0.0
+    assert _coerce_best_start_s({"best_start_s": float("nan")}) == 0.0
+
+    # And the happy path stays exact (no precision loss):
+    assert _coerce_best_start_s({"best_start_s": 128.0}) == 128.0
+    assert _coerce_best_start_s({"best_start_s": 128}) == 128.0  # int → float
+    assert _coerce_best_start_s({"best_start_s": "128.5"}) == 128.5  # string number

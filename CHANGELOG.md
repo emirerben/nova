@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.46.4] - 2026-05-25
+
+### Fixed
+- **Music line-lyric overlays no longer flicker between segments OR render full sentences after the audio cuts.** Two empirically-confirmed defects in the music render path, diagnosed against prod job `14ded08a` (Billie Jean):
+  - **Bug A — flicker** between same-line segments at slot boundaries. The splitter (cc4e615) emits one overlay per beat-snapped slot a lyric line crosses and relies on `_collect_absolute_overlays` to stitch them back via the same `lyric_line_id`. The merge guarded on `_LYRIC_LINE_CONTINUATION_GAP_S = 0.12s`, but `inject_lyric_overlays` runs BEFORE beat-snap, so the splitter clamps segment ends to PRE-snap slot durations. Beat-snap then shifts slot boundaries by up to one beat-interval (~221 ms on this track, hits ~500 ms on slower tempos), the gap predicate fails, and the two segments render with a visible blank window between them. Frame extraction at `t=4.2s` on job `14ded08a` confirmed the empty frame. Fix: new `_consolidate_lyric_segments` pre-pass merges by `lyric_line_id` identity (no gap predicate), preserves first/last fade semantics, unions origin slots, warns on large gaps for future regression detection.
+  - **Bug B — text outlasts audio**. PR #324's `_select_section_lines` clamps partial lines to `[best_start_s, best_end_s]` but the rendered audio mix actually ends at `best_start_s + sum(post_snap_durations)` — shorter than `best_end_s` by the beat-snap-dropped tail. For the Billie Jean job: line "She told my baby we'd danced 'til three, then she looked at me" is only sung as "She told my baby we'd danced" in the 2.156s mix, but the overlay shows the full sentence for 2.035s. Fix: new `_finalize_lyric_audible_window` runs after Layer 1, recomputes audible words fresh from `original_words` via the per-word midpoint rule against the post-snap audio end, and rebuilds `display_text` via punctuation-preserving alignment (preserves curly apostrophes, leading `'cause`/`'til`, hyphenated compounds, parentheticals). 6-step decision procedure with near-complete shortcut, alignment+conservative-join candidate selection, and final-vs-interior partial floors (final permissive: 2 words + 0.75s speech; interior strict: also requires 0.65 coverage on either axis since adjacent lines bridge the drop). Final-line detection operates on clipped audible song-time windows (set-based, handles ties) so a config-admitted but inaudible lyric can't steal the final slot.
+  - Empty-words branch (LRCLIB-plain tracks without Whisper alignment): keep original text but clamp abs window so post_dwell overhang doesn't render after audio silence.
+  - `_coerce_best_start_s` helper: None / NaN / non-numeric `best_start_s` no longer crashes the worker.
+  - Audio-bearing interstitial contract: `total_audio_bearing_duration_s` only adds `hold_s` when `music_audio_continues_during_hold` is absent/true — a future silent-hold interstitial cannot inadvertently widen the finalizer's window.
+  - Renderer parity: both Pillow (`text_overlay._validate_overlay`) and Skia (`text_overlay_skia._overlay_text` helper) prefer `display_text` over `text` (CLAUDE.md #296-class invariant).
+  - Karaoke renderer intentionally reads `text` directly (per-word highlight order keyed off original); the finalizer never sets `display_text` on karaoke overlays.
+  - Plan: `plans/geli-me-var-ama-hatalar-robust-reddy.md`. 154 new lyric tests passing (including the empirical Billie Jean fixture, 9 caplog-asserted log events, renderer-parity tests, and the silent-interstitial negative test). Architectural debt captured in TODOS.md.
+
 ## [0.4.46.3] - 2026-05-25
 
 ### Added
