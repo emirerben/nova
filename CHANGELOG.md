@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.45.8] - 2026-05-25
+
+### Fixed
+- **Generative-edit and auto-music jobs no longer get stuck on "Rendering your edits…" forever when a worker dies mid-render.** The orphan-job reaper (`app/tasks/reaper.py`) — whose entire job is to clear jobs abandoned by a SIGKILL'd worker (deploy/OOM) so the frontend stops spinning — only recognized `processing` as a reapable status. But the music and generative orchestrators flip a job to `rendering` (and the reserved `matching`/`posting` states) once they start rendering variants, so a job killed during the render phase was invisible to the reaper and stayed non-terminal indefinitely. `_NON_TERMINAL_STATUSES` now covers the full worker-owned set (`processing`, `matching`, `rendering`, `posting`), matching the worker-owned subset of `_CANCELLABLE_STATUSES` in `admin_jobs.py`. `queued` is deliberately excluded — a job still in the broker queue isn't visible to `inspect()`, so reaping it would false-positive work waiting behind a backlog. Caught on prod generative job `5ae0142f`, stuck `rendering` after a deploy SIGKILL'd its render mid-variant. Locked by new regression tests in `tests/tasks/test_reaper.py`.
+
 ## [0.4.45.7] - 2026-05-25
 
 ### Fixed
