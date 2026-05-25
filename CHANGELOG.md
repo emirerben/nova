@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.46.4] - 2026-05-25
+
+### Changed
+- **`CLAUDE.md` shrunk under the 40k-char performance budget** (43.4k → 38.4k). Claude Code warns and degrades when the always-loaded project context file crosses 40k chars. The pipeline incident histories (prod job IDs, PR numbers, multi-sentence narratives) that drove the bloat moved to `agents/DECISIONS.md` — the doc `CLAUDE.md` already points Claude to for rationale — while every invariant, guard-test name, and file pointer stays in `CLAUDE.md`. Nothing was lost; the deep "why" is now one referenced file away instead of in every context window.
+
 ## [0.4.46.3] - 2026-05-25
 
 ### Fixed
