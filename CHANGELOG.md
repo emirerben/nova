@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.45.5] - 2026-05-25
+
+### Changed
+- **Style sets restyled to an editorial look — serif fonts, smaller sizes.** The curated style-set library (`assets/style_sets/style-sets.json`) dropped the sans fonts (Montserrat / DM Sans / Space Grotesk read as cheap) for editorial serifs from the font registry: Playfair Display, Playfair Display Regular, Bodoni Moda (gold travel label + punchy per-word pop), Fraunces (karaoke sweep). Sizes pulled down from the coarse `large`/`xlarge` buckets (120–150px) to restrained explicit `text_size_px` (~44–92px: hooks ~88–92, labels ~58–62, cta ~44, lyrics ~58–64), and strokes thinned to 0 on agentic sets (relying on the renderer's gaussian shadow) / 2 on lyrics. `lifestyle_clean` uses Playfair Display Regular (the previously-tried Instrument Serif is a condensed face that read as horizontally squeezed). `lyric_word_pop_punchy` is now left-aligned (`text_anchor: left`, `position_x_frac: 0.06`) so the cumulative per-word reveal grows from the left edge instead of re-centering each word. Takes effect immediately for the live music-lyric path (resolved per job); `STYLE_SETS_VERSION` bumped `…-05-25a` → `…-05-25b`.
+
 ## [0.4.45.4] - 2026-05-25
 
 ### Fixed
