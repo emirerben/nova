@@ -294,6 +294,93 @@ describe("LyricsTab", () => {
     });
   });
 
+  // T3: caption — when the preview job carries the resolved audio window
+  // (preview_start_s + preview_duration_s), the dashboard renders a
+  // "Previewing m:ss – m:ss" line above the <video>. Without it, the
+  // auto-anchor change is silent: an admin previewing Billie Jean would hear
+  // the song's body and think the wrong track was loaded.
+  it("renders the Previewing m:ss – m:ss caption when the window is present", async () => {
+    mockPollerState = {
+      data: {
+        job_id: "lp-1",
+        status: "music_ready",
+        output_url: "https://storage.example.com/preview.mp4",
+        error_detail: null,
+        // Billie Jean's empirical window: anchor 28.80s + 20s.
+        preview_start_s: 28.80,
+        preview_duration_s: 20.0,
+      },
+      polling: false,
+      error: null,
+    };
+    render(
+      <LyricsTab trackId="track-1" track={makeTrack()} onTrackUpdated={jest.fn()} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Preview lyrics only/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Previewing 0:28 – 0:48/)).toBeInTheDocument();
+    });
+  });
+
+  // T3 (continued): early-vocal track — first lyric < LEAD_IN_S means anchor
+  // resolves to exactly 0. The caption must render `Previewing 0:00 – 0:20`,
+  // NOT be silently dropped. A regression that swapped the explicit `!== null`
+  // guard for a truthy check (`if (currentJob.preview_start_s && ...)`) would
+  // drop the caption for every early-vocal song and tests would still pass —
+  // this case locks the null vs falsy distinction.
+  it("renders the caption when preview_start_s is exactly 0 (early-vocal track)", async () => {
+    mockPollerState = {
+      data: {
+        job_id: "lp-1",
+        status: "music_ready",
+        output_url: "https://storage.example.com/preview.mp4",
+        error_detail: null,
+        preview_start_s: 0,
+        preview_duration_s: 20.0,
+      },
+      polling: false,
+      error: null,
+    };
+    render(
+      <LyricsTab trackId="track-1" track={makeTrack()} onTrackUpdated={jest.fn()} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Preview lyrics only/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Previewing 0:00 – 0:20/)).toBeInTheDocument();
+    });
+  });
+
+  // T3 (continued): legacy rows (rendered before the auto-anchor PR) have
+  // null preview_start_s / preview_duration_s. The caption must be omitted
+  // rather than render "Previewing NaN:NaN".
+  it("omits the caption when the preview job lacks the window fields", async () => {
+    mockPollerState = {
+      data: {
+        job_id: "lp-1",
+        status: "music_ready",
+        output_url: "https://storage.example.com/preview.mp4",
+        error_detail: null,
+        preview_start_s: null,
+        preview_duration_s: null,
+      },
+      polling: false,
+      error: null,
+    };
+    render(
+      <LyricsTab trackId="track-1" track={makeTrack()} onTrackUpdated={jest.fn()} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Preview lyrics only/i }));
+
+    // Wait for the video so we know the body has rendered, then assert no
+    // caption text appeared.
+    await waitFor(() => {
+      expect(document.querySelector("video")).not.toBeNull();
+    });
+    expect(screen.queryByText(/Previewing/)).toBeNull();
+  });
+
   // T2 (continued): legacy-row branch — the music orchestrator used to stash
   // a relative GCS path on assembly_plan.output_url instead of a signed URL.
   // resolveMusicJobOutputUrl rejects that and the dashboard shows a "legacy

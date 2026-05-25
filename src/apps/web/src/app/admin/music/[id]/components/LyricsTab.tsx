@@ -14,6 +14,8 @@ import LyricsConfigPanel from "@/app/admin/_shared/LyricsConfigPanel";
 import { JobIdChip } from "@/app/admin/_shared/JobIdChip";
 import { useJobPoller } from "@/hooks/useJobPoller";
 
+import { formatMSS } from "@/lib/format-time";
+
 import { LyricsTimingPanel } from "./LyricsTimingPanel";
 import { StatusPill, TERMINAL_STATUSES, resolveMusicJobOutputUrl } from "./musicJobStatus";
 
@@ -194,6 +196,19 @@ export function LyricsTab({ trackId, track, onTrackUpdated }: LyricsTabProps) {
 
               {outputUrl && (
                 <div className="mt-4 space-y-3">
+                  {/* Resolved window the preview rendered. Anchored at the
+                      first lyric line minus a small lead-in, so songs with
+                      instrumental intros (Billie Jean's first vocal at 0:30)
+                      don't render 20s of silence. Without this caption the
+                      audio shift is silent and admins watching the body of
+                      the song would think the wrong track was loaded. */}
+                  {currentJob.preview_start_s !== null &&
+                    currentJob.preview_duration_s !== null && (
+                      <p className="text-xs text-zinc-400 font-mono">
+                        Previewing {formatMSS(currentJob.preview_start_s)} –{" "}
+                        {formatMSS(currentJob.preview_start_s + currentJob.preview_duration_s)}
+                      </p>
+                    )}
                   <video
                     src={outputUrl}
                     controls
