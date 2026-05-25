@@ -12,7 +12,13 @@ const ADMIN_PROXY = "/api/admin";
 
 // ── Shared shapes ─────────────────────────────────────────────────────────────
 
-export type JobTypeFilter = "all" | "music" | "template" | "auto_music" | "default";
+export type JobTypeFilter =
+  | "all"
+  | "music"
+  | "template"
+  | "auto_music"
+  | "generative"
+  | "default";
 
 export interface AdminJobListItem {
   job_id: string;

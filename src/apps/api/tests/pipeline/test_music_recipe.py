@@ -28,8 +28,8 @@ def test_auto_best_section_empty_beats_no_duration() -> None:
 
 def test_auto_best_section_finds_peak_density() -> None:
     # Sparse beats 0-30s, dense beats 60-90s
-    sparse = [float(i) for i in range(0, 30, 4)]       # 8 beats
-    dense = [float(i) for i in range(60, 90, 1)]        # 30 beats
+    sparse = [float(i) for i in range(0, 30, 4)]  # 8 beats
+    dense = [float(i) for i in range(60, 90, 1)]  # 30 beats
     all_beats = sparse + dense
 
     start, end = auto_best_section(all_beats, window_s=30.0, track_duration_s=120.0)
@@ -51,6 +51,119 @@ def test_auto_best_section_track_shorter_than_window() -> None:
     start, end = auto_best_section(beats, window_s=30.0, track_duration_s=10.0)
     assert end <= 10.0
     assert start >= 0.0
+
+
+# ── Layer 3: lyric-aware section selection ────────────────────────────────────
+
+
+def test_auto_best_section_no_lyric_lines_is_backward_compatible() -> None:
+    """When lyric_lines is None or empty, scoring collapses to pure beat density.
+
+    Locks the backward-compat guarantee: every pre-Layer-3 caller (which never
+    passed lyric_lines) gets identical (best_start, best_end) tuples.
+    """
+    sparse = [float(i) for i in range(0, 30, 4)]
+    dense = [float(i) for i in range(60, 90, 1)]
+    beats = sparse + dense
+
+    s_none, e_none = auto_best_section(beats, window_s=30.0, track_duration_s=120.0)
+    s_empty, e_empty = auto_best_section(
+        beats, window_s=30.0, track_duration_s=120.0, lyric_lines=[]
+    )
+    # Pre-Layer-3 reference (call without the new kwarg)
+    s_ref, e_ref = auto_best_section(beats, window_s=30.0, track_duration_s=120.0)
+
+    assert (s_none, e_none) == (s_ref, e_ref)
+    assert (s_empty, e_empty) == (s_ref, e_ref)
+
+
+def test_auto_best_section_lyric_aware_breaks_tie_in_favor_of_vocal_window() -> None:
+    """Two near-equal beat windows: lyric weight tips toward the vocal one.
+
+    Pre-Layer-3 picked the densest beat window even when it sat over a pure
+    instrumental peak with no vocals (dc33d047). With lyric-aware scoring,
+    a beat-tie + lyric-rich window wins.
+    """
+    # Two equally-dense beat clusters: 0-30s and 60-90s, each with 30 beats.
+    cluster_a = [float(i) for i in range(0, 30)]
+    cluster_b = [float(i) for i in range(60, 90)]
+    beats = cluster_a + cluster_b
+
+    # Lyrics live entirely inside cluster B (sung verse section).
+    lyric_lines = [
+        {"text": "line one", "start_s": 62.0, "end_s": 65.0},
+        {"text": "line two", "start_s": 66.0, "end_s": 69.0},
+        {"text": "line three", "start_s": 72.0, "end_s": 75.0},
+    ]
+    start, _ = auto_best_section(
+        beats, window_s=30.0, track_duration_s=120.0, lyric_lines=lyric_lines
+    )
+    # Without lyrics, either cluster could win (tie); with lyrics, cluster B
+    # (60-89s) wins because 3 lines × 0.5 weight = +1.5 score.
+    assert start >= 55.0, f"expected lyric-rich cluster B start near 60s, got {start}"
+
+
+def test_auto_best_section_lyric_weight_zero_collapses_to_beat_only() -> None:
+    """lyric_weight=0 explicitly disables the contribution (same as None)."""
+    cluster_a = [float(i) for i in range(0, 30)]
+    cluster_b = [float(i) for i in range(60, 90)]
+    beats = cluster_a + cluster_b
+    lyric_lines = [{"text": "in B", "start_s": 70.0, "end_s": 75.0}]
+
+    s_weighted, _ = auto_best_section(
+        beats,
+        window_s=30.0,
+        track_duration_s=120.0,
+        lyric_lines=lyric_lines,
+        lyric_weight=0.0,
+    )
+    s_unweighted, _ = auto_best_section(beats, window_s=30.0, track_duration_s=120.0)
+    # Both calls must pick the same window — the lyric-tie-break is disabled.
+    assert s_weighted == s_unweighted
+
+
+def test_auto_best_section_beat_dominance_still_wins_over_lyric_weight() -> None:
+    """A 10-extra-beat cluster with zero lyrics still beats a sparse vocal verse.
+
+    Sanity check that lyric_weight=0.5 doesn't let a single lyric line override
+    a substantially beat-denser window. Prevents pathological cases where a
+    tiny vocal sample drowns out a clear chorus.
+    """
+    # Cluster A: 40 beats, no lyrics (chorus / drop)
+    cluster_a = [float(i) * 0.5 for i in range(0, 40)]
+    # Cluster B: 5 beats, with one lyric line (sparse verse)
+    cluster_b = [60.0, 65.0, 70.0, 75.0, 80.0]
+    beats = cluster_a + cluster_b
+    lyric_lines = [{"text": "lone line", "start_s": 65.0, "end_s": 70.0}]
+
+    start, _ = auto_best_section(
+        beats, window_s=20.0, track_duration_s=120.0, lyric_lines=lyric_lines
+    )
+    # Cluster A (0-20s, 40 beats, score 40) beats cluster B
+    # (60-80s, 5 beats + 1 line × 0.5 = 5.5 score). Lyric weight doesn't
+    # overpower a clear beat-density signal.
+    assert start < 30.0, f"expected beat-dense cluster A near 0s, got {start}"
+
+
+def test_auto_best_section_malformed_lyric_rows_are_skipped() -> None:
+    """Defensive: malformed JSONB rows (missing keys, non-numeric values) skip.
+
+    `MusicTrack.lyrics_cached` is JSONB and can drift across schema versions or
+    pick up bad migrations. The scorer must not crash on a single bad row.
+    """
+    beats = [float(i) for i in range(0, 30)]
+    lyric_lines = [
+        {"text": "good", "start_s": 5.0, "end_s": 8.0},
+        {"text": "no times"},  # missing start_s / end_s — keys default to 0.0 → le==ls → skip
+        {"text": "bad string", "start_s": "x", "end_s": 8.0},  # TypeError on float()
+        {"text": "inverted", "start_s": 20.0, "end_s": 10.0},  # le < ls — skip
+    ]
+    start, end = auto_best_section(
+        beats, window_s=15.0, track_duration_s=60.0, lyric_lines=lyric_lines
+    )
+    # Should not raise; should still pick a sensible window.
+    assert 0.0 <= start
+    assert end > start
 
 
 # ── generate_music_recipe ─────────────────────────────────────────────────────
@@ -318,9 +431,16 @@ class TestMergeAudioRecipe:
             "shot_count": 4,
             "total_duration_s": 16.0,
             "slots": [
-                {"position": i + 1, "target_duration_s": 4.0, "slot_type": "broll",
-                 "energy": 5.0, "priority": 5, "text_overlays": [],
-                 "transition_in": "cut", "speed_factor": 1.0}
+                {
+                    "position": i + 1,
+                    "target_duration_s": 4.0,
+                    "slot_type": "broll",
+                    "energy": 5.0,
+                    "priority": 5,
+                    "text_overlays": [],
+                    "transition_in": "cut",
+                    "speed_factor": 1.0,
+                }
                 for i in range(4)
             ],
             "beat_timestamps_s": [0.0, 4.0, 8.0, 12.0],
@@ -335,12 +455,24 @@ class TestMergeAudioRecipe:
         }
         gemini_recipe = {
             "slots": [
-                {"position": 1, "target_duration_s": 8.0, "slot_type": "hook",
-                 "transition_in": "whip-pan", "color_hint": "warm", "speed_factor": 0.8,
-                 "text_overlays": []},
-                {"position": 2, "target_duration_s": 8.0, "slot_type": "broll",
-                 "transition_in": "dissolve", "color_hint": "cool", "speed_factor": 1.2,
-                 "text_overlays": []},
+                {
+                    "position": 1,
+                    "target_duration_s": 8.0,
+                    "slot_type": "hook",
+                    "transition_in": "whip-pan",
+                    "color_hint": "warm",
+                    "speed_factor": 0.8,
+                    "text_overlays": [],
+                },
+                {
+                    "position": 2,
+                    "target_duration_s": 8.0,
+                    "slot_type": "broll",
+                    "transition_in": "dissolve",
+                    "color_hint": "cool",
+                    "speed_factor": 1.2,
+                    "text_overlays": [],
+                },
             ],
             "color_grade": "warm",
             "transition_style": "whip-pans on drops",
@@ -375,10 +507,20 @@ class TestMergeAudioRecipe:
             "shot_count": 2,
             "total_duration_s": 8.0,
             "slots": [
-                {"position": 1, "target_duration_s": 4.0, "slot_type": "broll",
-                 "transition_in": "cut", "text_overlays": []},
-                {"position": 2, "target_duration_s": 4.0, "slot_type": "broll",
-                 "transition_in": "cut", "text_overlays": []},
+                {
+                    "position": 1,
+                    "target_duration_s": 4.0,
+                    "slot_type": "broll",
+                    "transition_in": "cut",
+                    "text_overlays": [],
+                },
+                {
+                    "position": 2,
+                    "target_duration_s": 4.0,
+                    "slot_type": "broll",
+                    "transition_in": "cut",
+                    "text_overlays": [],
+                },
             ],
             "color_grade": "none",
         }

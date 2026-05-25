@@ -1,0 +1,31 @@
+{
+  "agent": "nova.compose.overlay_format_matcher",
+  "prompt_version": "2026-05-24",
+  "input": {
+    "clip_set_summary": "n_clips=5 | avg_hook_score=5.5 | avg_energy=4.0 — calm scenic travel b-roll, golden hour, wide vistas",
+    "hero_clip": {
+      "clip_id": "clip_001",
+      "media_type": "video",
+      "duration_s": 6.0,
+      "subject": "wide drone shot of a coastline at sunset",
+      "hook_text": "",
+      "hook_score": 5.0,
+      "energy": 3.5,
+      "description": "slow aerial push, warm golden light, serene"
+    }
+  },
+  "raw_text": "{\"effect\": \"fade-in\", \"position\": \"center\", \"size_class\": \"large\", \"text_color\": \"#FFFFFF\", \"highlight_color\": \"#7FD1FF\", \"text_anchor\": \"center\", \"matched_example_ids\": [\"travel-aspirational-popin-01\"]}",
+  "output": {
+    "effect": "fade-in",
+    "position": "center",
+    "size_class": "large",
+    "text_color": "#FFFFFF",
+    "highlight_color": "#7FD1FF",
+    "text_anchor": "center",
+    "matched_example_ids": ["travel-aspirational-popin-01"]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "calm scenic travel → gentle fade-in (not karaoke), matched the travel-aspirational exemplar"
+  }
+}

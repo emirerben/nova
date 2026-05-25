@@ -41,3 +41,4 @@ out/
 
 # Firebase
 firebase-debug.log
+.devtest/

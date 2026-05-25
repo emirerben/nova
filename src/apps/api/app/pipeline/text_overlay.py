@@ -1759,6 +1759,58 @@ def measure_text_width(
     return bbox[2] - bbox[0]
 
 
+def wrap_and_measure(
+    text: str,
+    *,
+    font_family: str | None = None,
+    font_style: str = "display",
+    text_size: str = "medium",
+    text_size_px: int | None = None,
+    max_width_px: int | None = None,
+) -> tuple[list[str], int]:
+    """Wrap `text` and return (lines, widest_line_px) for the resolved font.
+
+    Single source of truth for "does this text fit?" used by the universal
+    constraint pass (`app.pipeline.overlay_constraints`). It resolves the same
+    font `_draw_text_png` would, wraps with the same greedy `_wrap_text_to_lines`
+    both renderers mirror (Pillow `_wrap_text_to_lines` / Skia
+    `_wrap_text_to_lines`), and measures with Pillow. Pillow metrics are the
+    conservative reference: the constraint pass adds a small safety margin on top
+    so a fit it approves is also safe under Skia's HarfBuzz shaping.
+
+    `max_width_px` defaults to `_TEXT_MAX_LINE_W * CANVAS_W` (the wrap budget both
+    renderers use). Returns ([text], 0) when the font can't be resolved — the
+    caller treats width 0 as "don't shrink" (the renderer keeps its own
+    shrink-to-fit safety net).
+    """
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    if not text:
+        return ([text], 0)
+    size = text_size_px or _FONT_SIZE_MAP.get(text_size, 72)
+    font = None
+    if font_family:
+        font = _resolve_font_family(font_family, size)
+    if font is None:
+        font = _load_styled_font(font_style, text_size, text_size_px=size)
+    if font is None:
+        return ([text], 0)
+
+    width_budget = int(max_width_px if max_width_px is not None else _TEXT_MAX_LINE_W * CANVAS_W)
+    img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    lines: list[str] = []
+    for raw_line in text.split("\n"):
+        lines.extend(_wrap_text_to_lines(raw_line, font, width_budget, draw) if raw_line else [""])
+    widest = 0
+    for line in lines:
+        if not line:
+            continue
+        bbox = draw.textbbox((0, 0), line, font=font)
+        widest = max(widest, bbox[2] - bbox[0])
+    return (lines, widest)
+
+
 def _draw_text_png(
     text: str,
     position: str,

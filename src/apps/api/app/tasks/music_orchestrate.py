@@ -193,7 +193,33 @@ def analyze_music_track_task(self, track_id: str) -> None:
             beats = _detect_music_beats(local_audio)
             log.info("music_beats_detected", track_id=track_id, count=len(beats))
 
-            # Auto-select best section only if not already admin-configured
+            # ── Lyric extraction (fail-open, moved before section pick) ──
+            # Layer 3: feed full-track lyrics into auto_best_section so the
+            # picked window favors vocal-rich passages over beat-only peaks.
+            # `best_start_s`/`best_end_s` on LyricsInput are advisory (the agent
+            # transcribes the whole track regardless — see
+            # `app/agents/lyrics.py`), so passing full-track bounds here costs
+            # nothing extra and gives us the lines we need at scoring time.
+            # Reuses the already-downloaded audio file; any failure here is
+            # surfaced as `lyrics_status` but never blocks `analysis_status=ready`.
+            lyrics_result = _run_lyrics_extraction(
+                local_audio,
+                track_id,
+                best_start_s=0.0,
+                best_end_s=float(duration_s or 0.0),
+            )
+            # `_run_lyrics_extraction` is documented to never raise + always
+            # return a status dict, but tests mock it to return None and
+            # other call sites have done the same historically — guard so a
+            # None doesn't crash the analyze flow before Gemini gets a chance.
+            lyric_lines: list[dict] | None = None
+            if lyrics_result and lyrics_result.get("status") == "ready":
+                lyric_lines = (lyrics_result.get("output") or {}).get("lines") or None
+
+            # Auto-select best section only if not already admin-configured.
+            # Pass lyric_lines so the score becomes
+            # `beats + 0.5 * overlapping_lyric_lines` (see music_recipe.py:
+            # _LYRIC_LINE_WEIGHT). Backward-compat: None falls back to beat-only.
             best_start: float = float(existing_config.get("best_start_s", 0.0))
             best_end: float = float(existing_config.get("best_end_s", 0.0))
             if best_end <= best_start:
@@ -201,6 +227,7 @@ def analyze_music_track_task(self, track_id: str) -> None:
                     beats,
                     window_s=DEFAULT_WINDOW_S,
                     track_duration_s=float(duration_s or 0.0),
+                    lyric_lines=lyric_lines,
                 )
 
             # Slot count from best section
@@ -237,17 +264,6 @@ def analyze_music_track_task(self, track_id: str) -> None:
                     float(duration_s or 0.0),
                     track_id,
                 )
-
-            # ── Lyric extraction (new, fail-open) ────────────────────────
-            # Runs INSIDE the same temp dir so we reuse the already-downloaded
-            # audio file instead of re-downloading from GCS. Any failure here
-            # never blocks the track from being marked `analysis_status=ready`.
-            lyrics_result = _run_lyrics_extraction(
-                local_audio,
-                track_id,
-                best_start_s=new_config["best_start_s"],
-                best_end_s=new_config["best_end_s"],
-            )
 
         with _sync_session() as db:
             track = db.get(MusicTrack, track_id)
@@ -532,6 +548,10 @@ def _run_music_job(job_id: str) -> None:
         # (best_start_s, slot_every_n_beats, etc) so admins can edit
         # everything in one place. See app.routes.admin_music.update_music_track.
         lyrics_config = effective_lyrics_config(track.track_config or {}, lyrics_config_override)
+        # Pick a lyric style set from the track's MusicLabels (best-effort).
+        lyrics_config = _maybe_select_lyric_style_set(
+            lyrics_config, track.ai_labels, track.title or ""
+        )
 
     # [3] Generate recipe from beats
     recipe_dict = generate_music_recipe(track_data)
@@ -664,6 +684,11 @@ def _run_music_job(job_id: str) -> None:
             user_subject="",
             interstitials=[],
             force_single_pass=False,
+            # Lyric overlays render via Skia (HarfBuzz shaping, paint shadows),
+            # matching the templated-music path + the renderer-split intent.
+            # Gated globally by settings.text_renderer_skia_enabled inside
+            # _burn_text_overlays.
+            use_skia=True,
         )
 
         # [10] Mix in music track audio
@@ -1009,6 +1034,46 @@ def _run_song_classifier(
         return None
 
 
+def _maybe_select_lyric_style_set(
+    lyrics_config: dict | None,
+    ai_labels: dict | None,
+    title: str = "",
+) -> dict | None:
+    """Best-effort: pick a lyric style set via LyricStyleSelectorAgent.
+
+    No-op when lyrics are disabled, a set is already pinned in lyrics_config,
+    or the track has no `ai_labels`. Never raises — on any failure the config
+    is returned unchanged so lyrics still render with their existing defaults.
+    """
+    if not lyrics_config or not lyrics_config.get("enabled"):
+        return lyrics_config
+    if lyrics_config.get("style_set_id"):
+        return lyrics_config
+    labels_dict = (ai_labels or {}).get("labels")
+    if not labels_dict:
+        return lyrics_config
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents._schemas.music_labels import MusicLabels  # noqa: PLC0415
+        from app.agents.lyric_style_selector import (  # noqa: PLC0415
+            LyricStyleSelectorAgent,
+            LyricStyleSelectorInput,
+        )
+
+        out = LyricStyleSelectorAgent(default_client()).run(
+            LyricStyleSelectorInput(labels=MusicLabels(**labels_dict), title=title or ""),
+            ctx=RunContext(job_id=None),
+        )
+        cfg = dict(lyrics_config)
+        cfg["style_set_id"] = out.style_set_id
+        log.info("lyric_style_set_selected", style_set_id=out.style_set_id)
+        return cfg
+    except Exception as exc:  # noqa: BLE001 — selection is best-effort
+        log.warning("lyric_style_set_select_failed", error=str(exc))
+        return lyrics_config
+
+
 # ── Templated music jobs (fixed-asset + user-upload slots) ────────────────────
 
 
@@ -1067,6 +1132,9 @@ def _run_templated_music_job(job_id: str) -> None:
         lyrics_cached_tmpl = track.lyrics_cached
         track_cfg_tmpl = track.track_config or {}
         lyrics_config_tmpl = effective_lyrics_config(track_cfg_tmpl, lyrics_config_override)
+        lyrics_config_tmpl = _maybe_select_lyric_style_set(
+            lyrics_config_tmpl, track.ai_labels, track.title or ""
+        )
 
     # Inject lyric overlays for templated tracks. `best_start_s` defaults to 0
     # for templated tracks (slot times already start at the beginning of the
@@ -1326,9 +1394,7 @@ def _run_templated_music_job(job_id: str) -> None:
             burned_path = os.path.join(tmpdir, "burned.mp4")
             # Music jobs use Skia for lyrics rendering (karaoke-line, per-word-pop).
             # Gated globally by settings.text_renderer_skia_enabled inside _burn_text_overlays.
-            _burn_text_overlays(
-                assembled_path, abs_overlays, burned_path, tmpdir, use_skia=True
-            )
+            _burn_text_overlays(assembled_path, abs_overlays, burned_path, tmpdir, use_skia=True)
             if os.path.exists(burned_path) and os.path.getsize(burned_path) > 0:
                 assembled_path = burned_path
             else:

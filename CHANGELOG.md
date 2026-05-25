@@ -2,12 +2,69 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.45.1] - 2026-05-24
+## [0.4.45.7] - 2026-05-25
 
 ### Fixed
 - **Production YouTube imports can solve yt-dlp's current EJS challenges.** The Fly image now includes Deno, and the API installs `yt-dlp[default]` so the `yt-dlp-ejs` solver scripts ship with the Python package. This fixes the post-cookie production failure where the configured YouTube cookies were present but yt-dlp saw only image formats because signature/n-challenge solving had no runtime.
 
-## [0.4.45.0] - 2026-05-24
+## [0.4.45.6] - 2026-05-25
+
+### Changed
+- **Style sets restyled to an editorial look — serif fonts, smaller sizes.** The curated style-set library (`assets/style_sets/style-sets.json`) dropped the sans fonts (Montserrat / DM Sans / Space Grotesk read as cheap) for editorial serifs from the font registry: Playfair Display, Playfair Display Regular, Bodoni Moda (gold travel label + punchy per-word pop), Fraunces (karaoke sweep). Sizes pulled down from the coarse `large`/`xlarge` buckets (120–150px) to restrained explicit `text_size_px` (~44–92px: hooks ~88–92, labels ~58–62, cta ~44, lyrics ~58–64), and strokes thinned to 0 on agentic sets (relying on the renderer's gaussian shadow) / 2 on lyrics. `lifestyle_clean` uses Playfair Display Regular (the previously-tried Instrument Serif is a condensed face that read as horizontally squeezed). `lyric_word_pop_punchy` is now left-aligned (`text_anchor: left`, `position_x_frac: 0.06`) so the cumulative per-word reveal grows from the left edge instead of re-centering each word. Added a **`word_reveal`** set capturing the kinetic left-anchored pop-in look of agentic template `89cde014` ("not just luck 2") — Playfair serif, white, left edge at 6% — so that statement-reveal style is selectable/reusable (the per-word cumulative staging itself remains a pipeline behavior). Three more distinct aesthetics added: **`high_fashion`** (Bodoni Moda, magazine/luxury, white headline + gold label), **`bold_statement`** (Fraunces heavy serif, pop-in entrance), and **`film_mono`** (Space Mono, documentary/indie-film feel). Agentic set sizes normalized to a consistent scale (hook/intro 88, reaction 72, label 58, body 48, cta 44). Added two **typed-text animation** sets (Space Mono, left-anchored): **`typewriter`** (char-by-char reveal, the existing `typewriter` effect) and **`ai_answer`** (word-by-word stream with a blinking cursor — a new **`stream-in`** Skia effect that reveals ~6 words/s, like how an AI types out an answer; degrades to full static text on the Pillow path). Takes effect immediately for the live music-lyric path (resolved per job); `STYLE_SETS_VERSION` bumped `…-05-25a` → `…-05-25d`.
+
+## [0.4.45.5] - 2026-05-25
+
+### Changed
+- **Generative edits can no longer run longer than the footage you upload.** The "Target length" slider is gone (public `/generative` + admin launch panel) — it only ever influenced the original-audio variant anyway, while the two song variants silently sized output to the matched track's full best-section window (45s+) and *stretched* short clips with slow-motion (`setpts`, down to 0.4×) to fill the beat slots. Output length is now **derived** and bounded by real footage in every case:
+  - **Music variants** clamp the song's best-section window to the total uploaded footage before slicing it into beat slots (`_fit_section_to_footage` in `generative_build.py`), so a 12s upload on a 45s song section produces a ~12s edit, not a 45s one. The audio offset (and lyric timing) are untouched, so beat alignment is preserved.
+  - **No-music variant** sizes its arrangement from the footage total instead of the slider.
+  - **No stretch-to-fill, ever.** `_assemble_clips`/`_plan_slots` gained an `allow_slowdown_fill` flag (default `True` — templates and music jobs are byte-for-byte unchanged); generative edits pass `False`, so a clip shorter than its slot now shrinks the slot to the real footage (at 1.0× speed, no frozen-frame pad) instead of being slowed down. A `clip_footage_exhausted_trimmed` event is recorded to the job-debug trace.
+  - AI still trims clips *shorter* when the matcher prefers it (weak / no-action sections) — only manufacturing extra runtime is forbidden.
+  - Stale frontends that still POST `target_duration_s` are tolerated (the field is dropped, not rejected). The admin generative list drops its now-vestigial "target length" column.
+  - Verified on a real prod-image local render (footage-bounded output + `clip_footage_exhausted_trimmed`, no slowdown). `make local-render MODE=generative CLIPS="..."` now drives this path.
+
+## [0.4.45.4] - 2026-05-25
+
+### Fixed
+- **Beat-sync music lyrics now render via Skia (not libass), and long lyric lines no longer clip off-screen.** Two bugs surfaced by a real local music render of the new style-set lyric selector:
+  - **Routing:** `_run_music_job` assembled clips without forwarding a Skia flag, so beat-sync music lyric overlays fell through to the libass/ASS path — contradicting the renderer-split intent (and the templated-music path, which already forces Skia). `_assemble_clips` gains a `use_skia` override (defaults to `is_agentic`, so every existing caller is unchanged) and `_run_music_job` passes `use_skia=True`. Beat-sync music lyrics now render with HarfBuzz shaping + paint shadows like the rest of the agentic/music output.
+  - **Single-line overflow:** the universal constraint pass measured text as if it would *wrap*, but karaoke-line / lyric-line effects render on a single un-wrapped line. A long lyric "fit" as 3 wrapped lines and was then drawn as one 3×-too-wide line, clipping off both edges. The constraint pass now fits single-line effects (`karaoke-line`, `lyric-line`, cumulative pop-in) to one line — verified on a real render: "city lights keep calling out my name" shrank 120px→46px and sits fully on-screen with the amber karaoke sweep intact.
+- Removed accidentally-committed `.devtest/` dev logs from version control and added `.devtest/` to `.gitignore`.
+
+### Added
+- `scripts/preview_style_sets.py` (renders a visual comparison grid of all style sets through the real renderer) and `scripts/seed_demo_music_track.py` (seeds a ready+published beat-sync track for local lyric-selector testing) — local dev tooling.
+
+## [0.4.45.3] - 2026-05-25
+
+### Added
+- **A dedicated place to see and analyze generative edits in admin.** Generative edits were inspectable only by hunting for a job ID and opening `/admin/jobs/{id}` — there was no nav entry, no way to list them, and the jobs-list type filter had no `generative` option (the backend accepted it but the dropdown never offered it). This adds a **Generative** admin section (`/admin/generative`):
+  - A **recent generative jobs** table showing status, clip count + target length, and per-variant readiness chips (AI text / Lyrics / song, colored by render outcome) at a glance, each row linking into the existing `/admin/jobs/{id}` detail view (variant video tiles, agent runs, pipeline trace — reused, not duplicated).
+  - A **launch/test panel** to upload clips and kick off a generative job straight from admin (reuses the public generative endpoints), so you can drive a test edit and watch it render in the list.
+  - The `/admin/jobs` type-filter dropdown now offers **Generative**, backed by a new admin-gated `GET /admin/generative` endpoint that surfaces the per-variant summary the generic job list defers.
+
+## [0.4.45.2] - 2026-05-25
+
+### Added
+- **Text style sets + a hard "always fits the frame" guarantee.** On-screen text in agentic templates, music lyrics, and generative edits used to pick font/size/color/animation/position ad-hoc, so captions could overflow the 9:16 frame or look incoherent. This adds a curated, version-controlled library of named **style sets** (`assets/style_sets/style-sets.json`) — each a coherent per-role design system (hook / label / cta / lyric-line / etc.) defining font, size, color, effect, position, and timing. Classic templates are untouched.
+  - **Universal constraint pass** (`app/pipeline/overlay_constraints.py`): every overlay across the non-classic paths is shrunk + repositioned to fit the 9:16 safe zone before rendering. Wired at the shared `_collect_absolute_overlays` chokepoint (regular overlays + music lyrics + agentic) AND in the curtain-slot pre-burn path (`_pre_burn_curtain_slot_text`) so big font-cycle subject labels — e.g. a long travel title like "ANTANANARIVO MADAGASCAR", verified shrinking 170px→115px on a real render — are covered too. It only rewrites `text_size_px` / `position_*_frac` (fields both renderers already honor), so it is renderer-parity-safe by construction and can only improve overflowing text. Each shrink/clamp is logged to the admin job-debug trace (`constraint_clamp` / `constraint_floor_hit`). Gated by `STYLE_CONSTRAINTS_ENABLED` (default on).
+  - **Music lyric style selection** (`nova.audio.lyric_style_selector`): a text-only Gemini agent picks a lyric style set from the track's `MusicLabels`; the set supplies the lyric format (karaoke / line / per-word-pop) + styling defaults to the lyric injector. Best-effort — failure leaves existing defaults intact. Admins can pin a set per track via `lyrics_config.style_set_id`; explicit `lyrics_config` fields always override the set.
+
+### Notes
+- Resolution layer (`app/pipeline/style_sets.py`) is authoritative: the set's non-null fields win and the LLM/legacy per-overlay values only fill gaps. Initial library ships `default`, three lyric formats (`lyric_karaoke_bold`, `lyric_line_calm`, `lyric_word_pop_punchy`), and two agentic/generative sets (`travel_editorial`, `lifestyle_clean`).
+- Scoped to Phase 1 + 2 of the plan, plus curtain-path coverage caught during local verification. The agentic `template_text` refactor (cache-sensitive; requires a live-eval run per the prompt-change rule) and generative-edit wiring are deferred to follow-up PRs.
+### Fixed
+- **Music tracks with an unrecognized genre now label successfully instead of silently failing.** The song classifier previously refused any genre outside its fixed list (pop, hip-hop, electronic, cinematic, acoustic, comedy, other), so rock, R&B, Latin, jazz, and similar tracks ended up with no AI labels — which made them invisible to the auto-song matcher (including the new generative edits). Unrecognized genres are now mapped to the closest fit (rap/trap → hip-hop, EDM/house → electronic, orchestral/classical → cinematic, folk/country → acoustic) or to 'other', so every track gets labeled and can be matched.
+
+## [0.4.45.1] - 2026-05-24
+
+### Added
+- **Generative edits — upload clips, get AI-made edits with no template.** A new edit type that needs no reference template and no pre-chosen song: you upload raw clips, and the system auto-matches a song from the library, writes its own opening text, and returns three versions to pick from — (1) song + the song's lyrics, (2) song + AI-written intro text, (3) your clips' original audio + AI-written intro text. Don't like the song? Swap it for any library track and the edit re-cuts to the new beats. Don't like the text? Edit it or remove it. New page at `/generative`. Built by re-anchoring on the existing auto-music engine (song matching, beat-derived slots, lyric injection) plus two new text agents (`overlay_format_matcher` picks the overlay style from a curated example library; `intro_writer` writes the words) and a deterministic word-reveal timing synthesizer that beat-snaps the karaoke sweep. The AI-written text is treated as untrusted input end to end: the writer prompt frames clip content as data, and output is sanitized (no URLs, handles, tags, or runaway length) before it can reach the screen.
+
+- **Inspect and iterate generative edits from admin.** The `/admin/jobs/{id}` debug view now renders a generative job's variants as playable tiles (video + text-mode/song badge + render status), with Edit-text, Remove-text, and Swap-song controls that kick off async re-renders and poll until they land. Failed actions surface an error instead of vanishing. The jobs list also gains a `generative` type filter.
+
+### Notes
+- The original-audio variant preserves each clip's source audio (no music mix). Song variants only offer a "Lyrics" version when the matched track actually has cached lyrics.
+- Local prod-parity verification: `python3 scripts/local-render.py --mode generative --clip a.mp4 --clip b.mp4 …` drives a real job through the Fly-image stack and downloads every variant.
 
 ### Fixed
 - **Admin YouTube imports can now use configured yt-dlp cookies instead of failing on bot challenges.** API downloads, playlist ingestion, and lyric-sync diagnostics all share one cookie helper that accepts either `YTDLP_COOKIES_B64` or `YTDLP_COOKIES_PATH`, rejects invalid or conflicting config, writes base64 cookies as short-lived `0600` files, and keeps subprocess cookie paths readable without leaving named files behind on Linux. YouTube bot-challenge errors now tell admins to refresh cookies or use file upload instead of returning a generic download failure.

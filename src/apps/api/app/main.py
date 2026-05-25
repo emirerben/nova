@@ -11,9 +11,11 @@ from app.config import settings
 from app.limiter import limiter
 from app.routes import (
     admin,
+    admin_generative,
     admin_jobs,
     admin_music,
     clips,
+    generative_jobs,
     music,
     music_jobs,
     presigned,
@@ -82,9 +84,11 @@ app.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(admin_jobs.router, prefix="/admin/jobs", tags=["admin-jobs"])
 app.include_router(admin_music.router, prefix="/admin/music-tracks", tags=["admin-music"])
+app.include_router(admin_generative.router, prefix="/admin/generative", tags=["admin-generative"])
 app.include_router(template_jobs.router, prefix="/template-jobs", tags=["template-jobs"])
 app.include_router(music.router, prefix="/music-tracks", tags=["music"])
 app.include_router(music_jobs.router, prefix="/music-jobs", tags=["music-jobs"])
+app.include_router(generative_jobs.router, prefix="/generative-jobs", tags=["generative-jobs"])
 app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])
 app.include_router(clips.router, prefix="/clips", tags=["clips"])
 app.include_router(templates.router, prefix="/templates", tags=["templates"])
