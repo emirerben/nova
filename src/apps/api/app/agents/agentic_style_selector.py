@@ -99,3 +99,5 @@ class AgenticStyleSelectorAgent(Agent[AgenticStyleSelectorInput, AgenticStyleSel
             style_set_id=chosen,
             rationale=str(data.get("rationale", "") or "").strip(),
         )
+
+# (style-set selection decoupled into agentic_style_selector — see CHANGELOG 0.4.46.0)
