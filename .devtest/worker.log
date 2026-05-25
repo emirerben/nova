@@ -1,0 +1,289 @@
+ 
+ -------------- celery@Mac.mynet v5.6.3 (recovery)
+--- ***** ----- 
+-- ******* ---- macOS-26.4.1-arm64-arm-64bit 2026-05-25 07:38:08
+- *** --- * --- 
+- ** ---------- [config]
+- ** ---------- .> app:         nova:0x10b0de310
+- ** ---------- .> transport:   redis://localhost:6379//
+- ** ---------- .> results:     redis://localhost:6379/
+- *** --- * --- .> concurrency: 2 (prefork)
+-- ******* ---- .> task events: OFF (enable -E to monitor tasks in this worker)
+--- ***** ----- 
+ -------------- [queues]
+                .> celery           exchange=celery(direct) key=celery
+                
+
+[tasks]
+  . orchestrate_generative_job
+  . regenerate_generative_variant
+  . tasks.agentic_template_build_task
+  . tasks.analyze_music_track_task
+  . tasks.analyze_template_task
+  . tasks.batch_import_from_drive
+  . tasks.cleanup_agent_runs
+  . tasks.cleanup_cancelled_job
+  . tasks.extract_track_lyrics_task
+  . tasks.finalize_job
+  . tasks.import_from_drive
+  . tasks.orchestrate_auto_music_job
+  . tasks.orchestrate_job
+  . tasks.orchestrate_music_job
+  . tasks.orchestrate_single_video_job
+  . tasks.orchestrate_template_job
+  . tasks.render_clip
+  . tasks.render_lyrics_preview_task
+  . tasks.score_trace_async
+  . tasks.sweep_stale_jobs
+
+[2026-05-25 07:38:08,118: INFO/MainProcess] Connected to redis://localhost:6379//
+[2026-05-25 07:38:08,121: INFO/MainProcess] mingle: searching for neighbors
+[2026-05-25 07:38:09,134: INFO/MainProcess] mingle: all alone
+[2026-05-25 07:38:09,169: INFO/MainProcess] celery@Mac.mynet ready.
+[2026-05-25 07:38:10,767: INFO/MainProcess] Parsing model identifier. Schema: None, Identifier: ViT-B-32
+[2026-05-25 07:38:10,767: INFO/MainProcess] Loaded built-in ViT-B-32 model config.
+[2026-05-25 07:38:10,902: INFO/MainProcess] HTTP Request: HEAD https://huggingface.co/timm/vit_base_patch32_clip_224.openai/resolve/main/open_clip_model.safetensors "HTTP/1.1 302 Found"
+[2026-05-25 07:38:10,903: WARNING/MainProcess] Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[2026-05-25 07:38:10,903: WARNING/MainProcess] Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+[2026-05-25 07:38:10,906: WARNING/MainProcess] /Users/emirerben/Projects/nova/src/apps/api/.venv-test/lib/python3.11/site-packages/open_clip/factory.py:450: UserWarning: QuickGELU mismatch between final model config (quick_gelu=False) and pretrained tag 'openai' (quick_gelu=True).
+  warnings.warn(
+
+[2026-05-25 07:38:10,906: INFO/MainProcess] Instantiating model architecture: CLIP
+[2026-05-25 07:38:11,608: INFO/MainProcess] Loading full pretrained weights from: /Users/emirerben/.cache/huggingface/hub/models--timm--vit_base_patch32_clip_224.openai/snapshots/a6f597a30f7b82c51704746581f9a4e41421e878/open_clip_model.safetensors
+[2026-05-25 07:38:12,222: INFO/MainProcess] Final image preprocessing configuration set: {'size': (224, 224), 'mode': 'RGB', 'mean': (0.48145466, 0.4578275, 0.40821073), 'std': (0.26862954, 0.26130258, 0.27577711), 'interpolation': 'bicubic', 'resize_mode': 'shortest', 'fill_color': 0}
+[2026-05-25 07:38:12,222: INFO/MainProcess] Model ViT-B-32 creation process complete.
+[2026-05-25 07:38:12,224: WARNING/MainProcess] 2026-05-25 07:38:12 [info     ] clip_font_matcher_loaded       model_id=open-clip/ViT-B-32/openai model_version=2 registry_families=24
+[2026-05-25 07:38:12,224: WARNING/MainProcess] [worker_ready] CLIP font matcher prewarmed
+[2026-05-25 07:39:46,052: INFO/MainProcess] Task tasks.orchestrate_template_job[3e398734-b9e6-42c5-808a-dd5a27b4b764] received
+[2026-05-25 07:39:46,055: WARNING/ForkPoolWorker-2] 2026-05-25 07:39:46 [info     ] template_job_start             force_single_pass=False job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764
+objc[89709]: +[NSCharacterSet initialize] may have been in progress in another thread when fork() was called.
+objc[89709]: +[NSCharacterSet initialize] may have been in progress in another thread when fork() was called. We cannot safely call it or ignore it in the fork() child process. Crashing instead. Set a breakpoint on objc_initializeAfterForkError to debug.
+[2026-05-25 07:39:46,059: ERROR/MainProcess] Process 'ForkPoolWorker-2' pid:89709 exited with 'signal 6 (SIGABRT)'
+[2026-05-25 07:39:46,071: ERROR/MainProcess] Task handler raised error: WorkerLostError('Worker exited prematurely: signal 6 (SIGABRT) Job: 0.')
+Traceback (most recent call last):
+  File "/Users/emirerben/Projects/nova/src/apps/api/.venv-test/lib/python3.11/site-packages/billiard/pool.py", line 1265, in mark_as_worker_lost
+    raise WorkerLostError(
+billiard.einfo.ExceptionWithTraceback: 
+"""
+Traceback (most recent call last):
+  File "/Users/emirerben/Projects/nova/src/apps/api/.venv-test/lib/python3.11/site-packages/billiard/pool.py", line 1265, in mark_as_worker_lost
+    raise WorkerLostError(
+billiard.exceptions.WorkerLostError: Worker exited prematurely: signal 6 (SIGABRT) Job: 0.
+"""
+[2026-05-25 07:39:46,155: INFO/MainProcess] Task tasks.orchestrate_template_job[3e398734-b9e6-42c5-808a-dd5a27b4b764] received
+[2026-05-25 07:39:46,157: WARNING/ForkPoolWorker-1] 2026-05-25 07:39:46 [info     ] template_job_start             force_single_pass=False job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764
+objc[89708]: +[NSCharacterSet initialize] may have been in progress in another thread when fork() was called.
+objc[89708]: +[NSCharacterSet initialize] may have been in progress in another thread when fork() was called. We cannot safely call it or ignore it in the fork() child process. Crashing instead. Set a breakpoint on objc_initializeAfterForkError to debug.
+[2026-05-25 07:39:46,163: ERROR/MainProcess] Process 'ForkPoolWorker-1' pid:89708 exited with 'signal 6 (SIGABRT)'
+[2026-05-25 07:39:46,174: ERROR/MainProcess] Task handler raised error: WorkerLostError('Worker exited prematurely: signal 6 (SIGABRT) Job: 1.')
+Traceback (most recent call last):
+  File "/Users/emirerben/Projects/nova/src/apps/api/.venv-test/lib/python3.11/site-packages/billiard/pool.py", line 1265, in mark_as_worker_lost
+    raise WorkerLostError(
+billiard.einfo.ExceptionWithTraceback: 
+"""
+Traceback (most recent call last):
+  File "/Users/emirerben/Projects/nova/src/apps/api/.venv-test/lib/python3.11/site-packages/billiard/pool.py", line 1265, in mark_as_worker_lost
+    raise WorkerLostError(
+billiard.exceptions.WorkerLostError: Worker exited prematurely: signal 6 (SIGABRT) Job: 1.
+"""
+[2026-05-25 07:39:46,255: INFO/MainProcess] Task tasks.orchestrate_template_job[3e398734-b9e6-42c5-808a-dd5a27b4b764] received
+[2026-05-25 07:39:46,256: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:46 [info     ] template_job_start             force_single_pass=False job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764
+[2026-05-25 07:39:46,744: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:46 [info     ] clip_download_timing           clip_count=5 job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 max_workers=5 per_clip=[{'idx': 3, 'elapsed_ms': 240, 'normalize_ms': 28, 'size_bytes': 1530609}, {'idx': 4, 'elapsed_ms': 276, 'normalize_ms': 22, 'size_bytes': 1530609}, {'idx': 0, 'elapsed_ms': 406, 'normalize_ms': 22, 'size_bytes': 1530609}, {'idx': 2, 'elapsed_ms': 341, 'normalize_ms': 20, 'size_bytes': 1530609}, {'idx': 1, 'elapsed_ms': 448, 'normalize_ms': 21, 'size_bytes': 1530609}] per_clip_ms_max=448 per_clip_ms_mean=342 per_clip_ms_min=240 total_bytes=7653045 total_bytes_clip_count=5 total_ms_serial=1711
+[2026-05-25 07:39:46,750: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:46 [info     ] gemini_clip_pipeline_start     count=5 job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764
+[2026-05-25 07:39:46,757: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:46 [info     ] clip_cache_lookup_done         hits=0 misses=5 total=5
+[2026-05-25 07:39:46,781: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:46 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_0.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+[2026-05-25 07:39:46,804: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:46 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_1.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+[2026-05-25 07:39:46,833: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:46 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_2.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+[2026-05-25 07:39:46,874: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:46 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_3.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+[2026-05-25 07:39:46,919: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:46 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_4.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+[2026-05-25 07:39:47,355: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files "HTTP/1.1 200 OK"
+[2026-05-25 07:39:47,445: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files "HTTP/1.1 200 OK"
+[2026-05-25 07:39:47,492: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files "HTTP/1.1 200 OK"
+[2026-05-25 07:39:47,520: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files "HTTP/1.1 200 OK"
+[2026-05-25 07:39:47,571: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files "HTTP/1.1 200 OK"
+[2026-05-25 07:39:49,196: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AAVLpEgwyrZBG_aA6ce2KTAEil_BKERXDxEExE5Z_7LiT2ZVpaxwFqBA1hIx2i7RjmkxajnUnAEUMqY-fM6HZDs0q8DaqCJ8sdWxyZ2PCyz3eJk&upload_protocol=resumable "HTTP/1.1 200 OK"
+[2026-05-25 07:39:49,218: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AAVLpEiUie_3AVNyBjMX-W9qojVSLCQMpsQcGfGg40MbAh657Frn1ITYAN_TiXDZRnK_Nxx85zRG8QRAtOOKj5gFYyBOnM5D3S5NZcMtWM3ul6k&upload_protocol=resumable "HTTP/1.1 200 OK"
+[2026-05-25 07:39:49,258: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AAVLpEhVxMGMeCDWq7HeHFcVn81h8MvYuK-LpnluhhExD81741zDR6gJwV97RbWI7xH1REY8ZXCEpGaqKP2xnBvNX5x_p26bXc9DqO6SlTmoiA&upload_protocol=resumable "HTTP/1.1 200 OK"
+[2026-05-25 07:39:49,408: INFO/ForkPoolWorker-3] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/files/dtp4gwwhw642 "HTTP/1.1 200 OK"
+[2026-05-25 07:39:49,409: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:49 [debug    ] gemini_file_polling            name=files/dtp4gwwhw642 state=PROCESSING
+[2026-05-25 07:39:49,420: INFO/ForkPoolWorker-3] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/files/fyimeyowp2s4 "HTTP/1.1 200 OK"
+[2026-05-25 07:39:49,421: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:49 [debug    ] gemini_file_polling            name=files/fyimeyowp2s4 state=PROCESSING
+[2026-05-25 07:39:49,422: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AAVLpEiGzyFYnpqsOyBnjZAVyWbY42TDhX52rJ38H2AQgxdeHyNzbJJpD8M7rdZdi3gPKZdoFUkI3LOmxuCeqEL-LSEmEyyis_NZZQ6h8thQ8w&upload_protocol=resumable "HTTP/1.1 200 OK"
+[2026-05-25 07:39:49,436: INFO/ForkPoolWorker-3] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/files/xbomazoz2ntp "HTTP/1.1 200 OK"
+[2026-05-25 07:39:49,438: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:49 [debug    ] gemini_file_polling            name=files/xbomazoz2ntp state=PROCESSING
+[2026-05-25 07:39:49,573: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AAVLpEjtWv54JJ36Drwg5e9L2QzhFkSsQ0xUSh_x570is66NkJQiwx2e0PXSjmy4yIuRpNgpdgR6yZDhShoHy_uZcJH4Q4nVkVTQ2zKjEQFl4BA&upload_protocol=resumable "HTTP/1.1 200 OK"
+[2026-05-25 07:39:49,575: INFO/ForkPoolWorker-3] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/files/5ri2fb9cuqme "HTTP/1.1 200 OK"
+[2026-05-25 07:39:49,577: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:49 [debug    ] gemini_file_polling            name=files/5ri2fb9cuqme state=PROCESSING
+[2026-05-25 07:39:49,789: INFO/ForkPoolWorker-3] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/files/kq01xzdqhf3c "HTTP/1.1 200 OK"
+[2026-05-25 07:39:49,792: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:49 [debug    ] gemini_file_polling            name=files/kq01xzdqhf3c state=PROCESSING
+[2026-05-25 07:39:54,582: INFO/ForkPoolWorker-3] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/files/xbomazoz2ntp "HTTP/1.1 200 OK"
+[2026-05-25 07:39:54,586: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:54 [info     ] gemini_file_active             name=files/xbomazoz2ntp
+[2026-05-25 07:39:54,590: INFO/ForkPoolWorker-3] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/files/dtp4gwwhw642 "HTTP/1.1 200 OK"
+[2026-05-25 07:39:54,592: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:54 [info     ] gemini_file_active             name=files/dtp4gwwhw642
+[2026-05-25 07:39:54,600: INFO/ForkPoolWorker-3] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/files/fyimeyowp2s4 "HTTP/1.1 200 OK"
+[2026-05-25 07:39:54,603: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:54 [info     ] gemini_file_active             name=files/fyimeyowp2s4
+[2026-05-25 07:39:54,756: INFO/ForkPoolWorker-3] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/files/5ri2fb9cuqme "HTTP/1.1 200 OK"
+[2026-05-25 07:39:54,759: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:54 [info     ] gemini_file_active             name=files/5ri2fb9cuqme
+[2026-05-25 07:39:55,040: INFO/ForkPoolWorker-3] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/files/kq01xzdqhf3c "HTTP/1.1 200 OK"
+[2026-05-25 07:39:55,043: WARNING/ForkPoolWorker-3] 2026-05-25 07:39:55 [info     ] gemini_file_active             name=files/kq01xzdqhf3c
+[2026-05-25 07:39:55,063: INFO/ForkPoolWorker-3] AFC is enabled with max remote calls: 10.
+[2026-05-25 07:39:55,064: INFO/ForkPoolWorker-3] AFC is enabled with max remote calls: 10.
+[2026-05-25 07:39:55,064: INFO/ForkPoolWorker-3] AFC is enabled with max remote calls: 10.
+[2026-05-25 07:39:55,064: INFO/ForkPoolWorker-3] AFC is enabled with max remote calls: 10.
+[2026-05-25 07:39:55,069: INFO/ForkPoolWorker-3] AFC is enabled with max remote calls: 10.
+[2026-05-25 07:40:05,458: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent "HTTP/1.1 200 OK"
+[2026-05-25 07:40:05,464: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:05 [info     ] agent_run                      agent=nova.video.clip_metadata attempts=1 cost_usd=0.000331 fallback_used=False job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 latency_ms=10400 model=gemini-2.5-pro outcome=ok prompt_version=2026-05-14 refusal_count=0 request_id=None schema_retry_count=0 segment_idx=None tokens_in=3531 tokens_out=221
+[2026-05-25 07:40:05,481: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:05 [warning  ] langfuse_init_failed           error="No module named 'langfuse'"
+[2026-05-25 07:40:06,081: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent "HTTP/1.1 200 OK"
+[2026-05-25 07:40:06,085: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:06 [info     ] agent_run                      agent=nova.video.clip_metadata attempts=1 cost_usd=0.000334 fallback_used=False job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 latency_ms=11020 model=gemini-2.5-pro outcome=ok prompt_version=2026-05-14 refusal_count=0 request_id=None schema_retry_count=0 segment_idx=None tokens_in=3531 tokens_out=231
+[2026-05-25 07:40:07,231: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent "HTTP/1.1 200 OK"
+[2026-05-25 07:40:07,235: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:07 [info     ] agent_run                      agent=nova.video.clip_metadata attempts=1 cost_usd=0.000329 fallback_used=False job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 latency_ms=12170 model=gemini-2.5-pro outcome=ok prompt_version=2026-05-14 refusal_count=0 request_id=None schema_retry_count=0 segment_idx=None tokens_in=3531 tokens_out=213
+[2026-05-25 07:40:08,632: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent "HTTP/1.1 200 OK"
+[2026-05-25 07:40:08,636: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] agent_run                      agent=nova.video.clip_metadata attempts=1 cost_usd=0.000335 fallback_used=False job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 latency_ms=13572 model=gemini-2.5-pro outcome=ok prompt_version=2026-05-14 refusal_count=0 request_id=None schema_retry_count=0 segment_idx=None tokens_in=3531 tokens_out=235
+[2026-05-25 07:40:08,838: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent "HTTP/1.1 200 OK"
+[2026-05-25 07:40:08,841: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] agent_run                      agent=nova.video.clip_metadata attempts=1 cost_usd=0.000334 fallback_used=False job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 latency_ms=13777 model=gemini-2.5-pro outcome=ok prompt_version=2026-05-14 refusal_count=0 request_id=None schema_retry_count=0 segment_idx=None tokens_in=3531 tokens_out=229
+[2026-05-25 07:40:08,855: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] gemini_clip_pipeline_done      failed=0 job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 success=5
+[2026-05-25 07:40:08,862: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] template_match_start           job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764
+[2026-05-25 07:40:08,863: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] matcher_pin                    clip_id=files/kq01xzdqhf3c slot=1
+[2026-05-25 07:40:08,864: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] slot_pinned                    clip_id=files/kq01xzdqhf3c position=1 target_dur=1.0
+[2026-05-25 07:40:08,865: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] coverage_pass_done             assigned=4 skipped=0 total_clips=4
+[2026-05-25 07:40:08,866: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_pre_assigned              clip_id=files/xbomazoz2ntp energy=7.0 position=2
+[2026-05-25 07:40:08,867: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_pre_assigned              clip_id=files/5ri2fb9cuqme energy=7.0 position=3
+[2026-05-25 07:40:08,867: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_pre_assigned              clip_id=files/dtp4gwwhw642 energy=7.0 position=16
+[2026-05-25 07:40:08,868: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_pre_assigned              clip_id=files/fyimeyowp2s4 energy=7.0 position=17
+[2026-05-25 07:40:08,869: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_assigned                  cap_enforced=True clip_id=files/5ri2fb9cuqme energy=8.0 position=4 priority=10 target_dur=1.1 use_count=2
+[2026-05-25 07:40:08,870: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_assigned                  cap_enforced=True clip_id=files/dtp4gwwhw642 energy=8.0 position=5 priority=10 target_dur=5.5 use_count=2
+[2026-05-25 07:40:08,870: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_assigned                  cap_enforced=True clip_id=files/fyimeyowp2s4 energy=8.0 position=6 priority=9 target_dur=0.5 use_count=2
+[2026-05-25 07:40:08,871: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_assigned                  cap_enforced=True clip_id=files/xbomazoz2ntp energy=9.0 position=9 priority=9 target_dur=0.89 use_count=2
+[2026-05-25 07:40:08,872: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_assigned                  cap_enforced=True clip_id=files/5ri2fb9cuqme energy=9.0 position=11 priority=9 target_dur=0.98 use_count=3
+[2026-05-25 07:40:08,873: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_assigned                  cap_enforced=True clip_id=files/xbomazoz2ntp energy=9.5 position=13 priority=9 target_dur=0.89 use_count=3
+[2026-05-25 07:40:08,873: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_assigned                  cap_enforced=True clip_id=files/dtp4gwwhw642 energy=9.0 position=7 priority=8 target_dur=0.86 use_count=3
+[2026-05-25 07:40:08,874: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_assigned                  cap_enforced=True clip_id=files/fyimeyowp2s4 energy=9.0 position=8 priority=8 target_dur=0.93 use_count=3
+[2026-05-25 07:40:08,875: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_assigned                  cap_enforced=True clip_id=files/xbomazoz2ntp energy=7.0 position=10 priority=8 target_dur=0.86 use_count=4
+[2026-05-25 07:40:08,875: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_assigned                  cap_enforced=True clip_id=files/5ri2fb9cuqme energy=7.0 position=12 priority=8 target_dur=0.78 use_count=4
+[2026-05-25 07:40:08,876: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_assigned                  cap_enforced=True clip_id=files/dtp4gwwhw642 energy=7.0 position=14 priority=8 target_dur=0.93 use_count=4
+[2026-05-25 07:40:08,877: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_assigned                  cap_enforced=True clip_id=files/fyimeyowp2s4 energy=7.0 position=15 priority=8 target_dur=0.83 use_count=4
+[2026-05-25 07:40:08,878: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] template_match_done            clips_used=5 slots=17
+[2026-05-25 07:40:08,886: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] ffmpeg_assemble_start          effective_single_pass=False env_single_pass_enabled=False force_single_pass=False job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 render_path=multi template_single_pass=False
+[2026-05-25 07:40:08,887: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] subject_resolved               source=user subject='Antananarivo Madagascar'
+[2026-05-25 07:40:08,888: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=1.0 position=1 speed_factor=1.0 target_s=1.0
+[2026-05-25 07:40:08,888: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=1.5 position=2 speed_factor=1.0 target_s=1.5
+[2026-05-25 07:40:08,889: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=1.5 position=3 speed_factor=1.0 target_s=1.5
+[2026-05-25 07:40:08,890: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=1.1 position=4 speed_factor=1.0 target_s=1.1
+[2026-05-25 07:40:08,890: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [warning  ] clip_footage_exhausted         clip_dur=7.105306 clip_id=files/dtp4gwwhw642 cursor=0.0 position=5
+[2026-05-25 07:40:08,891: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=5.5 position=5 speed_factor=1.0 target_s=5.5
+[2026-05-25 07:40:08,891: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=0.5 position=6 speed_factor=1.0 target_s=0.5
+[2026-05-25 07:40:08,892: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [warning  ] clip_footage_exhausted         clip_dur=7.105306 clip_id=files/dtp4gwwhw642 cursor=7.105306 position=7
+[2026-05-25 07:40:08,892: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=0.86 position=7 speed_factor=1.0 target_s=0.86
+[2026-05-25 07:40:08,893: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=0.93 position=8 speed_factor=1.0 target_s=0.93
+[2026-05-25 07:40:08,894: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=0.89 position=9 speed_factor=1.0 target_s=0.89
+[2026-05-25 07:40:08,894: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=0.86 position=10 speed_factor=1.0 target_s=0.86
+[2026-05-25 07:40:08,895: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=0.98 position=11 speed_factor=1.0 target_s=0.98
+[2026-05-25 07:40:08,895: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=0.78 position=12 speed_factor=1.0 target_s=0.78
+[2026-05-25 07:40:08,896: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=0.89 position=13 speed_factor=1.0 target_s=0.89
+[2026-05-25 07:40:08,897: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [warning  ] clip_footage_exhausted         clip_dur=7.105306 clip_id=files/dtp4gwwhw642 cursor=7.105306 position=14
+[2026-05-25 07:40:08,897: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=0.93 position=14 speed_factor=1.0 target_s=0.93
+[2026-05-25 07:40:08,898: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [warning  ] clip_footage_exhausted         clip_dur=7.105306 clip_id=files/fyimeyowp2s4 cursor=7.029999999999999 position=15
+[2026-05-25 07:40:08,898: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=0.83 position=15 speed_factor=1.0 target_s=0.83
+[2026-05-25 07:40:08,899: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [warning  ] clip_footage_exhausted         clip_dur=7.105306 clip_id=files/dtp4gwwhw642 cursor=7.105306 position=16
+[2026-05-25 07:40:08,899: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=1.15 position=16 speed_factor=1.0 target_s=1.15
+[2026-05-25 07:40:08,900: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [warning  ] clip_footage_exhausted         clip_dur=7.105306 clip_id=files/fyimeyowp2s4 cursor=7.105306 position=17
+[2026-05-25 07:40:08,900: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [debug    ] slot_planned                   actual_s=1.15 position=17 speed_factor=1.0 target_s=1.15
+[2026-05-25 07:40:08,901: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] assemble_phase_done            elapsed_ms=13 job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 phase=plan slots=17
+[2026-05-25 07:40:08,901: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_0.mp4 narrowing_windows=[]
+[2026-05-25 07:40:08,902: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] reframe_start                  aspect=other ass_overlays=0 end=3.5 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_0.mp4 overlays=0 speed=1.0 start=2.5
+[2026-05-25 07:40:08,903: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_1.mp4 narrowing_windows=[]
+[2026-05-25 07:40:08,903: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:08 [info     ] reframe_start                  aspect=other ass_overlays=0 end=1.5 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_1.mp4 overlays=0 speed=1.0 start=0.0
+[2026-05-25 07:40:09,095: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_0.mp4 size_mb=1
+[2026-05-25 07:40:09,096: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=194 slot_idx=0 target_duration_s=1.0
+[2026-05-25 07:40:09,096: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_2.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,097: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=1.5 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_2.mp4 overlays=0 speed=1.0 start=0.0
+[2026-05-25 07:40:09,099: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_1.mp4 size_mb=1
+[2026-05-25 07:40:09,100: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=197 slot_idx=1 target_duration_s=1.5
+[2026-05-25 07:40:09,101: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_4.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,101: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=6.1 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_4.mp4 overlays=0 speed=1.0 start=5.0
+[2026-05-25 07:40:09,217: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_2.mp4 size_mb=1
+[2026-05-25 07:40:09,218: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=121 slot_idx=2 target_duration_s=1.5
+[2026-05-25 07:40:09,219: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_3.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,219: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=7.105306 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_3.mp4 overlays=0 speed=1.0 start=1.6053059999999997
+[2026-05-25 07:40:09,222: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_3.mp4 size_mb=1
+[2026-05-25 07:40:09,223: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=122 slot_idx=3 target_duration_s=1.1
+[2026-05-25 07:40:09,224: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_2.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,224: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=2.0 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_2.mp4 overlays=0 speed=1.0 start=1.5
+[2026-05-25 07:40:09,328: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_5.mp4 size_mb=0
+[2026-05-25 07:40:09,328: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=104 slot_idx=5 target_duration_s=0.5
+[2026-05-25 07:40:09,329: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_3.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,329: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=7.105306 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_3.mp4 overlays=0 speed=1.0 start=6.245305999999999
+[2026-05-25 07:40:09,438: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_6.mp4 size_mb=0
+[2026-05-25 07:40:09,438: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=109 slot_idx=6 target_duration_s=0.86
+[2026-05-25 07:40:09,439: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_4.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,440: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=7.029999999999999 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_4.mp4 overlays=0 speed=1.0 start=6.1
+[2026-05-25 07:40:09,467: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_4.mp4 size_mb=3
+[2026-05-25 07:40:09,468: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=249 slot_idx=4 target_duration_s=5.5
+[2026-05-25 07:40:09,468: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_1.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,469: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=2.39 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_1.mp4 overlays=0 speed=1.0 start=1.5
+[2026-05-25 07:40:09,521: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_7.mp4 size_mb=0
+[2026-05-25 07:40:09,522: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=82 slot_idx=7 target_duration_s=0.93
+[2026-05-25 07:40:09,523: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_2.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,523: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=2.86 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_2.mp4 overlays=0 speed=1.0 start=2.0
+[2026-05-25 07:40:09,585: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_8.mp4 size_mb=1
+[2026-05-25 07:40:09,585: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=116 slot_idx=8 target_duration_s=0.89
+[2026-05-25 07:40:09,586: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_1.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,587: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=3.37 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_1.mp4 overlays=0 speed=1.0 start=2.39
+[2026-05-25 07:40:09,610: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_9.mp4 size_mb=0
+[2026-05-25 07:40:09,611: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=88 slot_idx=9 target_duration_s=0.86
+[2026-05-25 07:40:09,611: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_2.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,612: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=3.6399999999999997 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_2.mp4 overlays=0 speed=1.0 start=2.86
+[2026-05-25 07:40:09,688: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_10.mp4 size_mb=1
+[2026-05-25 07:40:09,689: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=102 slot_idx=10 target_duration_s=0.98
+[2026-05-25 07:40:09,690: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_1.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,690: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=4.26 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_1.mp4 overlays=0 speed=1.0 start=3.37
+[2026-05-25 07:40:09,712: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_11.mp4 size_mb=0
+[2026-05-25 07:40:09,713: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=101 slot_idx=11 target_duration_s=0.78
+[2026-05-25 07:40:09,714: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_3.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,714: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=7.105306 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_3.mp4 overlays=0 speed=1.0 start=6.175306
+[2026-05-25 07:40:09,805: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_13.mp4 size_mb=0
+[2026-05-25 07:40:09,806: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=92 slot_idx=13 target_duration_s=0.93
+[2026-05-25 07:40:09,806: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_4.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,807: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=7.105306 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_4.mp4 overlays=0 speed=1.0 start=6.275306
+[2026-05-25 07:40:09,810: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_12.mp4 size_mb=0
+[2026-05-25 07:40:09,811: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=120 slot_idx=12 target_duration_s=0.89
+[2026-05-25 07:40:09,811: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_3.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,812: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=7.105306 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_3.mp4 overlays=0 speed=1.0 start=5.955306
+[2026-05-25 07:40:09,886: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_14.mp4 size_mb=0
+[2026-05-25 07:40:09,886: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=80 slot_idx=14 target_duration_s=0.83
+[2026-05-25 07:40:09,887: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_filter_chain           color_hint=none color_trc=bt709 darkening_windows=[] filters=['colorspace=all=bt709:iall=bt709', 'framerate=fps=30', 'scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'] input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_4.mp4 narrowing_windows=[]
+[2026-05-25 07:40:09,888: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_start                  aspect=other ass_overlays=0 end=7.105306 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/clip_4.mp4 overlays=0 speed=1.0 start=5.955306
+[2026-05-25 07:40:09,924: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_15.mp4 size_mb=1
+[2026-05-25 07:40:09,924: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=113 slot_idx=15 target_duration_s=1.15
+[2026-05-25 07:40:09,995: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] reframe_done                   output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_16.mp4 size_mb=1
+[2026-05-25 07:40:09,996: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] slot_render_done               elapsed_ms=108 slot_idx=16 target_duration_s=1.15
+[2026-05-25 07:40:09,996: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] parallel_render_complete       slots=17
+[2026-05-25 07:40:09,997: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:09 [info     ] assemble_phase_done            elapsed_ms=1095 job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 phase=render_parallel slots=17 workers=2
+[2026-05-25 07:40:10,035: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:10 [info     ] font_cycle_fonts_resolved      count=7 custom=None settle=_default size=170
+[2026-05-25 07:40:10,658: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:10 [info     ] font_cycle_rendered            accelerated=True duration=5.5 fonts_available=7 frames=57 has_spans=False slot=4 text='ANTANANARIVO MADAGAS'
+[2026-05-25 07:40:10,659: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:10 [info     ] pre_burn_curtain_text          overlays=58 slot=4
+[2026-05-25 07:40:11,463: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:11 [info     ] curtain_close_tail_start       anim_start=3.967 animate_s=1.6 input=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_4_textburned.mp4
+[2026-05-25 07:40:12,578: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:12 [info     ] curtain_close_tail_done        bar_frames=49 elapsed_ms=1114 output=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/slot_4_curtain.mp4
+[2026-05-25 07:40:12,579: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:12 [info     ] interstitial_skip_zero_hold    slot=4 type=curtain-close
+[2026-05-25 07:40:12,579: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:12 [info     ] assemble_phase_done            elapsed_ms=2581 interstitial_count=1 job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 phase=curtain_and_interstitials post_render_clip_count=17
+[2026-05-25 07:40:12,681: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:12 [info     ] probe_complete                 aspect_ratio=9:16 avg_frame_rate=9768960/329779 codec=h264 color_transfer=bt709 color_trc=bt709 duration_s=21.576553 fps=30.0 path=/var/folders/jb/765psyzj2sj0zpcb9lnvsp9h0000gn/T/tmpmep0329c/group_0.mp4.copy.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=1080x1920
+[2026-05-25 07:40:12,682: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:12 [info     ] concat_stream_copy_ok          actual_s=21.58 expected_s=21.35 slots=17 tolerance_s=0.5
+[2026-05-25 07:40:12,682: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:12 [info     ] join_or_concat_groups          groups=1 has_interstitials=True slots=17 visual_boundaries=0
+[2026-05-25 07:40:12,686: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:12 [info     ] assemble_phase_done            clips=17 elapsed_ms=106 job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 phase=join
+[2026-05-25 07:40:12,707: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:12 [info     ] debug_stage_durations          joined_dur=21.576553 slot_count=17 slot_durations_sum=21.35
+[2026-05-25 07:40:12,717: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:12 [info     ] text_overlays_collected        deduped=1 raw=1
+[2026-05-25 07:40:12,738: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:12 [info     ] burn_text_overlays             animated_overlay_count=0 ass_count=0 png_count=1 static_overlay_count=1
+[2026-05-25 07:40:14,882: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:14 [info     ] burn_text_done                 ass_count=0 elapsed_ms=2142 png_count=1
+[2026-05-25 07:40:14,906: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:14 [info     ] debug_post_burn_duration       burned_dur=21.587007
+[2026-05-25 07:40:14,907: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:14 [info     ] assemble_phase_done            elapsed_ms=2195 job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 overlay_count=1 phase=text_overlay
+[2026-05-25 07:40:15,158: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:15 [info     ] audio_mix_durations            audio_dur=21.4 trimming_video=True use_duration=21.4 video_dur=21.59
+[2026-05-25 07:40:15,965: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:15 [info     ] audio_mix_durations            audio_dur=21.4 trimming_video=True use_duration=21.4 video_dur=21.58
+[2026-05-25 07:40:16,648: INFO/ForkPoolWorker-3] AFC is enabled with max remote calls: 10.
+[2026-05-25 07:40:31,913: INFO/ForkPoolWorker-3] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent "HTTP/1.1 200 OK"
+[2026-05-25 07:40:31,918: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:31 [info     ] agent_run                      agent=nova.compose.platform_copy attempts=1 cost_usd=0.000154 fallback_used=False job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 latency_ms=15268 model=gemini-2.5-pro outcome=ok prompt_version=2026-05-09 refusal_count=0 request_id=None schema_retry_count=0 segment_idx=None tokens_in=236 tokens_out=456
+[2026-05-25 07:40:31,929: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:31 [info     ] copy_generated                 hook=
+[2026-05-25 07:40:33,302: WARNING/ForkPoolWorker-3] 2026-05-25 07:40:33 [info     ] template_job_done              job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 output_url='https://storage.googleapis.com/nova-videos-dev/jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764/template_output.mp4?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=nova-dev%40travelx-490311.iam.gserviceaccount.com%2F20260525%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20260525T064032Z&X-Goog-Expires=86400&X-Goog-SignedHeaders=host&X-Goog-Signature=6adeec26e4f83002be15761b09785991c1511e41b461c62e3951981ef63e63f85d1ee52a17af4d1529c61addb571719bd453034bde6950d98e16cd52b1551196c1a0c4f635de5f4fc60b2a2a261027990321563ba799c21a4c6443e76579f196b9ea2e7fb1a90b0d5a45a4e922a5b07ca7ea97b50d8370db04982a78c23f64b0ce0ec913d4a344813e7889ba0a2b50ef99efe152a676007ee534f4f5716c1c0f2a7b68aec7d9133bc1545c877105031dc7992a1c947ed18df0db31329de22051cb4db9b202b4ffd5cfae33925f267c6b91a2c897b3c528336c9440bb84a5d81d21165595c98222738bebddd5d4ce1d48fa64c363cc89d660fa39e8b5e314595e'
+[2026-05-25 07:40:33,318: INFO/ForkPoolWorker-3] Task tasks.orchestrate_template_job[3e398734-b9e6-42c5-808a-dd5a27b4b764] succeeded in 47.06320858400068s: None
+
+worker: Warm shutdown (MainProcess)

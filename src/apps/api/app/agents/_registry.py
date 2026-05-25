@@ -31,6 +31,11 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     ("nova.audio.song_classifier", "app.agents.song_classifier", "SongClassifierAgent"),
     ("nova.audio.song_sections", "app.agents.song_sections", "SongSectionsAgent"),
     ("nova.audio.music_matcher", "app.agents.music_matcher", "MusicMatcherAgent"),
+    (
+        "nova.audio.lyric_style_selector",
+        "app.agents.lyric_style_selector",
+        "LyricStyleSelectorAgent",
+    ),
     # Generative-edit text agents (no reference template; AI-authored overlay text)
     (
         "nova.compose.overlay_format_matcher",

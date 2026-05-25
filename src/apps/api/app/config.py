@@ -126,6 +126,18 @@ class Settings(BaseSettings):
     # no in-flight job is mid-rendered with a switched-on flag.
     text_renderer_skia_enabled: bool = True
 
+    # Universal text-overlay constraint pass. When True (default), every
+    # overlay collected by `_collect_absolute_overlays` (agentic templates +
+    # music lyrics + generative edits — NOT classic templates, which never
+    # carry the canonical overlay dict through this path) is run through
+    # `app.pipeline.overlay_constraints.apply_overlay_constraints`: text is
+    # shrunk/wrapped to fit a max line count and repositioned into the 9:16
+    # safe zone. The pass only rewrites `text_size_px` / `position_*_frac`
+    # (fields both renderers already honor), so it is renderer-parity-safe and
+    # can only improve overflowing text. Flip to False to disable the guarantee
+    # (e.g. to isolate a layout regression) without redeploying.
+    style_constraints_enabled: bool = True
+
     # agent_run retention (days). Rows with job_id IS NOT NULL and
     # created_at older than this are deleted by the daily
     # `tasks.cleanup_agent_runs` Beat task. Template- and track-scoped rows
