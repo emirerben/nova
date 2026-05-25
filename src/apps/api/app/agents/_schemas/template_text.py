@@ -103,9 +103,14 @@ class TemplateTextOverlay(BaseModel):
     start_s: float = Field(ge=0.0, description="Global timeline start in seconds.")
     end_s: float = Field(gt=0.0, description="Global timeline end in seconds. > start_s.")
     bbox: TextBBox
+    # ADVISORY when the build chose a style set: font_color_hex / effect /
+    # size_class describe what the agent SAW, but the chosen set
+    # (TemplateTextOutput.style_set_id) owns the rendered styling per role.
+    # resolve_overlay_style() only falls back to these for keys the set leaves
+    # null. Kept required/validated for the eval round-trip + the Layer-2 path.
     font_color_hex: str = Field(
         pattern=r"^#[0-9A-Fa-f]{6}$",
-        description="Dominant text pixel color at sample_frame_t.",
+        description="Dominant text pixel color at sample_frame_t (advisory under a style set).",
     )
     effect: str = Field(default="none")
     role: str = Field(default="label")
@@ -209,6 +214,18 @@ class TemplateTextOutput(BaseModel):
 
     Orchestrator groups by `slot_index` and writes back into `recipe.slots[i].text_overlays`,
     replacing whatever `template_recipe` originally emitted.
+
+    `style_set_id` is the ONE curated style set the agent chose for the whole
+    template (Layer-1 only — the Gemini pass sees the video and judges its
+    aesthetic). It drives per-role styling at render time via
+    `app.pipeline.style_sets.resolve_overlay_style`, making the agent's
+    per-overlay `font_color_hex` / `effect` / `size_class` advisory. `None`
+    means "no set chosen" — the Layer-2 OCR pipeline leaves it None and keeps
+    its existing uniform styling (set application for Layer-2 is a follow-up).
     """
 
     overlays: list[TemplateTextOverlay] = Field(default_factory=list)
+    style_set_id: str | None = Field(
+        default=None,
+        description="Chosen curated style set id (Layer-1). None = uniform/legacy styling.",
+    )

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.46.0] - 2026-05-25
+
+### Added
+- **Agentic templates now choose a curated style set for their text (Phase 3 of style sets).** The `template_text` agent — which already watches the template video to extract overlays — now also picks ONE style set (`travel_editorial`, `lifestyle_clean`, or `default`) matching the template's aesthetic. That set owns per-role typography (font / size / color / effect / position) at render time via `resolve_overlay_style`, replacing the prior **uniform 120px left-anchored** look for agentic overlays with a coherent, designed per-role style. The agent's per-overlay `font_color_hex` / `effect` / `size_class` become advisory hints. The universal constraint pass still guarantees every overlay fits the 9:16 safe zone.
+  - Threading: `TemplateTextOutput.style_set_id` (Layer-1 only; `None` keeps the Layer-2 OCR path on its existing uniform styling) → carried onto each slot overlay (`_style_set_styled` sentinel, which makes `text_designer` skip them) → resolved per-role in BOTH overlay-build sites (`_collect_absolute_overlays` and the curtain-slot pre-burn path).
+  - Cache: `CACHE_SCHEMA_VERSION` `s2`→`s3` (the Layer-1 agentic path keys on the base cache key, so this is what forces every cached recipe to reanalyze with the new styling; classic recipe-only templates reanalyze once with unchanged output). `STYLE_SETS_VERSION` is also folded into the Layer-2 content-hash so editing `style-sets.json` reanalyzes Layer-2 recipes. `template_text` `prompt_version` bumped to `2026-05-25`.
+
+### Notes
+- **Pre-merge gates (per CLAUDE.md):** this changes the `template_text` prompt + schema, so a **live eval run** (`pytest tests/evals/test_template_text_evals.py --with-judge --eval-mode=live`) must validate set-selection quality before merge, and a **real agentic template render** must confirm the burned per-role styling (the admin preview is not sufficient for agentic/Skia). Structural evals (235) + unit tests pass; live verification is outstanding.
+- Layer-2 OCR-pipeline overlays keep their uniform styling for now — applying style sets to the Layer-2 path is a follow-up.
+
 ## [0.4.45.2] - 2026-05-25
 
 ### Added

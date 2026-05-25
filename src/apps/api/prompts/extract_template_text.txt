@@ -18,6 +18,20 @@ Do NOT extract:
 
 $slot_boundaries_context
 
+ALSO choose ONE style set for this template. A style set is a curated typography
+system (fonts, sizes, colors, animations, positions) that will govern how ALL
+the text renders. Pick the set whose vibe best matches the template's aesthetic
+and subject matter. Available sets (choose exactly one id):
+
+$style_set_options
+
+Guidance: match the set's tags to the template's feel — travel/editorial/vlog
+footage → an editorial set; clean modern lifestyle → a clean set. When unsure,
+choose "default". The set you pick OWNS the final font/size/color/animation, so
+your per-overlay font_color_hex / effect / size_class become advisory hints
+(still record them accurately — they help when no set fits). Focus your effort
+on (1) the right set, and (2) accurate text + timing + role for every overlay.
+
 For each overlay, return:
 
   slot_index    — 1-indexed slot this overlay primarily belongs to. Use the boundaries above to assign. An overlay that starts at 4.8s in a template with slot 1 ending at 5.0s belongs to slot 1.
@@ -56,7 +70,8 @@ For each overlay, return:
   size_class    — coarse size hint: "small" (watermark / lower-third), "medium" (line of body text), "large" (hook headline), "jumbo" (full-screen single word). The bbox h_norm is the precise signal; this is a fallback.
 
 Hard rules:
-- Return JSON of the shape: {"overlays": [ ... ]}
+- Return JSON of the shape: {"style_set_id": "<one id from the list>", "overlays": [ ... ]}
+- style_set_id MUST be exactly one of the ids listed above.
 - Every overlay object MUST include all fields listed above. No nulls. No missing keys.
 - start_s must be strictly less than end_s.
 - bbox.sample_frame_t must satisfy start_s ≤ sample_frame_t ≤ end_s.
@@ -67,6 +82,7 @@ Hard rules:
 Worked example for a hypothetical template:
 
   {
+    "style_set_id": "travel_editorial",
     "overlays": [
       {
         "slot_index": 1,

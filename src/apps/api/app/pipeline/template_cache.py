@@ -91,7 +91,16 @@ TEMPLATE_PROMPT_VERSION = "v1"
 #     collided on the same Redis entry (incident: "not just luck 2" returned
 #     the old "not just luck" recipe on first analyze). s2 forces a one-time
 #     rebuild wave but eliminates the collision class entirely.
-CACHE_SCHEMA_VERSION = "s2"
+#   s2 → s3 (2026-05-25): agentic template_text now selects a curated style set
+#     that owns per-role text styling (font/size/color/effect/position),
+#     replacing the prior uniform 120px overlay look. The recipe→overlay
+#     mapping changed shape, so every cached recipe must reanalyze. The
+#     Layer-1 agentic path keys on the base key (no v2 content-hash), so a
+#     CACHE_SCHEMA_VERSION bump is the only thing that invalidates it; this
+#     also reanalyzes classic recipe-only templates once (their output is
+#     unchanged — just re-paid). STYLE_SETS_VERSION is folded into the Layer-2
+#     content-hash separately (see compute_text_overlay_version).
+CACHE_SCHEMA_VERSION = "s3"
 
 # Which set of agents produced the cached recipe. Manual templates use only
 # TemplateRecipeAgent and key as "recipe-only"; agentic templates additionally
@@ -224,9 +233,15 @@ def compute_text_overlay_version(
     if settings_dict is None:
         # Settings keys whose value affects Layer-2 routing/behavior. Keep
         # narrow — every key here invalidates every Layer-2 cache entry on
-        # value change.
+        # value change. STYLE_SETS_VERSION is included so editing
+        # style-sets.json re-analyzes Layer-2 agentic recipes (the styled
+        # overlays resolve against the set at render, but the cached recipe
+        # carries the chosen style_set_id; a library edit can change the look).
+        from app.pipeline.style_sets import STYLE_SETS_VERSION  # noqa: PLC0415
+
         settings_dict = {
             "text_overlay_v2_enabled": bool(getattr(settings, "text_overlay_v2_enabled", False)),
+            "style_sets_version": STYLE_SETS_VERSION,
         }
 
     prompt_hash = _sha256_files(prompt_paths)
