@@ -24,7 +24,6 @@ const POLL_MS = 2000;
 export default function GenerativePage() {
   const [uploads, setUploads] = useState<{ gcs_path: string; name: string }[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [targetDuration, setTargetDuration] = useState(20);
   const [jobId, setJobId] = useState<string | null>(null);
   const [status, setStatus] = useState<GenerativeJobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -111,16 +110,13 @@ export default function GenerativePage() {
   const handleGenerate = useCallback(async () => {
     setError(null);
     try {
-      const res = await createGenerativeJob(
-        uploads.map((u) => u.gcs_path),
-        targetDuration,
-      );
+      const res = await createGenerativeJob(uploads.map((u) => u.gcs_path));
       setJobId(res.job_id);
       setStatus(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start");
     }
-  }, [uploads, targetDuration]);
+  }, [uploads]);
 
   const refresh = useCallback(async () => {
     if (jobId) setStatus(await getGenerativeJobStatus(jobId));
@@ -162,19 +158,10 @@ export default function GenerativePage() {
               )}
             </div>
 
-            <div>
-              <label className="block text-sm text-zinc-400 mb-2">
-                Target length: {targetDuration}s
-              </label>
-              <input
-                type="range"
-                min={5}
-                max={60}
-                value={targetDuration}
-                onChange={(e) => setTargetDuration(Number(e.target.value))}
-                className="w-64"
-              />
-            </div>
+            <p className="text-xs text-zinc-500">
+              Length is set automatically from your clips and the matched song —
+              the edit is never longer than the footage you upload.
+            </p>
 
             <button
               onClick={handleGenerate}

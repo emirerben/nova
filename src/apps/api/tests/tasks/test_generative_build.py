@@ -80,15 +80,62 @@ def test_meta_to_summary_no_moments_keeps_default():
 
 def test_build_no_music_recipe_one_slot_per_clip_capped():
     metas = [_Meta(f"c{i}", 5.0) for i in range(10)]
-    recipe = gb._build_no_music_recipe(metas, target_duration_s=18.0)
+    recipe = gb._build_no_music_recipe(metas, available_footage_s=18.0)
     assert recipe["shot_count"] == gb._MAX_NO_MUSIC_SLOTS
     assert recipe["beat_timestamps_s"] == []
     assert all(s["target_duration_s"] > 0 for s in recipe["slots"])
 
 
 def test_build_no_music_recipe_single_clip():
-    recipe = gb._build_no_music_recipe([_Meta("c1", 5.0)], target_duration_s=10.0)
+    recipe = gb._build_no_music_recipe([_Meta("c1", 5.0)], available_footage_s=10.0)
     assert recipe["shot_count"] == 1
+
+
+def test_build_no_music_recipe_total_never_exceeds_footage():
+    # The no-music arrangement must never lay out more runtime than the footage.
+    metas = [_Meta(f"c{i}", 2.0) for i in range(3)]  # 6s total
+    recipe = gb._build_no_music_recipe(metas, available_footage_s=6.0)
+    assert recipe["total_duration_s"] <= 6.0 + 1e-6
+
+
+# ── Footage-derived sizing ─────────────────────────────────────────────────────
+
+
+class _Probe:
+    def __init__(self, duration_s):
+        self.duration_s = duration_s
+
+
+def test_available_footage_sums_probes():
+    pm = {"/a.mp4": _Probe(3.0), "/b.mp4": _Probe(4.5)}
+    assert gb._available_footage_s(pm) == 7.5
+
+
+def test_available_footage_ignores_bad_probes():
+    # A failed/zero probe contributes nothing — the ceiling stays conservative.
+    pm = {"/a.mp4": _Probe(3.0), "/b.mp4": _Probe(0.0), "/c.mp4": _Probe(-1.0)}
+    assert gb._available_footage_s(pm) == 3.0
+
+
+def test_fit_section_shrinks_window_to_footage():
+    # Song best section is 45s but only 12s of footage exists → window caps at 12s.
+    cfg = {"best_start_s": 10.0, "best_end_s": 55.0}
+    out = gb._fit_section_to_footage(cfg, available_footage_s=12.0)
+    assert out["best_start_s"] == 10.0  # offset untouched (audio alignment)
+    assert out["best_end_s"] == 22.0  # 10 + 12
+
+
+def test_fit_section_leaves_short_window_alone():
+    # Footage exceeds the section → the song's own structure stays the ceiling.
+    cfg = {"best_start_s": 5.0, "best_end_s": 20.0}  # 15s window
+    out = gb._fit_section_to_footage(cfg, available_footage_s=100.0)
+    assert out["best_end_s"] == 20.0
+
+
+def test_fit_section_noops_on_zero_footage():
+    cfg = {"best_start_s": 0.0, "best_end_s": 30.0}
+    out = gb._fit_section_to_footage(cfg, available_footage_s=0.0)
+    assert out["best_end_s"] == 30.0
 
 
 # ── Skia kill-switch guard ───────────────────────────────────────────────────────
@@ -226,7 +273,7 @@ def test_original_audio_variant_skips_mix(monkeypatch, tmp_path):
         clip_id_to_local={"c1": "/x.mp4"},
         clip_id_to_gcs={"c1": "music-uploads/x.mp4"},
         probe_map={},
-        target_duration_s=12.0,
+        available_footage_s=12.0,
         agent_text=None,
         agent_form={},
         variant_dir=str(vdir),
@@ -266,7 +313,7 @@ def test_song_variant_calls_mix(monkeypatch, tmp_path):
         clip_id_to_local={"c1": "/x.mp4"},
         clip_id_to_gcs={"c1": "music-uploads/x.mp4"},
         probe_map={},
-        target_duration_s=12.0,
+        available_footage_s=12.0,
         agent_text=None,
         agent_form={},
         variant_dir=str(vdir),

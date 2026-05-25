@@ -13,6 +13,41 @@ All notable changes to this project will be documented in this file.
 - **Pre-merge gates (per CLAUDE.md):** this changes the `template_text` prompt + schema, so a **live eval run** (`pytest tests/evals/test_template_text_evals.py --with-judge --eval-mode=live`) must validate set-selection quality before merge, and a **real agentic template render** must confirm the burned per-role styling (the admin preview is not sufficient for agentic/Skia). Structural evals (235) + unit tests pass; live verification is outstanding.
 - Layer-2 OCR-pipeline overlays keep their uniform styling for now — applying style sets to the Layer-2 path is a follow-up.
 
+## [0.4.45.6] - 2026-05-25
+
+### Changed
+- **Style sets restyled to an editorial look — serif fonts, smaller sizes.** The curated style-set library (`assets/style_sets/style-sets.json`) dropped the sans fonts (Montserrat / DM Sans / Space Grotesk read as cheap) for editorial serifs from the font registry: Playfair Display, Playfair Display Regular, Bodoni Moda (gold travel label + punchy per-word pop), Fraunces (karaoke sweep). Sizes pulled down from the coarse `large`/`xlarge` buckets (120–150px) to restrained explicit `text_size_px` (~44–92px: hooks ~88–92, labels ~58–62, cta ~44, lyrics ~58–64), and strokes thinned to 0 on agentic sets (relying on the renderer's gaussian shadow) / 2 on lyrics. `lifestyle_clean` uses Playfair Display Regular (the previously-tried Instrument Serif is a condensed face that read as horizontally squeezed). `lyric_word_pop_punchy` is now left-aligned (`text_anchor: left`, `position_x_frac: 0.06`) so the cumulative per-word reveal grows from the left edge instead of re-centering each word. Added a **`word_reveal`** set capturing the kinetic left-anchored pop-in look of agentic template `89cde014` ("not just luck 2") — Playfair serif, white, left edge at 6% — so that statement-reveal style is selectable/reusable (the per-word cumulative staging itself remains a pipeline behavior). Three more distinct aesthetics added: **`high_fashion`** (Bodoni Moda, magazine/luxury, white headline + gold label), **`bold_statement`** (Fraunces heavy serif, pop-in entrance), and **`film_mono`** (Space Mono, documentary/indie-film feel). Agentic set sizes normalized to a consistent scale (hook/intro 88, reaction 72, label 58, body 48, cta 44). Added two **typed-text animation** sets (Space Mono, left-anchored): **`typewriter`** (char-by-char reveal, the existing `typewriter` effect) and **`ai_answer`** (word-by-word stream with a blinking cursor — a new **`stream-in`** Skia effect that reveals ~6 words/s, like how an AI types out an answer; degrades to full static text on the Pillow path). Takes effect immediately for the live music-lyric path (resolved per job); `STYLE_SETS_VERSION` bumped `…-05-25a` → `…-05-25d`.
+
+## [0.4.45.5] - 2026-05-25
+
+### Changed
+- **Generative edits can no longer run longer than the footage you upload.** The "Target length" slider is gone (public `/generative` + admin launch panel) — it only ever influenced the original-audio variant anyway, while the two song variants silently sized output to the matched track's full best-section window (45s+) and *stretched* short clips with slow-motion (`setpts`, down to 0.4×) to fill the beat slots. Output length is now **derived** and bounded by real footage in every case:
+  - **Music variants** clamp the song's best-section window to the total uploaded footage before slicing it into beat slots (`_fit_section_to_footage` in `generative_build.py`), so a 12s upload on a 45s song section produces a ~12s edit, not a 45s one. The audio offset (and lyric timing) are untouched, so beat alignment is preserved.
+  - **No-music variant** sizes its arrangement from the footage total instead of the slider.
+  - **No stretch-to-fill, ever.** `_assemble_clips`/`_plan_slots` gained an `allow_slowdown_fill` flag (default `True` — templates and music jobs are byte-for-byte unchanged); generative edits pass `False`, so a clip shorter than its slot now shrinks the slot to the real footage (at 1.0× speed, no frozen-frame pad) instead of being slowed down. A `clip_footage_exhausted_trimmed` event is recorded to the job-debug trace.
+  - AI still trims clips *shorter* when the matcher prefers it (weak / no-action sections) — only manufacturing extra runtime is forbidden.
+  - Stale frontends that still POST `target_duration_s` are tolerated (the field is dropped, not rejected). The admin generative list drops its now-vestigial "target length" column.
+  - Verified on a real prod-image local render (footage-bounded output + `clip_footage_exhausted_trimmed`, no slowdown). `make local-render MODE=generative CLIPS="..."` now drives this path.
+
+## [0.4.45.4] - 2026-05-25
+
+### Fixed
+- **Beat-sync music lyrics now render via Skia (not libass), and long lyric lines no longer clip off-screen.** Two bugs surfaced by a real local music render of the new style-set lyric selector:
+  - **Routing:** `_run_music_job` assembled clips without forwarding a Skia flag, so beat-sync music lyric overlays fell through to the libass/ASS path — contradicting the renderer-split intent (and the templated-music path, which already forces Skia). `_assemble_clips` gains a `use_skia` override (defaults to `is_agentic`, so every existing caller is unchanged) and `_run_music_job` passes `use_skia=True`. Beat-sync music lyrics now render with HarfBuzz shaping + paint shadows like the rest of the agentic/music output.
+  - **Single-line overflow:** the universal constraint pass measured text as if it would *wrap*, but karaoke-line / lyric-line effects render on a single un-wrapped line. A long lyric "fit" as 3 wrapped lines and was then drawn as one 3×-too-wide line, clipping off both edges. The constraint pass now fits single-line effects (`karaoke-line`, `lyric-line`, cumulative pop-in) to one line — verified on a real render: "city lights keep calling out my name" shrank 120px→46px and sits fully on-screen with the amber karaoke sweep intact.
+- Removed accidentally-committed `.devtest/` dev logs from version control and added `.devtest/` to `.gitignore`.
+
+### Added
+- `scripts/preview_style_sets.py` (renders a visual comparison grid of all style sets through the real renderer) and `scripts/seed_demo_music_track.py` (seeds a ready+published beat-sync track for local lyric-selector testing) — local dev tooling.
+
+## [0.4.45.3] - 2026-05-25
+
+### Added
+- **A dedicated place to see and analyze generative edits in admin.** Generative edits were inspectable only by hunting for a job ID and opening `/admin/jobs/{id}` — there was no nav entry, no way to list them, and the jobs-list type filter had no `generative` option (the backend accepted it but the dropdown never offered it). This adds a **Generative** admin section (`/admin/generative`):
+  - A **recent generative jobs** table showing status, clip count + target length, and per-variant readiness chips (AI text / Lyrics / song, colored by render outcome) at a glance, each row linking into the existing `/admin/jobs/{id}` detail view (variant video tiles, agent runs, pipeline trace — reused, not duplicated).
+  - A **launch/test panel** to upload clips and kick off a generative job straight from admin (reuses the public generative endpoints), so you can drive a test edit and watch it render in the list.
+  - The `/admin/jobs` type-filter dropdown now offers **Generative**, backed by a new admin-gated `GET /admin/generative` endpoint that surfaces the per-variant summary the generic job list defers.
+
 ## [0.4.45.2] - 2026-05-25
 
 ### Added

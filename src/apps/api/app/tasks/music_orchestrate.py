@@ -668,6 +668,11 @@ def _run_music_job(job_id: str) -> None:
             user_subject="",
             interstitials=[],
             force_single_pass=False,
+            # Lyric overlays render via Skia (HarfBuzz shaping, paint shadows),
+            # matching the templated-music path + the renderer-split intent.
+            # Gated globally by settings.text_renderer_skia_enabled inside
+            # _burn_text_overlays.
+            use_skia=True,
         )
 
         # [10] Mix in music track audio

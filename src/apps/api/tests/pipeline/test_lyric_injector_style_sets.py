@@ -61,7 +61,8 @@ def test_karaoke_set_picks_karaoke_injector() -> None:
     overlays = recipe["slots"][0]["text_overlays"]
     assert overlays, "expected an injected lyric overlay"
     assert overlays[0]["effect"] == "karaoke-line"
-    assert overlays[0]["font_family"] == "Space Grotesk"
+    # lyric_karaoke_bold uses Fraunces after the editorial restyle (was Space Grotesk).
+    assert overlays[0]["font_family"] == "Fraunces"
 
 
 def test_no_set_id_unchanged_behavior() -> None:
