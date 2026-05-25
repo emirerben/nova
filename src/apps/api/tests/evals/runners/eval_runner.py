@@ -235,6 +235,14 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.transition_picker import TransitionPickerAgent
 
         return TransitionPickerAgent
+    if agent_name == "nova.compose.overlay_format_matcher":
+        from app.agents.overlay_format_matcher import OverlayFormatMatcherAgent
+
+        return OverlayFormatMatcherAgent
+    if agent_name == "nova.compose.intro_writer":
+        from app.agents.intro_writer import IntroTextWriterAgent
+
+        return IntroTextWriterAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 
@@ -302,9 +310,7 @@ def run_eval(
     # `skip_agent_run_persist` keeps eval rows out of the prod `agent_run`
     # table — the admin debug view filters by job_id and eval runs have no
     # job, so persisting them would just be noise on the way to nowhere.
-    eval_ctx = RunContext(
-        extra={"skip_langfuse_trace": True, "skip_agent_run_persist": True}
-    )
+    eval_ctx = RunContext(extra={"skip_langfuse_trace": True, "skip_agent_run_persist": True})
 
     effective_input = fixture.input
     if live_input_normalizer is not None and model_client is not None:

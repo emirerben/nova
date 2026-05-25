@@ -1,0 +1,31 @@
+{
+  "agent": "nova.compose.overlay_format_matcher",
+  "prompt_version": "2026-05-24",
+  "input": {
+    "clip_set_summary": "n_clips=4 | avg_hook_score=8.2 | avg_energy=7.8 — first-person POV, fast cuts, a surprising reveal at the end",
+    "hero_clip": {
+      "clip_id": "clip_001",
+      "media_type": "video",
+      "duration_s": 4.2,
+      "subject": "person opening a box and reacting with shock",
+      "hook_text": "you won't believe what was inside",
+      "hook_score": 9.0,
+      "energy": 8.5,
+      "description": "handheld POV, fast push-in on the face, high-energy reveal"
+    }
+  },
+  "raw_text": "{\"effect\": \"karaoke-line\", \"position\": \"center\", \"size_class\": \"jumbo\", \"text_color\": \"#FFFFFF\", \"highlight_color\": \"#FFD24A\", \"text_anchor\": \"center\", \"matched_example_ids\": [\"pov-surprise-karaoke-01\"]}",
+  "output": {
+    "effect": "karaoke-line",
+    "position": "center",
+    "size_class": "jumbo",
+    "text_color": "#FFFFFF",
+    "highlight_color": "#FFD24A",
+    "text_anchor": "center",
+    "matched_example_ids": ["pov-surprise-karaoke-01"]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "high-energy POV reveal → karaoke-line jumbo center, matched the pov-surprise exemplar"
+  }
+}
