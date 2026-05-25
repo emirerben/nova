@@ -166,6 +166,14 @@ function AdminNav({ onLogout }: { onLogout: () => void }) {
           >
             Jobs
           </NavLink>
+          <NavLink
+            href="/admin/generative"
+            active={
+              pathname === "/admin/generative" || pathname.startsWith("/admin/generative/")
+            }
+          >
+            Generative
+          </NavLink>
           <NavLink href="/admin/templates/new" active={pathname === "/admin/templates/new"}>
             New Template
           </NavLink>

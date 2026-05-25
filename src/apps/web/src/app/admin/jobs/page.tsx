@@ -52,6 +52,7 @@ const JOB_TYPE_LABEL: Record<string, string> = {
   template: "Template",
   music: "Music",
   auto_music: "Auto-music",
+  generative: "Generative",
 };
 
 export default function AdminJobsPage() {
@@ -152,6 +153,7 @@ export default function AdminJobsPage() {
                 <option value="music">Music</option>
                 <option value="template">Template</option>
                 <option value="auto_music">Auto-music</option>
+                <option value="generative">Generative</option>
                 <option value="default">Default</option>
               </select>
             </label>
