@@ -39,6 +39,7 @@ VALID_EFFECTS: frozenset[str] = frozenset(
         "bounce",
         "slide-in",
         "slide-up",
+        "stream-in",
         "static",
         "none",
     }

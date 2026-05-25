@@ -1,5 +1,5 @@
 {
-  "version": "style-sets-2026-05-25c",
+  "version": "style-sets-2026-05-25d",
   "_doc": "Curated text style sets. Each set defines per-ROLE styling that fully owns the look of an overlay (the LLM/recipe supplies only text + timing + role). Every `font_family` MUST be a key in assets/fonts/font-registry.json; every `effect` must be in VALID_EFFECTS (app/agents/_schemas/template_text.py) plus the renderer-level karaoke-line/lyric-line; every `position` must be a key in _POSITION_Y (app/pipeline/text_overlay.py). Fields left null fall through to the LLM/legacy advisory value, then the renderer default. Design direction: editorial fonts (serif + one mono; no cheap geometric sans), restrained sizes (text_size_px ~38-88, consistent scale across agentic sets), thin strokes (rely on the renderer's gaussian shadow). See app/pipeline/style_sets.py. Editing this file changes STYLE_SETS_VERSION which is folded into the Layer-2 cache key.",
   "sets": [
     {
@@ -133,6 +133,36 @@
         "reaction": {"font_family": "Space Mono", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
         "body": {"font_family": "Space Mono", "text_size_px": 38, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
         "intro": {"font_family": "Space Mono", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0}
+      }
+    },
+    {
+      "id": "typewriter",
+      "label": "Typewriter — Letter by Letter",
+      "_doc": "Classic mechanical typewriter: Space Mono, char-by-char reveal (effect=typewriter, ~12 chars/s), left-anchored so it types rightward from a fixed margin.",
+      "tags": ["agentic", "generative", "typewriter", "retro", "mechanical", "kinetic"],
+      "applies_to": ["agentic", "generative"],
+      "roles": {
+        "hook": {"font_family": "Space Mono", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "typewriter", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "label": {"font_family": "Space Mono", "text_size_px": 40, "text_color": "#FFFFFF", "effect": "typewriter", "position": "center-label", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "cta": {"font_family": "Space Mono", "text_size_px": 36, "text_color": "#FFFFFF", "effect": "typewriter", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "reaction": {"font_family": "Space Mono", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "typewriter", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "body": {"font_family": "Space Mono", "text_size_px": 38, "text_color": "#FFFFFF", "effect": "typewriter", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "intro": {"font_family": "Space Mono", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "typewriter", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0}
+      }
+    },
+    {
+      "id": "ai_answer",
+      "label": "AI Answer — Streaming",
+      "_doc": "How an AI returns an answer: Space Mono, word-by-word stream-in with a blinking cursor (effect=stream-in, ~6 words/s), left-anchored so the answer grows rightward like a chat response.",
+      "tags": ["agentic", "generative", "ai", "streaming", "terminal", "tech"],
+      "applies_to": ["agentic", "generative"],
+      "roles": {
+        "hook": {"font_family": "Space Mono", "text_size_px": 54, "text_color": "#FFFFFF", "effect": "stream-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "label": {"font_family": "Space Mono", "text_size_px": 40, "text_color": "#FFFFFF", "effect": "stream-in", "position": "center-label", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "cta": {"font_family": "Space Mono", "text_size_px": 36, "text_color": "#FFFFFF", "effect": "stream-in", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "reaction": {"font_family": "Space Mono", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "stream-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "body": {"font_family": "Space Mono", "text_size_px": 40, "text_color": "#FFFFFF", "effect": "stream-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "intro": {"font_family": "Space Mono", "text_size_px": 54, "text_color": "#FFFFFF", "effect": "stream-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0}
       }
     }
   ]
