@@ -1,0 +1,60 @@
+INFO:     Started server process [89676]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:54847 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54853 - "POST /uploads/presigned HTTP/1.1" 422 Unprocessable Entity
+2026-05-25 07:38:56 [info     ] presigned_url_created          job_id=d51dba76-a5dc-4299-a8cc-f69736d4c132 platforms=['tiktok']
+INFO:     127.0.0.1:54856 - "POST /uploads/presigned HTTP/1.1" 201 Created
+2026-05-25 07:39:04 [info     ] presigned_url_created          job_id=de08adb7-86ef-4e67-867f-65e462e7085f platforms=['tiktok']
+INFO:     127.0.0.1:54860 - "POST /uploads/presigned HTTP/1.1" 201 Created
+INFO:     127.0.0.1:54863 - "POST /template-jobs HTTP/1.1" 422 Unprocessable Entity
+INFO:     127.0.0.1:54865 - "POST /template-jobs HTTP/1.1" 422 Unprocessable Entity
+INFO:     127.0.0.1:54867 - "POST /template-jobs HTTP/1.1" 422 Unprocessable Entity
+INFO:     127.0.0.1:54869 - "GET /templates/7b4a98d5-cf76-4724-a870-e2388d590932 HTTP/1.1" 200 OK
+2026-05-25 07:39:45 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=https://storage.googleapis.com/nova-videos-dev/dev-user/de08adb7-86ef-4e67-867f-65e462e7085f/raw.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+2026-05-25 07:39:45 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=https://storage.googleapis.com/nova-videos-dev/dev-user/de08adb7-86ef-4e67-867f-65e462e7085f/raw.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+2026-05-25 07:39:45 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=https://storage.googleapis.com/nova-videos-dev/dev-user/de08adb7-86ef-4e67-867f-65e462e7085f/raw.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+2026-05-25 07:39:45 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=https://storage.googleapis.com/nova-videos-dev/dev-user/de08adb7-86ef-4e67-867f-65e462e7085f/raw.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+2026-05-25 07:39:45 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=https://storage.googleapis.com/nova-videos-dev/dev-user/de08adb7-86ef-4e67-867f-65e462e7085f/raw.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+2026-05-25 07:39:46 [info     ] template_job_created           clips=5 inputs={'location': 'Antananarivo Madagascar'} job_id=3e398734-b9e6-42c5-808a-dd5a27b4b764 template_id=7b4a98d5-cf76-4724-a870-e2388d590932 template_kind=multi_clip_montage
+INFO:     127.0.0.1:54871 - "POST /template-jobs HTTP/1.1" 201 Created
+INFO:     127.0.0.1:54901 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54914 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54918 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54921 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54924 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54928 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54931 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54934 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54939 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54941 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54943 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54945 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54948 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54952 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54954 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54962 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54989 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54993 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54995 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54997 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54999 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55001 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55003 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55006 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55008 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55012 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55014 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55016 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55018 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55020 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55026 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55028 - "GET /template-jobs/3e398734-b9e6-42c5-808a-dd5a27b4b764 HTTP/1.1" 404 Not Found
+2026-05-25 07:52:27 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=https://storage.googleapis.com/nova-videos-dev/dev-user/de08adb7-86ef-4e67-867f-65e462e7085f/raw.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+2026-05-25 07:52:28 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=https://storage.googleapis.com/nova-videos-dev/dev-user/de08adb7-86ef-4e67-867f-65e462e7085f/raw.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+2026-05-25 07:52:28 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=https://storage.googleapis.com/nova-videos-dev/dev-user/de08adb7-86ef-4e67-867f-65e462e7085f/raw.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+2026-05-25 07:52:28 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=https://storage.googleapis.com/nova-videos-dev/dev-user/de08adb7-86ef-4e67-867f-65e462e7085f/raw.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+2026-05-25 07:52:28 [info     ] probe_complete                 aspect_ratio=other avg_frame_rate=30/1 codec=vp9 color_transfer=bt709 color_trc=bt709 duration_s=7.105306 fps=30.0 path=https://storage.googleapis.com/nova-videos-dev/dev-user/de08adb7-86ef-4e67-867f-65e462e7085f/raw.mp4 pix_fmt=yuv420p r_frame_rate=30/1 resolution=672x1232
+2026-05-25 07:52:28 [info     ] template_job_created           clips=5 inputs={'location': 'Antananarivo Madagascar'} job_id=c497e007-527f-4bdd-a485-618b9ef1b59d template_id=7b4a98d5-cf76-4724-a870-e2388d590932 template_kind=multi_clip_montage
+INFO:     127.0.0.1:55098 - "POST /template-jobs HTTP/1.1" 201 Created
