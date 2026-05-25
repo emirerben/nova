@@ -74,6 +74,21 @@
         "body": {"font_family": "Playfair Display Regular", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
         "intro": {"font_family": "Playfair Display Regular", "text_size_px": 84, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0}
       }
+    },
+    {
+      "id": "word_reveal",
+      "label": "Kinetic Word Reveal",
+      "_doc": "Captures the look of agentic template 89cde014 'not just luck 2' — a left-anchored, pop-in statement that reveals word-by-word and grows rightward/downward. The cumulative per-word staging itself is produced by the pipeline (Layer-2 / per-word injector); this set carries the visual signature (left anchor, pop-in, Playfair serif, white) so it's selectable for kinetic/story templates.",
+      "tags": ["agentic", "generative", "kinetic", "statement", "story", "bold"],
+      "applies_to": ["agentic", "generative"],
+      "roles": {
+        "hook": {"font_family": "Playfair Display", "text_size_px": 82, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "reaction": {"font_family": "Playfair Display", "text_size_px": 76, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "body": {"font_family": "Playfair Display", "text_size_px": 58, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "label": {"font_family": "Bodoni Moda", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center-label", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "cta": {"font_family": "Playfair Display Regular", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "pop-in", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "intro": {"font_family": "Playfair Display", "text_size_px": 82, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0}
+      }
     }
   ]
 }
