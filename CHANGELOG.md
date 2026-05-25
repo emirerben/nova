@@ -12,6 +12,8 @@ All notable changes to this project will be documented in this file.
 ### Notes
 - Resolution layer (`app/pipeline/style_sets.py`) is authoritative: the set's non-null fields win and the LLM/legacy per-overlay values only fill gaps. Initial library ships `default`, three lyric formats (`lyric_karaoke_bold`, `lyric_line_calm`, `lyric_word_pop_punchy`), and two agentic/generative sets (`travel_editorial`, `lifestyle_clean`).
 - Scoped to Phase 1 + 2 of the plan, plus curtain-path coverage caught during local verification. The agentic `template_text` refactor (cache-sensitive; requires a live-eval run per the prompt-change rule) and generative-edit wiring are deferred to follow-up PRs.
+### Fixed
+- **Music tracks with an unrecognized genre now label successfully instead of silently failing.** The song classifier previously refused any genre outside its fixed list (pop, hip-hop, electronic, cinematic, acoustic, comedy, other), so rock, R&B, Latin, jazz, and similar tracks ended up with no AI labels — which made them invisible to the auto-song matcher (including the new generative edits). Unrecognized genres are now mapped to the closest fit (rap/trap → hip-hop, EDM/house → electronic, orchestral/classical → cinematic, folk/country → acoustic) or to 'other', so every track gets labeled and can be matched.
 
 ## [0.4.45.1] - 2026-05-24
 

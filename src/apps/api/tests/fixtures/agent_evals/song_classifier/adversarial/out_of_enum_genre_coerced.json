@@ -1,0 +1,39 @@
+{
+  "agent": "nova.audio.song_classifier",
+  "prompt_version": "2026-05-15",
+  "input": {
+    "file_uri": "files/golden-music-track",
+    "file_mime": "audio/mp4",
+    "audio_template_output": {
+      "copy_tone": "sentimental",
+      "transition_style": "dissolve",
+      "pacing_style": "slow, breathy crossfades",
+      "creative_direction": "Acoustic piano ballad with a wistful melody and slow vocal phrasing. Cuts dissolve on long sustains.",
+      "subject_niche": "intimate moments montage"
+    }
+  },
+  "raw_text": "{\"labels\": {\"label_version\": \"2026-05-15\", \"genre\": \"rock\", \"vibe_tags\": [\"driving\", \"anthemic\", \"energetic\"], \"energy\": \"high\", \"pacing\": \"fast\", \"mood\": \"defiant rock anthem\", \"ideal_content_profile\": \"High-energy montages, sports highlights, fast cuts.\", \"copy_tone\": \"high_energy\", \"transition_style\": \"hard_cut\", \"color_grade\": \"warm contrast\"}, \"rationale\": \"Driving rock anthem with anthemic energy.\"}",
+  "output": {
+    "labels": {
+      "label_version": "2026-05-15",
+      "genre": "other",
+      "vibe_tags": [
+        "driving",
+        "anthemic",
+        "energetic"
+      ],
+      "energy": "high",
+      "pacing": "fast",
+      "mood": "defiant rock anthem",
+      "ideal_content_profile": "High-energy montages, sports highlights, fast cuts.",
+      "copy_tone": "high_energy",
+      "transition_style": "hard_cut",
+      "color_grade": "warm contrast"
+    },
+    "rationale": "Driving rock anthem with anthemic energy."
+  },
+  "meta": {
+    "source": "hand_authored_adversarial",
+    "case": "out-of-enum genre 'rock' is coerced to 'other' by MusicLabels._coerce_genre so the track still labels instead of the classifier refusing (prod blocker fix)"
+  }
+}
