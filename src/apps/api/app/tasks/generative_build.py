@@ -129,6 +129,17 @@ def _run_generative_job(job_id: str) -> None:
             {"clips": len(clip_metas), "available_footage_s": round(available_footage_s, 3)},
         )
 
+        # Tonemap HDR clips ONCE up front, before rendering any variant. The
+        # HLG/HDR10 → SDR tonemap is the single most expensive per-slot operation
+        # (70-123s/slot vs ~16s for SDR — prod job f91ebe67), and a generative
+        # job reframes every clip independently in all three variants, so the
+        # same HDR frames were being tonemapped up to 3×. Pre-converting each HDR
+        # source to an SDR intermediate (and repointing clip_id_to_local at it)
+        # means every subsequent per-slot reframe sees a bt709 input and skips
+        # the tonemap entirely. Generative-only; SDR clips are untouched.
+        n_tonemapped = _pretonemap_hdr_clips(clip_id_to_local, probe_map, tmpdir)
+        record_pipeline_event("reframe", "hdr_pretonemap_done", {"clips_converted": n_tonemapped})
+
         # [Phase 3] Agent text (best-effort).
         agent_text, agent_form = _run_text_agents(clip_metas, hero, job_id=job_id)
         record_pipeline_event("overlay", "agent_text_done", {"has_text": bool(agent_text)})
@@ -142,25 +153,53 @@ def _run_generative_job(job_id: str) -> None:
         # [Phase 4/5] Build the variant spec list and render each.
         _set_status(job_id, "rendering")
         specs = _variant_specs(best_track)
+
+        # Resume support. A prior run of THIS job (killed mid-render by a CI
+        # deploy / OOM, then redelivered via Celery acks_late) may have already
+        # rendered some variants and persisted them below. Reuse any persisted
+        # variant whose id AND matched track still apply — only render the rest.
+        # The track-id guard matters: _match_best_track re-runs on retry and
+        # Gemini may pick a different song, in which case the old song variant is
+        # stale and must re-render. The original-audio variant (no track) is
+        # always reusable. Net: a deploy that kills the job after two variants
+        # costs only the third on retry, not all three.
+        prior = {
+            v.get("variant_id"): v
+            for v in _existing_variants(job_id)
+            if v.get("ok") and v.get("output_url")
+        }
         results: list[dict[str, Any]] = []
         for rank, spec in enumerate(specs, start=1):
+            variant_id = spec["variant_id"]
+            spec_track_id = spec["track"].id if spec["track"] else None
+            reusable = prior.get(variant_id)
+            if reusable is not None and reusable.get("music_track_id") == spec_track_id:
+                record_pipeline_event(
+                    "assembly", "variant_resumed", {"variant_id": variant_id, "rank": rank}
+                )
+                results.append({**reusable, "rank": rank})
+                continue
+
             variant_dir = os.path.join(tmpdir, f"variant_{rank}")
             os.makedirs(variant_dir, exist_ok=True)
-            results.append(
-                _render_generative_variant(
-                    job_id=job_id,
-                    rank=rank,
-                    spec=spec,
-                    clip_metas=clip_metas,
-                    clip_id_to_local=clip_id_to_local,
-                    clip_id_to_gcs=clip_id_to_gcs,
-                    probe_map=probe_map,
-                    available_footage_s=available_footage_s,
-                    agent_text=agent_text,
-                    agent_form=agent_form,
-                    variant_dir=variant_dir,
-                )
+            result = _render_generative_variant(
+                job_id=job_id,
+                rank=rank,
+                spec=spec,
+                clip_metas=clip_metas,
+                clip_id_to_local=clip_id_to_local,
+                clip_id_to_gcs=clip_id_to_gcs,
+                probe_map=probe_map,
+                available_footage_s=available_footage_s,
+                agent_text=agent_text,
+                agent_form=agent_form,
+                variant_dir=variant_dir,
             )
+            # Persist immediately so a deploy/OOM after this point can't lose it,
+            # and so the status endpoint reveals variants as they finish rather
+            # than all-at-once at _finalize_job.
+            _upsert_variant_entry(job_id, result)
+            results.append(result)
 
     _finalize_job(job_id, results)
 
@@ -210,6 +249,100 @@ def _ingest_clips(clip_paths_gcs: list[str], tmpdir: str, *, job_id: str) -> dic
         },
         "hero": max(clip_metas, key=lambda m: float(getattr(m, "hook_score", 0.0) or 0.0)),
     }
+
+
+def _pretonemap_hdr_clips(
+    clip_id_to_local: dict[str, str],
+    probe_map: dict,
+    tmpdir: str,
+) -> int:
+    """Convert each HLG/HDR10 source to an SDR intermediate ONCE, in place.
+
+    Mutates `clip_id_to_local` (repoints HDR clips at their SDR intermediate)
+    and `probe_map` (adds a bt709 probe entry for each intermediate). Returns
+    the number of clips converted.
+
+    Why: the HDR→SDR tonemap is by far the most expensive per-slot reframe step
+    (zscale linear-light + float upconvert + tonemap). A generative job reframes
+    every clip independently in all three variants, so without this the same HDR
+    frames are tonemapped up to 3×. Running the tonemap once per clip and feeding
+    every variant the resulting bt709 file collapses that to a single pass.
+
+    Parity: reuses `reframe._ZSCALE_SDR_PIPELINE` verbatim (the v0.4.45.7 sky-
+    banding fix: linear-light lanczos downscale + mobius tonemap + error-diffusion
+    dither). The intermediate is already ~`output_height` tall and tagged bt709,
+    so each per-slot reframe then takes the cheap SDR branch (`colorspace` +
+    `scale=-2:H` becomes a near-identity resample) — identical geometry to today,
+    minus the repeated tonemap. The only added cost is one high-quality
+    (crf 16) encode generation per HDR clip. Audio is stream-copied so the
+    original-audio variant keeps faithful source audio.
+    """
+    import subprocess  # noqa: PLC0415
+
+    from app.pipeline.reframe import (  # noqa: PLC0415
+        _HDR10_TRANSFER,
+        _HDR_FALLBACK_PIPELINE,
+        _HLG_TRANSFER,
+        _ZSCALE_SDR_PIPELINE,
+        _zscale_available,
+    )
+    from app.tasks.template_orchestrate import _probe_clips  # noqa: PLC0415
+
+    hdr_transfers = {_HLG_TRANSFER, _HDR10_TRANSFER}
+    vf = _ZSCALE_SDR_PIPELINE if _zscale_available() else _HDR_FALLBACK_PIPELINE
+    # Guard against odd output dimensions (libx264 + yuv420p require even W/H);
+    # the linear-light downscale can land on an odd minor axis for non-16:9
+    # sources. trunc-to-even crops at most 1px — imperceptible, and only fires
+    # on pathological aspect ratios.
+    vf = f"{vf},crop=trunc(iw/2)*2:trunc(ih/2)*2"
+
+    converted = 0
+    for clip_id, local_path in list(clip_id_to_local.items()):
+        probe = probe_map.get(local_path)
+        if probe is None or getattr(probe, "color_trc", "bt709") not in hdr_transfers:
+            continue
+
+        sdr_path = os.path.join(tmpdir, f"sdr_{converted}_{os.path.basename(local_path)}")
+        cmd = [
+            "ffmpeg", "-y", "-i", local_path,
+            "-vf", vf,
+            "-c:v", "libx264",
+            # Intermediate is re-encoded downstream by the per-slot reframe, but
+            # this is the one generation that carries the dithered HDR gradient —
+            # crf 16/fast (not ultrafast) so x264 doesn't reintroduce the very
+            # banding the tonemap's error-diffusion just removed.
+            "-crf", "16", "-preset", "fast", "-pix_fmt", "yuv420p",
+            "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
+            "-c:a", "copy",  # keep source audio for the original-audio variant
+            "-movflags", "+faststart",
+            sdr_path,
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=600)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            # Best-effort: a failed pre-tonemap leaves the HDR clip in place so
+            # the per-slot path still tonemaps it (slow but correct). Never abort
+            # the job over an optimization.
+            stderr = getattr(exc, "stderr", b"")
+            log.warning(
+                "generative_pretonemap_failed",
+                clip_id=clip_id,
+                error=str(exc),
+                stderr=(stderr[-500:].decode("utf-8", "replace") if stderr else ""),
+            )
+            continue
+
+        try:
+            probe_map[sdr_path] = _probe_clips([sdr_path])[sdr_path]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("generative_pretonemap_reprobe_failed", clip_id=clip_id, error=str(exc))
+            continue
+        clip_id_to_local[clip_id] = sdr_path
+        converted += 1
+
+    if converted:
+        log.info("generative_pretonemap_done", clips_converted=converted)
+    return converted
 
 
 @celery_app.task(
@@ -368,6 +501,42 @@ def _run_regenerate_variant(
         )
 
     _update_variant_entry(job_id, variant_id, result)
+
+
+def _existing_variants(job_id: str) -> list[dict[str, Any]]:
+    """Return the variants already persisted on this job (empty on first run)."""
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            return []
+        return list((job.assembly_plan or {}).get("variants") or [])
+
+
+def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> None:
+    """Insert or replace `result` in Job.assembly_plan['variants'] by variant_id.
+
+    Like `_update_variant_entry` but appends when the variant isn't present yet —
+    the full-job render starts with an empty variants list and adds entries as
+    each variant completes. Row-locked RMW (the worker runs --concurrency>1 and a
+    `regenerate_generative_variant` task may touch the same row). Does NOT change
+    job.status — the job stays `rendering` until `_finalize_job`.
+    """
+    variant_id = result.get("variant_id")
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return
+        plan = dict(job.assembly_plan or {})
+        variants = list(plan.get("variants") or [])
+        for i, v in enumerate(variants):
+            if v.get("variant_id") == variant_id:
+                variants[i] = result
+                break
+        else:
+            variants.append(result)
+        plan["variants"] = variants
+        job.assembly_plan = plan
+        db.commit()
 
 
 def _update_variant_entry(job_id: str, variant_id: str, patch: dict[str, Any]) -> None:

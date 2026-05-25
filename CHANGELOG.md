@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.46.1] - 2026-05-25
+## [0.4.46.2] - 2026-05-25
+
+### Changed
+- **Generative edits with HDR (iPhone) footage render ~2-3× faster, survive deploys, and reveal variants as they finish.** Three changes to `orchestrate_generative_job` that together make a generative render fast and durable instead of a 20-minute all-or-nothing block that any CI deploy could destroy:
+  - **Tonemap HDR clips once per job, not once per slot per variant.** A generative job renders three variants, each reframing every clip independently — so the expensive HLG/HDR10→SDR tonemap (`zscale` linear-light + float-upconvert + mobius) ran on the same HDR frames up to three times. Measured on prod job `f91ebe67`: HDR slots took 70-123s each vs ~16s for SDR, and the full 6-clip job took ~23.5 min, brushing the 30-min worker time limit. `_pretonemap_hdr_clips` now converts each HDR source to an SDR intermediate **once** up front and repoints every variant at it, so each per-slot reframe sees `bt709` and skips the tonemap. Reuses `reframe._ZSCALE_SDR_PIPELINE` verbatim (the v0.4.45.7 sky-banding fix) so color + geometry are unchanged, at the cost of one crf-16 encode generation per HDR clip. SDR clips untouched; failure is best-effort (per-slot tonemap still runs); source audio stream-copied for the original-audio variant.
+  - **Persist each variant as it finishes, and resume on retry.** Variants were only written to `Job.assembly_plan` at the very end, so a worker killed mid-render (CI deploy / OOM) discarded *all* completed variants, and the `acks_late` retry re-rendered everything from scratch. Each variant is now upserted into `assembly_plan["variants"]` the moment it completes (the status endpoint reveals them progressively instead of all-at-once), and on a re-run the orchestrator reuses any persisted variant whose id + matched track still apply — so a deploy that kills the job after two variants costs only the third on retry, not all three.
+  - **Graceful worker drain on deploy.** `fly.toml` sets `kill_signal = "SIGTERM"` on the worker so a deploy gives Celery the clean warm-shutdown signal; combined with the existing 30-min `kill_timeout`, an in-flight render gets a chance to finish before the machine is replaced rather than being cut off.
 
 ### Fixed
 - **Production YouTube imports can solve yt-dlp's current EJS challenges.** The Fly image now includes Deno, and the API installs `yt-dlp[default]` so the `yt-dlp-ejs` solver scripts ship with the Python package. This fixes the post-cookie production failure where the configured YouTube cookies were present but yt-dlp saw only image formats because signature/n-challenge solving had no runtime.
