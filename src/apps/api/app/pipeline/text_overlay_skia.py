@@ -115,6 +115,23 @@ def _preload_typefaces() -> None:
 _preload_typefaces()
 
 
+def _overlay_text(overlay: dict) -> str:
+    """Return the text the renderer should burn for this overlay.
+
+    Prefers `display_text` when set (Layer 2 line-style finalization in
+    `lyric_injector._finalize_lyric_audible_window` writes this when it
+    truncates a partial lyric line to its audible-word substring). Falls
+    back to `text` for every other case so non-music callers are byte-
+    identical to pre-PR behavior.
+
+    Plan: plans/geli-me-var-ama-hatalar-robust-reddy.md §2c, §2g.
+    """
+    dt = overlay.get("display_text")
+    if dt:
+        return dt
+    return overlay.get("text", "") or ""
+
+
 def _typeface_for_overlay(overlay: dict, font_name_override: str | None = None) -> skia.Typeface:
     """Resolve a typeface for an overlay following the same priority as
     text_overlay._draw_text_png: font_name_override → overlay.font_family →
@@ -384,9 +401,7 @@ def _draw_centered_text(
     first_w = block["widths"][0] if block["widths"] else 0
     emoji_metrics = _resolve_emoji_metrics(overlay, first_w, font)
 
-    base_color = _skia_color_from_hex(
-        overlay.get("text_color", "#FFFFFF"), int(255 * alpha)
-    )
+    base_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"), int(255 * alpha))
     fill_color = color_override if color_override is not None else base_color
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
     shadow_alpha = int(160 * alpha)
@@ -566,7 +581,7 @@ def _draw_pop_in_with_suffix(
     scales = (30, 115, 100)). Without this, every new lyric word re-pops the
     full accumulated line — visible flicker.
     """
-    text = overlay.get("text", "") or ""
+    text = _overlay_text(overlay)
     suffix = overlay.get("pop_animated_suffix") or ""
     if not text:
         return
@@ -667,6 +682,10 @@ def _draw_karaoke_line(
     """karaoke-line: each word switches from primary color to highlight color
     when t_local crosses its end timestamp. word_timings is a list of
     {text, duration_cs} with cumulative timing from overlay start.
+
+    Karaoke does NOT consume `display_text` — its per-word highlight order
+    is keyed off the original `text`. Layer 2's finalizer never sets
+    `display_text` on karaoke overlays (it only fires for effect="lyric-line").
     """
     text = overlay.get("text", "") or ""
     word_timings = overlay.get("word_timings") or []
@@ -707,9 +726,7 @@ def _draw_karaoke_line(
     baseline_y = _vertical_block_top(anchor, cy, line_height_raw) + (-metrics.fAscent)
 
     primary_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
-    highlight_color = _skia_color_from_hex(
-        overlay.get("highlight_color") or "#FFD24A"
-    )
+    highlight_color = _skia_color_from_hex(overlay.get("highlight_color") or "#FFD24A")
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
 
     for i, word in enumerate(words):
@@ -733,7 +750,7 @@ def _draw_with_animation(
     `effect` at time `t_local`, then draw the (possibly transformed) text.
     """
     effect = effect or overlay.get("effect", "none")
-    text = overlay.get("text", "") or ""
+    text = _overlay_text(overlay)
 
     scale = 1.0
     alpha = 1.0
@@ -849,9 +866,7 @@ def _draw_frame(overlay: dict, t_local: float, duration_s: float) -> skia.Image:
         font = skia.Font(_typeface_for_overlay(overlay, font_name_override=font_name))
         font.setSize(_resolve_font_size_px(overlay))
         font.setSubpixel(True)
-        _draw_centered_text(
-            canvas, overlay.get("text", ""), overlay, font_override=font
-        )
+        _draw_centered_text(canvas, _overlay_text(overlay), overlay, font_override=font)
     elif effect == "karaoke-line":
         _draw_karaoke_line(canvas, overlay, t_local, duration_s)
     elif effect == "pop-in" and overlay.get("pop_animated_suffix"):
@@ -859,7 +874,12 @@ def _draw_frame(overlay: dict, t_local: float, duration_s: float) -> skia.Image:
     elif _is_animated(overlay):
         _draw_with_animation(canvas, overlay, t_local, duration_s)
     else:
-        _draw_centered_text(canvas, overlay.get("text", ""), overlay)
+        # Static effects (incl. effect="lyric-line", which is the music
+        # line-style lyric path Layer 2 finalizes). `_overlay_text` returns
+        # `display_text` when the finalizer wrote it, else falls back to
+        # `text` (byte-identical to pre-PR for everything but truncated
+        # partial lyric lines).
+        _draw_centered_text(canvas, _overlay_text(overlay), overlay)
 
     return surface.makeImageSnapshot()
 
@@ -902,9 +922,7 @@ def _write_png_pillow(img: skia.Image, out_path: str) -> None:
 # -- Public API: render overlays to FFmpeg-ready PNG sequences ---------------
 
 
-def _generate_overlay_sequence(
-    overlay: dict, work_dir: str, idx: int
-) -> dict[str, Any] | None:
+def _generate_overlay_sequence(overlay: dict, work_dir: str, idx: int) -> dict[str, Any] | None:
     """Render every frame for one overlay, return a single config describing
     the sequence (or single PNG for static effects)."""
     start_s = float(overlay.get("start_s", 0.0))
@@ -968,9 +986,7 @@ def _render_overlay_sequences(
     sequences. Returns list of overlay-sequence configs ready for FFmpeg."""
     out: list[dict[str, Any]] = []
     for i, overlay in enumerate(overlays):
-        validated_text, start_s, end_s, _position = _validate_overlay(
-            overlay, slot_duration_s
-        )
+        validated_text, start_s, end_s, _position = _validate_overlay(overlay, slot_duration_s)
         # `_validate_overlay` returns None when the text is empty AND spans
         # are absent. Spans-only overlays are not yet supported by the Skia
         # path — fall back to validating just timing.
@@ -1011,9 +1027,12 @@ def _ffmpeg_burn_pngs(
         if seq["is_animated"]:
             cmd.extend(
                 [
-                    "-framerate", str(seq["fps"]),
-                    "-start_number", "0",
-                    "-i", seq["pattern"],
+                    "-framerate",
+                    str(seq["fps"]),
+                    "-start_number",
+                    "0",
+                    "-i",
+                    seq["pattern"],
                 ]
             )
         else:
@@ -1044,8 +1063,10 @@ def _ffmpeg_burn_pngs(
         [
             "-filter_complex",
             ";".join(fc_parts),
-            "-map", f"[{prev}]",
-            "-map", "0:a?",
+            "-map",
+            f"[{prev}]",
+            "-map",
+            "0:a?",
             *_encoding_args(output_path, preset="fast"),
         ]
     )

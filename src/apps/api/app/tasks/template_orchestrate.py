@@ -2769,6 +2769,7 @@ def _generate_single_pass_overlays(
     subject: str,
     tmpdir: str,
     is_agentic: bool = False,
+    lyric_audio_mix_song_start_s: float | None = None,
 ) -> tuple[list[dict], list[str], str]:
     """Build absolute-overlay PNG configs + ASS paths for single-pass M6.
 
@@ -2802,6 +2803,7 @@ def _generate_single_pass_overlays(
         subject,
         interstitial_map=interstitial_map,
         is_agentic=is_agentic,
+        lyric_audio_mix_song_start_s=lyric_audio_mix_song_start_s,
     )
     if not overlays:
         return [], [], ""
@@ -3002,6 +3004,12 @@ def _assemble_clips(
     transition_duration_s: float | None = None,
     allow_slowdown_fill: bool = True,
     use_skia: bool | None = None,
+    # Song-time start of the audio mix (passed to `_collect_absolute_overlays`
+    # → `_finalize_lyric_audible_window`). Music callers set this to the
+    # MusicTrack's `best_start_s`; template callers leave it None and the
+    # line-style finalization is skipped. The audible window's END is derived
+    # internally from `best_start_s + sum(post_snap_durations)`.
+    lyric_audio_mix_song_start_s: float | None = None,
 ) -> None:
     """Assemble clips in slot order: plan, parallel-render, then join with transitions.
 
@@ -3090,6 +3098,7 @@ def _assemble_clips(
                 subject=subject,
                 tmpdir=tmpdir,
                 is_agentic=is_agentic,
+                lyric_audio_mix_song_start_s=lyric_audio_mix_song_start_s,
             )
             spec = _build_single_pass_spec(
                 plans,
@@ -3380,6 +3389,7 @@ def _assemble_clips(
         subject,
         interstitial_map=interstitial_map,
         is_agentic=is_agentic,
+        lyric_audio_mix_song_start_s=lyric_audio_mix_song_start_s,
     )
     if abs_overlays:
         # Skia for agentic templates; Pillow + libass for classic.
@@ -3724,13 +3734,21 @@ def _collect_absolute_overlays(
     subject: str,
     interstitial_map: dict[int, dict] | None = None,
     is_agentic: bool = False,
+    lyric_audio_mix_song_start_s: float | None = None,
 ) -> list[dict]:
     """Collect text overlays across all slots with absolute video timestamps.
 
     Args:
-        slot_durations: Original per-slot durations (excluding interstitials).
+        slot_durations: Per-slot durations passed by `_assemble_clips`.
+            For music jobs these are POST-snap (the canonical source of truth
+            for the rendered audio mix end). For template jobs these are the
+            recipe target durations.
         interstitial_map: Lookup of interstitials by after_slot position.
             Used to offset cumulative time for interstitial hold durations.
+        lyric_audio_mix_song_start_s: Music callers only. When set, the
+            line-style lyric finalizer runs after Dedup 1 / Dedup 2 with the
+            audible window `[best_start_s, best_start_s + total_video_dur_s)`.
+            Skipped (no-op) when None — template callers don't pay.
 
     Two dedup rules prevent visual glitches:
       1. Same-text merge: if the same text (case-insensitive) appears at the
@@ -3915,6 +3933,21 @@ def _collect_absolute_overlays(
                 entry["lyric_segment_index"] = ov["lyric_segment_index"]
             if ov.get("lyric_segment_count") is not None:
                 entry["lyric_segment_count"] = ov["lyric_segment_count"]
+            # Song-time originals required by `_finalize_lyric_audible_window`
+            # (Layer 2). Without these propagated, the finalizer hits its
+            # missing-metadata safe-passthrough branch on every lyric line
+            # and Bug B (audio-cuts-mid-line text trim) is silently a no-op
+            # in prod. Tests don't catch this because fixtures construct
+            # overlay dicts directly, bypassing the entry rebuild here.
+            # See plans/geli-me-var-ama-hatalar-robust-reddy.md §2h.
+            if ov.get("original_text") is not None:
+                entry["original_text"] = ov["original_text"]
+            if ov.get("original_start_s_song") is not None:
+                entry["original_start_s_song"] = ov["original_start_s_song"]
+            if ov.get("original_end_s_song") is not None:
+                entry["original_end_s_song"] = ov["original_end_s_song"]
+            if ov.get("original_words") is not None:
+                entry["original_words"] = ov["original_words"]
             # Pass through player-card fields so the renderer receives
             # jersey_no + player_name (the special-effect path needs both).
             if ov.get("jersey_no"):
@@ -4075,7 +4108,103 @@ def _collect_absolute_overlays(
         return o.get("effect") == "lyric-line"
 
     _MERGE_GAP_THRESHOLD_S = 2.0
-    _LYRIC_LINE_CONTINUATION_GAP_S = 0.12
+    # Warning threshold for `lyric_line_id`-driven same-line merges. A gap
+    # larger than this between same-id segments is unusual — lyric injection
+    # runs on pre-snap slot durations today, so post-snap drift up to one
+    # beat-interval (~250-500 ms for typical 100-250 BPM tracks) is expected.
+    # 500 ms is well above expected drift but below "this is a different
+    # rendition of the line." Tighten this once post-snap injection lands
+    # (Architectural Debt TODO 1 in plans/geli-me-var-ama-hatalar-robust-reddy.md).
+    _LARGE_CONTINUATION_GAP_WARNING_S = 0.5
+
+    def _same_lyric_visual_style(a: dict, b: dict) -> bool:
+        """Visual-rendering attributes only, no originating-video-slot index."""
+        return (
+            a["text"].lower().strip() == b["text"].lower().strip()
+            and _slot_key(a) == _slot_key(b)
+            and a.get("font_family") == b.get("font_family")
+            and a.get("text_color") == b.get("text_color")
+            and not a.get("spans")
+            and not b.get("spans")
+        )
+
+    def _consolidate_lyric_segments(raw_in: list[dict]) -> list[dict]:
+        """Identity-driven merge for lyric-line segments sharing a lyric_line_id.
+
+        Replaces the gap-tolerance heuristic. Drops the `_LYRIC_LINE_CONTINUATION_GAP_S`
+        check — any segment with the same `lyric_line_id` is by definition a
+        continuation of the same source line. Beat-snap drift up to one
+        beat-interval is bridged transparently; larger gaps are merged but
+        traced via `lyric_line_large_continuation_gap` so they surface in
+        the admin timeline.
+
+        Safety: does NOT mutate the input list during iteration. Uses
+        `consumed` indices + `replacements` dict, then rebuilds output in
+        the original raw order.
+
+        Plan: plans/geli-me-var-ama-hatalar-robust-reddy.md §1c.
+        """
+        by_id: dict[str, list[tuple[int, dict]]] = {}
+        for idx, ov in enumerate(raw_in):
+            if ov.get("effect") != "lyric-line" or not ov.get("lyric_line_id"):
+                continue
+            by_id.setdefault(ov["lyric_line_id"], []).append((idx, ov))
+
+        consumed: set[int] = set()
+        replacements: dict[int, dict] = {}
+
+        for line_id, members in by_id.items():
+            if len(members) < 2:
+                continue
+            if not all(_same_lyric_visual_style(ov, members[0][1]) for _, ov in members[1:]):
+                log.warning(
+                    "lyric_segments_visual_style_drift",
+                    line_id=line_id,
+                    count=len(members),
+                )
+                continue
+            members.sort(key=lambda im: im[1]["start_s"])
+            base_idx, base = members[0]
+            merged = dict(base)
+            # Union origin slots from ALL members, filter None values.
+            origin_union: set = set()
+            for _, ov in members:
+                for s in ov.get("_origin_slots") or []:
+                    if s is not None:
+                        origin_union.add(s)
+            merged["_origin_slots"] = sorted(origin_union)
+            merged["lyric_segment_count"] = len(members)
+            # First segment owns fade_in_ms (already on `merged` via dict(base));
+            # last segment owns fade_out_ms.
+            merged["fade_in_ms"] = base.get("fade_in_ms", 0)
+            merged["start_s"] = min(s[1]["start_s"] for s in members)
+            prev_end = merged["end_s"]
+            for nxt_idx, nxt in members[1:]:
+                gap = nxt["start_s"] - prev_end
+                if gap > _LARGE_CONTINUATION_GAP_WARNING_S:
+                    log.warning(
+                        "lyric_line_large_continuation_gap",
+                        line_id=line_id,
+                        gap_s=round(gap, 4),
+                        prev_end_s=round(prev_end, 4),
+                        next_start_s=round(nxt["start_s"], 4),
+                    )
+                merged["end_s"] = max(merged["end_s"], nxt["end_s"])
+                merged["fade_out_ms"] = nxt.get("fade_out_ms", 0)
+                prev_end = merged["end_s"]
+                consumed.add(nxt_idx)
+            replacements[base_idx] = merged
+
+        if not consumed:
+            return raw_in
+        raw_out: list[dict] = []
+        for idx, ov in enumerate(raw_in):
+            if idx in consumed:
+                continue
+            raw_out.append(replacements.get(idx, ov))
+        return raw_out
+
+    raw = _consolidate_lyric_segments(raw)
     raw.sort(key=lambda o: (o["text"].lower().strip(), _slot_key(o), o["start_s"]))
     unique: list[dict] = []
     for ov in raw:
@@ -4097,33 +4226,23 @@ def _collect_absolute_overlays(
                 and not prev.get("spans")
                 and not ov.get("spans")
             )
-            same_lyric_line = (
-                same_visual_style
-                and _is_lyric_line(prev)
-                and _is_lyric_line(ov)
-                and prev.get("lyric_line_id")
-                and prev.get("lyric_line_id") == ov.get("lyric_line_id")
-                and ov["start_s"] - prev["end_s"] < _LYRIC_LINE_CONTINUATION_GAP_S
-            )
+            # Karaoke + lyric-line: karaoke per-overlay word_timings are tied
+            # to a specific [start_s, end_s] window so merging two karaoke
+            # overlays would invalidate one set of word timings. Lyric-line
+            # cross-slot stitching is handled by `_consolidate_lyric_segments`
+            # above (identity-driven via lyric_line_id); after that pre-pass
+            # there are no same-id lyric segments left in `raw`. Same text
+            # at different `lyric_line_id` is a chorus repeat and must NOT
+            # merge.
             same_text_overlay = (
                 same_visual_style
-                # Karaoke lines carry per-overlay word timings tied to a
-                # specific [start_s, end_s] window; merging two karaoke
-                # overlays would invalidate the word timings on whichever
-                # one got absorbed. Lyric injector already places each line
-                # at its own timestamp, so dedup never applies here.
-                # `lyric-line` only merges through the explicit lyric_line_id
-                # path above; text equality alone is not enough because the
-                # same lyric can repeat later in a song.
                 and ov.get("effect") not in ("karaoke-line", "lyric-line")
                 and prev.get("effect") not in ("karaoke-line", "lyric-line")
                 and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
             )
-            if same_lyric_line or same_text_overlay:
+            if same_text_overlay:
                 # Merge: extend previous overlay's end time
                 prev["end_s"] = max(prev["end_s"], ov["end_s"])
-                if same_lyric_line and ov.get("fade_out_ms") is not None:
-                    prev["fade_out_ms"] = ov["fade_out_ms"]
                 # If current has font-cycle effect, upgrade previous
                 if ov.get("effect") == "font-cycle":
                     prev["effect"] = "font-cycle"
@@ -4166,6 +4285,44 @@ def _collect_absolute_overlays(
 
     # Remove any that became invalid after truncation
     result = [o for o in unique if o["end_s"] > o["start_s"]]
+
+    # ── Layer 2: audible-window-aware lyric finalization (music only) ──
+    # Recomputes `audible_words` fresh from `original_words` against the
+    # post-snap audio window; produces `display_text` (renderer-read field),
+    # may shrink the abs window to fit the audible region, and drops lyrics
+    # whose audible fragment is too short. Non-lyric overlays pass through
+    # unchanged. Skipped when no music caller is wired (template path).
+    # See plans/geli-me-var-ama-hatalar-robust-reddy.md §2.
+    if lyric_audio_mix_song_start_s is not None and result:
+        # Audio mix end derives from the AUDIO-BEARING portion of the
+        # rendered timeline. Music jobs run no silent visual holds today
+        # (no curtain-close in the music path) so every interstitial hold
+        # extends the audible window. The contract is encoded now for
+        # forward compatibility: an interstitial that cuts the music
+        # audio MUST declare `music_audio_continues_during_hold: False`
+        # so this loop excludes its `hold_s` from the audible duration —
+        # otherwise a future silent hold would silently widen the
+        # finalizer's window and keep lyric overlays that have no audio.
+        # The default is True (music continues) which matches today's
+        # behavior for every existing interstitial type.
+        total_audio_bearing_duration_s = sum(slot_durations or [])
+        for inter in (interstitial_map or {}).values():
+            if not inter.get("music_audio_continues_during_hold", True):
+                continue
+            try:
+                total_audio_bearing_duration_s += float(inter.get("hold_s", 1.0))
+            except (TypeError, ValueError):
+                continue
+        audio_mix_song_end_s = float(lyric_audio_mix_song_start_s) + total_audio_bearing_duration_s
+        from app.pipeline.lyric_injector import (  # noqa: PLC0415
+            _finalize_lyric_audible_window,
+        )
+
+        result = _finalize_lyric_audible_window(
+            result,
+            audio_mix_song_start_s=float(lyric_audio_mix_song_start_s),
+            audio_mix_song_end_s=audio_mix_song_end_s,
+        )
 
     # ── Universal constraint pass ───────────────────────────────────────
     # Shrink/reposition every overlay so it fits the 9:16 safe zone,
