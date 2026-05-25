@@ -114,6 +114,28 @@ def test_post_lyrics_preview_rejects_missing_lyrics(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
+def test_post_lyrics_preview_rejects_empty_lines_array(client: TestClient) -> None:
+    """`lyrics_cached` carrying metadata (source, lrclib_id, …) but an empty
+    `lines` array used to slip past the `if not track.lyrics_cached` guard and
+    burn a worker on a job that always failed with "no renderable lyric
+    overlays". The route now rejects upfront with a useful message.
+    """
+    track = _track(lyrics_cached={"source": "lrclib_synced+whisper", "lines": []})
+    override, _session = _override_db(track)
+    app.dependency_overrides[get_db] = override
+    try:
+        resp = client.post(
+            f"/admin/music-tracks/{track.id}/lyrics-preview",
+            json={},
+            headers=_admin_headers(),
+        )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+    assert "no lyric lines" in resp.json()["detail"]
+
+
 def test_post_lyrics_preview_rejects_missing_audio(client: TestClient) -> None:
     track = _track(audio_gcs_path=None)
     override, _session = _override_db(track)
@@ -154,6 +176,8 @@ def test_get_lyrics_preview_status_shape(client: TestClient) -> None:
     job.assembly_plan = {
         "output_url": "https://example.com/out.mp4",
         "lyrics_config_effective": {"post_dwell_s": 0.3},
+        "preview_start_s": 28.80,
+        "preview_duration_s": 20.0,
     }
     override, _session = _override_db(track, job)
     app.dependency_overrides[get_db] = override
@@ -170,6 +194,48 @@ def test_get_lyrics_preview_status_shape(client: TestClient) -> None:
     assert body["job_id"] == str(job.id)
     assert body["output_url"] == "https://example.com/out.mp4"
     assert body["lyrics_config_effective"] == {"post_dwell_s": 0.3}
+    # Window must flow through to the response so the frontend can render the
+    # "Previewing m:ss – m:ss" caption. Without it, the auto-anchor change is
+    # silent and admins watching a song with a 30s instrumental intro would
+    # think the wrong song was loaded.
+    assert body["preview_start_s"] == 28.80
+    assert body["preview_duration_s"] == 20.0
+
+
+def test_get_lyrics_preview_status_omits_window_when_plan_lacks_it(
+    client: TestClient,
+) -> None:
+    """Legacy lyrics_preview rows (rendered before this PR) don't have
+    `preview_start_s` / `preview_duration_s` in their assembly_plan. The
+    response must omit those fields rather than 500ing on a type coercion.
+    """
+    track = _track()
+    job = MagicMock()
+    job.id = uuid4()
+    job.job_type = "lyrics_preview"
+    job.music_track_id = track.id
+    job.status = "music_ready"
+    job.error_detail = None
+    job.created_at = datetime.now(UTC)
+    job.updated_at = datetime.now(UTC)
+    job.assembly_plan = {
+        "output_url": "https://example.com/out.mp4",
+        "lyrics_config_effective": {"post_dwell_s": 0.3},
+    }
+    override, _session = _override_db(track, job)
+    app.dependency_overrides[get_db] = override
+    try:
+        resp = client.get(
+            f"/admin/music-tracks/{track.id}/lyrics-preview-jobs/{job.id}/status",
+            headers=_admin_headers(),
+        )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["preview_start_s"] is None
+    assert body["preview_duration_s"] is None
 
 
 def test_get_lyrics_preview_status_mismatched_track_returns_404(

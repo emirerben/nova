@@ -46,7 +46,9 @@ def render_lyrics_preview_task(self, job_id: str) -> None:
             override_payload = job.all_candidates or {}
             lyrics_config_effective = override_payload.get("lyrics_config_effective") or {}
 
-        output_url, debug_meta = render_lyrics_preview(track, lyrics_config_effective)
+        output_url, debug_meta = render_lyrics_preview(
+            track, lyrics_config_effective, job_id=job_id
+        )
 
         with _sync_session() as db:
             job = db.get(Job, uuid.UUID(job_id))

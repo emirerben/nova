@@ -1,9 +1,11 @@
 """Generative-edit job endpoints.
 
 POST /generative-jobs                                  — create a generative-mode job
+GET  /generative-jobs/style-sets                       — curated text style sets (gen-eligible)
 GET  /generative-jobs/{id}/status                      — poll status + variants
 POST /generative-jobs/{id}/variants/{vid}/swap-song    — async re-slot against a new song
 POST /generative-jobs/{id}/variants/{vid}/retext       — async re-render with new/removed text
+POST /generative-jobs/{id}/variants/{vid}/change-style — async re-render with a new style set
 
 A generative job needs no pre-selected song or template — the orchestrator auto-matches
 a track, writes its own intro text, and renders three variants. Per-variant state lives
@@ -81,6 +83,20 @@ class RetextRequest(BaseModel):
     remove: bool = False
 
 
+class ChangeStyleRequest(BaseModel):
+    style_set_id: str
+
+
+class StyleSetSummary(BaseModel):
+    id: str
+    label: str
+    tags: list[str]
+
+
+class StyleSetListResponse(BaseModel):
+    style_sets: list[StyleSetSummary]
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
@@ -135,6 +151,21 @@ async def create_generative_job(
 
     log.info("generative_job_created", job_id=str(job.id), clips=len(req.clip_gcs_paths))
     return GenerativeJobResponse(job_id=str(job.id), status="queued")
+
+
+@router.get("/style-sets", response_model=StyleSetListResponse)
+async def list_generative_style_sets() -> StyleSetListResponse:
+    """The curated text style sets a user/admin can pick from for a generative edit.
+
+    Generative-eligible only (no music-only lyric sets). Mirrors `GET /music-tracks`
+    — the gallery the swap-song picker reads. Declared BEFORE `/{job_id}/status` so
+    the literal path isn't captured as a job id.
+    """
+    from app.pipeline.style_sets import list_style_sets  # noqa: PLC0415
+
+    return StyleSetListResponse(
+        style_sets=[StyleSetSummary(**s) for s in list_style_sets(applies_to="generative")]
+    )
 
 
 @router.get("/{job_id}/status", response_model=GenerativeJobStatusResponse)
@@ -229,4 +260,44 @@ async def retext(
         remove_text=bool(req.remove),
     )
     log.info("generative_retext", job_id=str(job.id), variant_id=variant_id, remove=req.remove)
+    return GenerativeJobResponse(job_id=str(job.id), status="rendering")
+
+
+@router.post("/{job_id}/variants/{variant_id}/change-style", response_model=GenerativeJobResponse)
+async def change_style(
+    job_id: str,
+    variant_id: str,
+    req: ChangeStyleRequest,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobResponse:
+    """Re-render a variant with a different curated text style set (async).
+
+    Unlike swap-song this applies to ALL variants — the style set governs the AI
+    intro on the text variants and the lyric typography on the lyrics variant.
+    """
+    from app.pipeline.style_sets import style_set_ids  # noqa: PLC0415
+
+    job = await _load_generative_job(job_id, db)
+    variant = _find_variant(job, variant_id)
+    if variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    if variant.get("render_status") == "rendering":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
+        )
+    if req.style_set_id not in set(style_set_ids(applies_to="generative")):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unknown or non-generative style set.",
+        )
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.delay(str(job.id), variant_id, style_set_id=req.style_set_id)
+    log.info(
+        "generative_change_style",
+        job_id=str(job.id),
+        variant_id=variant_id,
+        style_set_id=req.style_set_id,
+    )
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
