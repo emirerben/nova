@@ -25,6 +25,11 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     ("nova.video.clip_metadata", "app.agents.clip_metadata", "ClipMetadataAgent"),
     ("nova.compose.template_recipe", "app.agents.template_recipe", "TemplateRecipeAgent"),
     ("nova.compose.template_text", "app.agents.template_text", "TemplateTextAgent"),
+    (
+        "nova.compose.agentic_style_selector",
+        "app.agents.agentic_style_selector",
+        "AgenticStyleSelectorAgent",
+    ),
     ("nova.audio.transcript", "app.agents.transcript", "TranscriptAgent"),
     ("nova.audio.lyrics", "app.agents.lyrics", "LyricsExtractionAgent"),
     ("nova.audio.template_recipe", "app.agents.audio_template", "AudioTemplateAgent"),

@@ -1,8 +1,9 @@
 """Orphan-job reaper.
 
-Marks template jobs as `processing_failed` when:
-  1. status is non-terminal (`processing` only — `template_ready` is the
-     finalize-step success state, not a mid-pipeline marker)
+Marks jobs as `processing_failed` when:
+  1. status is a worker-owned non-terminal status (see
+     `_NON_TERMINAL_STATUSES` — `processing`, `matching`, `rendering`,
+     `posting`; NOT `template_ready`, which is a success terminal)
   2. updated_at is older than `THRESHOLD_MIN`
   3. no live Celery task references the job_id (cross-checked via
      `celery_app.control.inspect()`)
@@ -42,9 +43,27 @@ log = structlog.get_logger()
 # a legitimately slow finisher always wins the race against the reaper.
 THRESHOLD_MIN = 60
 
-# Status values that are non-terminal — eligible for reaping when stale.
-# `processing` is set as the job enters the worker; if the worker SIGKILL's
-# mid-flight, the row stays stuck in `processing` forever.
+# Status values that are non-terminal AND worker-owned — eligible for
+# reaping when stale. Each is set while a Celery task is actively executing;
+# if the worker is SIGKILL'd mid-flight (deploy/OOM), the row stays stuck in
+# that status forever with failure_reason=None and the frontend shows a
+# perpetual loading state.
+#
+# This MUST stay in sync with the worker-owned subset of
+# `_CANCELLABLE_STATUSES` in app/routes/admin_jobs.py:
+#   - `processing` : template + music + generative jobs, entering the worker
+#   - `matching`   : reserved mid-pipeline status
+#   - `rendering`  : auto_music_orchestrate.py + generative_build.py flip to
+#                    this once they start rendering variants. Adding it here
+#                    is the fix for prod job 5ae0142f (generative edit killed
+#                    by a deploy mid-render, stuck "rendering" forever — the
+#                    reaper used to only know `processing`).
+#   - `posting`    : reserved post-render status
+#
+# Deliberately EXCLUDES `queued`: a queued job not yet prefetched by a worker
+# is invisible to inspect() (get_live_job_index only sees active+reserved), so
+# reaping `queued` would false-positive a job legitimately waiting in a deep
+# broker backlog. acks_late re-delivery is the recovery path for those.
 #
 # Do NOT include `template_ready` here. It looks "intermediate" by name but
 # template_orchestrate.py sets it at the FINALIZE step (after assemble +
@@ -52,7 +71,7 @@ THRESHOLD_MIN = 60
 # template job ends in `template_ready` and stays there. Reaping it would
 # silently flip every completed job to `processing_failed` after the
 # 60-minute threshold, which is what happened to prod job e3804f62.
-_NON_TERMINAL_STATUSES = ("processing",)
+_NON_TERMINAL_STATUSES = ("processing", "matching", "rendering", "posting")
 
 
 def _live_job_ids(celery_app: Celery) -> set[str] | None:

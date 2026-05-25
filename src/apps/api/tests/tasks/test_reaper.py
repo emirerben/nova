@@ -199,6 +199,13 @@ class TestThresholdConstant:
 
 @pytest.mark.parametrize("status,should_reap", [
     ("processing", True),
+    # Worker-owned mid-pipeline statuses the newer (music/generative)
+    # orchestrators flip to once a task is actively executing. A SIGKILL
+    # mid-flight strands them exactly like `processing` — they must reap.
+    # (prod job 5ae0142f stuck "rendering" forever before this was added.)
+    ("matching", True),
+    ("rendering", True),
+    ("posting", True),
     # template_ready is the SUCCESS terminal state for template jobs —
     # set at the finalize step after assemble + audio mix + upload. The
     # reaper must NOT touch it; doing so would flip every completed job
@@ -206,10 +213,17 @@ class TestThresholdConstant:
     # observed on job e3804f62).
     ("template_ready", False),
     ("music_ready", False),
+    ("variants_ready", False),
+    ("variants_ready_partial", False),
+    ("variants_failed", False),
     ("clips_ready", False),
     ("clips_ready_partial", False),
     ("completed", False),
+    ("cancelled", False),
     ("processing_failed", False),
+    # queued is deliberately NOT reapable: a job still in the broker queue
+    # (not yet prefetched) is invisible to inspect(), so reaping it would
+    # false-positive legit work waiting behind a deep backlog.
     ("queued", False),
 ])
 def test_non_terminal_statuses_constant_includes_correct_set(status, should_reap):
@@ -236,3 +250,48 @@ def test_template_ready_jobs_are_not_reaped():
         "template_ready is the success terminal state — reaping it flips "
         "every completed template job to processing_failed after 60 minutes."
     )
+
+
+def test_rendering_jobs_are_reaped():
+    """Regression: a stale `rendering` row with no live worker must be reaped.
+
+    Prod incident (job 5ae0142f): a generative edit got through clip
+    metadata → song match and flipped to status `rendering`, then the worker
+    machine was SIGKILL'd by a deploy mid-render. The hard kill skipped the
+    task's try/except → _fail_job, so the row sat at `rendering`,
+    assembly_plan=None, error_detail=None forever and the page showed
+    "Rendering your edits…" indefinitely.
+
+    `rendering` (and the sibling worker-owned statuses `matching`/`posting`,
+    set by auto_music_orchestrate.py + generative_build.py) was not in
+    `_NON_TERMINAL_STATUSES`, so the reaper — whose entire reason for
+    existing is to clear exactly this perpetual-loading state — never swept
+    it. This test pins the fix.
+    """
+    from app.tasks.reaper import _NON_TERMINAL_STATUSES
+    for status in ("rendering", "matching", "posting"):
+        assert status in _NON_TERMINAL_STATUSES, (
+            f"{status} is a worker-owned non-terminal status — a job killed "
+            f"mid-{status} stays stuck forever unless the reaper sweeps it."
+        )
+
+
+def test_reaper_sweeps_a_stale_rendering_job():
+    """End-to-end: rendering job, no live worker → reap UPDATE filters on it.
+
+    Confirms `rendering` actually flows into the compiled status-IN filter,
+    not just the constant (catches a future refactor that builds the WHERE
+    clause from a different source than `_NON_TERMINAL_STATUSES`).
+    """
+    from app.tasks.reaper import reap_orphans
+    app = _make_celery_with_inspect(active={}, reserved={})
+    patch_ctx, session = _patch_sync_session(rowcount=1)
+    with patch_ctx:
+        assert reap_orphans(app) == 1
+    stmt = session.execute.call_args[0][0]
+    # The status IN(...) binds as a single expanding-list param, so look for
+    # `rendering` as a member of any bound param value (not a standalone key).
+    bound = stmt.compile().params.values()
+    assert any(
+        "rendering" in v for v in bound if isinstance(v, (list, tuple))
+    ), "rendering must appear in the status-IN filter"

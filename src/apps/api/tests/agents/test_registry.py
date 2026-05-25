@@ -9,6 +9,7 @@ _EXPECTED = {
     "nova.video.clip_metadata",
     "nova.compose.template_recipe",
     "nova.compose.template_text",
+    "nova.compose.agentic_style_selector",
     "nova.audio.transcript",
     "nova.audio.lyrics",
     "nova.audio.template_recipe",

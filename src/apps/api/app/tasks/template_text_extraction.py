@@ -70,8 +70,18 @@ def _build_slot_boundaries(slots: list[dict[str, Any]]) -> list[tuple[float, flo
 _LAYER2_UNIFORM_LEFT_MARGIN_FRAC = 0.05
 
 
-def _overlay_to_recipe_dict(overlay: TemplateTextOverlay) -> dict[str, Any]:
+def _overlay_to_recipe_dict(
+    overlay: TemplateTextOverlay, style_set_id: str | None = None
+) -> dict[str, Any]:
     """Convert a TemplateTextOverlay to the renderer's slot-overlay dict shape.
+
+    When ``style_set_id`` is provided (Layer-1 agentic build that chose a set),
+    the overlay carries ``style_set_id`` + ``role`` and a ``_style_set_styled``
+    sentinel instead of the uniform Layer-2 fields. `_collect_absolute_overlays`
+    resolves the per-role styling (font/size/color/effect/position/anchor) from
+    the set, and `_classify_overlay` skips text_designer for these so the set is
+    the single source of styling truth. font_color_hex / effect / size_class are
+    kept as advisory hints only.
 
     Layer-2 overlays render uniformly: every overlay gets the same large font
     size (120 px), a hard 5% left-edge anchor, and `text_anchor="left"`. Only
@@ -92,6 +102,37 @@ def _overlay_to_recipe_dict(overlay: TemplateTextOverlay) -> dict[str, Any]:
     consistent (slot-relative start <= sample_frame_t <= slot-relative end).
     """
     pop_suffix = getattr(overlay, "pop_animated_suffix", None)
+
+    if style_set_id:
+        styled: dict[str, Any] = {
+            "role": overlay.role,
+            # Advisory — the chosen set governs the rendered styling. Carried so
+            # resolve_overlay_style can fall back per-key and for eval round-trip.
+            "effect": overlay.effect,
+            "position": _bbox_to_named_position(overlay.bbox.y_norm),
+            "font_color_hex": overlay.font_color_hex,
+            "font_size_hint": overlay.size_class,
+            "sample_text": overlay.sample_text,
+            "start_s": overlay.start_s,
+            "end_s": overlay.end_s,
+            "text_bbox": {
+                "x_norm": overlay.bbox.x_norm,
+                "y_norm": overlay.bbox.y_norm,
+                "w_norm": overlay.bbox.w_norm,
+                "h_norm": overlay.bbox.h_norm,
+                "sample_frame_t": overlay.bbox.sample_frame_t,
+            },
+            "has_darkening": False,
+            "has_narrowing": False,
+            # Drives per-role styling resolution in _collect_absolute_overlays.
+            "style_set_id": style_set_id,
+            # Skip text_designer / _BODY_CONFIG — the set owns styling.
+            "_style_set_styled": True,
+            "_extracted_by": "nova.compose.template_text",
+        }
+        if pop_suffix:
+            styled["pop_animated_suffix"] = pop_suffix
+        return styled
 
     out: dict[str, Any] = {
         "role": overlay.role,
@@ -155,6 +196,7 @@ def _bbox_to_named_position(y_norm: float) -> str:
 def _merge_overlays_into_slots(
     slots: list[dict[str, Any]],
     overlays: list[TemplateTextOverlay],
+    style_set_id: str | None = None,
 ) -> int:
     """Replace each slot's `text_overlays` with the matching extracted overlays.
 
@@ -181,7 +223,7 @@ def _merge_overlays_into_slots(
         slot_overlays = by_slot.get(i, [])
         rendered: list[dict[str, Any]] = []
         for ov in slot_overlays:
-            d = _overlay_to_recipe_dict(ov)
+            d = _overlay_to_recipe_dict(ov, style_set_id=style_set_id)
             # Convert global → slot-relative timing. Clamp to [0, slot_dur].
             d["start_s"] = max(0.0, ov.start_s - cursor)
             d["end_s"] = max(d["start_s"] + 0.01, ov.end_s - cursor)
@@ -229,6 +271,38 @@ def _apply_legibility_pacing(slots: list[dict[str, Any]]) -> None:
         slot["text_overlays"] = paced
         if any(warns.get(k) for k in ("stages_expanded", "singletons_expanded")):
             log.info("layer2_legibility_pass", slot_index=i, slot_duration_s=dur, **warns)
+
+
+def _select_agentic_style_set(
+    overlays: list, recipe: Any, *, job_id: str | None = None
+) -> str | None:
+    """Best-effort: pick an agentic style set from the extracted overlay texts.
+
+    Returns the chosen set id, or ``None`` on any failure (→ the overlays keep
+    their uniform styling). Runs AFTER template_text so it sees the real on-screen
+    text; kept OUT of template_text itself so the extraction prompt is unchanged.
+    """
+    texts = [getattr(o, "sample_text", "") for o in overlays if getattr(o, "sample_text", "")]
+    if not texts:
+        return None
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.agentic_style_selector import (  # noqa: PLC0415
+            AgenticStyleSelectorAgent,
+            AgenticStyleSelectorInput,
+        )
+
+        theme = str(getattr(recipe, "theme", "") or getattr(recipe, "name", "") or "")
+        out = AgenticStyleSelectorAgent(default_client()).run(
+            AgenticStyleSelectorInput(overlay_texts=texts, template_theme=theme),
+            ctx=RunContext(job_id=None),
+        )
+        log.info("agentic_style_set_selected", style_set_id=out.style_set_id, job_id=job_id)
+        return out.style_set_id
+    except Exception as exc:  # noqa: BLE001 — selection is best-effort
+        log.warning("agentic_style_set_select_failed", error=str(exc), job_id=job_id)
+        return None
 
 
 def extract_template_text_overlays(
@@ -334,7 +408,12 @@ def extract_template_text_overlays(
         )
         return False, 0
 
-    merged = _merge_overlays_into_slots(recipe.slots, out.overlays)
+    # Style set: chosen by a SEPARATE selector (not template_text — making the
+    # extraction agent also pick a set perturbed its bbox/effect/color
+    # extraction and regressed the eval). Best-effort; None → uniform styling.
+    style_set_id = _select_agentic_style_set(out.overlays, recipe, job_id=job_id)
+
+    merged = _merge_overlays_into_slots(recipe.slots, out.overlays, style_set_id=style_set_id)
     _apply_legibility_pacing(recipe.slots)
     log.info(
         "template_text_overlays_merged",

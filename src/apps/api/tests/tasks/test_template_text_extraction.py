@@ -26,6 +26,7 @@ from app.tasks.template_text_extraction import (
     _bbox_to_named_position,
     _build_slot_boundaries,
     _merge_overlays_into_slots,
+    _overlay_to_recipe_dict,
     extract_template_text_overlays,
 )
 
@@ -103,6 +104,38 @@ def test_bbox_to_named_position_buckets() -> None:
     assert _bbox_to_named_position(0.67) == "center"
     assert _bbox_to_named_position(0.68) == "bottom"
     assert _bbox_to_named_position(0.95) == "bottom"
+
+
+# ── style-set styled path ────────────────────────────────────────────────────
+
+
+def test_overlay_to_recipe_dict_styled_path() -> None:
+    """With a style_set_id, the overlay carries the set id + _style_set_styled
+    sentinel and DROPS the uniform Layer-2 fields (the set owns styling)."""
+    ov = _make_overlay(text="Tokyo", role="hook")
+    d = _overlay_to_recipe_dict(ov, style_set_id="travel_editorial")
+    assert d["style_set_id"] == "travel_editorial"
+    assert d["_style_set_styled"] is True
+    assert "_layer2_uniform" not in d
+    assert "text_size_px" not in d  # uniform sizing not pinned; set provides it
+    assert d["role"] == "hook"
+    # advisory fields preserved for fallback / round-trip
+    assert d["font_color_hex"] == "#FFFFFF"
+
+
+def test_overlay_to_recipe_dict_uniform_path_unchanged() -> None:
+    """Without a style_set_id, the legacy uniform path is unchanged."""
+    ov = _make_overlay(text="Tokyo", role="hook")
+    d = _overlay_to_recipe_dict(ov)
+    assert d.get("_layer2_uniform") is True
+    assert d["text_size_px"] == 120
+    assert "style_set_id" not in d
+
+
+def test_merge_threads_style_set_id_onto_overlays() -> None:
+    slots = [{"target_duration_s": 5.0, "text_overlays": []}]
+    _merge_overlays_into_slots(slots, [_make_overlay()], style_set_id="lifestyle_clean")
+    assert slots[0]["text_overlays"][0]["style_set_id"] == "lifestyle_clean"
 
 
 # ── _merge_overlays_into_slots ───────────────────────────────────────────────
