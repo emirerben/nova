@@ -73,6 +73,28 @@ log = structlog.get_logger()
 MAX_ERROR_DETAIL_LEN = 2000
 
 
+def _coerce_best_start_s(track_config: dict | None) -> float:
+    """Parse `best_start_s` from a track_config dict, treating None / invalid
+    as 0.0. The DB column allows NULL (admins who never set the section
+    leave it unset), and pydantic validation upstream may pass NaN/string
+    on partial config writes. Crashing the music orchestrator on
+    `float(None)` would brick the entire job — this helper keeps the
+    pipeline going with the sensible default.
+    """
+    if not track_config:
+        return 0.0
+    raw = track_config.get("best_start_s")
+    if raw is None:
+        return 0.0
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    if v != v:  # NaN
+        return 0.0
+    return v
+
+
 # ── Music-specific beat detection ────────────────────────────────────────────
 
 
@@ -689,6 +711,15 @@ def _run_music_job(job_id: str) -> None:
             # Gated globally by settings.text_renderer_skia_enabled inside
             # _burn_text_overlays.
             use_skia=True,
+            # Anchor for the line-style lyric audible-window finalizer. The
+            # audio mix runs from `best_start_s` for the full rendered video
+            # duration; `_collect_absolute_overlays` derives the audible end
+            # from this start + the post-snap cumulative durations it already
+            # uses for abs timestamps. Same `best_start_s` MUST be passed to
+            # `_mix_template_audio` below — drift here equals lyric drift.
+            # `_coerce_best_start_s` handles None / NaN / non-numeric DB
+            # values without crashing the worker.
+            lyric_audio_mix_song_start_s=_coerce_best_start_s(cfg),
         )
 
         # [10] Mix in music track audio
@@ -1389,6 +1420,12 @@ def _run_templated_music_job(job_id: str) -> None:
             slot_durations,
             clip_metas=None,
             subject="",
+            # Anchor for the line-style lyric audible-window finalizer; see
+            # the matching call in `_run_music_job`. Templated path uses
+            # `audio_start_offset_s = best_start_s` (or 0.0 when admin
+            # leaves the section unset) for `_mix_template_audio` below.
+            # `_coerce_best_start_s` handles None / NaN safely.
+            lyric_audio_mix_song_start_s=_coerce_best_start_s(track_cfg_tmpl),
         )
         if abs_overlays:
             burned_path = os.path.join(tmpdir, "burned.mp4")

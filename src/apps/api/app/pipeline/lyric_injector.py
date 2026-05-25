@@ -38,6 +38,8 @@ should treat this as "lyrics opt-in but unavailable for this track".
 from __future__ import annotations
 
 import copy
+import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -125,6 +127,15 @@ class _LineOverlayWindow:
     section_end_s: float
     fade_in_ms: int
     fade_out_ms: int
+    # Song-time originals for downstream finalization. The line-style
+    # finalization in template_orchestrate's `_collect_absolute_overlays`
+    # recomputes audible_words from `original_words` against the post-snap
+    # audio window. These are captured BEFORE any rebase or clamp — never
+    # add `best_start_s` to them.
+    original_text: str
+    original_start_s_song: float
+    original_end_s_song: float
+    original_words: list[dict]
 
 
 def inject_lyric_overlays(
@@ -314,6 +325,10 @@ def _select_section_lines(
                 clamped_end_s=clamped_le,
             )
 
+        # Section-clamped rebased words (existing behavior, retained for the
+        # karaoke / per-word-pop injectors and for debug only). The line-style
+        # finalization pass recomputes audible_words from `original_words`
+        # against the post-snap audio window, so it does NOT consume this list.
         rebased_words: list[dict] = []
         for w in line.get("words") or []:
             try:
@@ -327,12 +342,37 @@ def _select_section_lines(
             we = min(we_abs, clamped_le) - best_start_s
             rebased_words.append({"text": str(w.get("text", "")), "start_s": ws, "end_s": we})
 
+        # `original_words` = full pre-rebase word list IN SONG TIME. Carries
+        # words that fall outside the clamped section too — the line-style
+        # finalization needs the full denominator for coverage_words and the
+        # full input for the post-snap audible-word filter. NEVER add
+        # best_start_s back to these (they're already song time).
+        original_words: list[dict] = []
+        for w in line.get("words") or []:
+            try:
+                ws_abs = float(w.get("start_s", 0.0))
+                we_abs = float(w.get("end_s", 0.0))
+            except (TypeError, ValueError):
+                continue
+            original_words.append(
+                {"text": str(w.get("text", "")), "start_s_song": ws_abs, "end_s_song": we_abs}
+            )
+
         out.append(
             {
                 "text": str(line.get("text", "")),
                 "start_s": clamped_ls - best_start_s,
                 "end_s": clamped_le - best_start_s,
                 "words": rebased_words,
+                # Song-time originals for downstream finalization. The line
+                # bounds are the values from lyrics_cached as-is (no rebase,
+                # no clamp). Pair with `original_words` above. Captured before
+                # any clamp so finalization can recompute the audible set
+                # against the post-snap audio window.
+                "original_text": str(line.get("text", "")),
+                "original_start_s_song": ls,
+                "original_end_s_song": le,
+                "original_words": original_words,
             }
         )
     return out
@@ -623,6 +663,15 @@ def _inject_line(
         if section_end <= section_start:
             continue
 
+        # Song-time originals from `_select_section_lines`. Required for the
+        # finalization pass; the metadata validator in
+        # `_finalize_lyric_audible_window` falls back safely if any are
+        # missing (logs `lyric_segments_missing_finalization_metadata` and
+        # passes the overlay through unchanged).
+        original_text = line.get("original_text")
+        original_start_s_song = line.get("original_start_s_song")
+        original_end_s_song = line.get("original_end_s_song")
+        original_words = line.get("original_words")
         line_windows.append(
             _LineOverlayWindow(
                 lyric_line_id=f"line:{i}:{line_start:.3f}:{line_end:.3f}",
@@ -633,6 +682,16 @@ def _inject_line(
                 section_end_s=section_end,
                 fade_in_ms=int(fade_in_ms),
                 fade_out_ms=int(fade_out_ms),
+                original_text=(str(original_text) if original_text is not None else line["text"]),
+                original_start_s_song=(
+                    float(original_start_s_song)
+                    if original_start_s_song is not None
+                    else float("nan")
+                ),
+                original_end_s_song=(
+                    float(original_end_s_song) if original_end_s_song is not None else float("nan")
+                ),
+                original_words=list(original_words) if original_words else [],
             )
         )
 
@@ -674,9 +733,534 @@ def _inject_line(
                     "lyric_line_id": line.lyric_line_id,
                     "lyric_segment_index": segment_idx,
                     "lyric_segment_count": len(segments),
+                    # Song-time originals required by the line-style
+                    # finalization pass in `_collect_absolute_overlays`.
+                    # Written to EVERY segment so any survivor of merge
+                    # carries them. Finalizer recomputes `audible_words`
+                    # from `original_words` against the post-snap audio
+                    # window; it does NOT consume the section-clamped
+                    # `words` list.
+                    "original_text": line.original_text,
+                    "original_start_s_song": line.original_start_s_song,
+                    "original_end_s_song": line.original_end_s_song,
+                    "original_words": line.original_words,
                 }
             )
             _ensure_overlay_list(slots[slot_win.index]).append(overlay)
             injected += 1
 
     return injected
+
+
+# ── Line-style finalization (audible-window text fidelity) ────────────────────
+#
+# Called by `_collect_absolute_overlays` AFTER Layer 1's
+# `_consolidate_lyric_segments` merge. At that point each lyric-line is
+# represented by ONE merged overlay carrying:
+#
+#   - `text`              — current displayed text (may equal original)
+#   - `start_s`, `end_s`  — absolute video time
+#   - `lyric_line_id`
+#   - `original_text`, `original_start_s_song`, `original_end_s_song`,
+#     `original_words`   — set by `_inject_line` (song time)
+#   - `fade_in_ms`, `fade_out_ms`
+#
+# Finalization recomputes `audible_words` fresh from `original_words` against
+# the post-snap audio window `[audio_mix_song_start_s, audio_mix_song_end_s)`
+# using the per-word midpoint rule. It produces `display_text` (renderer-read
+# field) and may shrink the overlay's abs window to fit the audible region.
+# Dropped lyrics are removed from the output list.
+#
+# Plan: plans/geli-me-var-ama-hatalar-robust-reddy.md §2.
+
+# Per-word survival: a word is "audible" iff its midpoint lies inside
+# [audio_mix_song_start_s, audio_mix_song_end_s). Chosen for determinism,
+# perceptual match, and resilience to Whisper edge-jitter (±20 ms typical).
+# Document so it's not a magic heuristic.
+_AUDIBLE_WORD_MIDPOINT_RULE = (
+    "word_audible iff (word.start_s_song + word.end_s_song) / 2 "
+    "is in [audio_mix_song_start_s, audio_mix_song_end_s)"
+)
+
+# Quality thresholds (one input among several; not the sole input).
+_NEAR_COMPLETE_DURATION = 0.9
+_NEAR_COMPLETE_WORDS = 0.9
+_INTERIOR_COVERAGE_FLOOR = 0.65
+_BASIC_WORD_COUNT_FLOOR = 2
+_BASIC_AUDIBLE_SPEECH_S_FLOOR = 0.75
+_FINAL_LINE_TAIL_TOLERANCE_S = 0.25  # "final" iff abs_end within this of mix end
+_LINE_VS_WORD_BOUNDS_MISMATCH_S = 0.1  # log if line-end differs from last-word-end by more
+_EPS = 1e-6
+
+
+def _finalize_lyric_audible_window(
+    overlays: list[dict],
+    audio_mix_song_start_s: float,
+    audio_mix_song_end_s: float,
+) -> list[dict]:
+    """Audible-window-aware finalization for line-lyric overlays.
+
+    Contract (see plan §2i):
+      - non-lyric overlays pass through unchanged in their original positions;
+      - lyric overlays dropped by the decision procedure are removed;
+      - lyric overlays kept have `display_text` set and `start_s`/`end_s`
+        conservatively bounded to the audible region; `text` /
+        `original_text` / fade timings preserved.
+      - The returned list IS what renderers consume.
+
+    Args:
+      overlays: full overlay list AFTER Layer 1 consolidation. May contain
+        non-lyric overlays; they pass through unchanged.
+      audio_mix_song_start_s: song-time start of the rendered audio mix
+        (typically `best_start_s`).
+      audio_mix_song_end_s: song-time end of the rendered audio mix
+        (typically `best_start_s + total_audio_bearing_duration_s`).
+
+    Returns:
+      New list with the contract above. Original list is not mutated.
+    """
+    if audio_mix_song_end_s <= audio_mix_song_start_s:
+        return list(overlays)
+
+    audible_end_abs = audio_mix_song_end_s - audio_mix_song_start_s
+
+    # ── final-line detection ─────────────────────────────────────────────
+    # The naive picker (max raw `end_s` among all lyric overlays) misclassifies
+    # the real audible tail when a LATER lyric line was admitted at config
+    # time but sits entirely OUTSIDE the post-snap audible window (e.g. a
+    # `best_end_s` that overshoots the rendered audio end, or a lyric line
+    # whose audio is fully past `audio_mix_song_end_s`). The naive picker
+    # would tag the inaudible config'd line as final and starve the actual
+    # last-audible line of the permissive final-line quality floor — silently
+    # dropping the tail the user can hear.
+    #
+    # Correct contract: a line is "final" iff its CLIPPED audible window
+    # reaches within _FINAL_LINE_TAIL_TOLERANCE_S of the audible end. Ties
+    # are allowed (multiple lines may share the same clipped_end after
+    # compression). Fallback: if no line reaches the tolerance band, the
+    # latest audible clipped_end wins (covers tracks where the rendered
+    # window cuts well before any line tail).
+    final_idxs: set[int] = set()
+    audible_clipped_ends: list[tuple[int, float]] = []
+    for idx, ov in enumerate(overlays):
+        if ov.get("effect") != "lyric-line":
+            continue
+        orig_start = ov.get("original_start_s_song")
+        orig_end = ov.get("original_end_s_song")
+        if orig_start is None or orig_end is None:
+            # Missing metadata — `_finalize_one_lyric_line` will pass it
+            # through unchanged; finality doesn't matter for that branch.
+            continue
+        try:
+            orig_start_f = float(orig_start)
+            orig_end_f = float(orig_end)
+        except (TypeError, ValueError):
+            continue
+        clipped_start = max(orig_start_f, audio_mix_song_start_s)
+        clipped_end = min(orig_end_f, audio_mix_song_end_s)
+        if clipped_end <= clipped_start:
+            # No audible overlap — cannot be final.
+            continue
+        audible_clipped_ends.append((idx, clipped_end))
+        if clipped_end >= audio_mix_song_end_s - _FINAL_LINE_TAIL_TOLERANCE_S:
+            final_idxs.add(idx)
+
+    if not final_idxs and audible_clipped_ends:
+        # No line reaches the tolerance band — promote the latest audible
+        # clipped_end so we never strand the actual last-audible line.
+        latest = max(audible_clipped_ends, key=lambda item: item[1])[0]
+        final_idxs.add(latest)
+
+    out: list[dict] = []
+    for idx, ov in enumerate(overlays):
+        if ov.get("effect") != "lyric-line":
+            out.append(ov)
+            continue
+        is_final = idx in final_idxs
+        finalized = _finalize_one_lyric_line(
+            ov,
+            audio_mix_song_start_s=audio_mix_song_start_s,
+            audio_mix_song_end_s=audio_mix_song_end_s,
+            audible_end_abs=audible_end_abs,
+            is_final=is_final,
+        )
+        if finalized is not None:
+            out.append(finalized)
+    return out
+
+
+def _finalize_one_lyric_line(
+    overlay: dict,
+    *,
+    audio_mix_song_start_s: float,
+    audio_mix_song_end_s: float,
+    audible_end_abs: float,
+    is_final: bool,
+) -> dict | None:
+    """Apply the decision procedure to one lyric-line overlay.
+
+    Returns the (possibly-modified) overlay dict, or None if dropped.
+    """
+    line_id = overlay.get("lyric_line_id")
+    required = (
+        "original_text",
+        "original_start_s_song",
+        "original_end_s_song",
+        "original_words",
+    )
+    missing = [k for k in required if overlay.get(k) is None]
+    # NaN guards on the song-time fields (splitter writes NaN if upstream
+    # `_select_section_lines` didn't set them — defense in depth).
+    for k in ("original_start_s_song", "original_end_s_song"):
+        if k not in missing:
+            try:
+                v = float(overlay[k])
+                if v != v:  # NaN
+                    missing.append(k)
+            except (TypeError, ValueError):
+                missing.append(k)
+    if missing:
+        log.warning(
+            "lyric_segments_missing_finalization_metadata",
+            line_id=line_id,
+            missing_fields=missing,
+        )
+        # Safe passthrough: no shrink, no rewrite.
+        return overlay
+
+    original_text = str(overlay["original_text"])
+    original_start_s_song = float(overlay["original_start_s_song"])
+    original_end_s_song = float(overlay["original_end_s_song"])
+    original_words = list(overlay.get("original_words") or [])
+
+    # Empty-words short-circuit: tracks sourced from LRCLIB-plain (no Whisper
+    # alignment), or lines where the per-word list was dropped upstream, have
+    # NO surviving words by construction. Without this guard the decision
+    # procedure would compute surviving_word_count=0, fail Step 1 (coverage_words
+    # collapses), skip Step 2 (`surviving_word_count >= 2` is False), produce
+    # no candidate_text, and DROP the line at Step 3 — silently regressing
+    # every plain-lyric track that rendered fine pre-PR. Render the original
+    # text when the line is mostly inside the audible window; drop otherwise
+    # (line audio entirely outside the rendered window is the only legitimate
+    # drop case for plain-lyric lines).
+    if not original_words:
+        clipped_start = max(original_start_s_song, audio_mix_song_start_s)
+        clipped_end = min(original_end_s_song, audio_mix_song_end_s)
+        overlap_s = max(0.0, clipped_end - clipped_start)
+        original_dur = max(_EPS, original_end_s_song - original_start_s_song)
+        cov = overlap_s / original_dur
+        if cov < 0.5:
+            log.info(
+                "lyric_finalize_dropped_empty_words_outside_window",
+                line_id=line_id,
+                coverage_duration=round(cov, 4),
+            )
+            return None
+        # Mostly audible — keep the original text (no word data to align
+        # against), but still clamp the abs window to the audible video
+        # window so post_dwell or splitter overhang past the audio mix end
+        # doesn't render text after silence falls. Conservative clamp:
+        # `min(current_end_s, audible_end_abs)` + `max(0, current_start_s)`,
+        # same shape as `_apply_finalized`.
+        out = dict(overlay)
+        new_end_s = min(float(out.get("end_s", 0.0)), audible_end_abs)
+        new_start_s = max(0.0, float(out.get("start_s", 0.0)))
+        if new_end_s > new_start_s:
+            out["end_s"] = new_end_s
+            out["start_s"] = new_start_s
+        log.info("lyric_finalize_empty_words_kept_with_clamp", line_id=line_id)
+        return out
+
+    # If the line-level bounds disagree materially with word-derived bounds,
+    # log and prefer word-derived (user cleanup #5 / plan §2j).
+    if original_words:
+        first_w = original_words[0]
+        last_w = original_words[-1]
+        try:
+            first_w_start = float(first_w.get("start_s_song", original_start_s_song))
+            last_w_end = float(last_w.get("end_s_song", original_end_s_song))
+        except (TypeError, ValueError):
+            first_w_start = original_start_s_song
+            last_w_end = original_end_s_song
+        start_mismatch = abs(original_start_s_song - first_w_start)
+        end_mismatch = abs(original_end_s_song - last_w_end)
+        if (
+            start_mismatch > _LINE_VS_WORD_BOUNDS_MISMATCH_S
+            or end_mismatch > _LINE_VS_WORD_BOUNDS_MISMATCH_S
+        ):
+            log.warning(
+                "lyric_finalize_line_bounds_word_mismatch",
+                line_id=line_id,
+                line_start_s_song=original_start_s_song,
+                line_end_s_song=original_end_s_song,
+                first_word_start_s_song=first_w_start,
+                last_word_end_s_song=last_w_end,
+                start_mismatch_s=round(start_mismatch, 4),
+                end_mismatch_s=round(end_mismatch, 4),
+            )
+            original_start_s_song = first_w_start
+            original_end_s_song = last_w_end
+
+    # Compute audible_words fresh from original_words via midpoint rule.
+    audible_words = [
+        w for w in original_words if _word_audible(w, audio_mix_song_start_s, audio_mix_song_end_s)
+    ]
+    surviving_word_count = len(audible_words)
+    original_word_count = len(original_words)
+
+    # Per-line overlap (NOT audible section duration).
+    clipped_start = max(original_start_s_song, audio_mix_song_start_s)
+    clipped_end = min(original_end_s_song, audio_mix_song_end_s)
+    overlap_s = max(0.0, clipped_end - clipped_start)
+    original_dur = max(_EPS, original_end_s_song - original_start_s_song)
+    coverage_duration = overlap_s / original_dur
+    coverage_words = surviving_word_count / max(1, original_word_count)
+
+    # Audible speech = sum of per-word audible durations clamped to window.
+    audible_speech_s = 0.0
+    for w in audible_words:
+        try:
+            ws = float(w.get("start_s_song", 0.0))
+            we = float(w.get("end_s_song", 0.0))
+        except (TypeError, ValueError):
+            continue
+        audible_speech_s += max(
+            0.0, min(we, audio_mix_song_end_s) - max(ws, audio_mix_song_start_s)
+        )
+
+    # Step 1 — Near-complete: render original text unchanged. No log.
+    if coverage_duration >= _NEAR_COMPLETE_DURATION and coverage_words >= _NEAR_COMPLETE_WORDS:
+        return overlay
+
+    # Step 2 — Compute candidate_text via alignment, fall back to conservative join.
+    candidate_text: str | None = None
+    candidate_source: str | None = None
+    if surviving_word_count >= 2:
+        rebuilt = _align_audible_words_to_original_text(
+            original_text=original_text, audible_words=audible_words
+        )
+        if rebuilt is not None:
+            candidate_text = rebuilt
+            candidate_source = "alignment"
+        else:
+            candidate_text = " ".join(str(w.get("text", "")) for w in audible_words).strip()
+            candidate_source = "conservative_join"
+
+    # Step 3 — No candidate text: drop unconditionally.
+    if not candidate_text or not candidate_text.strip():
+        log.info(
+            "lyric_finalize_dropped_no_candidate_text",
+            line_id=line_id,
+            surviving_word_count=surviving_word_count,
+        )
+        return None
+
+    # Step 4 — Final-partial-line quality floor (basic only, more permissive).
+    if is_final:
+        if (
+            audible_speech_s < _BASIC_AUDIBLE_SPEECH_S_FLOOR
+            or surviving_word_count < _BASIC_WORD_COUNT_FLOOR
+        ):
+            log.info(
+                "lyric_finalize_final_line_dropped_fragment_too_short",
+                line_id=line_id,
+                audible_speech_s=round(audible_speech_s, 4),
+                surviving_word_count=surviving_word_count,
+            )
+            return None
+        return _apply_finalized(
+            overlay,
+            display_text=candidate_text,
+            audible_end_abs=audible_end_abs,
+            log_event="lyric_finalize_final_line_kept_truncated",
+            source=candidate_source,
+            line_id=line_id,
+        )
+
+    # Step 5 — Interior-partial-line quality floor (basic AND coverage; stricter).
+    interior_basic_ok = (
+        audible_speech_s >= _BASIC_AUDIBLE_SPEECH_S_FLOOR
+        and surviving_word_count >= _BASIC_WORD_COUNT_FLOOR
+    )
+    interior_coverage_ok = (
+        coverage_duration >= _INTERIOR_COVERAGE_FLOOR or coverage_words >= _INTERIOR_COVERAGE_FLOOR
+    )
+    if not (interior_basic_ok and interior_coverage_ok):
+        log.info(
+            "lyric_finalize_dropped_interior_partial",
+            line_id=line_id,
+            audible_speech_s=round(audible_speech_s, 4),
+            surviving_word_count=surviving_word_count,
+            coverage_duration=round(coverage_duration, 4),
+            coverage_words=round(coverage_words, 4),
+        )
+        return None
+
+    # Step 6 — Interior partial meeting BOTH floors: render candidate.
+    return _apply_finalized(
+        overlay,
+        display_text=candidate_text,
+        audible_end_abs=audible_end_abs,
+        log_event="lyric_finalize_interior_partial_kept_truncated",
+        source=candidate_source,
+        line_id=line_id,
+    )
+
+
+def _word_audible(
+    word: dict,
+    audio_mix_song_start_s: float,
+    audio_mix_song_end_s: float,
+) -> bool:
+    """Midpoint-in-window rule. See `_AUDIBLE_WORD_MIDPOINT_RULE`."""
+    try:
+        ws = float(word.get("start_s_song", 0.0))
+        we = float(word.get("end_s_song", 0.0))
+    except (TypeError, ValueError):
+        return False
+    midpoint = (ws + we) / 2.0
+    return audio_mix_song_start_s <= midpoint < audio_mix_song_end_s
+
+
+def _apply_finalized(
+    overlay: dict,
+    *,
+    display_text: str,
+    audible_end_abs: float,
+    log_event: str,
+    source: str | None,
+    line_id: str | None,
+) -> dict:
+    """Write `display_text` + conservative abs window onto a copy of `overlay`.
+
+    Conservative end clamp: `min(current_end_s, audible_end_abs)`. We do NOT
+    shrink to `clipped_end - audio_mix_song_start_s` because the splitter's
+    `post_dwell` intentionally extends the visual window past the line's
+    audio end for the YouTube-lyric-video "settle time" UX (PR #287). We
+    only protect against overhang past the audible mix end. Start side: only
+    bound to `>= 0` (the splitter never schedules a negative start).
+    """
+    out = dict(overlay)
+    out["display_text"] = display_text
+    new_end_s = min(float(out.get("end_s", 0.0)), audible_end_abs)
+    new_start_s = max(0.0, float(out.get("start_s", 0.0)))
+    if new_end_s > new_start_s:
+        out["end_s"] = new_end_s
+        out["start_s"] = new_start_s
+    log.info(log_event, line_id=line_id, source=source)
+    return out
+
+
+# ── Punctuation-preserving alignment ──────────────────────────────────────────
+
+
+# Token regex: Unicode-aware word characters, with apostrophe-containing
+# contractions (don't, we'd) and hyphenated compounds (hard-headed) treated
+# as single tokens. Leading-apostrophe words ('cause, 'til) are captured by
+# the leading `['’]?` alternative (U+2019 = curly apostrophe).
+# Parentheses and other punctuation are NOT tokens — they live in the
+# original string and survive the substring slice intact.
+_LYRIC_TOKEN_RE = re.compile(
+    r"['’]?\w+(?:[-'’]\w+)*",
+    flags=re.UNICODE,
+)
+
+
+def _normalize_token(text: str) -> str:
+    """NFKC normalize, casefold, and collapse curly apostrophe U+2019 → straight."""
+    return unicodedata.normalize("NFKC", text).replace("’", "'").casefold()
+
+
+def _tokenize_lyric_text(text: str) -> list[tuple[int, int, str]]:
+    """Return list of (start_char, end_char, normalized_text) tuples.
+
+    Preserves original character positions for substring slicing; normalization
+    is used for alignment matching only.
+    """
+    return [
+        (m.start(), m.end(), _normalize_token(m.group(0))) for m in _LYRIC_TOKEN_RE.finditer(text)
+    ]
+
+
+def _align_audible_words_to_original_text(
+    *, original_text: str, audible_words: list[dict]
+) -> str | None:
+    """Find a contiguous subsequence of tokens in `original_text` that matches
+    the normalized `audible_words` text list, and return the original-string
+    slice from the first matched token's start to the last matched token's end.
+
+    Contract (tightened per review feedback #6): prefers EXACT full contiguous
+    alignment. When the best contiguous run matches every audible word in
+    order, return the original-string slice. When it matches only some
+    audible words, return None AND log
+    `lyric_align_partial_match_omits_word` with the omitted words — the
+    caller will fall back to conservative join (`" ".join(audible_words)`),
+    which is safer than silently dropping a real audible word into the
+    substring slice.
+
+    Returns None on:
+      - audible_words count < 2
+      - no contiguous match found at all
+      - best contiguous match covers fewer than every audible word
+
+    Plan §2d. Curly apostrophes, leading apostrophes, hyphenated compounds,
+    and parenthetical content are all preserved through original-string slicing.
+    """
+    if len(audible_words) < 2:
+        return None
+
+    tokens = _tokenize_lyric_text(original_text)
+    if not tokens:
+        return None
+
+    audible_norm = [_normalize_token(str(w.get("text", ""))) for w in audible_words]
+    audible_norm = [t for t in audible_norm if t]
+    if len(audible_norm) < 2:
+        return None
+
+    n_aud = len(audible_norm)
+    n_tok = len(tokens)
+    # Find leftmost contiguous span in `tokens` matching `audible_norm`.
+    # Two-pointer scan: anchor on tokens, advance audible-pointer on each
+    # successive match; bail on first mismatch and slide anchor forward.
+    best_start: int | None = None
+    best_end: int | None = None
+    best_matched_count = 0
+    for anchor in range(n_tok - n_aud + 1):
+        ti = anchor
+        ai = 0
+        while ti < n_tok and ai < n_aud:
+            if tokens[ti][2] == audible_norm[ai]:
+                ai += 1
+                ti += 1
+            else:
+                break
+        matched = ai
+        if matched > best_matched_count:
+            best_matched_count = matched
+            best_start = anchor
+            best_end = ti  # exclusive index of last matched token + 1
+            if matched == n_aud:
+                break  # full match; leftmost wins
+
+    if best_start is None or best_end is None or best_end <= best_start:
+        return None
+
+    if best_matched_count < n_aud:
+        # Partial contiguous match — would silently drop one or more
+        # audible words from the displayed substring. Log the omitted
+        # words so coverage drift is debuggable, then return None so
+        # the caller uses the conservative join path (every audible word
+        # rendered, even if punctuation is lost).
+        omitted = audible_norm[best_matched_count:]
+        log.info(
+            "lyric_align_partial_match_omits_word",
+            matched_count=best_matched_count,
+            audible_count=n_aud,
+            omitted_words=omitted[:10],  # cap to avoid log spam on long lines
+        )
+        return None
+
+    first_start_char = tokens[best_start][0]
+    last_end_char = tokens[best_end - 1][1]
+    return original_text[first_start_char:last_end_char]

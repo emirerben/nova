@@ -1591,8 +1591,13 @@ def _validate_overlay(
 
     Returns (None, 0, 0, "") if the overlay should be skipped.
     When spans are present, skip text truncation (validate per-span instead).
+
+    Prefers `display_text` when set (Layer 2 line-style finalization writes
+    this for partial lyric lines it truncated to the audible-word substring).
+    Falls back to `text` for every other case — byte-identical to pre-PR for
+    non-music callers. See plans/geli-me-var-ama-hatalar-robust-reddy.md §2c.
     """
-    text = overlay.get("text", "")
+    text = overlay.get("display_text") or overlay.get("text", "")
     start_s = float(overlay.get("start_s", 0.0))
     end_s = float(overlay.get("end_s", 0.0))
     position = overlay.get("position", "center")
