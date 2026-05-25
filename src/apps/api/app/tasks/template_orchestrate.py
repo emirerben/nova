@@ -3925,6 +3925,21 @@ def _collect_absolute_overlays(
             if ov.get("stroke_width") is not None:
                 entry["stroke_width"] = ov["stroke_width"]
 
+            # 3b. Style set (agentic): the chosen set owns per-role styling.
+            # Resolve font/size/color/effect/position/anchor/stroke from the set
+            # for this overlay's role; the agent's per-overlay values are
+            # advisory (fill only set-null keys). The universal constraint pass
+            # below then guarantees fit. Only fires when the overlay carries a
+            # style_set_id (Layer-1 agentic builds that chose a set).
+            if ov.get("style_set_id"):
+                from app.pipeline.style_sets import resolve_overlay_style  # noqa: PLC0415
+
+                resolved = resolve_overlay_style(
+                    ov["style_set_id"], ov.get("role", "label"), advisory=entry
+                )
+                resolved.pop("timing", None)  # lyric-only; renderer ignores
+                entry.update(resolved)
+
             # 4. Apply label config based on subject vs prefix detection.
             # Gemini inconsistently returns role="hook" for text that should
             # be role="label", so we also detect by sample_text content.
@@ -4421,6 +4436,19 @@ def _pre_burn_curtain_slot_text(
             entry["font_family"] = ov["font_family"]
         if ov.get("cycle_fonts"):
             entry["cycle_fonts"] = ov["cycle_fonts"]
+
+        # Style set (agentic curtain-slot labels): same per-role resolution as
+        # _collect_absolute_overlays so a style-set-styled subject label gets
+        # the set's font/size/color/effect rather than falling through to the
+        # renderer default. The set owns styling; the agent's values are advisory.
+        if ov.get("style_set_id"):
+            from app.pipeline.style_sets import resolve_overlay_style  # noqa: PLC0415
+
+            resolved = resolve_overlay_style(
+                ov["style_set_id"], ov.get("role", "label"), advisory=entry
+            )
+            resolved.pop("timing", None)
+            entry.update(resolved)
 
         role = ov.get("role", "")
         sample_text = ov.get("sample_text", "")

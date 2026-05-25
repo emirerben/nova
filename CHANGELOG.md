@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.46.0] - 2026-05-25
+
+### Added
+- **Agentic templates now choose a curated style set for their text (Phase 3 of style sets).** A new lightweight `agentic_style_selector` agent picks ONE style set (`travel_editorial`, `lifestyle_clean`, `word_reveal`, `high_fashion`, …, or `default`) matching the template — from the extracted on-screen text + theme. That set owns per-role typography (font / size / color / effect / position) at render time via `resolve_overlay_style`, replacing the prior **uniform 120px left-anchored** look for agentic overlays with a coherent, designed per-role style. The universal constraint pass still guarantees every overlay fits the 9:16 safe zone.
+  - **Decoupled from `template_text` on purpose:** an earlier version had `template_text` itself pick the set, but mutating its extraction prompt perturbed its bbox/color/effect output (caught by the live eval). Set selection lives in a separate best-effort agent instead, so `template_text`'s prompt is unchanged from main and its eval is unaffected. Best-effort: any failure → uniform styling.
+  - Threading: the selector's `style_set_id` is carried onto each slot overlay (`_style_set_styled` sentinel, which makes `text_designer` skip them — the set owns styling) → resolved per-role in BOTH overlay-build sites (`_collect_absolute_overlays` and the curtain-slot pre-burn path). Layer-2 OCR overlays are untouched (keep uniform styling; follow-up).
+  - Cache: `CACHE_SCHEMA_VERSION` `s2`→`s3` (the Layer-1 agentic path keys on the base cache key, so this forces every cached recipe to reanalyze with the new styling; classic recipe-only templates reanalyze once with unchanged output). `STYLE_SETS_VERSION` is also folded into the Layer-2 content-hash.
+
+### Notes
+- Verified on a real agentic build + render: the selector picked `travel_editorial` for a "rich in life" template, the overlays rendered in Playfair serif via Skia through the full job pipeline (no integration regressions). The `template_text` live-judge eval fails identically on `main` (pre-existing, threshold-bound on the prod-snapshot fixtures) — not a regression from this change.
+
 ## [0.4.45.8] - 2026-05-25
 
 ### Fixed
