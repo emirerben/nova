@@ -359,7 +359,7 @@ def main() -> int:
         if not c.is_file():
             print(f"ERROR: clip not found: {c}", file=sys.stderr)
             return 2
-    if args.mode != "generative" and len(clips) != 1:
+    if args.mode == "template" and len(clips) != 1:
         print(f"ERROR: --mode {args.mode} takes exactly one --clip", file=sys.stderr)
         return 2
 

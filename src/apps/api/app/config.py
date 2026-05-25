@@ -177,7 +177,12 @@ class Settings(BaseSettings):
     output_width: int = 1080
     output_height: int = 1920
     output_fps: int = 30
-    output_video_bitrate: str = "4M"
+    # Capped-CRF ceiling, NOT an ABR target — see reframe._encoding_args. CRF 18
+    # is the quality driver; this bounds peak bitrate (bufsize = 2× this). Raised
+    # 4M→8M after the 4M ceiling macroblocked the dark sky on a 10-bit HLG iPhone
+    # sunset (lisbon1.MOV, 2026-05-25). 8M cleared the blocking with no visible
+    # gain from 12M at phone-delivery scale; +~70% file size on gradient-heavy clips.
+    output_video_bitrate: str = "8M"
     output_audio_bitrate: str = "192k"
     output_min_duration_s: float = 45.0
     output_max_duration_s: float = 59.0
