@@ -2380,6 +2380,7 @@ def _plan_slots(
     output_fit: str = "crop",
     *,
     is_agentic: bool = False,
+    allow_slowdown_fill: bool = True,
 ) -> tuple[list[SlotPlan], dict[str, float], float]:
     """Phase 1: sequential arithmetic to plan all slot renders.
 
@@ -2536,6 +2537,44 @@ def _plan_slots(
             slowdown_speed = available_at_start / slot_target_dur if slot_target_dur > 0 else 1.0
             footage_exhausted = start_s + source_duration > clip_dur
             if (
+                footage_exhausted
+                and probe is not None  # only act on a real probe, not the 30s fallback
+                and not allow_slowdown_fill
+                and available_at_start > 0.0
+            ):
+                # Ban stretch-to-fill (generative edits): NEVER slow a clip down
+                # to manufacture runtime. Render only the real footage at 1.0×
+                # and SHRINK the slot to that length. Setting slot_target_dur to
+                # the rendered length is what stops the CFR muxer from padding a
+                # frozen tail (the same freeze the slowdown path fixes for
+                # templates). Pull `cumulative_s` back by the time we just freed
+                # so later beat-snaps stay aligned to the now-shorter timeline.
+                speed_factor = 1.0
+                source_duration = available_at_start
+                cumulative_s -= max(0.0, slot_target_dur - available_at_start)
+                slot_target_dur = available_at_start
+                from app.services.pipeline_trace import (  # noqa: PLC0415
+                    record_pipeline_event,
+                )
+
+                record_pipeline_event(
+                    stage="reframe",
+                    event="clip_footage_exhausted_trimmed",
+                    data={
+                        "slot_index": i,
+                        "clip_id": clip_id,
+                        "clip_dur_s": round(clip_dur, 3),
+                        "trimmed_slot_dur_s": round(available_at_start, 3),
+                    },
+                )
+                log.warning(
+                    "clip_footage_exhausted_trimmed",
+                    clip_id=clip_id,
+                    position=step.slot.get("position"),
+                    clip_dur=round(clip_dur, 3),
+                    trimmed_slot_dur=round(available_at_start, 3),
+                )
+            elif (
                 footage_exhausted
                 and probe is not None  # only act on a real probe, not the 30s fallback
                 and available_at_start > 0.0
@@ -2961,6 +3000,7 @@ def _assemble_clips(
     force_single_pass: bool = False,
     is_agentic: bool = False,
     transition_duration_s: float | None = None,
+    allow_slowdown_fill: bool = True,
 ) -> None:
     """Assemble clips in slot order: plan, parallel-render, then join with transitions.
 
@@ -3014,6 +3054,7 @@ def _assemble_clips(
         tmpdir,
         output_fit=output_fit,
         is_agentic=is_agentic,
+        allow_slowdown_fill=allow_slowdown_fill,
     )
     _phase_done("plan", _phase_t0, job_id=job_id, slots=len(plans))
 

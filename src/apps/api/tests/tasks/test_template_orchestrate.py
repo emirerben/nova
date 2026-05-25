@@ -1178,6 +1178,83 @@ class TestClipFootageExhausted:
             assert kwargs["end_s"] == pytest.approx(5.5, abs=0.01)
 
 
+class TestBanSlowdownFill:
+    """Lock the generative-edit invariant: with `allow_slowdown_fill=False`, a
+    clip shorter than its slot is NEVER slowed down to fill — the slot shrinks to
+    the real footage instead, so the edit can never run longer than what the user
+    uploaded. (AI trimming clips shorter stays allowed; that's a different path.)
+    """
+
+    def _make_step(self, clip_id, start_s, end_s, target_dur):
+        step = MagicMock()
+        step.clip_id = clip_id
+        step.moment = {"start_s": start_s, "end_s": end_s}
+        step.slot = {"position": 1, "target_duration_s": target_dur}
+        return step
+
+    def test_short_source_trims_slot_no_slowdown(self, tmp_path):
+        """Source 2.97s in a 5.5s slot with allow_slowdown_fill=False →
+        speed_factor stays 1.0 (no stretch) and the window covers exactly the
+        2.97s of real footage. The slot is shorter; nothing is manufactured."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+        probe = VideoProbe(
+            duration_s=2.97, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = self._make_step("clip_a", start_s=0.0, end_s=3.9, target_dur=5.5)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+                allow_slowdown_fill=False,
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            # NEVER slowed: the defining contrast with TestClipFootageExhausted.
+            assert kwargs["speed_factor"] == 1.0
+            # Window = the real footage, no stretch, no freeze-pad.
+            assert kwargs["start_s"] == 0.0
+            assert kwargs["end_s"] == pytest.approx(2.97, abs=0.01)
+
+    def test_default_still_slows_down(self, tmp_path):
+        """Regression guard: the default (allow_slowdown_fill=True) path —
+        used by templates + music jobs — is unchanged and still slows down."""
+        from app.pipeline.probe import VideoProbe
+        from app.tasks.template_orchestrate import _assemble_clips
+
+        clip_file = tmp_path / "clip_0.mp4"
+        clip_file.write_bytes(b"fake")
+        probe = VideoProbe(
+            duration_s=2.97, fps=30.0, width=1920, height=1080,
+            has_audio=True, codec="h264", aspect_ratio="16:9", file_size_bytes=4,
+        )
+        step = self._make_step("clip_a", start_s=0.0, end_s=3.9, target_dur=5.5)
+
+        with (
+            patch("app.pipeline.reframe.reframe_and_export") as mock_reframe,
+            patch("app.tasks.template_orchestrate.shutil.copy2"),
+        ):
+            _assemble_clips(
+                steps=[step],
+                clip_id_to_local={"clip_a": str(clip_file)},
+                clip_probe_map={str(clip_file): probe},
+                output_path=str(tmp_path / "out.mp4"),
+                tmpdir=str(tmp_path),
+            )
+            kwargs = mock_reframe.call_args.kwargs
+            assert kwargs["speed_factor"] == pytest.approx(2.97 / 5.5, rel=0.01)
+
+
 # ── _assemble_clips aspect ratio ──────────────────────────────────────────────
 
 

@@ -20,9 +20,20 @@ from app.routes.generative_jobs import (
 def test_valid_request():
     req = CreateGenerativeJobRequest(
         clip_gcs_paths=["music-uploads/a.mp4", "slot-uploads/b.mp4"],
-        target_duration_s=20.0,
     )
     assert len(req.clip_gcs_paths) == 2
+
+
+def test_target_duration_field_removed():
+    # The slider is gone: output length is derived from footage, never user-set.
+    # A stale frontend that still posts the field must be tolerated (ignored),
+    # not rejected.
+    assert "target_duration_s" not in CreateGenerativeJobRequest.model_fields
+    req = CreateGenerativeJobRequest(
+        clip_gcs_paths=["music-uploads/a.mp4"],
+        target_duration_s=120.0,  # extra field — silently ignored
+    )
+    assert not hasattr(req, "target_duration_s")
 
 
 def test_rejects_empty_clips():
@@ -44,13 +55,6 @@ def test_rejects_arbitrary_bucket_prefix():
 def test_rejects_path_traversal():
     with pytest.raises(ValidationError):
         CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/../../etc/passwd"])
-
-
-def test_rejects_out_of_range_duration():
-    with pytest.raises(ValidationError):
-        CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/a.mp4"], target_duration_s=120.0)
-    with pytest.raises(ValidationError):
-        CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/a.mp4"], target_duration_s=1.0)
 
 
 def test_swap_song_request():

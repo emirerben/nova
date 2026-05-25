@@ -29,7 +29,6 @@ export interface AdminGenerativeListItem {
   updated_at: string;
   error_detail: string | null;
   clip_count: number;
-  target_duration_s: number | null;
   variants: AdminGenerativeVariant[];
 }
 
