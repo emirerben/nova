@@ -47,6 +47,7 @@ from app.agents._schemas.song_sections import SongSection, cap_song_section_dura
 from app.config import settings
 from app.database import get_db
 from app.models import Job, MusicTrack
+from app.pipeline.music_recipe import count_slots
 from app.routes.music_jobs import (
     _SLOT_UPLOAD_MAX_BYTES,
     SYNTHETIC_USER_ID,
@@ -730,6 +731,29 @@ async def update_music_track(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="best_end_s must be greater than best_start_s",
             )
+        # Slot-count invariant: (window, slot_every_n_beats) must produce >=1
+        # slot or every job submission will fail inside the worker with
+        # ValueError. The analyzer enforces this at analysis time
+        # (music_orchestrate._analyze_music_track_task n_slots == 0 → _fail_track);
+        # PATCH was the asymmetric gap. Skip the check while the track is
+        # still queued/analyzing (no beats yet) and when no slot-relevant
+        # field is in this patch.
+        _slot_fields = {"best_start_s", "best_end_s", "slot_every_n_beats"}
+        if (track.beat_timestamps_s or []) and (set(req.track_config) & _slot_fields):
+            start = float(merged_config.get("best_start_s", 0.0))
+            end = float(merged_config.get("best_end_s", 0.0))
+            n = int(merged_config.get("slot_every_n_beats", 8))
+            if count_slots(track.beat_timestamps_s, start, end, n) == 0:
+                beats_in_window = sum(1 for b in track.beat_timestamps_s if start <= b <= end)
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"This (window, slot_every_n_beats) combination produces "
+                        f"0 slots: {beats_in_window} beats in "
+                        f"[{start:.1f}s–{end:.1f}s] with slot_every_n_beats={n}. "
+                        f"Widen the window or lower slot_every_n_beats."
+                    ),
+                )
         track.track_config = merged_config
 
     now = datetime.now(UTC)

@@ -7,6 +7,7 @@ import pytest
 
 from app.pipeline.music_recipe import (
     auto_best_section,
+    count_slots,
     generate_music_recipe,
     merge_template_with_track,
 )
@@ -164,6 +165,89 @@ def test_auto_best_section_malformed_lyric_rows_are_skipped() -> None:
     # Should not raise; should still pick a sensible window.
     assert 0.0 <= start
     assert end > start
+
+
+# ── count_slots ───────────────────────────────────────────────────────────────
+
+
+def test_count_slots_empty_beats() -> None:
+    assert count_slots([], 0.0, 30.0, 8) == 0
+
+
+def test_count_slots_fewer_beats_than_n_returns_zero() -> None:
+    # The Marea (Fred Again) prod incident: 5 beats in [156.6, 170.0] with n=8
+    # produced 0 slots, but the admin PATCH endpoint had no guard so the job
+    # failed at run time instead of at config save time.
+    marea_beats = [159.474, 165.447, 165.895, 167.026, 169.799]
+    assert count_slots(marea_beats, 156.6, 170.0, 8) == 0
+    # And with n=4 (the admin's failed remediation attempt) it's still
+    # too narrow to be useful — 1 slot is the math, but the validator
+    # still accepts >=1; that's a UX problem, not a 0-slot bug.
+    assert count_slots(marea_beats, 156.6, 170.0, 4) == 1
+
+
+def test_count_slots_equal_to_n_returns_zero_boundary() -> None:
+    # range(0, len-n, n) where len==n gives range(0, 0, n) = empty.
+    # Boundary case the original arithmetic gets right by luck.
+    beats = [float(i) for i in range(8)]
+    assert count_slots(beats, 0.0, 8.0, 8) == 0
+
+
+def test_count_slots_just_above_n_returns_one() -> None:
+    beats = [float(i) for i in range(9)]
+    assert count_slots(beats, 0.0, 9.0, 8) == 1
+
+
+def test_count_slots_matches_range_arithmetic() -> None:
+    beats = [float(i) for i in range(0, 40)]
+    for n in (2, 4, 8, 12):
+        window_beats = [b for b in beats if 0.0 <= b <= 39.0]
+        expected = max(0, len(range(0, max(0, len(window_beats) - n), n)))
+        assert count_slots(beats, 0.0, 39.0, n) == expected, f"n={n}"
+
+
+def test_count_slots_window_outside_beats_returns_zero() -> None:
+    beats = [1.0, 2.0, 3.0]
+    assert count_slots(beats, 100.0, 200.0, 4) == 0
+
+
+def test_count_slots_agrees_with_generate_music_recipe_when_positive() -> None:
+    # When count_slots > 0, generate_music_recipe should produce exactly
+    # that many slots. Single source of truth.
+    beats = [float(i) * 0.5 for i in range(40)]  # 0.0 .. 19.5 step 0.5
+    n = 4
+    expected = count_slots(beats, 0.0, 19.5, n)
+    assert expected > 0
+    recipe = generate_music_recipe(
+        {
+            "beat_timestamps_s": beats,
+            "track_config": {
+                "best_start_s": 0.0,
+                "best_end_s": 19.5,
+                "slot_every_n_beats": n,
+            },
+            "duration_s": 30.0,
+        }
+    )
+    assert recipe["shot_count"] == expected
+
+
+def test_count_slots_agrees_with_generate_music_recipe_when_zero() -> None:
+    # When count_slots == 0, generate_music_recipe must raise.
+    beats = [1.0, 2.0, 3.0]
+    assert count_slots(beats, 0.0, 10.0, 8) == 0
+    with pytest.raises(ValueError, match="0 slots"):
+        generate_music_recipe(
+            {
+                "beat_timestamps_s": beats,
+                "track_config": {
+                    "best_start_s": 0.0,
+                    "best_end_s": 10.0,
+                    "slot_every_n_beats": 8,
+                },
+                "duration_s": 30.0,
+            }
+        )
 
 
 # ── generate_music_recipe ─────────────────────────────────────────────────────
