@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.47.0] - 2026-05-25
+
+### Added
+- **Generative edits now use the curated text style sets — and you can change the style, just like swapping the song.** The style-set library (`style_sets.py` / `style-sets.json`) shipped eight `applies_to: ["generative"]` sets, but the generative pipeline never used them: it styled the AI hero-intro purely from the free-form `OverlayFormatMatcherAgent` output and didn't even set a font. Now:
+  - **Auto-selected per job.** After writing the intro text, `orchestrate_generative_job` picks a generative-eligible style set (reusing `AgenticStyleSelectorAgent` against the generative catalog) and applies it to every variant — the AI intro on the text variants (`song_text` / `original_text`) via `resolve_overlay_style`, and the lyric typography on the `song_lyrics` variant via the lyric injector's `style_set_id` path. Each generative set gained a `lyric_line` role in its own font so lyrics inherit the set's look. The set is authoritative; the agent's per-attribute output drops to advisory (fills only what the set leaves null). Best-effort: selection failure falls back to `default`, never blocks a job.
+  - **User- and admin-changeable.** New `POST /generative-jobs/{id}/variants/{vid}/change-style` re-renders one variant against a different set (async, mirroring `swap-song`/`retext`), and `GET /generative-jobs/style-sets` lists the generative-eligible sets. The public generative page gets a "Style…" picker on every variant card, and a new admin detail page (`/admin/generative/{id}`) surfaces the same per-variant controls (previously admin was view-only). The chosen `style_set_id` is persisted on each variant in `assembly_plan["variants"]` so it survives song-swaps and text edits.
+  - The hero-intro overlay's effect allowlist widened to the curated-set vocabulary (`typewriter`, `stream-in`, `pop-in`, …) so a set's effect survives instead of being flattened to `static`; `build_intro_overlay` now threads the set's `font_family` / `stroke_width` / `text_size_px` / position fracs. Verified un-clipped across all nine generative sets via `make verify-overlays` (the Skia render gate).
 ## [0.4.46.5] - 2026-05-25
 
 ### Fixed

@@ -123,12 +123,18 @@ export default function AdminGenerativePage() {
                 <tbody className="divide-y divide-zinc-800">
                   {items.map((job) => (
                     <tr key={job.job_id} className="hover:bg-zinc-900/40">
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 whitespace-nowrap">
                         <Link
-                          href={`/admin/jobs/${job.job_id}`}
+                          href={`/admin/generative/${job.job_id}`}
                           className="font-mono text-xs text-blue-400 hover:underline"
                         >
                           {job.job_id.slice(0, 8)}…
+                        </Link>
+                        <Link
+                          href={`/admin/jobs/${job.job_id}`}
+                          className="ml-2 text-[10px] text-zinc-500 hover:underline"
+                        >
+                          debug
                         </Link>
                       </td>
                       <td className="px-3 py-2">

@@ -1,5 +1,5 @@
 {
-  "version": "style-sets-2026-05-25d",
+  "version": "style-sets-2026-05-25e",
   "_doc": "Curated text style sets. Each set defines per-ROLE styling that fully owns the look of an overlay (the LLM/recipe supplies only text + timing + role). Every `font_family` MUST be a key in assets/fonts/font-registry.json; every `effect` must be in VALID_EFFECTS (app/agents/_schemas/template_text.py) plus the renderer-level karaoke-line/lyric-line; every `position` must be a key in _POSITION_Y (app/pipeline/text_overlay.py). Fields left null fall through to the LLM/legacy advisory value, then the renderer default. Design direction: editorial fonts (serif + one mono; no cheap geometric sans), restrained sizes (text_size_px ~38-88, consistent scale across agentic sets), thin strokes (rely on the renderer's gaussian shadow). See app/pipeline/style_sets.py. Editing this file changes STYLE_SETS_VERSION which is folded into the Layer-2 cache key.",
   "sets": [
     {
@@ -58,7 +58,8 @@
         "cta": {"font_family": "Playfair Display Regular", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "fade-in", "position": "bottom", "text_anchor": "center", "stroke_width": 0},
         "reaction": {"font_family": "Playfair Display", "text_size_px": 72, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
         "body": {"font_family": "Playfair Display Regular", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "intro": {"font_family": "Playfair Display", "text_size_px": 88, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0}
+        "intro": {"font_family": "Playfair Display", "text_size_px": 88, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
+        "lyric_line": {"font_family": "Playfair Display", "text_size_px": 60, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "center", "stroke_width": 2, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
       }
     },
     {
@@ -72,7 +73,8 @@
         "cta": {"font_family": "Playfair Display Regular", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "fade-in", "position": "bottom", "text_anchor": "center", "stroke_width": 0},
         "reaction": {"font_family": "Playfair Display Regular", "text_size_px": 72, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
         "body": {"font_family": "Playfair Display Regular", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "intro": {"font_family": "Playfair Display Regular", "text_size_px": 88, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0}
+        "intro": {"font_family": "Playfair Display Regular", "text_size_px": 88, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
+        "lyric_line": {"font_family": "Playfair Display Regular", "text_size_px": 58, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "center-below", "text_anchor": "center", "stroke_width": 0, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.2, "next_line_gap_s": 0.25, "fade_in_ms": 300, "fade_out_ms": 350}}
       }
     },
     {
@@ -87,7 +89,8 @@
         "body": {"font_family": "Playfair Display", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
         "label": {"font_family": "Bodoni Moda", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center-label", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
         "cta": {"font_family": "Playfair Display Regular", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "pop-in", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "intro": {"font_family": "Playfair Display", "text_size_px": 82, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0}
+        "intro": {"font_family": "Playfair Display", "text_size_px": 82, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "lyric_line": {"font_family": "Playfair Display", "text_size_px": 60, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
       }
     },
     {
@@ -102,7 +105,8 @@
         "cta": {"font_family": "Bodoni Moda", "text_size_px": 42, "text_color": "#FFFFFF", "effect": "fade-in", "position": "bottom", "text_anchor": "center", "stroke_width": 0},
         "reaction": {"font_family": "Bodoni Moda", "text_size_px": 68, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
         "body": {"font_family": "Bodoni Moda", "text_size_px": 46, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "intro": {"font_family": "Bodoni Moda", "text_size_px": 80, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0}
+        "intro": {"font_family": "Bodoni Moda", "text_size_px": 80, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
+        "lyric_line": {"font_family": "Bodoni Moda", "text_size_px": 58, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "center", "stroke_width": 0, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
       }
     },
     {
@@ -117,7 +121,8 @@
         "cta": {"font_family": "Fraunces", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "pop-in", "position": "bottom", "text_anchor": "center", "stroke_width": 0},
         "reaction": {"font_family": "Fraunces", "text_size_px": 72, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
         "body": {"font_family": "Fraunces", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "intro": {"font_family": "Fraunces", "text_size_px": 84, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "center", "stroke_width": 0}
+        "intro": {"font_family": "Fraunces", "text_size_px": 84, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
+        "lyric_line": {"font_family": "Fraunces", "text_size_px": 60, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "center", "stroke_width": 2, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
       }
     },
     {
@@ -132,7 +137,8 @@
         "cta": {"font_family": "Space Mono", "text_size_px": 36, "text_color": "#FFFFFF", "effect": "fade-in", "position": "bottom", "text_anchor": "center", "stroke_width": 0},
         "reaction": {"font_family": "Space Mono", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
         "body": {"font_family": "Space Mono", "text_size_px": 38, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "intro": {"font_family": "Space Mono", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0}
+        "intro": {"font_family": "Space Mono", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
+        "lyric_line": {"font_family": "Space Mono", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "center", "stroke_width": 0, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
       }
     },
     {
@@ -147,7 +153,8 @@
         "cta": {"font_family": "Space Mono", "text_size_px": 36, "text_color": "#FFFFFF", "effect": "typewriter", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
         "reaction": {"font_family": "Space Mono", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "typewriter", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
         "body": {"font_family": "Space Mono", "text_size_px": 38, "text_color": "#FFFFFF", "effect": "typewriter", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "intro": {"font_family": "Space Mono", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "typewriter", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0}
+        "intro": {"font_family": "Space Mono", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "typewriter", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "lyric_line": {"font_family": "Space Mono", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
       }
     },
     {
@@ -162,7 +169,8 @@
         "cta": {"font_family": "Space Mono", "text_size_px": 36, "text_color": "#FFFFFF", "effect": "stream-in", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
         "reaction": {"font_family": "Space Mono", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "stream-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
         "body": {"font_family": "Space Mono", "text_size_px": 40, "text_color": "#FFFFFF", "effect": "stream-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "intro": {"font_family": "Space Mono", "text_size_px": 54, "text_color": "#FFFFFF", "effect": "stream-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0}
+        "intro": {"font_family": "Space Mono", "text_size_px": 54, "text_color": "#FFFFFF", "effect": "stream-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
+        "lyric_line": {"font_family": "Space Mono", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
       }
     }
   ]
