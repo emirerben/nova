@@ -66,6 +66,9 @@ Use `make local-render` when you need byte-equivalent (or close-to) output befor
 ```bash
 cp .env.local-render.example .env.local-render   # fill in GCS + AI keys
 make local-render CLIP=/path/to/clip.mp4 TEMPLATE=<uuid> [MODE=template|music] [INPUTS='{"location":"Tokyo"}']
+
+# generative edits (no template; song auto-matched; renders all 3 variants):
+make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
 ```
 
 This brings up `db` + `redis` + `api` + `worker` containers built from the repo-root `Dockerfile` (the Fly image), waits for `/health` on host port 8001, runs migrations, drives the job through the public API, downloads the rendered MP4 to `.local-render/<job-id>.mp4`, and prints `ffprobe`. The `nova-render` compose project name lets this stack coexist with `make dev` and `dev-auto.sh` on the same machine. Stop with `make local-render-down`; tail with `make local-render-logs`.
