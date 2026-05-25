@@ -12,7 +12,7 @@
 import { render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
-import { AudioPlayer } from "@/app/admin/music/[id]/page";
+import { AudioPlayer } from "@/app/admin/music/[id]/components/AudioPlayer";
 
 // Stub the admin audio-URL fetch so the component renders past its loading
 // guard. The fake URL is never played.
