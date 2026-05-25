@@ -54,7 +54,7 @@ function formatTime(seconds: number): string {
   return `${m}:${r.toFixed(1).padStart(4, "0")}`;
 }
 
-function AudioPlayer({
+export function AudioPlayer({
   trackId,
   beats,
   duration,
@@ -194,6 +194,15 @@ function AudioPlayer({
 
   const playheadX = duration > 0 ? (currentTime / duration) * W : 0;
 
+  // When agent sections exist, rank-1 is the canonical "active window" — the
+  // legacy 45s wash band, Set-start/end buttons, and "Best section" header
+  // all hide so only the numbered bands tell the story. Beat-strip
+  // highlighting re-keys off rank-1's bounds so beats inside section #1 stay
+  // bright (the visual cue that "these are the cut points").
+  const hasSections = !!sections && sections.length > 0;
+  const activeStart = hasSections ? sections![0].start_s : start;
+  const activeEnd = hasSections ? sections![0].end_s : end;
+
   // Time-ruler tick positions
   const tickStep = pickTickInterval(duration);
   const ticks: number[] = [];
@@ -316,19 +325,25 @@ function AudioPlayer({
           );
         })}
 
-        {/* Manual-config selected window highlight (over beat strip) */}
-        <rect
-          x={(start / duration) * W}
-          y={BEAT_TOP}
-          width={Math.max(0, ((end - start) / duration) * W)}
-          height={BEAT_H}
-          fill="rgba(139,92,246,0.15)"
-        />
+        {/* Manual-config selected window highlight (over beat strip).
+            Only shown when the agent has not yet picked sections; once it
+            has, rank-1 IS the canonical window and the numbered bands
+            above show it without this redundant wash. */}
+        {!hasSections && (
+          <rect
+            x={(start / duration) * W}
+            y={BEAT_TOP}
+            width={Math.max(0, ((end - start) / duration) * W)}
+            height={BEAT_H}
+            fill="rgba(139,92,246,0.15)"
+          />
+        )}
 
-        {/* Beat markers */}
+        {/* Beat markers. `inWindow` is keyed off the ACTIVE window — when
+            sections exist that's rank-1; otherwise the manual config window. */}
         {beats.map((b, i) => {
           const x = (b / duration) * W;
-          const inWindow = b >= start && b <= end;
+          const inWindow = b >= activeStart && b <= activeEnd;
           return (
             <rect
               key={i}
@@ -342,24 +357,30 @@ function AudioPlayer({
           );
         })}
 
-        {/* Start marker — spans bands + beat strip, skips the ruler */}
-        <line
-          x1={(start / duration) * W}
-          y1={RULER_H}
-          x2={(start / duration) * W}
-          y2={H}
-          stroke="#22c55e"
-          strokeWidth={2}
-        />
-        {/* End marker */}
-        <line
-          x1={(end / duration) * W}
-          y1={RULER_H}
-          x2={(end / duration) * W}
-          y2={H}
-          stroke="#ef4444"
-          strokeWidth={2}
-        />
+        {/* Start / end markers — paired with the manual-config wash band,
+            so they hide for the same reason. The numbered band borders
+            (rendered in the section loop above) already mark rank-1's
+            start/end. */}
+        {!hasSections && (
+          <>
+            <line
+              x1={(start / duration) * W}
+              y1={RULER_H}
+              x2={(start / duration) * W}
+              y2={H}
+              stroke="#22c55e"
+              strokeWidth={2}
+            />
+            <line
+              x1={(end / duration) * W}
+              y1={RULER_H}
+              x2={(end / duration) * W}
+              y2={H}
+              stroke="#ef4444"
+              strokeWidth={2}
+            />
+          </>
+        )}
 
         {/* Playhead — spans full height including ruler so timestamps stay readable */}
         <line
@@ -404,32 +425,42 @@ function AudioPlayer({
         </div>
       )}
 
-      {/* Section selection buttons */}
-      <div className="flex items-center gap-3 mt-2">
-        <button
-          onClick={() => setSelectMode(selectMode === "start" ? null : "start")}
-          className={`text-xs font-semibold px-3 py-1 rounded-lg transition-colors ${
-            selectMode === "start"
-              ? "bg-green-600 text-white"
-              : "bg-zinc-700 hover:bg-zinc-600 text-zinc-300"
-          }`}
-        >
-          {selectMode === "start" ? "Click waveform to set start..." : "Set start"}
-        </button>
-        <button
-          onClick={() => setSelectMode(selectMode === "end" ? null : "end")}
-          className={`text-xs font-semibold px-3 py-1 rounded-lg transition-colors ${
-            selectMode === "end"
-              ? "bg-red-600 text-white"
-              : "bg-zinc-700 hover:bg-zinc-600 text-zinc-300"
-          }`}
-        >
-          {selectMode === "end" ? "Click waveform to set end..." : "Set end"}
-        </button>
-        <span className="text-xs text-zinc-500">
-          {beats.length} beats · <span className="text-green-400">green</span> = start · <span className="text-red-400">red</span> = end · white = playhead
-        </span>
-      </div>
+      {/* Section selection buttons — only meaningful when the agent has
+          not picked sections. With sections, rank-1 IS the canonical
+          window and manual override would just create drift. */}
+      {hasSections ? (
+        <div className="flex items-center gap-3 mt-2">
+          <span className="text-xs text-zinc-500">
+            {beats.length} beats · white = playhead
+          </span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3 mt-2">
+          <button
+            onClick={() => setSelectMode(selectMode === "start" ? null : "start")}
+            className={`text-xs font-semibold px-3 py-1 rounded-lg transition-colors ${
+              selectMode === "start"
+                ? "bg-green-600 text-white"
+                : "bg-zinc-700 hover:bg-zinc-600 text-zinc-300"
+            }`}
+          >
+            {selectMode === "start" ? "Click waveform to set start..." : "Set start"}
+          </button>
+          <button
+            onClick={() => setSelectMode(selectMode === "end" ? null : "end")}
+            className={`text-xs font-semibold px-3 py-1 rounded-lg transition-colors ${
+              selectMode === "end"
+                ? "bg-red-600 text-white"
+                : "bg-zinc-700 hover:bg-zinc-600 text-zinc-300"
+            }`}
+          >
+            {selectMode === "end" ? "Click waveform to set end..." : "Set end"}
+          </button>
+          <span className="text-xs text-zinc-500">
+            {beats.length} beats · <span className="text-green-400">green</span> = start · <span className="text-red-400">red</span> = end · white = playhead
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -762,11 +793,17 @@ function ConfigTabContent({
         <Row label="Duration" value={track.duration_s ? `${track.duration_s.toFixed(1)}s` : "—"} />
         <Row label="Beats detected" value={String(track.beat_count)} />
         <Row
-          label="Best section"
+          label={
+            track.best_sections && track.best_sections.length > 0
+              ? "Section #1"
+              : "Best section"
+          }
           value={
-            cfg.best_start_s != null
-              ? `${cfg.best_start_s.toFixed(1)}s – ${cfg.best_end_s?.toFixed(1)}s`
-              : "—"
+            track.best_sections && track.best_sections.length > 0
+              ? `${track.best_sections[0].start_s.toFixed(1)}s – ${track.best_sections[0].end_s.toFixed(1)}s · ${track.best_sections[0].label}`
+              : cfg.best_start_s != null
+                ? `${cfg.best_start_s.toFixed(1)}s – ${cfg.best_end_s?.toFixed(1)}s`
+                : "—"
           }
         />
         <Row label="Slot every N beats" value={cfg.slot_every_n_beats?.toString() ?? "—"} />
