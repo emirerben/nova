@@ -136,12 +136,20 @@ def inject_lyric_overlays(
 ) -> dict:
     """Inject lyric overlays into recipe slots. Returns the modified recipe."""
 
-    cfg = lyrics_config or {}
+    cfg = dict(lyrics_config or {})
     if not cfg.get("enabled"):
         return recipe_dict
     if not lyrics_cached:
         log.info("lyric_inject_skipped_no_cache", reason="lyrics_cached missing")
         return recipe_dict
+
+    # Style set: when one is chosen (by the LyricStyleSelectorAgent at job time
+    # or pinned in lyrics_config), it supplies the lyric style + styling
+    # DEFAULTS. Explicit lyrics_config fields still win, so admin per-track
+    # tuning is preserved. The set's lyric role implies which injector runs
+    # unless lyrics_config pins `style`.
+    if cfg.get("style_set_id"):
+        cfg = _apply_style_set_defaults(cfg, cfg["style_set_id"])
 
     style = cfg.get("style") or "karaoke"
     if style not in ("karaoke", "per-word-pop", "line"):
@@ -197,6 +205,43 @@ def inject_lyric_overlays(
 
 
 # ── Internals ─────────────────────────────────────────────────────────────────
+
+
+def _apply_style_set_defaults(cfg: dict, set_id: str) -> dict:
+    """Layer a style set's lyric styling onto cfg as DEFAULTS.
+
+    Returns a new cfg where the set supplies `style` + styling/timing for keys
+    lyrics_config left unset. Existing (non-None) lyrics_config keys are never
+    overwritten — the set is a default source, lyrics_config is the override.
+    """
+    from app.pipeline.style_sets import (  # noqa: PLC0415
+        lyric_role_for_style,
+        lyric_style_for_set,
+        resolve_overlay_style,
+    )
+
+    out = dict(cfg)
+    out["style"] = out.get("style") or lyric_style_for_set(set_id)
+    resolved = resolve_overlay_style(set_id, lyric_role_for_style(out["style"]))
+
+    def _default(key: str, value: Any) -> None:
+        if value is not None and out.get(key) is None:
+            out[key] = value
+
+    _default("position", resolved.get("position"))
+    _default("text_color", resolved.get("text_color"))
+    _default("highlight_color", resolved.get("highlight_color"))
+    _default("text_size", resolved.get("text_size"))
+    _default("text_size_px", resolved.get("text_size_px"))
+    _default("font_family", resolved.get("font_family"))
+    _default("position_y_frac", resolved.get("position_y_frac"))
+    # The renderers/injectors call the stroke field `outline_px`; sets use the
+    # canonical `stroke_width`.
+    _default("outline_px", resolved.get("stroke_width"))
+    timing = resolved.get("timing", {})
+    for k in ("pre_roll_s", "post_dwell_s", "next_line_gap_s", "fade_in_ms", "fade_out_ms"):
+        _default(k, timing.get(k))
+    return out
 
 
 def _build_slot_windows(slots: list[dict]) -> list[_SlotWindow]:

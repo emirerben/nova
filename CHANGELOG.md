@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.45.2] - 2026-05-25
+
+### Added
+- **Text style sets + a hard "always fits the frame" guarantee.** On-screen text in agentic templates, music lyrics, and generative edits used to pick font/size/color/animation/position ad-hoc, so captions could overflow the 9:16 frame or look incoherent. This adds a curated, version-controlled library of named **style sets** (`assets/style_sets/style-sets.json`) — each a coherent per-role design system (hook / label / cta / lyric-line / etc.) defining font, size, color, effect, position, and timing. Classic templates are untouched.
+  - **Universal constraint pass** (`app/pipeline/overlay_constraints.py`): every overlay across the three non-classic paths is shrunk + repositioned to fit the 9:16 safe zone before rendering — runs once at the shared `_collect_absolute_overlays` chokepoint, before the Pillow/Skia renderer fork. It only rewrites `text_size_px` / `position_*_frac` (fields both renderers already honor), so it is renderer-parity-safe by construction and can only improve overflowing text. Each shrink/clamp is logged to the admin job-debug trace (`constraint_clamp` / `constraint_floor_hit`). Gated by `STYLE_CONSTRAINTS_ENABLED` (default on).
+  - **Music lyric style selection** (`nova.audio.lyric_style_selector`): a text-only Gemini agent picks a lyric style set from the track's `MusicLabels`; the set supplies the lyric format (karaoke / line / per-word-pop) + styling defaults to the lyric injector. Best-effort — failure leaves existing defaults intact. Admins can pin a set per track via `lyrics_config.style_set_id`; explicit `lyrics_config` fields always override the set.
+
+### Notes
+- Resolution layer (`app/pipeline/style_sets.py`) is authoritative: the set's non-null fields win and the LLM/legacy per-overlay values only fill gaps. Initial library ships `default`, three lyric formats (`lyric_karaoke_bold`, `lyric_line_calm`, `lyric_word_pop_punchy`), and two agentic/generative sets (`travel_editorial`, `lifestyle_clean`).
+- Scoped to Phase 1 + 2 of the plan. The agentic `template_text` refactor (cache-sensitive; requires a live-eval run per the prompt-change rule) and generative-edit wiring are deferred to follow-up PRs.
+
 ## [0.4.45.1] - 2026-05-24
 
 ### Added

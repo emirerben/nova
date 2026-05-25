@@ -4102,6 +4102,20 @@ def _collect_absolute_overlays(
     # Remove any that became invalid after truncation
     result = [o for o in unique if o["end_s"] > o["start_s"]]
 
+    # ── Universal constraint pass ───────────────────────────────────────
+    # Shrink/reposition every overlay so it fits the 9:16 safe zone,
+    # regardless of which style set (or none) produced it. Runs here — once,
+    # after dedup, before the renderer fork — so agentic + music + generative
+    # all get the same guarantee. Only rewrites text_size_px/position_*_frac
+    # (renderer-parity-safe). Gated so a layout regression can be isolated
+    # without a redeploy. Classic templates never reach this function.
+    if settings.style_constraints_enabled:
+        from app.pipeline.overlay_constraints import (  # noqa: PLC0415
+            apply_overlay_constraints,
+        )
+
+        result = apply_overlay_constraints(result)
+
     # Emit one pipeline_trace event per surviving overlay so the admin
     # timeline can show the exact post-merge / post-clamp / post-override
     # window that will be burned into the rendered video. record_pipeline_event
