@@ -73,6 +73,31 @@ def test_empty_text_skipped() -> None:
     assert out["text_size_px"] == 250
 
 
+def test_karaoke_line_shrinks_to_single_line() -> None:
+    """REGRESSION: karaoke-line renders on ONE line (no wrap), so the constraint
+    pass must shrink the FULL line to fit width — not let it 'fit' as wrapped
+    lines the renderer then clips off both edges. Caught on a real karaoke render
+    where a 6-word lyric at 120px stayed 120px (measured as 3 wrapped lines)."""
+    from app.pipeline.text_overlay import wrap_and_measure
+
+    ov = _ov(
+        "city lights keep calling out my name",
+        text_size_px=120,
+        effect="karaoke-line",
+        position="bottom",
+    )
+    [out] = apply_overlay_constraints([ov])
+    assert out["text_size_px"] < 120, "karaoke line must shrink to fit one line"
+    # The full (unwrapped) line now fits the safe-zone width.
+    _, widest = wrap_and_measure(
+        out["text"],
+        font_family="Montserrat",
+        text_size_px=out["text_size_px"],
+        max_width_px=CANVAS_W * 10,  # huge budget => single line
+    )
+    assert widest <= 0.88 * CANVAS_W or out["text_size_px"] == _MIN_FONT_SIZE
+
+
 def test_does_not_rewrite_text() -> None:
     ov = _ov("Some overflowing caption text that must be shrunk to fit nicely", text_size_px=250)
     original = ov["text"]

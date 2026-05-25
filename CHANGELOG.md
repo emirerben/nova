@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.45.4] - 2026-05-25
+## [0.4.45.5] - 2026-05-25
 
 ### Changed
 - **Generative edits can no longer run longer than the footage you upload.** The "Target length" slider is gone (public `/generative` + admin launch panel) — it only ever influenced the original-audio variant anyway, while the two song variants silently sized output to the matched track's full best-section window (45s+) and *stretched* short clips with slow-motion (`setpts`, down to 0.4×) to fill the beat slots. Output length is now **derived** and bounded by real footage in every case:
@@ -11,6 +11,18 @@ All notable changes to this project will be documented in this file.
   - **No stretch-to-fill, ever.** `_assemble_clips`/`_plan_slots` gained an `allow_slowdown_fill` flag (default `True` — templates and music jobs are byte-for-byte unchanged); generative edits pass `False`, so a clip shorter than its slot now shrinks the slot to the real footage (at 1.0× speed, no frozen-frame pad) instead of being slowed down. A `clip_footage_exhausted_trimmed` event is recorded to the job-debug trace.
   - AI still trims clips *shorter* when the matcher prefers it (weak / no-action sections) — only manufacturing extra runtime is forbidden.
   - Stale frontends that still POST `target_duration_s` are tolerated (the field is dropped, not rejected). The admin generative list drops its now-vestigial "target length" column.
+  - Verified on a real prod-image local render (footage-bounded output + `clip_footage_exhausted_trimmed`, no slowdown). `make local-render MODE=generative CLIPS="..."` now drives this path.
+
+## [0.4.45.4] - 2026-05-25
+
+### Fixed
+- **Beat-sync music lyrics now render via Skia (not libass), and long lyric lines no longer clip off-screen.** Two bugs surfaced by a real local music render of the new style-set lyric selector:
+  - **Routing:** `_run_music_job` assembled clips without forwarding a Skia flag, so beat-sync music lyric overlays fell through to the libass/ASS path — contradicting the renderer-split intent (and the templated-music path, which already forces Skia). `_assemble_clips` gains a `use_skia` override (defaults to `is_agentic`, so every existing caller is unchanged) and `_run_music_job` passes `use_skia=True`. Beat-sync music lyrics now render with HarfBuzz shaping + paint shadows like the rest of the agentic/music output.
+  - **Single-line overflow:** the universal constraint pass measured text as if it would *wrap*, but karaoke-line / lyric-line effects render on a single un-wrapped line. A long lyric "fit" as 3 wrapped lines and was then drawn as one 3×-too-wide line, clipping off both edges. The constraint pass now fits single-line effects (`karaoke-line`, `lyric-line`, cumulative pop-in) to one line — verified on a real render: "city lights keep calling out my name" shrank 120px→46px and sits fully on-screen with the amber karaoke sweep intact.
+- Removed accidentally-committed `.devtest/` dev logs from version control and added `.devtest/` to `.gitignore`.
+
+### Added
+- `scripts/preview_style_sets.py` (renders a visual comparison grid of all style sets through the real renderer) and `scripts/seed_demo_music_track.py` (seeds a ready+published beat-sync track for local lyric-selector testing) — local dev tooling.
 
 ## [0.4.45.3] - 2026-05-25
 

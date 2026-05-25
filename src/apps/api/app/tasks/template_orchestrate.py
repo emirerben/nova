@@ -3001,6 +3001,7 @@ def _assemble_clips(
     is_agentic: bool = False,
     transition_duration_s: float | None = None,
     allow_slowdown_fill: bool = True,
+    use_skia: bool | None = None,
 ) -> None:
     """Assemble clips in slot order: plan, parallel-render, then join with transitions.
 
@@ -3382,7 +3383,15 @@ def _assemble_clips(
     )
     if abs_overlays:
         # Skia for agentic templates; Pillow + libass for classic.
-        _burn_text_overlays(joined_path, abs_overlays, output_path, tmpdir, use_skia=is_agentic)
+        # `use_skia` defaults to `is_agentic` (preserves every existing caller),
+        # but callers can force it independently — beat-sync music jobs pass
+        # use_skia=True so lyric overlays render via Skia like the templated
+        # music path + the renderer-split intent in CLAUDE.md, instead of
+        # falling to libass.
+        effective_use_skia = is_agentic if use_skia is None else use_skia
+        _burn_text_overlays(
+            joined_path, abs_overlays, output_path, tmpdir, use_skia=effective_use_skia
+        )
         _burned_dur = _probe_duration(output_path)
         log.info("debug_post_burn_duration", burned_dur=_burned_dur)
     else:
