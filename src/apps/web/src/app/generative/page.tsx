@@ -2,22 +2,19 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  changeVariantStyle,
   createGenerativeJob,
   getGenerativeJobStatus,
+  getGenerativeStyleSets,
   GENERATIVE_TERMINAL_STATUSES,
   retextVariant,
   swapVariantSong,
   uploadGenerativeClip,
   type GenerativeJobStatus,
-  type GenerativeVariant,
+  type GenerativeStyleSet,
 } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
-
-const TEXT_MODE_LABEL: Record<string, string> = {
-  lyrics: "Lyrics",
-  agent_text: "AI text",
-  none: "No text",
-};
+import { VariantCard } from "./VariantCard";
 
 const POLL_MS = 2000;
 
@@ -28,16 +25,20 @@ export default function GenerativePage() {
   const [status, setStatus] = useState<GenerativeJobStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
+  const [styleSets, setStyleSets] = useState<GenerativeStyleSet[]>([]);
   // Bumped after every poll (success OR failure) so the polling effect always
   // re-arms — a transient fetch error must not silently kill polling.
   const [tick, setTick] = useState(0);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Song library for the swap picker.
+  // Song library for the swap picker + style sets for the style picker.
   useEffect(() => {
     getMusicTracks()
       .then((r) => setTracks(r.tracks))
       .catch(() => setTracks([]));
+    getGenerativeStyleSets()
+      .then(setStyleSets)
+      .catch(() => setStyleSets([]));
   }, []);
 
   const isTerminal = status != null && GENERATIVE_TERMINAL_STATUSES.includes(status.status);
@@ -195,6 +196,7 @@ export default function GenerativePage() {
                   key={v.variant_id}
                   variant={v}
                   tracks={tracks}
+                  styleSets={styleSets}
                   onSwap={async (trackId) => {
                     markVariantRendering(v.variant_id);
                     await swapVariantSong(jobId, v.variant_id, trackId);
@@ -208,6 +210,11 @@ export default function GenerativePage() {
                   onRemoveText={async () => {
                     markVariantRendering(v.variant_id);
                     await retextVariant(jobId, v.variant_id, { remove: true });
+                    await refresh();
+                  }}
+                  onChangeStyle={async (styleSetId) => {
+                    markVariantRendering(v.variant_id);
+                    await changeVariantStyle(jobId, v.variant_id, styleSetId);
                     await refresh();
                   }}
                 />
@@ -233,97 +240,4 @@ function StatusBanner({ status }: { status: GenerativeJobStatus | null }) {
     processing_failed: status?.error_detail ?? "Something went wrong.",
   };
   return <p className="text-zinc-300">{label[s] ?? s}</p>;
-}
-
-function VariantCard({
-  variant,
-  tracks,
-  onSwap,
-  onRetext,
-  onRemoveText,
-}: {
-  variant: GenerativeVariant;
-  tracks: MusicTrackSummary[];
-  onSwap: (trackId: string) => Promise<void>;
-  onRetext: (text: string) => Promise<void>;
-  onRemoveText: () => Promise<void>;
-}) {
-  const [busy, setBusy] = useState(false);
-  const rendering = variant.render_status === "rendering" || busy;
-  const failed = variant.render_status === "failed";
-
-  const run = async (fn: () => Promise<void>) => {
-    setBusy(true);
-    try {
-      await fn();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">
-          {TEXT_MODE_LABEL[variant.text_mode] ?? variant.text_mode}
-          {variant.track_title ? ` · ${variant.track_title}` : " · Original audio"}
-        </span>
-      </div>
-
-      <div className="aspect-[9/16] w-full overflow-hidden rounded bg-black">
-        {rendering ? (
-          <div className="flex h-full items-center justify-center text-sm text-zinc-500">
-            Rendering…
-          </div>
-        ) : failed ? (
-          <div className="flex h-full items-center justify-center px-3 text-center text-sm text-red-300">
-            {variant.error ?? "Render failed"}
-          </div>
-        ) : variant.output_url ? (
-          <video src={variant.output_url} controls className="h-full w-full object-contain" />
-        ) : (
-          <div className="flex h-full items-center justify-center text-sm text-zinc-600">
-            No preview
-          </div>
-        )}
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          disabled={rendering}
-          onClick={() => {
-            const next = prompt("New intro text:");
-            if (next && next.trim()) run(() => onRetext(next.trim()));
-          }}
-          className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40"
-        >
-          Edit text
-        </button>
-        <button
-          disabled={rendering}
-          onClick={() => run(onRemoveText)}
-          className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40"
-        >
-          Remove text
-        </button>
-        {tracks.length > 0 && variant.music_track_id !== null && (
-          <select
-            disabled={rendering}
-            value=""
-            onChange={(e) => {
-              if (e.target.value) run(() => onSwap(e.target.value));
-            }}
-            className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40"
-          >
-            <option value="">Swap song…</option>
-            {tracks.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.title}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
-    </div>
-  );
 }

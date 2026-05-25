@@ -144,6 +144,12 @@ def _run_generative_job(job_id: str) -> None:
         agent_text, agent_form = _run_text_agents(clip_metas, hero, job_id=job_id)
         record_pipeline_event("overlay", "agent_text_done", {"has_text": bool(agent_text)})
 
+        # Curated text style set (best-effort). Owns the typography of every
+        # variant's overlays — the AI intro and the lyrics. Always falls back to
+        # "default" so a job is never blocked on selection.
+        style_set_id = _select_generative_style_set(clip_metas, agent_text, job_id=job_id)
+        record_pipeline_event("overlay", "style_set_selected", {"style_set_id": style_set_id})
+
         # [Phase 2] Song match (best-effort). top-1 track for the song variants.
         best_track = _match_best_track(clip_metas, job_id=job_id)
         record_pipeline_event(
@@ -194,6 +200,7 @@ def _run_generative_job(job_id: str) -> None:
                 agent_text=agent_text,
                 agent_form=agent_form,
                 variant_dir=variant_dir,
+                style_set_id=style_set_id,
             )
             # Persist immediately so a deploy/OOM after this point can't lose it,
             # and so the status endpoint reveals variants as they finish rather
@@ -304,17 +311,34 @@ def _pretonemap_hdr_clips(
 
         sdr_path = os.path.join(tmpdir, f"sdr_{converted}_{os.path.basename(local_path)}")
         cmd = [
-            "ffmpeg", "-y", "-i", local_path,
-            "-vf", vf,
-            "-c:v", "libx264",
+            "ffmpeg",
+            "-y",
+            "-i",
+            local_path,
+            "-vf",
+            vf,
+            "-c:v",
+            "libx264",
             # Intermediate is re-encoded downstream by the per-slot reframe, but
             # this is the one generation that carries the dithered HDR gradient —
             # crf 16/fast (not ultrafast) so x264 doesn't reintroduce the very
             # banding the tonemap's error-diffusion just removed.
-            "-crf", "16", "-preset", "fast", "-pix_fmt", "yuv420p",
-            "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
-            "-c:a", "copy",  # keep source audio for the original-audio variant
-            "-movflags", "+faststart",
+            "-crf",
+            "16",
+            "-preset",
+            "fast",
+            "-pix_fmt",
+            "yuv420p",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-colorspace",
+            "bt709",
+            "-c:a",
+            "copy",  # keep source audio for the original-audio variant
+            "-movflags",
+            "+faststart",
             sdr_path,
         ]
         try:
@@ -363,8 +387,9 @@ def regenerate_generative_variant(
     new_track_id: str | None = None,
     override_text: str | None = None,
     remove_text: bool = False,
+    style_set_id: str | None = None,
 ) -> None:
-    """Re-render ONE variant of an existing generative job (swap-song / retext / remove).
+    """Re-render ONE variant of an existing generative job (swap-song / retext / restyle).
 
     Async by design (plan Decision 4): a re-slot against a new song is a full pipeline
     re-run, not an instant preview. Re-runs clip ingest, renders just the target
@@ -377,12 +402,15 @@ def regenerate_generative_variant(
         new_track_id=new_track_id,
         remove_text=remove_text,
         has_override=bool(override_text),
+        style_set_id=style_set_id,
     )
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     with pipeline_trace_for(job_id):
         try:
-            _run_regenerate_variant(job_id, variant_id, new_track_id, override_text, remove_text)
+            _run_regenerate_variant(
+                job_id, variant_id, new_track_id, override_text, remove_text, style_set_id
+            )
         except OperationalError:
             raise
         except Exception as exc:
@@ -404,6 +432,7 @@ def _run_regenerate_variant(
     new_track_id: str | None,
     override_text: str | None,
     remove_text: bool,
+    style_set_id: str | None = None,
 ) -> None:
     import types  # noqa: PLC0415
 
@@ -421,6 +450,14 @@ def _run_regenerate_variant(
         rank = int(existing.get("rank", 1))
         existing_track_id = existing.get("music_track_id")
         existing_text_mode = existing.get("text_mode", "agent_text")
+        # Style precedence: explicit restyle request → the variant's persisted set →
+        # any sibling variant's set (the job-level default) → "default".
+        existing_style_set_id = existing.get("style_set_id")
+        if existing_style_set_id is None:
+            existing_style_set_id = next(
+                (v.get("style_set_id") for v in variants if v.get("style_set_id")), None
+            )
+    resolved_style_set_id = style_set_id or existing_style_set_id or "default"
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths to re-render from")
@@ -498,6 +535,7 @@ def _run_regenerate_variant(
             agent_text=agent_text,
             agent_form=agent_form,
             variant_dir=variant_dir,
+            style_set_id=resolved_style_set_id,
         )
 
     _update_variant_entry(job_id, variant_id, result)
@@ -626,6 +664,41 @@ def _run_text_agents(clip_metas: list, hero, *, job_id: str) -> tuple[Any, dict]
         return None, {}
 
 
+def _select_generative_style_set(clip_metas: list, agent_text, *, job_id: str) -> str:
+    """Pick a curated style set for this generative edit. Returns a set id.
+
+    Reuses `AgenticStyleSelectorAgent` (text-only) but feeds it the
+    generative-eligible catalog so a music-only set can never be chosen. The
+    clip-set summary stands in for the "template theme"; the AI intro text (when
+    present) is the on-screen text sample. Best-effort: any failure → "default"
+    so a job is never blocked on style selection.
+    """
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.agentic_style_selector import (  # noqa: PLC0415
+            AgenticStyleSelectorAgent,
+            AgenticStyleSelectorInput,
+            StyleSetCandidate,
+        )
+        from app.pipeline.style_sets import list_style_sets  # noqa: PLC0415
+
+        candidates = [StyleSetCandidate(**s) for s in list_style_sets(applies_to="generative")]
+        overlay_texts = [agent_text.text] if agent_text is not None else []
+        out = AgenticStyleSelectorAgent(default_client()).run(
+            AgenticStyleSelectorInput(
+                overlay_texts=overlay_texts,
+                template_theme=_clip_set_summary(clip_metas),
+                available_sets=candidates,
+            ),
+            ctx=RunContext(job_id=job_id),
+        )
+        return out.style_set_id or "default"
+    except Exception as exc:  # noqa: BLE001 — selection is best-effort
+        log.warning("generative_style_set_select_failed", job_id=job_id, error=str(exc))
+        return "default"
+
+
 def _match_best_track(clip_metas: list, *, job_id: str) -> MusicTrack | None:
     """Top-1 matched track, or None if the library has no confident match."""
     try:
@@ -713,6 +786,7 @@ def _render_generative_variant(
     agent_text,
     agent_form: dict,
     variant_dir: str,
+    style_set_id: str | None = None,
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record."""
     from app.pipeline.agents.gemini_analyzer import build_recipe  # noqa: PLC0415
@@ -741,6 +815,7 @@ def _render_generative_variant(
         "text_mode": text_mode,
         "music_track_id": track_id,
         "track_title": track_title,
+        "style_set_id": style_set_id,
     }
     try:
         beats: list[float] = []
@@ -771,11 +846,14 @@ def _render_generative_variant(
         else:
             recipe_dict = _build_no_music_recipe(clip_metas, available_footage_s)
 
-        # Text injection per mode.
+        # Text injection per mode. The chosen style set styles BOTH the lyric
+        # overlays (lyrics variant) and the AI hero-intro (text variants).
         if text_mode == "lyrics" and track is not None:
-            recipe_dict = _inject_lyrics(recipe_dict, track)
+            recipe_dict = _inject_lyrics(recipe_dict, track, style_set_id=style_set_id)
         elif text_mode == "agent_text" and agent_text is not None:
-            recipe_dict = _inject_agent_intro(recipe_dict, agent_text, agent_form, beats)
+            recipe_dict = _inject_agent_intro(
+                recipe_dict, agent_text, agent_form, beats, style_set_id=style_set_id
+            )
 
         recipe = build_recipe(recipe_dict)
         try:
@@ -846,13 +924,22 @@ def _render_generative_variant(
         return {**base, "ok": False, "render_status": "failed", "error": err}
 
 
-def _inject_lyrics(recipe_dict: dict, track: MusicTrack) -> dict:
+def _inject_lyrics(recipe_dict: dict, track: MusicTrack, style_set_id: str | None = None) -> dict:
     from app.pipeline.lyric_injector import inject_lyric_overlays  # noqa: PLC0415
     from app.services.lyrics_config_effective import effective_lyrics_config  # noqa: PLC0415
 
     cfg = track.track_config or {}
-    # Force lyrics on for this variant (the user explicitly chose the lyrics edit).
-    lyrics_config = effective_lyrics_config(cfg, {"enabled": True, "style": "karaoke"})
+    if style_set_id:
+        # The chosen curated set drives the lyric look for a generative edit and is
+        # authoritative over the track's saved (music-job) lyric tuning, so we do NOT
+        # inherit `cfg["lyrics_config"]`. The set's lyric role implies the injector
+        # style (line/karaoke/word-pop) via `lyric_style_for_set`. style_set_id is
+        # consumed by `inject_lyric_overlays` directly (not a validated config key),
+        # so set it on the dict rather than routing it through effective_lyrics_config.
+        lyrics_config = {"enabled": True, "style_set_id": style_set_id}
+    else:
+        # Force lyrics on for this variant (the user explicitly chose the lyrics edit).
+        lyrics_config = effective_lyrics_config(cfg, {"enabled": True, "style": "karaoke"})
     return inject_lyric_overlays(
         recipe_dict,
         track.lyrics_cached,
@@ -863,7 +950,11 @@ def _inject_lyrics(recipe_dict: dict, track: MusicTrack) -> dict:
 
 
 def _inject_agent_intro(
-    recipe_dict: dict, agent_text, agent_form: dict, beats: list[float]
+    recipe_dict: dict,
+    agent_text,
+    agent_form: dict,
+    beats: list[float],
+    style_set_id: str | None = None,
 ) -> dict:
     from app.pipeline.generative_overlays import (  # noqa: PLC0415
         build_intro_overlay,
@@ -875,18 +966,42 @@ def _inject_agent_intro(
         return recipe_dict
     slot0_dur = float(slots[HERO_SLOT_INDEX].get("target_duration_s", 0.0) or 0.0)
     end_s = min(slot0_dur, MAX_INTRO_S) if slot0_dur > 0 else MAX_INTRO_S
+
+    # Curated style set owns the intro look (font, size, color, effect, position).
+    # The agent_form fields drop to ADVISORY: `resolve_overlay_style` lets the set
+    # win and only fills from `advisory` what the set leaves null. Resolving here
+    # (not inside build_intro_overlay) keeps that module import-light (no PIL/skia).
+    style: dict = {}
+    if style_set_id:
+        from app.pipeline.style_sets import resolve_overlay_style  # noqa: PLC0415
+
+        advisory = {
+            "effect": agent_form.get("effect"),
+            "position": agent_form.get("position"),
+            "text_color": agent_form.get("text_color"),
+            "highlight_color": agent_form.get("highlight_color"),
+            "text_anchor": agent_form.get("text_anchor"),
+        }
+        style = resolve_overlay_style(style_set_id, "intro", advisory=advisory)
+
     overlay = build_intro_overlay(
         agent_text.text,
-        effect=agent_form.get("effect", "karaoke-line"),
-        position=agent_form.get("position", "center"),
+        effect=style.get("effect") or agent_form.get("effect", "karaoke-line"),
+        position=style.get("position") or agent_form.get("position", "center"),
         size_class=agent_form.get("size_class", "jumbo"),
-        text_color=agent_form.get("text_color", "#FFFFFF"),
-        highlight_color=agent_form.get("highlight_color", "#FFD24A"),
-        text_anchor=agent_form.get("text_anchor", "center"),
+        text_color=style.get("text_color") or agent_form.get("text_color", "#FFFFFF"),
+        highlight_color=style.get("highlight_color")
+        or agent_form.get("highlight_color", "#FFD24A"),
+        text_anchor=style.get("text_anchor") or agent_form.get("text_anchor", "center"),
         start_s=0.0,
         end_s=end_s,
         beats=beats,  # slot-0 / section-relative; empty for the no-music variant
         highlight_word=getattr(agent_text, "highlight_word", None),
+        font_family=style.get("font_family"),
+        stroke_width=style.get("stroke_width"),
+        text_size_px=style.get("text_size_px"),
+        position_x_frac=style.get("position_x_frac"),
+        position_y_frac=style.get("position_y_frac"),
     )
     return inject_intro_overlay(recipe_dict, HERO_SLOT_INDEX, overlay)
 
@@ -987,6 +1102,7 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "text_mode": r["text_mode"],
                     "music_track_id": r.get("music_track_id"),
                     "track_title": r.get("track_title"),
+                    "style_set_id": r.get("style_set_id"),
                     "output_url": r.get("output_url"),
                     "video_path": r.get("video_path"),
                     "render_status": r.get("render_status"),
