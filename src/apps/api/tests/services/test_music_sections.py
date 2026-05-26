@@ -8,6 +8,7 @@ the backfill script both depend on.
 from __future__ import annotations
 
 from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
+from app.pipeline.music_recipe import count_slots
 from app.services.music_sections import (
     rank_one_bounds_from_sections,
     reconcile_track_config_to_rank_one,
@@ -187,6 +188,42 @@ def test_reconcile_keeps_legacy_when_section_too_narrow_for_slots() -> None:
 
     assert source == "auto_best_section"
     assert new_cfg["best_start_s"] == 100.0
+
+
+def test_reconcile_decision_matches_count_slots_at_boundary() -> None:
+    """Reconcile's fallback decision MUST agree with `count_slots`.
+
+    Pins the shared-helper invariant: the analyzer guard
+    (music_orchestrate.py), the admin PATCH validator (admin_music.py),
+    and reconcile_track_config_to_rank_one all derive the same arithmetic
+    from `app.pipeline.music_recipe.count_slots`. If any of them ever
+    drifts, this test catches it.
+    """
+    cfg = {"best_start_s": 0.0, "best_end_s": 45.0, "slot_every_n_beats": 8}
+    # Boundary case 1: rank-1 with exactly enough beats for 1 slot (9 beats, n=8).
+    # count_slots == 1 → reconcile must promote.
+    beats_promote = [60.0 + i * 0.5 for i in range(9)]  # 9 beats in [60, 64]
+    sections = [{"rank": 1, "start_s": 60.0, "end_s": 64.0}]
+    assert count_slots(beats_promote, 60.0, 64.0, 8) == 1
+    _, source = reconcile_track_config_to_rank_one(
+        track_config=cfg,
+        beats=beats_promote,
+        sections=sections,
+        section_version=CURRENT_SECTION_VERSION,
+    )
+    assert source == "song_sections", "rank-1 with count_slots==1 must promote"
+
+    # Boundary case 2: rank-1 with exactly n beats (8 beats, n=8) — count_slots == 0.
+    # Reconcile must fall back to keep the legacy window.
+    beats_fallback = [60.0 + i * 0.5 for i in range(8)]
+    assert count_slots(beats_fallback, 60.0, 64.0, 8) == 0
+    _, source = reconcile_track_config_to_rank_one(
+        track_config=cfg,
+        beats=beats_fallback,
+        sections=sections,
+        section_version=CURRENT_SECTION_VERSION,
+    )
+    assert source == "auto_best_section", "rank-1 with count_slots==0 must fall back"
 
 
 # ── refresh_recipe_cached_for_bounds ─────────────────────────────────────
