@@ -27,10 +27,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
+from app.services.music_sections import (
+    track_config_with_rank_one as _track_config_for_best_section,
+)
 from app.tasks.auto_music_orchestrate import (
     _load_matcher_candidates,
     _run_auto_music_job,
-    _track_config_for_best_section,
     _track_slot_count,
     orchestrate_auto_music_job,
 )

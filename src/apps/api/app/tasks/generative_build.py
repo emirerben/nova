@@ -820,8 +820,8 @@ def _render_generative_variant(
     try:
         beats: list[float] = []
         if track is not None:
-            from app.tasks.auto_music_orchestrate import (  # noqa: PLC0415
-                _track_config_for_best_section,
+            from app.services.music_sections import (  # noqa: PLC0415
+                track_config_with_rank_one,
             )
 
             if not track.audio_gcs_path:
@@ -831,7 +831,7 @@ def _render_generative_variant(
             # beat-snapped slots, so capping the window here is what keeps a
             # music variant from ever running longer than the content exists for.
             track_config = _fit_section_to_footage(
-                _track_config_for_best_section(track), available_footage_s
+                track_config_with_rank_one(track), available_footage_s
             )
             track_data = {
                 "beat_timestamps_s": track.beat_timestamps_s or [],

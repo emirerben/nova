@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.47.1] - 2026-05-25
+
+### Fixed
+- **Music lyric overlays no longer visibly stack at line transitions.** Empirical regression from `v0.4.45.3` (#319), which routed music lyric rendering through Skia. The Skia renderer's `_ANIMATED_EFFECTS_SKIA` set did **not** include `lyric-line`, so each lyric overlay rendered as a single full-opacity PNG gated by FFmpeg `enable='between(t,start,end)'` — a binary on/off. Two consecutive lyric lines whose `[start_s, end_s]` windows overlap (the designed crossfade window from `_inject_line`'s `dynamic_max_overlap = min(max_overlap_s, fade_in_s + fade_out_s)`) both burned at 100% alpha at the same `position_y_frac`, producing the visible "two stacked texts" symptom. libass had been honoring `fade_in_ms` / `fade_out_ms` via `_emit_lyric_line_alpha_tags` since before the migration. Visible in prod job `f191e328-4a18-420b-8c68-f9539071334b` at t≈5.85s ("If I can live through this" stacked over "What comes next" at `y_frac=0.8`). Empirical before/after at the same mid-overlap frame: max R 255/255 (both lines at full opacity, the bug) → max R 180/181 (proper crossfade after the fix). Pinned by `test_overlapping_lyric_lines_crossfade_through_burn_pipeline` (renders two overlapping lyric-line overlays through the real `_ffmpeg_burn_pngs` and asserts no full-opacity pixel in the overlap window).
+
+### Hardened
+- **lyric-line opts out of `MAX_OVERLAY_FRAMES=120` (4s @ 30fps) cap with a 30s sanity ceiling.** Making the effect animated naively inherits the font-cycle cap, which would chop the fade-out + tail off any lyric line longer than 4s — including the prod job's Line 2 (4.26s) that we were specifically fixing. The cap was set for font-cycle's per-frame font-swap PNG-explosion concern, not for slow alpha ramps. Per-effect ceiling now applies: `lyric-line` renders frames for its full duration, capped at `FPS * 30 = 900` frames with a `log.warning("skia_lyric_line_duration_clamped", ...)` if a malformed transcript ever produces an `end_s` past that. Worst-case scratch goes from unbounded (a hallucinated 240s lyric line would write ~7GB of PNGs) to ~1GB.
+- **`_lyric_line_alpha` matches libass `\\t(t1, t2, accel, tag)` curve semantics exactly.** Linear easing would diverge ~50% mid-fade vs libass for every lyric line (sub-frame timing but pixel-level brightness gap). Fade-in uses `alpha = sqrt(progress)` (libass `accel=0.5`, snaps in early); fade-out uses `alpha = 1 - progress**2` (libass `accel=2.0`, lingers then drops). Renderer-parity invariant from CLAUDE.md ("the #296 class") is now defensible at the pixel level, not just at the shape level. Default fade values also match libass when keys are absent (`fade_in_ms=150`, `fade_out_ms=250` via `_overlay_int` defaults at `text_overlay.py:476-477`).
+
+### Notes
+- 5 new pytest cases for `tests/pipeline/test_text_overlay_skia.py` (fade-in/hold/fade-out alpha ramps, zero-fade kill switch, libass clamp-semantic parity, long-line frame-cap regression, full-pipeline overlap crossfade). 43 → 45 tests in the Skia file; 1275 → 1277 in the full backend pipeline suite. All pass.
+- Kill switch: `fly secrets set TEXT_RENDERER_SKIA_ENABLED=false --app nova-video` + `fly machine restart` reverts music lyrics to libass per worker. Unchanged from prior — same env var, same scope.
+- No cache bump needed: the recipe shape is unchanged. Only the burn-time PNG generation differs. Cached recipes will re-render through the new path and produce correct MP4s on next access.
+
 ## [0.4.47.0] - 2026-05-25
 
 ### Added
