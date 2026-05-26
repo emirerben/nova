@@ -432,8 +432,12 @@ function ConfigTabContent({
             trackId={id}
             beats={track.beat_timestamps_s}
             duration={track.duration_s ?? 0}
-            start={parseFloat(bestStart) || (cfg.best_start_s ?? 0)}
-            end={parseFloat(bestEnd) || (cfg.best_end_s ?? 0)}
+            // Explicit empty-string check, not `|| fallback`: parseFloat("0")
+            // is 0 (falsy), which would silently fall through to the cfg
+            // value for sections starting at 0.0s and desync the isSelected
+            // indicator from the form input.
+            start={bestStart === "" ? (cfg.best_start_s ?? 0) : parseFloat(bestStart)}
+            end={bestEnd === "" ? (cfg.best_end_s ?? 0) : parseFloat(bestEnd)}
             sections={track.best_sections}
             onStartChange={(s) => setBestStart(s.toString())}
             onEndChange={(s) => setBestEnd(s.toString())}

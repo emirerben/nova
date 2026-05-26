@@ -18,6 +18,12 @@ const RANK_COLORS: Record<1 | 2 | 3, { fill: string; stroke: string; text: strin
   3: { fill: "rgba(139,92,246,0.22)", stroke: "#7c3aed", text: "#ddd6fe" },
 };
 
+// Tolerance for matching a section band against the active form window. A
+// single beat at 120 BPM is 0.5s, so 0.5s is well below any musical boundary
+// and two distinct sections can never both match — but it absorbs the float
+// drift introduced by string ↔ parseFloat round-trips through the form.
+const SELECTED_TOLERANCE_S = 0.5;
+
 function pickTickInterval(duration: number): number {
   if (duration <= 30) return 5;
   if (duration <= 60) return 10;
@@ -60,6 +66,11 @@ export function AudioPlayer({
   const [selectMode, setSelectMode] = useState<SelectionMode>(null);
   const [hoverSection, setHoverSection] = useState<SongSection | null>(null);
   const rafRef = useRef<number>(0);
+  // Track the active end-of-section timeupdate listener so rapid clicks
+  // don't stack listeners that fire on stale `end_s` values and pause the
+  // audio mid-section. Cleared whenever a new section-play starts or the
+  // current one reaches its end.
+  const sectionEndListenerRef = useRef<(() => void) | null>(null);
 
   // Fetch signed audio URL
   useEffect(() => {
@@ -92,6 +103,9 @@ export function AudioPlayer({
   const playSection = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
+    if (sectionEndListenerRef.current) {
+      audio.removeEventListener("timeupdate", sectionEndListenerRef.current);
+    }
     audio.currentTime = start;
     audio.play();
     setPlaying(true);
@@ -100,15 +114,20 @@ export function AudioPlayer({
         audio.pause();
         setPlaying(false);
         audio.removeEventListener("timeupdate", checkEnd);
+        sectionEndListenerRef.current = null;
       }
     };
     audio.addEventListener("timeupdate", checkEnd);
+    sectionEndListenerRef.current = checkEnd;
   }, [start, end]);
 
   // Play one of the agent's ranked sections — the core QA loop.
   const playAgentSection = useCallback((s: SongSection) => {
     const audio = audioRef.current;
     if (!audio) return;
+    if (sectionEndListenerRef.current) {
+      audio.removeEventListener("timeupdate", sectionEndListenerRef.current);
+    }
     audio.currentTime = s.start_s;
     audio.play();
     setPlaying(true);
@@ -117,9 +136,11 @@ export function AudioPlayer({
         audio.pause();
         setPlaying(false);
         audio.removeEventListener("timeupdate", checkEnd);
+        sectionEndListenerRef.current = null;
       }
     };
     audio.addEventListener("timeupdate", checkEnd);
+    sectionEndListenerRef.current = checkEnd;
   }, []);
 
   // SVG geometry. Ruler on top, optional band area in the middle, beat strip
@@ -252,19 +273,34 @@ export function AudioPlayer({
           const w = Math.max(2, Math.min(W - x, wRaw));
           const y = bandY(rank);
           const showLabel = w > 110;
-          const label = `#${rank} · ${s.label} · ${s.energy}`;
+          // 0.5s tolerance: well below a single beat at 120 BPM so sections
+          // never collide, but absorbs float drift between agent start_s and
+          // the round-tripped parseFloat() value coming back from the form.
+          const isSelected =
+            Math.abs(s.start_s - start) < SELECTED_TOLERANCE_S &&
+            Math.abs(s.end_s - end) < SELECTED_TOLERANCE_S;
+          const label = `${isSelected ? "✓ " : ""}#${rank} · ${s.label} · ${s.energy}`;
           return (
             // Key by array index — JSONB rows can theoretically duplicate ranks
             // (write-time parse() guards but read path trusts the data); using
             // rank as key would collide and break React identity tracking.
             <g
               key={`section-${i}`}
+              // testid keyed by rank for readable test queries — relies on
+              // the write-time parse() uniqueness guard (same one called out
+              // in the React-key comment below) for duplicate-free rendering.
+              data-testid={`section-band-${rank}`}
               onMouseEnter={() => setHoverSection(s)}
               onMouseLeave={() => setHoverSection((prev) => (prev === s ? null : prev))}
               onClick={(e) => {
                 if (selectMode !== null) return; // let waveform handler claim it
                 e.stopPropagation();
                 playAgentSection(s);
+                // Snap form state to this band's bounds; page.tsx wires these
+                // to setBestStart / setBestEnd, so the Timing config inputs
+                // update live and the user just clicks Save.
+                onStartChange(s.start_s);
+                onEndChange(s.end_s);
               }}
               style={{ cursor: selectMode ? "crosshair" : "pointer" }}
             >
@@ -276,7 +312,7 @@ export function AudioPlayer({
                 rx={2}
                 fill={colors.fill}
                 stroke={colors.stroke}
-                strokeWidth={1}
+                strokeWidth={isSelected ? 3 : 1}
               />
               {showLabel ? (
                 <text
@@ -296,7 +332,7 @@ export function AudioPlayer({
                   fill={colors.text}
                   fontFamily="ui-sans-serif, system-ui"
                 >
-                  {`#${rank}`}
+                  {`${isSelected ? "✓" : ""}#${rank}`}
                 </text>
               )}
             </g>
@@ -397,7 +433,7 @@ export function AudioPlayer({
             </div>
           ) : (
             <div className="text-zinc-500 px-1 py-2">
-              Hover an agent band for its rationale · click to play that section
+              Hover for rationale · click to preview + select as best section
             </div>
           )}
         </div>
