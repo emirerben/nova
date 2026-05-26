@@ -137,7 +137,9 @@ def _music_list_query():
         func.jsonb_array_length(MusicTrack.beat_timestamps_s),
         0,
     ).label("beat_count")
-    return select(MusicTrack, beat_count_expr).options(
+    has_ai_labels_expr = MusicTrack.ai_labels.isnot(None).label("has_ai_labels")
+    has_best_sections_expr = MusicTrack.best_sections.isnot(None).label("has_best_sections")
+    return select(MusicTrack, beat_count_expr, has_ai_labels_expr, has_best_sections_expr).options(
         load_only(
             MusicTrack.id,
             MusicTrack.title,
@@ -147,6 +149,8 @@ def _music_list_query():
             MusicTrack.published_at,
             MusicTrack.archived_at,
             MusicTrack.created_at,
+            MusicTrack.label_version,
+            MusicTrack.section_version,
         )
     )
 
@@ -167,9 +171,24 @@ def test_music_list_loads_only_slim_columns_plus_sql_beat_count():
         assert _selects_column(sql, "music_tracks", col), (
             f"expected music_tracks.{col} in SELECT, got: {sql}"
         )
-    for col in ("track_config", "lyrics_cached", "best_sections", "recipe_cached", "ai_labels"):
+    # These JSONB blobs must never be loaded onto the row at all.
+    for col in ("track_config", "lyrics_cached", "recipe_cached"):
         assert not _selects_column(sql, "music_tracks", col), (
             f"expected music_tracks.{col} to stay out of the list SELECT, got: {sql}"
+        )
+    # ai_labels / best_sections are referenced ONLY inside server-side
+    # `IS NOT NULL` boolean expressions (has_ai_labels / has_best_sections) —
+    # the multi-KB blob itself is never returned. The entity-level guarantee
+    # that the blob stays unloaded is locked by the inspect(track).unloaded
+    # checks below; here we just confirm the only reference is the predicate.
+    for col in ("ai_labels", "best_sections"):
+        assert f"music_tracks.{col} is not null" in sql, (
+            f"expected music_tracks.{col} only as an IS NOT NULL predicate, got: {sql}"
+        )
+        # No bare selection of the blob (e.g. `music_tracks.ai_labels,` or
+        # `music_tracks.ai_labels \nfrom`) — only the predicate form is allowed.
+        assert not re.search(rf"\bmusic_tracks\.{col}\b(?!_)(?!\s+is\s+not\s+null)", sql), (
+            f"expected music_tracks.{col} blob to stay out of the SELECT, got: {sql}"
         )
 
 
@@ -210,40 +229,38 @@ async def test_music_list_endpoint_returns_exact_slim_keys_and_sql_beat_count():
     count_result = MagicMock()
     count_result.scalar.return_value = 1
     rows_result = MagicMock()
-    rows_result.all.return_value = [(track, 4)]
+    # Rows now carry the SQL-derived has_ai_labels / has_best_sections booleans.
+    rows_result.all.return_value = [(track, 4, False, False)]
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=[count_result, rows_result])
 
     response = await list_music_tracks(db=db, limit=50, offset=0)
     payload = response.model_dump(mode="json")
 
+    expected_keys = {
+        "id",
+        "title",
+        "artist",
+        "analysis_status",
+        "thumbnail_url",
+        "beat_count",
+        "published_at",
+        "archived_at",
+        "label_version",
+        "section_version",
+        "has_ai_labels",
+        "generative_matchable",
+        "created_at",
+    }
     assert payload["total"] == 1
-    assert payload["tracks"][0].keys() == {
-        "id",
-        "title",
-        "artist",
-        "analysis_status",
-        "thumbnail_url",
-        "beat_count",
-        "published_at",
-        "archived_at",
-        "created_at",
-    }
+    assert payload["tracks"][0].keys() == expected_keys
     assert payload["tracks"][0]["beat_count"] == 4
+    assert payload["tracks"][0]["has_ai_labels"] is False
+    assert payload["tracks"][0]["generative_matchable"] is False
 
-    item = _to_list_item(track, beat_count=7)
+    item = _to_list_item(track, beat_count=7, has_ai_labels=False, has_best_sections=False)
 
-    assert item.model_dump().keys() == {
-        "id",
-        "title",
-        "artist",
-        "analysis_status",
-        "thumbnail_url",
-        "beat_count",
-        "published_at",
-        "archived_at",
-        "created_at",
-    }
+    assert item.model_dump().keys() == expected_keys
     assert item.beat_count == 7
     for col in (
         "beat_timestamps_s",

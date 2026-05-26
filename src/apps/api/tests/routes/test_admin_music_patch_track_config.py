@@ -81,6 +81,8 @@ def _make_track(
     t.track_config = track_config
     t.best_sections = None
     t.section_version = None
+    t.ai_labels = None
+    t.label_version = None
     t.lyrics_status = "pending"
     t.lyrics_source = None
     t.lyrics_error_detail = None
