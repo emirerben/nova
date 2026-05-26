@@ -37,6 +37,7 @@ from app.pipeline.lyric_injector import inject_lyric_overlays
 from app.pipeline.music_recipe import (
     DEFAULT_WINDOW_S,
     auto_best_section,
+    count_slots,
     generate_music_recipe,
     merge_audio_recipe,
 )
@@ -258,8 +259,7 @@ def analyze_music_track_task(self, track_id: str) -> None:
 
             # Slot count from best section
             n = int(existing_config.get("slot_every_n_beats", 8))
-            window_beats = [b for b in beats if best_start <= b <= best_end]
-            n_slots = len(range(0, max(0, len(window_beats) - n), n))
+            n_slots = count_slots(beats, best_start, best_end, n)
 
             if n_slots == 0:
                 _fail_track(

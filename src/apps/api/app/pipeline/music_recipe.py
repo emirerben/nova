@@ -17,6 +17,20 @@ DEFAULT_WINDOW_S = 45.0
 DEFAULT_SLOT_EVERY_N_BEATS = 8
 
 
+def count_slots(beats: list[float], start_s: float, end_s: float, n: int) -> int:
+    """Count slots that generate_music_recipe() would produce for these inputs.
+
+    Single source of truth for the slot-loop arithmetic so PATCH validators
+    (admin track-config edits) can reject (window, n) combos the recipe
+    generator would reject at job time. Mirrors the loop bound in
+    generate_music_recipe(): `range(0, len(window_beats) - n, n)`.
+    """
+    window_beats = [b for b in beats if start_s <= b <= end_s]
+    if len(window_beats) <= n:
+        return 0
+    return len(range(0, len(window_beats) - n, n))
+
+
 def generate_music_recipe(track_data: dict) -> dict:
     """Build a recipe dict from a MusicTrack's stored config and beat timestamps.
 

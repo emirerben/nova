@@ -24,6 +24,7 @@ from app.agents._schemas.song_sections import (
     CURRENT_SECTION_VERSION,
     MAX_SECTION_DURATION_S,
 )
+from app.pipeline.music_recipe import count_slots
 
 
 def rank_one_bounds_from_sections(
@@ -119,13 +120,14 @@ def reconcile_track_config_to_rank_one(
     # field exists but holds None. `int(None)` raises; backfill rows can
     # pre-date a clean `analyze_music_track_task` run.
     n = int(track_config.get("slot_every_n_beats") or 8)
-    window_beats = [b for b in beats if sec_start <= b <= sec_end]
-    n_slots = len(range(0, max(0, len(window_beats) - n), n))
+    n_slots = count_slots(beats, sec_start, sec_end, n)
     if n_slots == 0:
         # Section window too narrow for current slot_every_n_beats. Keeping
         # the legacy 45s window beats overwriting to a recipe that would
         # raise ValueError("produced 0 slots") at every job. The caller
-        # sees source="auto_best_section" and logs accordingly.
+        # sees source="auto_best_section" and logs accordingly. Shares
+        # arithmetic with the analyzer guard + admin PATCH validator via
+        # `count_slots` — single source of truth for the slot-loop bound.
         return dict(track_config), "auto_best_section"
 
     new_config = dict(track_config)
