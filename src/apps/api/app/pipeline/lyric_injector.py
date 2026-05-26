@@ -95,6 +95,16 @@ _MIN_OVERLAY_DURATION_S = 0.18
 # exact frame the last word's vocal stops). Dense lines are capped by a
 # small fade-bound overlap budget so lyrics can cross-dissolve without
 # ghosting through an entire section.
+# These are SOLO-LINE DEFAULTS — used when a line has no successor (last line
+# in a section), when consecutive lines are far enough apart that no overlap
+# fires, when the user explicitly pinned fade values via cfg, or when the
+# kill switch (`settings.lyric_dynamic_crossfade_enabled`) is off. For
+# inter-line crossfades with the kill switch on, the §1c post-pass in
+# `_inject_line` overrides BOTH sides' fade_in_ms / fade_out_ms with a
+# matched per-pair window and tags the outgoing overlay with
+# `fade_out_curve="sqrt"` (mirror-symmetric curves → unit-partition crossfade,
+# no readable stacked text). See plans/mirea-we-ve-lost-memoized-shannon.md
+# §1 for the geometry, §5 for the invariant tests.
 _LINE_PRE_ROLL_S = 0.40
 _LINE_POST_DWELL_S = 1.0
 _LINE_NEXT_LINE_GAP_S = 0.10
@@ -103,11 +113,37 @@ _LINE_FADE_OUT_MS = 250
 _LINE_HOLD_TO_NEXT_THRESHOLD_MS = 500
 # Upper bound on cross-dissolve overlap with the next lyric line. The
 # actual cap applied per-line is the minimum of this value and
-# (fade_in_s + fade_out_s); see _inject_line. Bounding by fade duration
-# prevents ghosting when a long post_dwell is combined with short fades.
+# (fade_in_s + fade_out_s) when the kill switch is OFF; the kill-switch-on
+# path uses just `max_overlap_s` since the §1c post-pass bounds the actual
+# emitted window. Bounding by fade duration prevents ghosting when a long
+# post_dwell is combined with short fades (in the legacy path).
 _LINE_MAX_OVERLAP_S = 0.4
 _LINE_DEFAULT_FONT_FAMILY = "Inter Tight"
 _MIN_LINE_VISIBLE_S = 0.20
+
+# Crossfade duration clamps for the dynamic-scaling post-pass. Below the
+# floor, the fade reads as a hard cut and the user perceives a flash rather
+# than a transition. Above the ceiling, the fade visibly drags into L_N's
+# own audible span — L_N goes translucent while the listener still hears
+# its vocal. 30 / 400 ms come from observed thresholds on dense pop tracks.
+_LINE_CROSSFADE_MIN_MS = 30
+_LINE_CROSSFADE_MAX_MS = 400
+
+# Short-line audible-hold guarantee for the OUTGOING line of a crossfade.
+# L_N must hold full opacity for at least this many seconds of its own
+# audible window BEFORE its fade-out begins; protects very short lines
+# (≤300 ms vocal hits) from being almost-entirely a fade. When the audible
+# window can't host MIN_FADE + this hold, §1g policy is hard cut (re-anchor
+# nxt.section_start so no visual overlap remains).
+_LINE_MIN_AUDIBLE_HOLD_S = 0.10
+
+# Middle-line full-opacity hold for the §1c three-line reconciliation pass.
+# If B.fade_in + B.fade_out would consume more than (B_visible − this),
+# both adjacent crossfade windows are shrunk proportionally so B still
+# reaches its peak alpha for at least this many milliseconds.
+_LINE_MIN_MIDDLE_PEAK_HOLD_MS = 80
+
+_FADE_OUT_CURVE_SQRT = "sqrt"
 
 
 def _resolve_fade_ms(cfg: dict, *, s_key: str, ms_key: str, default_ms: int) -> int:
@@ -136,6 +172,13 @@ class _LineOverlayWindow:
     original_start_s_song: float
     original_end_s_song: float
     original_words: list[dict]
+    # Set by the dynamic-crossfade post-pass to "sqrt" when this line is the
+    # OUTGOING side of a `"crossfade"` pair decision. The renderer reads it
+    # via overlay.get("fade_out_curve") and switches accel from 2.0 (default
+    # lingering `1−p²`) to 0.5 (mirror-symmetric `1−√p`). None for the last
+    # line of any section, sparse pairs, hard-cut / solo-demoted pairs,
+    # user-override pairs, and the kill-switch-disabled path.
+    fade_out_curve: str | None = None
 
 
 def inject_lyric_overlays(
@@ -153,6 +196,17 @@ def inject_lyric_overlays(
     if not lyrics_cached:
         log.info("lyric_inject_skipped_no_cache", reason="lyrics_cached missing")
         return recipe_dict
+
+    # Snapshot the keys that came from the caller's lyrics_config — BEFORE
+    # `_apply_style_set_defaults` writes its own timing defaults into cfg.
+    # The dynamic-crossfade post-pass in `_inject_line` uses this to tell
+    # genuine user overrides (admin Test tab pinning fade_in_ms=200) from
+    # style-set baseline timings (every `lyric_line` style set in
+    # assets/style_sets/style-sets.json ships with fade_in_ms + fade_out_ms
+    # in its `timing` block). Without this snapshot, every production track
+    # that resolves a style set looks like it has user-pinned fades, which
+    # disables the dynamic post-pass for nearly every real job.
+    cfg["_caller_key_set"] = frozenset(k for k, v in cfg.items() if v is not None)
 
     # Style set: when one is chosen (by the LyricStyleSelectorAgent at job time
     # or pinned in lyrics_config), it supplies the lyric style + styling
@@ -631,12 +685,51 @@ def _inject_line(
 
     max_overlap_s = max(0.0, float(cfg.get("max_overlap_s", _LINE_MAX_OVERLAP_S)))
 
-    # Bound visual overlap with the next line by the available cross-fade
-    # duration. When a caller explicitly passes fade_in_ms=0 / fade_out_ms=0,
-    # this collapses to 0 → no overlap (intended kill switch). Missing fade
-    # keys fall back to _LINE_FADE_*_MS defaults; missing keys must NOT
-    # silently disable the overlap behavior.
-    dynamic_max_overlap = min(max_overlap_s, fade_in_s + fade_out_s)
+    # User-override detection. Track whether the caller pinned fade values
+    # explicitly. The dynamic post-pass MUST NOT override these on either
+    # side — see plans/... §1b "PARTIAL-OVERRIDE POLICY" and the four-case
+    # matrix in test_partial_overrides_skip_dynamic_scaling. AND the §3
+    # `dynamic_max_overlap` widening must also defer to legacy when the
+    # user overrode fades — otherwise the section_end computation expands
+    # past what their pinned fade durations can cover, re-introducing the
+    # exact stacking the dynamic path is supposed to prevent.
+    #
+    # Use the caller-key snapshot captured BEFORE `_apply_style_set_defaults`
+    # ran (set in inject_lyric_overlays). Reading cfg directly here would
+    # treat every style-set baseline timing as a user override — every
+    # shipped `lyric_line` style set defines fade_in_ms + fade_out_ms in
+    # its `timing` block, so without the snapshot the dynamic post-pass
+    # NEVER fires for any production track that resolves a style set.
+    _caller_keys = cfg.get("_caller_key_set") or frozenset()
+    _fade_in_user_override = "fade_in_ms" in _caller_keys or "fade_in_s" in _caller_keys
+    _fade_out_user_override = "fade_out_ms" in _caller_keys or "fade_out_s" in _caller_keys
+    _any_user_override = _fade_in_user_override or _fade_out_user_override
+
+    # Kill-switch gate. When the dynamic-crossfade post-pass is OFF, the
+    # scheduler must reproduce pre-fix behavior byte-identically — including
+    # the legacy additive `min(max_overlap_s, fade_in_s + fade_out_s)`
+    # overlap cap. When ON, the post-pass below bounds the actual emitted
+    # window per pair (re-anchored to match the crossfade duration exactly),
+    # so this term only needs to honor the caller-configurable max_overlap_s.
+    # Also OFF when the caller pinned fades — see comment above.
+    # See plans/mirea-we-ve-lost-memoized-shannon.md §1f and the
+    # `test_kill_switch_disabled_reproduces_pre_fix_output` snapshot test.
+    from app.config import settings as _app_settings  # noqa: PLC0415
+
+    _dynamic_crossfade_enabled = (
+        bool(getattr(_app_settings, "lyric_dynamic_crossfade_enabled", True))
+        and not _any_user_override
+    )
+
+    if _dynamic_crossfade_enabled:
+        dynamic_max_overlap = max_overlap_s
+    else:
+        # Legacy additive cap. When a caller explicitly passes
+        # fade_in_ms=0 / fade_out_ms=0 this collapses to 0 → no overlap
+        # (intended pre-fix kill switch). Preserved exactly so the
+        # kill-switch-off path is a true rollback and so user-overridden
+        # fades produce the geometry they're sized for.
+        dynamic_max_overlap = min(max_overlap_s, fade_in_s + fade_out_s)
 
     n = len(section_lines)
     line_windows: list[_LineOverlayWindow] = []
@@ -695,6 +788,255 @@ def _inject_line(
             )
         )
 
+    # ── Dynamic crossfade post-pass (§1b–§1d in the plan) ─────────────────
+    # Gated entirely by `settings.lyric_dynamic_crossfade_enabled`. When off,
+    # this block is skipped and the loop below emits line_windows with their
+    # solo-default fade durations and no fade_out_curve key — byte-identical
+    # to pre-fix output.
+    if _dynamic_crossfade_enabled and len(line_windows) >= 2:
+        from app.services.pipeline_trace import (  # noqa: PLC0415
+            record_pipeline_event,
+        )
+
+        # ── Pair candidate assembly (§1b) ─────────────────────────────────
+        pair_candidates: list[dict[str, Any]] = []
+        for i in range(len(line_windows) - 1):
+            cur = line_windows[i]
+            nxt = line_windows[i + 1]
+
+            # Defensive: skip if `nxt` isn't temporally after `cur`. Production
+            # lyrics arrive in time order from Gemini/Whisper, but a scrambled
+            # cache (or a future caller passing lines out of order) would make
+            # natural_overlap_s meaningless — it could read as a huge "overlap"
+            # that's actually a temporal gap in the wrong direction. The
+            # legacy formula is implicitly robust via gap_cap; the dynamic
+            # post-pass needs explicit protection.
+            if nxt.line_start_s <= cur.line_start_s:
+                continue
+
+            natural_overlap_s = max(0.0, cur.section_end_s - nxt.section_start_s)
+            if natural_overlap_s <= 0:
+                # Sparse pair — gap exceeded pre_roll + post_dwell. Solo defaults.
+                continue
+
+            # ANY explicit user override on EITHER side skips this pair.
+            # Mixing override + dynamic across sides would break the mirror
+            # invariant. Operator intent wins; defaults defer.
+            if _any_user_override:
+                record_pipeline_event(
+                    "overlay",
+                    "lyric_crossfade_skipped",
+                    {
+                        "line_idx": i,
+                        "reason": "user_override",
+                        "fade_in_user_override": _fade_in_user_override,
+                        "fade_out_user_override": _fade_out_user_override,
+                    },
+                )
+                continue
+
+            raw_crossfade_ms = int(round(min(max_overlap_s, natural_overlap_s) * 1000))
+
+            # Below-MIN: refuse to inflate fade metadata above the actual
+            # emitted overlap window. A 10 ms emitted window with metadata
+            # claiming 30 ms of fade silently breaks the unit-partition
+            # invariant — the renderer's curve runs for 30 ms inside a 10 ms
+            # frame budget. Fall through to solo for this pair.
+            if raw_crossfade_ms < _LINE_CROSSFADE_MIN_MS:
+                record_pipeline_event(
+                    "overlay",
+                    "lyric_crossfade_skipped",
+                    {
+                        "line_idx": i,
+                        "reason": "below_min_overlap",
+                        "natural_overlap_ms": int(natural_overlap_s * 1000),
+                        "raw_crossfade_ms": raw_crossfade_ms,
+                    },
+                )
+                continue
+
+            crossfade_ms = min(_LINE_CROSSFADE_MAX_MS, raw_crossfade_ms)
+
+            # Short-line safety on the OUTGOING side (cur). Cur's fade-out
+            # region runs from section_end backward by crossfade_ms; it must
+            # not extend into the first _LINE_MIN_AUDIBLE_HOLD_S of cur's
+            # own vocal. If cur's audible window can't host MIN_FADE + this
+            # hold, the §1g hard-cut policy applies.
+            cur_audible_dur_ms = int((cur.section_end_s - cur.line_start_s) * 1000)
+            max_safe_fade_out_ms = cur_audible_dur_ms - int(_LINE_MIN_AUDIBLE_HOLD_S * 1000)
+            if max_safe_fade_out_ms < _LINE_CROSSFADE_MIN_MS:
+                # Hard cut. Decision is committed in §1d apply; cur keeps
+                # solo defaults, nxt.section_start re-anchored to cur.section_end
+                # so the two overlays do not visually overlap.
+                pair_candidates.append(
+                    {
+                        "i": i,
+                        "cur": cur,
+                        "nxt": nxt,
+                        "decision": "hard_cut",
+                        "natural_overlap_ms": int(natural_overlap_s * 1000),
+                    }
+                )
+                continue
+
+            crossfade_ms = min(crossfade_ms, max_safe_fade_out_ms)
+
+            pair_candidates.append(
+                {
+                    "i": i,
+                    "cur": cur,
+                    "nxt": nxt,
+                    "decision": "crossfade",
+                    "natural_overlap_ms": int(natural_overlap_s * 1000),
+                    "raw_crossfade_ms": raw_crossfade_ms,
+                    "crossfade_ms": crossfade_ms,
+                }
+            )
+
+        # ── Three-line conflict reconciliation (§1c) ──────────────────────
+        # If middle line B's fade_in (from A→B crossfade) + fade_out (from
+        # B→C crossfade) consumes more than (B_visible − MIN_PEAK_HOLD),
+        # shrink the adjacent crossfade windows so B still reaches peak
+        # alpha for at least MIN_PEAK_HOLD ms. Only operate on pairs whose
+        # decision is "crossfade" — a sparse / hard_cut / solo_demoted
+        # neighbor isn't a lever the post-pass can pull (its solo fade
+        # contributes to budget but can't be shrunk by us).
+        def _crossfade_candidate(target_i: int) -> dict | None:
+            for _c in pair_candidates:
+                if _c["i"] == target_i and _c["decision"] == "crossfade":
+                    return _c
+            return None
+
+        def _demote_pair_to_solo(prev_index: int) -> None:
+            for _c in pair_candidates:
+                if _c["i"] == prev_index and _c["decision"] == "crossfade":
+                    _c["decision"] = "solo_demoted"
+                    return
+
+        for _attempt in range(4):
+            conflict_resolved_this_pass = False
+            for j in range(1, len(line_windows) - 1):
+                B = line_windows[j]
+                prev_pair = _crossfade_candidate(j - 1)
+                next_pair = _crossfade_candidate(j)
+                if prev_pair is None and next_pair is None:
+                    # No crossfade lever on either side. Sparse / hard_cut /
+                    # solo_demoted neighbors mean B's fades are solo defaults
+                    # whose geometry is the legacy behavior. Don't touch.
+                    continue
+
+                fi = int(prev_pair["crossfade_ms"]) if prev_pair is not None else int(B.fade_in_ms)
+                fo = int(next_pair["crossfade_ms"]) if next_pair is not None else int(B.fade_out_ms)
+                B_visible_ms = int((B.section_end_s - B.section_start_s) * 1000)
+                budget = B_visible_ms - _LINE_MIN_MIDDLE_PEAK_HOLD_MS
+                if fi + fo <= budget:
+                    continue
+
+                new_fi, new_fo = fi, fo
+                if prev_pair is not None and next_pair is not None:
+                    # Both sides shrinkable. Proportional reduction.
+                    scale = budget / max(1, fi + fo)
+                    new_fi = max(_LINE_CROSSFADE_MIN_MS, int(round(fi * scale)))
+                    new_fo = max(_LINE_CROSSFADE_MIN_MS, int(round(fo * scale)))
+                    if new_fi + new_fo > budget:
+                        # Even with both at MIN_MS, sum exceeds budget.
+                        # Demote whichever side has the LARGER crossfade.
+                        if fi >= fo:
+                            _demote_pair_to_solo(prev_index=j - 1)
+                        else:
+                            _demote_pair_to_solo(prev_index=j)
+                        conflict_resolved_this_pass = True
+                        continue
+                    prev_pair["crossfade_ms"] = new_fi
+                    next_pair["crossfade_ms"] = new_fo
+                elif prev_pair is not None:
+                    # Only A→B shrinkable; B's outgoing fade is solo.
+                    new_fi = budget - fo
+                    if new_fi < _LINE_CROSSFADE_MIN_MS:
+                        _demote_pair_to_solo(prev_index=j - 1)
+                        conflict_resolved_this_pass = True
+                        continue
+                    prev_pair["crossfade_ms"] = new_fi
+                else:
+                    # Only B→C shrinkable; B's incoming fade is solo.
+                    new_fo = budget - fi
+                    if new_fo < _LINE_CROSSFADE_MIN_MS:
+                        _demote_pair_to_solo(prev_index=j)
+                        conflict_resolved_this_pass = True
+                        continue
+                    next_pair["crossfade_ms"] = new_fo
+
+                conflict_resolved_this_pass = True
+                record_pipeline_event(
+                    "overlay",
+                    "lyric_crossfade_three_line_reconciled",
+                    {
+                        "middle_line_idx": j,
+                        "B_visible_ms": B_visible_ms,
+                        "budget_ms": budget,
+                        "fi_before_ms": fi,
+                        "fi_after_ms": new_fi,
+                        "fo_before_ms": fo,
+                        "fo_after_ms": new_fo,
+                        "prev_is_crossfade": prev_pair is not None,
+                        "next_is_crossfade": next_pair is not None,
+                    },
+                )
+
+            if not conflict_resolved_this_pass:
+                break
+
+        # ── Apply pair_candidates to line_windows (§1d) ───────────────────
+        for c in pair_candidates:
+            cur = c["cur"]
+            nxt = c["nxt"]
+            if c["decision"] == "crossfade":
+                crossfade_ms = int(c["crossfade_ms"])
+                cur.fade_out_ms = crossfade_ms
+                cur.fade_out_curve = _FADE_OUT_CURVE_SQRT
+                nxt.fade_in_ms = crossfade_ms
+                # Re-anchor so the ACTUAL emitted overlap equals
+                # crossfade_ms exactly. The unit-partition identity in §2
+                # holds geometrically because of this, not just algebraically.
+                nxt.section_start_s = max(
+                    nxt.section_start_s,
+                    cur.section_end_s - crossfade_ms / 1000.0,
+                )
+                record_pipeline_event(
+                    "overlay",
+                    "lyric_crossfade_applied",
+                    {
+                        "line_idx": c["i"],
+                        "natural_overlap_ms": c["natural_overlap_ms"],
+                        "raw_crossfade_ms": c.get("raw_crossfade_ms"),
+                        "applied_crossfade_ms": crossfade_ms,
+                        "fade_in_user_override": False,
+                        "fade_out_user_override": False,
+                        "fade_out_curve": _FADE_OUT_CURVE_SQRT,
+                    },
+                )
+            elif c["decision"] == "hard_cut":
+                # No curve tag, no dynamic durations. Anchor nxt at
+                # cur.section_end so no visual overlap remains.
+                nxt.section_start_s = max(nxt.section_start_s, cur.section_end_s)
+                record_pipeline_event(
+                    "overlay",
+                    "lyric_crossfade_hard_cut",
+                    {
+                        "line_idx": c["i"],
+                        "cur_audible_ms": int((cur.section_end_s - cur.line_start_s) * 1000),
+                        "natural_overlap_ms": c["natural_overlap_ms"],
+                    },
+                )
+            elif c["decision"] == "solo_demoted":
+                # Same anchor policy as hard_cut — for a different reason.
+                nxt.section_start_s = max(nxt.section_start_s, cur.section_end_s)
+                record_pipeline_event(
+                    "overlay",
+                    "lyric_crossfade_solo_demoted",
+                    {"line_idx": c["i"]},
+                )
+
     injected = 0
     for line in line_windows:
         if line.section_end_s <= line.section_start_s:
@@ -746,6 +1088,12 @@ def _inject_line(
                     "original_words": line.original_words,
                 }
             )
+            # Emit fade_out_curve ONLY when set and ONLY on the final segment
+            # (mid-segments emit fade_out_ms=0 already, so the curve has
+            # nothing to act on). Omitting the key when value would be None
+            # preserves kill-switch byte-identity with pre-fix output.
+            if segment_idx == len(segments) - 1 and line.fade_out_curve is not None:
+                overlay["fade_out_curve"] = line.fade_out_curve
             _ensure_overlay_list(slots[slot_win.index]).append(overlay)
             injected += 1
 

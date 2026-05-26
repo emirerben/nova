@@ -3924,6 +3924,13 @@ def _collect_absolute_overlays(
                 entry["fade_in_ms"] = ov["fade_in_ms"]
             if ov.get("fade_out_ms") is not None:
                 entry["fade_out_ms"] = ov["fade_out_ms"]
+            # Lyric crossfade curve tag (set by `_inject_line` for inter-line
+            # crossfades only — see plan §1d). Must survive the absolute-time
+            # rebase into `entry` so the §1c `_consolidate_lyric_segments`
+            # merge below has the right field to propagate, and the renderer
+            # sees it after the final dedup.
+            if ov.get("fade_out_curve") is not None:
+                entry["fade_out_curve"] = ov["fade_out_curve"]
             # Line-style lyrics can be split across multiple beat-synced slots.
             # Keep their stable identity until dedup so the full renderer can
             # stitch those continuations back into one absolute ASS event.
@@ -4191,6 +4198,21 @@ def _collect_absolute_overlays(
                     )
                 merged["end_s"] = max(merged["end_s"], nxt["end_s"])
                 merged["fade_out_ms"] = nxt.get("fade_out_ms", 0)
+                # Last segment owns fade_out_curve too — the scheduler only
+                # tags it on segment_idx == len(segments)-1 (cross-slot
+                # split lyric lines have a `None`/absent curve on every
+                # mid-segment by design). Propagate explicitly so the
+                # production merge does not strip the sqrt curve mid-line.
+                # Renderer-parity bug guard: see plan §6a regression test.
+                nxt_curve = nxt.get("fade_out_curve")
+                if nxt_curve is not None:
+                    merged["fade_out_curve"] = nxt_curve
+                elif "fade_out_curve" in merged:
+                    # No curve on the new last segment but base had one
+                    # (impossible under normal injection rules — base is
+                    # never tagged when there are siblings — but defensive
+                    # against future schedulers).
+                    del merged["fade_out_curve"]
                 prev_end = merged["end_s"]
                 consumed.add(nxt_idx)
             replacements[base_idx] = merged
