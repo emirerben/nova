@@ -934,3 +934,327 @@ def test_display_text_empty_string_falls_back_to_text():
     # Should render "VISIBLE", not empty.
     assert skia_bbox is not None, "Skia rendered nothing — empty display_text wasn't ignored"
     assert (skia_bbox[2] - skia_bbox[0]) > 100, "rendered text too narrow for VISIBLE"
+
+
+# ── Renderer parity: lyric-line fade honored by both Skia and libass ─────────
+# Lock the renderer-parity invariant for `effect='lyric-line'`'s fade_in_ms /
+# fade_out_ms. libass honors them via _emit_lyric_line_alpha_tags
+# (text_overlay.py); Skia honors them via _lyric_line_alpha
+# (text_overlay_skia.py). Without parity, the orchestrator's intentional
+# crossfade window (lyric_injector.py's dynamic_max_overlap) renders as two
+# stacked full-opacity PNGs in the Skia path — the prod regression that
+# shipped with PR #319 and was visible in job f191e328-4a18-420b-8c68-
+# f9539071334b ("If I can live through this" + "What comes next" stacked
+# at t≈5.85s).
+
+
+def _frame_max_alpha(overlay: dict, t_local: float, duration_s: float) -> int:
+    """Render one frame via _draw_frame and return the max alpha across all
+    pixels — captures the brightest text pixel after fade is applied."""
+    import io
+
+    img = tos._draw_frame(overlay, t_local, duration_s)
+    im = Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA")
+    alpha = im.split()[-1]
+    return alpha.getextrema()[1]
+
+
+def test_lyric_line_is_animated_under_skia():
+    """`lyric-line` MUST be in _ANIMATED_EFFECTS_SKIA. The static path emits a
+    single full-opacity PNG that FFmpeg gates on/off with
+    `enable='between(t,start,end)'` — when two lyric overlays' enable windows
+    overlap (the designed crossfade window), they BOTH render at 100% alpha,
+    stacked at the same y_frac. The animated path emits one PNG per frame
+    with per-frame alpha so the same overlap crossfades correctly."""
+    assert "lyric-line" in tos._ANIMATED_EFFECTS_SKIA, (
+        "lyric-line must be in _ANIMATED_EFFECTS_SKIA so fade_in_ms / "
+        "fade_out_ms are honored per-frame. Without this, the renderer-"
+        "parity invariant breaks vs the libass path."
+    )
+    overlay = {
+        "text": "test",
+        "effect": "lyric-line",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "text_size_px": 64,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.8,
+        "text_color": "#FFFFFF",
+    }
+    with tempfile.TemporaryDirectory(prefix="lyric_seq_") as d:
+        seq = tos._generate_overlay_sequence(overlay, d, 0)
+    assert seq is not None
+    assert seq["is_animated"] is True, (
+        "lyric-line must produce an animated PNG sequence so fade ramps "
+        f"render per-frame; got is_animated={seq['is_animated']}"
+    )
+    assert seq["n_frames"] > 1, (
+        f"animated lyric-line must have >1 frame; got n_frames={seq['n_frames']}"
+    )
+
+
+def test_lyric_line_alpha_ramps_in_skia():
+    """At three sample t_local values, the rendered alpha must form a
+    fade-in → hold → fade-out ramp. Sample max alpha (brightest text pixel)
+    to compare. With fade_in_ms=150, fade_out_ms=250, duration=1.0s and
+    libass ease curves (accel=0.5 in, accel=2.0 out):
+
+      t=0.075 (mid fade-in):  alpha = sqrt(0.5)   ≈ 0.71 → max α ≈ 180
+      t=0.500 (hold):         alpha = 1.00              → max α = 255
+      t=0.875 (mid fade-out): alpha = 1 - 0.5**2  = 0.75 → max α ≈ 191
+
+    Slack: shadow has its own alpha curve, so we assert ordering + that the
+    hold sample is fully opaque and the fade samples are at least
+    moderately dimmer (well below 255).
+    """
+    overlay = {
+        "text": "FADE LYRIC",
+        "effect": "lyric-line",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "text_size_px": 80,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.8,
+        "text_color": "#FFFFFF",
+    }
+    a_in = _frame_max_alpha(overlay, t_local=0.075, duration_s=1.0)
+    a_hold = _frame_max_alpha(overlay, t_local=0.500, duration_s=1.0)
+    a_out = _frame_max_alpha(overlay, t_local=0.875, duration_s=1.0)
+
+    assert a_hold == 255, f"hold sample must be fully opaque; got {a_hold}"
+    # Fade samples should be reduced. Ease(0.5) at 50% in = 0.71; ease(2.0)
+    # at 50% out = 0.75. Threshold 240 still catches "no ramp applied"
+    # (which would render at exactly 255) without being brittle to AA +
+    # shadow contribution.
+    assert a_in < 240, (
+        f"fade-in sample at t=0.075 must be dimmer than hold; got {a_in}. "
+        "Skia is rendering at full opacity — alpha ramp not applied."
+    )
+    assert a_out < 240, (
+        f"fade-out sample at t=0.875 must be dimmer than hold; got {a_out}. "
+        "Skia is rendering at full opacity — alpha ramp not applied."
+    )
+
+
+def test_lyric_line_alpha_zero_fade_holds_full_opacity():
+    """fade_in_ms=0 + fade_out_ms=0 (the kill-switch case) must render solid
+    full alpha at every t_local. Guards against the helper accidentally
+    dividing by zero or producing NaN."""
+    overlay = {
+        "text": "SOLID",
+        "effect": "lyric-line",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "fade_in_ms": 0,
+        "fade_out_ms": 0,
+        "text_size_px": 80,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.8,
+        "text_color": "#FFFFFF",
+    }
+    for t_local in (0.0, 0.25, 0.5, 0.75, 1.0):
+        assert _frame_max_alpha(overlay, t_local=t_local, duration_s=1.0) == 255, (
+            f"zero-fade lyric-line at t={t_local} should be fully opaque"
+        )
+
+
+def test_lyric_line_alpha_helper_matches_libass_clamp_semantics():
+    """The Skia alpha helper must mirror libass `_emit_lyric_line_alpha_tags`
+    clamp semantics exactly (fade_out shrinks to fit any time fade_in did
+    not consume). Documenting + locking the cross-renderer contract here so
+    a future change to one helper forces a deliberate change to the other."""
+    # Normal case: both fades fit. Curves match libass:
+    #   fade-in:  alpha = sqrt(progress)        (accel=0.5)
+    #   fade-out: alpha = 1 - progress**2       (accel=2.0)
+    base = {"effect": "lyric-line", "fade_in_ms": 150, "fade_out_ms": 250}
+    assert tos._lyric_line_alpha(base, 0.0, 1.0) == 0.0
+    # Mid fade-in (50% through 150ms): sqrt(0.5) ≈ 0.707
+    assert abs(tos._lyric_line_alpha(base, 0.075, 1.0) - 0.5**0.5) < 0.01
+    assert tos._lyric_line_alpha(base, 0.5, 1.0) == 1.0  # hold
+    # Mid fade-out (50% through 250ms starting at 750ms): 1 - 0.5**2 = 0.75
+    assert abs(tos._lyric_line_alpha(base, 0.875, 1.0) - (1.0 - 0.5**2)) < 0.01
+    # Short overlay: fade_in_ms > duration → fade_in clamps; fade_out clamps to 0.
+    short = {"effect": "lyric-line", "fade_in_ms": 200, "fade_out_ms": 200}
+    a = tos._lyric_line_alpha(short, 0.05, 0.1)
+    assert 0.0 < a < 1.0  # mid-of-clamped-fade-in, no NaN, no overshoot
+    # Missing keys → defaults match libass (fade_in_ms=150, fade_out_ms=250).
+    # At t=0 we're at the start of fade-in → alpha=0; mid-hold → alpha=1.
+    none = {"effect": "lyric-line"}
+    assert tos._lyric_line_alpha(none, 0.0, 1.0) == 0.0
+    assert tos._lyric_line_alpha(none, 0.5, 1.0) == 1.0
+    # Explicit 0 still means "no fade" (kill switch).
+    zero = {"effect": "lyric-line", "fade_in_ms": 0, "fade_out_ms": 0}
+    assert tos._lyric_line_alpha(zero, 0.0, 1.0) == 1.0
+
+
+def test_lyric_line_longer_than_frame_cap_renders_full_duration():
+    """REGRESSION: making lyric-line animated naively inherits
+    MAX_OVERLAY_FRAMES (120 frames @ 30fps = 4s). The user-reported job's
+    Line 2 was 4.26s — capping would chop the last 0.26s (fade-out + tail),
+    re-introducing the stack-without-crossfade visible symptom right at
+    the next line's hand-off. lyric-line must opt out of the font-cycle
+    cap and render frames for its full duration."""
+    overlay = {
+        "text": "long lyric line that goes well past 4 seconds",
+        "effect": "lyric-line",
+        "start_s": 0.0,
+        "end_s": 6.0,  # 6s > 4s cap
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "text_size_px": 64,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.8,
+        "text_color": "#FFFFFF",
+    }
+    with tempfile.TemporaryDirectory(prefix="lyric_long_") as d:
+        seq = tos._generate_overlay_sequence(overlay, d, 0)
+    assert seq is not None
+    # 6.0s * 30 fps = 180 frames + 1 hold = 181. Must exceed MAX_OVERLAY_FRAMES.
+    expected_min = int(round(6.0 * tos.FPS))
+    assert seq["n_frames"] >= expected_min, (
+        f"lyric-line longer than {tos.MAX_OVERLAY_FRAMES / tos.FPS:.1f}s is "
+        f"silently truncated to {seq['n_frames']} frames; expected "
+        f">={expected_min} for a 6s line. The font-cycle frame cap must "
+        "not apply to lyric-line."
+    )
+
+
+def test_overlapping_lyric_lines_crossfade_through_burn_pipeline(tmp_workdir):
+    """END-TO-END REGRESSION: render two consecutive lyric-line overlays
+    that overlap by 100ms (the prod job f191e328 shape) through the actual
+    Skia + FFmpeg burn pipeline, sample a mid-overlap frame, and assert
+    NEITHER overlay saturates to full opacity.
+
+    Before this fix, both overlays burned at full alpha throughout the
+    overlap window — the "two stacked texts" visible symptom. The earlier
+    tests assert the renderer produces a ramp; this test asserts the ramp
+    produces a real crossfade through the full pipeline (which is what the
+    user actually sees in the rendered MP4)."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg not available")
+
+    line_a = {
+        "text": "FADE OUT LINE",
+        "effect": "lyric-line",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "text_size_px": 80,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFFFFF",
+    }
+    line_b = {
+        "text": "FADE IN LINE",
+        "effect": "lyric-line",
+        "start_s": 0.9,  # 100ms overlap with line_a's fade-out tail
+        "end_s": 2.0,
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "text_size_px": 80,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.7,  # different Y so we can tell them apart
+        "text_color": "#FFFFFF",
+    }
+
+    sequences = tos._render_overlay_sequences([line_a, line_b], 2.5, tmp_workdir)
+    assert len(sequences) == 2
+    assert all(s["is_animated"] for s in sequences), "both lyric-line overlays must be animated"
+
+    bg = os.path.join(tmp_workdir, "bg.mp4")
+    burned = os.path.join(tmp_workdir, "burned.mp4")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=1080x1920:r=30:d=2.5",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            bg,
+        ],
+        check=True,
+        capture_output=True,
+    )
+    tos._ffmpeg_burn_pngs(bg, sequences, burned)
+
+    # Sample mid-overlap frame at t=0.95s (line_a's fade-out is ~80%
+    # remaining toward 1.0; line_b's fade-in is ~33% into the 150ms ramp).
+    frame_path = os.path.join(tmp_workdir, "mid.png")
+    subprocess.run(
+        ["ffmpeg", "-y", "-ss", "0.95", "-i", burned, "-frames:v", "1", frame_path],
+        check=True,
+        capture_output=True,
+    )
+    im = Image.open(frame_path).convert("RGBA")
+    # line_a band centered at y_frac=0.5 → y≈960. line_b band at y_frac=0.7 → y≈1344.
+    # Both should be in fade — neither pixel band hits full white.
+    band_a_max = im.crop((0, 920, im.width, 1000)).split()[0].getextrema()[1]
+    band_b_max = im.crop((0, 1300, im.width, 1380)).split()[0].getextrema()[1]
+    assert band_a_max < 240, (
+        f"line_a at t=0.95 (mid fade-out) burned at near-full opacity (max R={band_a_max}); "
+        "alpha ramp not applied through the burn pipeline — the visible 'stacked text' bug."
+    )
+    assert band_b_max < 240, (
+        f"line_b at t=0.95 (early fade-in) burned at near-full opacity (max R={band_b_max}); "
+        "alpha ramp not applied through the burn pipeline — the visible 'stacked text' bug."
+    )
+
+
+def test_lyric_line_sanity_ceiling_caps_runaway_duration():
+    """Defense in depth: a malformed transcript could (in theory) produce a
+    lyric-line overlay with `end_s = 240.0`. Without a sanity cap, the
+    encode worker would write 7200 PNGs (~7GB scratch) before FFmpeg
+    consumes any. The ceiling caps n_frames at 30s × FPS regardless of
+    `wanted` so the worker survives bad upstream data."""
+    overlay = {
+        "text": "runaway",
+        "effect": "lyric-line",
+        "start_s": 0.0,
+        "end_s": 120.0,  # 2 minutes — well past any real lyric line
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "text_size_px": 64,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.8,
+        "text_color": "#FFFFFF",
+    }
+    with tempfile.TemporaryDirectory(prefix="lyric_runaway_") as d:
+        seq = tos._generate_overlay_sequence(overlay, d, 0)
+    assert seq is not None
+    ceiling = int(tos.FPS * 30)
+    assert seq["n_frames"] <= ceiling + 1, (
+        f"lyric-line n_frames={seq['n_frames']} exceeded sanity ceiling "
+        f"{ceiling}+1 — encode worker is exposed to runaway upstream data."
+    )
+
+
+def test_libass_lyric_line_emits_fade_tags():
+    """Parity reference: confirm the libass path emits `\\alpha` fade-in +
+    fade-out tags. If libass ever stops emitting these, the Skia
+    implementation needs to be reconciled with whatever replaced them."""
+    from app.pipeline.text_overlay import _emit_lyric_line_alpha_tags
+
+    tags = _emit_lyric_line_alpha_tags(
+        section_start_s=0.0, section_end_s=1.0, fade_in_ms=150, fade_out_ms=250
+    )
+    # Fade-in ramp: starts opaque-tag-0 (\alpha&HFF&) and animates to opaque
+    # (&H00&) over [0, 150ms].
+    assert r"\alpha&HFF&" in tags
+    assert r"\t(0,150" in tags and r"\alpha&H00&" in tags
+    # Fade-out ramp: animates back to fully transparent over [750, 1000ms].
+    assert r"\t(750,1000" in tags and tags.count(r"\alpha&HFF&") >= 2
