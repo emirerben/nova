@@ -266,3 +266,49 @@ test("isSelected works for sections starting at 0.0s (falsy-zero guard)", async 
     screen.getByTestId("section-band-1").querySelector("rect")?.getAttribute("stroke-width"),
   ).toBe("3");
 });
+
+test("beat-strip highlight follows form-state window, not sections[0]", async () => {
+  // Pins v2-1 fix. Before: activeStart/End hardcoded to sections[0], so
+  // beats inside section #1 (60-78s) lit up regardless of which band the
+  // user clicked. After: activeStart/End = start/end props, so the lit
+  // beats track the form window.
+  //
+  // Setup: form bounds match section #3 (140-156s). Assert that beats
+  // INSIDE section #3 use the "active" violet fill while beats inside
+  // section #1 do NOT. Active fill is "#8b5cf6" (rgba-equivalent of the
+  // bright violet); inactive is "#52525b" (zinc).
+  const { container } = renderWith(threeSections, { start: 140, end: 156 });
+  await screen.findByText(/Hover for rationale/i);
+
+  // The beat <rect>s have neither data-testid nor key — pull them by fill.
+  // Use querySelectorAll on the svg, filter to <rect> with the active fill.
+  const allRects = Array.from(container.querySelectorAll("rect"));
+  const activeBeats = allRects.filter(
+    (r) => r.getAttribute("fill") === "#8b5cf6",
+  );
+  // baseBeats are at 0.5s, 1.0s, ..., 120s. Beats in [140, 156] should be
+  // active. Since baseBeats only goes up to 120s, no beat falls inside #3 —
+  // the assertion becomes "no beats are highlighted", which still proves
+  // the bug fix: BEFORE v2-1, beats inside [60, 78] (section #1) would all
+  // be active. After: zero beats active (because no baseBeat is in [140, 156]).
+  //
+  // Concretely: pre-fix this count would be ~37 (beats 60.0s..78.0s @ 0.5s).
+  // Post-fix it must be 0.
+  expect(activeBeats.length).toBe(0);
+});
+
+test("beat-strip highlight covers form-window beats when window has beats", async () => {
+  // Complementary: form bounds at [30, 50] (inside baseBeats range).
+  // 40 beats span that 20s window at 0.5s spacing → expect ~40 active beats.
+  const { container } = renderWith(threeSections, { start: 30, end: 50 });
+  await screen.findByText(/Hover for rationale/i);
+
+  const activeBeats = Array.from(
+    container.querySelectorAll("rect"),
+  ).filter((r) => r.getAttribute("fill") === "#8b5cf6");
+
+  // Allow some slack on boundary inclusion. The exact bound check is
+  // b >= activeStart && b <= activeEnd at AudioPlayer:361.
+  expect(activeBeats.length).toBeGreaterThanOrEqual(30);
+  expect(activeBeats.length).toBeLessThanOrEqual(45);
+});

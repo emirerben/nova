@@ -16,6 +16,7 @@ import {
 import { adminCreateTemplateFromMusicTrack } from "@/lib/admin-api";
 import LyricsConfigPanel from "@/app/admin/_shared/LyricsConfigPanel";
 import type { LyricsConfig } from "@/lib/music-api";
+import { matchSectionByBounds } from "@/lib/music-section-match";
 import { AudioPlayer } from "./components/AudioPlayer";
 import { LyricsTab } from "./components/LyricsTab";
 import { TestTab } from "./components/TestTab";
@@ -353,6 +354,30 @@ function ConfigTabContent({
   handleArchive,
   onLyricsDirtyChange,
 }: ConfigTabContentProps) {
+  // Live form-state window: empty string → fall back to persisted cfg
+  // (matches the AudioPlayer start/end prop wiring further down). The
+  // matchedSection check identifies which agent band (if any) the
+  // current window corresponds to, so the metadata Row label can say
+  // "Section #N" instead of always claiming #1. Uses the same shared
+  // helper as AudioPlayer's per-band ✓ indicator — guarantees the two
+  // surfaces never disagree.
+  const liveStart =
+    bestStart === "" ? (cfg.best_start_s ?? 0) : parseFloat(bestStart);
+  const liveEnd =
+    bestEnd === "" ? (cfg.best_end_s ?? 0) : parseFloat(bestEnd);
+  const matchedSection = matchSectionByBounds(
+    track.best_sections,
+    liveStart,
+    liveEnd,
+  );
+  // Form ↔ persisted divergence drives the amber "Unsaved changes"
+  // badge next to the Save button. Compare strings to avoid float
+  // formatting drift (the form holds raw input strings).
+  const hasUnsavedChanges =
+    bestStart !== (cfg.best_start_s?.toString() ?? "") ||
+    bestEnd !== (cfg.best_end_s?.toString() ?? "") ||
+    slotEveryN !== (cfg.slot_every_n_beats?.toString() ?? "8");
+
   return (
     <>
       {/* Info card */}
@@ -361,17 +386,11 @@ function ConfigTabContent({
         <Row label="Duration" value={track.duration_s ? `${track.duration_s.toFixed(1)}s` : "—"} />
         <Row label="Beats detected" value={String(track.beat_count)} />
         <Row
-          label={
-            track.best_sections && track.best_sections.length > 0
-              ? "Section #1"
-              : "Best section"
-          }
+          label={matchedSection ? `Section #${matchedSection.rank}` : "Custom window"}
           value={
-            track.best_sections && track.best_sections.length > 0
-              ? `${track.best_sections[0].start_s.toFixed(1)}s – ${track.best_sections[0].end_s.toFixed(1)}s · ${track.best_sections[0].label}`
-              : cfg.best_start_s != null
-                ? `${cfg.best_start_s.toFixed(1)}s – ${cfg.best_end_s?.toFixed(1)}s`
-                : "—"
+            Number.isFinite(liveStart) && Number.isFinite(liveEnd) && liveEnd > liveStart
+              ? `${liveStart.toFixed(1)}s – ${liveEnd.toFixed(1)}s${matchedSection ? ` · ${matchedSection.label}` : ""}`
+              : "—"
           }
         />
         <Row label="Slot every N beats" value={cfg.slot_every_n_beats?.toString() ?? "—"} />
@@ -500,13 +519,22 @@ function ConfigTabContent({
               {saveMsg}
             </p>
           )}
-          <button
-            type="submit"
-            disabled={saving}
-            className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
-          >
-            {saving ? "Saving…" : "Save config"}
-          </button>
+          <div className="flex items-center">
+            <button
+              type="submit"
+              disabled={saving}
+              className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
+            >
+              {saving ? "Saving…" : "Save config"}
+            </button>
+            {/* Amber, not red — "unsaved" is a state, not an error. */}
+            {hasUnsavedChanges && (
+              <span className="ml-3 text-xs text-amber-400 inline-flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+                Unsaved changes
+              </span>
+            )}
+          </div>
         </form>
       </div>
 
