@@ -418,7 +418,7 @@ def test_upload_confirm_dispatches_celery_on_happy_path(client: TestClient) -> N
     try:
         with (
             patch("app.storage._get_client", return_value=fake_client),
-            patch("app.services.audio_download.probe_has_audio_stream", return_value=True),
+            patch("app.routes.admin_music.probe_has_audio_stream", return_value=True),
             patch("app.services.audio_download._probe_duration", return_value=215.5),
             patch("app.tasks.music_orchestrate.analyze_music_track_task") as mock_task,
         ):
@@ -496,7 +496,7 @@ def test_upload_confirm_rejects_non_audio_payload(client: TestClient) -> None:
     try:
         with (
             patch("app.storage._get_client", return_value=fake_client),
-            patch("app.services.audio_download.probe_has_audio_stream", return_value=False),
+            patch("app.routes.admin_music.probe_has_audio_stream", return_value=False),
             patch("app.tasks.music_orchestrate.analyze_music_track_task") as mock_task,
         ):
             mock_task.delay = MagicMock()
@@ -621,7 +621,7 @@ def test_upload_confirm_recovers_orphan_with_null_gcs_path(client: TestClient) -
     try:
         with (
             patch("app.storage._get_client", return_value=fake_client),
-            patch("app.services.audio_download.probe_has_audio_stream", return_value=True),
+            patch("app.routes.admin_music.probe_has_audio_stream", return_value=True),
             patch("app.services.audio_download._probe_duration", return_value=200.0),
             patch("app.tasks.music_orchestrate.analyze_music_track_task") as mock_task,
         ):
