@@ -39,8 +39,8 @@ const FIELDS: Array<{
   { key: "pre_roll_s", label: "Pre-roll", min: 0, max: 0.5, step: 0.01 },
   { key: "post_dwell_s", label: "Post-dwell", min: 0, max: 2, step: 0.01 },
   { key: "next_line_gap_s", label: "Next-line gap", min: 0, max: 0.5, step: 0.01 },
-  { key: "fade_in_ms", label: "Fade in", min: 0, max: 500, step: 10 },
-  { key: "fade_out_ms", label: "Fade out", min: 0, max: 800, step: 10 },
+  { key: "fade_in_ms", label: "Fade in (solo / legacy only)", min: 0, max: 500, step: 10 },
+  { key: "fade_out_ms", label: "Fade out (solo / legacy only)", min: 0, max: 800, step: 10 },
   {
     key: "hold_to_next_threshold_ms",
     label: "Hold-to-next",
@@ -175,6 +175,15 @@ export function LyricsTimingPanel({
           </label>
         ))}
       </div>
+
+      <p
+        data-testid="lyrics-timing-crossfade-note"
+        className="mt-3 text-xs text-zinc-500"
+      >
+        Inter-line lyric transitions use automatic crossfade timing to prevent
+        stacked text. The fade sliders above apply only to solo / last-line
+        fades and to the kill-switch-off legacy path.
+      </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button
