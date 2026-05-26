@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.47.2] - 2026-05-26
+
+### Fixed
+- **Generative-edit text-style picker no longer silently disappears when the API hiccups.** The public generative page loaded its curated text styles with a `.catch(() => setStyleSets([]))`, and the change-style control is gated on `styleSets.length > 0`. So any transient API failure (e.g. the app-wide 503 when the single API machine's event loop wedged) left the picker invisible — indistinguishable from "the feature was never shipped." The page now tracks the failure and shows a "Couldn't load text styles" notice with a Retry button above the variants grid, so a backend blip reads as a recoverable error instead of a missing feature. Happy path unchanged.
+
+### Tests
+- **Synced two stale admin test suites that were red on `main`.** `overlay-editor` asserted pre-drift overlay constants (`FONT_SIZE_MAP.small` 48, `POSITION_Y_MAP.center` 0.50) and a 3-zone snap model; `font-library` expected a `clean_captions` vibe count of 3. All were verified against the current source of truth (`app/pipeline/text_overlay.py` for the maps, `fontsByVibe()` for counts) and updated to match — the frontend and backend constants are in parity; the tests had simply not been updated when the registry and zone model grew.
+
 ## [0.4.47.1] - 2026-05-25
 
 ### Fixed
