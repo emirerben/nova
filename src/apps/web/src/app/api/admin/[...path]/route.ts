@@ -42,6 +42,12 @@ async function proxy(
     );
   }
 
+  // SECURITY: do not forward Authorization or Cookie upstream.
+  // The BasicAuth credential is consumed by middleware.ts (the /admin/* and
+  // /api/admin/* shared-secret gate). FastAPI's only auth signal is the
+  // server-side X-Admin-Token injected below; FastAPI must never see the
+  // browser's BasicAuth credentials or any session cookie. Only the
+  // incoming Content-Type is copied so the upstream parses bodies correctly.
   const headers: Record<string, string> = {
     "X-Admin-Token": ADMIN_TOKEN,
   };

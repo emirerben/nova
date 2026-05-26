@@ -35,6 +35,39 @@ npm run build
 Then open `chrome://extensions`, enable Developer mode, click "Load unpacked",
 and pick `src/apps/extension/dist/`.
 
+After loading, click the extension icon to open the popup and enter the Nova
+admin BasicAuth username + password (same creds the browser prompts you for on
+`/admin/*` pages). The "Test connection" button validates them locally without
+making a network request to non-allowlisted origins. Without creds set, every
+`/api/admin/*` call from the extension's offscreen doc will 401 against the
+middleware gate.
+
+## Rebuilding the admin install zip
+
+`/admin/extension/install` distributes a pre-built zip so admins don't have to
+clone the repo. When extension source changes, refresh it with:
+
+```bash
+./scripts/build-admin-extension-zip.sh
+```
+
+The script (1) builds the extension, (2) runs a secrets audit (gitleaks if
+available + a hard pattern grep on the source tree — exits non-zero on any
+match), (3) zips `dist/*` with `manifest.json` at archive root, (4) asserts
+the packaged manifest version equals the source manifest version, and (5)
+writes `src/apps/web/public/admin/extension/extension-info.json` with version,
+build timestamp, and source commit. Output goes to
+`src/apps/web/public/admin/extension/nova-extension.zip` (committed).
+
+The install page itself lives behind the BasicAuth middleware gate, so only
+authenticated admins can download the zip.
+
+CI automation of this rebuild is a follow-up — for now, rerun the script
+after editing anything under `src/apps/extension/src/`. `manifest.key` is
+intentionally deferred; when Phase 2 distribution lands, the middleware's
+`chrome-extension://*` CSRF allowance can lock to a single deterministic
+extension ID.
+
 For dev with the Nova SPA at `http://localhost:3000`:
 
 1. Open `chrome://extensions`, click the Nova extension's "Details", and copy

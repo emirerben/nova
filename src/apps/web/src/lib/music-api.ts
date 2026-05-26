@@ -385,16 +385,28 @@ export async function adminGetAudioUrl(id: string): Promise<string> {
 // helpers are the SPA's side of the contract. See plan:
 // ~/.claude/plans/sen-k-demli-bir-yaz-l-m-rosy-acorn.md
 
-/** Hard-coded ID of the production Nova ingest extension once deployed.
- *  In dev with an unpacked load this needs to be set per-developer; we read
- *  it from a global the extension's content script injects on Nova pages,
- *  with a fallback for the production stable ID. */
-export const NOVA_EXTENSION_ID =
-  (typeof window !== "undefined" &&
-    (window as unknown as { __NOVA_EXTENSION_ID__?: string }).__NOVA_EXTENSION_ID__) ||
-  // Placeholder — replace with the real ID once the production CRX is signed
-  // and the deterministic `key` field is committed to manifest.json.
-  "nova-extension-id-not-set";
+/** Placeholder returned when the extension hasn't injected its ID yet. */
+const EXTENSION_ID_NOT_SET = "nova-extension-id-not-set";
+
+/** Resolve the Nova extension ID at call time.
+ *  The extension's content script (src/apps/extension/src/content.js) sets
+ *  `<html data-nova-extension-id="…">` at document_start, so the attribute
+ *  is normally already on the document by the time SPA code runs. The
+ *  `window.__NOVA_EXTENSION_ID__` fallback is kept for back-compat with any
+ *  external setter that may already wire it that way.
+ *  manifest.key is deferred (Phase 2), so the ID is per-machine random for
+ *  unpacked loads — a hardcoded constant would not work. */
+export function novaExtensionId(): string {
+  if (typeof document !== "undefined" && document.documentElement) {
+    const attr = document.documentElement.getAttribute("data-nova-extension-id");
+    if (attr) return attr;
+  }
+  if (typeof window !== "undefined") {
+    const w = window as unknown as { __NOVA_EXTENSION_ID__?: string };
+    if (w.__NOVA_EXTENSION_ID__) return w.__NOVA_EXTENSION_ID__;
+  }
+  return EXTENSION_ID_NOT_SET;
+}
 
 interface ChromeRuntime {
   sendMessage(
@@ -413,12 +425,53 @@ function chromeRuntime(): ChromeRuntime | null {
   return c?.runtime ?? null;
 }
 
+/** Race-tolerantly resolve the extension ID. If content.js has already set
+ *  the DOM attribute we return immediately; otherwise we wait up to
+ *  `timeoutMs` for either the `nova-extension-ready` CustomEvent or the
+ *  attribute to appear (polled at 50ms). Returns the placeholder on timeout
+ *  so callers can short-circuit. */
+async function resolveExtensionId(timeoutMs: number): Promise<string> {
+  const initial = novaExtensionId();
+  if (initial && initial !== EXTENSION_ID_NOT_SET) return initial;
+  if (typeof document === "undefined") return EXTENSION_ID_NOT_SET;
+  return new Promise<string>((resolve) => {
+    let done = false;
+    const finish = (v: string) => {
+      if (done) return;
+      done = true;
+      document.removeEventListener("nova-extension-ready", onReady);
+      clearInterval(poll);
+      clearTimeout(timer);
+      resolve(v);
+    };
+    const onReady = (e: Event) => {
+      const ce = e as CustomEvent<{ extensionId?: string }>;
+      if (ce.detail?.extensionId) finish(ce.detail.extensionId);
+    };
+    document.addEventListener("nova-extension-ready", onReady);
+    const poll = setInterval(() => {
+      const v = novaExtensionId();
+      if (v && v !== EXTENSION_ID_NOT_SET) finish(v);
+    }, 50);
+    const timer = setTimeout(() => finish(novaExtensionId()), timeoutMs);
+  });
+}
+
 /** Returns true iff the Nova extension is installed AND reachable from this page.
- *  Sends a one-shot `ping` and waits for a `pong`. Resolves false on timeout
- *  (250ms) so the UI can swap to "Install Nova extension" without hanging. */
-export async function detectExtension(timeoutMs = 250): Promise<boolean> {
+ *  First resolves the extension ID (DOM attribute set by the content script,
+ *  with an event-driven fallback for slow profiles), then sends a one-shot
+ *  `ping` and waits for a `pong`. Resolves false on overall timeout so the UI
+ *  can swap to "Install Nova extension" without hanging. */
+export async function detectExtension(timeoutMs = 1500): Promise<boolean> {
   const runtime = chromeRuntime();
   if (!runtime) return false;
+  const startedAt = Date.now();
+  // Reserve a chunk of the budget for the ID handshake; the rest goes to
+  // the ping round-trip.
+  const idBudget = Math.min(timeoutMs - 250, Math.round(timeoutMs * 0.75));
+  const extensionId = await resolveExtensionId(Math.max(idBudget, 100));
+  if (!extensionId || extensionId === EXTENSION_ID_NOT_SET) return false;
+  const remaining = Math.max(timeoutMs - (Date.now() - startedAt), 200);
   return new Promise<boolean>((resolve) => {
     let done = false;
     const finish = (ok: boolean) => {
@@ -426,10 +479,10 @@ export async function detectExtension(timeoutMs = 250): Promise<boolean> {
       done = true;
       resolve(ok);
     };
-    const timer = setTimeout(() => finish(false), timeoutMs);
+    const timer = setTimeout(() => finish(false), remaining);
     try {
       runtime.sendMessage(
-        NOVA_EXTENSION_ID,
+        extensionId,
         { target: "nova_extension", type: "ping" },
         (resp: unknown) => {
           clearTimeout(timer);
@@ -574,6 +627,11 @@ export async function extensionIngest(
     onProgress({ stage: "failed", detail: "Nova extension not reachable" });
     throw new Error("Nova extension not reachable");
   }
+  // detectExtension() resolved the ID via the DOM-attribute bridge and
+  // confirmed it's reachable; reuse the same accessor here. Stable for the
+  // duration of this ingest because content.js writes the attribute once
+  // at document_start and doesn't mutate it.
+  const extensionId = novaExtensionId();
 
   // Per-ingest jobId so the listener can filter out events from concurrent
   // ingests in other tabs / a previous abandoned ingest in this tab.
@@ -631,7 +689,7 @@ export async function extensionIngest(
 
     try {
       runtime.sendMessage(
-        NOVA_EXTENSION_ID,
+        extensionId,
         {
           target: "nova_extension",
           type: "ingest",

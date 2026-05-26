@@ -27,6 +27,41 @@
 const OFFSCREEN_URL = "offscreen.html";
 const VERSION = chrome.runtime.getManifest().version;
 
+// Runtime sender verification. externally_connectable.matches in the manifest
+// already restricts WHICH ORIGINS can send messages, but not WHICH PATHS on
+// those origins, and not which COMMANDS they can invoke. Defense in depth so
+// a compromised non-admin Nova page (or a future regression of the manifest's
+// `matches`) can't trigger privileged ingest work.
+const ALLOWED_NOVA_ORIGINS = new Set([
+  "https://nova-video.vercel.app",
+  "http://localhost:3000",
+]);
+const ADMIN_PATH_PREFIX = "/admin/";
+const ALLOWED_EXTERNAL_COMMANDS = new Set(["ping", "ingest"]);
+
+function isAllowedSender(sender) {
+  try {
+    if (!sender?.url) return false;
+    const u = new URL(sender.url);
+    const origin = `${u.protocol}//${u.host}`;
+    if (!ALLOWED_NOVA_ORIGINS.has(origin)) return false;
+    if (!u.pathname.startsWith(ADMIN_PATH_PREFIX)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isSupportedYouTubeUrl(s) {
+  if (typeof s !== "string" || !s) return false;
+  try {
+    const u = new URL(s);
+    return /(^|\.)(youtube\.com|youtu\.be)$/i.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
 async function ensureOffscreen() {
   if (await chrome.offscreen.hasDocument()) return;
   await chrome.offscreen.createDocument({
@@ -99,12 +134,30 @@ function forwardProgress(jobId, event) {
 chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
   if (msg?.target !== "nova_extension") return;
 
+  // Runtime sender + command verification. See top-of-file comment.
+  if (!isAllowedSender(sender)) {
+    sendResponse({ ok: false, error: "sender not allowed" });
+    return false;
+  }
+  if (!ALLOWED_EXTERNAL_COMMANDS.has(msg.type)) {
+    sendResponse({ ok: false, error: "unknown command" });
+    return false;
+  }
+
   if (msg.type === "ping") {
     sendResponse({ ok: true, version: VERSION });
     return false;
   }
 
   if (msg.type === "ingest") {
+    const url = msg.payload?.url;
+    if (!isSupportedYouTubeUrl(url)) {
+      sendResponse({
+        ok: false,
+        error: "unsupported ingest URL (expected youtube.com or youtu.be)",
+      });
+      return false;
+    }
     (async () => {
       try {
         await dispatchIngest(
