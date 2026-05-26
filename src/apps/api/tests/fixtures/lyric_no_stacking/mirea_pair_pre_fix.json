@@ -1,0 +1,82 @@
+{
+  "cfg": {
+    "enabled": true,
+    "style": "line"
+  },
+  "lines_in": [
+    {
+      "end_s": 13.0,
+      "start_s": 12.4,
+      "text": "this year we've had to lose"
+    },
+    {
+      "end_s": 14.3,
+      "start_s": 13.1,
+      "text": "our space we've lost"
+    }
+  ],
+  "name": "mirea_pair",
+  "overlays": [
+    {
+      "effect": "lyric-line",
+      "end_s": 1.6,
+      "fade_in_ms": 50,
+      "fade_out_ms": 250,
+      "font_family": "Inter Tight",
+      "font_style": "sans",
+      "lyric_line_id": "line:0:1.000:1.600",
+      "lyric_segment_count": 1,
+      "lyric_segment_index": 0,
+      "original_end_s_song": 13.0,
+      "original_start_s_song": 12.4,
+      "original_text": "this year we've had to lose",
+      "original_words": [
+        {
+          "end_s_song": 13.0,
+          "start_s_song": 12.4,
+          "text": "this year we've had to lose"
+        }
+      ],
+      "position": "bottom",
+      "position_y_frac": 0.8,
+      "role": "lyrics",
+      "start_s": 0.6,
+      "text": "this year we've had to lose",
+      "text_color": "#FFFFFF",
+      "text_size": "medium",
+      "text_size_px": 56
+    },
+    {
+      "effect": "lyric-line",
+      "end_s": 3.9,
+      "fade_in_ms": 50,
+      "fade_out_ms": 250,
+      "font_family": "Inter Tight",
+      "font_style": "sans",
+      "lyric_line_id": "line:1:1.700:2.900",
+      "lyric_segment_count": 1,
+      "lyric_segment_index": 0,
+      "original_end_s_song": 14.3,
+      "original_start_s_song": 13.1,
+      "original_text": "our space we've lost",
+      "original_words": [
+        {
+          "end_s_song": 14.3,
+          "start_s_song": 13.1,
+          "text": "our space we've lost"
+        }
+      ],
+      "position": "bottom",
+      "position_y_frac": 0.8,
+      "role": "lyrics",
+      "start_s": 1.3,
+      "text": "our space we've lost",
+      "text_color": "#FFFFFF",
+      "text_size": "medium",
+      "text_size_px": 56
+    }
+  ],
+  "slot_durations_s": [
+    20.0
+  ]
+}

@@ -185,6 +185,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - OPENAI_API_KEY
 - GEMINI_API_KEY — required for clip analysis (music jobs) and template analysis
 - `ORIENTATION_NORMALIZE_ENABLED` — defaults to `true`. Set to `false` and restart workers to make `normalize_orientation` (the upload-rotation fix in `app/pipeline/orientation.py`) a no-op without redeploying. Safety valve for orientation regressions. Apply with `fly secrets set ORIENTATION_NORMALIZE_ENABLED=false --app nova-video` and then `fly machine restart <id>` on the worker process group.
+- `LYRIC_DYNAMIC_CROSSFADE_ENABLED` — defaults to `true`. Set to `false` and restart workers to fall back to legacy `_inject_line` scheduler behavior byte-identically: pre-fix `dynamic_max_overlap = min(max_overlap_s, fade_in_s + fade_out_s)` additive cap, no per-pair duration matching, no `fade_out_curve="sqrt"` tag. Use to roll back if a music or agentic-lyric render regresses after the dynamic-crossfade change. Apply with `fly secrets set LYRIC_DYNAMIC_CROSSFADE_ENABLED=false --app nova-video` and then `fly machine restart <id>`. The kill-switch byte-identical test (`tests/pipeline/test_lyric_injector_no_stacking.py::test_kill_switch_disabled_reproduces_pre_fix_output`) is the contract this flag must honor.
 
 ## Agent evals
 - Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents. Two layers: deterministic structural assertions + Claude-Sonnet LLM-as-judge.
@@ -223,8 +224,9 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Framework: Next.js (auto-detected)
 - Root directory: `src/apps/web/`
 - Deploy: auto-deploys on push to `main` via GitHub integration. **Do NOT run `vercel --prod` from a feature branch** — it pushes your local working tree to production, including files not yet in `main`, and can ship a frontend route without its backing API endpoint. For an emergency manual deploy: `git checkout main && git pull`, then `cd src/apps/web && vercel --prod`.
-- Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXT_PUBLIC_GOOGLE_CLIENT_ID, NEXT_PUBLIC_GOOGLE_PICKER_API_KEY, NEXTAUTH_SECRET)
-- Deployment Protection: preview-only (production is public)
+- Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXT_PUBLIC_GOOGLE_CLIENT_ID, NEXT_PUBLIC_GOOGLE_PICKER_API_KEY, NEXTAUTH_SECRET, ADMIN_BASIC_AUTH_USER, ADMIN_BASIC_AUTH_PASSWORD)
+- **`ADMIN_BASIC_AUTH_USER` + `ADMIN_BASIC_AUTH_PASSWORD` are MANDATORY.** They gate `/admin/*` and `/api/admin/*` via `src/apps/web/src/middleware.ts`. Without them set on Production AND Preview environments, every admin page returns 503 "Admin auth not configured" — fail-closed by design. Rotate by setting new values + redeploying (Edge runtime reads env at module init, no live refresh). This is a stopgap until proper per-user auth lands.
+- Deployment Protection: preview-only (production is public). The `ADMIN_BASIC_AUTH_*` middleware is the only admin gate on production.
 - Preview deploys: full API access via regex CORS (`allow_origin_regex` in `main.py`)
 
 ### Fly.io — API + Workers (configured by /setup-deploy)

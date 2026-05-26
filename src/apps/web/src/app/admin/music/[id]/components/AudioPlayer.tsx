@@ -3,10 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { adminGetAudioUrl, type SongSection } from "@/lib/music-api";
+import { matchSectionByBounds } from "@/lib/music-section-match";
 
 // Extracted from page.tsx (Next.js rejects non-page named exports from
 // page files). The audio player + waveform interaction is its own unit so
 // it can be tested in isolation — see __tests__/admin/MusicSectionPrecedence.
+//
+// Tolerance for the per-band ✓ + thicker stroke "isSelected" indicator
+// lives in src/lib/music-section-match.ts so the top metadata Row in
+// page.tsx uses the same number — otherwise the two surfaces could
+// disagree on which band is selected.
 
 type SelectionMode = "start" | "end" | null;
 
@@ -60,6 +66,11 @@ export function AudioPlayer({
   const [selectMode, setSelectMode] = useState<SelectionMode>(null);
   const [hoverSection, setHoverSection] = useState<SongSection | null>(null);
   const rafRef = useRef<number>(0);
+  // Track the active end-of-section timeupdate listener so rapid clicks
+  // don't stack listeners that fire on stale `end_s` values and pause the
+  // audio mid-section. Cleared whenever a new section-play starts or the
+  // current one reaches its end.
+  const sectionEndListenerRef = useRef<(() => void) | null>(null);
 
   // Fetch signed audio URL
   useEffect(() => {
@@ -92,6 +103,9 @@ export function AudioPlayer({
   const playSection = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
+    if (sectionEndListenerRef.current) {
+      audio.removeEventListener("timeupdate", sectionEndListenerRef.current);
+    }
     audio.currentTime = start;
     audio.play();
     setPlaying(true);
@@ -100,15 +114,20 @@ export function AudioPlayer({
         audio.pause();
         setPlaying(false);
         audio.removeEventListener("timeupdate", checkEnd);
+        sectionEndListenerRef.current = null;
       }
     };
     audio.addEventListener("timeupdate", checkEnd);
+    sectionEndListenerRef.current = checkEnd;
   }, [start, end]);
 
   // Play one of the agent's ranked sections — the core QA loop.
   const playAgentSection = useCallback((s: SongSection) => {
     const audio = audioRef.current;
     if (!audio) return;
+    if (sectionEndListenerRef.current) {
+      audio.removeEventListener("timeupdate", sectionEndListenerRef.current);
+    }
     audio.currentTime = s.start_s;
     audio.play();
     setPlaying(true);
@@ -117,9 +136,11 @@ export function AudioPlayer({
         audio.pause();
         setPlaying(false);
         audio.removeEventListener("timeupdate", checkEnd);
+        sectionEndListenerRef.current = null;
       }
     };
     audio.addEventListener("timeupdate", checkEnd);
+    sectionEndListenerRef.current = checkEnd;
   }, []);
 
   // SVG geometry. Ruler on top, optional band area in the middle, beat strip
@@ -172,14 +193,20 @@ export function AudioPlayer({
 
   const playheadX = duration > 0 ? (currentTime / duration) * W : 0;
 
-  // When agent sections exist, rank-1 is the canonical "active window" — the
-  // legacy 45s wash band, Set-start/end buttons, and "Best section" header
-  // all hide so only the numbered bands tell the story. Beat-strip
-  // highlighting re-keys off rank-1's bounds so beats inside section #1 stay
-  // bright (the visual cue that "these are the cut points").
+  // `hasSections` is still used to hide the legacy 45s wash band and the
+  // Set-start/end buttons at render time (only meaningful when no agent
+  // sections exist). The beat-strip highlight, however, ALWAYS follows
+  // the form-state window: pre-click-to-select rank-1 was the only
+  // sensible "active window" (no other section was reachable), but with
+  // click-to-select the form IS the active window — beats must agree.
   const hasSections = !!sections && sections.length > 0;
-  const activeStart = hasSections ? sections![0].start_s : start;
-  const activeEnd = hasSections ? sections![0].end_s : end;
+  const activeStart = start;
+  const activeEnd = end;
+  // Single source of truth for "which band is selected" — used by both
+  // the per-band ✓ + thicker stroke below AND the top metadata Row in
+  // page.tsx (via the same helper). Computed once, identity-compared
+  // inside the band loop.
+  const matchedSection = matchSectionByBounds(sections, start, end);
 
   // Time-ruler tick positions
   const tickStep = pickTickInterval(duration);
@@ -241,7 +268,10 @@ export function AudioPlayer({
           );
         })}
 
-        {/* Agent section bands (1-3 ranked, stacked rank-1 on top) */}
+        {/* Agent section bands (1-3 ranked, stacked rank-1 on top).
+            isSelected is identity-compared against the matchedSection
+            computed above, so the ✓ + thicker stroke here ALWAYS agrees
+            with the top metadata Row in page.tsx (same matcher). */}
         {sections?.map((s, i) => {
           const rank = (s.rank in RANK_COLORS ? s.rank : 1) as 1 | 2 | 3;
           const colors = RANK_COLORS[rank];
@@ -252,19 +282,29 @@ export function AudioPlayer({
           const w = Math.max(2, Math.min(W - x, wRaw));
           const y = bandY(rank);
           const showLabel = w > 110;
-          const label = `#${rank} · ${s.label} · ${s.energy}`;
+          const isSelected = matchedSection === s;
+          const label = `${isSelected ? "✓ " : ""}#${rank} · ${s.label} · ${s.energy}`;
           return (
             // Key by array index — JSONB rows can theoretically duplicate ranks
             // (write-time parse() guards but read path trusts the data); using
             // rank as key would collide and break React identity tracking.
             <g
               key={`section-${i}`}
+              // testid keyed by rank for readable test queries — relies on
+              // the write-time parse() uniqueness guard (same one called out
+              // in the React-key comment below) for duplicate-free rendering.
+              data-testid={`section-band-${rank}`}
               onMouseEnter={() => setHoverSection(s)}
               onMouseLeave={() => setHoverSection((prev) => (prev === s ? null : prev))}
               onClick={(e) => {
                 if (selectMode !== null) return; // let waveform handler claim it
                 e.stopPropagation();
                 playAgentSection(s);
+                // Snap form state to this band's bounds; page.tsx wires these
+                // to setBestStart / setBestEnd, so the Timing config inputs
+                // update live and the user just clicks Save.
+                onStartChange(s.start_s);
+                onEndChange(s.end_s);
               }}
               style={{ cursor: selectMode ? "crosshair" : "pointer" }}
             >
@@ -276,7 +316,7 @@ export function AudioPlayer({
                 rx={2}
                 fill={colors.fill}
                 stroke={colors.stroke}
-                strokeWidth={1}
+                strokeWidth={isSelected ? 3 : 1}
               />
               {showLabel ? (
                 <text
@@ -296,7 +336,7 @@ export function AudioPlayer({
                   fill={colors.text}
                   fontFamily="ui-sans-serif, system-ui"
                 >
-                  {`#${rank}`}
+                  {`${isSelected ? "✓" : ""}#${rank}`}
                 </text>
               )}
             </g>
@@ -317,8 +357,9 @@ export function AudioPlayer({
           />
         )}
 
-        {/* Beat markers. `inWindow` is keyed off the ACTIVE window — when
-            sections exist that's rank-1; otherwise the manual config window. */}
+        {/* Beat markers. `inWindow` is keyed off the form-state window
+            (start/end props) regardless of whether agent sections exist —
+            click-to-select means the form IS the active window. */}
         {beats.map((b, i) => {
           const x = (b / duration) * W;
           const inWindow = b >= activeStart && b <= activeEnd;
@@ -397,7 +438,7 @@ export function AudioPlayer({
             </div>
           ) : (
             <div className="text-zinc-500 px-1 py-2">
-              Hover an agent band for its rationale · click to play that section
+              Hover for rationale · click to preview + select as best section
             </div>
           )}
         </div>

@@ -126,6 +126,23 @@ class Settings(BaseSettings):
     # no in-flight job is mid-rendered with a switched-on flag.
     text_renderer_skia_enabled: bool = True
 
+    # Dynamic crossfade scheduling for the line-style lyric overlay path
+    # (`app.pipeline.lyric_injector._inject_line`). When True (default), the
+    # scheduler matches per-pair crossfade durations, anchors actual emitted
+    # overlap to the matched window, and tags the outgoing overlay with
+    # `fade_out_curve="sqrt"` so both renderers use mirror-symmetric fade
+    # curves during inter-line crossfades — α_L_N + α_L_N+1 = 1 at every t,
+    # so no two consecutive lyric overlays render readably simultaneously.
+    # When False, the scheduler reproduces pre-fix behavior byte-identically:
+    # legacy `dynamic_max_overlap = min(max_overlap_s, fade_in_s + fade_out_s)`
+    # cap, no `fade_out_curve` key, no dynamic duration matching. Flip to
+    # False on Fly (`fly secrets set LYRIC_DYNAMIC_CROSSFADE_ENABLED=false
+    # --app nova-video` then restart workers) to roll back music + agentic
+    # lyric scheduling instantly. The kill switch is read inside
+    # `inject_lyric_overlays`, so every job picks up the current value at
+    # scheduling time.
+    lyric_dynamic_crossfade_enabled: bool = True
+
     # Universal text-overlay constraint pass. When True (default), every
     # overlay collected by `_collect_absolute_overlays` (agentic templates +
     # music lyrics + generative edits — NOT classic templates, which never

@@ -643,6 +643,13 @@ def test_tight_lines_keep_their_fades() -> None:
 
 
 def test_default_fades_when_keys_missing_do_not_disable_overlap() -> None:
+    # No user-pinned fades → dynamic crossfade path runs. The overlap budget
+    # is now `max_overlap_s` directly (not the legacy additive
+    # `fade_in_s + fade_out_s` cap) — the §1d post-pass re-anchors
+    # nxt.section_start so the ACTUAL emitted overlap equals the matched
+    # crossfade duration. With pre_roll=0.4 and next.start=2.3, the
+    # geometric overlap available is 0.30 s (next_visual_start..gap_cap);
+    # post-pass matches durations at 300 ms.
     recipe = _make_recipe([10.0])
     cache = _make_lyrics_cache(
         [
@@ -663,18 +670,15 @@ def test_default_fades_when_keys_missing_do_not_disable_overlap() -> None:
             "next_line_gap_s": 0.0,
         },
     )
-    ov0 = out["slots"][0]["text_overlays"][0]
+    ov0, ov1 = out["slots"][0]["text_overlays"]
     next_visual_start = 2.3 - 0.4
-    expected_overlap_s = min(
-        lyric_injector._LINE_MAX_OVERLAP_S,
-        (lyric_injector._LINE_FADE_IN_MS + lyric_injector._LINE_FADE_OUT_MS) / 1000.0,
-    )
-    assert expected_overlap_s == pytest.approx(
-        (lyric_injector._LINE_FADE_IN_MS + lyric_injector._LINE_FADE_OUT_MS) / 1000.0,
-        abs=1e-3,
-    )
+    # ACTUAL emitted overlap equals matched crossfade duration.
+    expected_overlap_s = ov0["fade_out_ms"] / 1000.0
     assert ov0["end_s"] - next_visual_start == pytest.approx(expected_overlap_s, abs=1e-3)
     assert ov0["end_s"] > next_visual_start
+    # Matched durations + sqrt curve confirm the dynamic-crossfade path fired.
+    assert ov0["fade_out_ms"] == ov1["fade_in_ms"]
+    assert ov0["fade_out_curve"] == "sqrt"
 
 
 def test_line_last_line_uses_full_post_dwell() -> None:
@@ -707,6 +711,13 @@ def test_line_reads_tuning_from_config() -> None:
 
 
 def test_line_no_overrides_preserves_default_timing_contract() -> None:
+    # No fade overrides → dynamic crossfade path runs. Section start/end of
+    # both overlays are unchanged from the pre-fix geometry. Fade durations,
+    # however, get MATCHED: ov0.fade_out_ms == ov1.fade_in_ms == the
+    # available overlap window (300 ms with pre_roll=0.4 and 1 s gap), and
+    # ov0 carries fade_out_curve="sqrt". This is the contract:
+    # solo defaults survive ONLY when there's no crossfade successor; for
+    # inter-line transitions the post-pass owns both sides of the pair.
     recipe = _make_recipe([10.0])
     cache = _make_lyrics_cache(
         [
@@ -717,12 +728,21 @@ def test_line_no_overrides_preserves_default_timing_contract() -> None:
     out = inject_lyric_overlays(recipe, cache, 0.0, 10.0, {"enabled": True, "style": "line"})
     ov0, ov1 = out["slots"][0]["text_overlays"]
 
+    # Section geometry — unchanged by the post-pass.
     assert ov0["start_s"] == pytest.approx(0.6, abs=1e-3)
     assert ov0["end_s"] == pytest.approx(2.9, abs=1e-3)
-    assert ov0["fade_in_ms"] == 50
-    assert ov0["fade_out_ms"] == 250
     assert ov1["start_s"] == pytest.approx(2.6, abs=1e-3)
     assert ov1["end_s"] == pytest.approx(5.0, abs=1e-3)
+    # Fade in stays at the solo default (fade-in of first line; no
+    # predecessor to match against).
+    assert ov0["fade_in_ms"] == 50
+    # Matched durations + sqrt curve on the outgoing side prove the
+    # dynamic-crossfade post-pass fired. Last line keeps the solo
+    # lingering fade-out (no successor).
+    assert ov0["fade_out_ms"] == ov1["fade_in_ms"]
+    assert ov0["fade_out_curve"] == "sqrt"
+    assert ov1["fade_out_ms"] == 250
+    assert "fade_out_curve" not in ov1
 
 
 def test_line_post_dwell_can_hold_two_seconds_when_caps_have_slack() -> None:

@@ -475,6 +475,12 @@ def generate_animated_overlay_ass(
                 # back to the function defaults for any other call site.
                 fade_in_ms=_overlay_int(overlay, "fade_in_ms", 150),
                 fade_out_ms=_overlay_int(overlay, "fade_out_ms", 250),
+                # `lyric-line` effect only — optional fade-out curve override.
+                # Set by the dynamic-crossfade scheduler in lyric_injector to
+                # "sqrt" for inter-line crossfades (mirror-symmetric with the
+                # sqrt fade-in → unit-partition crossfade, no readable stacking).
+                # None means default lingering `1−p²`.
+                fade_out_curve=overlay.get("fade_out_curve"),
                 # `lyric-line` effect only — px font-size override that the
                 # wrap+shrink helper uses as its starting base. Without this
                 # the helper starts from the Style's Fontsize=90 and never
@@ -809,8 +815,18 @@ def _emit_lyric_line_alpha_tags(
     section_end_s: float,
     fade_in_ms: int,
     fade_out_ms: int,
+    *,
+    fade_out_curve: str | None = None,
 ) -> str:
-    """Emit clamped eased opacity tags for lyric-line ASS events."""
+    """Emit clamped eased opacity tags for lyric-line ASS events.
+
+    `fade_out_curve="sqrt"` switches the fade-out accel from 2.0 (default
+    lingering `1−p²`) to 0.5 (mirror-symmetric `1−√p`). Set by the dynamic
+    crossfade scheduler in `lyric_injector.py` for inter-line crossfades
+    only; over a matched-duration window paired with the sqrt fade-in on
+    the incoming line, α_outgoing + α_incoming = 1 at every t — no
+    readable stacked text. See plan §2 / Mirea fix.
+    """
     duration_ms = max(0, int(round((section_end_s - section_start_s) * 1000)))
     fade_in = max(0, min(fade_in_ms, duration_ms))
     fade_out = max(0, min(fade_out_ms, max(0, duration_ms - fade_in)))
@@ -824,7 +840,8 @@ def _emit_lyric_line_alpha_tags(
 
     if fade_out > 0:
         fade_out_start = max(fade_in, duration_ms - fade_out)
-        tags.append(rf"\t({fade_out_start},{duration_ms},2.0,\alpha&HFF&)")
+        fade_out_accel = "0.5" if fade_out_curve == "sqrt" else "2.0"
+        tags.append(rf"\t({fade_out_start},{duration_ms},{fade_out_accel},\alpha&HFF&)")
 
     return "{" + "".join(tags) + "}"
 
@@ -858,6 +875,13 @@ def _write_animated_ass(
     # for effect-specific parameters in this function.
     fade_in_ms: int = 150,
     fade_out_ms: int = 250,
+    # Lyric-line only: optional fade-out curve override. When set to "sqrt",
+    # the libass fade-out accel switches from 2.0 (default `1−p²` lingering)
+    # to 0.5 (mirror-symmetric `1−√p`). Set by the dynamic crossfade
+    # scheduler in `lyric_injector.py` for inter-line crossfades only — see
+    # _emit_lyric_line_alpha_tags and plan §2. None for every non-crossfade
+    # case (solo last line, sparse pair, hard-cut, override, kill-switch off).
+    fade_out_curve: str | None = None,
     # Lyric-line only: pixel font size override. When set, the dialogue emits
     # `\fs<px>` to override the LyricLine Style's hardcoded Fontsize=90. The
     # wrap+shrink helper then further reduces this size if even the wrapped
@@ -1030,7 +1054,9 @@ def _write_animated_ass(
         if text_color:
             bgr = _hex_to_ass_bgr(text_color)
             color_tag = f"\\1c&H{bgr}&"
-        alpha_tags = _emit_lyric_line_alpha_tags(start_s, end_s, fade_in_ms, fade_out_ms)
+        alpha_tags = _emit_lyric_line_alpha_tags(
+            start_s, end_s, fade_in_ms, fade_out_ms, fade_out_curve=fade_out_curve
+        )
 
         # Wrap + shrink to keep lyrics inside the 90%-canvas safe width.
         # libass uses \q2 below (explicit \N breaks only), so we MUST insert

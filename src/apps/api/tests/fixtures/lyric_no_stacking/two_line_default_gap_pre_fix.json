@@ -1,0 +1,82 @@
+{
+  "cfg": {
+    "enabled": true,
+    "style": "line"
+  },
+  "lines_in": [
+    {
+      "end_s": 2.0,
+      "start_s": 1.0,
+      "text": "First"
+    },
+    {
+      "end_s": 3.0,
+      "start_s": 2.3,
+      "text": "Second"
+    }
+  ],
+  "name": "two_line_default_gap",
+  "overlays": [
+    {
+      "effect": "lyric-line",
+      "end_s": 2.2,
+      "fade_in_ms": 50,
+      "fade_out_ms": 250,
+      "font_family": "Inter Tight",
+      "font_style": "sans",
+      "lyric_line_id": "line:0:1.000:2.000",
+      "lyric_segment_count": 1,
+      "lyric_segment_index": 0,
+      "original_end_s_song": 2.0,
+      "original_start_s_song": 1.0,
+      "original_text": "First",
+      "original_words": [
+        {
+          "end_s_song": 2.0,
+          "start_s_song": 1.0,
+          "text": "First"
+        }
+      ],
+      "position": "bottom",
+      "position_y_frac": 0.8,
+      "role": "lyrics",
+      "start_s": 0.6,
+      "text": "First",
+      "text_color": "#FFFFFF",
+      "text_size": "medium",
+      "text_size_px": 56
+    },
+    {
+      "effect": "lyric-line",
+      "end_s": 4.0,
+      "fade_in_ms": 50,
+      "fade_out_ms": 250,
+      "font_family": "Inter Tight",
+      "font_style": "sans",
+      "lyric_line_id": "line:1:2.300:3.000",
+      "lyric_segment_count": 1,
+      "lyric_segment_index": 0,
+      "original_end_s_song": 3.0,
+      "original_start_s_song": 2.3,
+      "original_text": "Second",
+      "original_words": [
+        {
+          "end_s_song": 3.0,
+          "start_s_song": 2.3,
+          "text": "Second"
+        }
+      ],
+      "position": "bottom",
+      "position_y_frac": 0.8,
+      "role": "lyrics",
+      "start_s": 1.9,
+      "text": "Second",
+      "text_color": "#FFFFFF",
+      "text_size": "medium",
+      "text_size_px": 56
+    }
+  ],
+  "slot_durations_s": [
+    10.0
+  ]
+}

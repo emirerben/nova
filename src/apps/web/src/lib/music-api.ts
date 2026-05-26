@@ -384,6 +384,359 @@ export async function adminGetAudioUrl(id: string): Promise<string> {
   return data.audio_url;
 }
 
+// ── Browser-side ingest (Chrome extension flow) ────────────────────────────
+//
+// Two-phase upload that bypasses both Vercel's body-size cap and Fly's IP
+// being flagged by YouTube. The browser extension does the actual extraction
+// from googlevideo.com (residential IP + admin's logged-in YT cookies); these
+// helpers are the SPA's side of the contract. See plan:
+// ~/.claude/plans/sen-k-demli-bir-yaz-l-m-rosy-acorn.md
+
+/** Placeholder returned when the extension hasn't injected its ID yet. */
+const EXTENSION_ID_NOT_SET = "nova-extension-id-not-set";
+
+/** Resolve the Nova extension ID at call time.
+ *  The extension's content script (src/apps/extension/src/content.js) sets
+ *  `<html data-nova-extension-id="…">` at document_start, so the attribute
+ *  is normally already on the document by the time SPA code runs. The
+ *  `window.__NOVA_EXTENSION_ID__` fallback is kept for back-compat with any
+ *  external setter that may already wire it that way.
+ *  manifest.key is deferred (Phase 2), so the ID is per-machine random for
+ *  unpacked loads — a hardcoded constant would not work. */
+export function novaExtensionId(): string {
+  if (typeof document !== "undefined" && document.documentElement) {
+    const attr = document.documentElement.getAttribute("data-nova-extension-id");
+    if (attr) return attr;
+  }
+  if (typeof window !== "undefined") {
+    const w = window as unknown as { __NOVA_EXTENSION_ID__?: string };
+    if (w.__NOVA_EXTENSION_ID__) return w.__NOVA_EXTENSION_ID__;
+  }
+  return EXTENSION_ID_NOT_SET;
+}
+
+interface ChromeRuntime {
+  sendMessage(
+    extensionId: string,
+    message: unknown,
+    callback: (response: unknown) => void,
+  ): void;
+  lastError?: { message?: string };
+}
+interface ChromeNS {
+  runtime?: ChromeRuntime;
+}
+
+function chromeRuntime(): ChromeRuntime | null {
+  const c = (globalThis as unknown as { chrome?: ChromeNS }).chrome;
+  return c?.runtime ?? null;
+}
+
+/** Race-tolerantly resolve the extension ID. If content.js has already set
+ *  the DOM attribute we return immediately; otherwise we wait up to
+ *  `timeoutMs` for either the `nova-extension-ready` CustomEvent or the
+ *  attribute to appear (polled at 50ms). Returns the placeholder on timeout
+ *  so callers can short-circuit. */
+async function resolveExtensionId(timeoutMs: number): Promise<string> {
+  const initial = novaExtensionId();
+  if (initial && initial !== EXTENSION_ID_NOT_SET) return initial;
+  if (typeof document === "undefined") return EXTENSION_ID_NOT_SET;
+  return new Promise<string>((resolve) => {
+    let done = false;
+    const finish = (v: string) => {
+      if (done) return;
+      done = true;
+      document.removeEventListener("nova-extension-ready", onReady);
+      clearInterval(poll);
+      clearTimeout(timer);
+      resolve(v);
+    };
+    const onReady = (e: Event) => {
+      const ce = e as CustomEvent<{ extensionId?: string }>;
+      if (ce.detail?.extensionId) finish(ce.detail.extensionId);
+    };
+    document.addEventListener("nova-extension-ready", onReady);
+    const poll = setInterval(() => {
+      const v = novaExtensionId();
+      if (v && v !== EXTENSION_ID_NOT_SET) finish(v);
+    }, 50);
+    const timer = setTimeout(() => finish(novaExtensionId()), timeoutMs);
+  });
+}
+
+/** Returns true iff the Nova extension is installed AND reachable from this page.
+ *  First resolves the extension ID (DOM attribute set by the content script,
+ *  with an event-driven fallback for slow profiles), then sends a one-shot
+ *  `ping` and waits for a `pong`. Resolves false on overall timeout so the UI
+ *  can swap to "Install Nova extension" without hanging. */
+export async function detectExtension(timeoutMs = 1500): Promise<boolean> {
+  const runtime = chromeRuntime();
+  if (!runtime) return false;
+  const startedAt = Date.now();
+  // Reserve a chunk of the budget for the ID handshake; the rest goes to
+  // the ping round-trip.
+  const idBudget = Math.min(timeoutMs - 250, Math.round(timeoutMs * 0.75));
+  const extensionId = await resolveExtensionId(Math.max(idBudget, 100));
+  if (!extensionId || extensionId === EXTENSION_ID_NOT_SET) return false;
+  const remaining = Math.max(timeoutMs - (Date.now() - startedAt), 200);
+  return new Promise<boolean>((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), remaining);
+    try {
+      runtime.sendMessage(
+        extensionId,
+        { target: "nova_extension", type: "ping" },
+        (resp: unknown) => {
+          clearTimeout(timer);
+          if (runtime.lastError) {
+            finish(false);
+            return;
+          }
+          finish(
+            typeof resp === "object" &&
+              resp !== null &&
+              (resp as { ok?: boolean }).ok === true,
+          );
+        },
+      );
+    } catch {
+      clearTimeout(timer);
+      finish(false);
+    }
+  });
+}
+
+export interface BrowserUploadInitResponse {
+  track_id: string;
+  upload_url: string;
+  gcs_path: string;
+  content_type: string;
+  expires_in_s: number;
+}
+
+export interface BrowserUploadConfirmResponse {
+  track_id: string;
+  analysis_status: string;
+  duration_s: number | null;
+}
+
+export interface ExtensionInitArgs {
+  source_url: string;
+  title?: string;
+  artist?: string;
+  ext: string; // ".m4a", ".webm", ...
+  byte_count: number;
+}
+
+export async function extensionUploadInit(
+  args: ExtensionInitArgs,
+): Promise<BrowserUploadInitResponse> {
+  const res = await fetch(`${ADMIN_PROXY}/music-tracks/upload-init`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    // 409 dedup carries a structured detail object with existing_track_id —
+    // bubble it up untransformed so the caller can offer "View existing track".
+    if (res.status === 409 && typeof detail.detail === "object") {
+      throw new ExtensionDedupError(detail.detail);
+    }
+    throw new Error(
+      typeof detail.detail === "string"
+        ? detail.detail
+        : `upload-init failed (${res.status})`,
+    );
+  }
+  return res.json();
+}
+
+export async function extensionUploadConfirm(
+  trackId: string,
+): Promise<BrowserUploadConfirmResponse> {
+  const res = await fetch(
+    `${ADMIN_PROXY}/music-tracks/${trackId}/upload-confirm`,
+    { method: "POST", headers: JSON_HEADERS },
+  );
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? `upload-confirm failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export class ExtensionDedupError extends Error {
+  existing_track_id: string;
+  existing_status: string;
+  constructor(detail: { existing_track_id: string; existing_status: string }) {
+    super(
+      `Track already exists (status: ${detail.existing_status}). Use existing ID.`,
+    );
+    this.name = "ExtensionDedupError";
+    this.existing_track_id = detail.existing_track_id;
+    this.existing_status = detail.existing_status;
+  }
+}
+
+/** UX-facing stage indicator for the 3-stage progress UI. Single spinner is
+ *  forbidden — the admin needs to know whether we're (a) pulling from YouTube
+ *  via their browser, (b) uploading bytes to our GCS, or (c) waiting on Celery
+ *  beat-detect. Conflating these into "Processing..." causes tab-close panic. */
+export type IngestStage =
+  | "extension_check"
+  | "extracting"
+  | "uploading"
+  | "confirming"
+  | "analyzing"
+  | "ready"
+  | "failed";
+
+export interface IngestProgress {
+  stage: IngestStage;
+  /** 0..1 within the current stage when reportable, else null. */
+  percent?: number | null;
+  /** Free-form status detail, e.g. "5.2 MB / 12 MB" or error message. */
+  detail?: string;
+  /** Once init has run, the track id we're ingesting against. */
+  track_id?: string;
+}
+
+/** Drive the full ingest end-to-end via the extension.
+ *
+ *  Lifecycle:
+ *    extension_check → extracting (extension fetches from googlevideo)
+ *    → uploading (extension PUTs blob to GCS via signed URL we mint)
+ *    → confirming (we tell server "blob landed, please verify + dispatch")
+ *    → analyzing (Celery runs beat detect; SPA can poll separately)
+ *
+ *  The extension does all the heavy work; this function is the message-passing
+ *  glue. Errors at any stage produce `IngestProgress { stage: "failed", detail }`
+ *  and reject the returned promise.
+ */
+export async function extensionIngest(
+  args: { url: string; title?: string; artist?: string },
+  onProgress: (p: IngestProgress) => void,
+): Promise<{ track_id: string }> {
+  const runtime = chromeRuntime();
+  if (!runtime) {
+    onProgress({ stage: "failed", detail: "Nova extension not installed" });
+    throw new Error("Nova extension not installed");
+  }
+  onProgress({ stage: "extension_check" });
+  const ok = await detectExtension();
+  if (!ok) {
+    onProgress({ stage: "failed", detail: "Nova extension not reachable" });
+    throw new Error("Nova extension not reachable");
+  }
+  // detectExtension() resolved the ID via the DOM-attribute bridge and
+  // confirmed it's reachable; reuse the same accessor here. Stable for the
+  // duration of this ingest because content.js writes the attribute once
+  // at document_start and doesn't mutate it.
+  const extensionId = novaExtensionId();
+
+  // Per-ingest jobId so the listener can filter out events from concurrent
+  // ingests in other tabs / a previous abandoned ingest in this tab.
+  // Without this, two overlapping calls would both react to the same
+  // `ready`/`failed` event and resolve with the wrong track_id.
+  const jobId = `j_${Date.now().toString(36)}_${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+
+  // Absolute origin (not relative). Otherwise the extension's offscreen doc
+  // — which has no notion of "the SPA's current origin" — defaults to its
+  // hardcoded prod fallback and a preview-deploy admin would silently pollute
+  // PROD's MusicTrack table from a non-prod SPA.
+  const proxyBase =
+    typeof window !== "undefined" && window.location?.origin
+      ? `${window.location.origin}${ADMIN_PROXY}`
+      : ADMIN_PROXY;
+
+  // Delegate to the extension. The extension calls upload-init/confirm on its
+  // own (via fetch to the Nova proxy, which injects the admin token); we just
+  // kick it off and tail the progress events it broadcasts back.
+  return new Promise((resolve, reject) => {
+    const listener = (msg: unknown) => {
+      if (typeof msg !== "object" || msg === null) return;
+      const m = msg as {
+        type?: string;
+        stage?: IngestStage;
+        jobId?: string;
+        payload?: IngestProgress & { jobId?: string };
+      };
+      if (m.type !== "nova_ingest_event" || !m.stage) return;
+      // Filter: event must carry our jobId, either at message top-level or
+      // inside payload. Reject events from other ingests (older tab, peer tab).
+      const eventJobId = m.jobId ?? m.payload?.jobId;
+      if (eventJobId && eventJobId !== jobId) return;
+      const event = (m.payload ?? { stage: m.stage }) as IngestProgress;
+      onProgress(event);
+      if (event.stage === "failed") {
+        cleanup();
+        reject(new Error(event.detail ?? "Extension ingest failed"));
+        return;
+      }
+      if (event.stage === "ready" && event.track_id) {
+        cleanup();
+        resolve({ track_id: event.track_id });
+      }
+    };
+    const win = globalThis as unknown as {
+      addEventListener: (type: string, fn: (e: MessageEvent) => void) => void;
+      removeEventListener: (type: string, fn: (e: MessageEvent) => void) => void;
+    };
+    const messageHandler = (e: MessageEvent) => listener(e.data);
+    win.addEventListener("message", messageHandler);
+    const cleanup = () => win.removeEventListener("message", messageHandler);
+
+    try {
+      runtime.sendMessage(
+        extensionId,
+        {
+          target: "nova_extension",
+          type: "ingest",
+          jobId,
+          payload: {
+            url: args.url,
+            title: args.title,
+            artist: args.artist,
+            proxy_base: proxyBase,
+            jobId,
+          },
+        },
+        (resp: unknown) => {
+          if (runtime.lastError) {
+            cleanup();
+            const err = runtime.lastError.message ?? "Extension call failed";
+            onProgress({ stage: "failed", detail: err });
+            reject(new Error(err));
+            return;
+          }
+          const r = resp as { ok?: boolean; error?: string };
+          if (!r?.ok) {
+            cleanup();
+            const err = r?.error ?? "Extension rejected the ingest call";
+            onProgress({ stage: "failed", detail: err });
+            reject(new Error(err));
+          }
+          // Success ack just means the extension picked up the work. The real
+          // resolution comes from the `ready` event the listener handles.
+        },
+      );
+    } catch (e: unknown) {
+      cleanup();
+      const err = e instanceof Error ? e.message : String(e);
+      onProgress({ stage: "failed", detail: err });
+      reject(new Error(err));
+    }
+  });
+}
+
 export async function adminArchiveMusicTrack(id: string): Promise<void> {
   const res = await fetch(`${ADMIN_PROXY}/music-tracks/${id}`, {
     method: "DELETE",
