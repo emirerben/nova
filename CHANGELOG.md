@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.47.2] - 2026-05-26
+
+### Changed
+- **Generative-edit intro hooks now write in a real creator voice instead of generic clickbait.** `nova.compose.intro_writer` is the only agent that *generates* on-screen text (templated videos reproduce their template author's text verbatim via the `template_text` OCR extractor — not generatable). It was steered by a few-shot library (`prompts/overlay_examples.json`) of flat lines like "watch how this turned out" / "this is dangerously good", and its prompt had no explicit voice guidance. Retuned against three reference TikToks Emir flagged — `@smeggs_` "POV: you found people who say yes", `@shootyourtrip` "imagine traveling solo in berlin and ending up here", `@vvvayda` "this and no job":
+  - **Recurated the exemplar library** (8 → 11 examples, replaced the two weakest, added `pov-social` and `lifestyle-freedom` profiles in the target voice). Since `overlay_format_matcher` selects the exemplars `intro_writer` sees, this steers both selection and style. `prompt_version` bumped on **both** agents (the library is part of both prompts).
+  - **Added a `## Voice` block** to `write_intro_text.txt`: lowercase-by-default, second-person / in-the-moment ("you", "imagine …", "POV: …", "this and …"), concrete + aspirational, plus an explicit DON'T list (clickbait clichés, Title Case, ALL-CAPS) and an anti-parrot rule (never reuse an example's words — write a new line for THIS clip).
+
+### Testing
+- **`intro_writer` eval gained a `voice_match` dimension** (`tests/evals/rubrics/intro_writer.md`) anchored on the three reference hooks as the calibration "5", and `hook_strength` now explicitly downranks clickbait clichés. The references are used two ways — as **few-shot exemplars** (steer the output) and as **judge voice-anchors** (measure it) — never as expected-output ground truth (that would overfit a hook to a clip).
+- Three new golden fixtures for the reference content types (solo-travel scenic, lifestyle/no-job, social POV), each an original line grounded in its clip rather than a copy of the exemplar. Replay-with-judge passes 5/5 deterministically; live-mode generation lands the voice (high `voice_match` across the board) with borderline cases flipping around the 3.5 line as expected for a generative copy agent. No cache bump needed — `intro_writer` isn't in the `text_overlay_v2` path.
+
 ## [0.4.47.1] - 2026-05-25
 
 ### Fixed

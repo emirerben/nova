@@ -1,0 +1,41 @@
+{
+  "agent": "nova.compose.intro_writer",
+  "prompt_version": "2026-05-26",
+  "input": {
+    "hero_clip": {
+      "clip_id": "clip_001",
+      "media_type": "video",
+      "duration_s": 4.5,
+      "subject": "a laptop and coffee on a table overlooking an empty beach midday",
+      "hook_text": "",
+      "hook_score": 7.0,
+      "energy": 3.5,
+      "description": "static wide shot, turquoise water, no crowds, quiet slow-living freedom vibe"
+    },
+    "hero_transcript": "this is just a regular tuesday for me now",
+    "tone": "calm",
+    "form": {"effect": "static", "size_class": "xlarge", "position": "center"},
+    "exemplars": [
+      {
+        "id": "lifestyle-freedom-static-01",
+        "content_profile": "slow-living, freedom, working-from-anywhere, beach or remote scenery, quietly aspirational",
+        "effect": "static",
+        "text": "this and no job",
+        "highlight_word": "no",
+        "position": "center",
+        "size_class": "xlarge",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A"
+      }
+    ]
+  },
+  "raw_text": "{\"text\": \"this is what my tuesdays look like now\", \"highlight_word\": \"tuesdays\"}",
+  "output": {
+    "text": "this is what my tuesdays look like now",
+    "highlight_word": "tuesdays"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "freedom/slow-living footage → original minimalist juxtaposition hook grounded in THIS clip (the 'regular tuesday' beach-office), in the reference voice (cf. @vvvayda 'this and no job'); NOT a copy of the exemplar"
+  }
+}

@@ -1,6 +1,6 @@
 {
   "agent": "nova.compose.intro_writer",
-  "prompt_version": "2026-05-24",
+  "prompt_version": "2026-05-26",
   "input": {
     "hero_clip": {
       "clip_id": "clip_001",
@@ -26,16 +26,27 @@
         "size_class": "jumbo",
         "text_color": "#FFFFFF",
         "highlight_color": "#FFD24A"
+      },
+      {
+        "id": "transformation-before-after-karaoke-01",
+        "content_profile": "before/after or transformation montage, process to payoff, satisfying result",
+        "effect": "karaoke-line",
+        "text": "this is what changed everything",
+        "highlight_word": "everything",
+        "position": "center",
+        "size_class": "jumbo",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A"
       }
     ]
   },
-  "raw_text": "{\"text\": \"i did not expect this\", \"highlight_word\": \"not\"}",
+  "raw_text": "{\"text\": \"i swear i did not order this\", \"highlight_word\": \"not\"}",
   "output": {
-    "text": "i did not expect this",
+    "text": "i swear i did not order this",
     "highlight_word": "not"
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "surprise reveal → short punchy hook grounded in the clip, highlight_word is a real token"
+    "case": "surprise reveal → original hook grounded in THIS clip (a mailed package), not a copy of the exemplar; lowercase in-voice, highlight_word is a real token"
   }
 }
