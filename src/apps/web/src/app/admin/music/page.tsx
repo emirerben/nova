@@ -206,6 +206,24 @@ export default function AdminMusicPage() {
                 {t.archived_at && (
                   <span className="text-xs text-zinc-500">archived</span>
                 )}
+                <span
+                  className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    t.generative_matchable
+                      ? "bg-emerald-500/15 text-emerald-400"
+                      : "bg-zinc-800 text-zinc-500"
+                  }`}
+                  title={
+                    t.generative_matchable
+                      ? "Eligible for generative auto-match"
+                      : "Not matchable — missing/stale AI labels or sections"
+                  }
+                >
+                  {t.generative_matchable ? "matchable" : "not matchable"}
+                </span>
+                <span className="text-[10px] text-zinc-500">
+                  labels: {t.has_ai_labels ? (t.label_version ?? "?") : "none"} ·
+                  sections: {t.section_version ?? "none"}
+                </span>
               </div>
             </Link>
           ))}
