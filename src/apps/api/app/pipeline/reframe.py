@@ -65,6 +65,7 @@ def _encoding_args(
     output_path: str,
     preset: str = "fast",
     crf: str = "18",
+    include_audio: bool = True,
 ) -> list[str]:
     """Shared FFmpeg output encoding arguments (DRY).
 
@@ -179,10 +180,15 @@ def _encoding_args(
         "-maxrate", settings.output_video_bitrate,
         "-bufsize", _double_rate(settings.output_video_bitrate),
         "-r", str(settings.output_fps),
+    ]
+    if include_audio:
         # Force identical body-slot audio layout (44.1kHz stereo AAC 192k) so
         # the downstream concat can stream-copy. See app/pipeline/audio_layout.py
         # for the contract — drift here re-introduces the silent-truncation bug.
-        *BODY_SLOT_AUDIO_OUT_ARGS,
+        # Video-only encodes (e.g. join_with_transitions, which mixes template
+        # audio separately and passes -an) set include_audio=False to skip these.
+        args += [*BODY_SLOT_AUDIO_OUT_ARGS]
+    args += [
         "-s", f"{settings.output_width}x{settings.output_height}",
         "-movflags", "+faststart",
         "-y",

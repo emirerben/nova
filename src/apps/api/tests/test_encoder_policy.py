@@ -76,6 +76,12 @@ FINAL_OUTPUT_REQUIRED: set[tuple[str, str]] = {
     # ultrafast/CRF 28 before 2026-05-25 — flipped to fast/CRF 20 when the
     # dashboard surfaced.
     ("app/pipeline/lyrics_preview.py", "_build_preview_ffmpeg_cmd"),
+    # xfade transition join. Re-encoded downstream by the overlay burn, but the
+    # blend itself is gradient-sensitive, so it uses fast (not ultrafast). Was
+    # hardcoded with no maxrate ceiling + no color tags until 2026-05-26 —
+    # routed through _encoding_args (include_audio=False) so it picks up the 16M
+    # capped-CRF ceiling and bt709 tagging like every other final-class encode.
+    ("app/pipeline/transitions.py", "join_with_transitions"),
 }
 
 # libx264 presets ordered from fastest to slowest. Anything at or stricter
@@ -99,6 +105,7 @@ FILES_TO_AUDIT: list[str] = [
     "app/pipeline/single_pass.py",
     "app/pipeline/text_overlay_skia.py",
     "app/pipeline/lyrics_preview.py",
+    "app/pipeline/transitions.py",
 ]
 
 
