@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.47.2] - 2026-05-26
+## [0.4.47.3] - 2026-05-26
 
 ### Changed
 - **Generative-edit intro hooks now write in a real creator voice instead of generic clickbait.** `nova.compose.intro_writer` is the only agent that *generates* on-screen text (templated videos reproduce their template author's text verbatim via the `template_text` OCR extractor — not generatable). It was steered by a few-shot library (`prompts/overlay_examples.json`) of flat lines like "watch how this turned out" / "this is dangerously good", and its prompt had no explicit voice guidance. Retuned against three reference TikToks Emir flagged — `@smeggs_` "POV: you found people who say yes", `@shootyourtrip` "imagine traveling solo in berlin and ending up here", `@vvvayda` "this and no job":
@@ -12,6 +12,17 @@ All notable changes to this project will be documented in this file.
 ### Testing
 - **`intro_writer` eval gained a `voice_match` dimension** (`tests/evals/rubrics/intro_writer.md`) anchored on the three reference hooks as the calibration "5", and `hook_strength` now explicitly downranks clickbait clichés. The references are used two ways — as **few-shot exemplars** (steer the output) and as **judge voice-anchors** (measure it) — never as expected-output ground truth (that would overfit a hook to a clip).
 - Three new golden fixtures for the reference content types (solo-travel scenic, lifestyle/no-job, social POV), each an original line grounded in its clip rather than a copy of the exemplar. Replay-with-judge passes 5/5 deterministically; live-mode generation lands the voice (high `voice_match` across the board) with borderline cases flipping around the 3.5 line as expected for a generative copy agent. No cache bump needed — `intro_writer` isn't in the `text_overlay_v2` path.
+
+## [0.4.47.2] - 2026-05-26
+
+### Fixed
+- **Generative-edit text-style picker no longer silently disappears when the API hiccups.** The public generative page loaded its curated text styles with a `.catch(() => setStyleSets([]))`, and the change-style control is gated on `styleSets.length > 0`. So any transient API failure (e.g. the app-wide 503 when the single API machine's event loop wedged) left the picker invisible — indistinguishable from "the feature was never shipped." The page now tracks the failure and shows a "Couldn't load text styles" notice with a Retry button above the variants grid, so a backend blip reads as a recoverable error instead of a missing feature. Happy path unchanged.
+
+### Tests
+- **Synced two stale admin test suites that were red on `main`.** `overlay-editor` asserted pre-drift overlay constants (`FONT_SIZE_MAP.small` 48, `POSITION_Y_MAP.center` 0.50) and a 3-zone snap model; `font-library` expected a `clean_captions` vibe count of 3. All were verified against the current source of truth (`app/pipeline/text_overlay.py` for the maps, `fontsByVibe()` for counts) and updated to match — the frontend and backend constants are in parity; the tests had simply not been updated when the registry and zone model grew.
+
+### CI
+- **Added a `test-web` CI job that runs the frontend Jest suite on every PR.** CI previously ran ESLint + `pytest` but never `pnpm test`, so frontend tests that encode values (overlay constants, font-vibe counts) silently rotted the moment those values changed — that's exactly how the two suites above stayed red on `main` across multiple releases without anyone noticing. The new job would have failed the PR that drifted the constants and forced the test update at the source.
 
 ## [0.4.47.1] - 2026-05-25
 

@@ -26,20 +26,36 @@ export default function GenerativePage() {
   const [error, setError] = useState<string | null>(null);
   const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
   const [styleSets, setStyleSets] = useState<GenerativeStyleSet[]>([]);
+  // True when the style-sets fetch failed. Without this, a transient API blip
+  // leaves styleSets=[] and the change-style picker (gated on length>0 in
+  // VariantCard) silently disappears — indistinguishable from "feature missing".
+  const [styleSetsError, setStyleSetsError] = useState(false);
   // Bumped after every poll (success OR failure) so the polling effect always
   // re-arms — a transient fetch error must not silently kill polling.
   const [tick, setTick] = useState(0);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Style sets for the style picker — retryable so a blip doesn't permanently
+  // hide the control.
+  const loadStyleSets = useCallback(() => {
+    getGenerativeStyleSets()
+      .then((s) => {
+        setStyleSets(s);
+        setStyleSetsError(false);
+      })
+      .catch(() => {
+        setStyleSets([]);
+        setStyleSetsError(true);
+      });
+  }, []);
 
   // Song library for the swap picker + style sets for the style picker.
   useEffect(() => {
     getMusicTracks()
       .then((r) => setTracks(r.tracks))
       .catch(() => setTracks([]));
-    getGenerativeStyleSets()
-      .then(setStyleSets)
-      .catch(() => setStyleSets([]));
-  }, []);
+    loadStyleSets();
+  }, [loadStyleSets]);
 
   const isTerminal = status != null && GENERATIVE_TERMINAL_STATUSES.includes(status.status);
 
@@ -189,6 +205,17 @@ export default function GenerativePage() {
               >
                 Start over
               </button>
+            )}
+            {styleSetsError && styleSets.length === 0 && (
+              <div className="mt-4 flex items-center gap-3 rounded border border-amber-700/60 bg-amber-950/40 px-4 py-2 text-sm text-amber-200">
+                <span>Couldn&apos;t load text styles — the style picker is hidden.</span>
+                <button
+                  onClick={loadStyleSets}
+                  className="rounded border border-amber-600 px-2 py-0.5 text-xs text-amber-100 hover:bg-amber-900/50"
+                >
+                  Retry
+                </button>
+              </div>
             )}
             <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
               {(status?.variants ?? []).map((v) => (
