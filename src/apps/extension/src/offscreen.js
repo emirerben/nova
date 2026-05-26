@@ -36,6 +36,13 @@ async function loadAdminBasicAuthHeader() {
   const stored = await chrome.storage.local.get([ADMIN_USER_KEY, ADMIN_PASS_KEY]);
   const user = stored[ADMIN_USER_KEY];
   const pass = stored[ADMIN_PASS_KEY];
+  console.log("[nova-debug] storage-read", {
+    userType: typeof user,
+    userLen: typeof user === "string" ? user.length : null,
+    passType: typeof pass,
+    passLen: typeof pass === "string" ? pass.length : null,
+    allKeysInResult: Object.keys(stored),
+  });
   if (typeof user !== "string" || typeof pass !== "string") return null;
   if (!user || !pass) return null;
   return encodeBasicAuthHeader(user, pass);
@@ -164,16 +171,31 @@ async function fetchJson(proxyBase, path, body) {
   try {
     const parsed = new URL(url);
     const reqOrigin = `${parsed.protocol}//${parsed.host}`;
-    if (
-      isAllowedNovaApiOrigin(reqOrigin) &&
-      parsed.pathname.startsWith("/api/admin/")
-    ) {
+    const originOk = isAllowedNovaApiOrigin(reqOrigin);
+    const pathOk = parsed.pathname.startsWith("/api/admin/");
+    console.log("[nova-debug] fetchJson-entry", {
+      url,
+      pathname: parsed.pathname,
+      reqOrigin,
+      originOk,
+      pathOk,
+    });
+    if (originOk && pathOk) {
       const auth = await loadAdminBasicAuthHeader();
+      console.log("[nova-debug] auth-attach", {
+        authNullish: auth == null,
+        authLen: auth ? auth.length : null,
+        authPrefix: auth ? auth.slice(0, 6) : null,
+      });
       if (auth) headers["Authorization"] = auth;
+    } else {
+      console.log("[nova-debug] auth-skipped (condition false)");
     }
-  } catch {
+  } catch (e) {
     // Malformed URL — let fetch throw the canonical error below.
+    console.log("[nova-debug] try-block threw", String(e?.message || e));
   }
+  console.log("[nova-debug] final-headers-keys", Object.keys(headers));
 
   const init = {
     method: "POST",
