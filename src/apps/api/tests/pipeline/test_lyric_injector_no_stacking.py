@@ -240,24 +240,66 @@ def test_crossfade_alpha_sum_is_unit_partition_pure_pairs_only() -> None:
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def test_dynamic_post_pass_fires_regardless_of_explicit_fade_cfg() -> None:
+@pytest.mark.parametrize(
+    "cfg_extra, name",
+    [
+        ({"fade_in_ms": 175, "fade_out_ms": 175}, "both_ms"),
+        ({"fade_in_ms": 175}, "only_in_ms"),
+        ({"fade_out_ms": 175}, "only_out_ms"),
+        # _s aliases — the legacy form of the same fields, accepted by
+        # `_resolve_fade_ms`. Must also be overridden by the post-pass.
+        ({"fade_in_s": 0.175, "fade_out_s": 0.175}, "both_s"),
+        ({"fade_in_s": 0.175}, "only_in_s"),
+        # The 0 case — pre-fix kill-switch idiom. Under §F the post-pass
+        # still fires (the kill switch is the proper rollback path), so
+        # caller's 0 is overridden.
+        ({"fade_in_ms": 0, "fade_out_ms": 0}, "both_zero_ms"),
+        ({"fade_in_s": 0.0}, "fade_in_s_zero"),
+        # Mixed _ms + _s — _s wins in _resolve_fade_ms, both should still
+        # be overridden by the post-pass.
+        ({"fade_in_s": 0.2, "fade_out_ms": 100}, "mixed_s_and_ms"),
+    ],
+)
+def test_dynamic_post_pass_fires_regardless_of_explicit_fade_cfg(
+    cfg_extra: dict, name: str
+) -> None:
     """Caller-set fade values in cfg do NOT disable the dynamic post-pass.
-    The matched-window math always wins while the kill switch is on. To
-    restore legacy behavior, flip settings.lyric_dynamic_crossfade_enabled
-    to False (whole-system rollback, byte-identical to pre-fix). See §F."""
+    The matched-window math always wins while the kill switch is on,
+    regardless of which fade-cfg permutation the caller submits:
+      - fade_in_ms only / fade_out_ms only / both
+      - fade_in_s / fade_out_s (legacy aliases)
+      - fade_in_ms=0 / fade_out_ms=0 (legacy "kill via cfg" idiom)
+      - mixed _ms + _s
+
+    The override gate was the PR #343 regression. There is exactly one
+    rollback path: settings.lyric_dynamic_crossfade_enabled = False
+    (whole-system, byte-identical to pre-fix). See plan §F."""
     overlays = _inject(
         [
             ("this year we've had to lose", 12.4, 13.0),
             ("our space we've lost", 13.1, 14.3),
         ],
-        cfg_extra={"fade_in_ms": 175, "fade_out_ms": 175},
+        cfg_extra=cfg_extra,
     )
-    assert overlays[0].get("fade_out_curve") == "sqrt"
-    assert overlays[0]["fade_out_ms"] == overlays[1]["fade_in_ms"]
-    # The matched value comes from the crossfade math, not the 175 the
-    # caller passed. The caller's value is NOT honored when the post-pass
-    # fires — that's the new contract.
-    assert overlays[0]["fade_out_ms"] != 175
+    got_curve = overlays[0].get("fade_out_curve")
+    assert got_curve == "sqrt", (
+        f"{name}: post-pass should fire regardless of cfg, got curve={got_curve!r}"
+    )
+    assert overlays[0]["fade_out_ms"] == overlays[1]["fade_in_ms"], (
+        f"{name}: matched-window math must produce equal fade durations"
+    )
+    # The caller's value is NOT honored when the post-pass fires — that's
+    # the new contract. Verify none of the caller's specified values leaked
+    # through verbatim. (175 → matched-window value ≠ 175.)
+    for key, val in cfg_extra.items():
+        if key == "fade_in_ms":
+            assert overlays[1]["fade_in_ms"] != val or val == 0, (
+                f"{name}: caller's {key}={val} was honored verbatim"
+            )
+        if key == "fade_out_ms":
+            assert overlays[0]["fade_out_ms"] != val or val == 0, (
+                f"{name}: caller's {key}={val} was honored verbatim"
+            )
 
 
 def test_post_pass_fires_for_admin_preview_effective_cfg() -> None:

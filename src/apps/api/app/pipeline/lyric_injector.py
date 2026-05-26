@@ -802,6 +802,20 @@ def _inject_line(
             # legacy formula is implicitly robust via gap_cap; the dynamic
             # post-pass needs explicit protection.
             if nxt.line_start_s <= cur.line_start_s:
+                # Trace the skip so non-monotonic input from a future caller
+                # surfaces in the admin job-debug view instead of vanishing
+                # silently into a "post-pass didn't run, why is it stacking?"
+                # mystery. Cheap, zero-cost when never hit.
+                record_pipeline_event(
+                    "overlay",
+                    "lyric_crossfade_skipped",
+                    {
+                        "line_idx": i,
+                        "reason": "non_monotonic_line_start_s",
+                        "cur_line_start_s": cur.line_start_s,
+                        "nxt_line_start_s": nxt.line_start_s,
+                    },
+                )
                 continue
 
             natural_overlap_s = max(0.0, cur.section_end_s - nxt.section_start_s)
