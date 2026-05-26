@@ -38,21 +38,24 @@ function makeOverlay(overrides: Partial<RecipeTextOverlay> = {}): RecipeTextOver
 
 describe("overlay-constants", () => {
   describe("SCALE and font sizes", () => {
-    test("SCALE produces readable preview sizes (≥10px for all text sizes)", () => {
+    test("SCALE produces readable preview sizes (≥9px for all text sizes)", () => {
+      // smallest size is small=36 → 36 * 0.259 ≈ 9.33px in preview
       for (const [size, px] of Object.entries(FONT_SIZE_MAP)) {
         const scaled = px * SCALE;
-        expect(scaled).toBeGreaterThanOrEqual(10);
+        expect(scaled).toBeGreaterThanOrEqual(9);
       }
     });
 
     test("POSITION_Y_MAP matches backend values", () => {
+      // mirrors _POSITION_Y in app/pipeline/text_overlay.py
       expect(POSITION_Y_MAP.top).toBe(0.15);
-      expect(POSITION_Y_MAP.center).toBe(0.50);
+      expect(POSITION_Y_MAP.center).toBe(0.45);
       expect(POSITION_Y_MAP.bottom).toBe(0.85);
     });
 
     test("FONT_SIZE_MAP matches backend values", () => {
-      expect(FONT_SIZE_MAP.small).toBe(48);
+      // mirrors _FONT_SIZE_MAP in app/pipeline/text_overlay.py
+      expect(FONT_SIZE_MAP.small).toBe(36);
       expect(FONT_SIZE_MAP.medium).toBe(72);
       expect(FONT_SIZE_MAP.large).toBe(120);
       expect(FONT_SIZE_MAP.xlarge).toBe(150);
@@ -139,10 +142,13 @@ describe("overlay-constants", () => {
       expect(snapToNearestZone(0.2)).toBe("top");
     });
 
-    test("snaps to center when near center", () => {
-      expect(snapToNearestZone(0.4)).toBe("center");
-      expect(snapToNearestZone(0.5)).toBe("center");
-      expect(snapToNearestZone(0.6)).toBe("center");
+    test("snaps to the right zone across the dense center band", () => {
+      // Center band has four zones: center-above (0.42), center (0.45),
+      // center-label (0.472), center-below (0.55). Exact hits snap to themselves.
+      expect(snapToNearestZone(0.42)).toBe("center-above");
+      expect(snapToNearestZone(0.45)).toBe("center");
+      expect(snapToNearestZone(0.472)).toBe("center-label");
+      expect(snapToNearestZone(0.55)).toBe("center-below");
     });
 
     test("snaps to bottom when near bottom", () => {
@@ -152,9 +158,9 @@ describe("overlay-constants", () => {
     });
 
     test("snaps to nearest at boundary between zones", () => {
-      // Midpoint between top (0.15) and center (0.50) = 0.325
-      expect(snapToNearestZone(0.32)).toBe("top");
-      expect(snapToNearestZone(0.33)).toBe("center");
+      // Midpoint between top (0.15) and center-above (0.42) = 0.285
+      expect(snapToNearestZone(0.28)).toBe("top");
+      expect(snapToNearestZone(0.29)).toBe("center-above");
     });
 
     test("handles extreme values", () => {
