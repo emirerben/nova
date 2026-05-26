@@ -79,6 +79,13 @@
 **What:** The `/music` frontend route is deleted but the backend (`routes/music.py`, `music_jobs.py`, beat-sync orchestrate) is preserved. Revisit when product direction on multi-mode (templates vs music sync) is settled.
 **Priority:** P3
 
+### Keyboard accessibility for admin music section bands
+**What:** Ranked section bands in `AudioPlayer.tsx` (`/admin/music/[id]`) are SVG `<g>` elements with `onClick` but no `tabIndex` or `onKeyDown` — keyboard-only users can't trigger the new click-to-select feature (or the pre-existing click-to-preview). Add `tabIndex={0}` + Enter/Space handler that runs the same path as `onClick`.
+**Why:** Admin users today are mouse-driven, so this isn't a current blocker. But the click-to-select feature shipped in feat/music-section-click-select-2026-05-26 is fundamentally a "skip the typing" affordance — a keyboard user needs it more than a mouse user does. Worth fixing the next time the file is opened, not a separate PR alone.
+**How:** Add `tabIndex={0}` and `onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); /* same body as onClick */ } }}` to the section band `<g>` in `AudioPlayer.tsx:260`. Extract the shared body into a local function to avoid duplication. Add one test asserting Enter on a focused band fires onStartChange/onEndChange.
+**Effort:** XS (human: ~30 min / CC: ~5 min)
+**Priority:** P3
+
 ## Visual Overlay Editor (shipped v0.2.0.0, 2026-04-11)
 
 ### Overlay Editor Component Tests (Tier 2)
