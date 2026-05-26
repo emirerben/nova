@@ -567,3 +567,26 @@ def test_upsert_does_not_change_job_status(monkeypatch):
         {"variant_id": "song_text", "ok": True, "output_url": "u"},
     )
     assert job.status == "rendering"
+
+
+def test_match_best_track_ignores_publish_gate(monkeypatch):
+    """Generative auto-match draws from the WHOLE analyzed library, so it must
+    call the shared candidate loader with require_published=False — otherwise
+    only the handful of publicly-published tracks would ever be picked."""
+    import app.tasks.auto_music_orchestrate as amo
+
+    captured = {}
+
+    def fake_load(n_clips, **kwargs):
+        captured["n_clips"] = n_clips
+        captured["kwargs"] = kwargs
+        return [_track("t1")]
+
+    monkeypatch.setattr(amo, "_load_matcher_candidates", fake_load)
+    monkeypatch.setattr(amo, "_run_music_matcher", lambda **kw: [{"track_id": "t1"}])
+
+    out = gb._match_best_track([_Meta("c1", 5.0), _Meta("c2", 5.0)], job_id="j1")
+
+    assert out is not None and out.id == "t1"
+    assert captured["n_clips"] == 2
+    assert captured["kwargs"].get("require_published") is False

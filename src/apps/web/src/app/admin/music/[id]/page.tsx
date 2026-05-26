@@ -446,6 +446,28 @@ function ConfigTabContent({
                 no agent sections
               </span>
             )}
+            <span
+              className="text-xs text-zinc-400 font-mono"
+              title="song_classifier coverage. Generative matching requires current-version AI labels."
+            >
+              {track.has_ai_labels
+                ? `labels v${track.label_version ?? "?"}`
+                : "no AI labels"}
+            </span>
+            <span
+              className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                track.generative_matchable
+                  ? "bg-emerald-500/15 text-emerald-400"
+                  : "bg-zinc-800 text-zinc-500"
+              }`}
+              title={
+                track.generative_matchable
+                  ? "Eligible for generative auto-match (publish not required)."
+                  : "Not eligible for generative auto-match — missing/stale AI labels or sections."
+              }
+            >
+              {track.generative_matchable ? "matchable" : "not matchable"}
+            </span>
           </div>
           <AudioPlayer
             trackId={id}

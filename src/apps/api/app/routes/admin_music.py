@@ -43,7 +43,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
-from app.agents._schemas.song_sections import SongSection, cap_song_section_duration
+from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION
+from app.agents._schemas.song_sections import (
+    CURRENT_SECTION_VERSION,
+    SongSection,
+    cap_song_section_duration,
+)
 from app.config import settings
 from app.database import get_db
 from app.models import Job, MusicTrack
@@ -70,6 +75,7 @@ from app.services.lyrics_config_effective import (
     normalize_lyrics_config,
 )
 from app.services.lyrics_config_validation import validate_lyrics_config_dict
+from app.services.music_sections import current_best_section_for_track
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -164,6 +170,13 @@ class MusicTrackResponse(BaseModel):
     # spot stale rows scored under an older prompt version at a glance.
     best_sections: list[SongSection] | None
     section_version: str | None
+    # Song-classifier coverage. `label_version` mirrors CURRENT_LABEL_VERSION;
+    # `has_ai_labels` is true when the classifier blob is present at all.
+    # `generative_matchable` is the at-a-glance "can generative auto-pick this
+    # track?" signal — see _compute_generative_matchable.
+    label_version: str | None
+    has_ai_labels: bool
+    generative_matchable: bool
     created_at: datetime
 
 
@@ -178,6 +191,10 @@ class MusicTrackListItem(BaseModel):
     beat_count: int
     published_at: datetime | None
     archived_at: datetime | None
+    label_version: str | None
+    section_version: str | None
+    has_ai_labels: bool
+    generative_matchable: bool
     created_at: datetime
 
 
@@ -229,6 +246,28 @@ class LyricsPreviewStatusResponse(BaseModel):
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
+def _compute_generative_matchable(t: MusicTrack) -> bool:
+    """Mirror the generative candidate gate (minus the per-job slot-count fit).
+
+    Replicates the DB filter in
+    ``auto_music_orchestrate._load_matcher_candidates(require_published=False)``
+    plus its rank-1-section check, so an admin can see at a glance whether a
+    track is eligible for generative auto-match. The ``published_at`` clause is
+    intentionally omitted (generative ignores it), as is the ``n_clips``
+    slot-count heuristic — that depends on the user's clip count, which an admin
+    row has no notion of. So this means "eligible before clip-count fit," which
+    is the right observability signal.
+    """
+    return (
+        t.analysis_status == "ready"
+        and t.ai_labels is not None
+        and t.label_version == CURRENT_LABEL_VERSION
+        and t.best_sections is not None
+        and t.section_version == CURRENT_SECTION_VERSION
+        and current_best_section_for_track(t) is not None
+    )
+
+
 def _to_response(t: MusicTrack) -> MusicTrackResponse:
     beats = t.beat_timestamps_s or []
     # Coerce best_sections per-row. SongSection has strict Literal unions; one
@@ -277,11 +316,34 @@ def _to_response(t: MusicTrack) -> MusicTrackResponse:
         lyrics_extracted_at=t.lyrics_extracted_at,
         best_sections=coerced_sections,
         section_version=t.section_version,
+        label_version=t.label_version,
+        has_ai_labels=t.ai_labels is not None,
+        generative_matchable=_compute_generative_matchable(t),
         created_at=t.created_at,
     )
 
 
-def _to_list_item(t: MusicTrack, beat_count: int) -> MusicTrackListItem:
+def _to_list_item(
+    t: MusicTrack,
+    beat_count: int,
+    *,
+    has_ai_labels: bool,
+    has_best_sections: bool,
+) -> MusicTrackListItem:
+    # `has_ai_labels` / `has_best_sections` come from SQL `IS NOT NULL`
+    # expressions, NOT from touching the JSONB columns — the list query keeps
+    # ai_labels/best_sections deferred (perf invariant, locked by
+    # tests/routes/test_admin_list_defer_jsonb.py). label_version/section_version
+    # are cheap scalar strings and ARE loaded. The list-level matchability check
+    # therefore omits the rank-1-section deep validity that _to_response does;
+    # it means "eligible by version + presence," which is the right list signal.
+    matchable = (
+        t.analysis_status == "ready"
+        and has_ai_labels
+        and t.label_version == CURRENT_LABEL_VERSION
+        and has_best_sections
+        and t.section_version == CURRENT_SECTION_VERSION
+    )
     return MusicTrackListItem(
         id=t.id,
         title=t.title,
@@ -291,6 +353,10 @@ def _to_list_item(t: MusicTrack, beat_count: int) -> MusicTrackListItem:
         beat_count=beat_count,
         published_at=t.published_at,
         archived_at=t.archived_at,
+        label_version=t.label_version,
+        section_version=t.section_version,
+        has_ai_labels=has_ai_labels,
+        generative_matchable=matchable,
         created_at=t.created_at,
     )
 
@@ -1033,7 +1099,15 @@ async def list_music_tracks(
         func.jsonb_array_length(MusicTrack.beat_timestamps_s),
         0,
     ).label("beat_count")
-    base_query = select(MusicTrack, beat_count_expr).options(
+    # has_ai_labels / has_best_sections are computed server-side as IS NOT NULL
+    # so the heavy JSONB columns stay deferred (perf invariant locked by
+    # test_admin_list_defer_jsonb.py). label_version/section_version are cheap
+    # scalar strings and are loaded so the matchability badge can check versions.
+    has_ai_labels_expr = MusicTrack.ai_labels.isnot(None).label("has_ai_labels")
+    has_best_sections_expr = MusicTrack.best_sections.isnot(None).label("has_best_sections")
+    base_query = select(
+        MusicTrack, beat_count_expr, has_ai_labels_expr, has_best_sections_expr
+    ).options(
         load_only(
             MusicTrack.id,
             MusicTrack.title,
@@ -1043,6 +1117,8 @@ async def list_music_tracks(
             MusicTrack.published_at,
             MusicTrack.archived_at,
             MusicTrack.created_at,
+            MusicTrack.label_version,
+            MusicTrack.section_version,
         )
     )
 
@@ -1057,7 +1133,15 @@ async def list_music_tracks(
     rows = result.all()
 
     return MusicTrackListResponse(
-        tracks=[_to_list_item(t, beat_count) for (t, beat_count) in rows],
+        tracks=[
+            _to_list_item(
+                t,
+                beat_count,
+                has_ai_labels=has_ai_labels,
+                has_best_sections=has_best_sections,
+            )
+            for (t, beat_count, has_ai_labels, has_best_sections) in rows
+        ],
         total=total,
     )
 

@@ -707,7 +707,9 @@ def _match_best_track(clip_metas: list, *, job_id: str) -> MusicTrack | None:
             _run_music_matcher,
         )
 
-        candidates = _load_matcher_candidates(len(clip_metas))
+        # Generative auto-picks a song; the user never browses the gallery, so
+        # match against the whole analyzed library, not just published tracks.
+        candidates = _load_matcher_candidates(len(clip_metas), require_published=False)
         if not candidates:
             log.info("generative_no_labeled_tracks", job_id=job_id)
             return None

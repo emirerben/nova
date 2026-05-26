@@ -86,6 +86,9 @@ export interface MusicTrackDetail {
   lyrics_extracted_at: string | null;
   best_sections: SongSection[] | null;
   section_version: string | null;
+  label_version: string | null;
+  has_ai_labels: boolean;
+  generative_matchable: boolean;
   created_at: string;
 }
 
@@ -98,6 +101,10 @@ export interface MusicTrackListItem {
   beat_count: number;
   published_at: string | null;
   archived_at: string | null;
+  label_version: string | null;
+  section_version: string | null;
+  has_ai_labels: boolean;
+  generative_matchable: boolean;
   created_at: string;
 }
 

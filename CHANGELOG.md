@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.47.4] - 2026-05-26
+
+### Changed
+- **Generative edits can now auto-match against the whole analyzed music library, not just the handful of publicly-published tracks.** The candidate loader was gated on `published_at IS NOT NULL` — the same gate the public gallery uses for human browsing — so generative edits (where the song is auto-picked and the user never browses) could only ever land on a published track. With 2 of 50 tracks published, every song variant was effectively dark. `_load_matcher_candidates` now takes `require_published` (default `True`, so auto-music is unchanged); the generative path passes `require_published=False` and matches any `ready` track with current AI labels + song sections. The public gallery filter (`routes/music.py`) is untouched.
+
+### Added
+- **Admin music UI now shows per-track generative matchability.** `/admin/music` (list) and `/admin/music/[id]` (detail) surface a `matchable` / `not matchable` pill plus `labels: <version|none>` and `sections: <version|none>` captions, so it's obvious at a glance whether a track is eligible for generative auto-match and, if not, whether it's missing AI labels, stale labels, or stale sections. The admin API responses gained `label_version`, `has_ai_labels`, and a computed `generative_matchable` field (previously `ai_labels`/`label_version` weren't serialized at all, making coverage impossible to diagnose without DB access).
+
 ## [0.4.47.3] - 2026-05-26
 
 ### Changed
