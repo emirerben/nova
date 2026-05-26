@@ -41,6 +41,10 @@ from app.pipeline.music_recipe import (
     merge_audio_recipe,
 )
 from app.services.lyrics_config_effective import effective_lyrics_config
+from app.services.music_sections import (
+    reconcile_track_config_to_rank_one,
+    refresh_recipe_cached_for_bounds,
+)
 from app.storage import download_to_file
 from app.tasks.template_orchestrate import (
     _analyze_clips_parallel,
@@ -287,6 +291,51 @@ def analyze_music_track_task(self, track_id: str) -> None:
                     track_id,
                 )
 
+            # ── Section-1 reconciliation (canonical best_section) ────────
+            # `auto_best_section()` above wrote a legacy 45s window into
+            # new_config. If song_sections returned a usable rank-1, promote
+            # its bounds — every downstream consumer (manual job, templated
+            # job, admin merge endpoints) reads track_config.best_start_s /
+            # best_end_s, so writing rank-1 here fixes them all at once.
+            # See app/services/music_sections.py for the gating logic.
+            best_section_source = "auto_best_section"
+            if sections_dict is not None:
+                new_config, best_section_source = reconcile_track_config_to_rank_one(
+                    track_config=new_config,
+                    beats=beats,
+                    sections=sections_dict.get("sections"),
+                    section_version=sections_dict.get("section_version"),
+                )
+                if best_section_source == "song_sections":
+                    # Refresh log fields so the structured log at end of
+                    # task reflects the canonical bounds, not the legacy
+                    # auto_best_section window we computed before.
+                    best_start = float(new_config["best_start_s"])
+                    best_end = float(new_config["best_end_s"])
+                    n_slots = max(
+                        1, int(new_config.get("required_clips_max", n_slots))
+                    )
+                    # Templated music jobs render `recipe_cached` verbatim
+                    # (see _run_templated_music_job). If we don't refresh
+                    # it against the new bounds, those jobs keep using the
+                    # legacy 45s slot timing forever. Manual jobs are safe
+                    # because they regenerate from track_config at job
+                    # time, but the cache must match for templated paths.
+                    if recipe_cached is not None:
+                        try:
+                            recipe_cached = refresh_recipe_cached_for_bounds(
+                                recipe_cached=recipe_cached,
+                                beats=beats,
+                                track_config=new_config,
+                                duration_s=float(duration_s or 0.0),
+                            )
+                        except Exception as exc:
+                            log.warning(
+                                "recipe_cached_refresh_failed",
+                                track_id=track_id,
+                                error=str(exc),
+                            )
+
         with _sync_session() as db:
             track = db.get(MusicTrack, track_id)
             if track:
@@ -327,6 +376,7 @@ def analyze_music_track_task(self, track_id: str) -> None:
             lyrics_status=lyrics_result.get("status") if lyrics_result else "skipped",
             has_ai_labels=ai_labels_dict is not None,
             has_best_sections=sections_dict is not None,
+            best_section_source=best_section_source,
         )
 
     except OperationalError as db_exc:

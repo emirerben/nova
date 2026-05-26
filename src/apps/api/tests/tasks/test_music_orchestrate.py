@@ -352,6 +352,148 @@ def test_analyze_music_track_task_gemini_populates_recipe_cached() -> None:
     assert mock_track.recipe_cached_at is not None
 
 
+def test_analyze_music_track_task_promotes_rank_one_to_track_config() -> None:
+    """When song_sections returns a valid rank-1, track_config.best_start_s /
+    best_end_s reflect the section bounds (NOT the legacy auto_best_section
+    45s window) and required_clips_min/max are recomputed from the new
+    window. This is the load-bearing fix that retires the 45s default for
+    every downstream consumer of track_config.
+    """
+    from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
+
+    mock_track = _make_mock_track(track_config={"slot_every_n_beats": 2})
+    # 240 beats every 0.5s across 120s — both windows have ample slots.
+    mock_beats = [round(0.5 * i, 3) for i in range(1, 241)]
+
+    # _run_gemini_audio_analysis returns (recipe_cached, ai_labels, sections_dict).
+    # We control all three directly. recipe_cached starts as a 60s-window
+    # merged recipe; the reconcile block should regenerate it for the new
+    # rank-1 bounds.
+    mock_recipe_cached = {
+        "shot_count": 30,
+        "total_duration_s": 60.0,
+        "slots": [
+            {
+                "position": i + 1,
+                "target_duration_s": 2.0,
+                "slot_type": "broll",
+                "transition_in": "whip-pan",
+                "color_hint": "warm",
+                "text_overlays": [],
+                "speed_factor": 1.0,
+                "energy": 5.0,
+                "priority": 5,
+            }
+            for i in range(30)
+        ],
+        "color_grade": "warm",
+        "transition_style": "whip-pans",
+        "creative_direction": "energetic",
+        "copy_tone": "playful",
+    }
+    mock_sections_dict = {
+        "sections": [
+            {
+                "rank": 1,
+                "start_s": 30.0,
+                "end_s": 50.0,
+                "label": "chorus",
+                "energy": "high",
+                "suggested_use": "hook",
+                "rationale": "peak energy chorus section.",
+            }
+        ],
+        "section_version": CURRENT_SECTION_VERSION,
+    }
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = lambda s: s
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = mock_track
+
+    with (
+        patch("app.tasks.music_orchestrate._sync_session", return_value=mock_session),
+        patch("app.tasks.music_orchestrate.download_to_file"),
+        patch("app.tasks.music_orchestrate._detect_music_beats", return_value=mock_beats),
+        # Legacy auto_best_section would pick (5.0, 50.0) — a 45s window.
+        # The reconcile block must overwrite this with rank-1 (30.0, 50.0).
+        patch("app.tasks.music_orchestrate.auto_best_section", return_value=(5.0, 50.0)),
+        patch(
+            "app.tasks.music_orchestrate._run_gemini_audio_analysis",
+            return_value=(mock_recipe_cached, None, mock_sections_dict),
+        ),
+        patch("app.tasks.music_orchestrate.gemini_upload_and_wait", new=MagicMock()),
+        patch("app.tasks.music_orchestrate.analyze_audio_template", new=MagicMock()),
+        patch("tempfile.TemporaryDirectory") as mock_td,
+    ):
+        mock_td.return_value.__enter__ = lambda s: "/tmp/fake"
+        mock_td.return_value.__exit__ = MagicMock(return_value=False)
+
+        analyze_music_track_task(TRACK_ID)
+
+    assert mock_track.analysis_status == "ready"
+    cfg = mock_track.track_config
+    # Rank-1 bounds win over auto_best_section's 45s window.
+    assert cfg["best_start_s"] == 30.0
+    assert cfg["best_end_s"] == 50.0
+    # required_clips were recomputed for the 20s window (not the 45s default).
+    # 41 beats inside [30.0, 50.0] @ 0.5s spacing, slot_every_n_beats=2 →
+    # n_slots = ceil((41-2)/2) = 20 (per range(0, len-n, n))
+    assert cfg["required_clips_max"] >= 1
+    assert cfg["required_clips_max"] < 30  # NOT the original 60s-window count
+    assert cfg["required_clips_min"] >= 1
+    # recipe_cached was regenerated against the new bounds, preserving
+    # visual fields from the previous merged cache.
+    assert mock_track.recipe_cached is not None
+    assert mock_track.recipe_cached.get("color_grade") == "warm"
+    assert mock_track.recipe_cached["total_duration_s"] == 20.0
+
+
+def test_analyze_music_track_task_keeps_legacy_when_no_sections() -> None:
+    """Without sections_dict the auto_best_section 45s window stays as the
+    canonical track_config — the same behavior as before the fix.
+    Guards against accidentally over-aggressive promotion.
+    """
+    mock_track = _make_mock_track(track_config={"slot_every_n_beats": 2})
+    mock_beats = [round(0.5 * i, 3) for i in range(1, 241)]
+
+    mock_recipe_cached = {
+        "shot_count": 30,
+        "total_duration_s": 45.0,
+        "slots": [],
+        "color_grade": "warm",
+    }
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = lambda s: s
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = mock_track
+
+    with (
+        patch("app.tasks.music_orchestrate._sync_session", return_value=mock_session),
+        patch("app.tasks.music_orchestrate.download_to_file"),
+        patch("app.tasks.music_orchestrate._detect_music_beats", return_value=mock_beats),
+        patch("app.tasks.music_orchestrate.auto_best_section", return_value=(5.0, 50.0)),
+        patch(
+            "app.tasks.music_orchestrate._run_gemini_audio_analysis",
+            return_value=(mock_recipe_cached, None, None),  # sections_dict=None
+        ),
+        patch("app.tasks.music_orchestrate.gemini_upload_and_wait", new=MagicMock()),
+        patch("app.tasks.music_orchestrate.analyze_audio_template", new=MagicMock()),
+        patch("tempfile.TemporaryDirectory") as mock_td,
+    ):
+        mock_td.return_value.__enter__ = lambda s: "/tmp/fake"
+        mock_td.return_value.__exit__ = MagicMock(return_value=False)
+
+        analyze_music_track_task(TRACK_ID)
+
+    assert mock_track.analysis_status == "ready"
+    cfg = mock_track.track_config
+    # Legacy auto_best_section bounds preserved when sections are missing.
+    assert cfg["best_start_s"] == 5.0
+    assert cfg["best_end_s"] == 50.0
+
+
 def test_analyze_music_track_task_gemini_failure_falls_back_to_beat_only() -> None:
     """When Gemini fails, track still reaches 'ready' with a beat-only recipe."""
     mock_track = _make_mock_track(track_config={"slot_every_n_beats": 2})
