@@ -191,7 +191,7 @@ describe("LyricsTab", () => {
 
     // The timing panel must now reflect the new saved baseline.
     expect(screen.getByLabelText("Post-dwell")).toHaveValue(1.75);
-    expect(screen.getByLabelText("Fade in")).toHaveValue(175);
+    expect(screen.getByLabelText("Fade in (solo / legacy only)")).toHaveValue(175);
     // And there should NOT be an "unsaved overrides" warning (the working
     // state matches the new saved baseline after the re-sync).
     expect(
