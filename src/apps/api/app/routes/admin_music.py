@@ -61,6 +61,7 @@ from app.services.audio_download import (
     DownloadError,
     download_audio_and_upload,
     is_supported_audio_url,
+    probe_has_audio_stream,
 )
 from app.services.lyrics_config_effective import (
     deep_merge_dict,
@@ -431,6 +432,375 @@ async def upload_music_track(
 
     log.info("music_track_uploaded", track_id=track_id, filename=file.filename)
     return CreateMusicTrackResponse(id=track_id, analysis_status="queued")
+
+
+# ── Browser-side ingest (signed-URL flow) ─────────────────────────────────────
+#
+# Two-phase upload that lets the Nova admin Chrome extension extract YouTube
+# audio in the admin's browser (residential IP, real cookies — see eng-review
+# plan "Hybrid Route iii + Signed URL") and PUT the resulting blob straight to
+# GCS. Vercel and FastAPI never see the bytes, sidestepping Vercel's function
+# body cap (4.5 MB on Hobby, bounded on Pro) and Fly's data-center IP being
+# flagged by YouTube as automated traffic.
+#
+#   1. POST /admin/music-tracks/upload-init     → mint signed PUT URL
+#   2. browser PUTs blob direct to GCS          (no FastAPI hop)
+#   3. POST /admin/music-tracks/{id}/upload-confirm → verify + dispatch Celery
+
+
+_BROWSER_AUDIO_EXT_ALLOWLIST = {
+    ".m4a",
+    ".mp3",
+    ".wav",
+    ".ogg",
+    ".aac",
+    ".mp4",
+    ".webm",
+    ".opus",
+}
+_BROWSER_AUDIO_MAX_BYTES = 100 * 1024 * 1024  # 100 MB
+_BROWSER_AUDIO_MIN_BYTES = 1024  # 1 KB — anything smaller is junk
+_BROWSER_AUDIO_PUT_TTL = timedelta(minutes=15)
+_BROWSER_INGEST_DEDUP_WINDOW = timedelta(hours=24)
+
+
+# ext → Content-Type the signed URL must lock the PUT to. The browser MUST send
+# exactly this Content-Type or GCS will reject the PUT (this is part of the V4
+# signed-URL contract).
+_BROWSER_AUDIO_EXT_TO_CONTENT_TYPE = {
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",  # YouTube AAC-in-MP4 sometimes reports application/mp4
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".aac": "audio/aac",
+    ".webm": "audio/webm",
+    ".opus": "audio/ogg",  # Opus-in-Ogg; GCS doesn't care, ffprobe handles either
+}
+
+
+class BrowserUploadInitRequest(BaseModel):
+    """Mint a signed PUT URL for the browser extension to upload audio bytes.
+
+    Fields:
+        source_url: original YouTube/SoundCloud URL (preserved as MusicTrack.source_url
+                    so we don't lose provenance and can dedup re-uploads)
+        title, artist: optional metadata extracted by the extension
+        ext: file extension including leading dot, lowercase
+        byte_count: declared blob size (enforced via the signed URL Content-Length
+                    isn't directly settable in V4 signed URLs but we reject upfront
+                    if the admin's extension is announcing > 100 MB)
+    """
+
+    source_url: str
+    title: str | None = None
+    artist: str | None = None
+    ext: str
+    byte_count: int
+
+    @field_validator("source_url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        if not is_supported_audio_url(v.strip()):
+            raise ValueError(
+                "Only YouTube (youtube.com, youtu.be) and "
+                "SoundCloud (soundcloud.com) URLs are supported."
+            )
+        return v.strip()
+
+    @field_validator("ext")
+    @classmethod
+    def validate_ext(cls, v: str) -> str:
+        v = v.lower().strip()
+        if not v.startswith("."):
+            v = "." + v
+        if v not in _BROWSER_AUDIO_EXT_ALLOWLIST:
+            allowed = ", ".join(sorted(_BROWSER_AUDIO_EXT_ALLOWLIST))
+            raise ValueError(f"Unsupported audio extension: {v}. Allowed: {allowed}")
+        return v
+
+    @field_validator("byte_count")
+    @classmethod
+    def validate_byte_count(cls, v: int) -> int:
+        if v < _BROWSER_AUDIO_MIN_BYTES:
+            raise ValueError(
+                f"byte_count too small ({v}). Audio blob must be at least "
+                f"{_BROWSER_AUDIO_MIN_BYTES} bytes."
+            )
+        if v > _BROWSER_AUDIO_MAX_BYTES:
+            raise ValueError(
+                f"byte_count exceeds limit ({v} > {_BROWSER_AUDIO_MAX_BYTES} bytes / 100 MB)."
+            )
+        return v
+
+
+class BrowserUploadInitResponse(BaseModel):
+    track_id: str
+    upload_url: str
+    gcs_path: str
+    content_type: str
+    expires_in_s: int
+
+
+class BrowserUploadConfirmResponse(BaseModel):
+    track_id: str
+    analysis_status: str
+    duration_s: float | None
+
+
+def _sign_track_audio_put(gcs_path: str, content_type: str) -> str:
+    """Mint a 15-minute signed PUT URL scoped to *gcs_path* + *content_type*.
+
+    Locking Content-Type at the URL signing layer means a leaked URL can only
+    upload bytes with that exact MIME type — defense-in-depth against signed-URL
+    misuse. See plan §"Güvenlik ve Auth Detayları" item 10.
+    """
+    from app.storage import _get_client  # noqa: PLC0415
+
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(gcs_path)
+    return blob.generate_signed_url(
+        version="v4",
+        method="PUT",
+        content_type=content_type,
+        expiration=_BROWSER_AUDIO_PUT_TTL,
+    )
+
+
+@router.post(
+    "/upload-init",
+    response_model=BrowserUploadInitResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_admin)],
+)
+async def browser_upload_init(
+    req: BrowserUploadInitRequest,
+    db: AsyncSession = Depends(get_db),
+) -> BrowserUploadInitResponse:
+    """Phase 1 of browser-side ingest: create pending MusicTrack + mint signed PUT URL.
+
+    Dedup: if the same source_url already produced a track in the last 24h that
+    is still progressing or completed, return 409 with the existing track_id so
+    the extension can recover instead of creating phantom duplicate rows.
+    """
+    # Dedup window: 24h for completed/in-flight tracks. Stale `pending` rows
+    # (older than the 15-min PUT TTL) are NOT considered duplicates — those
+    # represent abandoned uploads (admin closed the tab, signed URL expired),
+    # and blocking re-ingest for 24h on a never-completed upload is hostile UX.
+    now = datetime.now(UTC)
+    dedup_cutoff = now - _BROWSER_INGEST_DEDUP_WINDOW
+    stale_pending_cutoff = now - _BROWSER_AUDIO_PUT_TTL
+    existing_q = await db.execute(
+        select(MusicTrack)
+        .where(
+            MusicTrack.source_url == req.source_url,
+            MusicTrack.created_at >= dedup_cutoff,
+            MusicTrack.archived_at.is_(None),
+            MusicTrack.analysis_status.in_(["pending", "queued", "analyzing", "ready"]),
+            # If status is still "pending" past the signed-URL TTL, the upload
+            # was abandoned — let the new init replace it.
+            ~(
+                (MusicTrack.analysis_status == "pending")
+                & (MusicTrack.created_at < stale_pending_cutoff)
+            ),
+        )
+        .order_by(MusicTrack.created_at.desc())
+        .limit(1)
+    )
+    existing = existing_q.scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "duplicate_source_url",
+                "message": (
+                    "A track with this source URL was already ingested in the last "
+                    "24 hours. Use the existing track_id."
+                ),
+                "existing_track_id": existing.id,
+                "existing_status": existing.analysis_status,
+            },
+        )
+
+    track_id = str(uuid.uuid4())
+    gcs_path = f"music/{track_id}/audio{req.ext}"
+    content_type = _BROWSER_AUDIO_EXT_TO_CONTENT_TYPE[req.ext]
+    upload_url = _sign_track_audio_put(gcs_path, content_type)
+
+    track = MusicTrack(
+        id=track_id,
+        title=(req.title or "").strip() or f"Track {track_id[:8]}",
+        artist=(req.artist or "").strip(),
+        source_url=req.source_url,
+        # Stash the gcs_path at init so upload-confirm doesn't have to probe
+        # all 8 allowed extensions. Status="pending" gates downstream usage
+        # (gallery + admin job dispatch both require status=="ready"), so
+        # populating audio_gcs_path early is safe.
+        audio_gcs_path=gcs_path,
+        analysis_status="pending",
+    )
+    db.add(track)
+    await db.commit()
+
+    log.info(
+        "music_track_browser_init",
+        track_id=track_id,
+        source_url=req.source_url,
+        ext=req.ext,
+        byte_count=req.byte_count,
+    )
+    return BrowserUploadInitResponse(
+        track_id=track_id,
+        upload_url=upload_url,
+        gcs_path=gcs_path,
+        content_type=content_type,
+        expires_in_s=int(_BROWSER_AUDIO_PUT_TTL.total_seconds()),
+    )
+
+
+@router.post(
+    "/{track_id}/upload-confirm",
+    response_model=BrowserUploadConfirmResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def browser_upload_confirm(
+    track_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> BrowserUploadConfirmResponse:
+    """Phase 3 of browser-side ingest: verify GCS blob + ffprobe + dispatch Celery.
+
+    The extension calls this AFTER its PUT to the signed URL succeeds. We:
+      1. HEAD the GCS object to confirm bytes landed.
+      2. Download to a temp file and ffprobe it (audio stream present? duration?).
+         If the payload is not decodable audio, mark the track failed.
+      3. Update audio_gcs_path + duration + status='queued'.
+      4. Dispatch analyze_music_track_task — same downstream as the URL path.
+    """
+    track = await _get_track_or_404(track_id, db)
+
+    # Idempotency. If the track is already past pending AND has an audio_gcs_path
+    # set, a prior confirm finished — re-confirms should just echo current state
+    # rather than re-dispatching Celery. If audio_gcs_path is None but status
+    # somehow advanced (partial-failure orphan), fall through to recover.
+    if track.analysis_status not in ("pending", "failed") and track.audio_gcs_path:
+        return BrowserUploadConfirmResponse(
+            track_id=track.id,
+            analysis_status=track.analysis_status,
+            duration_s=track.duration_s,
+        )
+
+    # upload-init persisted the exact gcs_path. Verify the blob landed there.
+    # Falling back to extension-probing is unnecessary now — and was a 7-extra-
+    # round-trip + non-deterministic-set-iteration smell besides.
+    expected_path = track.audio_gcs_path
+    if not expected_path:
+        # Older pending rows from before the init-persists-path change. Fall back
+        # to the probe loop so we don't strand them.
+        from app.storage import _get_client  # noqa: PLC0415
+
+        bucket = _get_client().bucket(settings.storage_bucket)
+        for ext in (".m4a", ".mp4", ".webm", ".opus", ".mp3", ".wav", ".ogg", ".aac"):
+            candidate = f"music/{track_id}/audio{ext}"
+            blob = bucket.blob(candidate)
+            if blob.exists():
+                expected_path = candidate
+                break
+        if not expected_path:
+            track.analysis_status = "failed"
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No audio blob found at the expected GCS path. Did the PUT succeed?",
+            )
+
+    from app.storage import _get_client  # noqa: PLC0415
+
+    bucket = _get_client().bucket(settings.storage_bucket)
+    found_blob = bucket.blob(expected_path)
+    if not found_blob.exists():
+        # The PUT never landed (or landed at an unexpected path). Mark the
+        # pending row failed so dedup doesn't keep blocking the source_url.
+        track.analysis_status = "failed"
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No audio blob found at the expected GCS path. Did the PUT succeed?",
+        )
+    found_path = expected_path
+
+    found_blob.reload()  # populate .size, .content_type, etc
+
+    if found_blob.size and found_blob.size > _BROWSER_AUDIO_MAX_BYTES:
+        # Delete the oversize blob — the `music/` prefix is excluded from the
+        # 24h GCS lifecycle rule (per CLAUDE.md storage-retention), so leaving
+        # the bytes would leak storage cost forever.
+        try:
+            await asyncio.to_thread(found_blob.delete)
+        except Exception:
+            log.warning(
+                "browser_upload_confirm_oversize_delete_failed",
+                track_id=track_id,
+                gcs_path=found_path,
+            )
+        track.analysis_status = "failed"
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Uploaded blob exceeds 100 MB cap ({found_blob.size} bytes).",
+        )
+
+    # ffprobe defense-in-depth: download to temp, verify it's actually audio.
+    ext = Path(found_path).suffix
+    duration_s: float | None = None
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=True) as tmp:
+        await asyncio.to_thread(found_blob.download_to_filename, tmp.name)
+        from app.services.audio_download import _probe_duration as _probe_dur  # noqa: PLC0415
+
+        is_audio = await asyncio.to_thread(probe_has_audio_stream, tmp.name)
+        if not is_audio:
+            track.analysis_status = "failed"
+            await db.commit()
+            # Best-effort: nuke the bogus blob so we don't pay for storage on junk.
+            try:
+                await asyncio.to_thread(found_blob.delete)
+            except Exception:
+                log.warning(
+                    "browser_upload_confirm_blob_delete_failed",
+                    track_id=track_id,
+                    gcs_path=found_path,
+                )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Uploaded blob is not decodable audio (ffprobe found no audio stream). "
+                    "If this is from a YouTube extraction, check that the extension picked "
+                    "an audio-only itag."
+                ),
+            )
+        duration_s = await asyncio.to_thread(_probe_dur, tmp.name)
+
+    track.audio_gcs_path = found_path
+    track.duration_s = duration_s
+    track.analysis_status = "queued"
+    await db.commit()
+    await db.refresh(track)
+
+    from app.tasks.music_orchestrate import analyze_music_track_task  # noqa: PLC0415
+
+    analyze_music_track_task.delay(track_id)
+
+    log.info(
+        "music_track_browser_confirmed",
+        track_id=track_id,
+        gcs_path=found_path,
+        bytes=found_blob.size,
+        duration_s=duration_s,
+    )
+    return BrowserUploadConfirmResponse(
+        track_id=track_id,
+        analysis_status="queued",
+        duration_s=duration_s,
+    )
 
 
 # ── Templated track create ────────────────────────────────────────────────────
