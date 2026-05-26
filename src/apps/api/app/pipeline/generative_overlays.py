@@ -198,3 +198,90 @@ def inject_intro_overlay(recipe: dict, hero_slot_index: int, overlay: dict | Non
         slot["text_overlays"] = arr
     arr.append(overlay)
     return recipe
+
+
+# Display end for the persistent hold overlay. Generative output is sub-60s; any
+# value past the rendered length works because FFmpeg's `enable='between(t,start,end)'`
+# clips the overlay at the real EOF. A generous constant avoids depending on the
+# post-beat-snap video duration (unknown at injection time) — under-shooting would
+# drop the tail, over-shooting is free.
+_HOLD_TO_END_S = 3600.0
+
+
+def inject_persistent_intro(
+    recipe: dict,
+    hero_slot_index: int,
+    *,
+    text: str,
+    effect: str,
+    reveal_window_s: float,
+    beats: list[float] | None = None,
+    text_color: str = _DEFAULT_TEXT_COLOR,
+    highlight_color: str = _DEFAULT_HIGHLIGHT_COLOR,
+    **style_kwargs,
+) -> dict:
+    """Keep the hero intro on screen for the WHOLE video: animate it in over the
+    opening, then hold the settled text statically until the video ends.
+
+    Music/generative jobs burn overlays onto the JOINED video with absolute
+    timestamps (`_collect_absolute_overlays`), and the Skia renderer caps ANIMATED
+    overlays at `MAX_OVERLAY_FRAMES` (~4s) — a single animated overlay stretched
+    across a longer video would vanish at the cap. So we emit TWO overlays into the
+    hero slot:
+
+    - A bounded animated **reveal** `[0, reveal_window_s]` (the agent's effect). Short
+      enough to stay under the frame cap.
+    - A **static hold** `[reveal_window_s, EOF]` rendered in the effect's *settled*
+      color (karaoke settles every word to `highlight_color`; other effects settle to
+      `text_color`). A static overlay is one looped PNG — no frame cap — and its
+      `end_s` is not clamped to the hero slot, so it spans the entire joined video.
+
+    Both carry `role="generative_intro"`, which the Dedup-1 pass in
+    `_collect_absolute_overlays` treats as no-merge: without that the static hold would
+    merge into the animated reveal (same text/position, and for non-karaoke effects the
+    same color) and re-extend it past the frame cap.
+
+    No-op (recipe unchanged) on empty text, missing/empty slots, or an out-of-range
+    hero index — same defensive contract as `inject_intro_overlay`.
+    """
+    if not (text or "").strip():
+        return recipe
+    slots = recipe.get("slots")
+    if not isinstance(slots, list) or not slots:
+        log.warning("generative_overlay_inject_no_slots")
+        return recipe
+    if not (0 <= hero_slot_index < len(slots)):
+        log.warning(
+            "generative_overlay_inject_hero_out_of_range",
+            hero_slot_index=hero_slot_index,
+            slot_count=len(slots),
+        )
+        return recipe
+
+    reveal_end = max(0.0, float(reveal_window_s))
+    reveal = build_intro_overlay(
+        text,
+        effect=effect,
+        start_s=0.0,
+        end_s=reveal_end,
+        beats=beats,
+        text_color=text_color,
+        highlight_color=highlight_color,
+        **style_kwargs,
+    )
+    inject_intro_overlay(recipe, hero_slot_index, reveal)
+
+    # Settled color = what the animated reveal looks like once it finishes. Karaoke
+    # sweeps every word to the highlight color; all other effects settle on text_color.
+    settled_color = highlight_color if effect == "karaoke-line" else text_color
+    hold = build_intro_overlay(
+        text,
+        effect="static",
+        start_s=reveal_end,
+        end_s=_HOLD_TO_END_S,
+        text_color=settled_color,
+        highlight_color=highlight_color,
+        **style_kwargs,
+    )
+    inject_intro_overlay(recipe, hero_slot_index, hold)
+    return recipe

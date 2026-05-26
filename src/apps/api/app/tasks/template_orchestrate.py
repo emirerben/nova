@@ -4066,6 +4066,12 @@ def _collect_absolute_overlays(
             # downstream renderers never see these keys.
             entry["_origin_slots"] = [slot_position]
             entry["_clamped_by"] = _clamped_by
+            # Generative-edit intros emit a bounded animated reveal + a long static
+            # hold at the same text/position. Dedup 1 must NOT merge them: merging
+            # would extend the animated reveal to the hold's end and trip the Skia
+            # MAX_OVERLAY_FRAMES (~4s) cap, blanking the intro mid-video. Marking the
+            # role no-merge keeps the reveal bounded and the static hold spanning.
+            entry["_no_merge"] = ov.get("role") == "generative_intro"
 
             raw.append(entry)
 
@@ -4260,6 +4266,10 @@ def _collect_absolute_overlays(
                 same_visual_style
                 and ov.get("effect") not in ("karaoke-line", "lyric-line")
                 and prev.get("effect") not in ("karaoke-line", "lyric-line")
+                # Generative intro reveal/hold pair must stay distinct (see the
+                # `_no_merge` note where it is set in the entry build above).
+                and not ov.get("_no_merge")
+                and not prev.get("_no_merge")
                 and ov["start_s"] - prev["end_s"] < _MERGE_GAP_THRESHOLD_S
             )
             if same_text_overlay:
@@ -4400,6 +4410,7 @@ def _collect_absolute_overlays(
     for o in result:
         o.pop("_origin_slots", None)
         o.pop("_clamped_by", None)
+        o.pop("_no_merge", None)
         o.pop("lyric_line_id", None)
         o.pop("lyric_segment_index", None)
         o.pop("lyric_segment_count", None)

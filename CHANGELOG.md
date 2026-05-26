@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.47.5] - 2026-05-26
+
+### Fixed
+- **The AI hero-intro text on generative-edit videos now stays on screen for the whole video instead of vanishing a few seconds in.** It was injected into the hero slot only with `end_s` hard-capped at `MAX_INTRO_S = 3.0`s, so on the text variants (`song_text`, `original_text`) the intro disappeared at ~3s. Generative overlays burn onto the *joined* video with absolute timestamps, and the Skia renderer caps *animated* overlays at `MAX_OVERLAY_FRAMES` (~4s) — so simply extending the animated overlay's `end_s` would have made it vanish at the cap. Instead the intro is now emitted as two overlays in the hero slot: a bounded **animated reveal** `[0, reveal_window]` (the agent's effect; `reveal_window = min(slot0_dur, MAX_INTRO_S)`, kept under the frame cap), followed by a **static hold** in the effect's settled color (`highlight_color` for karaoke, else `text_color`) whose `end_s` spans the whole joined video — a static overlay is a single looped PNG, immune to the frame cap. `MAX_INTRO_S` now caps the reveal animation only, not display time. Applies to the text variants only; `song_lyrics` (changing karaoke lyrics) is unchanged.
+- A scoped guard in `_collect_absolute_overlays` Dedup-1 marks `role="generative_intro"` overlays no-merge, so the reveal and hold (same text/position, and same color for `pop-in`) are never merged into one animated overlay that would re-trip the frame cap. No effect on template/music overlays.
+
 ## [0.4.47.4] - 2026-05-26
 
 ### Changed
