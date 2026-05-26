@@ -22,6 +22,24 @@
 // having both vendored is the redundancy layer the plan calls for.
 
 import { Innertube, UniversalCache } from "youtubei.js/web";
+import { isAllowedNovaApiOrigin } from "./lib/origin-allowlist.js";
+import { encodeBasicAuthHeader } from "./lib/basic-auth.js";
+
+const ADMIN_USER_KEY = "nova_admin_user";
+const ADMIN_PASS_KEY = "nova_admin_pass";
+
+async function loadAdminBasicAuthHeader() {
+  // Returns a "Basic <utf-8 b64>" string when valid credentials are stored,
+  // or null. UTF-8 (not Latin-1) is required so passwords with é/ö/emoji
+  // actually authenticate against the server-side middleware which decodes
+  // the same way (see src/apps/web/src/middleware.ts).
+  const stored = await chrome.storage.local.get([ADMIN_USER_KEY, ADMIN_PASS_KEY]);
+  const user = stored[ADMIN_USER_KEY];
+  const pass = stored[ADMIN_PASS_KEY];
+  if (typeof user !== "string" || typeof pass !== "string") return null;
+  if (!user || !pass) return null;
+  return encodeBasicAuthHeader(user, pass);
+}
 
 function emit(jobId, stage, extras = {}) {
   chrome.runtime.sendMessage({
@@ -116,9 +134,32 @@ async function fetchJson(proxyBase, path, body) {
     ? proxyBase
     : await resolveAbsoluteProxyBase(proxyBase);
   const url = `${absoluteBase}${path}`;
+  const headers = { "Content-Type": "application/json" };
+
+  // SECURITY: only attach Authorization: Basic when BOTH conditions hold —
+  //   (1) the request URL's origin is in the Nova allowlist, AND
+  //   (2) the request URL's pathname starts with /api/admin/.
+  // Belt-and-suspenders against a tampered `nova_api_origin` setting or a
+  // future call site that points fetchJson at something other than the
+  // admin proxy. The PUT to storage.googleapis.com and the youtubei.js
+  // fetches do not go through fetchJson — they cannot be affected here.
+  try {
+    const parsed = new URL(url);
+    const reqOrigin = `${parsed.protocol}//${parsed.host}`;
+    if (
+      isAllowedNovaApiOrigin(reqOrigin) &&
+      parsed.pathname.startsWith("/api/admin/")
+    ) {
+      const auth = await loadAdminBasicAuthHeader();
+      if (auth) headers["Authorization"] = auth;
+    }
+  } catch {
+    // Malformed URL — let fetch throw the canonical error below.
+  }
+
   const init = {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     credentials: "omit",
   };
   if (body !== undefined) init.body = JSON.stringify(body);

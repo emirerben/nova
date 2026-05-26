@@ -35,10 +35,26 @@ chrome.runtime.onMessage.addListener((msg) => {
   );
 });
 
-// Tiny readiness ping so the SPA can race a one-shot detection against the
-// content script being injected (faster than chrome.runtime.sendMessage cold-
-// start through the SW). The SPA can either ping the SW directly OR sniff
-// this banner if it appeared before the SPA's detect call landed.
-window.dispatchEvent(
-  new CustomEvent("nova-extension-ready", { detail: { version: 1 } }),
+// Expose the extension ID to the Nova SPA via the DOM.
+//
+// Content scripts run in an isolated JavaScript world: globals written to
+// `window` here are not visible to the page's own scripts. DOM mutations
+// (attributes, elements) ARE visible to both worlds. The Nova SPA reads
+// `document.documentElement.getAttribute("data-nova-extension-id")` from
+// music-api.ts's detectExtension to know which extension ID to ping. This
+// matters because the manifest's `key` is deferred — unpacked installs get
+// random per-machine IDs, so the SPA cannot hardcode the ID.
+//
+// Also dispatch `nova-extension-ready` on document so the SPA can wait
+// event-driven instead of polling. content_scripts[].run_at = "document_start"
+// in the manifest covers the common case; the event is the safety net for
+// slow profiles + reloads.
+document.documentElement.setAttribute(
+  "data-nova-extension-id",
+  chrome.runtime.id,
+);
+document.dispatchEvent(
+  new CustomEvent("nova-extension-ready", {
+    detail: { extensionId: chrome.runtime.id, version: 1 },
+  }),
 );

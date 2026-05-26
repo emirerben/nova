@@ -224,8 +224,9 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Framework: Next.js (auto-detected)
 - Root directory: `src/apps/web/`
 - Deploy: auto-deploys on push to `main` via GitHub integration. **Do NOT run `vercel --prod` from a feature branch** — it pushes your local working tree to production, including files not yet in `main`, and can ship a frontend route without its backing API endpoint. For an emergency manual deploy: `git checkout main && git pull`, then `cd src/apps/web && vercel --prod`.
-- Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXT_PUBLIC_GOOGLE_CLIENT_ID, NEXT_PUBLIC_GOOGLE_PICKER_API_KEY, NEXTAUTH_SECRET)
-- Deployment Protection: preview-only (production is public)
+- Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXT_PUBLIC_GOOGLE_CLIENT_ID, NEXT_PUBLIC_GOOGLE_PICKER_API_KEY, NEXTAUTH_SECRET, ADMIN_BASIC_AUTH_USER, ADMIN_BASIC_AUTH_PASSWORD)
+- **`ADMIN_BASIC_AUTH_USER` + `ADMIN_BASIC_AUTH_PASSWORD` are MANDATORY.** They gate `/admin/*` and `/api/admin/*` via `src/apps/web/src/middleware.ts`. Without them set on Production AND Preview environments, every admin page returns 503 "Admin auth not configured" — fail-closed by design. Rotate by setting new values + redeploying (Edge runtime reads env at module init, no live refresh). This is a stopgap until proper per-user auth lands.
+- Deployment Protection: preview-only (production is public). The `ADMIN_BASIC_AUTH_*` middleware is the only admin gate on production.
 - Preview deploys: full API access via regex CORS (`allow_origin_regex` in `main.py`)
 
 ### Fly.io — API + Workers (configured by /setup-deploy)
