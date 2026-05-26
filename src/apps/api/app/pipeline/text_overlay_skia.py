@@ -775,9 +775,19 @@ def _lyric_line_alpha(overlay: dict, t_local: float, duration_s: float) -> float
         return progress**0.5
     fade_out_start_ms = duration_ms - fade_out
     if fade_out > 0 and t_ms >= fade_out_start_ms:
-        # libass \t(fade_out_start, duration_ms, 2.0, \alpha&HFF&) →
-        # alpha = 1 - progress**2
         progress = (t_ms - fade_out_start_ms) / float(fade_out)
+        if overlay.get("fade_out_curve") == "sqrt":
+            # Mirror of the sqrt fade-in: libass \t(start, end, 0.5, \alpha&HFF&)
+            # → alpha = 1 − progress**0.5. Set by the dynamic crossfade
+            # post-pass in lyric_injector.py for inter-line crossfades only;
+            # over a matched duration window paired with the sqrt fade-in on
+            # the incoming line, α_outgoing + α_incoming = 1 at every t — no
+            # readable stacked text. See plan §2 / Mirea fix.
+            return max(0.0, 1.0 - progress**0.5)
+        # Default lingering fade-out (solo lines, sparse pairs, hard-cut /
+        # solo-demoted / override / kill-switch-off — every non-crossfade
+        # case): libass \t(fade_out_start, duration_ms, 2.0, \alpha&HFF&) →
+        # alpha = 1 − progress².
         return max(0.0, 1.0 - progress**2)
     return 1.0
 
