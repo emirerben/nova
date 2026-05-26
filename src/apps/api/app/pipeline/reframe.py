@@ -298,7 +298,13 @@ def reframe_and_export(
             cmd += ["-map", "0:v:0", "-map", "1:a:0", "-shortest"]
         cmd += [
             "-vf", vf_string,
-            *_encoding_args(output_path, preset="ultrafast"),
+            # Intermediate (re-encoded by the final burn). ultrafast keeps per-slot
+            # render speed, but its weaker tools macroblock dark gradients and the
+            # final fast pass can't recover that. crf=14 (vs the 18 default) spends
+            # more bits here so the temp file stays clean for the final encode —
+            # ~38% less dark-region distortion in local A/B (job 792f2d52). Temp-only;
+            # shipped bytes still come from the final fast pass.
+            *_encoding_args(output_path, preset="ultrafast", crf="14"),
         ]
 
     log.info(
@@ -455,7 +461,10 @@ def _build_overlay_cmd(
         cmd.extend(["-map", "0:a?"])
     else:
         cmd.extend(["-map", f"{silent_audio_idx}:a:0", "-shortest"])
-    cmd.extend(_encoding_args(output_path, preset="ultrafast"))
+    # Intermediate (re-encoded downstream). crf=14 keeps this overlay-on-base temp
+    # file clean so the final pass isn't fed pre-baked dark-gradient blocking. See
+    # the matching note in reframe_and_export.
+    cmd.extend(_encoding_args(output_path, preset="ultrafast", crf="14"))
 
     return cmd
 

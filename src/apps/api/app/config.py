@@ -197,9 +197,12 @@ class Settings(BaseSettings):
     # Capped-CRF ceiling, NOT an ABR target — see reframe._encoding_args. CRF 18
     # is the quality driver; this bounds peak bitrate (bufsize = 2× this). Raised
     # 4M→8M after the 4M ceiling macroblocked the dark sky on a 10-bit HLG iPhone
-    # sunset (lisbon1.MOV, 2026-05-25). 8M cleared the blocking with no visible
-    # gain from 12M at phone-delivery scale; +~70% file size on gradient-heavy clips.
-    output_video_bitrate: str = "8M"
+    # sunset (lisbon1.MOV, 2026-05-25). Raised 8M→16M (2026-05-26) after a dark
+    # HLG night clip (job 792f2d52) still pinned to the 8M ceiling and macroblocked:
+    # at 16M the same footage uses ~16 Mbps, i.e. CRF 18 genuinely wanted ~2× what
+    # 8M allowed. Local A/B (SSIM vs clean master) showed the ceiling bump alone cut
+    # dark-region distortion ~31%. CRF still governs, so easy/bright clips stay small.
+    output_video_bitrate: str = "16M"
     output_audio_bitrate: str = "192k"
     output_min_duration_s: float = 45.0
     output_max_duration_s: float = 59.0
