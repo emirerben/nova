@@ -3,10 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { adminGetAudioUrl, type SongSection } from "@/lib/music-api";
+import { matchSectionByBounds } from "@/lib/music-section-match";
 
 // Extracted from page.tsx (Next.js rejects non-page named exports from
 // page files). The audio player + waveform interaction is its own unit so
 // it can be tested in isolation — see __tests__/admin/MusicSectionPrecedence.
+//
+// Tolerance for the per-band ✓ + thicker stroke "isSelected" indicator
+// lives in src/lib/music-section-match.ts so the top metadata Row in
+// page.tsx uses the same number — otherwise the two surfaces could
+// disagree on which band is selected.
 
 type SelectionMode = "start" | "end" | null;
 
@@ -17,12 +23,6 @@ const RANK_COLORS: Record<1 | 2 | 3, { fill: string; stroke: string; text: strin
   2: { fill: "rgba(139,92,246,0.45)", stroke: "#8b5cf6", text: "#ede9fe" },
   3: { fill: "rgba(139,92,246,0.22)", stroke: "#7c3aed", text: "#ddd6fe" },
 };
-
-// Tolerance for matching a section band against the active form window. A
-// single beat at 120 BPM is 0.5s, so 0.5s is well below any musical boundary
-// and two distinct sections can never both match — but it absorbs the float
-// drift introduced by string ↔ parseFloat round-trips through the form.
-const SELECTED_TOLERANCE_S = 0.5;
 
 function pickTickInterval(duration: number): number {
   if (duration <= 30) return 5;
@@ -193,14 +193,20 @@ export function AudioPlayer({
 
   const playheadX = duration > 0 ? (currentTime / duration) * W : 0;
 
-  // When agent sections exist, rank-1 is the canonical "active window" — the
-  // legacy 45s wash band, Set-start/end buttons, and "Best section" header
-  // all hide so only the numbered bands tell the story. Beat-strip
-  // highlighting re-keys off rank-1's bounds so beats inside section #1 stay
-  // bright (the visual cue that "these are the cut points").
+  // `hasSections` is still used to hide the legacy 45s wash band and the
+  // Set-start/end buttons at render time (only meaningful when no agent
+  // sections exist). The beat-strip highlight, however, ALWAYS follows
+  // the form-state window: pre-click-to-select rank-1 was the only
+  // sensible "active window" (no other section was reachable), but with
+  // click-to-select the form IS the active window — beats must agree.
   const hasSections = !!sections && sections.length > 0;
-  const activeStart = hasSections ? sections![0].start_s : start;
-  const activeEnd = hasSections ? sections![0].end_s : end;
+  const activeStart = start;
+  const activeEnd = end;
+  // Single source of truth for "which band is selected" — used by both
+  // the per-band ✓ + thicker stroke below AND the top metadata Row in
+  // page.tsx (via the same helper). Computed once, identity-compared
+  // inside the band loop.
+  const matchedSection = matchSectionByBounds(sections, start, end);
 
   // Time-ruler tick positions
   const tickStep = pickTickInterval(duration);
@@ -262,7 +268,10 @@ export function AudioPlayer({
           );
         })}
 
-        {/* Agent section bands (1-3 ranked, stacked rank-1 on top) */}
+        {/* Agent section bands (1-3 ranked, stacked rank-1 on top).
+            isSelected is identity-compared against the matchedSection
+            computed above, so the ✓ + thicker stroke here ALWAYS agrees
+            with the top metadata Row in page.tsx (same matcher). */}
         {sections?.map((s, i) => {
           const rank = (s.rank in RANK_COLORS ? s.rank : 1) as 1 | 2 | 3;
           const colors = RANK_COLORS[rank];
@@ -273,12 +282,7 @@ export function AudioPlayer({
           const w = Math.max(2, Math.min(W - x, wRaw));
           const y = bandY(rank);
           const showLabel = w > 110;
-          // 0.5s tolerance: well below a single beat at 120 BPM so sections
-          // never collide, but absorbs float drift between agent start_s and
-          // the round-tripped parseFloat() value coming back from the form.
-          const isSelected =
-            Math.abs(s.start_s - start) < SELECTED_TOLERANCE_S &&
-            Math.abs(s.end_s - end) < SELECTED_TOLERANCE_S;
+          const isSelected = matchedSection === s;
           const label = `${isSelected ? "✓ " : ""}#${rank} · ${s.label} · ${s.energy}`;
           return (
             // Key by array index — JSONB rows can theoretically duplicate ranks
@@ -353,8 +357,9 @@ export function AudioPlayer({
           />
         )}
 
-        {/* Beat markers. `inWindow` is keyed off the ACTIVE window — when
-            sections exist that's rank-1; otherwise the manual config window. */}
+        {/* Beat markers. `inWindow` is keyed off the form-state window
+            (start/end props) regardless of whether agent sections exist —
+            click-to-select means the form IS the active window. */}
         {beats.map((b, i) => {
           const x = (b / duration) * W;
           const inWindow = b >= activeStart && b <= activeEnd;
