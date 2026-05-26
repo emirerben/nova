@@ -1215,6 +1215,130 @@ def test_overlapping_lyric_lines_crossfade_through_burn_pipeline(tmp_workdir):
     )
 
 
+def test_real_milky_overlapping_lines_crossfade_through_burn_pipeline(tmp_workdir):
+    """END-TO-END on REAL prod data: take a consecutive overlapping lyric pair
+    straight out of the production scheduler + consolidation
+    (`inject_lyric_overlays` → `_collect_absolute_overlays`) for the Milky track
+    that stacked in prod job 901fe271, then burn it through the actual Skia +
+    FFmpeg pipeline and assert the overlap frame shows a real crossfade — NEITHER
+    line at full opacity.
+
+    The sibling test above uses synthetic timings; this one proves the EXACT
+    windows/fades/curves the live generative path emits survive to real pixels.
+    Distinct probe-Y per line (the real overlays share y=0.80) so each band is
+    independently measurable — the crossfade property depends on timing+curve,
+    not Y."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg not available")
+
+    from app.pipeline.lyric_injector import inject_lyric_overlays
+    from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+    # Real synced lyrics from prod track 29da2cbf, best section 60-75s. The
+    # sustained "Do do" lines overlap in source time — the prod stacking shape.
+    prod_lines = [
+        ("Just the way you are", 58.22, 60.12),
+        ("Do do do do do do do do", 60.12, 63.19),
+        ("Do do do do do do do do", 62.92, 66.54),
+        ("And it goes", 66.74, 67.15),
+        ("Do do do do do do do do", 67.32, 70.24),
+    ]
+    cache = {
+        "lines": [
+            {
+                "text": t,
+                "start_s": s,
+                "end_s": e,
+                "words": [{"text": t, "start_s": s, "end_s": e}],
+            }
+            for t, s, e in prod_lines
+        ]
+    }
+    slot_durations = [7.5, 7.5]
+    recipe = {
+        "slots": [
+            {"position": i + 1, "target_duration_s": d, "text_overlays": []}
+            for i, d in enumerate(slot_durations)
+        ]
+    }
+    out = inject_lyric_overlays(recipe, cache, 60.0, 75.0, {"enabled": True, "style": "line"})
+    steps = [{"clip_id": f"c{i}", "slot": slot} for i, slot in enumerate(out["slots"])]
+    overlays = [
+        o
+        for o in _collect_absolute_overlays(steps, slot_durations, None, "", is_agentic=True)
+        if o.get("effect") == "lyric-line"
+    ]
+    overlays.sort(key=lambda o: o["start_s"])
+
+    # Find the first consecutive pair that overlaps in time (the transition the
+    # viewer sees as one line handing off to the next).
+    pair = next(
+        ((a, b) for a, b in zip(overlays, overlays[1:]) if a["end_s"] > b["start_s"]),
+        None,
+    )
+    assert pair is not None, "expected at least one overlapping lyric transition"
+    a_src, b_src = pair
+    overlap_mid = (b_src["start_s"] + a_src["end_s"]) / 2.0
+
+    # Clone with distinct probe-Y so each band is independently measurable.
+    # Everything else (start/end/fade_in/fade_out/fade_out_curve) is the REAL
+    # scheduler output — that is what governs the crossfade.
+    line_a = {**a_src, "position_x_frac": 0.5, "position_y_frac": 0.5, "text_color": "#FFFFFF"}
+    line_b = {**b_src, "position_x_frac": 0.5, "position_y_frac": 0.7, "text_color": "#FFFFFF"}
+
+    duration = b_src["end_s"] + 0.5
+    sequences = tos._render_overlay_sequences([line_a, line_b], duration, tmp_workdir)
+    assert len(sequences) == 2
+    assert all(s["is_animated"] for s in sequences), "both lyric-line overlays must be animated"
+
+    bg = os.path.join(tmp_workdir, "bg.mp4")
+    burned = os.path.join(tmp_workdir, "burned.mp4")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=black:s=1080x1920:r=30:d={duration:.2f}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            bg,
+        ],
+        check=True,
+        capture_output=True,
+    )
+    tos._ffmpeg_burn_pngs(bg, sequences, burned)
+
+    frame_path = os.path.join(tmp_workdir, "mid.png")
+    subprocess.run(
+        ["ffmpeg", "-y", "-ss", f"{overlap_mid:.3f}", "-i", burned, "-frames:v", "1", frame_path],
+        check=True,
+        capture_output=True,
+    )
+    im = Image.open(frame_path).convert("RGBA")
+    # line_a band at y_frac=0.5 → y≈960; line_b band at y_frac=0.7 → y≈1344.
+    band_a_max = im.crop((0, 900, im.width, 1020)).split()[0].getextrema()[1]
+    band_b_max = im.crop((0, 1284, im.width, 1404)).split()[0].getextrema()[1]
+    # At the overlap midpoint a true crossfade keeps BOTH lines below full
+    # opacity. The pre-#343 bug burned both at 255 (the stacked-text symptom).
+    assert band_a_max < 240, (
+        f"outgoing line {a_src['text'][:16]!r} at overlap midpoint t={overlap_mid:.2f}s "
+        f"burned near-full (max R={band_a_max}) — stacked-text regression in the burned video."
+    )
+    assert band_b_max < 240, (
+        f"incoming line {b_src['text'][:16]!r} at overlap midpoint t={overlap_mid:.2f}s "
+        f"burned near-full (max R={band_b_max}) — stacked-text regression in the burned video."
+    )
+
+
 def test_lyric_line_sanity_ceiling_caps_runaway_duration():
     """Defense in depth: a malformed transcript could (in theory) produce a
     lyric-line overlay with `end_s = 240.0`. Without a sanity cap, the
