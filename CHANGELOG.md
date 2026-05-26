@@ -10,6 +10,9 @@ All notable changes to this project will be documented in this file.
 ### Tests
 - **Synced two stale admin test suites that were red on `main`.** `overlay-editor` asserted pre-drift overlay constants (`FONT_SIZE_MAP.small` 48, `POSITION_Y_MAP.center` 0.50) and a 3-zone snap model; `font-library` expected a `clean_captions` vibe count of 3. All were verified against the current source of truth (`app/pipeline/text_overlay.py` for the maps, `fontsByVibe()` for counts) and updated to match — the frontend and backend constants are in parity; the tests had simply not been updated when the registry and zone model grew.
 
+### CI
+- **Added a `test-web` CI job that runs the frontend Jest suite on every PR.** CI previously ran ESLint + `pytest` but never `pnpm test`, so frontend tests that encode values (overlay constants, font-vibe counts) silently rotted the moment those values changed — that's exactly how the two suites above stayed red on `main` across multiple releases without anyone noticing. The new job would have failed the PR that drifted the constants and forced the test update at the source.
+
 ## [0.4.47.1] - 2026-05-25
 
 ### Fixed
