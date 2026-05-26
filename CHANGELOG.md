@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.47.5] - 2026-05-26
+
+### Tests
+- **Locked the no-lyric-stacking invariant at the consolidation layer that generative + music jobs actually render through.** #343's dynamic-crossfade fix added an alpha-property no-stacking suite, but it replays alpha over the raw `inject_lyric_overlays` output only — it never runs `_collect_absolute_overlays`, which does two more transforms (cross-slot segment merge by `lyric_line_id`, slot-relative→absolute rebasing). A regression there — e.g. `_consolidate_lyric_segments` dropping `fade_out_curve` on merge — would silently revert to the 1−p² curve that stacked text, and the inject-level suite couldn't see it. New tests in `test_lyric_injector_no_stacking.py` replay the Skia alpha curves over the post-consolidation output and assert Level 1 (no double-bright) + Level 2 (no readable same-slot stacking) hold, anchored to the real prod failure: generative job `901fe271`'s overlapping synced "doo doo" lines from track 29da2cbf ("Milky – Just The Way You Are"), across footage-trimmed single-slot and multi-slot beat-synced cuts. A dedicated test pins that the sqrt crossfade curve survives the cross-slot merge. No production code change — the path is already correct on `main`; this guards it against the recurrence that has shipped ~10 times (#282, #285, #287, #303, #306, #307, #324, #332, #336, #343).
+
 ## [0.4.47.4] - 2026-05-26
 
 ### Changed
