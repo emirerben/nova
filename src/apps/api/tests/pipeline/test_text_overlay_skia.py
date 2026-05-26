@@ -1264,7 +1264,22 @@ def test_real_milky_overlapping_lines_crossfade_through_burn_pipeline(tmp_workdi
             for i, d in enumerate(slot_durations)
         ]
     }
-    out = inject_lyric_overlays(recipe, cache, 60.0, 75.0, {"enabled": True, "style": "line"})
+    # Realistic `effective_lyrics_config` shape (admin Test tab / generative
+    # path): form-default fade_in_ms=150 + fade_out_ms=250 that PR #343 misread
+    # as user overrides and used to disable its own crossfade (the #344 bug).
+    # The bare {"enabled","style"} config bypasses that path, so use the shape
+    # that actually broke — this asserts the crossfade reaches real pixels even
+    # under the gate-tripping config.
+    effective_cfg = {
+        "style": "line",
+        "enabled": True,
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "pre_roll_s": 0.1,
+        "post_dwell_s": 1.0,
+        "next_line_gap_s": 0.1,
+    }
+    out = inject_lyric_overlays(recipe, cache, 60.0, 75.0, effective_cfg)
     steps = [{"clip_id": f"c{i}", "slot": slot} for i, slot in enumerate(out["slots"])]
     overlays = [
         o

@@ -654,14 +654,44 @@ def test_level1_and_level2_hold_across_grid(gap_s: float, dur_s: float) -> None:
 # prod failure.
 
 
+# The exact `lyrics_config_effective` shape prod feeds `inject_lyric_overlays`
+# (admin Test tab / generative path): form-default fade_in_ms=150 + fade_out_ms=250
+# that PR #343's `_caller_key_set` snapshot misread as user overrides and used to
+# disable its own crossfade (the #344 regression). The bare {"enabled","style"}
+# config bypasses that path entirely — #344's own commit names it as why #343's
+# tests missed the bug. These consolidation + burn tests use the realistic shape
+# so they guard the path that actually broke, not the happy path.
+EFFECTIVE_CFG = {
+    "style": "line",
+    "enabled": True,
+    "fade_in_ms": 150,
+    "fade_out_ms": 250,
+    "pre_roll_s": 0.1,
+    "post_dwell_s": 1.0,
+    "next_line_gap_s": 0.1,
+    "hold_to_next_threshold_ms": 500,
+    "position": "bottom",
+    "text_size": "medium",
+    "font_style": "sans",
+    "outline_px": 2,
+    "text_color": "#FFFFFF",
+    "highlight_color": "#FFFF00",
+}
+
+
 def _inject_and_consolidate(
     lines: list[tuple[str, float, float]],
     best_start_s: float,
     best_end_s: float,
     slot_durations_s: tuple[float, ...],
+    cfg: dict | None = None,
 ) -> list[dict]:
     """Inject, then run the real `_collect_absolute_overlays` consolidation the
-    generative + music render paths use. Returns absolute-time lyric overlays."""
+    generative + music render paths use. Returns absolute-time lyric overlays.
+
+    Defaults to the realistic `effective_lyrics_config` shape (EFFECTIVE_CFG) —
+    the one that tripped PR #343's user-override gate — NOT the bare config that
+    silently bypasses the dynamic post-pass."""
     from app.tasks.template_orchestrate import _collect_absolute_overlays
 
     out = inject_lyric_overlays(
@@ -669,7 +699,7 @@ def _inject_and_consolidate(
         _cache(lines),
         best_start_s,
         best_end_s,
-        {"enabled": True, "style": "line"},
+        dict(cfg or EFFECTIVE_CFG),
     )
     steps = [{"clip_id": f"c{i}", "slot": slot} for i, slot in enumerate(out["slots"])]
     abs_overlays = _collect_absolute_overlays(
@@ -743,8 +773,8 @@ def test_consolidation_carries_fade_out_curve_onto_merged_overlay() -> None:
     only on a crossfade decision — so the spanning line needs a follower.)"""
     overlays = _inject_and_consolidate(
         [
-            ("a line that spans both slots", 60.5, 63.2),  # crosses the 2.5s seam
-            ("the following line here", 63.3, 64.8),  # A crossfades into this
+            ("a line that spans both slots", 60.5, 63.5),  # crosses the 2.5s seam
+            ("the following line here", 63.0, 64.8),  # A crossfades into this
         ],
         60.0,
         65.0,
