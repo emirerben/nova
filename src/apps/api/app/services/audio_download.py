@@ -150,8 +150,7 @@ def _raise_descriptive_error(url: str, raw_error: str) -> None:
         )
     if _UNAVAILABLE_PATTERN.search(raw_error):
         raise DownloadError(
-            "This track is unavailable (private, removed, or deleted). "
-            "Check the URL and try again."
+            "This track is unavailable (private, removed, or deleted). Check the URL and try again."
         )
     # Generic fallback — include raw error for admin debugging
     raise DownloadError(f"Failed to download audio: {raw_error}")
@@ -171,9 +170,13 @@ def _probe_duration(audio_path: str) -> float | None:
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
                 audio_path,
             ],
             capture_output=True,
@@ -185,3 +188,35 @@ def _probe_duration(audio_path: str) -> float | None:
         return float(raw) if raw else None
     except Exception:
         return None
+
+
+def probe_has_audio_stream(audio_path: str) -> bool:
+    """Return True iff ffprobe finds at least one audio stream in *audio_path*.
+
+    Defense-in-depth for the browser-side ingest path: the extension uploads
+    arbitrary bytes via signed PUT, and we want to reject anything that isn't
+    actually decodable audio (e.g., a renamed `.mp4` with no audio track, or
+    a stray garbage payload) before dispatching the Celery analysis task.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                audio_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        return "audio" in result.stdout.lower()
+    except Exception:
+        return False

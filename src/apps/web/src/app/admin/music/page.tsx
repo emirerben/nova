@@ -6,10 +6,19 @@ import {
   adminListMusicTracks,
   adminCreateMusicTrack,
   adminUploadMusicTrack,
+  detectExtension,
+  extensionIngest,
+  ExtensionDedupError,
+  type IngestProgress,
   type MusicTrackListItem,
 } from "@/lib/music-api";
 
 const STATUS_COLORS: Record<string, string> = {
+  // "pending" = init created the row but bytes haven't landed in GCS yet.
+  // Distinct color so admins don't confuse this with "queued" (which means
+  // Celery has the work and analysis is in flight). Amber communicates
+  // "waiting on something external (the browser upload)".
+  pending: "bg-amber-900 text-amber-300",
   queued: "bg-zinc-700 text-zinc-300",
   analyzing: "bg-blue-900 text-blue-300",
   ready: "bg-green-900 text-green-300",
@@ -30,6 +39,12 @@ export default function AdminMusicPage() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
 
+  // Browser-extension ingest state. Detection runs once on mount; the button
+  // stays disabled with an "Install extension" hint when not reachable.
+  const [extensionAvailable, setExtensionAvailable] = useState<boolean | null>(null);
+  const [extProgress, setExtProgress] = useState<IngestProgress | null>(null);
+  const [extIngesting, setExtIngesting] = useState(false);
+
   async function loadTracks() {
     setLoading(true);
     try {
@@ -46,6 +61,45 @@ export default function AdminMusicPage() {
   useEffect(() => {
     loadTracks();
   }, []);
+
+  useEffect(() => {
+    // One-shot detection. If the user installs the extension mid-session they
+    // can hit "Recheck" — we don't poll, polling burns the extension's runtime
+    // wakeup budget for no reason.
+    detectExtension().then(setExtensionAvailable);
+  }, []);
+
+  async function handleExtensionIngest() {
+    if (!url.trim()) {
+      setCreateError("Enter a YouTube URL first");
+      return;
+    }
+    setExtIngesting(true);
+    setCreateError(null);
+    setExtProgress({ stage: "extension_check" });
+    try {
+      await extensionIngest(
+        { url: url.trim(), title: title || undefined, artist: artist || undefined },
+        (p) => setExtProgress(p),
+      );
+      setUrl("");
+      setTitle("");
+      setArtist("");
+      setExtProgress(null);
+      await loadTracks();
+    } catch (e: unknown) {
+      if (e instanceof ExtensionDedupError) {
+        setCreateError(
+          `Already ingested in the last 24h (status: ${e.existing_status}). ` +
+            `Existing track: ${e.existing_track_id}`,
+        );
+      } else {
+        setCreateError(e instanceof Error ? e.message : "Extension ingest failed");
+      }
+    } finally {
+      setExtIngesting(false);
+    }
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -148,19 +202,71 @@ export default function AdminMusicPage() {
             />
           </div>
           {createError && <p className="text-red-400 text-sm mt-2">{createError}</p>}
-          <button
-            type="submit"
-            disabled={creating || (addMode === "upload" ? !file : !url.trim())}
-            className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
-          >
-            {creating
-              ? addMode === "upload" ? "Uploading..." : "Downloading..."
-              : addMode === "upload" ? "Upload & analyze" : "Add track"}
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="submit"
+              disabled={
+                creating ||
+                extIngesting ||
+                (addMode === "upload" ? !file : !url.trim())
+              }
+              className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
+            >
+              {creating
+                ? addMode === "upload" ? "Uploading..." : "Downloading..."
+                : addMode === "upload" ? "Upload & analyze" : "Add track (server)"}
+            </button>
+
+            {addMode === "url" && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleExtensionIngest}
+                  disabled={
+                    creating ||
+                    extIngesting ||
+                    !url.trim() ||
+                    extensionAvailable === false
+                  }
+                  title={
+                    extensionAvailable === false
+                      ? "Nova extension not detected — install it to ingest from your browser"
+                      : "Pull audio via the Nova Chrome extension (your IP + your YouTube cookies)"
+                  }
+                  className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
+                >
+                  {extIngesting ? "Ingesting..." : "Ingest via extension"}
+                </button>
+                {extensionAvailable === false && (
+                  <a
+                    href="/admin/extension/install"
+                    className="text-xs text-emerald-400 hover:text-emerald-300 underline"
+                  >
+                    Install Nova extension
+                  </a>
+                )}
+                {extensionAvailable === null && (
+                  <span className="text-xs text-zinc-500">Detecting extension…</span>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* 3-stage progress UI for the extension flow. NEVER a single spinner —
+              admins need to see whether we're pulling from YouTube (their IP),
+              uploading bytes to Nova, or waiting on Celery. Conflating those into
+              "Processing..." has historically caused tab-close panic. */}
+          {extProgress && (
+            <div className="mt-3 bg-zinc-800/60 border border-zinc-700 rounded-lg p-3 text-xs">
+              <ExtensionProgressBar progress={extProgress} />
+            </div>
+          )}
         </form>
       </div>
 
       {/* Track list */}
+      {/* (Progress widget is defined below the main component to keep
+          the page render free of inline JSX-defined components.) */}
       {loading ? (
         <p className="text-zinc-400">Loading…</p>
       ) : error ? (
@@ -210,6 +316,69 @@ export default function AdminMusicPage() {
             </Link>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Extension ingest progress UI ─────────────────────────────────────────────
+//
+// Three discrete stages, each clearly labeled with what's happening on whose
+// machine. The plan calls these out as non-negotiable: a single spinner causes
+// admins to close the tab during the upload phase (their internet, not ours).
+
+const STAGE_LABELS: Record<IngestProgress["stage"], string> = {
+  extension_check: "Checking extension…",
+  extracting: "Downloading from YouTube (your browser, your IP)",
+  uploading: "Uploading to Nova (your → our GCS bucket)",
+  confirming: "Verifying upload on the server",
+  analyzing: "Analyzing (beat detect, sections, classifier)",
+  ready: "Ready",
+  failed: "Failed",
+};
+
+const STAGE_ORDER: IngestProgress["stage"][] = [
+  "extracting",
+  "uploading",
+  "analyzing",
+];
+
+function ExtensionProgressBar({ progress }: { progress: IngestProgress }) {
+  const currentIdx = STAGE_ORDER.indexOf(progress.stage);
+  const isFailed = progress.stage === "failed";
+  const isReady = progress.stage === "ready";
+  return (
+    <div>
+      <div className="flex items-center gap-2 font-mono">
+        {STAGE_ORDER.map((stage, i) => {
+          const done = isReady || (currentIdx > i && !isFailed);
+          const active = currentIdx === i && !isFailed && !isReady;
+          const cls = isFailed
+            ? "bg-red-700 text-red-200"
+            : done
+            ? "bg-emerald-700 text-emerald-100"
+            : active
+            ? "bg-amber-600 text-amber-50 animate-pulse"
+            : "bg-zinc-700 text-zinc-400";
+          return (
+            <div key={stage} className="flex items-center gap-2">
+              <span className={`px-2 py-0.5 rounded ${cls}`}>
+                {i + 1}. {STAGE_LABELS[stage]}
+                {active && progress.percent != null
+                  ? ` (${Math.round(progress.percent * 100)}%)`
+                  : ""}
+              </span>
+              {i < STAGE_ORDER.length - 1 && (
+                <span className="text-zinc-600">→</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {progress.detail && (
+        <p className={`mt-2 ${isFailed ? "text-red-300" : "text-zinc-400"}`}>
+          {progress.detail}
+        </p>
       )}
     </div>
   );
