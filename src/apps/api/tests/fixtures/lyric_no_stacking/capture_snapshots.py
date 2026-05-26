@@ -56,7 +56,13 @@ def _extract_overlays(recipe: dict) -> list[dict]:
     ]
 
 
-def capture(name: str, lines: list[tuple[str, float, float]], slot_durations_s: list[float], *, cfg_extra: dict | None = None) -> dict:
+def capture(
+    name: str,
+    lines: list[tuple[str, float, float]],
+    slot_durations_s: list[float],
+    *,
+    cfg_extra: dict | None = None,
+) -> dict:
     cfg = {"enabled": True, "style": "line"}
     if cfg_extra:
         cfg.update(cfg_extra)
