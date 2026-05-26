@@ -81,7 +81,7 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.overlay_format_matcher",
         prompt_id="match_overlay_format",
-        prompt_version="2026-05-24",
+        prompt_version="2026-05-26",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,

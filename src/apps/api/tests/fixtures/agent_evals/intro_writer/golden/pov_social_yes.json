@@ -1,0 +1,41 @@
+{
+  "agent": "nova.compose.intro_writer",
+  "prompt_version": "2026-05-26",
+  "input": {
+    "hero_clip": {
+      "clip_id": "clip_001",
+      "media_type": "video",
+      "duration_s": 4.0,
+      "subject": "a group of new friends laughing and pulling the camera person into a spontaneous adventure",
+      "hook_text": "",
+      "hook_score": 8.0,
+      "energy": 7.5,
+      "description": "handheld POV, fast candid moments, strangers becoming friends, warm welcoming energy"
+    },
+    "hero_transcript": "come on let's just go, are you in? yes? let's do it",
+    "tone": "warm",
+    "form": {"effect": "karaoke-line", "size_class": "jumbo", "position": "center"},
+    "exemplars": [
+      {
+        "id": "pov-social-karaoke-01",
+        "content_profile": "first-person POV meeting people, group travel, candid social moments, open and welcoming energy",
+        "effect": "karaoke-line",
+        "text": "POV: you found the people who say yes",
+        "highlight_word": "yes",
+        "position": "center",
+        "size_class": "jumbo",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A"
+      }
+    ]
+  },
+  "raw_text": "{\"text\": \"POV: the strangers who said yes\", \"highlight_word\": \"yes\"}",
+  "output": {
+    "text": "POV: the strangers who said yes",
+    "highlight_word": "yes"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "social POV footage → original 'POV:' second-person hook grounded in THIS clip (strangers becoming friends), in the reference voice (cf. @smeggs_ 'POV: you found people who say yes'); NOT a copy of the exemplar"
+  }
+}

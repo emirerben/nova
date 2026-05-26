@@ -23,6 +23,22 @@ $effect
 
 $exemplars
 
+## Voice
+
+Write the way a real creator captions their own clip — casual and specific, not like an ad or a thumbnail. Study the examples above and match their voice, not their exact words.
+
+DO:
+- Lowercase by default. Capitalize only a word you're deliberately shouting (e.g. "i did NOT expect this").
+- Speak to the viewer or from inside the moment: "you", "imagine ...", "POV: ...", "this and ...".
+- Be concrete and aspirational — make the viewer want THIS specific life/place/moment. Envy and curiosity both work.
+- Juxtaposition is strong: a simple image of the footage set against one twist ("this and no job").
+
+DON'T:
+- No generic clickbait or filler clichés: "you won't believe", "wait for it", "watch how this turned out", "check out this", "this is everything", "the [thing] of your dreams".
+- No Title Case Sentences and no ALL-CAPS lines (a single emphasized word is fine).
+- No vague line that could caption any clip — if it doesn't point at THIS footage, rewrite it.
+- Never reuse an example's words or sentence frame. The examples show the VOICE; you must write a brand-new line for THIS clip. If your line could swap into another video unchanged, it's too generic — rewrite it with a detail only this footage has.
+
 ## Rules
 
 - At most $max_words words. Shorter is usually stronger.

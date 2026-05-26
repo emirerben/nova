@@ -1,5 +1,5 @@
 {
-  "version": "2026-05-24",
+  "version": "2026-05-26",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -7,6 +7,17 @@
       "effect": "karaoke-line",
       "text": "i did NOT expect this to happen",
       "highlight_word": "NOT",
+      "position": "center",
+      "size_class": "jumbo",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A"
+    },
+    {
+      "id": "pov-social-karaoke-01",
+      "content_profile": "first-person POV meeting people, group travel, candid social moments, open and welcoming energy",
+      "effect": "karaoke-line",
+      "text": "POV: you found the people who say yes",
+      "highlight_word": "yes",
       "position": "center",
       "size_class": "jumbo",
       "text_color": "#FFFFFF",
@@ -24,11 +35,33 @@
       "highlight_color": "#7FD1FF"
     },
     {
+      "id": "travel-aspirational-fadein-02",
+      "content_profile": "immersive travel arrival, walking into a striking place, wanderlust and envy",
+      "effect": "fade-in",
+      "text": "imagine ending up somewhere like this",
+      "highlight_word": "imagine",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#7FD1FF"
+    },
+    {
+      "id": "lifestyle-freedom-static-01",
+      "content_profile": "slow-living, freedom, working-from-anywhere, beach or remote scenery, quietly aspirational",
+      "effect": "static",
+      "text": "this and no job",
+      "highlight_word": "no",
+      "position": "center",
+      "size_class": "xlarge",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A"
+    },
+    {
       "id": "transformation-before-after-karaoke-01",
       "content_profile": "before/after or transformation montage, process to payoff, satisfying result",
       "effect": "karaoke-line",
-      "text": "watch how this turned out",
-      "highlight_word": "turned",
+      "text": "this is what changed everything",
+      "highlight_word": "everything",
       "position": "center",
       "size_class": "jumbo",
       "text_color": "#FFFFFF",
@@ -49,8 +82,8 @@
       "id": "foodie-craving-popin-01",
       "content_profile": "food close-ups, cooking or eating, appetizing and indulgent",
       "effect": "pop-in",
-      "text": "this is dangerously good",
-      "highlight_word": "dangerously",
+      "text": "the bite you'll think about all week",
+      "highlight_word": "week",
       "position": "bottom",
       "size_class": "large",
       "text_color": "#FFFFFF",
