@@ -592,3 +592,15 @@ All items completed 2026-04-06:
 **How:** In the LyricsTimingPanel (or wherever `best_start_s`/`best_end_s` are edited), add buttons "Snap start to previous line / next line" and "Snap end to previous line / next line." Compute snap targets from `MusicTrack.lyrics_cached.lines` (the same source the runtime guard uses). Show a preview list of which lyric lines will be included with the proposed bounds.
 **Effort:** S (human: ~half day / CC: ~1 hour)
 **Priority:** P3
+
+### LyricsTimingPanel: per-field dirty tracking + "auto" placeholders for untouched fade fields
+**What:** After PR #344 (§F of plans/mirea-we-ve-lost-memoized-shannon.md), the admin Test tab's `LyricsTimingPanel.tsx` fade_in_ms / fade_out_ms sliders only affect solo / last-line fades and the kill-switch-off legacy path. The sliders are now labeled "Fade in (solo / legacy only)" and a small inline note explains the contract, but the form still submits every field on every render (form defaults included). That's how PR #343 was empirically tricked into thinking the operator pinned form defaults as overrides. Today the post-pass ignores these for inter-line transitions, so the bug is dormant — but the UX is still misleading.
+**Why:** Per-field dirty tracking removes a whole class of "the operator didn't pin this, the UI did" misunderstandings — both for humans reading the `lyrics_config_effective` on a Job row and for future scheduler code that might re-add cfg-key-based logic. Also shrinks the saved Job blob.
+**How:** In `LyricsTimingPanel.tsx`:
+  1. Track per-field `dirty` state (initially false, flips true on first user change).
+  2. In `onSubmit` and `saveDefaults`, only include fields where `dirty[key] === true`.
+  3. Display "auto" placeholder text on untouched fields (faded zinc) instead of the slider's numeric default.
+  4. Add a "Reset to auto" affordance that clears dirty state for a field (round-trip back to "auto").
+  5. Backend `LyricsConfigOverride` schema in `src/apps/api/app/schemas/lyrics_config_override.py` already accepts Optional fields, so no API change is required.
+**Effort:** S (human: ~2-3h / CC: ~30 min)
+**Priority:** P3

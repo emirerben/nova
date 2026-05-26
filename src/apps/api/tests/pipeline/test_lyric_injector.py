@@ -456,9 +456,16 @@ def test_line_clamps_pre_roll_to_section_start() -> None:
     assert ov["start_s"] == pytest.approx(0.0, abs=1e-3)
 
 
-def test_line_post_dwell_extends_into_overlap_budget() -> None:
+def test_line_post_dwell_extends_into_overlap_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     """Dense lines extend into the fade-bound overlap budget."""
     recipe = _make_recipe([10.0])
+    # Pins the LEGACY formula geometry. Under the dynamic crossfade default
+    # (§F), the post-pass overrides caller-set fades and re-anchors the
+    # window. The legacy `min(max_overlap_s, fade_in_s + fade_out_s)`
+    # additive cap is only reachable via the kill switch.
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "lyric_dynamic_crossfade_enabled", False)
     # First line ends at 2.0; second line starts at 2.3.
     # Natural post-dwell would end first line at 2.0 + 2.0 = 4.0.
     # next_visual_start = 2.3 - 0.40 = 1.90.
@@ -552,7 +559,12 @@ def test_line_post_dwell_capped_by_static_overlap_budget() -> None:
     assert visual_overlap_s <= lyric_injector._LINE_MAX_OVERLAP_S + 1e-9
 
 
-def test_line_overlap_bounded_by_short_fades() -> None:
+def test_line_overlap_bounded_by_short_fades(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LEGACY-PATH assertion (kill-switch off). Under the §F default the
+    dynamic post-pass overrides caller-set fades and recomputes overlap."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "lyric_dynamic_crossfade_enabled", False)
     recipe = _make_recipe([10.0])
     cache = _make_lyrics_cache(
         [
@@ -583,8 +595,15 @@ def test_line_overlap_bounded_by_short_fades() -> None:
     assert visual_overlap_s == pytest.approx(0.1, abs=1e-3)
 
 
-def test_line_zero_fades_yields_zero_visual_overlap_when_it_does_not_cut_audio() -> None:
-    """Zero fades cap against visual start when the audio span still fits."""
+def test_line_zero_fades_yields_zero_visual_overlap_when_it_does_not_cut_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LEGACY-PATH assertion (kill-switch off). Zero fades collapse the
+    legacy additive cap to 0 — only meaningful when the dynamic post-pass
+    is disabled, since the post-pass would override the 0 anyway."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "lyric_dynamic_crossfade_enabled", False)
     recipe = _make_recipe([10.0])
     cache = _make_lyrics_cache(
         [
@@ -613,7 +632,15 @@ def test_line_zero_fades_yields_zero_visual_overlap_when_it_does_not_cut_audio()
     assert ov1["start_s"] >= ov0["end_s"]
 
 
-def test_tight_lines_keep_their_fades() -> None:
+def test_tight_lines_keep_their_fades_with_kill_switch_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LEGACY-PATH assertion (kill-switch off). Caller-set fades are only
+    honored verbatim when the dynamic post-pass is off. Under the §F
+    default, caller fades are replaced by the matched-window math."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "lyric_dynamic_crossfade_enabled", False)
     recipe = _make_recipe([10.0])
     cache = _make_lyrics_cache(
         [
@@ -825,10 +852,21 @@ def test_line_next_line_gap_never_cuts_current_audio() -> None:
     assert ov0["end_s"] == pytest.approx(2.0, abs=1e-3)
 
 
-def test_line_continues_across_short_music_slots_until_audio_end() -> None:
+def test_line_continues_across_short_music_slots_until_audio_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Regression for prod job 5390c7ef-a3eb-448d-bb80-b6c1e292d16c:
     # the line starts near the end of slot 2 but the vocal continues through
     # slots 3 and 4. It must not disappear at slot 2's clip cut.
+    #
+    # Test intent is cross-slot segmenting, not fade values. Pin the
+    # kill-switch off so the caller-set fade_in_ms=150 / fade_out_ms=250
+    # values are honored as-is (under §F the dynamic post-pass would
+    # override them with the matched-window math, which would change the
+    # segment fade_ms assertions without changing the cross-slot intent).
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "lyric_dynamic_crossfade_enabled", False)
     recipe = _make_recipe([6.997, 2.176, 2.155, 1.493, 2.027, 1.579])
     cache = _make_lyrics_cache(
         [

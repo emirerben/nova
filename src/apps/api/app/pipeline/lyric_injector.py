@@ -197,16 +197,21 @@ def inject_lyric_overlays(
         log.info("lyric_inject_skipped_no_cache", reason="lyrics_cached missing")
         return recipe_dict
 
-    # Snapshot the keys that came from the caller's lyrics_config — BEFORE
-    # `_apply_style_set_defaults` writes its own timing defaults into cfg.
-    # The dynamic-crossfade post-pass in `_inject_line` uses this to tell
-    # genuine user overrides (admin Test tab pinning fade_in_ms=200) from
-    # style-set baseline timings (every `lyric_line` style set in
-    # assets/style_sets/style-sets.json ships with fade_in_ms + fade_out_ms
-    # in its `timing` block). Without this snapshot, every production track
-    # that resolves a style set looks like it has user-pinned fades, which
-    # disables the dynamic post-pass for nearly every real job.
-    cfg["_caller_key_set"] = frozenset(k for k, v in cfg.items() if v is not None)
+    # NOTE: PR #343 introduced a `_caller_key_set` snapshot here to distinguish
+    # "operator pinned fade_in_ms via the admin Test tab" from "style-set
+    # baseline timings written by _apply_style_set_defaults". Empirically that
+    # distinction did not exist in production: the admin Test tab UI submits
+    # every form field on every render, including the prefilled defaults
+    # `fade_in_ms=150` / `fade_out_ms=250`. `create_admin_lyrics_preview` in
+    # routes/admin_music.py merges them into the Job's lyrics_config_effective
+    # via effective_lyrics_config(), and the lyrics_preview_task passes that
+    # dict to inject_lyric_overlays. The snapshot then saw "user overrides"
+    # for every preview/render and silently disabled the dynamic crossfade
+    # post-pass — restoring the exact stacking PR #343 was supposed to fix.
+    # See plans/mirea-we-ve-lost-memoized-shannon.md §F. The gate is removed:
+    # when `LYRIC_DYNAMIC_CROSSFADE_ENABLED` is on, the dynamic post-pass
+    # fires for every consecutive pair regardless of what cfg contains.
+    # Operators who genuinely want legacy behavior flip the kill switch.
 
     # Style set: when one is chosen (by the LyricStyleSelectorAgent at job time
     # or pinned in lyrics_config), it supplies the lyric style + styling
@@ -685,40 +690,26 @@ def _inject_line(
 
     max_overlap_s = max(0.0, float(cfg.get("max_overlap_s", _LINE_MAX_OVERLAP_S)))
 
-    # User-override detection. Track whether the caller pinned fade values
-    # explicitly. The dynamic post-pass MUST NOT override these on either
-    # side — see plans/... §1b "PARTIAL-OVERRIDE POLICY" and the four-case
-    # matrix in test_partial_overrides_skip_dynamic_scaling. AND the §3
-    # `dynamic_max_overlap` widening must also defer to legacy when the
-    # user overrode fades — otherwise the section_end computation expands
-    # past what their pinned fade durations can cover, re-introducing the
-    # exact stacking the dynamic path is supposed to prevent.
+    # Kill-switch gate. ONE switch, ONE meaning: when
+    # `LYRIC_DYNAMIC_CROSSFADE_ENABLED` is True (default), the dynamic
+    # post-pass below ALWAYS fires for every consecutive line pair —
+    # regardless of what cfg contains for fade_in_ms / fade_out_ms / etc.
+    # When False, the scheduler reproduces pre-fix behavior byte-identically:
+    # legacy additive `min(max_overlap_s, fade_in_s + fade_out_s)` overlap
+    # cap, solo-default fade durations, no `fade_out_curve` key.
     #
-    # Use the caller-key snapshot captured BEFORE `_apply_style_set_defaults`
-    # ran (set in inject_lyric_overlays). Reading cfg directly here would
-    # treat every style-set baseline timing as a user override — every
-    # shipped `lyric_line` style set defines fade_in_ms + fade_out_ms in
-    # its `timing` block, so without the snapshot the dynamic post-pass
-    # NEVER fires for any production track that resolves a style set.
-    _caller_keys = cfg.get("_caller_key_set") or frozenset()
-    _fade_in_user_override = "fade_in_ms" in _caller_keys or "fade_in_s" in _caller_keys
-    _fade_out_user_override = "fade_out_ms" in _caller_keys or "fade_out_s" in _caller_keys
-    _any_user_override = _fade_in_user_override or _fade_out_user_override
-
-    # Kill-switch gate. When the dynamic-crossfade post-pass is OFF, the
-    # scheduler must reproduce pre-fix behavior byte-identically — including
-    # the legacy additive `min(max_overlap_s, fade_in_s + fade_out_s)`
-    # overlap cap. When ON, the post-pass below bounds the actual emitted
-    # window per pair (re-anchored to match the crossfade duration exactly),
-    # so this term only needs to honor the caller-configurable max_overlap_s.
-    # Also OFF when the caller pinned fades — see comment above.
-    # See plans/mirea-we-ve-lost-memoized-shannon.md §1f and the
-    # `test_kill_switch_disabled_reproduces_pre_fix_output` snapshot test.
+    # PR #343 had a second condition here (`and not _any_user_override`)
+    # that tried to honor "operator pinned fade values via admin Test tab".
+    # That distinction did not exist in production — the admin UI submits
+    # every form field with default values on every render, which
+    # effective_lyrics_config() merged into the Job row's
+    # lyrics_config_effective. The override gate read those defaults as
+    # operator intent and silently disabled the dynamic post-pass, exactly
+    # restoring the stacking bug PR #343 was supposed to fix. See plan §F.
     from app.config import settings as _app_settings  # noqa: PLC0415
 
-    _dynamic_crossfade_enabled = (
-        bool(getattr(_app_settings, "lyric_dynamic_crossfade_enabled", True))
-        and not _any_user_override
+    _dynamic_crossfade_enabled = bool(
+        getattr(_app_settings, "lyric_dynamic_crossfade_enabled", True)
     )
 
     if _dynamic_crossfade_enabled:
@@ -727,8 +718,7 @@ def _inject_line(
         # Legacy additive cap. When a caller explicitly passes
         # fade_in_ms=0 / fade_out_ms=0 this collapses to 0 → no overlap
         # (intended pre-fix kill switch). Preserved exactly so the
-        # kill-switch-off path is a true rollback and so user-overridden
-        # fades produce the geometry they're sized for.
+        # kill-switch-off path is a true byte-identical rollback.
         dynamic_max_overlap = min(max_overlap_s, fade_in_s + fade_out_s)
 
     n = len(section_lines)
@@ -812,27 +802,25 @@ def _inject_line(
             # legacy formula is implicitly robust via gap_cap; the dynamic
             # post-pass needs explicit protection.
             if nxt.line_start_s <= cur.line_start_s:
-                continue
-
-            natural_overlap_s = max(0.0, cur.section_end_s - nxt.section_start_s)
-            if natural_overlap_s <= 0:
-                # Sparse pair — gap exceeded pre_roll + post_dwell. Solo defaults.
-                continue
-
-            # ANY explicit user override on EITHER side skips this pair.
-            # Mixing override + dynamic across sides would break the mirror
-            # invariant. Operator intent wins; defaults defer.
-            if _any_user_override:
+                # Trace the skip so non-monotonic input from a future caller
+                # surfaces in the admin job-debug view instead of vanishing
+                # silently into a "post-pass didn't run, why is it stacking?"
+                # mystery. Cheap, zero-cost when never hit.
                 record_pipeline_event(
                     "overlay",
                     "lyric_crossfade_skipped",
                     {
                         "line_idx": i,
-                        "reason": "user_override",
-                        "fade_in_user_override": _fade_in_user_override,
-                        "fade_out_user_override": _fade_out_user_override,
+                        "reason": "non_monotonic_line_start_s",
+                        "cur_line_start_s": cur.line_start_s,
+                        "nxt_line_start_s": nxt.line_start_s,
                     },
                 )
+                continue
+
+            natural_overlap_s = max(0.0, cur.section_end_s - nxt.section_start_s)
+            if natural_overlap_s <= 0:
+                # Sparse pair — gap exceeded pre_roll + post_dwell. Solo defaults.
                 continue
 
             raw_crossfade_ms = int(round(min(max_overlap_s, natural_overlap_s) * 1000))
@@ -1010,8 +998,6 @@ def _inject_line(
                         "natural_overlap_ms": c["natural_overlap_ms"],
                         "raw_crossfade_ms": c.get("raw_crossfade_ms"),
                         "applied_crossfade_ms": crossfade_ms,
-                        "fade_in_user_override": False,
-                        "fade_out_user_override": False,
                         "fade_out_curve": _FADE_OUT_CURVE_SQRT,
                     },
                 )
