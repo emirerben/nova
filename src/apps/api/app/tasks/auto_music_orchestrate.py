@@ -428,14 +428,16 @@ def _run_auto_music_job(job_id: str) -> None:
 # ── Candidate loading + matcher invocation ────────────────────────────────────
 
 
-def _load_matcher_candidates(n_clips: int) -> list[MusicTrack]:
-    """Return published, current-label-version tracks the matcher may pick from.
+def _load_matcher_candidates(n_clips: int, *, require_published: bool = True) -> list[MusicTrack]:
+    """Return analyzed, current-version tracks the matcher may pick from.
 
     Two filters:
-      - DB-side: ``published_at IS NOT NULL`` AND ``ai_labels IS NOT NULL``
-        AND ``label_version = CURRENT_LABEL_VERSION`` AND
+      - DB-side: ``ai_labels IS NOT NULL`` AND
+        ``label_version = CURRENT_LABEL_VERSION`` AND
         ``best_sections IS NOT NULL`` AND
-        ``section_version = CURRENT_SECTION_VERSION``.
+        ``section_version = CURRENT_SECTION_VERSION`` AND
+        ``analysis_status = 'ready'``. ``published_at IS NOT NULL`` is added
+        only when ``require_published`` is set.
       - Python-side: drop tracks whose slot count is degenerate after
         ``consolidate_slots(slot_count, n_clips)`` — see Critical risk #4
         in the plan. We approximate this by checking that the track's
@@ -444,16 +446,24 @@ def _load_matcher_candidates(n_clips: int) -> list[MusicTrack]:
         and skip. The exact gate uses the matcher's slot_count hint, not
         the post-consolidation count, because consolidate_slots needs the
         clip_metas (which we have) but we want a cheap pre-filter here.
+
+    ``require_published=False`` is the generative path: generative edits
+    auto-pick a song (the user never browses the gallery), so the
+    public-gallery publish gate shouldn't constrain them — any analyzed,
+    current-version track is fair game. Auto-music keeps the default so its
+    candidate set stays published-only.
     """
     with _sync_session() as db:
-        stmt = select(MusicTrack).where(
-            MusicTrack.published_at.is_not(None),
+        where_clauses = [
             MusicTrack.ai_labels.is_not(None),
             MusicTrack.label_version == CURRENT_LABEL_VERSION,
             MusicTrack.best_sections.is_not(None),
             MusicTrack.section_version == CURRENT_SECTION_VERSION,
             MusicTrack.analysis_status == "ready",
-        )
+        ]
+        if require_published:
+            where_clauses.append(MusicTrack.published_at.is_not(None))
+        stmt = select(MusicTrack).where(*where_clauses)
         tracks: list[MusicTrack] = list(db.execute(stmt).scalars().all())
         # Detach: the session closes before the orchestrator finishes,
         # so we eagerly resolve the few attributes we'll need later.

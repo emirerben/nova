@@ -43,7 +43,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
-from app.agents._schemas.song_sections import SongSection, cap_song_section_duration
+from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION
+from app.agents._schemas.song_sections import (
+    CURRENT_SECTION_VERSION,
+    SongSection,
+    cap_song_section_duration,
+)
 from app.config import settings
 from app.database import get_db
 from app.models import Job, MusicTrack
@@ -69,6 +74,7 @@ from app.services.lyrics_config_effective import (
     normalize_lyrics_config,
 )
 from app.services.lyrics_config_validation import validate_lyrics_config_dict
+from app.services.music_sections import current_best_section_for_track
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -163,6 +169,13 @@ class MusicTrackResponse(BaseModel):
     # spot stale rows scored under an older prompt version at a glance.
     best_sections: list[SongSection] | None
     section_version: str | None
+    # Song-classifier coverage. `label_version` mirrors CURRENT_LABEL_VERSION;
+    # `has_ai_labels` is true when the classifier blob is present at all.
+    # `generative_matchable` is the at-a-glance "can generative auto-pick this
+    # track?" signal — see _compute_generative_matchable.
+    label_version: str | None
+    has_ai_labels: bool
+    generative_matchable: bool
     created_at: datetime
 
 
@@ -177,6 +190,10 @@ class MusicTrackListItem(BaseModel):
     beat_count: int
     published_at: datetime | None
     archived_at: datetime | None
+    label_version: str | None
+    section_version: str | None
+    has_ai_labels: bool
+    generative_matchable: bool
     created_at: datetime
 
 
@@ -228,6 +245,28 @@ class LyricsPreviewStatusResponse(BaseModel):
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
+def _compute_generative_matchable(t: MusicTrack) -> bool:
+    """Mirror the generative candidate gate (minus the per-job slot-count fit).
+
+    Replicates the DB filter in
+    ``auto_music_orchestrate._load_matcher_candidates(require_published=False)``
+    plus its rank-1-section check, so an admin can see at a glance whether a
+    track is eligible for generative auto-match. The ``published_at`` clause is
+    intentionally omitted (generative ignores it), as is the ``n_clips``
+    slot-count heuristic — that depends on the user's clip count, which an admin
+    row has no notion of. So this means "eligible before clip-count fit," which
+    is the right observability signal.
+    """
+    return (
+        t.analysis_status == "ready"
+        and t.ai_labels is not None
+        and t.label_version == CURRENT_LABEL_VERSION
+        and t.best_sections is not None
+        and t.section_version == CURRENT_SECTION_VERSION
+        and current_best_section_for_track(t) is not None
+    )
+
+
 def _to_response(t: MusicTrack) -> MusicTrackResponse:
     beats = t.beat_timestamps_s or []
     # Coerce best_sections per-row. SongSection has strict Literal unions; one
@@ -276,6 +315,9 @@ def _to_response(t: MusicTrack) -> MusicTrackResponse:
         lyrics_extracted_at=t.lyrics_extracted_at,
         best_sections=coerced_sections,
         section_version=t.section_version,
+        label_version=t.label_version,
+        has_ai_labels=t.ai_labels is not None,
+        generative_matchable=_compute_generative_matchable(t),
         created_at=t.created_at,
     )
 
@@ -290,6 +332,10 @@ def _to_list_item(t: MusicTrack, beat_count: int) -> MusicTrackListItem:
         beat_count=beat_count,
         published_at=t.published_at,
         archived_at=t.archived_at,
+        label_version=t.label_version,
+        section_version=t.section_version,
+        has_ai_labels=t.ai_labels is not None,
+        generative_matchable=_compute_generative_matchable(t),
         created_at=t.created_at,
     )
 
@@ -673,6 +719,13 @@ async def list_music_tracks(
             MusicTrack.published_at,
             MusicTrack.archived_at,
             MusicTrack.created_at,
+            # Needed by _compute_generative_matchable / list matchability badge.
+            # ai_labels + best_sections are JSONB blobs, but the admin list is
+            # paginated (<=200 rows) so the extra payload is acceptable.
+            MusicTrack.ai_labels,
+            MusicTrack.label_version,
+            MusicTrack.best_sections,
+            MusicTrack.section_version,
         )
     )
 
