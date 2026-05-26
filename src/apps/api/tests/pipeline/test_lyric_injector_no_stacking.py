@@ -220,46 +220,105 @@ def test_crossfade_alpha_sum_is_unit_partition_pure_pairs_only() -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# User-override matrix — four cases (plan §1b PARTIAL-OVERRIDE POLICY)
+# Kill-switch ON ⇒ dynamic post-pass ALWAYS fires (plan §F)
+#
+# Pre-§F policy: cfg containing fade_in_ms or fade_out_ms was treated as
+# operator intent and disabled the post-pass. Empirically the "operator
+# intent" signal does not exist in production — the admin Test tab UI
+# submits every form field with default values on every render, and
+# effective_lyrics_config() merges them into the Job row's
+# lyrics_config_effective before inject_lyric_overlays sees it. The
+# override gate then silently disabled the dynamic post-pass for every
+# preview job in the wild — restoring the exact stacking PR #343 was
+# supposed to fix.
+#
+# New contract: while LYRIC_DYNAMIC_CROSSFADE_ENABLED is True, the
+# dynamic post-pass fires for every consecutive pair, regardless of what
+# cfg contains. The operator's only rollback is the kill switch
+# (process-wide flag flip), which IS still byte-identical to pre-fix
+# `main` — pinned by test_kill_switch_disabled_reproduces_pre_fix_output.
 # ──────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "fade_in_override, fade_out_override, expect_crossfade",
-    [
-        (None, None, True),  # neither — dynamic crossfade fires
-        (175, None, False),  # fade_in only — pair skipped
-        (None, 175, False),  # fade_out only — pair skipped
-        (175, 175, False),  # both — pair skipped
-    ],
-)
-def test_partial_overrides_skip_dynamic_scaling(
-    fade_in_override: int | None, fade_out_override: int | None, expect_crossfade: bool
-) -> None:
-    cfg: dict = {}
-    if fade_in_override is not None:
-        cfg["fade_in_ms"] = fade_in_override
-    if fade_out_override is not None:
-        cfg["fade_out_ms"] = fade_out_override
-
+def test_dynamic_post_pass_fires_regardless_of_explicit_fade_cfg() -> None:
+    """Caller-set fade values in cfg do NOT disable the dynamic post-pass.
+    The matched-window math always wins while the kill switch is on. To
+    restore legacy behavior, flip settings.lyric_dynamic_crossfade_enabled
+    to False (whole-system rollback, byte-identical to pre-fix). See §F."""
     overlays = _inject(
         [
             ("this year we've had to lose", 12.4, 13.0),
             ("our space we've lost", 13.1, 14.3),
         ],
+        cfg_extra={"fade_in_ms": 175, "fade_out_ms": 175},
+    )
+    assert overlays[0].get("fade_out_curve") == "sqrt"
+    assert overlays[0]["fade_out_ms"] == overlays[1]["fade_in_ms"]
+    # The matched value comes from the crossfade math, not the 175 the
+    # caller passed. The caller's value is NOT honored when the post-pass
+    # fires — that's the new contract.
+    assert overlays[0]["fade_out_ms"] != 175
+
+
+def test_post_pass_fires_for_admin_preview_effective_cfg() -> None:
+    """REGRESSION for the PR #343 failure observed on prod job
+    5a71226e-8104-404c-b8d1-b8d1f71a6414 (Mirea lyrics preview).
+
+    The admin Test tab UI submits a LyricsConfigOverride with form-default
+    fade values on every render. `create_admin_lyrics_preview` merges them
+    via `effective_lyrics_config()` and saves the result to the Job row's
+    `assembly_plan["lyrics_config_effective"]`. The lyrics_preview_task
+    then passes that dict to `inject_lyric_overlays`. Under PR #343's
+    `_caller_key_set` snapshot, the presence of `fade_in_ms` /
+    `fade_out_ms` in cfg silently disabled the dynamic post-pass and
+    restored legacy stacking — which the user observed at t≈16s in the
+    rendered MP4 with both 'Our space, we've lost' and 'We've lost
+    dancing' simultaneously readable.
+
+    This fixture is the exact `lyrics_config_effective` shape pulled from
+    the prod DB for that job. The dynamic post-pass MUST fire on it."""
+    cfg = {
+        "style": "line",
+        "enabled": True,
+        # Form-default values the admin UI sent — operator did NOT pin these
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "pre_roll_s": 0.1,
+        "post_dwell_s": 1.0,
+        "next_line_gap_s": 0.1,
+        "hold_to_next_threshold_ms": 500,
+        "position": "bottom",
+        "text_size": "medium",
+        "font_style": "sans",
+        "outline_px": 2,
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFFF00",
+    }
+    # Use the exact temporal-overlap pair from the failing render: L2 ends
+    # at 16.680 but L3 starts at 16.430 (negative audio gap of 250 ms).
+    overlays = _inject(
+        [
+            ("Our space, we've lost", 12.540, 16.680),
+            ("We've lost dancing", 16.430, 17.240),
+        ],
         cfg_extra=cfg,
     )
-    if expect_crossfade:
-        assert overlays[0].get("fade_out_curve") == "sqrt"
-        assert overlays[0]["fade_out_ms"] == overlays[1]["fade_in_ms"]
-    else:
-        assert "fade_out_curve" not in overlays[0], (
-            f"override case must not tag fade_out_curve; got {overlays[0].get('fade_out_curve')!r}"
-        )
-        if fade_in_override is not None:
-            assert overlays[1]["fade_in_ms"] == fade_in_override
-        if fade_out_override is not None:
-            assert overlays[0]["fade_out_ms"] == fade_out_override
+    # The post-pass MUST have fired — this assertion is what fails on
+    # PR #343 and passes after the override-gate drop.
+    assert overlays[0].get("fade_out_curve") == "sqrt", (
+        "Admin-preview effective_lyrics_config shape silently disabled the "
+        "dynamic post-pass on PR #343 — the empirical bug that re-shipped."
+    )
+    assert overlays[0]["fade_out_ms"] == overlays[1]["fade_in_ms"]
+    # Level 2 (no readable stacked text) must hold across the boundary.
+    for t in _event_boundary_times(overlays):
+        active = _active_alphas(overlays, t)
+        for (o1, a1), (o2, a2) in combinations(active, 2):
+            if _same_visual_slot(o1, o2):
+                assert not (a1 > READABLE_ALPHA and a2 > READABLE_ALPHA), (
+                    f"L2 violated at t={t:.3f}s — the regression from PR #343 "
+                    f"is back: A={a1:.2f}, B={a2:.2f}"
+                )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -492,11 +551,11 @@ def test_style_set_defaults_do_not_spoof_user_override(style_set_id: str) -> Non
                 )
 
 
-def test_actual_user_override_in_lyrics_config_still_skips_post_pass() -> None:
-    """The override gate must still fire when the caller (admin Test tab,
-    test fixture) explicitly pins fade values in lyrics_config — even
-    alongside a style_set_id. Sanity: style-set defaults DON'T spoof
-    override, but user-pinned values DO."""
+def test_explicit_cfg_fade_with_style_set_still_fires_post_pass() -> None:
+    """The §F override-gate drop applies regardless of style_set_id. Even
+    when a caller explicitly pins fade_in_ms in cfg AND specifies a style
+    set, the dynamic post-pass still runs and overrides both with the
+    matched-window math. This was the inverse of the PR #343 contract."""
     overlays = _inject(
         [
             ("this year we've had to lose", 12.4, 13.0),
@@ -504,13 +563,13 @@ def test_actual_user_override_in_lyrics_config_still_skips_post_pass() -> None:
         ],
         cfg_extra={
             "style_set_id": "lyric_line_calm",
-            "fade_in_ms": 175,  # user-pinned — beats style-set default
+            "fade_in_ms": 175,
         },
     )
-    assert "fade_out_curve" not in overlays[0], (
-        "explicit user override must skip the post-pass even with a style_set_id"
-    )
-    assert overlays[1]["fade_in_ms"] == 175
+    assert overlays[0].get("fade_out_curve") == "sqrt"
+    assert overlays[0]["fade_out_ms"] == overlays[1]["fade_in_ms"]
+    # Caller's 175 is overridden by the crossfade math — not honored.
+    assert overlays[1]["fade_in_ms"] != 175
 
 
 @pytest.mark.parametrize("gap_s", [0.0, 0.05, 0.1, 0.2, 0.4, 0.8])

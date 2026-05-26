@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.pipeline.lyric_injector import inject_lyric_overlays
 
 
@@ -246,18 +248,29 @@ def test_sparse_pair_never_carries_curve_tag() -> None:
         )
 
 
-def test_user_override_pair_never_carries_curve_tag() -> None:
-    """When the caller pinned fade_in_ms or fade_out_ms, the pair is skipped
-    by the post-pass and no curve tag is emitted on either side."""
+def test_kill_switch_off_pair_never_carries_curve_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When LYRIC_DYNAMIC_CROSSFADE_ENABLED is off (the legacy rollback
+    path), no overlay carries fade_out_curve='sqrt' — regardless of cfg
+    contents. This is the kill-switch byte-identity guarantee.
+
+    Under §F the override gate is gone, so cfg fade values no longer
+    suppress the post-pass — the kill switch is the only path to legacy
+    behavior. This test exists to pin that contract: there is no
+    second-class "skip the post-pass without flipping the switch" path."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "lyric_dynamic_crossfade_enabled", False)
     slots = _inject(
         [("first", 1.0, 2.0), ("second", 2.3, 3.0)],
         slot_durations_s=[10.0],
-        cfg_extra={"fade_in_ms": 175},  # only one side overridden — entire pair skipped
+        cfg_extra={"fade_in_ms": 175},
     )
     overlays = [o for slot in slots for o in slot.get("text_overlays", [])]
     for o in overlays:
         assert "fade_out_curve" not in o, (
-            f"override pair must not carry curve tag (got {o.get('fade_out_curve')!r})"
+            f"kill-switch-off path must not carry curve tag (got {o.get('fade_out_curve')!r})"
         )
 
 
