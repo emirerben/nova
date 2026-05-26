@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.47.6] - 2026-05-26
+
+### Fixed
+- **Dark and night footage no longer macroblocks (the "pixels" and color blotching in the sky).** Rendered videos showed 16×16 block quantization and chroma blotching in dark gradients — reproduced on a real iPhone HLG-HDR night clip whose three output variants all pinned to ~8.5 Mbps. Two compounding causes, both fixed: (1) the output bitrate ceiling was **8M, which starved CRF 18** — the same footage actually wants ~16 Mbps, so on hard content quality dropped below the CRF target; raised `output_video_bitrate` 8M→16M (capped CRF still governs, so bright/simple clips stay small — verified byte-identical under both ceilings). (2) The intermediate `reframe` encode ran at `ultrafast crf 18`, baking block artifacts into dark gradients before the final pass could ever see clean input; lowered both intermediate call sites to `crf 14` (preset stays `ultrafast`, so render speed is unchanged — only temp-file size grows). Faithful prod-image A/B (real zscale HDR→SDR tonemap) on the failing clip: dark-region distortion down ~49% (SSIM 0.910→0.954), macroblocking visually gone, colors unchanged. Locked by `test_encoder_policy.py` (the capped-CRF assertion is relational, so the ceiling bump needs no test edit). Verified end-to-end through the full generative pipeline (`make local-render`): the delivered variant rose from 8.7 Mbps (prod, before) to 14.9 Mbps on the same clip — off the ceiling.
+- **xfade transitions no longer bypass the encoder quality budget.** `join_with_transitions` hardcoded its encoder args with **no maxrate ceiling and no bt709 color tags**, so the transition-blend generation (one of the encode passes on multi-clip jobs) could starve on dark gradients and shipped untagged whenever a no-overlay job sent that output straight to the user. Routed it through the shared `_encoding_args` (new `include_audio=False` flag preserves the `-an` video-only contract) so it gets the same 16M capped-CRF ceiling + closed-GOP as every other final-class encode, plus a `setparams=bt709` filter on the xfade output to stamp full color VUI (combining two inputs in a filtergraph resets color metadata, so the encoder-side flags alone only set the matrix). Added the call site to the `test_encoder_policy.py` audit so it can't silently regress.
+
 ## [0.4.47.4] - 2026-05-26
 
 ### Changed

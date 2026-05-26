@@ -131,22 +131,32 @@ def join_with_transitions(
 
     filter_complex = _build_xfade_filter(transitions, slot_durations, transition_duration_s)
 
-    # The final output label is [v{N-1}] where N = len(slot_paths)
-    final_label = f"[v{len(slot_paths) - 1}]"
+    # The xfade chain's final output label is [v{N-1}] where N = len(slot_paths).
+    # Stamp bt709 onto that frame via setparams: combining two inputs in a
+    # filtergraph resets the output's color metadata to unspecified, so the
+    # encoder-side -color_* flags only reliably write the matrix. setparams
+    # forces full VUI (primaries + transfer + matrix) so a no-overlay job that
+    # ships this output directly is correctly tagged, not just matrix-tagged.
+    xfade_out = f"[v{len(slot_paths) - 1}]"
+    filter_complex += (
+        f";{xfade_out}setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709[vout]"
+    )
+    final_label = "[vout]"
+
+    # Route through the shared _encoding_args so this xfade-blend generation
+    # gets the same quality budget as every other final-class encode: capped CRF
+    # at settings.output_video_bitrate (16M), bt709 color tags, and closed-GOP.
+    # Previously these were hardcoded with NO maxrate ceiling and NO color tags,
+    # so on dark gradients this generation could starve and the SDR output went
+    # untagged. include_audio=False keeps the -an video-only contract (template
+    # audio is mixed separately downstream).
+    from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
 
     cmd.extend([
         "-filter_complex", filter_complex,
         "-map", final_label,
         "-an",  # video-only — template audio mixed separately
-        "-c:v", "libx264",
-        "-profile:v", "high",
-        "-preset", "fast",
-        "-crf", "18",
-        "-pix_fmt", "yuv420p",  # QuickTime/browser compatibility
-        "-r", "30",
-        "-movflags", "+faststart",
-        "-y",
-        output_path,
+        *_encoding_args(output_path, preset="fast", include_audio=False),
     ])
 
     log.info(
