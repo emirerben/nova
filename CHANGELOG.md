@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.47.10] - 2026-05-27
+
+### Changed
+- **Generative-edit first-variant time cut toward ~1 minute by capping gemini-2.5 thinking on the rest of the critical-path agents.** After the v0.4.47.9 matcher fix, prod profiling showed the first variant still gated by `clip_metadata` (the hook-detection vision call) and the `overlay_format_matcher` → `intro_writer` → `agentic_style_selector` text chain — all gemini-2.5-flash calls whose latency was dominated by default *dynamic thinking* (e.g. `clip_metadata` burned ~4k thinking tokens). Set `thinking_budget=512` on all four. Measured A/B on real prod clips: `clip_metadata` 13-18s → ~5s, the text chain ~19s → ~8s. **Validated quality-neutral on real clips** (the eval fixtures' source videos had been GC'd from GCS, so validation was done directly on downloaded prod clips): subjects, hook text, and best-moments held or improved across 3 clips + repeats — default thinking occasionally produced an *empty transcript* or a degenerate best-moment that the capped run did not, and the AI intro hooks were equally strong and on-theme ("when the last drop hits and the chaos begins" vs the default's "pov: the whole squad celebrates your empty glass"). 512 (not the matcher's 256) keeps reasoning headroom for the extraction + creative steps. `clip_metadata` is shared, so template and music jobs get the same speedup.
+
 ## [0.4.47.9] - 2026-05-27
 
 ### Changed
