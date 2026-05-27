@@ -90,6 +90,15 @@ class AgentSpec:
     timeout_s: float = 30.0
     cost_per_1k_input_usd: float = 0.0
     cost_per_1k_output_usd: float = 0.0
+    # Gemini-2.5 thinking budget (output tokens the model may spend on internal
+    # reasoning before answering). None = SDK default (dynamic thinking, can be
+    # thousands of tokens → tens of seconds of latency). Set a small positive
+    # value to cap it for structured/extraction tasks where extended reasoning
+    # adds latency without quality. 256 is honored by both flash (prod) and pro
+    # (evals run on pro), so the eval validates the same budget that ships.
+    # Ignored by non-Gemini clients (Whisper). Quality-sensitive: validate via
+    # the agent's eval suite before lowering. See the generative speed work.
+    thinking_budget: int | None = None
     # When True (default): on SchemaError/RefusalError, retry once with a
     # clarification suffix. When False: raise TerminalError immediately so
     # the caller can fall through to a cheaper backup path. Used for agents
@@ -189,6 +198,7 @@ class ModelClient:
         media_mime: str | None = None,
         response_json: bool = True,
         max_output_tokens: int | None = None,
+        thinking_budget: int | None = None,
         timeout_s: float = 30.0,
     ) -> ModelInvocation:
         raise NotImplementedError
@@ -404,6 +414,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     media_mime=mime,
                     response_json=self.response_json,
                     max_output_tokens=self.max_output_tokens,
+                    thinking_budget=self.spec.thinking_budget,
                     timeout_s=self.spec.timeout_s,
                 )
             except TransientError as exc:
