@@ -47,6 +47,9 @@ _FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "lyric_no_stac
 
 def _cache(lines: list[tuple[str, float, float]]) -> dict:
     return {
+        # Injector requires a publishable source after 2026-05-27 — see
+        # `_INJECTOR_ALLOWED_SOURCES` in app/pipeline/lyric_injector.py.
+        "source": "lrclib_synced+whisper",
         "lines": [
             {
                 "text": text,
@@ -55,7 +58,7 @@ def _cache(lines: list[tuple[str, float, float]]) -> dict:
                 "words": [{"text": text, "start_s": start, "end_s": end}],
             }
             for text, start, end in lines
-        ]
+        ],
     }
 
 

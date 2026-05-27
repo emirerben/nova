@@ -1247,6 +1247,9 @@ def test_real_milky_overlapping_lines_crossfade_through_burn_pipeline(tmp_workdi
         ("Do do do do do do do do", 67.32, 70.24),
     ]
     cache = {
+        # Injector requires a publishable source after 2026-05-27 — see
+        # `_INJECTOR_ALLOWED_SOURCES` in app/pipeline/lyric_injector.py.
+        "source": "lrclib_synced+whisper",
         "lines": [
             {
                 "text": t,
@@ -1255,7 +1258,7 @@ def test_real_milky_overlapping_lines_crossfade_through_burn_pipeline(tmp_workdi
                 "words": [{"text": t, "start_s": s, "end_s": e}],
             }
             for t, s, e in prod_lines
-        ]
+        ],
     }
     slot_durations = [7.5, 7.5]
     recipe = {
