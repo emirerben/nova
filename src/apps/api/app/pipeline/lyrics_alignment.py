@@ -83,18 +83,16 @@ _MIN_SIMILARITY = 0.65
 # much of the gap each unaligned run gets.
 _INTERPOLATION_PADDING_S = 0.02
 
-# Small spacer that keeps the trailing-unmatched spread from touching the
-# next line's first accepted Whisper word at the same timestamp. Matches the
-# `_NEXT_LINE_SAFETY_S` figure used downstream in the renderer.
+# Small visual spacer reserved at the trailing-unmatched spread's tail end so
+# the last interpolated token doesn't land at the exact same timestamp as the
+# next line's first accepted Whisper word. Distinct from the renderer's
+# `_LINE_NEXT_LINE_GAP_S` (which gates audio-time gap, not interpolation room).
 _NEXT_LINE_SAFETY_S = 0.05
 
-# Per-token cap on the trailing-unmatched spread. Mirrors `_MAX_INTERP_SLICE_S`
-# (defined below) so a noisy tail can never produce karaoke timings outside
-# normal singing pace. Concrete value lives at the existing constant.
-
-# Default per-token budget when the caller cannot supply a tail-end cap.
-# Half of `_MAX_INTERP_SLICE_S` per token, capped at a minimum of 50ms so
-# we never produce zero-duration words.
+# Default per-token budget multiplier when the caller cannot supply a
+# tail-end cap (e.g. the unanchored `align()` path). Each unmatched token
+# gets `_MAX_INTERP_SLICE_S * this factor` seconds, sized below normal
+# karaoke pace so a noisy tail never runs long against the next line.
 _TRAILING_SPREAD_CONSERVATIVE_FACTOR = 0.5
 
 
@@ -261,11 +259,18 @@ def _build_line(
     tail_unmatched = [j for j, (_, s, _) in enumerate(slots) if j > last_timed and s is None]
     tail_count = len(tail_unmatched)
 
-    # When >=2 trailing tokens are unmatched, emit a guardrail log so the
-    # rate of this fallback is visible in prod. The pre-fix code silently
-    # collapsed every such tail onto a 250ms window at `prev_end`, masking
-    # 1-3 seconds of canonical lyric. Logging once per occurrence (not once
-    # per token) keeps the log volume reasonable.
+    # Emit guardrail logs so the rate of trailing-unmatched fallbacks is
+    # visible in prod. The pre-fix code silently collapsed every such tail
+    # onto a 250ms window at `prev_end`, masking 1-3 seconds of canonical
+    # lyric. Two distinct events:
+    #   - `lyrics_alignment_trailing_collapse` (WARN): the original ≥2-token
+    #     collapse pattern — the bug class that motivated this fix.
+    #   - `lyrics_alignment_trailing_single_no_cap` (WARN): a single trailing
+    #     unmatched token with no caller-supplied tail_end_cap_s, falling
+    #     back to the conservative budget. Low-confidence by construction;
+    #     when AlignedLine gains a `line_alignment_status` field (follow-up
+    #     PR), this site should also stamp `"low_conf"`.
+    # Logging once per occurrence (not per token) keeps log volume reasonable.
     if tail_count >= 2:
         log.warning(
             "lyrics_alignment_trailing_collapse",
@@ -274,6 +279,13 @@ def _build_line(
             unmatched_count=tail_count,
             canonical_tail=[slots[j][0] for j in tail_unmatched],
             tail_end_cap_s=(round(tail_end_cap_s, 3) if tail_end_cap_s is not None else None),
+        )
+    elif tail_count == 1 and tail_end_cap_s is None:
+        log.warning(
+            "lyrics_alignment_trailing_single_no_cap",
+            line=canonical_line.strip()[:80],
+            prev_end=round(slots[last_timed][2] or 0.0, 3),
+            canonical_tail=[slots[j][0] for j in tail_unmatched],
         )
 
     # Linear interpolation for runs of unaligned words.

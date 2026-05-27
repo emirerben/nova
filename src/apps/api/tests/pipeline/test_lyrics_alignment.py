@@ -449,3 +449,108 @@ def test_trailing_spread_single_unmatched_does_not_log_collapse(monkeypatch) -> 
     assert not rec.events_named("lyrics_alignment_trailing_collapse"), (
         "should NOT log collapse for a single trailing unmatched token"
     )
+
+
+def test_single_trailing_unmatched_with_cap_respects_safety_margin() -> None:
+    """Pins the scope-expanded tail_count == 1 behavior in the anchored path.
+
+    The pre-fix code gave a single trailing unmatched word a fixed 0.25s
+    window. The bounded spread formula now gives it the cap-derived duration
+    (up to `_MAX_INTERP_SLICE_S = 0.8s`), but MUST still respect
+    `tail_end_cap_s - _NEXT_LINE_SAFETY_S` so it can never extend into the
+    next line. Scope-expansion is intentional (single missing word should
+    reflect a real karaoke duration) — this test pins it.
+    """
+    anchors = [
+        SyncedLine(start_s=0.0, text="a b missing"),
+        # Next anchor at 3.0s — plenty of cap room for the single missing word.
+        SyncedLine(start_s=3.0, text="next"),
+    ]
+    whisper = [
+        _ww("a", 0.0, 0.3),
+        _ww("b", 0.3, 0.6),
+        # No Whisper word for "missing" inside [0, 3) — single trailing
+        # unmatched token.
+        _ww("next", 3.0, 3.2),
+    ]
+    result = align_with_line_anchors(anchors, whisper, track_end_s=4.0)
+    line_a = next(line for line in result.lines if line.text == "a b missing")
+    missing = line_a.words[-1]
+    # Pre-fix 0.25s would put missing.end_s at ~0.87s. The new bounded
+    # spread gives the canonical _MAX_INTERP_SLICE_S = 0.8s slice
+    # (rounded), so the duration is around 0.78-0.80s — substantially
+    # more than 0.25s but still well below the cap.
+    duration = missing.end_s - missing.start_s
+    assert duration > 0.3, (
+        f"single trailing unmatched should get >0.3s, got {duration:.3f}s "
+        "— pre-fix 0.25s collapse pattern returned"
+    )
+    assert duration <= 0.81, (
+        f"single trailing unmatched should be capped at _MAX_INTERP_SLICE_S "
+        f"(~0.8s with rounding), got {duration:.3f}s"
+    )
+    # Safety margin: missing.end_s must NOT reach the next anchor.
+    next_anchor_start = 3.0
+    assert missing.end_s <= next_anchor_start - 0.04, (
+        f"single trailing unmatched ends at {missing.end_s}, must respect "
+        f"_NEXT_LINE_SAFETY_S = 0.05 before next anchor at {next_anchor_start}"
+    )
+
+
+def test_single_trailing_unmatched_cap_with_no_room_falls_back_to_conservative() -> None:
+    """When the supplied `tail_end_cap_s` leaves no usable room past
+    `prev_end` (the previously matched Whisper word already ran into the
+    next line's anchor window), the single-trailing branch uses the
+    conservative no-cap budget formula. End must still NOT cross the next
+    line's first matched Whisper word, because the global next-line
+    protection is enforced by Pass 2 / per-line index bounds (future PR);
+    in the meantime the conservative per-token cap is the only bound.
+    """
+    anchors = [
+        SyncedLine(start_s=0.0, text="a b missing"),
+        # Next anchor at only 0.65s — earlier than the actual vocal end.
+        SyncedLine(start_s=0.65, text="next"),
+    ]
+    whisper = [
+        _ww("a", 0.0, 0.3),
+        # "b" extends past anchor B (0.65s) — its end at 0.7s overran the
+        # hard window. cap_budget becomes negative; conservative fires.
+        _ww("b", 0.3, 0.7),
+        _ww("next", 0.65, 0.85),
+    ]
+    result = align_with_line_anchors(anchors, whisper, track_end_s=2.0)
+    line_a = next(line for line in result.lines if line.text == "a b missing")
+    missing = line_a.words[-1]
+    duration = missing.end_s - missing.start_s
+    # Conservative formula: _MAX_INTERP_SLICE_S * tail_count * 0.5 = 0.4s.
+    # Per-token cap clamps at _MAX_INTERP_SLICE_S = 0.8s. So duration is
+    # 0.38s (0.4 - _INTERPOLATION_PADDING_S).
+    assert 0.35 <= duration <= 0.45, (
+        f"conservative budget should produce ~0.4s slice, got {duration:.3f}s"
+    )
+
+
+def test_single_trailing_unmatched_no_cap_logs_for_visibility(monkeypatch) -> None:
+    """The unanchored `align()` path passes no `tail_end_cap_s` — when a
+    single trailing unmatched token uses the conservative budget, emit the
+    `lyrics_alignment_trailing_single_no_cap` event so the rate of this
+    low-confidence fallback is visible in prod. Documented substitute for
+    a per-line low_conf marker until the data model gains one.
+    """
+    from app.pipeline import lyrics_alignment
+
+    rec = _LogRecorder()
+    monkeypatch.setattr(lyrics_alignment, "log", rec)
+
+    # Single line, single trailing miss.
+    canonical = ["match miss"]
+    whisper = [_ww("match", 0.0, 0.5)]
+    align(canonical, whisper)
+
+    events = rec.events_named("lyrics_alignment_trailing_single_no_cap")
+    assert len(events) == 1, (
+        f"expected exactly one no-cap-single event, got {[e for _, e, _ in rec.events]}"
+    )
+    assert events[0]["canonical_tail"] == ["miss"]
+    # The collapse log MUST NOT also fire (tail_count == 1).
+    assert not rec.events_named("lyrics_alignment_trailing_collapse")
