@@ -144,6 +144,13 @@ export default function AdminMusicTrackPage({
         },
       });
       setTrack(updated);
+      // Re-sync form state from the persisted response. Without this, a user
+      // who typed "127.20" stays dirty after Save (cfg.best_start_s=127.2 →
+      // toString()="127.2", form keeps "127.20"), and `sectionBoundsDirty`
+      // blocks the preview button indefinitely. The same trap applied to the
+      // pre-existing `hasUnsavedChanges` badge but went unnoticed because
+      // the badge was cosmetic; the new preview gate makes it user-blocking.
+      syncFormFromTrack(updated);
       setSaveMsg("Saved.");
     } catch (e: unknown) {
       setSaveMsg(e instanceof Error ? e.message : "Save failed");
@@ -238,6 +245,19 @@ export default function AdminMusicTrackPage({
 
   const cfg = track.track_config ?? ({} as TrackConfig);
 
+  // Dirty-state for the best-section bounds ONLY (not slot_every_n).
+  // Computed at the page-top level because the form state lives here while
+  // the lyric-preview button lives on sibling tabs (Lyrics, Test). When the
+  // user clicks a section band on the Config tab's AudioPlayer, bestStart /
+  // bestEnd update locally but the DB isn't touched until Save — so any
+  // preview kicked off while these strings differ from the persisted
+  // toString would render against stale section bounds (the Beat It bug,
+  // job 616d3e53). Comparing strings avoids float formatting drift since
+  // the form holds raw input strings.
+  const sectionBoundsDirty =
+    bestStart !== (cfg.best_start_s?.toString() ?? "") ||
+    bestEnd !== (cfg.best_end_s?.toString() ?? "");
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 max-w-3xl mx-auto">
       {/* Header */}
@@ -275,9 +295,14 @@ export default function AdminMusicTrackPage({
       </div>
 
       {activeTab === "test" ? (
-        <TestTab trackId={id} track={track} />
+        <TestTab trackId={id} track={track} sectionBoundsDirty={sectionBoundsDirty} />
       ) : activeTab === "lyrics" ? (
-        <LyricsTab trackId={id} track={track} onTrackUpdated={setTrack} />
+        <LyricsTab
+          trackId={id}
+          track={track}
+          onTrackUpdated={setTrack}
+          sectionBoundsDirty={sectionBoundsDirty}
+        />
       ) : (
         <ConfigTabContent
           id={id}
