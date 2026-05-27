@@ -233,7 +233,7 @@ export async function createMusicJob(
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? "Failed to create music job");
+    throw new Error(detail.detail || "Failed to create music job");
   }
   return res.json();
 }
@@ -253,7 +253,7 @@ export async function uploadMusicSlot(file: File): Promise<SlotUploadResponse> {
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? "Upload failed");
+    throw new Error(detail.detail || "Upload failed");
   }
   return res.json();
 }
@@ -293,7 +293,7 @@ export async function adminCreateMusicTrack(
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? "Failed to create music track");
+    throw new Error(detail.detail || "Failed to create music track");
   }
   return res.json();
 }
@@ -329,7 +329,7 @@ export async function adminPatchLyricsConfig(
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? `Lyrics config save failed: ${res.status}`);
+    throw new Error(detail.detail || `Lyrics config save failed: ${res.status}`);
   }
   return res.json();
 }
@@ -352,29 +352,160 @@ export async function adminExtractLyrics(
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? `Extract lyrics failed: ${res.status}`);
+    throw new Error(detail.detail || `Extract lyrics failed: ${res.status}`);
   }
   return res.json();
 }
 
+/** Extensions accepted by the admin SPA's "Upload file" form. Must mirror the
+ *  backend's _BROWSER_AUDIO_EXT_ALLOWLIST in app/routes/admin_music.py — the
+ *  init endpoint Pydantic-rejects anything else with a 422. */
+const FILE_UPLOAD_ALLOWED_EXTS = new Set([
+  ".m4a",
+  ".mp3",
+  ".wav",
+  ".ogg",
+  ".aac",
+  ".mp4",
+  ".webm",
+  ".opus",
+]);
+
+function extOf(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  return dot >= 0 ? filename.slice(dot).toLowerCase() : "";
+}
+
+/** Direct-file upload from the admin SPA, via the signed-URL bypass that
+ *  sidesteps the Vercel admin-proxy 4.5 MB function body cap.
+ *
+ *  Three phases:
+ *    1. POST /upload-init-file        → pending row + signed PUT URL
+ *    2. PUT  <signed-url>             → bytes go straight to GCS (no proxy hop)
+ *    3. POST /{id}/upload-confirm     → HEAD + ffprobe + dispatch analyze task
+ *
+ *  Progress is reported through the same IngestProgress shape used by the
+ *  extension flow so the SPA can reuse ExtensionProgressBar verbatim. The PUT
+ *  uses XHR (not fetch) because fetch still has no upload-progress event — a
+ *  20 MB upload with a single spinner is exactly the tab-close-panic UX the
+ *  extension flow's three-stage bar was built to fix.
+ */
 export async function adminUploadMusicTrack(
   file: File,
   title?: string,
   artist?: string,
+  onProgress?: (p: IngestProgress) => void,
 ): Promise<{ id: string; analysis_status: string }> {
-  const formData = new FormData();
-  formData.append("file", file);
-  if (title) formData.append("title", title);
-  if (artist) formData.append("artist", artist);
-  const res = await fetch(`${ADMIN_PROXY}/music-tracks/upload`, {
-    method: "POST",
-    body: formData,
-  });
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? "Failed to upload audio");
+  const ext = extOf(file.name);
+  if (!FILE_UPLOAD_ALLOWED_EXTS.has(ext)) {
+    throw new Error(
+      `Unsupported audio extension: ${ext || "(none)"}. ` +
+        "Use m4a, mp3, wav, ogg, aac, mp4, webm, or opus.",
+    );
   }
-  return res.json();
+
+  // Phase 1: mint signed URL (Vercel proxy hop, body is JSON not blob).
+  onProgress?.({ stage: "uploading", percent: 0, detail: "Preparing upload…" });
+  const initRes = await fetch(`${ADMIN_PROXY}/music-tracks/upload-init-file`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      filename: file.name,
+      title: title || undefined,
+      artist: artist || undefined,
+      ext,
+      byte_count: file.size,
+    }),
+  });
+  if (!initRes.ok) {
+    const detail = await initRes.json().catch(() => ({ detail: initRes.statusText }));
+    const msg =
+      typeof detail.detail === "string" && detail.detail
+        ? detail.detail
+        : `upload-init-file failed (${initRes.status})`;
+    onProgress?.({ stage: "failed", detail: msg });
+    throw new Error(msg);
+  }
+  const init: BrowserUploadInitResponse = await initRes.json();
+  onProgress?.({
+    stage: "uploading",
+    percent: 0,
+    detail: `0 / ${(file.size / 1024 / 1024).toFixed(1)} MB`,
+    track_id: init.track_id,
+  });
+
+  // Phase 2: PUT bytes directly to GCS. CORS on the prod bucket is configured
+  // to allow exactly two origins: https://nova-video.vercel.app and
+  // http://localhost:3000 (Allow-Methods GET/PUT/HEAD, Allow-Headers
+  // Content-Type) — empirically verified via OPTIONS preflight. Vercel preview
+  // deploys (nova-video-git-*.vercel.app) are NOT in the allowlist, so this
+  // upload will fail on previews with a CORS error. Test on prod or update the
+  // bucket CORS config to add a preview pattern if preview testing is needed.
+  // The signed URL pins Content-Type, so we MUST send exactly init.content_type
+  // or GCS returns 403 SignatureDoesNotMatch.
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", init.upload_url, true);
+    xhr.setRequestHeader("Content-Type", init.content_type);
+    xhr.upload.onprogress = (e: ProgressEvent) => {
+      if (!e.lengthComputable) return;
+      const percent = e.total > 0 ? e.loaded / e.total : 0;
+      const loadedMb = (e.loaded / 1024 / 1024).toFixed(1);
+      const totalMb = (e.total / 1024 / 1024).toFixed(1);
+      onProgress?.({
+        stage: "uploading",
+        percent,
+        detail: `${loadedMb} / ${totalMb} MB`,
+        track_id: init.track_id,
+      });
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else
+        reject(
+          new Error(
+            `GCS PUT failed (${xhr.status}): ${xhr.responseText.slice(0, 200) || xhr.statusText}`,
+          ),
+        );
+    };
+    xhr.onerror = () =>
+      reject(new Error("Network error during upload (check connection)"));
+    xhr.onabort = () => reject(new Error("Upload aborted"));
+    xhr.send(file);
+  }).catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    onProgress?.({ stage: "failed", detail: msg, track_id: init.track_id });
+    throw err instanceof Error ? err : new Error(msg);
+  });
+
+  // Phase 3: ask the server to verify + dispatch Celery analysis.
+  onProgress?.({
+    stage: "confirming",
+    detail: "Verifying upload…",
+    track_id: init.track_id,
+  });
+  const confirmRes = await fetch(
+    `${ADMIN_PROXY}/music-tracks/${init.track_id}/upload-confirm`,
+    { method: "POST", headers: JSON_HEADERS },
+  );
+  if (!confirmRes.ok) {
+    const detail = await confirmRes
+      .json()
+      .catch(() => ({ detail: confirmRes.statusText }));
+    const msg =
+      typeof detail.detail === "string" && detail.detail
+        ? detail.detail
+        : `upload-confirm failed (${confirmRes.status})`;
+    onProgress?.({ stage: "failed", detail: msg, track_id: init.track_id });
+    throw new Error(msg);
+  }
+  const confirmed: BrowserUploadConfirmResponse = await confirmRes.json();
+  onProgress?.({
+    stage: "analyzing",
+    detail: "Beat detection running…",
+    track_id: init.track_id,
+  });
+  return { id: confirmed.track_id, analysis_status: confirmed.analysis_status };
 }
 
 export async function adminGetAudioUrl(id: string): Promise<string> {
@@ -549,7 +680,7 @@ export async function extensionUploadInit(
       throw new ExtensionDedupError(detail.detail);
     }
     throw new Error(
-      typeof detail.detail === "string"
+      typeof detail.detail === "string" && detail.detail
         ? detail.detail
         : `upload-init failed (${res.status})`,
     );
@@ -566,7 +697,7 @@ export async function extensionUploadConfirm(
   );
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? `upload-confirm failed (${res.status})`);
+    throw new Error(detail.detail || `upload-confirm failed (${res.status})`);
   }
   return res.json();
 }
@@ -776,7 +907,7 @@ export async function adminCreateMusicTestJob(
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? "Failed to create test job");
+    throw new Error(detail.detail || "Failed to create test job");
   }
   return res.json();
 }
@@ -798,7 +929,7 @@ export async function adminRerenderMusicJob(
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? "Failed to re-render job");
+    throw new Error(detail.detail || "Failed to re-render job");
   }
   return res.json();
 }
@@ -843,7 +974,7 @@ export async function adminCreateLyricsPreview(
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? "Failed to create lyrics preview");
+    throw new Error(detail.detail || "Failed to create lyrics preview");
   }
   return res.json();
 }
