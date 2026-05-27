@@ -83,6 +83,18 @@ _MIN_SIMILARITY = 0.65
 # much of the gap each unaligned run gets.
 _INTERPOLATION_PADDING_S = 0.02
 
+# Small visual spacer reserved at the trailing-unmatched spread's tail end so
+# the last interpolated token doesn't land at the exact same timestamp as the
+# next line's first accepted Whisper word. Distinct from the renderer's
+# `_LINE_NEXT_LINE_GAP_S` (which gates audio-time gap, not interpolation room).
+_NEXT_LINE_SAFETY_S = 0.05
+
+# Default per-token budget multiplier when the caller cannot supply a
+# tail-end cap (e.g. the unanchored `align()` path). Each unmatched token
+# gets `_MAX_INTERP_SLICE_S * this factor` seconds, sized below normal
+# karaoke pace so a noisy tail never runs long against the next line.
+_TRAILING_SPREAD_CONSERVATIVE_FACTOR = 0.5
+
 
 def align(
     canonical_lines: list[str],
@@ -216,6 +228,8 @@ def _find_match(
 def _build_line(
     canonical_line: str,
     slots: list[tuple[str, float | None, float | None]],
+    *,
+    tail_end_cap_s: float | None = None,
 ) -> AlignedLine | None:
     """Stitch a per-word slot list into an AlignedLine.
 
@@ -223,10 +237,56 @@ def _build_line(
     surrounding aligned neighbors. If a line has ZERO aligned anchors, the
     line is dropped from the output — it can't be timed without at least
     one Whisper match.
+
+    `tail_end_cap_s` is the upper bound for the trailing-unmatched spread —
+    typically the caller's `window_end` (or the next line's first reliable
+    Whisper start minus `_NEXT_LINE_SAFETY_S`). When supplied, several
+    trailing unaligned tokens are spread across `[prev_end, tail_end_cap_s]`
+    instead of being collapsed onto a single 0.25s window at `prev_end`.
+    When not supplied (the unanchored `align()` path has no per-line window),
+    a conservative half-budget formula is used. See plan §_build_line
+    fallback guardrail.
     """
     timed_indices = [i for i, (_, s, e) in enumerate(slots) if s is not None and e is not None]
     if not timed_indices:
         return None
+
+    # Pre-compute the trailing-unmatched-tail span so the spread formula
+    # below sees the same `tail_count` for every word in the tail. Without
+    # this, each iteration recomputes the index of the "next unmatched
+    # slot" and the spread becomes order-dependent on iteration state.
+    last_timed = max(timed_indices)
+    tail_unmatched = [j for j, (_, s, _) in enumerate(slots) if j > last_timed and s is None]
+    tail_count = len(tail_unmatched)
+
+    # Emit guardrail logs so the rate of trailing-unmatched fallbacks is
+    # visible in prod. The pre-fix code silently collapsed every such tail
+    # onto a 250ms window at `prev_end`, masking 1-3 seconds of canonical
+    # lyric. Two distinct events:
+    #   - `lyrics_alignment_trailing_collapse` (WARN): the original ≥2-token
+    #     collapse pattern — the bug class that motivated this fix.
+    #   - `lyrics_alignment_trailing_single_no_cap` (WARN): a single trailing
+    #     unmatched token with no caller-supplied tail_end_cap_s, falling
+    #     back to the conservative budget. Low-confidence by construction;
+    #     when AlignedLine gains a `line_alignment_status` field (follow-up
+    #     PR), this site should also stamp `"low_conf"`.
+    # Logging once per occurrence (not per token) keeps log volume reasonable.
+    if tail_count >= 2:
+        log.warning(
+            "lyrics_alignment_trailing_collapse",
+            line=canonical_line.strip()[:80],
+            prev_end=round(slots[last_timed][2] or 0.0, 3),
+            unmatched_count=tail_count,
+            canonical_tail=[slots[j][0] for j in tail_unmatched],
+            tail_end_cap_s=(round(tail_end_cap_s, 3) if tail_end_cap_s is not None else None),
+        )
+    elif tail_count == 1 and tail_end_cap_s is None:
+        log.warning(
+            "lyrics_alignment_trailing_single_no_cap",
+            line=canonical_line.strip()[:80],
+            prev_end=round(slots[last_timed][2] or 0.0, 3),
+            canonical_tail=[slots[j][0] for j in tail_unmatched],
+        )
 
     # Linear interpolation for runs of unaligned words.
     spans: list[tuple[float, float]] = []
@@ -250,10 +310,53 @@ def _build_line(
             start = prev_end + slice_dur * position_in_run + _INTERPOLATION_PADDING_S
             end = start + max(slice_dur - 2 * _INTERPOLATION_PADDING_S, 0.05)
         elif prev_idx is not None:
-            # Trailing unaligned word — sit it just after the last anchor.
+            # Trailing unaligned word — bounded spread across the available
+            # tail window. Pre-fix code collapsed every trailing token onto
+            # `prev_end + 0.02s` for 0.25s regardless of count, silently
+            # dropping the back half of a long line when LRCLIB's next-line
+            # anchor was earlier than the actual vocal. See plan §_build_line
+            # fallback guardrail + the f65b5762 / Hawai regression test.
             prev_end = slots[prev_idx][2] or 0.0
-            start = prev_end + _INTERPOLATION_PADDING_S
-            end = start + 0.25
+            position_in_tail = sum(1 for j in range(prev_idx + 1, i + 1) if slots[j][1] is None) - 1
+
+            # tail_end_cap_s = caller-supplied upper bound (window_end /
+            # next-line-safe boundary). When None — or when the supplied cap
+            # leaves no positive room past `prev_end` (the previous matched
+            # Whisper word ran past the hard window already) — we fall back
+            # to half of _MAX_INTERP_SLICE_S per token so a noisy tail never
+            # overruns the next line nor lingers past sane karaoke pace.
+            conservative_budget = (
+                _MAX_INTERP_SLICE_S * tail_count * _TRAILING_SPREAD_CONSERVATIVE_FACTOR
+            )
+            if tail_end_cap_s is not None:
+                effective_cap = tail_end_cap_s - _NEXT_LINE_SAFETY_S
+                cap_budget = effective_cap - prev_end
+                # If the cap leaves no usable budget, defer to the
+                # conservative formula. Tail tokens will extend past the
+                # cap, but the per-token cap (_MAX_INTERP_SLICE_S below)
+                # still keeps each word from running long.
+                budget = cap_budget if cap_budget > 0.05 else conservative_budget
+            else:
+                budget = conservative_budget
+
+            # Per-token slice size, capped at the standard interp slice so a
+            # very wide cap (e.g. the whole track tail) doesn't blow up
+            # individual word durations.
+            slice_dur = min(budget / max(1, tail_count), _MAX_INTERP_SLICE_S)
+            slice_dur = max(slice_dur, 0.05)
+
+            start = prev_end + _INTERPOLATION_PADDING_S + slice_dur * position_in_tail
+            end = start + max(slice_dur - _INTERPOLATION_PADDING_S, 0.05)
+
+            # Defense-in-depth clamp: when a usable cap was supplied AND
+            # `prev_end` actually sits before the cap, never let `end` cross
+            # the safety margin. When `prev_end` already overran the cap
+            # (matched word's end exceeded the LRCLIB window), the
+            # conservative formula above ran instead — no cap to clamp
+            # against, the per-token slice cap is the only bound.
+            if tail_end_cap_s is not None and prev_end < tail_end_cap_s - _NEXT_LINE_SAFETY_S:
+                hard_cap = tail_end_cap_s - _NEXT_LINE_SAFETY_S
+                end = min(end, hard_cap)
         else:
             # Leading unaligned word — sit it just before the next anchor.
             next_start = slots[next_idx][1] if next_idx is not None else 0.0  # type: ignore[index]
@@ -447,7 +550,10 @@ def _align_within_window(
                 slots.append((canonical_word, ww.start_s, ww.end_s))
                 matched_count += 1
                 cursor = match_idx + 1
-        line = _build_line(anchor_text, slots)
+        # Pass the anchored window's upper bound so the trailing-unmatched
+        # guardrail in `_build_line` can spread (not collapse) tokens up to
+        # `window_end - _NEXT_LINE_SAFETY_S`.
+        line = _build_line(anchor_text, slots, tail_end_cap_s=window_end)
         if line is not None:
             return line, matched_count
         # `_build_line` only returns None when zero words matched — fall

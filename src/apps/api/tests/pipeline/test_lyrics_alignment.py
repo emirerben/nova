@@ -263,3 +263,294 @@ def test_anchored_multi_timestamp_chorus_anchors_get_distinct_windows() -> None:
     assert result.lines[0].words[0].start_s == 0.0
     assert result.lines[1].words[0].start_s == 10.0
     assert result.lines[2].words[0].start_s == 20.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trailing-collapse guardrail
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _LogRecorder:
+    """Stand-in for the module-level structlog `log`. structlog's BoundLogger
+    bypasses pytest's caplog by default, so we monkeypatch the module
+    attribute and inspect calls directly. Pattern lifted from
+    tests/pipeline/test_lyric_injector.py."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, dict]] = []
+
+    def info(self, event, **kwargs):
+        self.events.append(("info", event, kwargs))
+
+    def warning(self, event, **kwargs):
+        self.events.append(("warning", event, kwargs))
+
+    def debug(self, *args, **kwargs):
+        pass
+
+    def error(self, *args, **kwargs):
+        pass
+
+    def events_named(self, name: str) -> list[dict]:
+        return [k for _level, e, k in self.events if e == name]
+
+
+def test_trailing_unmatched_tail_spreads_distinct_slots_not_collapsed() -> None:
+    """The f65b5762 / Hawai class: LRCLIB next-line anchor lands earlier
+    than the actual next vocal, so the trailing canonical tokens for the
+    current line never match any Whisper word inside the hard window.
+
+    Pre-fix code collapsed all trailing tokens onto a single 250ms window
+    at `prev_end + 0.02s`, baking a wrong `line.end_s` into the cache. The
+    guardrail spreads them across the available tail with distinct slots.
+    """
+    anchors = [
+        SyncedLine(start_s=2.9, text="I didn't wanna be the one to forget"),
+        SyncedLine(start_s=5.0, text="I thought of everything I'd never regret"),
+    ]
+    whisper = [
+        _ww("I", 2.95, 3.07),
+        _ww("didn", 3.07, 3.57),
+        _ww("'t", 3.57, 3.81),
+        _ww("wanna", 3.82, 4.45),
+        _ww("be", 4.45, 4.70),
+        # "the" lands inside [2.9, 5.0) start-wise so it still matches.
+        _ww("the", 4.70, 5.07),
+        # "one to forget" start past 5.0 — excluded by the hard window.
+        _ww("one", 5.07, 5.43),
+        _ww("to", 5.47, 5.69),
+        _ww("forget", 5.69, 6.44),
+        _ww("I", 7.19, 7.29),
+        _ww("thought", 7.29, 8.04),
+        _ww("of", 8.04, 8.25),
+        _ww("everything", 8.25, 9.33),
+        _ww("I", 9.33, 9.43),
+        _ww("'d", 9.43, 9.63),
+        _ww("never", 9.64, 10.18),
+        _ww("regret", 10.18, 10.83),
+    ]
+    result = align_with_line_anchors(anchors, whisper, track_end_s=12.0)
+
+    line_a = next(line for line in result.lines if line.text.startswith("I didn"))
+    # "one to forget" — three trailing unmatched canonical tokens. Pre-fix
+    # behavior collapsed all three onto [prev_end + 0.02, prev_end + 0.27].
+    trailing = line_a.words[-3:]
+    starts = sorted(w.start_s for w in trailing)
+    assert len(set(starts)) == 3, f"trailing words should have distinct starts, got {starts}"
+    # Adjacent trailing words are spaced by at least 0.15s (not bunched
+    # at prev_end + 0.02s, which was the pre-fix collapse pattern).
+    for prev_s, next_s in zip(starts, starts[1:], strict=False):
+        assert next_s - prev_s >= 0.15, (
+            f"trailing words too close ({next_s - prev_s:.3f}s) — "
+            "pre-fix collapse pattern resurfaced"
+        )
+    # Line end extends substantially past the LRCLIB next-anchor (5.0s),
+    # since the canonical line's audio actually runs to ~6.4s. The pre-fix
+    # collapse would have put line.end_s ~4.95s — readers saw text disappear
+    # 1.5s before "forget" finished.
+    assert line_a.end_s > 5.5, (
+        f"line.end_s ({line_a.end_s}) should reach into the real audio tail; "
+        "if it stops near the drifted LRCLIB anchor, the trailing-collapse bug returned"
+    )
+
+
+def test_trailing_unmatched_tail_logs_collapse_event_when_triggered(
+    monkeypatch,
+) -> None:
+    """The guardrail emits `lyrics_alignment_trailing_collapse` once per
+    occurrence so the rate of this fallback is visible in prod logs."""
+    from app.pipeline import lyrics_alignment
+
+    rec = _LogRecorder()
+    monkeypatch.setattr(lyrics_alignment, "log", rec)
+
+    anchors = [
+        SyncedLine(start_s=0.0, text="match match miss miss miss miss"),
+        SyncedLine(start_s=1.0, text="next"),
+    ]
+    whisper = [
+        _ww("match", 0.0, 0.2),
+        _ww("match", 0.2, 0.4),
+        _ww("next", 1.0, 1.2),
+    ]
+    align_with_line_anchors(anchors, whisper, track_end_s=2.0)
+    events = rec.events_named("lyrics_alignment_trailing_collapse")
+    assert len(events) >= 1, (
+        f"expected at least one trailing_collapse event, got {[e for _, e, _ in rec.events]}"
+    )
+    ev = events[0]
+    assert ev["unmatched_count"] == 4
+    assert ev["canonical_tail"] == ["miss", "miss", "miss", "miss"]
+
+
+def test_trailing_unmatched_tail_uses_conservative_budget_when_no_cap() -> None:
+    """The unanchored `align()` path has no per-line window. The
+    guardrail falls back to a half-budget formula (still bounded) instead
+    of using a runaway tail_end_cap_s = None branch.
+    """
+    canonical = ["match miss miss miss"]
+    # Whisper matches only the first word.
+    whisper = [_ww("match", 0.0, 0.5)]
+    result = align(canonical, whisper)
+    assert len(result.lines) == 1
+    line = result.lines[0]
+    # Trailing "miss miss miss" — bounded by the conservative formula:
+    # _MAX_INTERP_SLICE_S=0.8 * 3 tokens * 0.5 factor = 1.2s budget total,
+    # capped per-token at _MAX_INTERP_SLICE_S. Each token gets ~0.4s; no
+    # token's end exceeds prev_end + budget.
+    trailing = line.words[-3:]
+    assert trailing[-1].end_s < 0.5 + 0.8 * 3 + 0.1  # well within the budget cap
+    # Each trailing word has its own slot.
+    starts = [w.start_s for w in trailing]
+    assert len(set(starts)) == 3
+
+
+def test_trailing_spread_clamped_to_next_line_safety_margin() -> None:
+    """When `tail_end_cap_s` is supplied, the spread must leave a
+    `_NEXT_LINE_SAFETY_S = 0.05` spacer before the cap so the trailing
+    tokens never land at the same timestamp as the next anchor.
+    """
+    anchors = [
+        SyncedLine(start_s=0.0, text="a b miss"),
+        SyncedLine(start_s=1.0, text="z"),
+    ]
+    whisper = [
+        _ww("a", 0.0, 0.1),
+        _ww("b", 0.1, 0.2),
+        # No "miss" in window.
+        _ww("z", 1.0, 1.1),
+    ]
+    result = align_with_line_anchors(anchors, whisper, track_end_s=2.0)
+    line_a = next(line for line in result.lines if line.text == "a b miss")
+    # "miss" must end at most window_end - _NEXT_LINE_SAFETY_S = 0.95
+    assert line_a.words[-1].end_s <= 0.95 + 1e-6
+
+
+def test_trailing_spread_single_unmatched_does_not_log_collapse(monkeypatch) -> None:
+    """A single trailing unmatched token is not the collapse pattern —
+    no `lyrics_alignment_trailing_collapse` log fires for tail_count < 2.
+    The guardrail target is 2+ collapsed trailing tokens.
+    """
+    from app.pipeline import lyrics_alignment
+
+    rec = _LogRecorder()
+    monkeypatch.setattr(lyrics_alignment, "log", rec)
+
+    anchors = [
+        SyncedLine(start_s=0.0, text="a b miss"),
+        SyncedLine(start_s=2.0, text="z"),
+    ]
+    whisper = [
+        _ww("a", 0.0, 0.3),
+        _ww("b", 0.3, 0.6),
+        _ww("z", 2.0, 2.3),
+    ]
+    align_with_line_anchors(anchors, whisper, track_end_s=3.0)
+    assert not rec.events_named("lyrics_alignment_trailing_collapse"), (
+        "should NOT log collapse for a single trailing unmatched token"
+    )
+
+
+def test_single_trailing_unmatched_with_cap_respects_safety_margin() -> None:
+    """Pins the scope-expanded tail_count == 1 behavior in the anchored path.
+
+    The pre-fix code gave a single trailing unmatched word a fixed 0.25s
+    window. The bounded spread formula now gives it the cap-derived duration
+    (up to `_MAX_INTERP_SLICE_S = 0.8s`), but MUST still respect
+    `tail_end_cap_s - _NEXT_LINE_SAFETY_S` so it can never extend into the
+    next line. Scope-expansion is intentional (single missing word should
+    reflect a real karaoke duration) — this test pins it.
+    """
+    anchors = [
+        SyncedLine(start_s=0.0, text="a b missing"),
+        # Next anchor at 3.0s — plenty of cap room for the single missing word.
+        SyncedLine(start_s=3.0, text="next"),
+    ]
+    whisper = [
+        _ww("a", 0.0, 0.3),
+        _ww("b", 0.3, 0.6),
+        # No Whisper word for "missing" inside [0, 3) — single trailing
+        # unmatched token.
+        _ww("next", 3.0, 3.2),
+    ]
+    result = align_with_line_anchors(anchors, whisper, track_end_s=4.0)
+    line_a = next(line for line in result.lines if line.text == "a b missing")
+    missing = line_a.words[-1]
+    # Pre-fix 0.25s would put missing.end_s at ~0.87s. The new bounded
+    # spread gives the canonical _MAX_INTERP_SLICE_S = 0.8s slice
+    # (rounded), so the duration is around 0.78-0.80s — substantially
+    # more than 0.25s but still well below the cap.
+    duration = missing.end_s - missing.start_s
+    assert duration > 0.3, (
+        f"single trailing unmatched should get >0.3s, got {duration:.3f}s "
+        "— pre-fix 0.25s collapse pattern returned"
+    )
+    assert duration <= 0.81, (
+        f"single trailing unmatched should be capped at _MAX_INTERP_SLICE_S "
+        f"(~0.8s with rounding), got {duration:.3f}s"
+    )
+    # Safety margin: missing.end_s must NOT reach the next anchor.
+    next_anchor_start = 3.0
+    assert missing.end_s <= next_anchor_start - 0.04, (
+        f"single trailing unmatched ends at {missing.end_s}, must respect "
+        f"_NEXT_LINE_SAFETY_S = 0.05 before next anchor at {next_anchor_start}"
+    )
+
+
+def test_single_trailing_unmatched_cap_with_no_room_falls_back_to_conservative() -> None:
+    """When the supplied `tail_end_cap_s` leaves no usable room past
+    `prev_end` (the previously matched Whisper word already ran into the
+    next line's anchor window), the single-trailing branch uses the
+    conservative no-cap budget formula. End must still NOT cross the next
+    line's first matched Whisper word, because the global next-line
+    protection is enforced by Pass 2 / per-line index bounds (future PR);
+    in the meantime the conservative per-token cap is the only bound.
+    """
+    anchors = [
+        SyncedLine(start_s=0.0, text="a b missing"),
+        # Next anchor at only 0.65s — earlier than the actual vocal end.
+        SyncedLine(start_s=0.65, text="next"),
+    ]
+    whisper = [
+        _ww("a", 0.0, 0.3),
+        # "b" extends past anchor B (0.65s) — its end at 0.7s overran the
+        # hard window. cap_budget becomes negative; conservative fires.
+        _ww("b", 0.3, 0.7),
+        _ww("next", 0.65, 0.85),
+    ]
+    result = align_with_line_anchors(anchors, whisper, track_end_s=2.0)
+    line_a = next(line for line in result.lines if line.text == "a b missing")
+    missing = line_a.words[-1]
+    duration = missing.end_s - missing.start_s
+    # Conservative formula: _MAX_INTERP_SLICE_S * tail_count * 0.5 = 0.4s.
+    # Per-token cap clamps at _MAX_INTERP_SLICE_S = 0.8s. So duration is
+    # 0.38s (0.4 - _INTERPOLATION_PADDING_S).
+    assert 0.35 <= duration <= 0.45, (
+        f"conservative budget should produce ~0.4s slice, got {duration:.3f}s"
+    )
+
+
+def test_single_trailing_unmatched_no_cap_logs_for_visibility(monkeypatch) -> None:
+    """The unanchored `align()` path passes no `tail_end_cap_s` — when a
+    single trailing unmatched token uses the conservative budget, emit the
+    `lyrics_alignment_trailing_single_no_cap` event so the rate of this
+    low-confidence fallback is visible in prod. Documented substitute for
+    a per-line low_conf marker until the data model gains one.
+    """
+    from app.pipeline import lyrics_alignment
+
+    rec = _LogRecorder()
+    monkeypatch.setattr(lyrics_alignment, "log", rec)
+
+    # Single line, single trailing miss.
+    canonical = ["match miss"]
+    whisper = [_ww("match", 0.0, 0.5)]
+    align(canonical, whisper)
+
+    events = rec.events_named("lyrics_alignment_trailing_single_no_cap")
+    assert len(events) == 1, (
+        f"expected exactly one no-cap-single event, got {[e for _, e, _ in rec.events]}"
+    )
+    assert events[0]["canonical_tail"] == ["miss"]
+    # The collapse log MUST NOT also fire (tail_count == 1).
+    assert not rec.events_named("lyrics_alignment_trailing_collapse")
