@@ -134,7 +134,7 @@ def test_strip_video_invokes_ffmpeg_with_lossless_audio_copy(tmp_path: Path) -> 
     # silently mask removal of -c:a copy.
     assert "-vn" in args
     assert "-c:a" in args and args[args.index("-c:a") + 1] == "copy"
-    assert "-map" in args and args[args.index("-map") + 1] == "0:a"
+    assert "-map" in args and args[args.index("-map") + 1] == "0:a:0"
     assert "-f" in args and args[args.index("-f") + 1] == "mp4"
 
 

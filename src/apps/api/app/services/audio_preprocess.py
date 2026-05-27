@@ -77,10 +77,13 @@ def has_video_stream(path: str) -> bool:
 
 
 def strip_video(src: str, dest: str) -> None:
-    """Re-mux *src* to *dest* keeping only the audio stream. Lossless.
+    """Re-mux *src* to *dest* keeping only the first audio stream. Lossless.
 
-    Uses ``ffmpeg -vn -c:a copy -map 0:a -f mp4`` so the audio bytes are
-    untouched. Output container is mp4/m4a regardless of input.
+    Uses ``ffmpeg -vn -c:a copy -map 0:a:0 -f mp4`` so the audio bytes are
+    untouched. ``0:a:0`` picks a single audio stream deterministically — a
+    multi-track YouTube container (dubbed languages) would otherwise hand
+    Whisper a stream chosen by SDK/server tie-break, which can swap between
+    runs. Output container is mp4/m4a regardless of input.
 
     Raises AudioPreprocessError on ffmpeg failure (includes stderr tail).
     """
@@ -92,7 +95,7 @@ def strip_video(src: str, dest: str) -> None:
             src,
             "-vn",
             "-map",
-            "0:a",
+            "0:a:0",
             "-c:a",
             "copy",
             "-f",
@@ -132,7 +135,7 @@ def compress_to_mono_64k(src: str, dest: str) -> None:
             src,
             "-vn",
             "-map",
-            "0:a",
+            "0:a:0",
             "-ac",
             "1",
             "-b:a",
