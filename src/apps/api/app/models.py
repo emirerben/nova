@@ -234,16 +234,51 @@ class MusicTrack(Base):
     # Gemini audio analysis → cached recipe for audio-only template creation
     recipe_cached: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     recipe_cached_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
-    # Lyrics extraction (Genius lyric text + Whisper word timings, aligned).
+    # Lyrics extraction (LRCLIB canonical text + Whisper word timings, aligned).
     # See app.agents.lyrics for the producer and app.pipeline.lyric_injector for
     # how this gets baked into music-job text overlays.
-    # "pending" | "extracting" | "ready" | "failed" | "unavailable"
+    #
+    # State machine:
+    #   "pending"             — not yet attempted
+    #   "extracting"          — Celery task running
+    #   "ready"               — publishable; lyrics_source MUST be in
+    #                           app.agents.lyrics.PUBLISHABLE_LYRICS_SOURCES
+    #   "needs_manual_lyrics" — LRCLIB lookup failed (or matched a wrong
+    #                           recording at low confidence). Whisper draft
+    #                           stored on `lyrics_whisper_draft` for admin
+    #                           reference. Admin must paste a LRCLIB ID/URL
+    #                           via the force-id endpoint to recover.
+    #   "unavailable"         — LRCLIB confirms instrumental (no lyrics exist)
+    #   "failed"              — Whisper crashed or pipeline error
     lyrics_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    # Publishable extraction blob (LyricsOutput shape). Production consumers
+    # only ever read this — non-publishable Whisper-only transcriptions live
+    # on `lyrics_whisper_draft` instead.
     lyrics_cached: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     lyrics_error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     lyrics_extracted_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
-    # "genius+whisper" | "whisper_only" | "manual" — null until extraction runs
+    # "lrclib_synced+whisper" | "lrclib_plain+whisper" | "whisper_only"
+    # (legacy: "genius+whisper" | "manual"). Only the lrclib_* sources are
+    # production-publishable; see app.agents.lyrics.PUBLISHABLE_LYRICS_SOURCES.
     lyrics_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Structured trace of the latest LRCLIB lookup. Surfaced in admin UI.
+    # Shape: {"query": {...}, "get_status": "404"|"hit"|"error", "search_status":
+    # "no_strong_match"|"hit"|"skipped", "search_top_score": float?,
+    # "lrclib_id_matched": int?, "fallback_path": str, "duration_delta_s":
+    # float?, "attempted_at": iso8601, "attempt_count": int}. Null until the
+    # agent's new flow lands.
+    lyrics_diagnostic: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Whisper-only draft kept for admin reference when production extraction
+    # fails (lyrics_status='needs_manual_lyrics'). Same LyricsOutput shape as
+    # lyrics_cached. Never read by production consumers.
+    lyrics_whisper_draft: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Monotonic counter bumped on every re-extract / force-id action. The
+    # extraction task takes an expected_version param and updates conditionally
+    # on it — older tasks completing after newer ones get their mutation
+    # discarded. Prevents stale-task races when an admin rapidly re-pastes IDs.
+    lyrics_extraction_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
     # song_classifier creative labels (vibe, genre, mood, copy_tone, ...).
     # See app/agents/_schemas/music_labels.py — MusicLabels Pydantic shape.
     # Nullable until backfill runs; the matcher filters out NULL-labeled tracks.

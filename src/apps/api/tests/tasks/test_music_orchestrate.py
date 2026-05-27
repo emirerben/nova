@@ -837,3 +837,269 @@ def test_run_lyrics_extraction_passes_duration_s_to_agent() -> None:
     assert captured_inputs[0].duration_s == 211.6
     assert captured_inputs[0].best_start_s == 0.0
     assert captured_inputs[0].best_end_s == 180.0
+
+
+# ── Forced LRCLIB ID + stale-task protection (NEW: 2026-05-27) ──────────────
+
+
+def _make_mock_track_for_lyrics(
+    *,
+    extraction_version: int = 0,
+    forced_lrclib_id: int | None = None,
+    title: str = "Beauty And A Beat",
+    artist: str = "Justin Bieber",
+) -> MagicMock:
+    """Build a MagicMock that mimics MusicTrack for _run_lyrics_extraction.
+
+    The real model has typed attributes; the orchestrator reads
+    `track.lyrics_extraction_version` (int), `track.track_config` (dict|None),
+    `track.title`/`track.artist` (str), and writes back several lyrics_* fields.
+    """
+    mock = MagicMock()
+    mock.title = title
+    mock.artist = artist
+    mock.id = TRACK_ID
+    mock.lyrics_extraction_version = extraction_version
+    mock.lyrics_status = "extracting"
+    if forced_lrclib_id is not None:
+        mock.track_config = {"lyrics_config": {"forced_lrclib_id": forced_lrclib_id}}
+    else:
+        mock.track_config = None
+    return mock
+
+
+def test_run_lyrics_extraction_threads_forced_lrclib_id_to_agent() -> None:
+    """Admin pastes a row ID → it ends up in `track_config.lyrics_config.forced_lrclib_id`
+    → orchestrator must read it and put it on LyricsInput so the agent
+    fetches that exact LRCLIB row instead of doing title/artist search."""
+    from app.tasks.music_orchestrate import _run_lyrics_extraction
+
+    captured_inputs: list = []
+
+    class _CapturingAgent:
+        def __init__(self, *_a, **_kw) -> None:
+            pass
+
+        def run(self, lyrics_input, ctx=None):  # noqa: ARG002
+            captured_inputs.append(lyrics_input)
+            output = MagicMock()
+            output.is_empty = True
+            output.source = "lrclib_synced+whisper"
+            output.lyrics_diagnostic = {}
+            output.model_dump = MagicMock(return_value={})
+            return output
+
+    track = _make_mock_track_for_lyrics(forced_lrclib_id=8543210)
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = lambda s: s
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = track
+
+    mock_settings = MagicMock()
+    mock_settings.openai_api_key = "sk-test"
+
+    with (
+        patch("app.tasks.music_orchestrate._sync_session", return_value=mock_session),
+        patch("app.agents.lyrics.LyricsExtractionAgent", _CapturingAgent),
+        patch("app.config.settings", mock_settings),
+    ):
+        _run_lyrics_extraction(
+            "/tmp/audio.m4a",
+            TRACK_ID,
+            best_start_s=0.0,
+            best_end_s=180.0,
+            duration_s=212.0,
+        )
+
+    assert len(captured_inputs) == 1
+    assert captured_inputs[0].forced_lrclib_id == 8543210
+
+
+def test_run_lyrics_extraction_ignores_invalid_forced_id_in_config() -> None:
+    """Garbage in track_config.lyrics_config.forced_lrclib_id (e.g. legacy
+    string, negative number) must NOT crash the extraction. The agent runs
+    the normal title/artist search."""
+    from app.tasks.music_orchestrate import _run_lyrics_extraction
+
+    captured_inputs: list = []
+
+    class _CapturingAgent:
+        def __init__(self, *_a, **_kw) -> None:
+            pass
+
+        def run(self, lyrics_input, ctx=None):  # noqa: ARG002
+            captured_inputs.append(lyrics_input)
+            output = MagicMock()
+            output.is_empty = True
+            output.source = "lrclib_synced+whisper"
+            output.lyrics_diagnostic = {}
+            output.model_dump = MagicMock(return_value={})
+            return output
+
+    track = MagicMock()
+    track.title = "X"
+    track.artist = "Y"
+    track.id = TRACK_ID
+    track.lyrics_extraction_version = 0
+    # Pathological config: not an int.
+    track.track_config = {"lyrics_config": {"forced_lrclib_id": "not-an-int"}}
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = lambda s: s
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = track
+
+    mock_settings = MagicMock()
+    mock_settings.openai_api_key = "sk-test"
+
+    with (
+        patch("app.tasks.music_orchestrate._sync_session", return_value=mock_session),
+        patch("app.agents.lyrics.LyricsExtractionAgent", _CapturingAgent),
+        patch("app.config.settings", mock_settings),
+    ):
+        _run_lyrics_extraction(
+            "/tmp/audio.m4a",
+            TRACK_ID,
+            best_start_s=0.0,
+            best_end_s=0.0,
+            duration_s=0.0,
+        )
+
+    # forced_lrclib_id ended up None — fell back to title/artist search.
+    assert captured_inputs[0].forced_lrclib_id is None
+
+
+def test_apply_lyrics_result_routes_publishable_to_cached() -> None:
+    """`lrclib_synced+whisper` outputs go to lyrics_cached + status=ready,
+    and the Whisper draft column is cleared (any prior draft is now stale)."""
+    from app.tasks.music_orchestrate import _apply_lyrics_result
+
+    track = MagicMock()
+    track.lyrics_extraction_version = 5
+    track.lyrics_whisper_draft = {"prior": "draft"}  # should be cleared
+
+    _apply_lyrics_result(
+        track,
+        {
+            "status": "ready",
+            "source": "lrclib_synced+whisper",
+            "output": {"source": "lrclib_synced+whisper", "lines": []},
+            "diagnostic": {"fallback_path": "ready_synced"},
+            "version_snapshot": 5,
+        },
+    )
+
+    assert track.lyrics_status == "ready"
+    assert track.lyrics_source == "lrclib_synced+whisper"
+    assert track.lyrics_cached == {"source": "lrclib_synced+whisper", "lines": []}
+    assert track.lyrics_whisper_draft is None  # cleared
+    assert track.lyrics_diagnostic == {"fallback_path": "ready_synced"}
+
+
+def test_apply_lyrics_result_routes_whisper_only_to_draft_with_needs_manual_status() -> None:
+    """The Beauty And A Beat policy: whisper_only output is NEVER written to
+    lyrics_cached. Status flips to needs_manual_lyrics, draft column gets the
+    Whisper output for admin reference, error message hints at the recovery
+    path (paste a row ID)."""
+    from app.tasks.music_orchestrate import _apply_lyrics_result
+
+    track = MagicMock()
+    track.lyrics_extraction_version = 3
+    track.lyrics_cached = {"stale": "publishable"}  # should be cleared
+
+    _apply_lyrics_result(
+        track,
+        {
+            "status": "needs_manual_lyrics",
+            "source": "whisper_only",
+            "whisper_draft": {"source": "whisper_only", "lines": [{"text": "hello"}]},
+            "diagnostic": {"fallback_path": "needs_manual_lyrics"},
+            "version_snapshot": 3,
+        },
+    )
+
+    assert track.lyrics_status == "needs_manual_lyrics"
+    assert track.lyrics_cached is None  # CRITICAL — never publish Whisper-only
+    assert track.lyrics_whisper_draft == {
+        "source": "whisper_only",
+        "lines": [{"text": "hello"}],
+    }
+    assert track.lyrics_source == "whisper_only"
+    assert track.lyrics_diagnostic == {"fallback_path": "needs_manual_lyrics"}
+    assert "paste" in (track.lyrics_error_detail or "").lower()
+
+
+def test_apply_lyrics_result_stale_task_discards_mutation() -> None:
+    """The Beauty And A Beat sprint scenario: admin pastes wrong ID, then
+    pastes the right ID before the first task finishes. The newer task bumped
+    `lyrics_extraction_version` from 5→6 at dispatch. When the older task
+    arrives at `_apply_lyrics_result` with `version_snapshot=5` against a
+    row at version=6, the mutation must be discarded — applying it would
+    overwrite the newer task's output with the older task's wrong result."""
+    from app.tasks.music_orchestrate import _apply_lyrics_result
+
+    track = MagicMock()
+    track.id = TRACK_ID
+    track.lyrics_extraction_version = 6  # newer task already bumped
+    prior_status = "ready"
+    prior_cached = {"correct": "lyrics"}
+    track.lyrics_status = prior_status
+    track.lyrics_cached = prior_cached
+
+    _apply_lyrics_result(
+        track,
+        {
+            "status": "needs_manual_lyrics",  # the OLDER task's bad result
+            "source": "whisper_only",
+            "whisper_draft": {"wrong": "garbage"},
+            "diagnostic": {"fallback_path": "needs_manual_lyrics"},
+            "version_snapshot": 5,  # doesn't match current 6 → discard
+        },
+    )
+
+    # Track state must be UNCHANGED — no mutation applied.
+    assert track.lyrics_status == prior_status, "stale task overwrote status"
+    assert track.lyrics_cached == prior_cached, "stale task overwrote cached lyrics"
+
+
+def test_apply_lyrics_result_matching_version_applies_mutation() -> None:
+    """Sanity-check the other side of the gate: when version_snapshot matches
+    current, the mutation applies normally."""
+    from app.tasks.music_orchestrate import _apply_lyrics_result
+
+    track = MagicMock()
+    track.id = TRACK_ID
+    track.lyrics_extraction_version = 4
+
+    _apply_lyrics_result(
+        track,
+        {
+            "status": "ready",
+            "source": "lrclib_synced+whisper",
+            "output": {"lines": [{"text": "ok"}]},
+            "diagnostic": {"fallback_path": "ready_synced"},
+            "version_snapshot": 4,  # matches → apply
+        },
+    )
+
+    assert track.lyrics_status == "ready"
+    assert track.lyrics_cached == {"lines": [{"text": "ok"}]}
+
+
+def test_apply_lyrics_result_skipped_bypasses_version_gate() -> None:
+    """Skipped runs (no OPENAI_API_KEY) don't read a version snapshot, so
+    they bypass the stale-task gate and can land their no-op mutation on
+    any row state. Existing pre-2026-05-27 behavior; pinned here so a
+    future refactor doesn't break it."""
+    from app.tasks.music_orchestrate import _apply_lyrics_result
+
+    track = MagicMock()
+    track.lyrics_status = "pending"
+    track.lyrics_extraction_version = 99
+
+    _apply_lyrics_result(track, {"status": "skipped", "reason": "openai_api_key_missing"})
+
+    # `skipped` left a fresh row at `pending` because there was no prior
+    # successful extraction to preserve.
+    assert track.lyrics_status == "pending"

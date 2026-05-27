@@ -28,11 +28,24 @@ _YOUTUBE_NOISE_TAGS = re.compile(
     flags=re.IGNORECASE,
 )
 
+# Trailing "ft. X" / "feat. Y" / "featuring Z" outside parens. Anchored to
+# end-of-string so a leading "Featuring You" (rare legitimate title-initial)
+# is preserved. The parens-wrapped variants ("(feat. ...)") are already
+# stripped by `_YOUTUBE_NOISE_TAGS` indirectly when wrapped in a noise tag,
+# and otherwise preserved as legitimate parens; this regex handles the
+# admin-uploaded-filename case `"Beauty And A Beat (Official Music Video) ft. Nicki Minaj"`
+# where the feature credit hangs OUTSIDE all parens and LRCLIB's exact-string
+# title index would refuse to match it.
+_TRAILING_FEATURE_RE = re.compile(
+    r"\s+(?:ft|feat|featuring)\.?\s+\S.*$",
+    flags=re.IGNORECASE,
+)
+
 
 def build_lyrics_search_query(title: str, artist: str) -> tuple[str, str]:
     """Return cleaned `(title, artist)` pair for lyric lookups.
 
-    Two operations, in order:
+    Three operations, in order:
 
     1. **Artist deduplication.** When the title field starts with the artist
        name plus a separator ('Artist - ', 'Artist -', case-insensitive),
@@ -41,8 +54,14 @@ def build_lyrics_search_query(title: str, artist: str) -> tuple[str, str]:
 
     2. **Noise tag stripping.** Drop parenthetical / bracketed segments
        that match the YouTube noise vocabulary ("Official Video", "HD",
-       "Lyrics", "Remix", etc.). Preserves legitimate parens like
-       "(feat. Ariana Grande)" — those don't match the vocabulary.
+       "Lyrics", "Remix", etc.). Preserves legitimate parens.
+
+    3. **Trailing-feature stripping.** Strip dangling " ft. X" / " feat. Y"
+       / " featuring Z" at end-of-string after the parenthetical noise has
+       been removed. LRCLIB's index keys on the song's canonical title
+       (no feature credits), so leaving the suffix in the query was the
+       root cause of the Beauty And A Beat / Justin Bieber miss
+       (admin-uploaded filename incident, PR for this change).
 
     Returns:
         (clean_title, clean_artist). Either field may be empty; callers
@@ -60,6 +79,11 @@ def build_lyrics_search_query(title: str, artist: str) -> tuple[str, str]:
 
     # Drop parenthetical / bracketed noise like "(Official Video)".
     title = _YOUTUBE_NOISE_TAGS.sub("", title)
+    # Strip dangling " ft./feat./featuring X" outside any parens, anchored to
+    # end. Runs AFTER parenthetical stripping so a title like
+    # "Song (Official Video) ft. Other" loses "(Official Video)" first, then
+    # the trailing " ft. Other".
+    title = _TRAILING_FEATURE_RE.sub("", title)
     # Collapse repeated whitespace + leading/trailing hyphens left behind.
     title = re.sub(r"\s+", " ", title).strip(" -–—")
 

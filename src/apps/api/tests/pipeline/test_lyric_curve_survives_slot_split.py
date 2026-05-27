@@ -29,6 +29,7 @@ from app.pipeline.lyric_injector import inject_lyric_overlays
 
 def _cache(lines: list[tuple[str, float, float]]) -> dict:
     return {
+        "source": "lrclib_synced+whisper",
         "lines": [
             {
                 "text": text,
@@ -37,7 +38,7 @@ def _cache(lines: list[tuple[str, float, float]]) -> dict:
                 "words": [{"text": text, "start_s": start, "end_s": end}],
             }
             for text, start, end in lines
-        ]
+        ],
     }
 
 

@@ -32,13 +32,17 @@ def build_single_slot_recipe(target_duration_s: float = 20.0) -> dict:
 def make_lyrics_cached(
     *,
     lines: Iterable[dict],
+    source: str = "lrclib_synced+whisper",
 ) -> dict:
     """Wrap raw lines in the lyrics_cached envelope the injector expects.
 
     Each line must already have `text`, `start_s`, `end_s`, and `words` —
     we don't synthesize them so the tests stay literal about timings.
+
+    `source` defaults to a publishable LRCLIB shape so the injector's
+    Layer-2 source gate (added 2026-05-27) accepts the fixture.
     """
-    return {"lines": list(lines)}
+    return {"source": source, "lines": list(lines)}
 
 
 def inject_overlays_for_style(

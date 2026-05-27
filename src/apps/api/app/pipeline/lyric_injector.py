@@ -58,6 +58,23 @@ from app.pipeline.text_reveal import (
 log = structlog.get_logger()
 
 
+# Sources that the injector will burn into output. The agent's
+# `PUBLISHABLE_LYRICS_SOURCES` set covers the forward path; this set adds
+# the legacy `genius+whisper` rows that pre-date the LRCLIB cutover (still
+# in prod DB until they're re-extracted) and the future `manual` admin
+# override. `whisper_only` is INTENTIONALLY excluded — defense in depth
+# against a stale or drift-state row sneaking through, even though the
+# orchestrator never writes whisper_only to lyrics_cached now.
+_INJECTOR_ALLOWED_SOURCES: frozenset[str] = frozenset(
+    {
+        "lrclib_synced+whisper",
+        "lrclib_plain+whisper",
+        "genius+whisper",  # legacy, pre-LRCLIB cutover
+        "manual",  # admin override (future)
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class _SlotWindow:
     """A slot's absolute [start_s, end_s] window in section-relative coords."""
@@ -193,8 +210,26 @@ def inject_lyric_overlays(
     cfg = dict(lyrics_config or {})
     if not cfg.get("enabled"):
         return recipe_dict
+    # Layer-1 gate (primary, silent): no publishable extraction → nothing to burn.
+    # After 2026-05-27 migration, non-publishable Whisper-only outputs live on
+    # `lyrics_whisper_draft` instead and never reach this function.
     if not lyrics_cached:
         log.info("lyric_inject_skipped_no_cache", reason="lyrics_cached missing")
+        return recipe_dict
+
+    # Layer-2 gate (defense in depth, loud): even if `lyrics_cached` is populated,
+    # the embedded `source` must be in the injector's allowlist. Catches drift
+    # cases — a stale `whisper_only` blob sneaking through a half-applied
+    # migration, or a future source added to the agent without a paired
+    # injector update.
+    source = (lyrics_cached.get("source") or "") if isinstance(lyrics_cached, dict) else ""
+    if source not in _INJECTOR_ALLOWED_SOURCES:
+        log.warning(
+            "lyric_injection_skipped_invariant_violated",
+            reason="lyrics_cached.source not in injector allowlist",
+            source=source or "<empty>",
+            config_enabled=bool(cfg.get("enabled")),
+        )
         return recipe_dict
 
     # NOTE: PR #343 introduced a `_caller_key_set` snapshot here to distinguish

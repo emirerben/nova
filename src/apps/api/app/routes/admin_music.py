@@ -168,10 +168,22 @@ class MusicTrackResponse(BaseModel):
     # Lyrics fields — see app.agents.lyrics + app.models.MusicTrack for shape.
     # `lyrics_cached` is full per-line + per-word JSON; in list responses we
     # still surface it so the frontend can preview without an extra fetch.
+    # `lyrics_whisper_draft` is the non-publishable Whisper-only draft that
+    # the admin UI shows below the diagnostic when status='needs_manual_lyrics',
+    # so the operator can cross-check timestamps when picking an LRCLIB row.
+    # `lyrics_diagnostic` is the structured trace of the last lookup attempt
+    # (cleaned title/artist sent, response statuses, top fuzzy score, duration
+    # delta) — rendered as the diagnostic block on the Lyrics tab.
+    # `lyrics_extraction_version` is the monotonic counter behind the stale-
+    # task discard gate in music_orchestrate; surfaced so the FE can pin its
+    # paste-ID action to the version it saw.
     lyrics_status: str
     lyrics_source: str | None
     lyrics_error_detail: str | None
     lyrics_cached: dict | None
+    lyrics_whisper_draft: dict | None
+    lyrics_diagnostic: dict | None
+    lyrics_extraction_version: int
     lyrics_extracted_at: datetime | None
     # Output of the song_sections agent — 1-3 ranked edit-worthy windows.
     # `section_version` mirrors CURRENT_SECTION_VERSION so the admin UI can
@@ -334,6 +346,9 @@ def _to_response(t: MusicTrack) -> MusicTrackResponse:
         lyrics_source=t.lyrics_source,
         lyrics_error_detail=t.lyrics_error_detail,
         lyrics_cached=t.lyrics_cached,
+        lyrics_whisper_draft=t.lyrics_whisper_draft,
+        lyrics_diagnostic=t.lyrics_diagnostic,
+        lyrics_extraction_version=int(t.lyrics_extraction_version or 0),
         lyrics_extracted_at=t.lyrics_extracted_at,
         best_sections=coerced_sections,
         section_version=t.section_version,
@@ -1338,6 +1353,27 @@ async def update_music_track(
     if req.thumbnail_url is not None:
         track.thumbnail_url = req.thumbnail_url
     if req.track_config is not None:
+        # Defense in depth (2026-05-27 Beauty And A Beat PR): refuse a REQUEST
+        # that flips `lyrics_config.enabled=true` on a non-ready track. The FE
+        # disables the checkbox visually; this is the backend wall against a
+        # hand-crafted PATCH that would otherwise enable lyric burn-in on a
+        # whisper-only or needs_manual_lyrics track. We inspect ONLY the
+        # incoming request (not the merged config), so legitimate edits to
+        # other lyrics_config keys on an already-enabled track still work.
+        req_lyrics_cfg = req.track_config.get("lyrics_config") or {}
+        if (
+            isinstance(req_lyrics_cfg, dict)
+            and req_lyrics_cfg.get("enabled") is True
+            and track.lyrics_status != "ready"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Cannot enable lyrics on this track: lyrics_status is "
+                    f"{track.lyrics_status!r}, must be 'ready'. Resolve the "
+                    "extraction first (paste an LRCLIB ID or re-extract)."
+                ),
+            )
         merged_config = {**(track.track_config or {}), **req.track_config}
         if merged_config.get("best_end_s", 0) <= merged_config.get("best_start_s", 0):
             raise HTTPException(
@@ -1409,6 +1445,10 @@ async def update_music_track_lyrics_config(
             detail=str(exc),
         ) from exc
     normalized = normalize_lyrics_config(merged)
+    # NOTE: The PATCH `/lyrics-config` route's `LyricsConfigOverride` schema
+    # does NOT accept `enabled` (extra="forbid"). The enabled flag is flipped
+    # via the general `PATCH /{track_id}` body's `track_config` field, where
+    # the Beauty-And-A-Beat (2026-05-27) `enabled=true` gate lives.
     track_config["lyrics_config"] = normalized
     track.track_config = track_config
     await db.commit()
@@ -1586,6 +1626,7 @@ async def extract_track_lyrics(
 
     track.lyrics_status = "extracting"
     track.lyrics_error_detail = None
+    track.lyrics_extraction_version = int(track.lyrics_extraction_version or 0) + 1
     await db.commit()
 
     from app.tasks.music_orchestrate import extract_track_lyrics_task  # noqa: PLC0415
@@ -1593,6 +1634,101 @@ async def extract_track_lyrics(
     extract_track_lyrics_task.delay(track_id)
 
     log.info("music_track_lyrics_dispatched", track_id=track_id)
+    return ReanalyzeResponse(track_id=track_id, analysis_status="extracting")
+
+
+class ForceLrclibIdRequest(BaseModel):
+    """Admin manual override for the LRCLIB lookup.
+
+    Accepts either a naked numeric ID (`"12345"`) or an lrclib.net row URL
+    (`https://lrclib.net/lyrics/12345`). Parsing is delegated to
+    `app.services.lrclib_id_parse.parse_lrclib_id` which enforces a strict
+    host allowlist (no arbitrary URLs allowed). See PR Beauty-And-A-Beat.
+    """
+
+    id_or_url: str
+
+
+@router.post(
+    "/{track_id}/lyrics-force-lrclib-id",
+    response_model=ReanalyzeResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def force_lyrics_lrclib_id(
+    track_id: str,
+    req: ForceLrclibIdRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ReanalyzeResponse:
+    """Pin a track to a specific LRCLIB row and re-extract.
+
+    Recovery path for the `needs_manual_lyrics` state: when title+artist
+    search fails (dirty metadata, regional title variants), the admin can
+    paste the correct LRCLIB row URL or ID. The agent bypasses /api/get +
+    /api/search entirely and fetches the named row via /api/get/{id}.
+
+    Persists `forced_lrclib_id` into `track_config.lyrics_config` so that
+    subsequent re-extracts (e.g. if the audio file is re-encoded) keep
+    using the same row without re-asking the admin.
+
+    Bumps `lyrics_extraction_version` so any in-flight extraction task from
+    a prior force-id (or a normal re-extract that's still running) gets
+    discarded at commit time rather than racing this one — see
+    `_apply_lyrics_result` in app/tasks/music_orchestrate.py.
+    """
+    from app.services.lrclib_id_parse import (  # noqa: PLC0415
+        LrclibIdParseError,
+        parse_lrclib_id,
+    )
+
+    try:
+        forced_id = parse_lrclib_id(req.id_or_url)
+    except LrclibIdParseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    track = await _get_track_or_404(track_id, db)
+
+    if not track.audio_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Track has no audio file — re-upload the track first.",
+        )
+    if track.lyrics_status == "extracting":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Lyric extraction is already in progress for this track. "
+                "Wait for it to finish, then try again."
+            ),
+        )
+
+    # Persist forced_lrclib_id into track_config.lyrics_config so it's read
+    # by music_orchestrate._run_lyrics_extraction at task start. JSONB column
+    # is a dict | None at the model level, but we may be appending to an
+    # existing config — preserve other keys.
+    existing_track_config = dict(track.track_config or {})
+    existing_lyrics_cfg = dict(existing_track_config.get("lyrics_config") or {})
+    existing_lyrics_cfg["forced_lrclib_id"] = forced_id
+    existing_track_config["lyrics_config"] = existing_lyrics_cfg
+    track.track_config = existing_track_config
+
+    track.lyrics_status = "extracting"
+    track.lyrics_error_detail = None
+    track.lyrics_diagnostic = None  # stale; the new run will repopulate
+    track.lyrics_extraction_version = int(track.lyrics_extraction_version or 0) + 1
+    await db.commit()
+
+    from app.tasks.music_orchestrate import extract_track_lyrics_task  # noqa: PLC0415
+
+    extract_track_lyrics_task.delay(track_id)
+
+    log.info(
+        "music_track_lyrics_forced_id_dispatched",
+        track_id=track_id,
+        forced_lrclib_id=forced_id,
+    )
     return ReanalyzeResponse(track_id=track_id, analysis_status="extracting")
 
 

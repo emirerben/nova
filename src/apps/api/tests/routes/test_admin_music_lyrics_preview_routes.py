@@ -36,6 +36,8 @@ def _track(**overrides) -> MagicMock:
     t.duration_s = 5.0
     t.track_config = {"lyrics_config": {"enabled": True, "style": "line"}}
     t.lyrics_cached = {
+        # Source required by injector's Layer-2 gate (added 2026-05-27).
+        "source": "lrclib_synced+whisper",
         "lines": [
             {
                 "text": "hello",
@@ -43,7 +45,7 @@ def _track(**overrides) -> MagicMock:
                 "end_s": 2.0,
                 "words": [{"text": "hello", "start_s": 1.0, "end_s": 2.0}],
             }
-        ]
+        ],
     }
     for key, value in overrides.items():
         setattr(t, key, value)

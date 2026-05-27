@@ -19,6 +19,8 @@ def test_line_style_default_text_size_and_position() -> None:
         "slots": [{"position": 1, "target_duration_s": 6.0, "text_overlays": []}],
     }
     cache = {
+        "source": "lrclib_synced+whisper",
+
         "lines": [
             {
                 "text": "I hope I make it outta here (let's go! Yeah)",
@@ -45,6 +47,8 @@ def test_line_style_respects_caller_overrides() -> None:
         "slots": [{"position": 1, "target_duration_s": 6.0, "text_overlays": []}],
     }
     cache = {
+        "source": "lrclib_synced+whisper",
+
         "lines": [
             {"text": "Tuned", "start_s": 0.5, "end_s": 1.5, "words": []},
         ]

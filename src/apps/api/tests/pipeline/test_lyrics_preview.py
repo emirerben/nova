@@ -29,6 +29,7 @@ def _track(**overrides):
         duration_s=5.0,
         track_config={},
         lyrics_cached={
+            "source": "lrclib_synced+whisper",
             "lines": [
                 {
                     "text": "hello world",
@@ -39,7 +40,7 @@ def _track(**overrides):
                         {"text": "world", "start_s": 1.5, "end_s": 2.0},
                     ],
                 }
-            ]
+            ],
         },
     )
     for key, value in overrides.items():
@@ -183,6 +184,9 @@ def _track_with_lines(line_starts: list[float], **overrides):
     """
     track = _track(**overrides)
     track.lyrics_cached = {
+        # Injector requires a publishable source after 2026-05-27 — see
+        # `_INJECTOR_ALLOWED_SOURCES` in app/pipeline/lyric_injector.py.
+        "source": "lrclib_synced+whisper",
         "lines": [
             {
                 "text": f"line {idx}",
@@ -193,7 +197,7 @@ def _track_with_lines(line_starts: list[float], **overrides):
                 ],
             }
             for idx, start in enumerate(line_starts)
-        ]
+        ],
     }
     return track
 
@@ -419,10 +423,12 @@ def test_preview_window_section_anchored_with_pre_section_overlap() -> None:
         track_config={"best_start_s": 127.2, "best_end_s": 141.0},
     )
     track.lyrics_cached = {
+        # Source required by injector's Layer-2 gate (added 2026-05-27).
+        "source": "lrclib_synced+whisper",
         "lines": [
             {"text": "intro", "start_s": 126.9, "end_s": 129.0},
             {"text": "more", "start_s": 130.0, "end_s": 131.0},
-        ]
+        ],
     }
     start_s, duration_s = _resolve_preview_window(track)
     assert start_s == 127.2  # clamped to section start, NOT 124.9
@@ -936,6 +942,7 @@ def _track_with_first_line_at(start_s: float, **overrides):
     """Variant fixture: `_track()` with the line's `start_s` overridden."""
     track = _track(**overrides)
     track.lyrics_cached = {
+        "source": "lrclib_synced+whisper",
         "lines": [
             {
                 "text": "hello world",
@@ -946,7 +953,7 @@ def _track_with_first_line_at(start_s: float, **overrides):
                     {"text": "world", "start_s": start_s + 0.5, "end_s": start_s + 1.0},
                 ],
             }
-        ]
+        ],
     }
     return track
 
@@ -1064,7 +1071,10 @@ def test_render_lyrics_preview_writes_per_job_path() -> None:
         audio_gcs_path="music/track-A/audio.m4a",
         duration_s=60.0,
         track_config={},
-        lyrics_cached={"lines": [{"text": "x", "start_s": 1.0, "end_s": 2.0}]},
+        lyrics_cached={
+            "source": "lrclib_synced+whisper",
+            "lines": [{"text": "x", "start_s": 1.0, "end_s": 2.0}],
+        },
     )
 
     captured: list[str] = []
@@ -1114,6 +1124,7 @@ def test_render_lyrics_preview_writes_per_style_path() -> None:
         duration_s=60.0,
         track_config={},
         lyrics_cached={
+            "source": "lrclib_synced+whisper",
             "lines": [
                 {
                     "text": "hello",
@@ -1123,7 +1134,7 @@ def test_render_lyrics_preview_writes_per_style_path() -> None:
                         {"text": "hello", "start_s": 1.0, "end_s": 2.0},
                     ],
                 }
-            ]
+            ],
         },
     )
 

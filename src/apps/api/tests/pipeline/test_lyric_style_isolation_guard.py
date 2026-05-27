@@ -39,12 +39,16 @@ _LYRIC_INJECTOR_PATH = (
 )
 
 # Inclusive line range covering `_inject_line` and the dynamic-crossfade
-# post-pass. Lines 644 starts with `def _inject_line(`; line 1146 is the
+# post-pass. Line 677 starts with `def _inject_line(`; line 1179 is the
 # last line before `def _finalize_lyric_audible_window(` (the next public
-# function). If the file structure changes such that this range no longer
-# captures the right scope, update BOTH endpoints below AND the SHA.
-_LINE_FROZEN_RANGE_START: int = 644
-_LINE_FROZEN_RANGE_END: int = 1146
+# function). Range moved from 644..1146 to 677..1179 in PR Beauty-And-A-Beat
+# (2026-05-27) when the `_INJECTOR_ALLOWED_SOURCES` constant + Layer-2 source
+# gate were added at the top of the file — content of the frozen range is
+# byte-identical (same SHA), just shifted by +33 lines.
+# If the file structure changes such that this range no longer captures the
+# right scope, update BOTH endpoints below AND the SHA.
+_LINE_FROZEN_RANGE_START: int = 679
+_LINE_FROZEN_RANGE_END: int = 1181
 
 # Locked SHA256 of the frozen range. DO NOT update this constant casually.
 # Read the module docstring above for the legitimate update procedure.

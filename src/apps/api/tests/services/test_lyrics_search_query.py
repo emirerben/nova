@@ -80,3 +80,77 @@ def test_strips_trailing_dash_after_noise_removal() -> None:
     weird in the lookup string."""
     title, _ = build_lyrics_search_query("Song Title - (Official Video)", "Artist")
     assert title == "Song Title"
+
+
+# ── Trailing-feature stripping (the Beauty And A Beat fix) ────────────────────
+
+
+def test_strips_trailing_ft_with_dot() -> None:
+    """Admin-uploaded filename 'Song ft. Other' must lose the suffix —
+    LRCLIB's index keys on the canonical title without feature credits."""
+    title, artist = build_lyrics_search_query("Beauty And A Beat ft. Nicki Minaj", "Justin Bieber")
+    assert title == "Beauty And A Beat"
+    assert artist == "Justin Bieber"
+
+
+def test_strips_trailing_feat_with_dot() -> None:
+    title, _ = build_lyrics_search_query("Song Title feat. Artist X", "Other")
+    assert title == "Song Title"
+
+
+def test_strips_trailing_feat_without_dot() -> None:
+    title, _ = build_lyrics_search_query("Song Title feat Artist X", "Other")
+    assert title == "Song Title"
+
+
+def test_strips_trailing_featuring() -> None:
+    title, _ = build_lyrics_search_query("Song Title featuring Some Person", "Artist")
+    assert title == "Song Title"
+
+
+def test_trailing_feature_case_insensitive() -> None:
+    """yt-dlp + admin uploads emit varied casing — FT./Feat./Featuring."""
+    for raw in (
+        "Song Title FT. Other",
+        "Song Title Feat. Other",
+        "Song Title FEATURING Other",
+    ):
+        title, _ = build_lyrics_search_query(raw, "Artist")
+        assert title == "Song Title", f"failed for {raw!r}"
+
+
+def test_full_beauty_and_a_beat_filename() -> None:
+    """Regression test for the exact failing case: admin uploads
+    'Justin Bieber - Beauty And A Beat (Official Music Video) ft. Nicki Minaj.mp3'
+    (the .mp3 is gone by the time it reaches here, but the rest is the
+    track title field). LRCLIB needs `Beauty And A Beat` / `Justin Bieber`."""
+    title, artist = build_lyrics_search_query(
+        "Justin Bieber - Beauty And A Beat (Official Music Video) ft. Nicki Minaj",
+        "Justin Bieber",
+    )
+    assert title == "Beauty And A Beat"
+    assert artist == "Justin Bieber"
+
+
+def test_preserves_parenthetical_feat() -> None:
+    """The `(feat. ...)` form stays — that's the canonical title shape on
+    many services (Apple Music, Spotify). LRCLIB indexes both, and the
+    parenthetical variant is more likely to match older recordings."""
+    title, _ = build_lyrics_search_query("Save Your Tears (feat. Ariana Grande)", "The Weeknd")
+    assert title == "Save Your Tears (feat. Ariana Grande)"
+
+
+def test_does_not_strip_leading_featuring() -> None:
+    """A title that legitimately STARTS with 'Featuring' (e.g. a track
+    literally named 'Featuring You') must NOT be stripped — the regex is
+    anchored to require leading whitespace, so a token at position 0 of
+    the string doesn't match."""
+    title, _ = build_lyrics_search_query("Featuring You", "Some Artist")
+    assert title == "Featuring You"
+
+
+def test_does_not_strip_ft_inside_word() -> None:
+    """A title with 'ft' as a substring of a longer word (e.g. 'Software')
+    must not be touched."""
+    title, _ = build_lyrics_search_query("Software Update Blues", "Artist")
+    assert title == "Software Update Blues"

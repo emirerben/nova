@@ -834,16 +834,29 @@ def _run_lyrics_extraction(
     """Call LyricsExtractionAgent and return a status-tagged result.
 
     Returns one of:
-      {"status": "ready",       "output": <LyricsOutput.model_dump()>, "source": "..."}
-      {"status": "unavailable", "error": "<short str>"}   # no usable output (e.g. instrumental)
-      {"status": "failed",      "error": "<short str>"}   # whisper/network error
-      {"status": "skipped",     "reason": "..."}          # OPENAI_API_KEY missing, etc.
+      {"status": "ready",               "output": <dump>, "source": "lrclib_*",
+                                        "diagnostic": <dump>, "version_snapshot": int}
+      {"status": "needs_manual_lyrics", "whisper_draft": <dump>, "source": "whisper_only",
+                                        "diagnostic": <dump>, "version_snapshot": int}
+      {"status": "unavailable",         "error": "...", "diagnostic": <dump>?,
+                                        "version_snapshot": int}
+      {"status": "failed",              "error": "...", "version_snapshot": int}
+      {"status": "skipped",             "reason": "..."}        # no version_snapshot
+
+    `version_snapshot` is the `lyrics_extraction_version` read off the track
+    at the time the agent was kicked off. `_apply_lyrics_result` uses it for
+    conditional UPDATE — if another task has bumped the version in the
+    meantime, our mutation is discarded (stale-task protection).
 
     Never raises — caller is expected to slot whatever is returned into the
     DB via `_apply_lyrics_result`.
     """
     from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
-    from app.agents.lyrics import LyricsExtractionAgent, LyricsInput  # noqa: PLC0415
+    from app.agents.lyrics import (  # noqa: PLC0415
+        PUBLISHABLE_LYRICS_SOURCES,
+        LyricsExtractionAgent,
+        LyricsInput,
+    )
     from app.config import settings  # noqa: PLC0415
 
     # Whisper is required; without it we can't produce timing data. Bail fast.
@@ -852,7 +865,10 @@ def _run_lyrics_extraction(
         return {"status": "skipped", "reason": "openai_api_key_missing"}
 
     # Look up the most recent track metadata for the agent input (title/artist
-    # may have been edited since dispatch).
+    # may have been edited since dispatch) AND snapshot the extraction version
+    # so we can detect stale-task races at commit time.
+    forced_lrclib_id: int | None = None
+    version_snapshot: int = 0
     try:
         with _sync_session() as db:
             track = db.get(MusicTrack, track_id)
@@ -860,6 +876,25 @@ def _run_lyrics_extraction(
                 return {"status": "failed", "error": "track_not_found"}
             title = (track.title or "").strip()
             artist = (track.artist or "").strip()
+            version_snapshot = int(track.lyrics_extraction_version or 0)
+            # Forced override (admin paste-ID) lives on track_config.lyrics_config.
+            cfg = (track.track_config or {}) or {}
+            lyrics_cfg = (cfg.get("lyrics_config") or {}) if isinstance(cfg, dict) else {}
+            forced_raw = (
+                lyrics_cfg.get("forced_lrclib_id") if isinstance(lyrics_cfg, dict) else None
+            )
+            if forced_raw is not None:
+                try:
+                    forced_lrclib_id = int(forced_raw)
+                    if forced_lrclib_id <= 0:
+                        forced_lrclib_id = None
+                except (TypeError, ValueError):
+                    log.warning(
+                        "lyrics_forced_id_invalid_in_config",
+                        track_id=track_id,
+                        raw=forced_raw,
+                    )
+                    forced_lrclib_id = None
     except Exception as exc:
         return {"status": "failed", "error": f"db_lookup_failed: {exc}"}
 
@@ -876,6 +911,7 @@ def _run_lyrics_extraction(
                 best_start_s=float(best_start_s or 0.0),
                 best_end_s=float(best_end_s or 0.0),
                 duration_s=float(duration_s or 0.0),
+                forced_lrclib_id=forced_lrclib_id,
             ),
             ctx=RunContext(job_id=f"track:{track_id}"),
         )
@@ -884,43 +920,105 @@ def _run_lyrics_extraction(
         # "whisper returned zero words" → instrumental; surface as unavailable
         # so the admin UI can show "no lyrics" instead of "extraction failed".
         if "zero words" in msg or "instrumental" in msg:
-            return {"status": "unavailable", "error": msg[:500]}
-        return {"status": "failed", "error": msg[:500]}
+            return {
+                "status": "unavailable",
+                "error": msg[:500],
+                "version_snapshot": version_snapshot,
+            }
+        return {"status": "failed", "error": msg[:500], "version_snapshot": version_snapshot}
     except Exception as exc:  # safety net — agent runtime should already wrap
-        return {"status": "failed", "error": str(exc)[:500]}
+        return {"status": "failed", "error": str(exc)[:500], "version_snapshot": version_snapshot}
 
     if output.is_empty:
-        return {"status": "unavailable", "error": "no_lines_after_alignment"}
+        return {
+            "status": "unavailable",
+            "error": "no_lines_after_alignment",
+            "diagnostic": output.lyrics_diagnostic,
+            "version_snapshot": version_snapshot,
+        }
 
+    output_dump = output.model_dump()
+
+    # Publishability decision: only LRCLIB-derived sources count as ready.
+    # Whisper-only goes to the draft column with status=needs_manual_lyrics.
+    if output.source in PUBLISHABLE_LYRICS_SOURCES:
+        return {
+            "status": "ready",
+            "source": output.source,
+            "output": output_dump,
+            "diagnostic": output.lyrics_diagnostic,
+            "version_snapshot": version_snapshot,
+        }
+    # Anything else (whisper_only, or any non-LRCLIB source) is non-publishable.
     return {
-        "status": "ready",
+        "status": "needs_manual_lyrics",
         "source": output.source,
-        "output": output.model_dump(),
+        "whisper_draft": output_dump,
+        "diagnostic": output.lyrics_diagnostic,
+        "version_snapshot": version_snapshot,
     }
 
 
 def _apply_lyrics_result(track: MusicTrack, result: dict | None) -> None:
-    """Persist the result of `_run_lyrics_extraction` onto the track row."""
+    """Persist the result of `_run_lyrics_extraction` onto the track row.
+
+    Stale-task protection: when the result carries a `version_snapshot`
+    that doesn't match the row's current `lyrics_extraction_version`, the
+    result is discarded — a newer extraction task has already raced ahead
+    and we'd otherwise overwrite its correct output with our stale one.
+    """
     if not result:
         return
     from datetime import UTC, datetime  # noqa: PLC0415
 
     status = result.get("status") or "failed"
+
+    # Stale-task discard. Skipped runs don't have a snapshot (never read a
+    # version), so they bypass the check.
+    if "version_snapshot" in result:
+        current_version = int(track.lyrics_extraction_version or 0)
+        snapshot = int(result.get("version_snapshot") or 0)
+        if snapshot != current_version:
+            log.warning(
+                "lyric_extraction_stale_task_discarded",
+                track_id=track.id,
+                version_snapshot=snapshot,
+                current_version=current_version,
+                status=status,
+            )
+            return
+
+    now = datetime.now(UTC)
     if status == "ready":
         track.lyrics_status = "ready"
         track.lyrics_cached = result.get("output")
-        track.lyrics_source = result.get("source") or "genius+whisper"
+        track.lyrics_whisper_draft = None  # publishable wins; clear any prior draft
+        track.lyrics_source = result.get("source") or "lrclib_synced+whisper"
         track.lyrics_error_detail = None
-        track.lyrics_extracted_at = datetime.now(UTC)
+        track.lyrics_diagnostic = result.get("diagnostic")
+        track.lyrics_extracted_at = now
+    elif status == "needs_manual_lyrics":
+        # Non-publishable extraction (whisper_only). Keep the draft for admin
+        # reference but do NOT populate lyrics_cached — production consumers
+        # only ever read that column and must not see Whisper hallucinations.
+        track.lyrics_status = "needs_manual_lyrics"
+        track.lyrics_cached = None
+        track.lyrics_whisper_draft = result.get("whisper_draft")
+        track.lyrics_source = result.get("source") or "whisper_only"
+        track.lyrics_error_detail = "LRCLIB lookup failed; paste a row ID to recover"
+        track.lyrics_diagnostic = result.get("diagnostic")
+        track.lyrics_extracted_at = now
     elif status == "unavailable":
         track.lyrics_status = "unavailable"
         track.lyrics_cached = None
+        track.lyrics_whisper_draft = None
         track.lyrics_error_detail = (result.get("error") or "")[:MAX_ERROR_DETAIL_LEN]
-        track.lyrics_extracted_at = datetime.now(UTC)
+        track.lyrics_diagnostic = result.get("diagnostic") or track.lyrics_diagnostic
+        track.lyrics_extracted_at = now
     elif status == "skipped":
         # Don't overwrite a previous successful extraction just because the
         # current run was skipped (e.g. OPENAI_API_KEY temporarily unset).
-        if track.lyrics_status not in ("ready", "unavailable"):
+        if track.lyrics_status not in ("ready", "unavailable", "needs_manual_lyrics"):
             track.lyrics_status = "pending"
     else:  # failed
         track.lyrics_status = "failed"

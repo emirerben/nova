@@ -22,9 +22,18 @@ def _make_recipe(slot_durations: list[float]) -> dict:
 
 def _make_lyrics_cache(
     lines: list[tuple[str, float, float, list[tuple[str, float, float]]]],
+    *,
+    source: str = "lrclib_synced+whisper",
 ) -> dict:
-    """Helper: lines = [(text, start_s, end_s, [(word, ws, we), ...]), ...]"""
+    """Helper: lines = [(text, start_s, end_s, [(word, ws, we), ...]), ...]
+
+    `source` defaults to the production-publishable LRCLIB synced shape so
+    the injector's Layer-2 source gate (added 2026-05-27, Beauty And A Beat
+    PR) accepts the fixture. Pass an explicit `source` to test the gate's
+    rejection paths (e.g. `whisper_only`, drift cases).
+    """
     return {
+        "source": source,
         "lines": [
             {
                 "text": text,
@@ -33,7 +42,7 @@ def _make_lyrics_cache(
                 "words": [{"text": w, "start_s": ws, "end_s": we} for w, ws, we in words],
             }
             for text, start, end, words in lines
-        ]
+        ],
     }
 
 

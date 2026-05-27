@@ -83,6 +83,28 @@ export interface MusicTrackDetail {
   lyrics_source: string | null;
   lyrics_error_detail: string | null;
   lyrics_cached: LyricsCache | null;
+  /**
+   * Non-publishable Whisper-only draft kept for admin reference when the
+   * production extraction fails (status='needs_manual_lyrics'). Surfaced in
+   * the admin UI below the diagnostic block so the operator can cross-check
+   * timestamps when picking an LRCLIB row. NEVER read by production
+   * consumers. Added 2026-05-27 (Beauty And A Beat PR).
+   */
+  lyrics_whisper_draft: LyricsCache | null;
+  /**
+   * Structured trace of the last LRCLIB lookup attempt: cleaned title/artist
+   * sent, response statuses of /api/get and /api/search, top fuzzy score,
+   * matched LRCLIB id, duration delta. Rendered as the diagnostic block on
+   * the Lyrics tab when status='needs_manual_lyrics'. Added 2026-05-27.
+   */
+  lyrics_diagnostic: LyricsDiagnostic | null;
+  /**
+   * Monotonic counter behind the stale-task discard gate. The FE pins its
+   * paste-ID action to whatever version it last saw, so an admin who clicks
+   * Force-ID while a prior extraction is still running can't race it.
+   * Added 2026-05-27.
+   */
+  lyrics_extraction_version: number;
   lyrics_extracted_at: string | null;
   best_sections: SongSection[] | null;
   section_version: string | null;
@@ -113,7 +135,56 @@ export type LyricsStatus =
   | "extracting"
   | "ready"
   | "failed"
-  | "unavailable";
+  | "unavailable"
+  /**
+   * LRCLIB lookup failed (or matched a wrong-recording row at low confidence).
+   * The Whisper-only draft lives on `lyrics_whisper_draft`; the admin must
+   * paste an LRCLIB row ID via `adminForceLrclibId` to recover.
+   * Added 2026-05-27 (Beauty And A Beat PR).
+   */
+  | "needs_manual_lyrics";
+
+/**
+ * Structured trace of the last LRCLIB lookup attempt. Backend writes one
+ * blob per extraction terminal state. The Lyrics tab surfaces a
+ * human-readable summary block when status='needs_manual_lyrics'.
+ *
+ * The shape is loose by design: backend additions (new diagnostic fields,
+ * deeper trace levels) deserialize without a FE change. Only the fields
+ * the FE renders are typed strictly.
+ */
+export interface LyricsDiagnostic {
+  query: {
+    title: string;
+    artist: string;
+    duration_s: number | null;
+    forced_lrclib_id: number | null;
+  };
+  /**
+   * Status of the /api/get pass.
+   *   "hit" | "not_found" | "error" | "skipped" (when forced_lrclib_id set)
+   *   | "forced_id_hit" | "forced_id_not_found" | "forced_id_error"
+   * Loose `string` so backend additions don't require a FE bump.
+   */
+  get_status: string;
+  /**
+   * Status of the /api/search fuzzy fallback pass.
+   *   "hit" | "no_strong_match" | "not_found" | "error" | "skipped" | etc.
+   */
+  search_status: string;
+  search_top_score: number | null;
+  lrclib_id_matched: number | null;
+  fallback_path: string;
+  /**
+   * |LRCLIB recording duration − uploaded audio duration| at the matched
+   * row, in seconds. Used by the UI to render the duration-mismatch
+   * warning banner ("LRCLIB recording is X:XX, your audio is Y:YY"). Null
+   * when not computed (e.g. forced-ID 404, network error).
+   */
+  duration_delta_s: number | null;
+  lrclib_error: string | null;
+  attempted_at: string;
+}
 
 export type LyricsStyle = "karaoke" | "per-word-pop" | "line";
 
@@ -134,6 +205,13 @@ export interface LyricsConfig {
   fade_out_ms?: number;
   hold_to_next_threshold_ms?: number;
   font_family?: string;
+  /**
+   * Admin manual override: pin a specific LRCLIB row ID for extraction.
+   * Set via `adminForceLrclibId` (POST /lyrics-force-lrclib-id), never
+   * directly via PATCH /lyrics-config. The agent fetches /api/get/{id}
+   * instead of doing title/artist search. Added 2026-05-27.
+   */
+  forced_lrclib_id?: number | null;
 }
 
 export interface LyricsConfigOverride {
@@ -361,6 +439,39 @@ export async function adminExtractLyrics(
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Extract lyrics failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * Pin a specific LRCLIB row for this track and re-extract.
+ *
+ * Recovery path for the `needs_manual_lyrics` state: admin pastes a numeric
+ * LRCLIB row ID or an `lrclib.net/lyrics/<id>` URL. The backend validates the
+ * input via a strict host-allowlist parser, persists `forced_lrclib_id` into
+ * `track_config.lyrics_config`, bumps `lyrics_extraction_version` (stale-task
+ * gate), and dispatches the Celery extraction task — which fetches the named
+ * row directly via /api/get/{id} instead of doing title/artist search.
+ *
+ * Throws on 4xx with the server's error detail (e.g. "URL host 'evil.com' is
+ * not an LRCLIB host"), so the caller can surface a clear UI message.
+ * Added 2026-05-27 (Beauty And A Beat PR).
+ */
+export async function adminForceLrclibId(
+  id: string,
+  idOrUrl: string,
+): Promise<{ track_id: string; analysis_status: string }> {
+  const res = await fetch(
+    `${ADMIN_PROXY}/music-tracks/${id}/lyrics-force-lrclib-id`,
+    {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ id_or_url: idOrUrl }),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Force LRCLIB ID failed: ${res.status}`);
   }
   return res.json();
 }
