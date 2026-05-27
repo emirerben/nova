@@ -85,6 +85,14 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
+        # Cap reasoning. This is the hook-voice generator, so it was validated
+        # carefully: A/B on a real clip produced equally strong, on-theme hooks
+        # at 512 ("when the last drop hits and the chaos begins") vs default
+        # ("pov: the whole squad celebrates your empty glass") — comparable
+        # editorial voice, ~8s chain vs ~19s. 512 (not 256) keeps headroom for
+        # the creative step. Single-sample validated; revisit if hook voice
+        # drifts in prod logs.
+        thinking_budget=512,
     )
     Input = IntroWriterInput
     Output = IntroWriterOutput
