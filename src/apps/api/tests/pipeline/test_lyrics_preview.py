@@ -488,7 +488,7 @@ def test_render_lyrics_preview_writes_per_job_path() -> None:
     being guarded against: job A's status row stored URL `/.../K.mp4` and
     job B's render then wrote to the same `K.mp4`, so admins watching the
     status response for job A saw bytes from job B's render. Verifies the
-    `{track_id}/{job_id}/...` namespacing directly without standing up the
+    `{track_id}/{style}/{job_id}/...` namespacing directly without standing up the
     full FFmpeg + GCS path.
     """
     track = SimpleNamespace(
@@ -526,9 +526,103 @@ def test_render_lyrics_preview_writes_per_job_path() -> None:
         monkeypatch.undo()
 
     assert captured == [
-        "music-lyrics-previews/track-A/job-1/lyrics-preview.mp4",
-        "music-lyrics-previews/track-A/job-2/lyrics-preview.mp4",
+        "music-lyrics-previews/track-A/line/job-1/lyrics-preview.mp4",
+        "music-lyrics-previews/track-A/line/job-2/lyrics-preview.mp4",
     ], f"expected per-job paths, got {captured}"
+
+
+def test_render_lyrics_preview_writes_per_style_path() -> None:
+    """Two preview jobs against the same track in different styles must land
+    in distinct GCS prefixes so concurrent multi-style renders never overwrite
+    each other. Pre-fix: every preview wrote to ``{track_id}/{job_id}/...``
+    AND the route hardcoded ``style: "line"``, so the admin dashboard could
+    not even render Pop-up or Karaoke. This test pins the post-fix layout
+    ``{track_id}/{style}/{job_id}/...`` and the per-style token mapping
+    (``per-word-pop`` collapses to ``popup`` for URL friendliness).
+    """
+    track = SimpleNamespace(
+        id="track-A",
+        audio_gcs_path="music/track-A/audio.m4a",
+        duration_s=60.0,
+        track_config={},
+        lyrics_cached={
+            "lines": [
+                {
+                    "text": "hello",
+                    "start_s": 1.0,
+                    "end_s": 2.0,
+                    "words": [
+                        {"text": "hello", "start_s": 1.0, "end_s": 2.0},
+                    ],
+                }
+            ]
+        },
+    )
+
+    captured: list[str] = []
+
+    def fake_download(_gcs_path: str, local_path: str) -> None:
+        Path(local_path).write_bytes(b"audio")
+
+    def fake_run(cmd, **_kwargs):
+        Path(cmd[-1]).write_bytes(b"mp4")
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    def fake_upload(_local: str, object_path: str) -> str:
+        captured.append(object_path)
+        return f"https://example.com/{object_path}"
+
+    import pytest as _pytest  # noqa: PLC0415
+
+    monkeypatch = _pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr("app.pipeline.lyrics_preview.download_to_file", fake_download)
+        monkeypatch.setattr("app.pipeline.lyrics_preview.subprocess.run", fake_run)
+        monkeypatch.setattr("app.pipeline.lyrics_preview.upload_public_read", fake_upload)
+
+        for style in ("line", "karaoke", "per-word-pop"):
+            render_lyrics_preview(track, {"enabled": True, "style": style}, job_id=f"job-{style}")
+    finally:
+        monkeypatch.undo()
+
+    assert captured == [
+        "music-lyrics-previews/track-A/line/job-line/lyrics-preview.mp4",
+        "music-lyrics-previews/track-A/karaoke/job-karaoke/lyrics-preview.mp4",
+        "music-lyrics-previews/track-A/popup/job-per-word-pop/lyrics-preview.mp4",
+    ], f"per-style path namespace drifted: {captured}"
+
+
+def test_build_lyrics_preview_recipe_honors_style_override(tmp_path: Path) -> None:
+    """Pre-fix the preview module hardcoded ``style: "line"`` inside
+    ``build_lyrics_preview_recipe``, so the dashboard could never render Pop-up
+    or Karaoke regardless of what the admin selected. Asserts the chosen
+    style now reaches ``inject_lyric_overlays`` unchanged, by inspecting the
+    effect on the resulting overlay (each style emits a distinct effect tag:
+    ``lyric-line`` for line, ``karaoke-line`` for karaoke).
+    """
+    track = _track()
+
+    recipe_line = build_lyrics_preview_recipe(track, {"enabled": True, "style": "line"})
+    recipe_karaoke = build_lyrics_preview_recipe(track, {"enabled": True, "style": "karaoke"})
+
+    line_effects = {
+        o.get("effect")
+        for slot in recipe_line.get("slots", [])
+        for o in slot.get("text_overlays", [])
+    }
+    karaoke_effects = {
+        o.get("effect")
+        for slot in recipe_karaoke.get("slots", [])
+        for o in slot.get("text_overlays", [])
+    }
+
+    assert "lyric-line" in line_effects, f"expected lyric-line, got {line_effects}"
+    assert "karaoke-line" in karaoke_effects, (
+        f"expected karaoke-line (style passthrough), got {karaoke_effects}"
+    )
+    assert "lyric-line" not in karaoke_effects, (
+        "style override leaked: karaoke recipe must not contain lyric-line overlays"
+    )
 
 
 def test_first_line_start_s_rejects_non_finite_floats() -> None:

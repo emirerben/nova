@@ -535,6 +535,15 @@ def _inject_karaoke(
                 "end_s": round(rel_end, 3),
                 "highlight_color": highlight,
                 "word_timings": word_timings,
+                # Section-relative anchors capture the line's intended audio
+                # position INDEPENDENT of slot windowing. The post-snap
+                # re-anchor pass in `_collect_absolute_overlays` reads these
+                # to keep the karaoke sweep glued to the vocal even after
+                # beat-snap shifts the slot's cumulative offset. Line-style
+                # overlays do NOT carry these fields, so the re-anchor pass
+                # is a no-op for them — Line's behavior is byte-identical.
+                "section_anchor_s": round(line["start_s"], 3),
+                "section_end_anchor_s": round(line["end_s"], 3),
             }
         )
         _ensure_overlay_list(slots[slot_win.index]).append(overlay)
@@ -616,6 +625,14 @@ def _inject_per_word_pop(
                     # static so the viewer doesn't see the whole line re-pop
                     # on every new word.
                     "pop_animated_suffix": stage.pop_animated_suffix,
+                    # Section-relative anchors — see karaoke injector for the
+                    # full rationale. The post-snap re-anchor pass in
+                    # `_collect_absolute_overlays` glues each per-word stage
+                    # to its vocal onset even when beat-snap shifts the slot.
+                    # Line-style overlays do NOT carry these fields, so the
+                    # pass is a no-op for them.
+                    "section_anchor_s": round(stage.start_s, 3),
+                    "section_end_anchor_s": round(stage.end_s, 3),
                 }
             )
             _ensure_overlay_list(slots[slot_win.index]).append(overlay)

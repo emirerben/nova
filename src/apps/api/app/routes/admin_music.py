@@ -76,7 +76,13 @@ from app.services.lyrics_config_effective import (
     non_null_model_dict,
     normalize_lyrics_config,
 )
-from app.services.lyrics_config_validation import validate_lyrics_config_dict
+from app.services.lyrics_config_validation import (
+    LINE_ONLY_KEYS as _LINE_ONLY_KEYS_RUNTIME,
+)
+from app.services.lyrics_config_validation import (
+    LYRICS_STYLES,
+    validate_lyrics_config_dict,
+)
 from app.services.music_sections import current_best_section_for_track
 
 log = structlog.get_logger()
@@ -221,10 +227,20 @@ class LyricsConfigPatchResponse(BaseModel):
 
 class LyricsPreviewRequest(BaseModel):
     lyrics_config_override: LyricsConfigOverride | None = None
+    # Chosen lyric animation style for THIS preview. Defaults to "line" so
+    # callers that don't know about the multi-style dashboard get the same
+    # behavior as before. The route is the single source of truth for the
+    # style sent to the renderer; the override schema intentionally does NOT
+    # carry style because it's reused on track-update flows where style lives
+    # under `track_config.lyrics_config`.
+    style: Literal["line", "karaoke", "per-word-pop"] = "line"
 
 
 class LyricsPreviewResponse(BaseModel):
     job_id: str
+    # Echo the resolved style so the frontend can route the response back to
+    # the correct preview slot in its 3-slot dashboard (Line/Pop-up/Karaoke).
+    style: Literal["line", "karaoke", "per-word-pop"]
 
 
 class LyricsPreviewStatusResponse(BaseModel):
@@ -241,6 +257,9 @@ class LyricsPreviewStatusResponse(BaseModel):
     # 30s instrumental intro would think the wrong song was loaded.
     preview_start_s: float | None = None
     preview_duration_s: float | None = None
+    # The style this preview was rendered in. Null on legacy rows that
+    # predate the multi-style dashboard (those always rendered as "line").
+    style: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -1442,12 +1461,20 @@ async def create_admin_lyrics_preview(
         )
 
     override = non_null_model_dict(req.lyrics_config_override)
+    # NOTE: `req.style` is validated by Pydantic's Literal[...] on the
+    # request model — an unknown value is rejected with 422 BEFORE this
+    # handler runs. No runtime re-check needed here.
     try:
-        effective = {
-            **effective_lyrics_config(track.track_config, override),
-            "enabled": True,
-            "style": "line",
-        }
+        merged = effective_lyrics_config(track.track_config, override)
+        # When the admin picks a non-Line style for preview, the merged
+        # config may still carry line-only knobs (pre_roll_s, fade_in_ms, …)
+        # inherited from track_config.lyrics_config. The validator rejects
+        # those for non-Line styles by design — so strip them here before
+        # re-validating. The track's saved config is untouched; this is a
+        # one-shot, request-scoped projection for previewing only.
+        if req.style != "line":
+            merged = {k: v for k, v in merged.items() if k not in _LINE_ONLY_KEYS_RUNTIME}
+        effective = {**merged, "enabled": True, "style": req.style}
         validate_lyrics_config_dict(effective)
     except ValueError as exc:
         raise HTTPException(
@@ -1462,7 +1489,7 @@ async def create_admin_lyrics_preview(
         raw_storage_path=track.audio_gcs_path or "",
         selected_platforms=["admin"],
         all_candidates={"lyrics_config_effective": effective},
-        assembly_plan={"lyrics_config_effective": effective},
+        assembly_plan={"lyrics_config_effective": effective, "lyric_style": req.style},
         status="queued",
     )
     db.add(job)
@@ -1473,7 +1500,7 @@ async def create_admin_lyrics_preview(
     from app.tasks.lyrics_preview_task import render_lyrics_preview_task  # noqa: PLC0415
 
     await enqueue_orchestrator(render_lyrics_preview_task, job.id, db)
-    return LyricsPreviewResponse(job_id=str(job.id))
+    return LyricsPreviewResponse(job_id=str(job.id), style=req.style)
 
 
 @router.get(
@@ -1505,16 +1532,25 @@ async def get_admin_lyrics_preview_status(
     )
     raw_start = plan.get("preview_start_s")
     raw_dur = plan.get("preview_duration_s")
+    # Resolve the rendered style. Prefer the explicit `lyric_style` field
+    # written by the route at submit time (canonical for new previews); fall
+    # back to the effective config's style for jobs created before the
+    # multi-style dashboard shipped; default to None so the frontend treats
+    # those as legacy Line previews without breaking the type contract.
+    raw_cfg = plan.get("lyrics_config_effective")
+    cfg = raw_cfg if isinstance(raw_cfg, dict) else None
+    plan_style = plan.get("lyric_style")
+    if not isinstance(plan_style, str) or plan_style not in LYRICS_STYLES:
+        plan_style = cfg.get("style") if cfg and isinstance(cfg.get("style"), str) else None
     return LyricsPreviewStatusResponse(
         job_id=str(job.id),
         status=job.status,
         output_url=output_url,
         error_detail=job.error_detail,
-        lyrics_config_effective=plan.get("lyrics_config_effective")
-        if isinstance(plan.get("lyrics_config_effective"), dict)
-        else None,
+        lyrics_config_effective=cfg,
         preview_start_s=float(raw_start) if isinstance(raw_start, int | float) else None,
         preview_duration_s=float(raw_dur) if isinstance(raw_dur, int | float) else None,
+        style=plan_style,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )

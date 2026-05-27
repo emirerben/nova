@@ -3797,6 +3797,39 @@ def _collect_absolute_overlays(
         slot_overlays = [
             dict(o) if isinstance(o, dict) else o for o in slot.get("text_overlays", [])
         ]
+
+        # Post-snap re-anchor for karaoke + per-word-pop overlays. This
+        # rewrites overlay.start_s/end_s against the post-snap slot's
+        # section-relative cumulative_s so per-word highlights stay glued
+        # to the vocal even when beat-snap shifts the slot's start. The
+        # pass is a NO-OP for:
+        #   - Line-style overlays (no section_anchor_s stamp)
+        #   - All non-lyric overlays (effect not in {karaoke-line, pop-in})
+        #   - Templates that never inject karaoke/popup lyrics
+        # Operates on slot_overlays (the working copy), never the recipe
+        # dict, so a future re-run sees the original anchors. Gated by
+        # `settings.lyric_word_resync_enabled` for emergency rollback.
+        if settings.lyric_word_resync_enabled:
+            from app.pipeline.lyric_word_resync import (  # noqa: PLC0415
+                resync_slot_overlays,
+            )
+
+            rewritten = resync_slot_overlays(
+                [o for o in slot_overlays if isinstance(o, dict)],
+                slot_post_snap_section_start_s=cumulative_s,
+                slot_post_snap_duration_s=dur,
+            )
+            if rewritten:
+                from app.services.pipeline_trace import (  # noqa: PLC0415
+                    record_pipeline_event,
+                )
+
+                record_pipeline_event(
+                    stage="overlay",
+                    event="lyric_word_resync",
+                    data={"slot_index": i, "overlays_rewritten": rewritten},
+                )
+
         # Only agentic templates carry Layer-2 cumulative word-reveals; the
         # `_same_overlay_anchor` guard inside butt_join already rejects classic
         # text-prefix collisions, but gating here keeps classic renders byte-for-
