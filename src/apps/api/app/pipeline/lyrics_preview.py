@@ -5,14 +5,23 @@ Renders the lyric `.ass` produced by the production ASS-generation path over a
 full-render output for any reason other than compositing, the bug is in the
 production renderer, not here. This module never re-implements ASS generation.
 
-Window policy (2026-05-25): previews show a 20-second window anchored at the
-first lyric line. We slice `[first_line_start - LEAD_IN_S, +PREVIEW_WINDOW_S]`
-out of the audio so the dashboard works for songs with instrumental intros
-(e.g. Billie Jean — first vocal at 30.8s would have rendered 20s of silence
-under the prior `[0, 20s]` policy and tripped the "no renderable lyric
-overlays" error). LEAD_IN_S preserves ~2s of pre-vocal audio so the fade-in
-reads as natural rather than chopped at frame 0. Tracks whose available tail
-after the anchor is shorter than `PREVIEW_WINDOW_S` render the shorter window.
+Window policy (2026-05-27): previews show a 20-second window anchored at
+the first lyric line WITHIN the admin-selected best section
+(`track_config.best_start_s` / `best_end_s` on `MusicTrack`). This is what
+the admin music page's section-strip ("click to preview + select as best
+section") implies — clicking section #2 should yield section #2 lyrics.
+
+When the saved section contains no lyric lines (instrumental sections,
+bridge sections with no vocals) OR `track_config` has no bounds, the
+preview falls back to the prior 2026-05-25 policy: anchor at
+`first_line_of_song - LEAD_IN_S`. The fallback exists so songs like
+Billie Jean (30s instrumental intro) still render a non-silent preview
+when the admin hasn't picked a vocal-bearing section. LEAD_IN_S preserves
+~2s of pre-vocal audio so the fade-in reads as natural rather than chopped
+at frame 0; the section-anchored path additionally clamps the anchor at
+`best_start_s` so audio never bleeds from outside the section. Tracks
+whose available tail after the anchor is shorter than `PREVIEW_WINDOW_S`
+(or whose `best_end_s - anchor` is shorter) render the shorter window.
 
 The window is enforced at TWO layers:
   1. `build_lyrics_preview_recipe` passes the anchored
@@ -45,6 +54,7 @@ from app.pipeline._ffmpeg_filter_paths import escape_ffmpeg_filter_path
 from app.pipeline.lyric_injector import inject_lyric_overlays
 from app.pipeline.reframe import _encoding_args
 from app.pipeline.text_overlay import FONTS_DIR, generate_animated_overlay_ass
+from app.services.pipeline_trace import record_pipeline_event
 from app.storage import download_to_file, upload_public_read
 
 # Maximum preview duration. The window is anchored at the first lyric line and
@@ -86,6 +96,42 @@ def _read_best_end_s(track_config: Any) -> float | None:
         return float(raw)
     except (TypeError, ValueError):
         return None
+
+
+def _read_best_bounds(track_config: Any) -> tuple[float | None, float | None]:
+    """Read `(best_start_s, best_end_s)` from a track_config that may be a
+    dict (JSONB load) or an object with attributes.
+
+    NaN / Inf values are rejected (returned as None) so the section-anchor
+    path's `best_start <= line <= best_end` comparison can't be silently
+    bypassed — all NaN comparisons return False, which would always fail
+    the in-section check and fire the fallback even when the section
+    bounds were merely corrupted. Matches the guard in `_first_line_start_s`.
+
+    Returns `(None, None)` semantics: either axis missing/unparseable
+    propagates as None on that axis only, so callers can treat "either
+    missing" as "no section configured" without per-axis branching.
+    Never raises.
+    """
+    if track_config is None:
+        return (None, None)
+    if isinstance(track_config, dict):
+        raw_start = track_config.get("best_start_s")
+        raw_end = track_config.get("best_end_s")
+    else:
+        raw_start = getattr(track_config, "best_start_s", None)
+        raw_end = getattr(track_config, "best_end_s", None)
+
+    def _coerce(raw: Any) -> float | None:
+        if raw is None:
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+    return (_coerce(raw_start), _coerce(raw_end))
 
 
 def _resolve_track_duration_s(track: Any) -> float:
@@ -141,24 +187,156 @@ def _first_line_start_s(lyrics_cached: Any) -> float | None:
     return min(starts)
 
 
-def _resolve_preview_window(track: Any) -> tuple[float, float]:
-    """Compute the preview's anchored `(start_s, duration_s)` window.
+def _coerce_finite(raw: Any) -> float | None:
+    """Coerce a raw value to a finite float, or None.
 
-    Anchors at `max(0, first_line.start_s - LEAD_IN_S)` and extends forward by
-    `PREVIEW_WINDOW_S`, capped at the track's remaining audio. Both values are
-    rounded to 3 decimals to match the recipe slot's `target_duration_s`
-    precision and the FFmpeg `-ss` / `-t` literals.
+    Centralizes the NaN/Inf + TypeError/ValueError guards used in three
+    places (`_read_best_bounds`, `_first_line_start_s`,
+    `_first_lyric_in_section`) so the rules stay consistent if we tighten
+    them later (e.g. add an upper bound).
+    """
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
 
-    Falls back to `start_s = 0.0` when `lyrics_cached["lines"]` is missing or
-    has no parseable timings — that path is then caught downstream as "no
-    renderable lyric overlays" with the same clear error.
+
+def _first_lyric_in_section(
+    lyrics_cached: Any,
+    best_start_s: float,
+    best_end_s: float,
+) -> float | None:
+    """Return the earliest `start_s` across cached lyric lines that OVERLAP
+    the half-open interval `[best_start_s, best_end_s)`, or None when no
+    line overlaps.
+
+    Overlap semantics (2026-05-27 rev2):
+      - When the line has a finite `end_s`: `line_start < best_end_s AND
+        line_end > best_start_s`. A line that starts before the section
+        but ends inside it (e.g. a chorus line that bleeds in from the
+        pre-chorus) still counts — its earliest in-section content is
+        what the admin wants to preview.
+      - When `end_s` is missing or non-finite: fall back to start-only
+        membership at `best_start_s <= line_start < best_end_s`. Half-open
+        on the upper bound so a line starting exactly at `best_end_s`
+        does NOT count (it would render a window with no overlapping
+        lyric content).
+
+    The return value is `line.start_s`, not the clamped overlap point.
+    `_resolve_preview_window` clamps the eventual anchor to
+    `max(0.0, best_start_s, line.start_s - LEAD_IN_S)` so callers that
+    receive a `line.start_s < best_start_s` do not bleed audio from
+    outside the section.
+    """
+    if not isinstance(lyrics_cached, dict):
+        return None
+    lines = lyrics_cached.get("lines") or []
+    starts: list[float] = []
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        line_start = _coerce_finite(line.get("start_s"))
+        if line_start is None:
+            continue
+        line_end = _coerce_finite(line.get("end_s"))
+        if line_end is not None:
+            # Interval-overlap path. Half-open on the section upper bound:
+            # a line ending at best_start_s does NOT overlap.
+            in_section = line_start < best_end_s and line_end > best_start_s
+        else:
+            # Start-only path. Half-open: a line starting at best_end_s
+            # does NOT count.
+            in_section = best_start_s <= line_start < best_end_s
+        if in_section:
+            starts.append(line_start)
+    if not starts:
+        return None
+    return min(starts)
+
+
+def _resolve_preview_window_with_policy(
+    track: Any,
+) -> tuple[float, float, str, str | None]:
+    """Compute the preview window AND name which policy produced it.
+
+    Returns `(start_s, duration_s, policy, fallback_reason)`:
+      - `policy = "section"` — section-anchored path succeeded.
+        `fallback_reason` is `None`.
+      - `policy = "fallback"` — first-vocal-of-song fallback fired.
+        `fallback_reason` names which gate the section path failed:
+          * `"no_bounds"` — `track_config` missing one or both bounds.
+          * `"invalid_bounds"` — `best_end_s <= best_start_s` (zero / negative span).
+          * `"no_lyrics_in_section"` — section has no overlapping lyric lines.
+          * `"no_positive_available_window"` — anchor + section_end gave a
+            non-positive renderable window (e.g. `best_end_s` past
+            `track_duration_s` AND anchor past either).
+
+    Telemetry in `render_lyrics_preview` keys off `policy`, NOT a post-hoc
+    "is anchor outside section" check. The post-hoc check missed cases
+    where the fallback anchor happened to land inside the configured
+    section (e.g. section [20, 30] with no lyrics inside, first vocal at
+    30.8s → fallback anchor 28.8s sits inside [20, 30] even though the
+    fallback fired). The policy field is authoritative.
+
+    Two-tier behavior (2026-05-27):
+      1. **Section-anchored (primary).** When `track_config.best_start_s` /
+         `best_end_s` are both present, the span is positive, and the
+         section contains at least one overlapping lyric line, anchor at
+         `max(0.0, best_start_s, first_in_section - LEAD_IN_S)`. The
+         `0.0` clamp is defense-in-depth against negative `best_start_s`
+         (the API accepts finite negatives today). Duration is capped by
+         `best_end_s - anchor` and `PREVIEW_WINDOW_S`.
+      2. **First-vocal-of-song (fallback).** Anchor at
+         `max(0.0, first_line_of_song - LEAD_IN_S)`. Preserves the
+         2026-05-25 Billie Jean fix where 30s of instrumental intro would
+         otherwise have rendered a silent preview.
+
+    Both numeric values are rounded to 3 decimals so the FFmpeg `-ss` /
+    `-t` literals match the recipe slot's `target_duration_s` precision.
     """
     track_duration_s = _resolve_track_duration_s(track)
-    first_start = _first_line_start_s(getattr(track, "lyrics_cached", None))
+    lyrics_cached = getattr(track, "lyrics_cached", None)
+    section_start_s, section_end_s = _read_best_bounds(getattr(track, "track_config", None))
+
+    # Section-anchored path. Track WHY the path falls through so the
+    # telemetry can be specific instead of conflating four distinct cases.
+    fallback_reason: str | None
+    if section_start_s is None or section_end_s is None:
+        fallback_reason = "no_bounds"
+    elif section_end_s <= section_start_s:
+        fallback_reason = "invalid_bounds"
+    else:
+        first_in_section = _first_lyric_in_section(lyrics_cached, section_start_s, section_end_s)
+        if first_in_section is None:
+            fallback_reason = "no_lyrics_in_section"
+        else:
+            # 0.0 clamp guards against negative `best_start_s` slipping in
+            # (the API column is a free float). Without it, a section saved
+            # at best_start_s=-5 with a lyric at 0.5s would anchor at -1.5
+            # and pass `-ss -1.500` to FFmpeg, which silently treats it
+            # as 0s — but the math downstream (`available`, `duration_s`)
+            # would be off.
+            anchor = max(0.0, section_start_s, first_in_section - LEAD_IN_S)
+            available = min(track_duration_s, section_end_s) - anchor
+            if available > 0:
+                duration_s = min(PREVIEW_WINDOW_S, available)
+                return (
+                    round(anchor, 3),
+                    round(duration_s, 3),
+                    "section",
+                    None,
+                )
+            fallback_reason = "no_positive_available_window"
+
+    # Fallback: first vocal of the whole song.
+    first_start = _first_line_start_s(lyrics_cached)
     if first_start is None or first_start <= LEAD_IN_S:
         start_s = 0.0
     else:
-        start_s = first_start - LEAD_IN_S
+        start_s = max(0.0, first_start - LEAD_IN_S)
     available = track_duration_s - start_s
     if available <= 0:
         raise LyricsPreviewInputError(
@@ -167,7 +345,17 @@ def _resolve_preview_window(track: Any) -> tuple[float, float]:
             f"exceeds track duration {track_duration_s:.3f}s."
         )
     duration_s = min(PREVIEW_WINDOW_S, available)
-    return round(start_s, 3), round(duration_s, 3)
+    return round(start_s, 3), round(duration_s, 3), "fallback", fallback_reason
+
+
+def _resolve_preview_window(track: Any) -> tuple[float, float]:
+    """Thin wrapper returning just `(start_s, duration_s)` for callers that
+    do not need the policy / fallback_reason fields (e.g. recipe building,
+    existing tests). Telemetry consumers in `render_lyrics_preview` call
+    `_resolve_preview_window_with_policy` directly.
+    """
+    start_s, duration_s, _policy, _reason = _resolve_preview_window_with_policy(track)
+    return start_s, duration_s
 
 
 def build_lyrics_preview_recipe(track: Any, lyrics_config_effective: dict) -> dict:
@@ -281,7 +469,38 @@ def render_lyrics_preview(
     # and the FFmpeg `-ss` / `-t` flags. Drift between those two would mean the
     # lyrics land outside the video frame or the audio plays a different
     # segment than the lyrics describe.
-    preview_start_s, preview_duration_s = _resolve_preview_window(track)
+    (
+        preview_start_s,
+        preview_duration_s,
+        policy,
+        fallback_reason,
+    ) = _resolve_preview_window_with_policy(track)
+
+    # Defense-in-depth telemetry: emit a structured event whenever the user
+    # has configured section bounds AND the resolver fell back to the
+    # first-vocal-of-song policy. Gating on the explicit `policy` field
+    # (not on whether the final anchor sits inside the section) is the
+    # only correct signal: a fallback can still produce a preview start
+    # that happens to land inside the configured section (e.g. section
+    # [20, 30] with no lyrics inside + first vocal at 30.8s → fallback
+    # anchor 28.8s sits inside [20, 30] even though the fallback fired).
+    # The previous "outside section" inference missed that case.
+    # `record_pipeline_event` no-ops when there is no active
+    # `pipeline_trace_for` context, so this is safe in tests that bypass
+    # the Celery wrapper.
+    section_start_raw, section_end_raw = _read_best_bounds(getattr(track, "track_config", None))
+    section_bounds_configured = section_start_raw is not None and section_end_raw is not None
+    if policy == "fallback" and section_bounds_configured:
+        record_pipeline_event(
+            "preview",
+            "anchor_outside_section",
+            {
+                "preview_start_s": preview_start_s,
+                "best_start_s": section_start_raw,
+                "best_end_s": section_end_raw,
+                "reason": fallback_reason or "no_lyrics_in_section",
+            },
+        )
 
     with tempfile.TemporaryDirectory(prefix="nova_lyrics_preview_") as tmpdir:
         audio_ext = Path(str(audio_gcs_path)).suffix or ".m4a"

@@ -41,9 +41,19 @@ interface LyricsTabProps {
   trackId: string;
   track: MusicTrackDetail;
   onTrackUpdated: (t: MusicTrackDetail) => void;
+  // Page-top dirty flag for best_start_s / best_end_s. Gates the preview
+  // button below so a user who clicked a section band on the Config tab
+  // without saving can't fire a preview against stale section bounds (the
+  // Beat It bug, job 616d3e53). Optional so legacy callers stay safe.
+  sectionBoundsDirty?: boolean;
 }
 
-export function LyricsTab({ trackId, track, onTrackUpdated }: LyricsTabProps) {
+export function LyricsTab({
+  trackId,
+  track,
+  onTrackUpdated,
+  sectionBoundsDirty = false,
+}: LyricsTabProps) {
   const [savedLyricsConfig, setSavedLyricsConfig] = useState<Partial<LyricsConfig>>(
     track.track_config?.lyrics_config ?? {},
   );
@@ -142,6 +152,12 @@ export function LyricsTab({ trackId, track, onTrackUpdated }: LyricsTabProps) {
           savedConfig={savedLyricsConfig}
           fullTestDisabled
           fullTestHint="Open the Test tab to render a full music job."
+          previewDisabled={sectionBoundsDirty}
+          previewHint={
+            sectionBoundsDirty
+              ? "Save section bounds on the Config tab first — preview reads the persisted window."
+              : undefined
+          }
           onSaved={setSavedLyricsConfig}
           onSubmit={(action, override) => {
             if (action === "preview") {

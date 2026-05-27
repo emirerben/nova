@@ -15,6 +15,13 @@ interface LyricsTimingPanelProps {
   savedConfig: Partial<LyricsConfig>;
   fullTestDisabled?: boolean;
   fullTestHint?: string | null;
+  // Gates the "Preview lyrics only" button. Set by the parent when the
+  // Config tab has unsaved best_start_s / best_end_s edits — the preview
+  // endpoint reads persisted bounds from the DB, so firing it with form
+  // state ahead of the DB renders against the wrong section (the Beat
+  // It bug, job 616d3e53). Defaults to enabled.
+  previewDisabled?: boolean;
+  previewHint?: string | null;
   onSubmit: (action: TimingAction, override: LyricsConfigOverride) => void;
   onWorkingChange?: (override: LyricsConfigOverride) => void;
   onSaved?: (savedConfig: Partial<LyricsConfig>) => void;
@@ -93,6 +100,8 @@ export function LyricsTimingPanel({
   savedConfig,
   fullTestDisabled = false,
   fullTestHint = null,
+  previewDisabled = false,
+  previewHint = null,
   onSubmit,
   onWorkingChange,
   onSaved,
@@ -188,11 +197,21 @@ export function LyricsTimingPanel({
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button
           type="button"
+          data-testid="lyrics-timing-preview-button"
+          disabled={previewDisabled}
           onClick={() => onSubmit("preview", { ...working })}
-          className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-600"
+          className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Preview lyrics only
         </button>
+        {previewDisabled && previewHint && (
+          <span
+            data-testid="lyrics-timing-preview-hint"
+            className="text-xs text-amber-400"
+          >
+            ⚠ {previewHint}
+          </span>
+        )}
         <button
           type="button"
           disabled={fullTestDisabled}

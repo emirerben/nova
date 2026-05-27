@@ -220,3 +220,67 @@ def test_patch_skips_guard_when_track_has_no_beats(client: TestClient) -> None:
 
     assert resp.status_code == 200, resp.text
     assert track.track_config["best_start_s"] == 156.6
+
+
+def test_patch_track_config_preserves_existing_keys(client: TestClient) -> None:
+    """The admin music page's Save handler sends only the three fields the form
+    edits (`best_start_s`, `best_end_s`, `slot_every_n_beats`) — but track_config
+    in production also carries `lyrics_config`, `required_clips_min`,
+    `required_clips_max`, and others. The PATCH handler MUST deep-merge so a
+    partial Save does not drop those fields.
+
+    Without this lock, a future refactor swapping the merge for
+    `track.track_config = req.track_config` would silently wipe the entire
+    track's lyrics styling and clip-count config every time an admin saves a
+    new section window. The bug would only surface the next time a music job
+    runs (LyricsConfig defaults swap in) — too late to catch in code review.
+    """
+    # Dense beats so the slot-count guard passes on the new window
+    dense_beats = [47.8 + (i * 0.33) for i in range(48)]
+    existing_lyrics_config = {
+        "enabled": True,
+        "style": "line",
+        "pre_roll_s": 0.15,
+        "post_dwell_s": 1.25,
+        "next_line_gap_s": 0.05,
+        "fade_in_ms": 200,
+        "fade_out_ms": 300,
+        "hold_to_next_threshold_ms": 600,
+    }
+    track = _make_track(
+        beats=dense_beats,
+        track_config={
+            "best_start_s": 30.0,
+            "best_end_s": 50.0,
+            "slot_every_n_beats": 8,
+            "lyrics_config": existing_lyrics_config,
+            "required_clips_min": 3,
+            "required_clips_max": 12,
+        },
+    )
+    override, _session = _override_db(track)
+    app.dependency_overrides[get_db] = override
+    try:
+        # Mirror the frontend's actual Save payload — only the three form fields.
+        resp = client.patch(
+            f"/admin/music-tracks/{track.id}",
+            json={
+                "track_config": {
+                    "best_start_s": 47.8,
+                    "best_end_s": 64.14,
+                    "slot_every_n_beats": 8,
+                }
+            },
+            headers=_admin_headers(),
+        )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200, resp.text
+    # Patched fields took effect.
+    assert track.track_config["best_start_s"] == 47.8
+    assert track.track_config["best_end_s"] == 64.14
+    # Existing keys SURVIVED the merge.
+    assert track.track_config["lyrics_config"] == existing_lyrics_config
+    assert track.track_config["required_clips_min"] == 3
+    assert track.track_config["required_clips_max"] == 12
