@@ -10,10 +10,10 @@ import pytest
 
 from app.services.audio_download import (
     DownloadError,
-    _probe_duration,
     _raise_descriptive_error,
     download_audio_and_upload,
     is_supported_audio_url,
+    probe_duration,
 )
 
 # ── is_supported_audio_url ────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ def test_raise_descriptive_error_generic() -> None:
         _raise_descriptive_error("https://youtube.com/x", "some other yt-dlp error")
 
 
-# ── _probe_duration ───────────────────────────────────────────────────────────
+# ── probe_duration ───────────────────────────────────────────────────────────
 
 
 def test_probe_duration_success(tmp_path: Path) -> None:
@@ -77,7 +77,7 @@ def test_probe_duration_success(tmp_path: Path) -> None:
 
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="183.42\n", returncode=0)
-        result = _probe_duration(str(audio))
+        result = probe_duration(str(audio))
 
     assert result == pytest.approx(183.42)
 
@@ -88,14 +88,14 @@ def test_probe_duration_empty_output(tmp_path: Path) -> None:
 
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="", returncode=1)
-        result = _probe_duration(str(audio))
+        result = probe_duration(str(audio))
 
     assert result is None
 
 
 def test_probe_duration_exception() -> None:
     with patch("subprocess.run", side_effect=OSError("ffprobe not found")):
-        result = _probe_duration("/nonexistent/audio.m4a")
+        result = probe_duration("/nonexistent/audio.m4a")
     assert result is None
 
 
@@ -131,7 +131,7 @@ def test_download_audio_and_upload_success(tmp_path: Path) -> None:
     with (
         patch("app.services.audio_download.yt_dlp.YoutubeDL", return_value=mock_ydl),
         patch("app.services.audio_download._get_client", return_value=mock_client),
-        patch("app.services.audio_download._probe_duration", return_value=183.0),
+        patch("app.services.audio_download.probe_duration", return_value=183.0),
         patch("app.services.audio_download._find_audio", return_value=fake_audio),
         patch("tempfile.TemporaryDirectory") as mock_td,
     ):
@@ -161,7 +161,7 @@ def test_download_audio_and_upload_too_long(tmp_path: Path) -> None:
 
     with (
         patch("app.services.audio_download.yt_dlp.YoutubeDL", return_value=mock_ydl),
-        patch("app.services.audio_download._probe_duration", return_value=650.0),
+        patch("app.services.audio_download.probe_duration", return_value=650.0),
         patch("app.services.audio_download._find_audio", return_value=fake_audio),
         patch("tempfile.TemporaryDirectory") as mock_td,
     ):

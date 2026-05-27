@@ -21,6 +21,7 @@ Auth: X-Admin-Token header (same as admin.py).
 import asyncio
 import hmac
 import json
+import os
 import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -455,30 +456,60 @@ async def upload_music_track(
         )
 
     track_id = str(uuid.uuid4())
-    gcs_path = f"music/{track_id}/audio{ext or '.m4a'}"
 
-    # Save upload to temp file, probe duration, upload to GCS
-    with tempfile.NamedTemporaryFile(suffix=ext or ".m4a", delete=True) as tmp:
+    # Save upload to temp file. Admins routinely upload a YouTube .mp4
+    # (video+audio) into this audio-only endpoint, so after we save the
+    # bytes we ffprobe and strip the video stream losslessly before the
+    # GCS write. Both temp files live in the same TemporaryDirectory so
+    # cleanup is automatic regardless of which path we take.
+    with tempfile.TemporaryDirectory(prefix="nova_music_upload_") as upload_dir:
+        source_path = os.path.join(upload_dir, f"source{ext or '.m4a'}")
         content = await file.read()
         if len(content) > 50 * 1024 * 1024:  # 50 MB limit
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="Audio file too large. Maximum 50 MB.",
             )
-        tmp.write(content)
-        tmp.flush()
+        with open(source_path, "wb") as f:
+            f.write(content)
 
-        # Probe duration via ffprobe
-        from app.services.audio_download import _probe_duration  # noqa: PLC0415
-
-        duration_s = _probe_duration(tmp.name)
-
-        # Upload to GCS
+        from app.services.audio_download import probe_duration  # noqa: PLC0415
+        from app.services.audio_preprocess import (  # noqa: PLC0415
+            AudioPreprocessError,
+            has_video_stream,
+            strip_video,
+        )
         from app.storage import _get_client  # noqa: PLC0415
+
+        upload_source = source_path
+        upload_content_type = ct or "audio/mp4"
+        gcs_extension = ext or ".m4a"
+        if has_video_stream(source_path):
+            stripped_path = os.path.join(upload_dir, "audio_only.m4a")
+            try:
+                strip_video(source_path, stripped_path)
+            except AudioPreprocessError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Failed to extract audio from upload: {exc}",
+                ) from exc
+            upload_source = stripped_path
+            upload_content_type = "audio/mp4"
+            gcs_extension = ".m4a"
+            log.info(
+                "music_upload_video_stripped",
+                track_id=track_id,
+                filename=file.filename,
+                original_bytes=len(content),
+                stripped_bytes=os.path.getsize(upload_source),
+            )
+
+        gcs_path = f"music/{track_id}/audio{gcs_extension}"
+        duration_s = probe_duration(upload_source)
 
         bucket = _get_client().bucket(settings.storage_bucket)
         blob = bucket.blob(gcs_path)
-        blob.upload_from_filename(tmp.name, content_type=ct or "audio/mp4")
+        blob.upload_from_filename(upload_source, content_type=upload_content_type)
 
     track = MusicTrack(
         id=track_id,
@@ -929,7 +960,7 @@ async def browser_upload_confirm(
     duration_s: float | None = None
     with tempfile.NamedTemporaryFile(suffix=ext, delete=True) as tmp:
         await asyncio.to_thread(found_blob.download_to_filename, tmp.name)
-        from app.services.audio_download import _probe_duration as _probe_dur  # noqa: PLC0415
+        from app.services.audio_download import probe_duration as _probe_dur  # noqa: PLC0415
 
         is_audio = await asyncio.to_thread(probe_has_audio_stream, tmp.name)
         if not is_audio:
@@ -1121,9 +1152,9 @@ async def create_templated_music_track(
         tmp.write(content)
         tmp.flush()
 
-        from app.services.audio_download import _probe_duration  # noqa: PLC0415
+        from app.services.audio_download import probe_duration  # noqa: PLC0415
 
-        duration_s = _probe_duration(tmp.name)
+        duration_s = probe_duration(tmp.name)
 
         from app.storage import _get_client  # noqa: PLC0415
 
