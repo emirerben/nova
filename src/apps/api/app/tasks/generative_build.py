@@ -131,29 +131,48 @@ def _run_generative_job(job_id: str) -> None:
             {"clips": len(clip_metas), "available_footage_s": round(available_footage_s, 3)},
         )
 
-        # Tonemap HDR clips ONCE up front, before rendering any variant. The
-        # HLG/HDR10 → SDR tonemap is the single most expensive per-slot operation
-        # (70-123s/slot vs ~16s for SDR — prod job f91ebe67), and a generative
-        # job reframes every clip independently in all three variants, so the
-        # same HDR frames were being tonemapped up to 3×. Pre-converting each HDR
-        # source to an SDR intermediate (and repointing clip_id_to_local at it)
-        # means every subsequent per-slot reframe sees a bt709 input and skips
-        # the tonemap entirely. Generative-only; SDR clips are untouched.
-        n_tonemapped = _pretonemap_hdr_clips(clip_id_to_local, probe_map, tmpdir)
+        # The pre-render phase has three independent workstreams that used to run
+        # strictly serially (~tonemap + ~20s text/style + up to ~64s matcher).
+        # They share no inputs beyond clip_metas/clip_id_to_local, so run them
+        # concurrently — the HDR tonemap is an ffmpeg subprocess and the agents
+        # are network-bound LLM calls, both of which release the GIL, so threads
+        # genuinely overlap. Critical path collapses to the SLOWEST stream.
+        #
+        #   A) HDR pre-tonemap     — ffmpeg, mutates clip_id_to_local/probe_map.
+        #   B) text agents → style — style depends on the intro text, so chained.
+        #   C) music matcher       — top-1 track for the song variants.
+        #
+        # Tonemap (A) ONLY up front, before rendering any variant: the HLG/HDR10 →
+        # SDR tonemap is the single most expensive per-slot op (70-123s/slot vs
+        # ~16s for SDR — prod job f91ebe67), and a generative job reframes every
+        # clip in all three variants, so the same HDR frames were tonemapped up
+        # to 3×. Pre-converting to an SDR intermediate (and repointing
+        # clip_id_to_local) means every per-slot reframe sees bt709 and skips the
+        # tonemap. Generative-only; SDR clips untouched.
+        #
+        # pipeline_trace contextvar caveat: `record_pipeline_event` reads a
+        # contextvar set by `pipeline_trace_for`, which worker threads do NOT
+        # inherit — so the trace events are emitted HERE on the main thread after
+        # join, never from inside the threads. The agents persist their own
+        # agent_run rows via the explicit `job_id` on RunContext, unaffected.
+        from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+        def _text_then_style():
+            text, form = _run_text_agents(clip_metas, hero, job_id=job_id)
+            style = _select_generative_style_set(clip_metas, text, job_id=job_id)
+            return text, form, style
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            fut_tonemap = pool.submit(_pretonemap_hdr_clips, clip_id_to_local, probe_map, tmpdir)
+            fut_text = pool.submit(_text_then_style)
+            fut_match = pool.submit(_match_best_track, clip_metas, job_id=job_id)
+            n_tonemapped = fut_tonemap.result()
+            agent_text, agent_form, style_set_id = fut_text.result()
+            best_track = fut_match.result()
+
         record_pipeline_event("reframe", "hdr_pretonemap_done", {"clips_converted": n_tonemapped})
-
-        # [Phase 3] Agent text (best-effort).
-        agent_text, agent_form = _run_text_agents(clip_metas, hero, job_id=job_id)
         record_pipeline_event("overlay", "agent_text_done", {"has_text": bool(agent_text)})
-
-        # Curated text style set (best-effort). Owns the typography of every
-        # variant's overlays — the AI intro and the lyrics. Always falls back to
-        # "default" so a job is never blocked on selection.
-        style_set_id = _select_generative_style_set(clip_metas, agent_text, job_id=job_id)
         record_pipeline_event("overlay", "style_set_selected", {"style_set_id": style_set_id})
-
-        # [Phase 2] Song match (best-effort). top-1 track for the song variants.
-        best_track = _match_best_track(clip_metas, job_id=job_id)
         record_pipeline_event(
             "assembly", "song_match_done", {"track_id": best_track.id if best_track else None}
         )

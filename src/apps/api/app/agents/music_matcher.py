@@ -157,7 +157,7 @@ class MusicMatcherAgent(Agent[MusicMatcherInput, MusicMatcherOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.audio.music_matcher",
         prompt_id="match_music",
-        prompt_version="2026-05-15",
+        prompt_version="2026-05-27",
         # Text-only matcher; flash is plenty. If quality drifts in prod logs,
         # swap to pro via fallback_models without a prompt_version bump.
         model="gemini-2.5-flash",
@@ -166,6 +166,23 @@ class MusicMatcherAgent(Agent[MusicMatcherInput, MusicMatcherOutput]):
     )
     Input = MusicMatcherInput
     Output = MusicMatcherOutput
+    # Latency lever: the orchestrator only ever consumes the top `n_variants`
+    # picks (the rest of the ranking is never used as a render-time fallback),
+    # so the prompt asks the model to emit ONLY the top picks + a small spare
+    # margin (`max_return`) instead of a verbose entry for every library track.
+    # Emitting all ~32 tracks with full rationale + predicted_strengths was
+    # ~4.6k output tokens / ~64s on the generative critical path; trimming to
+    # ~6 entries cuts generated tokens ~6× — a few seconds — WITHOUT changing
+    # which track wins (the model still scores the whole library internally).
+    #
+    # NOTE: this is done via the PROMPT, not a `max_output_tokens` hard cap. A
+    # cap is unsafe here — gemini-2.5 spends output-token budget on internal
+    # "thinking" before emitting JSON, so a low cap truncates to an empty
+    # response (finish_reason=MAX_TOKENS, tokens_out=0). The prompt instruction
+    # reduces the tokens the model *chooses* to generate, which is truncation-safe.
+    # Spare picks beyond n_variants — defense-in-depth fallback headroom if a
+    # top pick is dropped as a hallucination or unpublished mid-flight.
+    _RETURN_SPARE: ClassVar[int] = 3
 
     def required_fields(self) -> list[str]:
         return ["ranked"]
@@ -178,9 +195,15 @@ class MusicMatcherAgent(Agent[MusicMatcherInput, MusicMatcherOutput]):
         # is belt-and-suspenders alongside the cross-ref filter in parse() —
         # cheap and dramatically lowers hallucination rate in practice.
         valid_ids = ", ".join(t.track_id for t in input.available_tracks)
+        # Cap the number of entries the model emits to the picks the orchestrator
+        # will actually use (top-K) plus a small spare margin — never more than
+        # the library has. This is the lever that cuts output tokens (and thus
+        # latency) without affecting the #1 pick.
+        max_return = min(input.n_variants + self._RETURN_SPARE, len(input.available_tracks))
         return load_prompt(
             "match_music",
             n_variants=str(input.n_variants),
+            max_return=str(max_return),
             clip_count=str(len(input.clip_summaries)),
             track_count=str(len(input.available_tracks)),
             clip_set_summary=clip_set,
