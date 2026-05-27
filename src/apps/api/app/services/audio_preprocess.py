@@ -15,6 +15,7 @@ helpers operate on files already on local disk.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 
 import structlog
@@ -28,8 +29,21 @@ class AudioPreprocessError(Exception):
     """
 
 
+def _safe_size(path: str) -> int | None:
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return None
+
+
 def has_video_stream(path: str) -> bool:
-    """Return True iff ffprobe finds at least one video stream in *path*."""
+    """Return True iff ffprobe finds a real video stream in *path*.
+
+    Attached-picture streams (m4a/mp4 cover art encoded as MJPEG/PNG with
+    ``disposition.attached_pic=1``) are NOT considered video — stripping
+    them would silently destroy cover art on legitimate audio uploads, and
+    they don't bloat file size enough to be worth re-muxing.
+    """
     try:
         result = subprocess.run(
             [
@@ -49,8 +63,16 @@ def has_video_stream(path: str) -> bool:
         if result.returncode != 0:
             return False
         data = json.loads(result.stdout or "{}")
-        return any(s.get("codec_type") == "video" for s in data.get("streams", []))
-    except Exception:
+        return any(
+            s.get("codec_type") == "video" and (s.get("disposition") or {}).get("attached_pic") != 1
+            for s in data.get("streams", [])
+        )
+    except Exception as exc:
+        # ffprobe missing or returning garbage. Returning False is safer
+        # (avoids crashing the request) but log loudly: a silent False here
+        # turns the upload-strip path into a no-op and lets video-bearing
+        # bytes land in GCS unchanged.
+        log.warning("audio_preprocess_ffprobe_failed", path=path, error=str(exc))
         return False
 
 
@@ -86,6 +108,11 @@ def strip_video(src: str, dest: str) -> None:
         raise AudioPreprocessError(
             f"ffmpeg strip-video failed (rc={result.returncode}): {(result.stderr or '')[-500:]}"
         )
+    log.info(
+        "audio_preprocess_strip_video",
+        src_bytes=_safe_size(src),
+        dest_bytes=_safe_size(dest),
+    )
 
 
 def compress_to_mono_64k(src: str, dest: str) -> None:
@@ -126,3 +153,8 @@ def compress_to_mono_64k(src: str, dest: str) -> None:
             f"ffmpeg mono-64k compress failed (rc={result.returncode}): "
             f"{(result.stderr or '')[-500:]}"
         )
+    log.info(
+        "audio_preprocess_compress_mono_64k",
+        src_bytes=_safe_size(src),
+        dest_bytes=_safe_size(dest),
+    )

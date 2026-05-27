@@ -6,10 +6,10 @@ canonical lyric `prompt` (Genius lyrics) to bias Whisper toward the correct
 spelling.
 
 Inputs are expected to be audio-only m4a from yt-dlp or the admin upload
-route. When that contract is violated (e.g. an admin uploads a YouTube
-.mp4 with the video stream intact, or a long uncompressed wav blows past
-the 25 MB Whisper ceiling), `_shrink_for_whisper` transparently re-muxes
-or re-encodes to a fitting audio-only file before upload.
+route. When that contract is violated (a video container slips through,
+or an uncompressed audio file exceeds the 25 MB Whisper API ceiling),
+`_shrink_for_whisper` transparently re-muxes or re-encodes to a fitting
+audio-only file before upload.
 
 Returns word-level timing as a list of WhisperWord; alignment with Genius
 text happens in app.pipeline.lyrics_alignment.
@@ -67,9 +67,10 @@ def _shrink_for_whisper(audio_path: str, dest_dir: str) -> tuple[str, list[str]]
     """Return a (possibly the original) path that fits under the Whisper cap.
 
     Two-stage strategy:
-      1. If the file has a video stream, strip it lossless (``-vn -c:a copy``).
-         Most "audio.mp4" admin uploads are full music videos — stripping the
-         video alone typically takes ~27 MB → ~4 MB.
+      1. If the file has a real video stream (cover-art attached pictures
+         don't count — see ``has_video_stream``), strip it lossless via
+         ``-vn -c:a copy``. Music-video containers typically lose an order
+         of magnitude of bytes here.
       2. If still over the cap (genuinely-large pure audio, e.g. uncompressed
          wav), re-encode to mono 64 kbps AAC.
 
@@ -140,7 +141,12 @@ def transcribe_for_lyrics(
 
     with tempfile.TemporaryDirectory(prefix="nova_whisper_shrink_") as shrink_dir:
         upload_path = audio_path
-        if original_size > _MAX_FILE_BYTES or has_video_stream(audio_path):
+        # Only enter the shrink path when the file is actually over the cap.
+        # Once the upload route strips video at ingest, every track stored
+        # in GCS fits — so this branch only fires for legacy bloated rows
+        # (e.g. tracks ingested before the upload-side fix shipped) or
+        # genuinely-large pure-audio inputs.
+        if original_size > _MAX_FILE_BYTES:
             upload_path, stages = _shrink_for_whisper(audio_path, shrink_dir)
             log.info(
                 "whisper_lyrics_compressed",

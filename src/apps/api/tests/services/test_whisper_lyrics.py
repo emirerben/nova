@@ -50,6 +50,48 @@ def test_has_video_stream_false_when_audio_only(tmp_path: Path) -> None:
         assert has_video_stream(str(f)) is False
 
 
+def test_has_video_stream_false_for_cover_art_attached_picture(tmp_path: Path) -> None:
+    """yt-dlp m4a tracks embed YouTube thumbnails as MJPEG with
+    disposition.attached_pic=1. These must NOT count as video — otherwise
+    every normal music upload triggers a wasteful re-mux and silently
+    strips cover art."""
+    from app.services.audio_preprocess import has_video_stream
+
+    f = tmp_path / "song_with_cover.m4a"
+    f.write_bytes(b"x")
+    fake = MagicMock(
+        returncode=0,
+        stdout=(
+            '{"streams":['
+            '{"codec_type":"audio","codec_name":"aac"},'
+            '{"codec_type":"video","codec_name":"mjpeg","disposition":{"attached_pic":1}}'
+            "]}"
+        ),
+    )
+    with patch("app.services.audio_preprocess.subprocess.run", return_value=fake):
+        assert has_video_stream(str(f)) is False
+
+
+def test_has_video_stream_true_when_real_video_alongside_cover_art(tmp_path: Path) -> None:
+    """A real video stream plus a cover art stream should still report True."""
+    from app.services.audio_preprocess import has_video_stream
+
+    f = tmp_path / "music_video.mp4"
+    f.write_bytes(b"x")
+    fake = MagicMock(
+        returncode=0,
+        stdout=(
+            '{"streams":['
+            '{"codec_type":"video","codec_name":"av1","disposition":{"attached_pic":0}},'
+            '{"codec_type":"audio","codec_name":"opus"},'
+            '{"codec_type":"video","codec_name":"mjpeg","disposition":{"attached_pic":1}}'
+            "]}"
+        ),
+    )
+    with patch("app.services.audio_preprocess.subprocess.run", return_value=fake):
+        assert has_video_stream(str(f)) is True
+
+
 def test_has_video_stream_false_when_ffprobe_fails(tmp_path: Path) -> None:
     from app.services.audio_preprocess import has_video_stream
 
@@ -87,9 +129,12 @@ def test_strip_video_invokes_ffmpeg_with_lossless_audio_copy(tmp_path: Path) -> 
     args = run.call_args.args[0]
     assert args[0] == "ffmpeg"
     # Critical flags: -vn drops video, -c:a copy keeps audio bytes verbatim (no re-encode).
+    # Use index-pair checks rather than substring membership so a future flag
+    # whose value also contains "copy" (e.g. -map_metadata 0:copy_chapters) can't
+    # silently mask removal of -c:a copy.
     assert "-vn" in args
-    assert "copy" in args  # c:a copy
-    # Output container must be mp4 so .m4a containers are valid.
+    assert "-c:a" in args and args[args.index("-c:a") + 1] == "copy"
+    assert "-map" in args and args[args.index("-map") + 1] == "0:a"
     assert "-f" in args and args[args.index("-f") + 1] == "mp4"
 
 
@@ -285,8 +330,14 @@ def test_transcribe_uses_original_path_when_under_cap(tmp_path: Path) -> None:
 
     _real_open = open  # noqa: A001 — keep handle so capture_open can call through
 
+    # has_video_stream must NOT be called for under-cap files — the size gate
+    # short-circuits. Patch it to raise so a regression that reintroduces the
+    # probe in the hot path is loud.
+    def _fail_probe(_p: str) -> bool:
+        raise AssertionError("has_video_stream must not be called for under-cap files")
+
     with (
-        patch.object(whisper_lyrics, "has_video_stream", return_value=False),
+        patch.object(whisper_lyrics, "has_video_stream", side_effect=_fail_probe),
         patch("openai.OpenAI", return_value=fake_client),
         patch("builtins.open", side_effect=capture_open),
     ):
