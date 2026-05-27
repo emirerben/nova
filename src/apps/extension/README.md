@@ -24,6 +24,21 @@ service workers get killed after ~5 minutes of activity, which kills long
 downloads. Offscreen documents are kept alive by their declared `reasons`
 (here, `BLOBS`).
 
+### Why a `declarativeNetRequest` rule rewrites the `Origin` header
+
+When the offscreen doc calls `fetch()` against `youtube.com`, Chrome
+auto-attaches `Origin: chrome-extension://<id>` (CORS — extension JS can't
+suppress it). YouTube's edge 403s any `/youtubei/v1/*` POST whose Origin is
+a `chrome-extension://` URL. The fix is a dynamic DNR rule, registered in
+`background.js` (`YT_ORIGIN_RULE` / `ensureYouTubeOriginRule`), that
+overwrites `Origin` with `https://www.youtube.com` on extension-initiated
+POSTs to `/youtubei/*`. The rule is dynamic (not a static `rules.json`)
+because the canonical scope is `initiatorDomains: [chrome.runtime.id]`,
+which static rule files can't reference. Pattern verified against
+[chromium-extensions/034BzGADjsg](https://groups.google.com/a/chromium.org/g/chromium-extensions/c/034BzGADjsg).
+Stage-2 `*.googlevideo.com` byte fetches are NOT Origin-checked, so the
+rule deliberately doesn't cover them.
+
 ## Build + load locally
 
 ```bash

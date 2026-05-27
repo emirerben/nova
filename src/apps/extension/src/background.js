@@ -27,6 +27,57 @@
 const OFFSCREEN_URL = "offscreen.html";
 const VERSION = chrome.runtime.getManifest().version;
 
+// ── DNR rule: rewrite Origin on YouTube InnerTube POSTs ──────────────────────
+// Chrome auto-attaches `Origin: chrome-extension://<id>` to cross-origin POSTs
+// from the offscreen doc. YouTube's edge 403s any /youtubei/v1/* POST with
+// that Origin. The fix is to overwrite Origin with https://www.youtube.com
+// before the request leaves the browser. youtubei.js (called from offscreen.js)
+// has no way to suppress the auto-attached header; this is the documented MV3
+// approach. Pattern verified against:
+// https://groups.google.com/a/chromium.org/g/chromium-extensions/c/034BzGADjsg
+//
+// Registered dynamically (not as a static rule) because the static rules.json
+// format can't reference `chrome.runtime.id`, which is the tightest possible
+// initiator scope — guarantees the rule only fires on requests this extension
+// itself initiated, never on traffic from a youtube.com tab the user is
+// browsing.
+const YT_ORIGIN_RULE = {
+  id: 1,
+  action: {
+    type: "modifyHeaders",
+    requestHeaders: [
+      { header: "Origin", operation: "set", value: "https://www.youtube.com" },
+    ],
+  },
+  condition: {
+    urlFilter: "||youtube.com/youtubei/",
+    initiatorDomains: [chrome.runtime.id],
+    requestMethods: ["post"],
+    resourceTypes: ["xmlhttprequest"],
+  },
+};
+
+async function ensureYouTubeOriginRule() {
+  // Idempotent: drop any prior copy of rule id=1 then add the current one.
+  // Dynamic rules survive SW restarts because Chrome persists them, but
+  // re-asserting on every SW startup is cheap and self-healing.
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: [YT_ORIGIN_RULE.id],
+    addRules: [YT_ORIGIN_RULE],
+  });
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  ensureYouTubeOriginRule().catch((err) =>
+    console.error("[nova-extension] failed to install YouTube Origin rule:", err),
+  );
+});
+// Also assert at top-level so the rule exists even if Chrome wakes the SW for
+// the first time without firing onInstalled (e.g. profile sync edge cases).
+ensureYouTubeOriginRule().catch((err) =>
+  console.error("[nova-extension] failed to refresh YouTube Origin rule:", err),
+);
+
 // Runtime sender verification. externally_connectable.matches in the manifest
 // already restricts WHICH ORIGINS can send messages, but not WHICH PATHS on
 // those origins, and not which COMMANDS they can invoke. Defense in depth so
