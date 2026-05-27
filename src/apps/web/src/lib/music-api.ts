@@ -210,8 +210,16 @@ export interface LyricsPreviewStatus {
   // small lead-in. Null on legacy rows rendered before the auto-anchor PR.
   preview_start_s: number | null;
   preview_duration_s: number | null;
+  // The lyric style this preview was rendered in. Null on rows rendered
+  // before the multi-style dashboard shipped (those were always Line).
+  style: LyricsStyle | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface LyricsPreviewCreateResponse {
+  job_id: string;
+  style: LyricsStyle;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -962,15 +970,22 @@ export async function adminGetMusicJobStatus(
 export async function adminCreateLyricsPreview(
   trackId: string,
   lyricsConfigOverride?: LyricsConfigOverride,
-): Promise<{ job_id: string }> {
+  style: LyricsStyle = "line",
+): Promise<LyricsPreviewCreateResponse> {
+  // Strip line-only override fields when previewing in a non-Line style.
+  // The backend already does this defensively before validation, but
+  // dropping them client-side keeps the request body honest and avoids
+  // surprising the network panel reviewer with knobs that won't fire.
+  const safeOverride: LyricsConfigOverride | undefined =
+    style !== "line" ? undefined : lyricsConfigOverride;
+  const body: Record<string, unknown> = { style };
+  if (safeOverride) {
+    body.lyrics_config_override = safeOverride;
+  }
   const res = await fetch(`${ADMIN_PROXY}/music-tracks/${trackId}/lyrics-preview`, {
     method: "POST",
     headers: JSON_HEADERS,
-    body: JSON.stringify(
-      lyricsConfigOverride
-        ? { lyrics_config_override: lyricsConfigOverride }
-        : {},
-    ),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));

@@ -16,27 +16,25 @@ import { useJobPoller } from "@/hooks/useJobPoller";
 
 import { formatMSS } from "@/lib/format-time";
 
+import { AltStylePreviewSlot } from "./AltStylePreviewSlot";
 import { LyricsTimingPanel } from "./LyricsTimingPanel";
 import { StatusPill, TERMINAL_STATUSES, resolveMusicJobOutputUrl } from "./musicJobStatus";
 
 /**
- * Dedicated "Line Lyric Templates" dashboard.
+ * Lyric templates dashboard.
  *
  * Sits next to the Test tab on `/admin/music/[id]?tab=lyrics`. Composes the
- * shipped `LyricsConfigPanel` + `LyricsTimingPanel` and wires the existing
- * `adminCreateLyricsPreview` flow into a focused workflow: see + tune the
- * line-style overlay, preview it on a 20s black background with track audio.
+ * shipped `LyricsConfigPanel` + `LyricsTimingPanel` and wires the
+ * `adminCreateLyricsPreview` flow into three independent preview slots — one
+ * per lyric style (line / pop-up / karaoke). Each slot renders against a
+ * 20s black background with the track's own audio so timing decisions stay
+ * isolated from clip selection.
  *
- * Reuse contract:
- *   - lyric extraction, alignment, ASS generation, render — all shipped.
- *   - this component owns no rendering logic; it only composes UI and routes
- *     state through the existing admin API client.
- *
- * Scope note: "line" is the highlighted workflow per product requirement.
- * Karaoke and per-word-pop remain visible inside `LyricsConfigPanel`'s style
- * dropdown so admins can switch styles for production music jobs, but the
- * preview button always renders in line style (the backend forces
- * `style: "line"` on the lyrics-preview job — admin_music.py).
+ * The Line slot keeps the original LyricsTimingPanel workflow (line-only
+ * fade/dwell knobs live there). Pop-up and Karaoke render through
+ * `AltStylePreviewSlot` — they have no per-knob admin controls today; their
+ * styling comes from the track-level `LyricsConfigPanel` (position,
+ * text_color, highlight_color, font_style) which already supports all three.
  */
 
 interface LyricsTabProps {
@@ -109,22 +107,24 @@ export function LyricsTab({ trackId, track, onTrackUpdated }: LyricsTabProps) {
 
   return (
     <div className="space-y-6">
-      {/* Header — anchors the workflow as "Line Lyric Templates".
+      {/* Header — anchors the workflow as "Lyric Templates".
           Uses <h2> not <h1>: the page already renders <h1>{track.title}</h1>
           higher up the tree. Flat bg-zinc-900 + rounded-xl border to match
           every other panel on this dashboard (TestTab, LyricsConfigPanel,
           LyricsTimingPanel). */}
       <div className="bg-zinc-900 rounded-xl border border-zinc-700 p-5">
-        <h2 className="font-semibold text-zinc-100">Line Lyric Templates</h2>
+        <h2 className="font-semibold text-zinc-100">Lyric Templates</h2>
         <p className="mt-1 text-sm text-zinc-400">
-          Tune the line-style lyric overlay independently from full music jobs. Previews
-          render against a 20s black background with the track&apos;s own audio so timing
+          Tune lyric overlays independently from full music jobs. Each preview renders
+          against a 20s black background with the track&apos;s own audio so timing
           decisions stay isolated from clip selection.
         </p>
         <p className="mt-2 text-xs text-zinc-500">
-          Karaoke and per-word-pop styles remain available in the visual config below for
-          production music jobs, but the preview button always renders the{" "}
-          <span className="font-mono text-zinc-300">line</span> style.
+          <span className="font-mono text-zinc-300">Line</span> carries per-knob tuning
+          (pre-roll, fade, dwell) via the timing panel below.{" "}
+          <span className="font-mono text-zinc-300">Pop-up</span> and{" "}
+          <span className="font-mono text-zinc-300">Karaoke</span> render in their own
+          slots and inherit visual styling from the config panel.
         </p>
       </div>
 
@@ -234,6 +234,26 @@ export function LyricsTab({ trackId, track, onTrackUpdated }: LyricsTabProps) {
           ) : (
             <p className="text-xs text-zinc-500">Waiting for status…</p>
           )}
+        </div>
+      )}
+
+      {/* Alternate-style preview slots. Each owns its own job + poller so
+          the three styles render independently. Hidden until lyrics are
+          ready since they need cached lyric lines too. */}
+      {lyricsReady && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <AltStylePreviewSlot
+            trackId={trackId}
+            style="per-word-pop"
+            label="Pop-up"
+            helper="Per-word reveal. One word pops in at its audio onset; the previous word fades out as the next arrives."
+          />
+          <AltStylePreviewSlot
+            trackId={trackId}
+            style="karaoke"
+            label="Karaoke"
+            helper="Line stays on screen with a color sweep advancing across words as they're sung."
+          />
         </div>
       )}
     </div>

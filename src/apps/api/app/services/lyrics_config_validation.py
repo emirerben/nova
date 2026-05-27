@@ -52,7 +52,7 @@ LYRICS_CONFIG_KEYS = {
     "font_family",
 }
 
-_LINE_ONLY_KEYS = frozenset(
+LINE_ONLY_KEYS = frozenset(
     {
         "pre_roll_s",
         "post_dwell_s",
@@ -65,6 +65,9 @@ _LINE_ONLY_KEYS = frozenset(
         "hold_to_next_threshold_ms",
     }
 )
+# Backwards-compat alias for callers that imported the private name. New
+# callers (admin_music.py, future style routes) should import LINE_ONLY_KEYS.
+_LINE_ONLY_KEYS = LINE_ONLY_KEYS
 
 _FONT_REGISTRY_PATH = (
     Path(__file__).resolve().parents[2] / "assets" / "fonts" / "font-registry.json"

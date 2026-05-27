@@ -173,6 +173,15 @@ def _resolve_preview_window(track: Any) -> tuple[float, float]:
 def build_lyrics_preview_recipe(track: Any, lyrics_config_effective: dict) -> dict:
     """Build a one-slot recipe anchored at the first lyric line and inject
     lyrics via production code.
+
+    The chosen lyric style lives inside ``lyrics_config_effective["style"]``
+    (one of "line", "karaoke", "per-word-pop"). The admin route always sets
+    it explicitly. Callers that omit it (legacy tests, internal helpers
+    written against the old implicit-Line behavior) get ``"line"`` as the
+    backwards-compatible default — NOT the dispatcher's intrinsic default
+    of ``"karaoke"``, because every caller of this module historically
+    meant Line. Passing an unset style downstream would silently flip
+    behavior; this default makes the migration safe.
     """
     lyrics_cached = getattr(track, "lyrics_cached", None)
     if not lyrics_cached:
@@ -188,12 +197,14 @@ def build_lyrics_preview_recipe(track: Any, lyrics_config_effective: dict) -> di
             }
         ]
     }
+    cfg = {**lyrics_config_effective, "enabled": True}
+    cfg.setdefault("style", "line")
     return inject_lyric_overlays(
         recipe,
         lyrics_cached,
         best_start_s=preview_start_s,
         best_end_s=preview_start_s + preview_duration_s,
-        lyrics_config={**lyrics_config_effective, "enabled": True, "style": "line"},
+        lyrics_config=cfg,
     )
 
 
@@ -220,6 +231,23 @@ def build_lyrics_preview_ass_files(
     return ass_files
 
 
+_STYLE_PATH_TOKEN = {"line": "line", "karaoke": "karaoke", "per-word-pop": "popup"}
+
+
+def _style_path_segment(lyrics_config_effective: dict) -> str:
+    """Return a filesystem-safe segment for the configured lyric style.
+
+    Falls back to "line" if the style is missing or unknown — matching the
+    runtime default in ``inject_lyric_overlays`` (which itself falls back to
+    "karaoke" if unset, but Line is what the historical preview path always
+    rendered, so an empty-style preview should not silently change category).
+    The "-" in "per-word-pop" is collapsed to "popup" so the path stays
+    URL-friendly and human-readable.
+    """
+    style = lyrics_config_effective.get("style")
+    return _STYLE_PATH_TOKEN.get(str(style) if style is not None else "", "line")
+
+
 def render_lyrics_preview(
     track: Any,
     lyrics_config_effective: dict,
@@ -233,11 +261,20 @@ def render_lyrics_preview(
     `music-lyrics-previews/{track_id}/lyrics-preview.mp4` — admin-visible
     silent UX corruption (job A's status row pointed at a URL serving job
     B's render bytes).
+
+    The chosen lyric style (line / karaoke / per-word-pop) is encoded in the
+    GCS path between the track and job segments. This lets the dashboard
+    show one preview per style without races between concurrent style runs
+    against the same track. The 24h lifecycle rule in
+    ``infra/gcs-lifecycle.json`` matches both layouts (the rule keys on the
+    ``music-lyrics-previews/`` prefix), so per-style paths still get
+    deleted on the same schedule as flat-path legacy objects.
     """
     audio_gcs_path = getattr(track, "audio_gcs_path", None)
     if not audio_gcs_path:
         raise LyricsPreviewInputError("Music track has no audio file.")
     track_id = str(getattr(track, "id", "unknown"))
+    style_segment = _style_path_segment(lyrics_config_effective)
 
     # Resolve the window ONCE so the same (start_s, duration_s) reaches both
     # the ASS generation (via build_lyrics_preview_recipe → inject_lyric_overlays)
@@ -264,10 +301,14 @@ def render_lyrics_preview(
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
             raise RuntimeError("lyrics preview ffmpeg produced empty output")
 
-        # Per-job namespacing: track_id alone collides across iterations.
-        # The 24h delete rule in `infra/gcs-lifecycle.json` matches this prefix
-        # so blobs don't accumulate forever.
-        object_path = f"music-lyrics-previews/{track_id}/{job_id}/lyrics-preview.mp4"
+        # Per-job AND per-style namespacing: track_id alone collides across
+        # iterations (different config edits for the same track) and the
+        # admin dashboard now renders three independent style previews. The
+        # 24h delete rule in `infra/gcs-lifecycle.json` keys on the
+        # `music-lyrics-previews/` prefix so blobs don't accumulate forever.
+        object_path = (
+            f"music-lyrics-previews/{track_id}/{style_segment}/{job_id}/lyrics-preview.mp4"
+        )
         output_url = upload_public_read(output_path, object_path)
         return output_url, {
             "ass_count": len(ass_files),
@@ -275,6 +316,7 @@ def render_lyrics_preview(
             "output_gcs_path": object_path,
             "preview_start_s": preview_start_s,
             "preview_duration_s": preview_duration_s,
+            "lyric_style": style_segment,
         }
 
 
