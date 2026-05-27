@@ -636,3 +636,152 @@ def test_level1_and_level2_hold_across_grid(gap_s: float, dur_s: float) -> None:
                 assert not (a1 > READABLE_ALPHA and a2 > READABLE_ALPHA), (
                     f"L2 fail dur={dur_s} gap={gap_s} t={t:.3f}: {a1:.2f}, {a2:.2f}"
                 )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Consolidation-path coverage — the layer the unit tests above don't reach
+# ──────────────────────────────────────────────────────────────────────────
+#
+# Everything above replays alpha over the RAW `inject_lyric_overlays` output.
+# But generative + music jobs render the output of `_collect_absolute_overlays`,
+# which runs two more transforms the scheduler tests never exercise:
+#   1. `_consolidate_lyric_segments` merges a line's cross-slot segments by
+#      `lyric_line_id` and must carry `fade_out_curve` from the last segment
+#      onto the merged overlay (a curve drop here silently reverts to the 1−p²
+#      stacking bug, invisible to the unit suite).
+#   2. slot-relative → absolute-time rebasing across multiple beat-synced slots.
+# These tests pin the no-stacking invariant at THAT layer, anchored to a real
+# prod failure.
+
+
+# The exact `lyrics_config_effective` shape prod feeds `inject_lyric_overlays`
+# (admin Test tab / generative path): form-default fade_in_ms=150 + fade_out_ms=250
+# that PR #343's `_caller_key_set` snapshot misread as user overrides and used to
+# disable its own crossfade (the #344 regression). The bare {"enabled","style"}
+# config bypasses that path entirely — #344's own commit names it as why #343's
+# tests missed the bug. These consolidation + burn tests use the realistic shape
+# so they guard the path that actually broke, not the happy path.
+EFFECTIVE_CFG = {
+    "style": "line",
+    "enabled": True,
+    "fade_in_ms": 150,
+    "fade_out_ms": 250,
+    "pre_roll_s": 0.1,
+    "post_dwell_s": 1.0,
+    "next_line_gap_s": 0.1,
+    "hold_to_next_threshold_ms": 500,
+    "position": "bottom",
+    "text_size": "medium",
+    "font_style": "sans",
+    "outline_px": 2,
+    "text_color": "#FFFFFF",
+    "highlight_color": "#FFFF00",
+}
+
+
+def _inject_and_consolidate(
+    lines: list[tuple[str, float, float]],
+    best_start_s: float,
+    best_end_s: float,
+    slot_durations_s: tuple[float, ...],
+    cfg: dict | None = None,
+) -> list[dict]:
+    """Inject, then run the real `_collect_absolute_overlays` consolidation the
+    generative + music render paths use. Returns absolute-time lyric overlays.
+
+    Defaults to the realistic `effective_lyrics_config` shape (EFFECTIVE_CFG) —
+    the one that tripped PR #343's user-override gate — NOT the bare config that
+    silently bypasses the dynamic post-pass."""
+    from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+    out = inject_lyric_overlays(
+        _recipe(slot_durations_s),
+        _cache(lines),
+        best_start_s,
+        best_end_s,
+        dict(cfg or EFFECTIVE_CFG),
+    )
+    steps = [{"clip_id": f"c{i}", "slot": slot} for i, slot in enumerate(out["slots"])]
+    abs_overlays = _collect_absolute_overlays(
+        steps, list(slot_durations_s), None, "", is_agentic=True
+    )
+    return [o for o in abs_overlays if o.get("effect") == "lyric-line"]
+
+
+# Real synced lyrics from prod track 29da2cbf ("Milky – Just The Way You Are"),
+# best section 60-75s (absolute song time). Consecutive sustained "Do do" lines
+# OVERLAP each other (62.92 < 63.19), and a generative job (901fe271) rendered
+# them as four overlays stacked at bottom/0.80 — the reported clash. Captured
+# before #343's dynamic-crossfade scheduler landed; pinned here so the
+# consolidation path can never regress back to that frame.
+_MILKY_PROD_LINES = [
+    ("Just the way you are", 58.22, 60.12),
+    ("Do do do do do do do do", 60.12, 63.19),
+    ("Do do do do do do do do", 62.92, 66.54),
+    ("And it goes", 66.74, 67.15),
+    ("Do do do do do do do do", 67.32, 70.24),
+    ("Do do do do do do do do", 70.42, 73.83),
+    ("And it goes", 74.1, 74.72),
+]
+
+
+def _assert_no_stacking_through_consolidation(overlays: list[dict], label: str) -> None:
+    assert overlays, f"{label}: expected consolidated lyric overlays"
+    for t in _event_boundary_times(overlays):
+        active = _active_alphas(overlays, t)
+        for (o1, a1), (o2, a2) in combinations(active, 2):
+            assert not (a1 > DOUBLE_BRIGHT_ALPHA and a2 > DOUBLE_BRIGHT_ALPHA), (
+                f"{label}: L1 double-bright at t={t:.3f}s — {a1:.2f}, {a2:.2f} "
+                f"({o1['text'][:16]!r} / {o2['text'][:16]!r})"
+            )
+            if _same_visual_slot(o1, o2):
+                assert not (a1 > READABLE_ALPHA and a2 > READABLE_ALPHA), (
+                    f"{label}: L2 same-slot readable stacking at t={t:.3f}s — "
+                    f"{a1:.2f}, {a2:.2f} ({o1['text'][:16]!r} / {o2['text'][:16]!r})"
+                )
+
+
+@pytest.mark.parametrize(
+    "label, best_start, best_end, slot_durations",
+    [
+        # Footage-trimmed single clip — the exact shape of prod job 901fe271.
+        ("milky footage-trimmed 7.5s", 60.0, 67.5, (7.5,)),
+        # Multi-slot beat-synced cuts — cross-slot segment merge + curve carry.
+        ("milky full section 2x7.5s", 60.0, 75.0, (7.5, 7.5)),
+        ("milky full section 6x2.5s", 60.0, 75.0, (2.5, 2.5, 2.5, 2.5, 2.5, 2.5)),
+    ],
+)
+def test_milky_prod_lines_no_stacking_through_consolidation(
+    label: str, best_start: float, best_end: float, slot_durations: tuple[float, ...]
+) -> None:
+    """Overlapping synced source lines must not stack at the render layer the
+    generative + music paths actually use (post-consolidation absolute time).
+    Regression for prod job 901fe271; complements #343's inject-level suite."""
+    overlays = _inject_and_consolidate(_MILKY_PROD_LINES, best_start, best_end, slot_durations)
+    _assert_no_stacking_through_consolidation(overlays, label)
+
+
+def test_consolidation_carries_fade_out_curve_onto_merged_overlay() -> None:
+    """A line that (a) spans two slots AND (b) crossfades into the next line
+    must keep `fade_out_curve="sqrt"` on its merged overlay. The curve lives
+    on the line's LAST segment (in slot 1); `_consolidate_lyric_segments` must
+    carry it onto the merged result. Dropping it on merge silently reverts to
+    the 1−p² curve that caused the stacking bug — invisible to the inject-level
+    suite because it never consolidates.
+
+    (A lone line with no successor correctly has no curve — #343 emits sqrt
+    only on a crossfade decision — so the spanning line needs a follower.)"""
+    overlays = _inject_and_consolidate(
+        [
+            ("a line that spans both slots", 60.5, 63.5),  # crosses the 2.5s seam
+            ("the following line here", 63.0, 64.8),  # A crossfades into this
+        ],
+        60.0,
+        65.0,
+        (2.5, 2.5),
+    )
+    merged = [o for o in overlays if o["text"] == "a line that spans both slots"]
+    assert len(merged) == 1, "cross-slot segments should consolidate to one overlay"
+    assert merged[0].get("fade_out_curve") == "sqrt", (
+        "merged overlay lost fade_out_curve — would revert to the stacking curve"
+    )
