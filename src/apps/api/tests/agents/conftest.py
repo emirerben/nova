@@ -86,6 +86,7 @@ class MockModelClient(ModelClient):
         media_mime: str | None = None,
         response_json: bool = True,
         max_output_tokens: int | None = None,
+        thinking_budget: int | None = None,
         timeout_s: float = 30.0,
     ) -> ModelInvocation:
         self.invocations.append(

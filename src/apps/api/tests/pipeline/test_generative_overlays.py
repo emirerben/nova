@@ -6,7 +6,12 @@ mandatory per CLAUDE.md's #296-class history.
 
 from __future__ import annotations
 
-from app.pipeline.generative_overlays import build_intro_overlay, inject_intro_overlay
+from app.pipeline.generative_overlays import (
+    _HOLD_TO_END_S,
+    build_intro_overlay,
+    inject_intro_overlay,
+    inject_persistent_intro,
+)
 
 
 def test_karaoke_overlay_has_word_timings_matching_skia_schema():
@@ -199,3 +204,160 @@ def test_inject_no_slots_is_noop():
     recipe = {"slots": []}
     ov = build_intro_overlay("hi", effect="static", start_s=0.0, end_s=1.0)
     assert inject_intro_overlay(recipe, 0, ov) == {"slots": []}
+
+
+# -- inject_persistent_intro: reveal then hold for the whole video --
+
+
+def _hero_overlays(recipe: dict) -> list[dict]:
+    return recipe["slots"][0]["text_overlays"]
+
+
+def test_persistent_intro_emits_reveal_plus_spanning_hold():
+    recipe = {"slots": [{"position": 0, "target_duration_s": 5.0}]}
+    out = inject_persistent_intro(
+        recipe,
+        0,
+        text="i did not expect this",
+        effect="karaoke-line",
+        reveal_window_s=3.0,
+        position="center",
+    )
+    overlays = _hero_overlays(out)
+    assert len(overlays) == 2
+    reveal, hold = overlays
+    # Bounded animated reveal over the reveal window (stays under the Skia frame cap).
+    assert reveal["effect"] == "karaoke-line"
+    assert reveal["start_s"] == 0.0
+    assert reveal["end_s"] == 3.0
+    total_reveal = sum(w["duration_cs"] for w in reveal["word_timings"]) / 100.0
+    assert abs(total_reveal - 3.0) < 0.05
+    # Static hold takes over at the reveal end and spans to (past) EOF.
+    assert hold["effect"] == "static"
+    assert hold["start_s"] == 3.0
+    assert hold["end_s"] == _HOLD_TO_END_S
+    assert "word_timings" not in hold
+    # Same text + position so they sit in the same screen slot, back-to-back.
+    assert reveal["text"] == hold["text"] == "i did not expect this"
+    assert reveal["position"] == hold["position"] == "center"
+    # role marks both no-merge for the Dedup-1 pass.
+    assert reveal["role"] == hold["role"] == "generative_intro"
+
+
+def test_persistent_intro_karaoke_hold_uses_highlight_color():
+    # Karaoke settles every word to highlight_color, so the static hold must render in
+    # highlight_color to continue seamlessly from the reveal's settled state.
+    out = inject_persistent_intro(
+        {"slots": [{"position": 0, "target_duration_s": 5.0}]},
+        0,
+        text="hello world",
+        effect="karaoke-line",
+        reveal_window_s=3.0,
+        text_color="#FFFFFF",
+        highlight_color="#FFD24A",
+    )
+    reveal, hold = _hero_overlays(out)
+    assert reveal["text_color"] == "#FFFFFF"
+    assert hold["text_color"] == "#FFD24A"  # settled karaoke color
+
+
+def test_persistent_intro_non_karaoke_hold_uses_text_color():
+    # pop-in (and other block effects) settle on text_color, so the hold matches it.
+    out = inject_persistent_intro(
+        {"slots": [{"position": 0, "target_duration_s": 5.0}]},
+        0,
+        text="hello world",
+        effect="pop-in",
+        reveal_window_s=3.0,
+        text_color="#FFFFFF",
+        highlight_color="#FFD24A",
+    )
+    reveal, hold = _hero_overlays(out)
+    assert reveal["effect"] == "pop-in"
+    assert hold["effect"] == "static"
+    assert hold["text_color"] == "#FFFFFF"  # settled = text_color for non-karaoke
+
+
+def test_persistent_intro_style_fields_on_both_overlays():
+    out = inject_persistent_intro(
+        {"slots": [{"position": 0, "target_duration_s": 5.0}]},
+        0,
+        text="ai answer",
+        effect="stream-in",
+        reveal_window_s=3.0,
+        font_family="Space Mono",
+        text_size_px=56,
+        position_x_frac=0.06,
+    )
+    for ov in _hero_overlays(out):
+        assert ov["font_family"] == "Space Mono"
+        assert ov["text_size_px"] == 56
+        assert ov["position_x_frac"] == 0.06
+
+
+def test_persistent_intro_empty_text_noop():
+    recipe = {"slots": [{"position": 0, "target_duration_s": 5.0}]}
+    out = inject_persistent_intro(recipe, 0, text="   ", effect="karaoke-line", reveal_window_s=3.0)
+    assert out["slots"][0].get("text_overlays") in (None, [])
+
+
+def test_persistent_intro_no_slots_noop():
+    recipe = {"slots": []}
+    out = inject_persistent_intro(recipe, 0, text="hi", effect="static", reveal_window_s=3.0)
+    assert out == {"slots": []}
+
+
+def test_persistent_intro_hero_out_of_range_noop():
+    recipe = {"slots": [{"position": 0, "target_duration_s": 5.0}]}
+    out = inject_persistent_intro(recipe, 5, text="hi", effect="static", reveal_window_s=3.0)
+    assert out["slots"][0].get("text_overlays") in (None, [])
+
+
+def test_persistent_intro_only_hero_slot_gets_overlays():
+    # Injection targets the hero slot ONLY — the static hold spans the whole video via
+    # its end_s (overlays burn on the joined video, not per segment), so later slots
+    # stay empty.
+    recipe = {
+        "slots": [
+            {"position": 0, "target_duration_s": 5.0},
+            {"position": 1, "target_duration_s": 4.0},
+        ]
+    }
+    out = inject_persistent_intro(
+        recipe, 0, text="stays up", effect="karaoke-line", reveal_window_s=3.0
+    )
+    assert len(out["slots"][0]["text_overlays"]) == 2
+    assert out["slots"][1].get("text_overlays") in (None, [])
+
+
+def test_persistent_intro_survives_collect_absolute_overlays():
+    # End-to-end against the REAL burn-time overlay collection: the reveal and hold must
+    # NOT merge (Dedup 1), the hold must span past every later cut, and the karaoke
+    # reveal must keep its word_timings.
+    from app.pipeline.agents.gemini_analyzer import AssemblyStep
+    from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+    slots = [
+        {"position": i + 1, "target_duration_s": d, "priority": 5, "slot_type": "broll"}
+        for i, d in enumerate((5.0, 4.0, 6.0))
+    ]
+    inject_persistent_intro(
+        {"slots": slots}, 0, text="i did not expect", effect="karaoke-line", reveal_window_s=3.0
+    )
+    steps = [AssemblyStep(slot=s, clip_id=f"c{i}", moment={}) for i, s in enumerate(slots)]
+    slot_durs = [s["target_duration_s"] for s in slots]
+    out = _collect_absolute_overlays(steps, slot_durs, clip_metas=None, subject="", is_agentic=True)
+
+    intros = [o for o in out if o["text"] == "i did not expect"]
+    assert len(intros) == 2  # reveal + hold survived as distinct overlays (no merge)
+    intros.sort(key=lambda o: o["start_s"])
+    reveal, hold = intros
+    assert reveal["effect"] == "karaoke-line"
+    assert reveal["start_s"] == 0.0 and reveal["end_s"] == 3.0
+    assert reveal.get("word_timings")
+    assert hold["effect"] == "static"
+    assert hold["start_s"] == 3.0
+    # Hold spans well past the total video duration (5+4+6 = 15s) — held to EOF.
+    assert hold["end_s"] >= sum(slot_durs)
+    # Internal bookkeeping is stripped before return.
+    assert "_no_merge" not in hold
