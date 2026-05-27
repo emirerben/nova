@@ -473,7 +473,7 @@ async def upload_music_track(
         with open(source_path, "wb") as f:
             f.write(content)
 
-        from app.services.audio_download import _probe_duration  # noqa: PLC0415
+        from app.services.audio_download import probe_duration  # noqa: PLC0415
         from app.services.audio_preprocess import (  # noqa: PLC0415
             AudioPreprocessError,
             has_video_stream,
@@ -505,7 +505,7 @@ async def upload_music_track(
             )
 
         gcs_path = f"music/{track_id}/audio{gcs_extension}"
-        duration_s = _probe_duration(upload_source)
+        duration_s = probe_duration(upload_source)
 
         bucket = _get_client().bucket(settings.storage_bucket)
         blob = bucket.blob(gcs_path)
@@ -960,7 +960,7 @@ async def browser_upload_confirm(
     duration_s: float | None = None
     with tempfile.NamedTemporaryFile(suffix=ext, delete=True) as tmp:
         await asyncio.to_thread(found_blob.download_to_filename, tmp.name)
-        from app.services.audio_download import _probe_duration as _probe_dur  # noqa: PLC0415
+        from app.services.audio_download import probe_duration as _probe_dur  # noqa: PLC0415
 
         is_audio = await asyncio.to_thread(probe_has_audio_stream, tmp.name)
         if not is_audio:
@@ -1152,9 +1152,9 @@ async def create_templated_music_track(
         tmp.write(content)
         tmp.flush()
 
-        from app.services.audio_download import _probe_duration  # noqa: PLC0415
+        from app.services.audio_download import probe_duration  # noqa: PLC0415
 
-        duration_s = _probe_duration(tmp.name)
+        duration_s = probe_duration(tmp.name)
 
         from app.storage import _get_client  # noqa: PLC0415
 

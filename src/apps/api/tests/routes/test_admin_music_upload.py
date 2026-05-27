@@ -103,7 +103,7 @@ def test_upload_strips_video_stream_and_rewrites_gcs_path_to_m4a(
             patch(
                 "app.services.audio_preprocess.strip_video", side_effect=fake_strip
             ) as strip_mock,
-            patch("app.services.audio_download._probe_duration", return_value=223.5),
+            patch("app.services.audio_download.probe_duration", return_value=223.5),
             patch("app.storage._get_client", return_value=fake_client),
             patch("app.tasks.music_orchestrate.analyze_music_track_task.delay") as dispatch,
         ):
@@ -160,7 +160,7 @@ def test_upload_skips_strip_when_input_is_audio_only(client: TestClient) -> None
         with (
             patch("app.services.audio_preprocess.has_video_stream", return_value=False),
             patch("app.services.audio_preprocess.strip_video") as strip_mock,
-            patch("app.services.audio_download._probe_duration", return_value=180.0),
+            patch("app.services.audio_download.probe_duration", return_value=180.0),
             patch("app.storage._get_client", return_value=fake_client),
             patch("app.tasks.music_orchestrate.analyze_music_track_task.delay"),
         ):
@@ -181,6 +181,43 @@ def test_upload_skips_strip_when_input_is_audio_only(client: TestClient) -> None
     assert upload_args["path"].endswith(".m4a")
 
 
+def test_upload_returns_413_when_over_50_mb(client: TestClient) -> None:
+    """51 MB upload must short-circuit at the 50 MB cap: no ffprobe, no
+    ffmpeg, no GCS write, no DB row. Locks the upfront size gate so a
+    future refactor (e.g. moving the size check after probe) breaks
+    loudly instead of silently."""
+    session = _make_db_mock()
+    _override_db(session)
+
+    payload = b"x" * (51 * 1024 * 1024)
+
+    try:
+        with (
+            patch("app.services.audio_preprocess.has_video_stream") as has_video,
+            patch("app.services.audio_preprocess.strip_video") as strip_mock,
+            patch("app.services.audio_download.probe_duration") as probe_mock,
+            patch("app.storage._get_client") as gcs_client,
+            patch("app.tasks.music_orchestrate.analyze_music_track_task.delay") as dispatch,
+        ):
+            resp = client.post(
+                "/admin/music-tracks/upload",
+                headers=_admin_headers(),
+                files={"file": ("big.mp4", payload, "video/mp4")},
+                data={"title": "x", "artist": "y"},
+            )
+    finally:
+        _clear_db_override()
+
+    assert resp.status_code == 413, resp.text
+    assert "too large" in resp.json()["detail"].lower()
+    has_video.assert_not_called()
+    strip_mock.assert_not_called()
+    probe_mock.assert_not_called()
+    gcs_client.assert_not_called()
+    dispatch.assert_not_called()
+    session.add.assert_not_called()
+
+
 def test_upload_returns_422_when_ffmpeg_fails(client: TestClient) -> None:
     """Corrupt mp4 → ffmpeg fails on strip_video → 422 to admin, not 500."""
     from app.services.audio_preprocess import AudioPreprocessError
@@ -195,7 +232,7 @@ def test_upload_returns_422_when_ffmpeg_fails(client: TestClient) -> None:
                 "app.services.audio_preprocess.strip_video",
                 side_effect=AudioPreprocessError("Invalid data found"),
             ),
-            patch("app.services.audio_download._probe_duration", return_value=None),
+            patch("app.services.audio_download.probe_duration", return_value=None),
         ):
             resp = client.post(
                 "/admin/music-tracks/upload",
