@@ -777,3 +777,63 @@ def test_coerce_best_start_s_handles_none_invalid_nan() -> None:
     assert _coerce_best_start_s({"best_start_s": 128.0}) == 128.0
     assert _coerce_best_start_s({"best_start_s": 128}) == 128.0  # int → float
     assert _coerce_best_start_s({"best_start_s": "128.5"}) == 128.5  # string number
+
+
+# ── _run_lyrics_extraction kwarg wire (Hawai duration-disambiguation) ────────
+
+
+def test_run_lyrics_extraction_passes_duration_s_to_agent() -> None:
+    """The orchestrator must thread `duration_s` through to LyricsInput so
+    the agent can pass it to LRCLIB's `/api/get?duration=N` for recording
+    disambiguation. If this kwarg ever silently drops (e.g. someone renames
+    the helper signature), the version-mismatch defense regresses without
+    anything failing loudly — both call sites (`analyze_music_track_task`
+    and `extract_track_lyrics_task`) would still type-check and the agent
+    would still produce a result, just with LRCLIB's wrong-recording
+    syncedLyrics back at the start of the pipeline.
+    """
+    from app.tasks.music_orchestrate import _run_lyrics_extraction
+
+    captured_inputs: list = []
+
+    class _CapturingAgent:
+        def __init__(self, *_a, **_kw) -> None:
+            pass
+
+        def run(self, lyrics_input, ctx=None):  # noqa: ARG002
+            captured_inputs.append(lyrics_input)
+            output = MagicMock()
+            output.is_empty = True
+            output.source = "lrclib_synced+whisper"
+            output.model_dump = MagicMock(return_value={})
+            return output
+
+    mock_track = MagicMock()
+    mock_track.title = "Hawai"
+    mock_track.artist = "Maluma"
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = lambda s: s
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = mock_track
+
+    mock_settings = MagicMock()
+    mock_settings.openai_api_key = "sk-test"
+
+    with (
+        patch("app.tasks.music_orchestrate._sync_session", return_value=mock_session),
+        patch("app.agents.lyrics.LyricsExtractionAgent", _CapturingAgent),
+        patch("app.config.settings", mock_settings),
+    ):
+        _run_lyrics_extraction(
+            "/tmp/audio.m4a",
+            TRACK_ID,
+            best_start_s=0.0,
+            best_end_s=180.0,
+            duration_s=211.6,
+        )
+
+    assert len(captured_inputs) == 1
+    assert captured_inputs[0].duration_s == 211.6
+    assert captured_inputs[0].best_start_s == 0.0
+    assert captured_inputs[0].best_end_s == 180.0

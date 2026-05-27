@@ -142,6 +142,189 @@ def test_lrclib_error_falls_back_to_whisper_only(mock_lrclib, mock_whisper) -> N
     assert out.source == "whisper_only"
 
 
+# ── Version-mismatch defense (Hawai regression) ──────────────────────────────
+
+
+def _lrclib_synced_wrong_recording() -> LrclibLyrics:
+    """LRCLIB rows from a DIFFERENT recording of the same song. Synced
+    anchors are clustered in the 0–10s range but the uploaded audio puts
+    those lyrics 20s+ later. Mimics the production Hawai shape: many
+    anchors none of which line up with where Whisper finds the words.
+
+    Note on test geometry: `align_with_line_anchors` makes the LAST
+    anchor's window extend to `whisper.words[-1].end_s`, so a 2-anchor
+    test would accidentally let the final anchor capture all the Whisper
+    words via Strategy 1 and boost confidence above the fallback
+    threshold. We add a third decoy anchor whose text does NOT fuzzy-match
+    any Whisper word so Strategy 2 produces zero matches there too —
+    matching what happens in production where LRCLIB has 30+ anchors and
+    only one of them happens to overlap a Whisper word.
+    """
+    return LrclibLyrics(
+        title="Hawai",
+        artist="Maluma",
+        plain_lines=("Hello world", "so now he's your heaven yeah"),
+        synced_lines=(
+            SyncedLine(start_s=0.5, text="Hello world"),
+            SyncedLine(start_s=4.59, text="so now he's your heaven yeah"),
+            # Decoy: throwaway text in the trailing window. None of these
+            # tokens fuzzy-match any Whisper word (similarity < 0.65), so
+            # Strategy 2 produces zero matches and confidence stays low.
+            SyncedLine(start_s=11.0, text="xkcd zzz qqq"),
+        ),
+        instrumental=False,
+        lrclib_id=999,
+    )
+
+
+def _whisper_result_offset_22s() -> WhisperLyricsResult:
+    """Whisper transcribed the uploaded audio correctly — the lyrics actually
+    play at ~22s, NOT where LRCLIB's anchors say. Exact bug shape from the
+    Hawai prod incident."""
+    return WhisperLyricsResult(
+        words=(
+            # First line at 20-21s
+            _ww("hello", 20.0, 20.5),
+            _ww("world", 20.5, 21.0),
+            # Bug line at 22-23s (NOT at LRCLIB's 4.59s)
+            _ww("so", 22.0, 22.2),
+            _ww("now", 22.2, 22.4),
+            _ww("hes", 22.4, 22.6),
+            _ww("your", 22.6, 22.9),
+            _ww("heaven", 22.9, 23.4),
+            _ww("yeah", 23.4, 23.8),
+        ),
+        full_text="hello world so now hes your heaven yeah",
+        language="en",
+    )
+
+
+@patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.search_lrclib")
+def test_low_confidence_synced_falls_back_to_plain_whisper(mock_lrclib, mock_whisper) -> None:
+    """The Hawai bug shape — LRCLIB returned a different recording's synced
+    lyrics. align_with_line_anchors will run every line through Strategy 3
+    (linear interpolation across the LRCLIB window) and produce a confidence
+    near 0 with timestamps in the 0–10s range. The agent must detect this
+    and fall back to the plain+whisper path so Whisper's real timings drive
+    the line bounds, putting the bug line back at ~22s instead of 4.59s.
+    """
+    mock_lrclib.return_value = _lrclib_synced_wrong_recording()
+    mock_whisper.return_value = _whisper_result_offset_22s()
+
+    agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
+    out = agent.run(
+        LyricsInput(
+            audio_path="/tmp/hawai.m4a",
+            track_title="Hawai",
+            artist="Maluma",
+            duration_s=211.6,  # passes through to LRCLIB as `duration`
+        )
+    )
+
+    # Source flipped to plain+whisper — synced anchors rejected as bad.
+    assert out.source == "lrclib_plain+whisper", (
+        f"low-confidence synced should fall back to plain+whisper, got {out.source}"
+    )
+    # The bug line must now sit where the AUDIO has it, not where LRCLIB lied.
+    bug_line = next(line for line in out.lines if "heaven" in line.text.lower())
+    assert bug_line.start_s >= 20.0, (
+        f"bug line should be at ~22s (real audio), not {bug_line.start_s}s (LRCLIB lie)"
+    )
+    assert bug_line.start_s < 25.0
+
+
+@patch("app.config.settings")
+@patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.search_lrclib")
+def test_kill_switch_disabled_keeps_low_confidence_synced(
+    mock_lrclib, mock_whisper, mock_settings
+) -> None:
+    """`LYRIC_SYNCED_ANCHOR_FALLBACK_ENABLED=false` reverts to pre-2026-05-27
+    behavior: even when the synced alignment has near-zero confidence, the
+    agent ships the synced result as-is instead of falling back. Reserved
+    for emergency prod rollback if the 0.20 threshold demotes too many
+    legitimate extractions. Pinning this test ensures the kill switch
+    actually short-circuits the fallback gate."""
+    mock_settings.lyric_synced_anchor_fallback_enabled = False
+    mock_lrclib.return_value = _lrclib_synced_wrong_recording()
+    mock_whisper.return_value = _whisper_result_offset_22s()
+
+    agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
+    out = agent.run(LyricsInput(audio_path="/tmp/hawai.m4a", track_title="Hawai", artist="Maluma"))
+
+    # Kill switch off → synced path wins even with bad confidence.
+    assert out.source == "lrclib_synced+whisper"
+
+
+@patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.search_lrclib")
+def test_low_confidence_synced_no_plain_falls_back_to_whisper_only(
+    mock_lrclib, mock_whisper
+) -> None:
+    """Same version-mismatch shape, but LRCLIB row had no plainLyrics at all
+    (rare — usually if synced exists, plain also does). Must still degrade
+    gracefully to whisper_only rather than ship the wrong timestamps."""
+    mock_lrclib.return_value = LrclibLyrics(
+        title="X",
+        artist="Y",
+        plain_lines=(),
+        synced_lines=(
+            SyncedLine(start_s=0.5, text="anchor one"),
+            SyncedLine(start_s=4.59, text="anchor two"),
+        ),
+        instrumental=False,
+        lrclib_id=42,
+    )
+    mock_whisper.return_value = _whisper_result_offset_22s()
+
+    agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
+    out = agent.run(LyricsInput(audio_path="/tmp/x.m4a", track_title="X", artist="Y"))
+
+    assert out.source == "whisper_only"
+    assert len(out.lines) >= 1
+    # Whisper-only timestamps are absolute — must be in the 20s range.
+    assert out.lines[0].start_s >= 20.0
+
+
+@patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.search_lrclib")
+def test_duration_s_passes_through_to_lrclib(mock_lrclib, mock_whisper) -> None:
+    """LyricsInput.duration_s must reach search_lrclib so LRCLIB can pick
+    the right recording at the lookup boundary (layer 1 of the defense)."""
+    mock_lrclib.return_value = _lrclib_synced()
+    mock_whisper.return_value = _whisper_result()
+
+    agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
+    agent.run(
+        LyricsInput(
+            audio_path="/tmp/x.m4a",
+            track_title="Test Song",
+            artist="Test Artist",
+            duration_s=211.6,
+        )
+    )
+
+    # search_lrclib was called with duration_s kwarg matching the input.
+    assert mock_lrclib.call_args.kwargs.get("duration_s") == 211.6
+
+
+@patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.search_lrclib")
+def test_duration_s_zero_passes_none_to_lrclib(mock_lrclib, mock_whisper) -> None:
+    """duration_s=0 (default, "unknown") must arrive at LRCLIB as None so
+    the client omits the `duration` query param. Passing 0 verbatim would
+    make LRCLIB filter for instant-length tracks and 404 everything."""
+    mock_lrclib.return_value = _lrclib_synced()
+    mock_whisper.return_value = _whisper_result()
+
+    agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
+    agent.run(LyricsInput(audio_path="/tmp/x.m4a", track_title="X"))
+
+    # `duration_s or None` collapses 0.0 to None.
+    assert mock_lrclib.call_args.kwargs.get("duration_s") is None
+
+
 # ── Instrumental ──────────────────────────────────────────────────────────────
 
 

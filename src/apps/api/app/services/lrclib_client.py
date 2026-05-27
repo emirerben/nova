@@ -92,7 +92,12 @@ _TIMESTAMP_RE = re.compile(r"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]")
 _METADATA_TAG_RE = re.compile(r"^\[[a-zA-Z][a-zA-Z0-9_-]*:[^\]]*\]\s*$")
 
 
-def search_lrclib(title: str, artist: str = "") -> LrclibLyrics:
+def search_lrclib(
+    title: str,
+    artist: str = "",
+    *,
+    duration_s: float | None = None,
+) -> LrclibLyrics:
     """Look up lyrics on LRCLIB.
 
     Args:
@@ -101,6 +106,14 @@ def search_lrclib(title: str, artist: str = "") -> LrclibLyrics:
             before calling — LRCLIB matches strictly on artist_name + track_name.
         artist: Cleaned artist name. May be empty; LRCLIB will use title-only
             matching but the hit quality drops sharply.
+        duration_s: Track duration in seconds. When supplied, LRCLIB only
+            returns a row whose recording length is within ±2s (LRCLIB's own
+            tolerance). Critical for songs that exist in multiple recordings
+            (radio edit, remix, extended) where lyric text matches but
+            line-level timestamps differ — without it LRCLIB returns any
+            matching title+artist row and the synced anchors land at the
+            wrong absolute times (see PR #356/#358 incident on Hawai). Pass
+            None or 0 to skip duration disambiguation.
 
     Raises:
         LrclibNotFound: HTTP 404, or 200 with empty plainLyrics+syncedLyrics.
@@ -115,6 +128,9 @@ def search_lrclib(title: str, artist: str = "") -> LrclibLyrics:
     params = {"track_name": title}
     if artist:
         params["artist_name"] = artist
+    if duration_s is not None and duration_s > 0:
+        # LRCLIB accepts integer seconds with ±2s match tolerance.
+        params["duration"] = str(int(round(duration_s)))
 
     headers = {"User-Agent": _USER_AGENT, "Accept": "application/json"}
 
