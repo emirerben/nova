@@ -241,10 +241,19 @@ class LyricsExtractionAgent(Agent[LyricsInput, LyricsOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.audio.lyrics",
         prompt_id="extract_lyrics",  # nominal — no template loaded
-        # 2026-05-27 (PR Beauty And A Beat): forced-ID admin override,
-        # /api/search fuzzy fallback, diagnostic blob, whisper_only
-        # demoted to non-publishable draft (orchestrator translates).
-        prompt_version="2026-05-27.beauty",
+        # 2026-05-27 (PR Instant Crush): LRC-anchor re-anchor when the
+        # detected audio-vs-LRC shift exceeds the threshold. Rewrites every
+        # AlignedLine.start_s / end_s to LRC_anchor[i] + shift so line
+        # bounds track the actual audio cut even when LRC indexed a
+        # different cut (e.g. Instant Crush 339.79s official-video cut vs
+        # LRCLIB album cut at 338.00s). Per-word AlignedWord timings stay
+        # as Whisper produced them — karaoke `\kf` + per-word-pop are
+        # unaffected. Bumped from `2026-05-27.beauty` to force re-analyze
+        # of existing cached blobs on next preview / render.
+        # Previous: 2026-05-27 (PR Beauty And A Beat): forced-ID admin
+        # override, /api/search fuzzy fallback, diagnostic blob,
+        # whisper_only demoted to non-publishable draft.
+        prompt_version="2026-05-27.instant-crush",
         model="rule_based",
         # LRCLIB + Whisper each have their own retry/timeout policy. The
         # agent runtime's retry loop doesn't apply to rule_based agents.

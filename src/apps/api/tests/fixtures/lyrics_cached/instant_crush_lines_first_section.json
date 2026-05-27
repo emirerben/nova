@@ -1,0 +1,89 @@
+{
+  "_comment": "First 5 lines of MusicTrack 82053916-6e91-45ea-8c8a-72bb8ff36a6d (Instant Crush, Daft Punk, official-video cut). Pulled from prod via admin endpoint; see plan v4 Phase 1A for provenance. Used by tests/pipeline/test_lyric_line_tail_grace.py to lock the L0/L1/L2 regression, the L3 cached-overlap no-op, and the gap-cap crossing rule.",
+  "source": "lrclib_synced+whisper",
+  "lrclib_id": 1909138,
+  "confidence": 0.269,
+  "lines": [
+    {
+      "text": "I didn't want to be the one to forget",
+      "start_s": 28.880,
+      "end_s": 31.170,
+      "words": [
+        {"text": "I", "start_s": 28.880, "end_s": 29.600},
+        {"text": "didn't", "start_s": 29.600, "end_s": 30.260},
+        {"text": "want", "start_s": 30.260, "end_s": 30.640},
+        {"text": "to", "start_s": 30.640, "end_s": 30.900},
+        {"text": "be", "start_s": 30.920, "end_s": 31.170},
+        {"text": "the", "start_s": 30.920, "end_s": 31.170},
+        {"text": "one", "start_s": 30.920, "end_s": 31.170},
+        {"text": "to", "start_s": 30.920, "end_s": 31.170},
+        {"text": "forget", "start_s": 30.920, "end_s": 31.170}
+      ]
+    },
+    {
+      "text": "I thought of everything I'd never regret",
+      "start_s": 31.690,
+      "end_s": 33.220,
+      "words": [
+        {"text": "I", "start_s": 31.690, "end_s": 31.920},
+        {"text": "thought", "start_s": 31.690, "end_s": 31.920},
+        {"text": "of", "start_s": 31.690, "end_s": 31.920},
+        {"text": "everything", "start_s": 31.690, "end_s": 31.920},
+        {"text": "I'd", "start_s": 31.690, "end_s": 31.920},
+        {"text": "never", "start_s": 31.690, "end_s": 31.920},
+        {"text": "regret", "start_s": 31.940, "end_s": 33.220}
+      ]
+    },
+    {
+      "text": "A little time with you is all that I get",
+      "start_s": 37.820,
+      "end_s": 39.910,
+      "words": [
+        {"text": "A", "start_s": 37.820, "end_s": 38.540},
+        {"text": "little", "start_s": 38.540, "end_s": 38.980},
+        {"text": "time", "start_s": 38.980, "end_s": 39.340},
+        {"text": "with", "start_s": 39.340, "end_s": 39.640},
+        {"text": "you", "start_s": 39.660, "end_s": 39.910},
+        {"text": "is", "start_s": 39.660, "end_s": 39.910},
+        {"text": "all", "start_s": 39.660, "end_s": 39.910},
+        {"text": "that", "start_s": 39.660, "end_s": 39.910},
+        {"text": "I", "start_s": 39.660, "end_s": 39.910},
+        {"text": "get", "start_s": 39.660, "end_s": 39.910}
+      ]
+    },
+    {
+      "text": "That's all we need because it's all we can take",
+      "start_s": 40.420,
+      "end_s": 44.510,
+      "words": [
+        {"text": "That's", "start_s": 40.420, "end_s": 40.740},
+        {"text": "all", "start_s": 43.040, "end_s": 43.380},
+        {"text": "we", "start_s": 43.380, "end_s": 43.560},
+        {"text": "need", "start_s": 43.560, "end_s": 43.660},
+        {"text": "because", "start_s": 43.660, "end_s": 44.240},
+        {"text": "it's", "start_s": 44.260, "end_s": 44.510},
+        {"text": "all", "start_s": 44.260, "end_s": 44.510},
+        {"text": "we", "start_s": 44.260, "end_s": 44.510},
+        {"text": "can", "start_s": 44.260, "end_s": 44.510},
+        {"text": "take", "start_s": 44.260, "end_s": 44.510}
+      ]
+    },
+    {
+      "text": "One thing I never see the same when your 'round",
+      "start_s": 43.760,
+      "end_s": 48.120,
+      "words": [
+        {"text": "One", "start_s": 43.760, "end_s": 44.196},
+        {"text": "thing", "start_s": 44.196, "end_s": 44.632},
+        {"text": "I", "start_s": 44.632, "end_s": 45.068},
+        {"text": "never", "start_s": 45.068, "end_s": 45.504},
+        {"text": "see", "start_s": 45.504, "end_s": 45.940},
+        {"text": "the", "start_s": 45.940, "end_s": 46.376},
+        {"text": "same", "start_s": 46.376, "end_s": 46.812},
+        {"text": "when", "start_s": 46.812, "end_s": 47.248},
+        {"text": "your", "start_s": 47.248, "end_s": 47.684},
+        {"text": "'round", "start_s": 47.684, "end_s": 48.120}
+      ]
+    }
+  ]
+}
