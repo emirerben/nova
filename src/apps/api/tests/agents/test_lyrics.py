@@ -8,12 +8,19 @@ import pytest
 
 from app.agents._runtime import TerminalError
 from app.agents.lyrics import (
+    PUBLISHABLE_LYRICS_SOURCES,
     LyricsExtractionAgent,
     LyricsInput,
     LyricsOutput,
     _truncate_whisper_prompt,
 )
-from app.services.lrclib_client import LrclibError, LrclibLyrics, LrclibNotFound, SyncedLine
+from app.services.lrclib_client import (
+    LrclibError,
+    LrclibLyrics,
+    LrclibNotFound,
+    LrclibSearchCandidate,
+    SyncedLine,
+)
 from app.services.whisper_lyrics import WhisperLyricsError, WhisperLyricsResult, WhisperWord
 
 
@@ -113,9 +120,16 @@ def test_lrclib_plain_falls_back_to_fuzzy_align(mock_lrclib, mock_whisper) -> No
 
 
 @patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.search_lrclib_fuzzy")
 @patch("app.agents.lyrics.search_lrclib")
-def test_lrclib_miss_falls_back_to_whisper_only(mock_lrclib, mock_whisper) -> None:
+def test_lrclib_miss_falls_back_through_search_then_whisper_only(
+    mock_lrclib, mock_fuzzy, mock_whisper
+) -> None:
+    """When /api/get 404s AND /api/search also misses, the agent must end
+    up at whisper_only (non-publishable; orchestrator persists to draft).
+    Critical: /search MUST have been tried as the second-chance path."""
     mock_lrclib.side_effect = LrclibNotFound("no entry")
+    mock_fuzzy.side_effect = LrclibNotFound("nothing")
     mock_whisper.return_value = _whisper_result()
 
     agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
@@ -124,22 +138,38 @@ def test_lrclib_miss_falls_back_to_whisper_only(mock_lrclib, mock_whisper) -> No
     assert out.source == "whisper_only"
     assert out.confidence == 0.5
     assert len(out.lines) >= 1
+    # /search must have been attempted as the fallback.
+    assert mock_fuzzy.called, "agent must try /api/search when /api/get 404s"
     # No prompt — nothing to bias Whisper with.
     assert mock_whisper.call_args.kwargs["prompt"] == ""
+    # Diagnostic blob captures the failure path.
+    assert out.lyrics_diagnostic is not None
+    assert out.lyrics_diagnostic["get_status"] == "not_found"
+    assert out.lyrics_diagnostic["search_status"] == "not_found"
+    assert out.lyrics_diagnostic["fallback_path"] == "needs_manual_lyrics"
 
 
 @patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.search_lrclib_fuzzy")
 @patch("app.agents.lyrics.search_lrclib")
-def test_lrclib_error_falls_back_to_whisper_only(mock_lrclib, mock_whisper) -> None:
-    """Network failure / 429-exhaustion / 5xx — all surface as LrclibError
-    and the agent must continue with Whisper-only rather than raise."""
+def test_lrclib_error_falls_back_through_search_then_whisper_only(
+    mock_lrclib, mock_fuzzy, mock_whisper
+) -> None:
+    """Network failure / 429-exhaustion / 5xx — both /get and /search must
+    fail before the agent settles on whisper_only. The agent must continue
+    rather than raise."""
     mock_lrclib.side_effect = LrclibError("network broken")
+    mock_fuzzy.side_effect = LrclibError("still broken")
     mock_whisper.return_value = _whisper_result()
 
     agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
     out = agent.run(LyricsInput(audio_path="/tmp/x.m4a", track_title="X"))
 
     assert out.source == "whisper_only"
+    assert mock_fuzzy.called
+    # Error message preserved on the diagnostic for admin visibility.
+    assert out.lyrics_diagnostic is not None
+    assert "network" in (out.lyrics_diagnostic.get("lrclib_error") or "").lower()
 
 
 # ── Version-mismatch defense (Hawai regression) ──────────────────────────────
@@ -413,6 +443,219 @@ def test_truncate_prompt_chars_safety_cap() -> None:
     huge_word = "x" * 2000
     out = _truncate_whisper_prompt(f"{huge_word} second third")
     assert len(out) <= 800
+
+
+# ── Legacy schema deserialization (REGRESSION) ────────────────────────────────
+
+
+# ── /api/search fallback (NEW: 2026-05-27 Beauty And A Beat fix) ─────────────
+
+
+def _fuzzy_candidate(
+    *,
+    lrclib_id: int = 50001,
+    title: str = "Beauty And A Beat",
+    artist: str = "Justin Bieber",
+    duration_s: float = 211.0,
+    title_sim: float = 1.0,
+    combined: float = 0.95,
+    delta: float | None = 1.0,
+) -> LrclibSearchCandidate:
+    return LrclibSearchCandidate(
+        lrclib_id=lrclib_id,
+        title=title,
+        artist=artist,
+        duration_s=duration_s,
+        title_similarity=title_sim,
+        duration_delta_s=delta,
+        combined_score=combined,
+    )
+
+
+@patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.get_lrclib_by_id")
+@patch("app.agents.lyrics.search_lrclib_fuzzy")
+@patch("app.agents.lyrics.search_lrclib")
+def test_search_fallback_strong_match_promotes_to_publishable(
+    mock_lrclib, mock_fuzzy, mock_get_by_id, mock_whisper
+) -> None:
+    """The Beauty And A Beat happy path: /api/get 404s but /api/search finds
+    a high-confidence candidate that is re-fetched by ID and aligned —
+    yielding a publishable lrclib_synced+whisper result."""
+    mock_lrclib.side_effect = LrclibNotFound("not in exact index")
+    mock_fuzzy.return_value = [_fuzzy_candidate()]
+    mock_get_by_id.return_value = _lrclib_synced()
+    mock_whisper.return_value = _whisper_result()
+
+    agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
+    out = agent.run(
+        LyricsInput(
+            audio_path="/tmp/x.m4a",
+            track_title="Beauty And A Beat ft. Nicki Minaj",
+            artist="Justin Bieber",
+            duration_s=212.0,
+        )
+    )
+
+    assert out.source == "lrclib_synced+whisper"
+    assert out.is_publishable
+    assert out.lyrics_diagnostic is not None
+    assert out.lyrics_diagnostic["search_status"] == "hit"
+    assert out.lyrics_diagnostic["search_top_score"] >= 0.85
+    assert out.lyrics_diagnostic["lrclib_id_matched"] is not None
+    assert out.lyrics_diagnostic["fallback_path"] in ("ready_synced", "ready_plain")
+    # get_by_id called once with the top candidate's ID — the agent must
+    # re-fetch since /api/search returns metadata only, no lyrics.
+    mock_get_by_id.assert_called_once_with(50001)
+
+
+@patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.search_lrclib_fuzzy")
+@patch("app.agents.lyrics.search_lrclib")
+def test_search_fallback_weak_top_score_goes_whisper_only(
+    mock_lrclib, mock_fuzzy, mock_whisper
+) -> None:
+    """If the top /api/search candidate doesn't clear the combined-score
+    gate, the agent must NOT re-fetch it — accepting a weak match would
+    burn wrong lyrics onto a video. Degrade to whisper_only instead."""
+    mock_lrclib.side_effect = LrclibNotFound("no exact")
+    mock_fuzzy.return_value = [_fuzzy_candidate(combined=0.55)]  # below 0.85 gate
+    mock_whisper.return_value = _whisper_result()
+
+    agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
+    out = agent.run(LyricsInput(audio_path="/tmp/x.m4a", track_title="Weak Match"))
+
+    assert out.source == "whisper_only"
+    assert not out.is_publishable
+    assert out.lyrics_diagnostic["search_status"] == "no_strong_match"
+    assert out.lyrics_diagnostic["search_top_score"] == 0.55
+
+
+@patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.search_lrclib_fuzzy")
+@patch("app.agents.lyrics.search_lrclib")
+def test_search_fallback_skipped_when_get_hits(mock_lrclib, mock_fuzzy, mock_whisper) -> None:
+    """/api/get hit → /api/search must NOT fire. Saves one HTTP roundtrip
+    and keeps prod logs uncluttered."""
+    mock_lrclib.return_value = _lrclib_synced()
+    mock_whisper.return_value = _whisper_result()
+
+    agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
+    out = agent.run(LyricsInput(audio_path="/tmp/x.m4a", track_title="Test Song"))
+
+    assert out.source == "lrclib_synced+whisper"
+    mock_fuzzy.assert_not_called()
+    assert out.lyrics_diagnostic["search_status"] == "skipped"
+
+
+# ── Forced-LRCLIB-ID path (admin manual override) ─────────────────────────────
+
+
+@patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.get_lrclib_by_id")
+@patch("app.agents.lyrics.search_lrclib")
+def test_forced_id_skips_search_uses_direct_get(mock_lrclib, mock_get_by_id, mock_whisper) -> None:
+    """Admin pastes a row ID — the agent must fetch that exact ID,
+    bypassing title+artist+duration search entirely."""
+    mock_get_by_id.return_value = _lrclib_synced()
+    mock_whisper.return_value = _whisper_result()
+
+    agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
+    out = agent.run(
+        LyricsInput(
+            audio_path="/tmp/x.m4a",
+            track_title="Whatever",  # ignored when forced_lrclib_id set
+            artist="Whoever",
+            forced_lrclib_id=8543210,
+        )
+    )
+
+    assert out.source == "lrclib_synced+whisper"
+    assert out.is_publishable
+    mock_get_by_id.assert_called_once_with(8543210)
+    # /api/get title+artist search was NOT used.
+    mock_lrclib.assert_not_called()
+    # Diagnostic captures the forced-ID path.
+    assert out.lyrics_diagnostic["query"]["forced_lrclib_id"] == 8543210
+    assert out.lyrics_diagnostic["get_status"] == "forced_id_hit"
+
+
+@patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.get_lrclib_by_id")
+def test_forced_id_404_falls_to_whisper_only_with_diagnostic(mock_get_by_id, mock_whisper) -> None:
+    """Admin pasted an ID that doesn't exist on LRCLIB. The agent must NOT
+    raise — it returns a whisper_only output, and the diagnostic records
+    the forced-ID failure so the admin sees a clear 'that ID 404'd' state."""
+    mock_get_by_id.side_effect = LrclibNotFound("no row id=99")
+    mock_whisper.return_value = _whisper_result()
+
+    agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
+    out = agent.run(
+        LyricsInput(
+            audio_path="/tmp/x.m4a",
+            track_title="X",
+            forced_lrclib_id=99,
+        )
+    )
+
+    assert out.source == "whisper_only"
+    assert not out.is_publishable
+    assert out.lyrics_diagnostic["get_status"] == "forced_id_not_found"
+    assert out.lyrics_diagnostic["fallback_path"] == "needs_manual_lyrics"
+
+
+@patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.get_lrclib_by_id")
+def test_forced_id_instrumental_raises_terminal(mock_get_by_id, mock_whisper) -> None:
+    """Forced-ID returns an instrumental row — same handling as the normal
+    path: TerminalError with 'instrumental' keyword, no Whisper call."""
+    mock_get_by_id.return_value = LrclibLyrics(
+        title="Beat",
+        artist="DJ",
+        plain_lines=(),
+        synced_lines=None,
+        instrumental=True,
+        lrclib_id=42,
+    )
+
+    agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
+    with pytest.raises(TerminalError, match="instrumental"):
+        agent.run(LyricsInput(audio_path="/tmp/x.m4a", track_title="X", forced_lrclib_id=42))
+
+    mock_whisper.assert_not_called()
+
+
+# ── Publishable-source allowlist invariant ────────────────────────────────────
+
+
+def test_publishable_sources_allowlist_pinned() -> None:
+    """The allowlist must be exactly the LRCLIB-derived sources.
+
+    Changing this set is a deliberate policy decision (e.g. reintroducing
+    Genius support) and must be a conscious edit, not a side effect of
+    refactoring. If this test fails, the contributor must explain the
+    new entry in the PR description AND update the orchestrator's
+    persistence translation in app/tasks/music_orchestrate.py.
+    """
+    assert PUBLISHABLE_LYRICS_SOURCES == frozenset(
+        {
+            "lrclib_synced+whisper",
+            "lrclib_plain+whisper",
+        }
+    )
+
+
+def test_whisper_only_is_not_publishable() -> None:
+    """A whisper_only output MUST NOT report itself as publishable —
+    that's the core invariant of the new policy: no production renders
+    against transcription-only output."""
+    out = LyricsOutput(source="whisper_only")
+    assert not out.is_publishable
+
+
+def test_lrclib_sources_are_publishable() -> None:
+    for source in ("lrclib_synced+whisper", "lrclib_plain+whisper"):
+        assert LyricsOutput(source=source).is_publishable, f"{source} must be publishable"
 
 
 # ── Legacy schema deserialization (REGRESSION) ────────────────────────────────

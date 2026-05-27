@@ -7,6 +7,8 @@ def _recipe() -> dict:
 
 def _cache() -> dict:
     return {
+        "source": "lrclib_synced+whisper",
+
         "lines": [
             {
                 "text": "Default font",

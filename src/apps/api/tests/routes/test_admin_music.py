@@ -212,6 +212,9 @@ def test_to_response_round_trips_best_sections() -> None:
     track.lyrics_source = None
     track.lyrics_error_detail = None
     track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
     track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 
@@ -261,6 +264,9 @@ def _matchable_track() -> MagicMock:
     track.lyrics_source = None
     track.lyrics_error_detail = None
     track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
     track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
     return track
@@ -349,6 +355,9 @@ def test_to_response_drops_invalid_section_rows() -> None:
     track.lyrics_source = None
     track.lyrics_error_detail = None
     track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
     track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 
@@ -397,6 +406,9 @@ def test_to_response_caps_overlong_best_sections() -> None:
     track.lyrics_source = None
     track.lyrics_error_detail = None
     track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
     track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 
@@ -435,6 +447,9 @@ def test_to_response_drops_all_when_every_section_invalid() -> None:
     track.lyrics_source = None
     track.lyrics_error_detail = None
     track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
     track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 
@@ -470,6 +485,9 @@ def test_to_response_handles_null_best_sections() -> None:
     track.lyrics_source = None
     track.lyrics_error_detail = None
     track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
     track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 

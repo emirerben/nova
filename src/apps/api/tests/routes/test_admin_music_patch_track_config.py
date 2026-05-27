@@ -87,6 +87,9 @@ def _make_track(
     t.lyrics_source = None
     t.lyrics_error_detail = None
     t.lyrics_cached = None
+    t.lyrics_whisper_draft = None
+    t.lyrics_diagnostic = None
+    t.lyrics_extraction_version = 0
     t.lyrics_extracted_at = None
     t.created_at = datetime.now(UTC)
     return t

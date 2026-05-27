@@ -6,6 +6,8 @@ from __future__ import annotations
 from app.pipeline.lyric_injector import _apply_style_set_defaults, inject_lyric_overlays
 
 _LYRICS = {
+    # Source required by injector's Layer-2 gate (added 2026-05-27).
+    "source": "lrclib_synced+whisper",
     "lines": [
         {
             "text": "hello world",
@@ -16,7 +18,7 @@ _LYRICS = {
                 {"text": "world", "start_s": 2.0, "end_s": 3.0},
             ],
         }
-    ]
+    ],
 }
 
 

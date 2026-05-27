@@ -69,7 +69,24 @@ class LrclibLyrics:
 
 
 _API_URL = "https://lrclib.net/api/get"
+_API_GET_BY_ID_URL_TEMPLATE = "https://lrclib.net/api/get/{lrclib_id}"
+_API_SEARCH_URL = "https://lrclib.net/api/search"
 _TIMEOUT_S = 8.0
+# Soft duration-mismatch penalties for the /api/search fuzzy fallback.
+# Music-video uploads commonly carry 5-15s of spoken intro/outro that the
+# LRCLIB recording does not, so a hard ±2s gate (as on /api/get) is too
+# strict here. Score penalty grows with delta but never excludes outright
+# — the title+artist similarity hard gates do the heavy lifting.
+_FUZZY_DURATION_DELTA_WARN_S = 15.0
+_FUZZY_DURATION_DELTA_HARD_S = 60.0
+# Hard gate: title token-set similarity must reach this before a /search
+# candidate is even considered. Below this, the song is almost certainly
+# a different track that shares a coincidental keyword.
+_FUZZY_MIN_TITLE_SIM = 0.85
+# Combined-score gate that promotes a /api/search top result to a real
+# match worth re-fetching via /api/get/{id}. Below this the agent treats
+# the search as "no strong match" and routes to needs_manual_lyrics.
+_FUZZY_MIN_COMBINED_SCORE = 0.85
 
 # Backoff schedule for HTTP 429. Total worst case ~6.5s before we surrender
 # and the caller falls back to whisper-only. Stays well inside the
@@ -188,6 +205,360 @@ def search_lrclib(
 
     log.info(
         "lrclib_lyrics_fetched",
+        title=matched_title,
+        artist=matched_artist,
+        lrclib_id=lrclib_id,
+        instrumental=instrumental,
+        plain_line_count=len(plain_lines),
+        synced_line_count=len(synced_lines) if synced_lines else 0,
+    )
+
+    return LrclibLyrics(
+        title=matched_title,
+        artist=matched_artist,
+        plain_lines=plain_lines,
+        synced_lines=synced_lines,
+        instrumental=instrumental,
+        lrclib_id=lrclib_id,
+    )
+
+
+# ── /api/get/{id} — direct lookup by LRCLIB row ID ────────────────────────────
+
+
+def get_lrclib_by_id(lrclib_id: int) -> LrclibLyrics:
+    """Fetch an LRCLIB row by its exact numeric ID.
+
+    Used by the admin manual-override path: an admin who knows the correct
+    row (e.g. found it on lrclib.net) pastes the ID or URL and Nova
+    re-extracts against that specific row, bypassing the title-search step.
+
+    Single shot, same headers + retry behavior as `search_lrclib`. The
+    LRCLIB endpoint is `GET https://lrclib.net/api/get/{id}` (path-param
+    form, no query params). The response body shape is identical to
+    `/api/get?track_name=...&artist_name=...`.
+
+    Args:
+        lrclib_id: Positive integer LRCLIB row ID. Caller is responsible
+            for validation (use `app.services.lrclib_id_parse.parse_lrclib_id`
+            to extract from admin input).
+
+    Raises:
+        LrclibNotFound: HTTP 404 (row ID doesn't exist), or 200 with empty
+            plainLyrics+syncedLyrics+instrumental=False.
+        LrclibError: HTTP 5xx, network error, malformed JSON, or 429 after
+            exhausting all retries.
+        ValueError: lrclib_id is not a positive integer.
+    """
+    if not isinstance(lrclib_id, int) or lrclib_id <= 0:
+        raise ValueError(f"lrclib_id must be a positive integer, got {lrclib_id!r}")
+
+    url = _API_GET_BY_ID_URL_TEMPLATE.format(lrclib_id=lrclib_id)
+    headers = {"User-Agent": _USER_AGENT, "Accept": "application/json"}
+
+    try:
+        with httpx.Client(timeout=_TIMEOUT_S, headers=headers) as client:
+            resp = _get_with_retry(client, url, {})
+    except httpx.HTTPError as exc:
+        raise LrclibError(f"lrclib network error: {exc}") from exc
+
+    if resp.status_code == 404:
+        raise LrclibNotFound(f"lrclib has no row with id={lrclib_id}")
+    if resp.status_code == 429:
+        raise LrclibError("lrclib still rate-limited (429) after retries — falling back")
+    if resp.status_code >= 400:
+        raise LrclibError(f"lrclib returned {resp.status_code}: {resp.text[:200]}")
+
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise LrclibError(f"lrclib returned non-JSON: {exc}") from exc
+
+    if not isinstance(body, dict):
+        raise LrclibError(f"lrclib returned unexpected shape: {type(body).__name__}")
+
+    if body.get("statusCode") == 404 or body.get("name") == "NotFoundError":
+        raise LrclibNotFound(f"lrclib NotFoundError body for id={lrclib_id}")
+
+    return _hydrate_lrclib_lyrics(body, fallback_title="", fallback_artist="")
+
+
+# ── /api/search — fuzzy fallback when /api/get 404s ───────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class LrclibSearchCandidate:
+    """One row from `/api/search`, scored locally.
+
+    The combined score is in [0.0, 1.0]; the agent's `_FUZZY_MIN_COMBINED_SCORE`
+    is the promote-to-real-match threshold.
+    """
+
+    lrclib_id: int
+    title: str  # LRCLIB-matched track_name
+    artist: str  # LRCLIB-matched artist_name
+    duration_s: float | None
+    title_similarity: float  # 0.0-1.0 token-set similarity (HARD GATE upstream)
+    # |candidate.duration - request.duration|; None if either unknown.
+    duration_delta_s: float | None
+    # Weighted blend: title*0.5 + artist_match*0.3 + duration_penalty*0.2.
+    combined_score: float
+
+
+def search_lrclib_fuzzy(
+    title: str,
+    artist: str = "",
+    *,
+    duration_s: float | None = None,
+) -> list[LrclibSearchCandidate]:
+    """Fuzzy fallback when `/api/get` returns 404.
+
+    `/api/get` is exact-string indexed and returns 404 for any title with
+    feature credits, accent variants, or apostrophe quirks LRCLIB doesn't
+    normalize. `/api/search` is full-text and ranks results, so it's the
+    natural second-chance path.
+
+    Scoring:
+      * title token-set similarity (HARD gate at `_FUZZY_MIN_TITLE_SIM`,
+        weight 0.5 in combined score)
+      * artist case-insensitive match after stripping `ft.`/`feat.` from
+        either side (HARD gate: candidates failing the artist check are
+        dropped entirely, no soft-penalty)
+      * duration delta in seconds (SOFT signal, weight 0.2). Music-video
+        audio uploads carry intro/outro that LRCLIB's recording doesn't,
+        so deltas up to ~15s are normal. Penalty grows linearly to
+        `_FUZZY_DURATION_DELTA_HARD_S` (60s); past that the candidate is
+        dropped.
+
+    Returns:
+        Candidates sorted by `combined_score` descending. May be empty.
+        Caller (agent) applies the final `_FUZZY_MIN_COMBINED_SCORE` gate
+        before deciding to re-fetch by ID and align.
+
+    Raises:
+        LrclibError: HTTP 5xx, network error, malformed JSON, 429 retries
+            exhausted.
+        LrclibNotFound: empty title, or `/api/search` returns 0 candidates
+            (treating 0-row response as not-found is consistent with the
+            `/api/get` contract).
+    """
+    title = (title or "").strip()
+    artist = (artist or "").strip()
+    if not title:
+        raise LrclibNotFound("empty title — nothing to search")
+
+    params: dict[str, str] = {"track_name": title}
+    if artist:
+        params["artist_name"] = artist
+    # Don't pass `duration` to /api/search — it's a HARD ±2s filter there too,
+    # defeating the whole point of using /search as a relaxed fallback.
+
+    headers = {"User-Agent": _USER_AGENT, "Accept": "application/json"}
+
+    try:
+        with httpx.Client(timeout=_TIMEOUT_S, headers=headers) as client:
+            resp = _get_with_retry(client, _API_SEARCH_URL, params)
+    except httpx.HTTPError as exc:
+        raise LrclibError(f"lrclib network error: {exc}") from exc
+
+    if resp.status_code == 404:
+        raise LrclibNotFound(f"lrclib /api/search 404 for {title!r} / {artist!r}")
+    if resp.status_code == 429:
+        raise LrclibError("lrclib still rate-limited (429) after retries — falling back")
+    if resp.status_code >= 400:
+        raise LrclibError(f"lrclib returned {resp.status_code}: {resp.text[:200]}")
+
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise LrclibError(f"lrclib returned non-JSON: {exc}") from exc
+
+    if not isinstance(body, list):
+        raise LrclibError(f"lrclib /api/search returned unexpected shape: {type(body).__name__}")
+
+    if not body:
+        raise LrclibNotFound(f"lrclib /api/search empty result for {title!r} / {artist!r}")
+
+    candidates: list[LrclibSearchCandidate] = []
+    for row in body:
+        if not isinstance(row, dict):
+            continue
+        scored = _score_search_candidate(
+            row, request_title=title, request_artist=artist, request_duration_s=duration_s
+        )
+        if scored is None:
+            continue
+        candidates.append(scored)
+
+    candidates.sort(key=lambda c: c.combined_score, reverse=True)
+
+    log.info(
+        "lrclib_fuzzy_search",
+        title=title,
+        artist=artist,
+        duration_s=duration_s,
+        candidate_count=len(candidates),
+        top_score=candidates[0].combined_score if candidates else None,
+        top_id=candidates[0].lrclib_id if candidates else None,
+    )
+
+    return candidates
+
+
+def _score_search_candidate(
+    row: dict,
+    *,
+    request_title: str,
+    request_artist: str,
+    request_duration_s: float | None,
+) -> LrclibSearchCandidate | None:
+    """Score one /api/search row against the request. Returns None for
+    hard-gate failures (title similarity below the floor, or duration
+    delta past the hard limit, or missing required fields).
+    """
+    try:
+        lrclib_id = int(row.get("id") or 0)
+    except (TypeError, ValueError):
+        return None
+    if lrclib_id <= 0:
+        return None
+
+    cand_title = (row.get("trackName") or "").strip()
+    cand_artist = (row.get("artistName") or "").strip()
+    if not cand_title:
+        return None
+
+    title_sim = _title_token_set_similarity(request_title, cand_title)
+    if title_sim < _FUZZY_MIN_TITLE_SIM:
+        return None
+
+    # Artist gate — case-insensitive equal after stripping any trailing
+    # "ft./feat./featuring …" from either side. Empty request artist matches
+    # any candidate (admin uploaded a track with no artist field).
+    if request_artist and not _artists_match(request_artist, cand_artist):
+        return None
+    artist_match_score = (
+        1.0 if not request_artist else (1.0 if _artists_match(request_artist, cand_artist) else 0.0)
+    )
+
+    cand_duration_raw = row.get("duration")
+    try:
+        cand_duration_s: float | None = float(cand_duration_raw) if cand_duration_raw else None
+    except (TypeError, ValueError):
+        cand_duration_s = None
+
+    duration_delta_s: float | None = None
+    duration_score = 1.0  # No request duration → no penalty.
+    if request_duration_s is not None and request_duration_s > 0 and cand_duration_s is not None:
+        duration_delta_s = abs(cand_duration_s - request_duration_s)
+        if duration_delta_s >= _FUZZY_DURATION_DELTA_HARD_S:
+            # Hard limit: this is clearly a different recording (extended
+            # mix vs single, or a totally different song that happens to
+            # share a title token).
+            return None
+        # Linear penalty: 0s delta → 1.0, 15s delta → 0.0, beyond → already
+        # rejected above. Allow 15-60s span to score below zero but the
+        # combined score gate naturally filters those out anyway.
+        if duration_delta_s <= _FUZZY_DURATION_DELTA_WARN_S:
+            duration_score = 1.0 - (duration_delta_s / _FUZZY_DURATION_DELTA_WARN_S)
+        else:
+            # Soft tail: 15-60s span maps to [0.0, -1.0]; let the combined
+            # score gate reject anything that ends up below `_FUZZY_MIN_COMBINED_SCORE`.
+            duration_score = -1.0 * (
+                (duration_delta_s - _FUZZY_DURATION_DELTA_WARN_S)
+                / (_FUZZY_DURATION_DELTA_HARD_S - _FUZZY_DURATION_DELTA_WARN_S)
+            )
+
+    combined = 0.5 * title_sim + 0.3 * artist_match_score + 0.2 * duration_score
+
+    return LrclibSearchCandidate(
+        lrclib_id=lrclib_id,
+        title=cand_title,
+        artist=cand_artist,
+        duration_s=cand_duration_s,
+        title_similarity=round(title_sim, 4),
+        duration_delta_s=round(duration_delta_s, 2) if duration_delta_s is not None else None,
+        combined_score=round(combined, 4),
+    )
+
+
+def _title_token_set_similarity(a: str, b: str) -> float:
+    """Token-set Jaccard similarity over lowercased word tokens.
+
+    Robust to word reordering, punctuation differences, and feature credits
+    that the sanitizer left in. Returns 1.0 for identical token sets,
+    0.0 for disjoint, fractional in between.
+    """
+    tokens_a = _tokenize_title(a)
+    tokens_b = _tokenize_title(b)
+    if not tokens_a or not tokens_b:
+        return 0.0
+    inter = tokens_a & tokens_b
+    union = tokens_a | tokens_b
+    return len(inter) / len(union)
+
+
+_TITLE_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _tokenize_title(s: str) -> set[str]:
+    """Lowercase tokens of [a-z0-9] runs. Drops punctuation, accents
+    (after NFKD), and feature credits."""
+    import unicodedata  # noqa: PLC0415 — only needed here
+
+    folded = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+    return set(_TITLE_TOKEN_RE.findall(folded.lower()))
+
+
+_ARTIST_TAIL_FEAT_RE = re.compile(r"\s+(?:ft|feat|featuring)\.?\s+.+$", flags=re.IGNORECASE)
+
+
+def _artists_match(a: str, b: str) -> bool:
+    """Case-insensitive artist equality after stripping trailing
+    `ft./feat./featuring …` and surrounding whitespace from either side."""
+
+    def _norm(s: str) -> str:
+        s = _ARTIST_TAIL_FEAT_RE.sub("", s.strip())
+        return s.casefold()
+
+    return _norm(a) == _norm(b)
+
+
+def _hydrate_lrclib_lyrics(
+    body: dict,
+    *,
+    fallback_title: str,
+    fallback_artist: str,
+) -> LrclibLyrics:
+    """Build LrclibLyrics from a `/api/get*` 200-response body.
+
+    Shared between `search_lrclib` (title+artist lookup) and
+    `get_lrclib_by_id` (ID lookup) — the response body shape is identical
+    across both endpoints.
+
+    Raises:
+        LrclibNotFound: 200 body with empty plain+synced AND not instrumental
+            (LRCLIB sometimes returns an empty row for very recent uploads).
+    """
+    instrumental = bool(body.get("instrumental"))
+    matched_title = (body.get("trackName") or "").strip() or fallback_title
+    matched_artist = (body.get("artistName") or "").strip() or fallback_artist
+    lrclib_id_raw = body.get("id")
+    try:
+        lrclib_id = int(lrclib_id_raw) if lrclib_id_raw is not None else 0
+    except (TypeError, ValueError):
+        lrclib_id = 0
+
+    plain_lyrics = body.get("plainLyrics") or ""
+    synced_lyrics = body.get("syncedLyrics") or ""
+    plain_lines = _parse_plain_lyrics(plain_lyrics) if plain_lyrics else ()
+    synced_lines = _parse_synced_lyrics(synced_lyrics) if synced_lyrics else None
+
+    if not instrumental and not plain_lines and not synced_lines:
+        raise LrclibNotFound(f"lrclib row had empty plainLyrics + syncedLyrics for id={lrclib_id}")
+
+    log.info(
+        "lrclib_lyrics_fetched_by_id" if not fallback_title else "lrclib_lyrics_fetched",
         title=matched_title,
         artist=matched_artist,
         lrclib_id=lrclib_id,

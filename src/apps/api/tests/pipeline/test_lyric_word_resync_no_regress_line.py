@@ -33,6 +33,7 @@ def _line_only_recipe_and_lyrics() -> tuple[dict, dict, dict]:
         ]
     }
     lyrics_cached = {
+        "source": "lrclib_synced+whisper",
         "lines": [
             {
                 "text": "hello world",
@@ -43,7 +44,7 @@ def _line_only_recipe_and_lyrics() -> tuple[dict, dict, dict]:
                     {"text": "world", "start_s": 3.0, "end_s": 4.0},
                 ],
             }
-        ]
+        ],
     }
     cfg = {
         "enabled": True,
@@ -123,6 +124,7 @@ def test_karaoke_and_popup_overlays_carry_section_stamps() -> None:
         ]
     }
     lyrics_cached = {
+        "source": "lrclib_synced+whisper",
         "lines": [
             {
                 "text": "hello world",
@@ -133,7 +135,7 @@ def test_karaoke_and_popup_overlays_carry_section_stamps() -> None:
                     {"text": "world", "start_s": 3.0, "end_s": 4.0},
                 ],
             }
-        ]
+        ],
     }
     for style, expected_effects in (
         ("karaoke", {"karaoke-line"}),

@@ -25,6 +25,7 @@ def _track(**overrides):
         duration_s=5.0,
         track_config={},
         lyrics_cached={
+            "source": "lrclib_synced+whisper",
             "lines": [
                 {
                     "text": "hello world",
@@ -35,7 +36,7 @@ def _track(**overrides):
                         {"text": "world", "start_s": 1.5, "end_s": 2.0},
                     ],
                 }
-            ]
+            ],
         },
     )
     for key, value in overrides.items():
@@ -368,6 +369,7 @@ def _track_with_first_line_at(start_s: float, **overrides):
     """Variant fixture: `_track()` with the line's `start_s` overridden."""
     track = _track(**overrides)
     track.lyrics_cached = {
+        "source": "lrclib_synced+whisper",
         "lines": [
             {
                 "text": "hello world",
@@ -378,7 +380,7 @@ def _track_with_first_line_at(start_s: float, **overrides):
                     {"text": "world", "start_s": start_s + 0.5, "end_s": start_s + 1.0},
                 ],
             }
-        ]
+        ],
     }
     return track
 
@@ -496,7 +498,10 @@ def test_render_lyrics_preview_writes_per_job_path() -> None:
         audio_gcs_path="music/track-A/audio.m4a",
         duration_s=60.0,
         track_config={},
-        lyrics_cached={"lines": [{"text": "x", "start_s": 1.0, "end_s": 2.0}]},
+        lyrics_cached={
+            "source": "lrclib_synced+whisper",
+            "lines": [{"text": "x", "start_s": 1.0, "end_s": 2.0}],
+        },
     )
 
     captured: list[str] = []
@@ -546,6 +551,7 @@ def test_render_lyrics_preview_writes_per_style_path() -> None:
         duration_s=60.0,
         track_config={},
         lyrics_cached={
+            "source": "lrclib_synced+whisper",
             "lines": [
                 {
                     "text": "hello",
@@ -555,7 +561,7 @@ def test_render_lyrics_preview_writes_per_style_path() -> None:
                         {"text": "hello", "start_s": 1.0, "end_s": 2.0},
                     ],
                 }
-            ]
+            ],
         },
     )
 
