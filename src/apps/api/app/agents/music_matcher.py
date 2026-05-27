@@ -163,6 +163,12 @@ class MusicMatcherAgent(Agent[MusicMatcherInput, MusicMatcherOutput]):
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
+        # Cap internal reasoning. Ranking from pre-computed labels needs little
+        # chain-of-thought; default dynamic thinking burned ~6.6k thought-tokens
+        # / ~30s on the real 34-track prod input vs ~4s capped (measured A/B on
+        # flash). 256 is honored by flash (prod) and pro (evals run on pro), so
+        # the eval validates the shipped budget.
+        thinking_budget=256,
     )
     Input = MusicMatcherInput
     Output = MusicMatcherOutput

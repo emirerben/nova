@@ -155,6 +155,7 @@ class GeminiClient(ModelClient):
         media_mime: str | None = None,
         response_json: bool = True,
         max_output_tokens: int | None = None,
+        thinking_budget: int | None = None,
         timeout_s: float = 30.0,  # noqa: ARG002 — genai SDK doesn't accept per-call timeout currently
     ) -> ModelInvocation:
         from google.genai import errors as genai_errors  # type: ignore[import]
@@ -190,6 +191,16 @@ class GeminiClient(ModelClient):
             cfg_kwargs["response_mime_type"] = "application/json"
         if max_output_tokens is not None:
             cfg_kwargs["max_output_tokens"] = max_output_tokens
+        # Cap gemini-2.5 internal reasoning. Default (dynamic) thinking can burn
+        # thousands of output tokens — measured 6574 thought-tokens / ~30s on the
+        # music_matcher call vs ~3-4s when capped. Only applies to gemini-2.5
+        # models (the param is silently meaningless on other SKUs). Note: flash
+        # accepts thinking_budget=0 (disable), pro requires >=128 — callers that
+        # also run under the eval (pro) should use >=128 (256 is the house value).
+        if thinking_budget is not None and model.startswith("gemini-2.5"):
+            cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(
+                thinking_budget=thinking_budget
+            )
 
         try:
             response = client.models.generate_content(
@@ -268,6 +279,7 @@ class WhisperClient(ModelClient):
         media_mime: str | None = None,  # noqa: ARG002
         response_json: bool = True,  # noqa: ARG002 — Whisper returns its own JSON shape
         max_output_tokens: int | None = None,  # noqa: ARG002
+        thinking_budget: int | None = None,  # noqa: ARG002 — Whisper has no thinking
         timeout_s: float = 30.0,  # noqa: ARG002
     ) -> ModelInvocation:
         if not media_uri:
@@ -332,6 +344,7 @@ class ModelDispatcher(ModelClient):
         media_mime: str | None = None,
         response_json: bool = True,
         max_output_tokens: int | None = None,
+        thinking_budget: int | None = None,
         timeout_s: float = 30.0,
     ) -> ModelInvocation:
         if model.startswith("gemini"):
@@ -342,6 +355,7 @@ class ModelDispatcher(ModelClient):
                 media_mime=media_mime,
                 response_json=response_json,
                 max_output_tokens=max_output_tokens,
+                thinking_budget=thinking_budget,
                 timeout_s=timeout_s,
             )
         if model == "whisper-1":
@@ -352,6 +366,7 @@ class ModelDispatcher(ModelClient):
                 media_mime=media_mime,
                 response_json=response_json,
                 max_output_tokens=max_output_tokens,
+                thinking_budget=thinking_budget,
                 timeout_s=timeout_s,
             )
         raise TerminalError(f"unknown model: {model!r}")
