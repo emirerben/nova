@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.47.9] - 2026-05-27
+
+### Changed
+- **Music matching is ~9× faster (~36s → ~4s), shaving the generative-edit critical path again.** Profiling the v0.4.47.8 prod render (`/admin/jobs/{id}/debug`) showed `music_matcher` still taking ~36s despite emitting only ~480 output tokens — the latency was gemini-2.5's *internal thinking*: a direct A/B on the real 34-track prod input measured **6,574 thinking tokens / 30.1s** with default dynamic thinking vs **3.4s** disabled and **4.4s** capped at 256. Added a per-agent `thinking_budget` to `AgentSpec`, plumbed through `_model_client.invoke` as gemini-2.5 `ThinkingConfig`, and set `music_matcher` to **256** (honored by both flash in prod and pro in evals, so the eval validates the shipped budget). Quality-checked: the live `music_matcher` eval holds at 22/23 with the budget — the one sub-threshold fixture is judge variance (passes on re-run), same as before the change. The budget is opt-in per agent (default unset = SDK default), so no other agent's behavior changes. Speeds the regular auto-music pipeline too (shared matcher).
+
 ## [0.4.47.8] - 2026-05-27
 
 ### Changed
