@@ -62,12 +62,29 @@ function extractVideoId(input) {
   return null;
 }
 
+// YouTube tightened the WEB-client player response in 2025–26: the WEB
+// path returns formats with neither `url` nor `signatureCipher`, so any
+// youtubei.js `.download()` call against the WEB client throws "No valid URL
+// to decipher". yt-dlp solved this by switching to the ANDROID_VR client,
+// which still serves direct (unsigned) audio URLs. Empirically verified end-
+// to-end on youtubei.js@17.0.1 against the Roger Sanchez "Again" video that
+// hit this in prod — 2 MB partial read, ffprobe-confirmed AAC matching the
+// source's 6:03 duration. Pinned here as a constant so all calls stay in
+// sync — never mix clients on a single ingest.
+const YT_CLIENT = "ANDROID_VR";
+
 async function extractViaYoutubei(videoId) {
+  // Note: requests issued by this fetch wrapper to /youtubei/v1/* get their
+  // `Origin: chrome-extension://<id>` header rewritten to
+  // `https://www.youtube.com` by the dynamic DNR rule registered in
+  // background.js (YT_ORIGIN_RULE). Without that rewrite YouTube's edge 403s
+  // every InnerTube POST. If you're debugging an unexpected Origin value on
+  // YouTube traffic from this extension, that rule is why.
   const yt = await Innertube.create({
     cache: new UniversalCache(false),
     fetch: (input, init) => fetch(input, init),
   });
-  const info = await yt.getBasicInfo(videoId);
+  const info = await yt.getBasicInfo(videoId, { client: YT_CLIENT });
   if (info.basic_info?.is_live) {
     throw new Error("Live streams are not supported.");
   }
@@ -83,6 +100,7 @@ async function extractViaYoutubei(videoId) {
     type: "audio",
     quality: "best",
     format: format.mime_type?.includes("mp4") ? "mp4" : "any",
+    client: YT_CLIENT,
   });
   return {
     title: info.basic_info?.title || "",
