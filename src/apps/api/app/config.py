@@ -143,6 +143,23 @@ class Settings(BaseSettings):
     # scheduling time.
     lyric_dynamic_crossfade_enabled: bool = True
 
+    # Post-snap re-anchor for karaoke + per-word-pop lyric overlays
+    # (`app.pipeline.lyric_word_resync`). When True (default), each music-job
+    # render rewrites karaoke/popup overlay `start_s`/`end_s` so the per-word
+    # highlight (karaoke) and per-stage arrival (pop-in) stay glued to the
+    # vocal even after beat-snap shifts the slot's cumulative position. When
+    # False, falls back to pre-fix behavior byte-identically: overlays render
+    # at their pre-snap slot-relative positions and may drift up to one
+    # beat-interval (~250 ms on a 2.4 BPS track) against the audio.
+    # Flip to False on Fly
+    # (`fly secrets set LYRIC_WORD_RESYNC_ENABLED=false --app nova-video`
+    # then restart workers) to roll back instantly if the re-anchor pass
+    # itself ships a regression. The flag is read inside
+    # `_collect_absolute_overlays` so every job picks up the current value
+    # at render-collect time. Line-style overlays NEVER participate in this
+    # pass — they don't carry the `section_anchor_s` stamp.
+    lyric_word_resync_enabled: bool = True
+
     # Synced-anchor health check for the lyrics agent
     # (`app.agents.lyrics.LyricsExtractionAgent.compute`). When True (default),
     # if `align_with_line_anchors` returns confidence < 0.20, the agent

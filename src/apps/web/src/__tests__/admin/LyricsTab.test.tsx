@@ -105,15 +105,18 @@ describe("LyricsTab", () => {
     });
   });
 
-  it("anchors the workflow as Line Lyric Templates", () => {
+  it("anchors the workflow as Lyric Templates with all three styles", () => {
     render(
       <LyricsTab trackId="track-1" track={makeTrack()} onTrackUpdated={jest.fn()} />,
     );
+    // Header renamed from "Line Lyric Templates" to "Lyric Templates" when
+    // Pop-up + Karaoke preview slots shipped alongside the original Line
+    // workflow (feat/lyrics-popup-karaoke). The render-window helper copy
+    // (`20s black background`) still surfaces so dashboard constraints
+    // remain obvious without scrolling into the previews.
     expect(
-      screen.getByRole("heading", { name: /Line Lyric Templates/i }),
+      screen.getByRole("heading", { name: /Lyric Templates/i }),
     ).toBeInTheDocument();
-    // The copy must surface 20s + black background so the workflow's
-    // constraints are obvious from the dashboard alone.
     expect(screen.getByText(/20s black background/i)).toBeInTheDocument();
   });
 
