@@ -11,6 +11,10 @@ from app.pipeline.lyrics_preview import (
     PREVIEW_CRF,
     PREVIEW_WINDOW_S,
     LyricsPreviewInputError,
+    _first_lyric_in_section,
+    _read_best_bounds,
+    _resolve_preview_window,
+    _resolve_preview_window_with_policy,
     build_lyrics_preview_ass_files,
     build_lyrics_preview_recipe,
     render_lyrics_preview,
@@ -157,6 +161,570 @@ def test_preview_recipe_raises_on_negative_duration() -> None:
     track = _track(duration_s=-5.0, track_config={})
     with pytest.raises(LyricsPreviewInputError, match="duration is unknown"):
         build_lyrics_preview_recipe(track, {})
+
+
+# ---------------------------------------------------------------------------
+# Section-anchored preview window (2026-05-27)
+#
+# Locks the policy switch from "first lyric of song" → "first lyric WITHIN
+# the admin-selected best section, with first-vocal-of-song as the fallback
+# when the section has no lyrics". The Beat It bug (job 616d3e53) was that
+# clicking section #2 had zero effect on the preview window; these tests
+# guard against any regression of that behavior AND against breaking the
+# pre-existing Billie Jean instrumental-intro fallback.
+# ---------------------------------------------------------------------------
+
+
+def _track_with_lines(line_starts: list[float], **overrides):
+    """Build a track fixture with explicit lyric line start times.
+
+    Each entry produces a 1-second line at the given `start_s`. Used by the
+    section-anchor tests below so each scenario can express its in/out-of-
+    section line layout in one line of test code.
+    """
+    track = _track(**overrides)
+    track.lyrics_cached = {
+        "lines": [
+            {
+                "text": f"line {idx}",
+                "start_s": start,
+                "end_s": start + 1.0,
+                "words": [
+                    {"text": f"line{idx}", "start_s": start, "end_s": start + 1.0},
+                ],
+            }
+            for idx, start in enumerate(line_starts)
+        ]
+    }
+    return track
+
+
+def test_preview_window_anchors_at_first_lyric_in_section() -> None:
+    """Section-anchored: lyric at 130s within section [127.2, 141.0].
+
+    Anchor = max(127.2, 130 - 2.0) = 128.0; duration = min(20, 141.0-128.0) = 13.0.
+    """
+    track = _track_with_lines(
+        [28.0, 130.0, 132.0, 200.0],
+        duration_s=300.0,
+        track_config={"best_start_s": 127.2, "best_end_s": 141.0},
+    )
+    assert _resolve_preview_window(track) == (128.0, 13.0)
+
+
+def test_preview_window_falls_back_when_section_has_no_lyrics() -> None:
+    """Section contains no lyrics → falls back to first-vocal-of-song policy.
+
+    Billie Jean shape: section selected in instrumental territory, all lines
+    after the section. Without the fallback we'd render a silent 20s preview.
+    """
+    track = _track_with_lines(
+        [30.8, 35.0],
+        duration_s=200.0,
+        track_config={"best_start_s": 0.0, "best_end_s": 20.0},
+    )
+    assert _resolve_preview_window(track) == (28.8, 20.0)
+
+
+def test_preview_window_falls_back_when_track_config_missing() -> None:
+    """No track_config bounds → fallback path, byte-identical to pre-2026-05-27
+    behavior. Pre-existing tracks that haven't been re-sectioned still work.
+    """
+    track = _track_with_lines(
+        [30.8, 35.0],
+        duration_s=200.0,
+        track_config={},
+    )
+    assert _resolve_preview_window(track) == (28.8, 20.0)
+
+
+def test_preview_window_clamps_anchor_at_section_start() -> None:
+    """Lyric at best_start_s + 0.3s → LEAD_IN would go below section start,
+    so anchor clamps at best_start_s. Preview must not bleed audio from
+    outside the admin-selected section (e.g. drum fill ending the prior
+    section would otherwise leak into a chorus preview).
+    """
+    track = _track_with_lines(
+        [127.5],
+        duration_s=300.0,
+        track_config={"best_start_s": 127.2, "best_end_s": 141.0},
+    )
+    start_s, duration_s = _resolve_preview_window(track)
+    assert start_s == 127.2  # clamped, NOT 127.5 - 2.0
+    assert duration_s == round(141.0 - 127.2, 3)  # 13.8
+
+
+def test_preview_window_duration_capped_by_section_end() -> None:
+    """Section span is only 14s → preview duration is 14s, not 20s. The window
+    must never exceed best_end_s even when PREVIEW_WINDOW_S is larger.
+    """
+    track = _track_with_lines(
+        [128.0],
+        duration_s=300.0,
+        track_config={"best_start_s": 127.2, "best_end_s": 141.2},
+    )
+    start_s, duration_s = _resolve_preview_window(track)
+    # 128 - 2 = 126 < 127.2 → anchor clamps at 127.2; available = 141.2 - 127.2 = 14.0
+    assert start_s == 127.2
+    assert duration_s == 14.0
+
+
+def test_preview_window_anchor_does_not_leak_outside_section_when_lead_in_negative() -> None:
+    """First lyric exactly at best_start_s. Anchor must not go below 0 OR below
+    section start. Defensive coverage for sections that start at 0s.
+    """
+    track = _track_with_lines(
+        [5.0],
+        duration_s=60.0,
+        track_config={"best_start_s": 5.0, "best_end_s": 25.0},
+    )
+    start_s, duration_s = _resolve_preview_window(track)
+    # 5.0 - 2.0 = 3.0 < 5.0 (section_start) → clamps to 5.0
+    assert start_s == 5.0
+    # available = min(60, 25) - 5 = 20.0
+    assert duration_s == 20.0
+
+
+def test_read_best_bounds_dict_shape() -> None:
+    """Production track_config arrives as a dict (JSONB → SQLAlchemy load)."""
+    assert _read_best_bounds({"best_start_s": 127.2, "best_end_s": 141.0}) == (127.2, 141.0)
+    assert _read_best_bounds({}) == (None, None)
+    assert _read_best_bounds({"best_start_s": 127.2}) == (127.2, None)
+
+
+def test_read_best_bounds_object_shape() -> None:
+    """Defensive: callers that pass Pydantic / SimpleNamespace shapes."""
+    cfg = SimpleNamespace(best_start_s=127.2, best_end_s=141.0)
+    assert _read_best_bounds(cfg) == (127.2, 141.0)
+    assert _read_best_bounds(None) == (None, None)
+
+
+def test_read_best_bounds_rejects_non_finite() -> None:
+    """NaN / Inf must coerce to None on the offending axis. All NaN comparisons
+    return False so a NaN best_start_s would silently fail every in-section
+    check and fire the fallback — this guard converts that into an explicit
+    "no section configured" signal at the read boundary.
+    """
+    assert _read_best_bounds({"best_start_s": float("nan"), "best_end_s": 141.0}) == (
+        None,
+        141.0,
+    )
+    assert _read_best_bounds({"best_start_s": 127.2, "best_end_s": float("inf")}) == (
+        127.2,
+        None,
+    )
+    assert _read_best_bounds({"best_start_s": "not-a-float", "best_end_s": None}) == (
+        None,
+        None,
+    )
+
+
+def test_first_lyric_in_section_filters_correctly() -> None:
+    """Half-open `[best_start_s, best_end_s)` semantics with start-only fallback
+    (lines lacking `end_s`). Returns min start_s of in-section lines. Lines
+    outside the section are ignored; non-list / non-dict shapes return None.
+    """
+    lyrics = {
+        "lines": [
+            {"start_s": 28.0},
+            {"start_s": 130.0},
+            {"start_s": 132.0},
+            {"start_s": 141.0},  # exactly at best_end_s — EXCLUDED (half-open)
+            {"start_s": 200.0},
+        ]
+    }
+    assert _first_lyric_in_section(lyrics, 127.2, 141.0) == 130.0
+    # No lines in section
+    assert _first_lyric_in_section(lyrics, 60.0, 100.0) is None
+    # Empty input shapes
+    assert _first_lyric_in_section({"lines": []}, 0.0, 100.0) is None
+    assert _first_lyric_in_section(None, 0.0, 100.0) is None
+    # Non-finite line is skipped
+    bad = {"lines": [{"start_s": float("nan")}, {"start_s": 130.0}]}
+    assert _first_lyric_in_section(bad, 127.2, 141.0) == 130.0
+
+
+def test_first_lyric_in_section_excludes_line_at_section_end() -> None:
+    """Half-open upper bound: a line whose `start_s` equals `best_end_s` does
+    NOT belong to the section. Locks the 2026-05-27 rev2 semantics switch from
+    inclusive-on-both-ends to `[best_start_s, best_end_s)`.
+
+    Rationale: a line that starts at the section end has nothing renderable
+    inside the preview window — the preview ends right when the line begins.
+    """
+    lyrics = {"lines": [{"start_s": 141.0}]}
+    assert _first_lyric_in_section(lyrics, 127.2, 141.0) is None
+
+
+def test_first_lyric_in_section_counts_overlapping_pre_section_line() -> None:
+    """Interval-overlap path: a line that starts BEFORE the section but ends
+    INSIDE it counts as belonging to the section. Common case in pop songs
+    where a pre-chorus line bleeds into the chorus.
+
+    Section [127.2, 141.0], line [126.9, 129.0]:
+      `line_start (126.9) < best_end_s (141.0)` AND
+      `line_end (129.0) > best_start_s (127.2)` → overlap, counts.
+    Returns the raw `line.start_s = 126.9`; the caller clamps the anchor
+    so audio does not bleed before the section start.
+    """
+    lyrics = {"lines": [{"start_s": 126.9, "end_s": 129.0}]}
+    assert _first_lyric_in_section(lyrics, 127.2, 141.0) == 126.9
+
+
+def test_first_lyric_in_section_ignores_non_finite_end_s() -> None:
+    """When `end_s` is NaN/Inf/missing, fall back to start-only membership
+    (still half-open). Guards against a future cache shape change leaking
+    a non-finite end into the overlap math.
+    """
+    # NaN end → start-only path → 130.0 is in [127.2, 141.0)
+    assert (
+        _first_lyric_in_section(
+            {"lines": [{"start_s": 130.0, "end_s": float("nan")}]}, 127.2, 141.0
+        )
+        == 130.0
+    )
+    # Missing end → start-only path → 130.0 is in [127.2, 141.0)
+    assert _first_lyric_in_section({"lines": [{"start_s": 130.0}]}, 127.2, 141.0) == 130.0
+
+
+def test_first_lyric_in_section_overlap_exact_boundary_touch_excluded() -> None:
+    """Half-open overlap: a line ending exactly at `best_start_s` does NOT
+    overlap (line_end > best_start_s must be strict). A line starting
+    exactly at `best_end_s` does NOT overlap (line_start < best_end_s
+    must be strict). Locks the strict-inequality choice.
+    """
+    # Line touching the upper bound from outside: start at best_end_s.
+    assert (
+        _first_lyric_in_section({"lines": [{"start_s": 141.0, "end_s": 145.0}]}, 127.2, 141.0)
+        is None
+    )
+    # Line touching the lower bound from below: end at best_start_s.
+    assert (
+        _first_lyric_in_section({"lines": [{"start_s": 120.0, "end_s": 127.2}]}, 127.2, 141.0)
+        is None
+    )
+
+
+def test_preview_window_section_anchored_with_pre_section_overlap() -> None:
+    """End-to-end of the overlap path: pre-chorus line bleeds into the
+    chorus section. Anchor must clamp to best_start_s — never let audio
+    play from before the admin-selected section.
+
+    Section [127.2, 141.0], line [126.9, 129.0]:
+      first_in_section = 126.9
+      anchor = max(0.0, 127.2, 126.9 - 2.0) = max(0.0, 127.2, 124.9) = 127.2
+      available = min(track_duration, 141.0) - 127.2 = 13.8
+    """
+    track = _track(
+        duration_s=300.0,
+        track_config={"best_start_s": 127.2, "best_end_s": 141.0},
+    )
+    track.lyrics_cached = {
+        "lines": [
+            {"text": "intro", "start_s": 126.9, "end_s": 129.0},
+            {"text": "more", "start_s": 130.0, "end_s": 131.0},
+        ]
+    }
+    start_s, duration_s = _resolve_preview_window(track)
+    assert start_s == 127.2  # clamped to section start, NOT 124.9
+    assert duration_s == round(141.0 - 127.2, 3)  # 13.8
+
+
+def test_preview_window_section_anchored_clamps_anchor_to_zero() -> None:
+    """Defense vs negative `best_start_s`: anchor must clamp to `max(0.0, ...)`.
+    Even though the frontend should not produce negative bounds, the API
+    column accepts finite negatives and `_read_best_bounds` lets them through.
+    Without the 0.0 clamp, FFmpeg `-ss -1.500` is silently treated as 0 but
+    the downstream `duration_s` math is off.
+
+    Section [-5.0, 10.0], line at 0.5:
+      first_in_section = 0.5
+      anchor = max(0.0, -5.0, 0.5 - 2.0) = max(0.0, -5.0, -1.5) = 0.0
+      available = min(track_duration, 10.0) - 0.0 = 10.0
+    """
+    track = _track_with_lines(
+        [0.5],
+        duration_s=60.0,
+        track_config={"best_start_s": -5.0, "best_end_s": 10.0},
+    )
+    start_s, duration_s = _resolve_preview_window(track)
+    assert start_s == 0.0
+    assert duration_s == 10.0
+
+
+def test_resolve_preview_window_with_policy_reports_section() -> None:
+    """Policy field tracks the section-anchored success case."""
+    track = _track_with_lines(
+        [28.0, 130.0],
+        duration_s=300.0,
+        track_config={"best_start_s": 127.2, "best_end_s": 141.0},
+    )
+    start_s, duration_s, policy, reason = _resolve_preview_window_with_policy(track)
+    assert policy == "section"
+    assert reason is None
+    assert (start_s, duration_s) == (128.0, 13.0)
+
+
+def test_resolve_preview_window_with_policy_reports_no_bounds() -> None:
+    """track_config missing bounds → policy=fallback, reason=no_bounds."""
+    track = _track_with_lines([30.8], duration_s=200.0, track_config={})
+    _, _, policy, reason = _resolve_preview_window_with_policy(track)
+    assert policy == "fallback"
+    assert reason == "no_bounds"
+
+
+def test_resolve_preview_window_with_policy_reports_invalid_bounds() -> None:
+    """`best_end_s <= best_start_s` → policy=fallback, reason=invalid_bounds.
+    Zero-span sections (start==end) and reversed bounds both flow here.
+    """
+    track = _track_with_lines(
+        [30.8], duration_s=200.0, track_config={"best_start_s": 50.0, "best_end_s": 50.0}
+    )
+    _, _, policy, reason = _resolve_preview_window_with_policy(track)
+    assert policy == "fallback"
+    assert reason == "invalid_bounds"
+
+
+def test_resolve_preview_window_with_policy_reports_no_lyrics_in_section() -> None:
+    """Section has valid bounds but contains no overlapping lyric line →
+    policy=fallback, reason=no_lyrics_in_section. The classic case the
+    Billie Jean fallback handles.
+    """
+    track = _track_with_lines(
+        [30.8, 60.0],
+        duration_s=200.0,
+        track_config={"best_start_s": 0.0, "best_end_s": 20.0},
+    )
+    _, _, policy, reason = _resolve_preview_window_with_policy(track)
+    assert policy == "fallback"
+    assert reason == "no_lyrics_in_section"
+
+
+def test_render_lyrics_preview_emits_telemetry_when_fallback_anchor_inside_section(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """CRITICAL: the previous telemetry implementation missed this case.
+
+    Section [20.0, 30.0] with NO overlapping lyrics. First vocal of song at
+    30.8s. Fallback fires; anchor = max(0, 30.8 - 2.0) = 28.8s, which sits
+    INSIDE the configured section [20, 30]. The pre-rev2 telemetry compared
+    the final anchor against section bounds and would NOT emit the event —
+    silently losing the very signal admins were supposed to monitor.
+
+    With policy-based telemetry the event fires whenever `policy=="fallback"`
+    and section bounds were configured, regardless of where the anchor lands.
+    """
+    captured: list[tuple[str, str, dict]] = []
+
+    monkeypatch.setattr(
+        "app.pipeline.lyrics_preview.record_pipeline_event",
+        lambda s, e, d=None: captured.append((s, e, d or {})),
+    )
+    monkeypatch.setattr(
+        "app.pipeline.lyrics_preview.download_to_file",
+        lambda _g, local: Path(local).write_bytes(b"audio"),
+    )
+
+    def _fake_run(cmd, **_kwargs):
+        Path(cmd[-1]).write_bytes(b"mp4")
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    monkeypatch.setattr("app.pipeline.lyrics_preview.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "app.pipeline.lyrics_preview.upload_public_read",
+        lambda _l, _o: "https://example.com/preview.mp4",
+    )
+
+    track = _track_with_lines(
+        [30.8, 35.0],
+        duration_s=200.0,
+        track_config={"best_start_s": 20.0, "best_end_s": 30.0},
+    )
+    render_lyrics_preview(track, {"enabled": True, "style": "line"}, job_id="job-1")
+
+    matching = [
+        (s, e, d) for (s, e, d) in captured if (s, e) == ("preview", "anchor_outside_section")
+    ]
+    assert matching, (
+        "policy-based telemetry must fire when the fallback path runs, even "
+        f"if the fallback anchor happens to land inside the section. Events: {captured}"
+    )
+    payload = matching[0][2]
+    # 28.8 is INSIDE [20.0, 30.0] — this is exactly the case the old impl missed.
+    assert payload["preview_start_s"] == 28.8
+    assert 20.0 <= payload["preview_start_s"] <= 30.0
+    assert payload["best_start_s"] == 20.0
+    assert payload["best_end_s"] == 30.0
+    assert payload["reason"] == "no_lyrics_in_section"
+
+
+def test_billie_jean_byte_identical_when_no_section_bounds() -> None:
+    """CRITICAL REGRESSION: Billie Jean shape — 30s instrumental intro, first
+    vocal at 30.8s, no `track_config` section bounds set. The 2026-05-27
+    section-anchored rewrite must produce the EXACT same window the pre-fix
+    code produced (the 2026-05-25 Billie Jean fix), or we'd regress 30s
+    silent previews.
+
+    Pre-fix output for this fixture:
+      start_s = max(0, 30.8 - LEAD_IN_S) = 28.8
+      duration_s = min(PREVIEW_WINDOW_S, 200 - 28.8) = 20.0
+    """
+    track = _track_with_lines(
+        [30.8, 35.0, 60.0],
+        duration_s=200.0,
+        track_config={},  # no section configured — purest fallback case
+    )
+    assert _resolve_preview_window(track) == (
+        round(30.8 - LEAD_IN_S, 3),
+        PREVIEW_WINDOW_S,
+    )
+
+
+def test_render_lyrics_preview_emits_anchor_outside_section_telemetry(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Defense-in-depth: when section bounds are configured but the resolved
+    anchor falls outside them (fallback path fired because the section had no
+    lyrics inside), `render_lyrics_preview` MUST emit a
+    `preview.anchor_outside_section` pipeline_trace event. The audit trail
+    lets admins detect users picking vocal-free sections without realizing
+    the preview silently drops back to the song intro.
+
+    Locks the call site against a future refactor silently removing the
+    telemetry — without this test, only humans reading the diff would catch
+    a deleted `record_pipeline_event` call.
+    """
+    captured: list[tuple[str, str, dict]] = []
+
+    def fake_record_event(stage: str, event: str, data: dict | None = None) -> None:
+        captured.append((stage, event, data or {}))
+
+    def fake_download(_gcs_path: str, local_path: str) -> None:
+        Path(local_path).write_bytes(b"audio")
+
+    def fake_run(cmd, **_kwargs):
+        Path(cmd[-1]).write_bytes(b"mp4")
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    monkeypatch.setattr("app.pipeline.lyrics_preview.record_pipeline_event", fake_record_event)
+    monkeypatch.setattr("app.pipeline.lyrics_preview.download_to_file", fake_download)
+    monkeypatch.setattr("app.pipeline.lyrics_preview.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "app.pipeline.lyrics_preview.upload_public_read",
+        lambda _local, _obj: "https://example.com/preview.mp4",
+    )
+
+    # Section is [0, 20] but first lyric is at 30.8s — fallback fires and the
+    # anchor (28.8s) lands outside the configured section. Event must emit.
+    track = _track_with_lines(
+        [30.8, 35.0],
+        duration_s=200.0,
+        track_config={"best_start_s": 0.0, "best_end_s": 20.0},
+    )
+    render_lyrics_preview(track, {"enabled": True, "style": "line"}, job_id="job-1")
+
+    matching = [
+        (s, e, d) for (s, e, d) in captured if (s, e) == ("preview", "anchor_outside_section")
+    ]
+    assert matching, f"expected one preview.anchor_outside_section event, got: {captured}"
+    assert len(matching) == 1
+    payload = matching[0][2]
+    assert payload["preview_start_s"] == 28.8
+    assert payload["best_start_s"] == 0.0
+    assert payload["best_end_s"] == 20.0
+    assert payload["reason"] == "no_lyrics_in_section"
+
+
+def test_render_lyrics_preview_telemetry_tolerates_float_rounding(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The anchor inside `_resolve_preview_window` is `round(anchor, 3)` but
+    `track_config.best_start_s` may carry more precision (e.g. 30.4561). Without
+    rounding the comparison's right-hand side, a section saved at 30.4561 with
+    the anchor floor-clamped to the same value would emit a false-positive
+    `anchor_outside_section` event: rounded preview (30.456) is less than the
+    unrounded section_start (30.4561). The metric must reflect the rendered
+    window at FFmpeg precision, not at storage precision.
+    """
+    captured: list[tuple[str, str, dict]] = []
+
+    monkeypatch.setattr(
+        "app.pipeline.lyrics_preview.record_pipeline_event",
+        lambda s, e, d=None: captured.append((s, e, d or {})),
+    )
+    monkeypatch.setattr(
+        "app.pipeline.lyrics_preview.download_to_file",
+        lambda _g, local: Path(local).write_bytes(b"audio"),
+    )
+
+    def _fake_run(cmd, **_kwargs):
+        Path(cmd[-1]).write_bytes(b"mp4")
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    monkeypatch.setattr("app.pipeline.lyrics_preview.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "app.pipeline.lyrics_preview.upload_public_read",
+        lambda _l, _o: "https://example.com/preview.mp4",
+    )
+
+    # Section bound with 4 decimals; first lyric at section start triggers
+    # the floor clamp. preview_start_s rounds to 30.456 while best_start_s
+    # stays at 30.4561 in the comparison. Pre-fix this fired the event.
+    track = _track_with_lines(
+        [30.4561],
+        duration_s=200.0,
+        track_config={"best_start_s": 30.4561, "best_end_s": 50.4561},
+    )
+    render_lyrics_preview(track, {"enabled": True, "style": "line"}, job_id="job-1")
+
+    outside = [(s, e) for (s, e, _) in captured if (s, e) == ("preview", "anchor_outside_section")]
+    assert outside == [], (
+        f"rounding-tolerance regression: anchor_outside_section fired on the "
+        f"section-anchored happy path. Events: {captured}"
+    )
+
+
+def test_render_lyrics_preview_skips_telemetry_when_anchor_inside_section(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Inverse of the previous test: when the section-anchored path succeeds
+    (anchor lands inside [best_start_s, best_end_s]), no telemetry fires.
+    Locks the gating condition so a future refactor can't accidentally emit
+    the event on EVERY preview render (which would make the audit log
+    useless).
+    """
+    captured: list[tuple[str, str, dict]] = []
+
+    monkeypatch.setattr(
+        "app.pipeline.lyrics_preview.record_pipeline_event",
+        lambda s, e, d=None: captured.append((s, e, d or {})),
+    )
+    monkeypatch.setattr(
+        "app.pipeline.lyrics_preview.download_to_file",
+        lambda _g, local: Path(local).write_bytes(b"audio"),
+    )
+
+    def _fake_run(cmd, **_kwargs):
+        Path(cmd[-1]).write_bytes(b"mp4")
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    monkeypatch.setattr("app.pipeline.lyrics_preview.subprocess.run", _fake_run)
+    monkeypatch.setattr(
+        "app.pipeline.lyrics_preview.upload_public_read",
+        lambda _l, _o: "https://example.com/preview.mp4",
+    )
+
+    # Section [127.2, 141.0] contains lyric at 130.0 → anchor lands at 128.0
+    # which is INSIDE the section. No outside-section event.
+    track = _track_with_lines(
+        [28.0, 130.0],
+        duration_s=300.0,
+        track_config={"best_start_s": 127.2, "best_end_s": 141.0},
+    )
+    render_lyrics_preview(track, {"enabled": True, "style": "line"}, job_id="job-1")
+
+    outside = [(s, e) for (s, e, _) in captured if (s, e) == ("preview", "anchor_outside_section")]
+    assert outside == [], f"expected zero anchor_outside_section events, got: {captured}"
 
 
 def test_render_lyrics_preview_builds_browser_safe_ffmpeg(monkeypatch, tmp_path: Path) -> None:

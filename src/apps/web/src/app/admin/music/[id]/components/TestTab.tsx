@@ -29,6 +29,13 @@ type ActiveJobStatus = MusicJobStatus | LyricsPreviewStatus;
 interface TestTabProps {
   trackId: string;
   track: MusicTrackDetail;
+  // Set by the page-top component when the Config tab's best_start_s /
+  // best_end_s form state differs from the persisted track_config. Gates
+  // the embedded LyricsTimingPanel's "Preview lyrics only" button so a
+  // user who clicked a section band on the Config tab without clicking
+  // Save can't fire a preview against stale section bounds (the Beat It
+  // bug, job 616d3e53). Defaults to false for callers that never set it.
+  sectionBoundsDirty?: boolean;
 }
 
 interface UploadedClip {
@@ -58,7 +65,7 @@ function describeExpectedClipCount(track: MusicTrackDetail): {
   return { message: `Expects ${min}–${max} clips`, min, max };
 }
 
-export function TestTab({ trackId, track }: TestTabProps) {
+export function TestTab({ trackId, track, sectionBoundsDirty = false }: TestTabProps) {
   const [uploads, setUploads] = useState<UploadedClip[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -196,14 +203,32 @@ export function TestTab({ trackId, track }: TestTabProps) {
   }
 
   const clipCount = uploads.length;
+  // Gate the full test render against stale section bounds in addition to
+  // the upload-count guards. music_orchestrate.py reads
+  // `track_config.best_start_s` / `best_end_s` from the DB at job submit
+  // time (see _run_templated_music_job, ~line 463). If the Config tab's
+  // form state diverges from the persisted track, the orchestrator would
+  // render against the OLD section the admin thought they had replaced —
+  // the same trap the lyric-preview button gates against, just with a
+  // longer/heavier blast radius (full clip render + audio mix).
   const submitDisabled =
-    !trackReady || uploading || clipCount < expected.min || clipCount > expected.max;
+    !trackReady ||
+    uploading ||
+    clipCount < expected.min ||
+    clipCount > expected.max ||
+    sectionBoundsDirty;
+  // The upload-state hints take priority because they tell the admin what to
+  // do RIGHT NOW about clips. Section-dirty appears only when the upload
+  // state is otherwise valid, so the admin always sees the most actionable
+  // blocker first.
   const fullTestHint =
     clipCount > 0 && clipCount < expected.min
       ? `Need ${expected.min - clipCount} more clip${expected.min - clipCount === 1 ? "" : "s"}`
       : clipCount > expected.max
         ? `Too many clips (${clipCount} > ${expected.max})`
-        : null;
+        : sectionBoundsDirty
+          ? "Save section bounds on the Config tab first — full render reads the persisted window."
+          : null;
 
   const currentJob = poller.data;
   const isPolling = poller.polling;
@@ -310,6 +335,12 @@ export function TestTab({ trackId, track }: TestTabProps) {
         savedConfig={savedLyricsConfig}
         fullTestDisabled={submitDisabled}
         fullTestHint={fullTestHint}
+        previewDisabled={sectionBoundsDirty}
+        previewHint={
+          sectionBoundsDirty
+            ? "Save section bounds on the Config tab first — preview reads the persisted window."
+            : undefined
+        }
         onSaved={setSavedLyricsConfig}
         onWorkingChange={setCurrentLyricsOverride}
         onSubmit={(action, override) => {
