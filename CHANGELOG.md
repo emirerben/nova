@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.47.8] - 2026-05-27
+
+### Changed
+- **Generative-edit jobs reach their first variant much faster (Phase 1 of the speed work).** Two critical-path fixes, both behavior-preserving — the edit you get is identical, it just arrives sooner. (1) **Music match dropped from ~64s to a few seconds.** The `music_matcher` agent was generating a full rationale plus four `predicted_strengths` for *every* track in the library (~32 tracks → ~4.6k output tokens, and token generation is the latency), even though the generative pipeline only ever uses the top pick. The prompt now asks for only the top `n_variants + 3` ranked entries with a one-line rationale; the model still scores the whole library internally so the chosen track is unchanged (verified against the live `music_matcher` eval — same top pick). Output dropped 4.6k→~570 tokens. Done via the prompt, not a `max_output_tokens` cap: gemini-2.5 spends output budget on internal "thinking", so a hard cap truncates to an empty response. (2) **The pre-render phase now overlaps its independent work instead of running it serially.** HDR pre-tonemap (ffmpeg), the text agents (`overlay_format_matcher` → `intro_writer` → style selection), and the music matcher are independent, so they run concurrently on a `ThreadPoolExecutor` in `_run_generative_job` — the critical path collapses from their sum to their max. `pipeline_trace` events stay on the main thread (worker threads don't inherit the trace contextvar); agent_run persistence is unaffected (each agent carries its `job_id` explicitly). Also speeds the regular auto-music pipeline, which shares `music_matcher`.
+
 ## [0.4.47.7] - 2026-05-27
 
 ### Fixed
