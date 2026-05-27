@@ -707,3 +707,250 @@ def test_upload_init_dedup_query_filters_stale_pending() -> None:
     assert "source_url" in compiled
     assert "pending" in compiled
     assert "queued" in compiled
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /admin/music-tracks/upload-init-file — SPA direct-file upload variant
+#
+# These mirror the extension-flow tests above but exercise the no-URL variant
+# used by the "Upload file" form on /admin/music. The variant bypasses Vercel's
+# 4.5 MB function body cap by minting a signed PUT URL the browser uploads to
+# directly. It does NOT dedup by source_url (a file upload has no canonical
+# URL identity — two unrelated tracks both named "Again.mp4" must coexist).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_upload_init_file_requires_auth(client: TestClient) -> None:
+    resp = client.post(
+        "/admin/music-tracks/upload-init-file",
+        json={"filename": "Again.mp4", "ext": ".mp4", "byte_count": 8_000_000},
+    )
+    assert resp.status_code in (401, 422)
+
+
+def test_upload_init_file_rejects_wrong_token(client: TestClient) -> None:
+    resp = client.post(
+        "/admin/music-tracks/upload-init-file",
+        json={"filename": "Again.mp4", "ext": ".mp4", "byte_count": 8_000_000},
+        headers={"X-Admin-Token": "wrong"},
+    )
+    assert resp.status_code == 401
+
+
+def test_upload_init_file_rejects_bad_ext(client: TestClient) -> None:
+    resp = client.post(
+        "/admin/music-tracks/upload-init-file",
+        json={"filename": "evil.exe", "ext": ".exe", "byte_count": 8_000_000},
+        headers=admin_headers(),
+    )
+    assert resp.status_code == 422
+    detail_text = str(resp.json().get("detail", "")).lower()
+    assert "ext" in detail_text or "extension" in detail_text
+
+
+def test_upload_init_file_rejects_oversized_byte_count(client: TestClient) -> None:
+    resp = client.post(
+        "/admin/music-tracks/upload-init-file",
+        json={
+            "filename": "huge.m4a",
+            "ext": ".m4a",
+            "byte_count": 200 * 1024 * 1024,  # 200 MB > 100 MB cap
+        },
+        headers=admin_headers(),
+    )
+    assert resp.status_code == 422
+    assert "byte_count" in str(resp.json().get("detail", "")).lower()
+
+
+def test_upload_init_file_rejects_undersized_byte_count(client: TestClient) -> None:
+    resp = client.post(
+        "/admin/music-tracks/upload-init-file",
+        json={"filename": "tiny.m4a", "ext": ".m4a", "byte_count": 10},
+        headers=admin_headers(),
+    )
+    assert resp.status_code == 422
+
+
+def test_upload_init_file_rejects_path_traversal_filename(client: TestClient) -> None:
+    """Filename feeds source_url=upload://<filename>. Reject slashes."""
+    resp = client.post(
+        "/admin/music-tracks/upload-init-file",
+        json={
+            "filename": "../etc/passwd",
+            "ext": ".m4a",
+            "byte_count": 5_000_000,
+        },
+        headers=admin_headers(),
+    )
+    assert resp.status_code == 422
+
+
+def test_upload_init_file_rejects_backslash_filename(client: TestClient) -> None:
+    """Windows-style path traversal must be rejected too."""
+    resp = client.post(
+        "/admin/music-tracks/upload-init-file",
+        json={
+            "filename": "..\\windows\\system32.m4a",
+            "ext": ".m4a",
+            "byte_count": 5_000_000,
+        },
+        headers=admin_headers(),
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "bad_char,label",
+    [
+        ("\x00", "null"),
+        ("\n", "newline"),
+        ("\r", "carriage-return"),
+        ("\t", "tab"),
+        ("\x7f", "DEL"),
+    ],
+)
+def test_upload_init_file_rejects_control_chars_in_filename(
+    client: TestClient, bad_char: str, label: str
+) -> None:
+    """C0 controls + DEL break log lines and gallery card rendering."""
+    resp = client.post(
+        "/admin/music-tracks/upload-init-file",
+        json={
+            "filename": f"track{bad_char}injected.m4a",
+            "ext": ".m4a",
+            "byte_count": 5_000_000,
+        },
+        headers=admin_headers(),
+    )
+    assert resp.status_code == 422, f"{label} char should be rejected"
+
+
+def test_upload_init_file_rejects_empty_filename(client: TestClient) -> None:
+    resp = client.post(
+        "/admin/music-tracks/upload-init-file",
+        json={"filename": "   ", "ext": ".m4a", "byte_count": 5_000_000},
+        headers=admin_headers(),
+    )
+    assert resp.status_code == 422
+
+
+def test_upload_init_file_returns_signed_url(client: TestClient) -> None:
+    """Happy path: 201 with track_id + signed upload_url; source_url stored as upload://<filename>."""
+    session = _make_db_mock(existing_track_for_dedup=None)
+    _override_db(session)
+
+    fake_blob = MagicMock()
+    fake_blob.generate_signed_url.return_value = "https://storage.googleapis.com/signed-file-put"
+    fake_bucket = MagicMock()
+    fake_bucket.blob.return_value = fake_blob
+    fake_client = MagicMock()
+    fake_client.bucket.return_value = fake_bucket
+
+    try:
+        with patch("app.storage._get_client", return_value=fake_client):
+            resp = client.post(
+                "/admin/music-tracks/upload-init-file",
+                json={
+                    "filename": "Again.mp4",
+                    "title": "Again",
+                    "artist": "Roger Sanchez",
+                    "ext": ".mp4",
+                    "byte_count": 8_970_070,
+                },
+                headers=admin_headers(),
+            )
+    finally:
+        _clear_db_override()
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["upload_url"] == "https://storage.googleapis.com/signed-file-put"
+    # .mp4 maps to audio/mp4 (YouTube AAC-in-MP4 reports application/mp4 too).
+    assert body["content_type"] == "audio/mp4"
+    assert body["gcs_path"].startswith("music/")
+    assert body["gcs_path"].endswith("/audio.mp4")
+    assert body["expires_in_s"] == 15 * 60
+    assert body["track_id"]
+
+    # MusicTrack was inserted with source_url=upload://<filename>, audio_gcs_path
+    # pre-populated, status=pending — matching the extension init contract.
+    session.add.assert_called_once()
+    track = session.add.call_args.args[0]
+    assert track.source_url == "upload://Again.mp4"
+    assert track.title == "Again"
+    assert track.artist == "Roger Sanchez"
+    assert track.audio_gcs_path == body["gcs_path"]
+    assert track.analysis_status == "pending"
+
+
+def test_upload_init_file_skips_source_url_dedup(client: TestClient) -> None:
+    """File uploads must NOT consult the 24h source_url dedup query.
+
+    Two unrelated tracks the admin happens to name "Again.mp4" must produce two
+    distinct DB rows. The extension flow dedups by source_url because it has a
+    canonical YouTube URL identity; direct uploads do not. Empirically verify
+    the route never executes a SELECT against MusicTrack (the dedup query in
+    /upload-init is the only SELECT in either init handler).
+    """
+    session = _make_db_mock(existing_track_for_dedup=None)
+    _override_db(session)
+
+    fake_blob = MagicMock()
+    fake_blob.generate_signed_url.return_value = "https://storage.googleapis.com/signed-file-put"
+    fake_bucket = MagicMock()
+    fake_bucket.blob.return_value = fake_blob
+    fake_client = MagicMock()
+    fake_client.bucket.return_value = fake_bucket
+
+    try:
+        with patch("app.storage._get_client", return_value=fake_client):
+            resp = client.post(
+                "/admin/music-tracks/upload-init-file",
+                json={
+                    "filename": "Again.mp4",
+                    "ext": ".mp4",
+                    "byte_count": 8_000_000,
+                },
+                headers=admin_headers(),
+            )
+    finally:
+        _clear_db_override()
+
+    assert resp.status_code == 201, resp.text
+    # No SELECT was issued — the dedup path is genuinely bypassed.
+    session.execute.assert_not_called()
+
+
+def test_upload_init_file_defaults_title_to_filename_when_missing(
+    client: TestClient,
+) -> None:
+    session = _make_db_mock(existing_track_for_dedup=None)
+    _override_db(session)
+
+    fake_blob = MagicMock()
+    fake_blob.generate_signed_url.return_value = "https://storage.googleapis.com/signed"
+    fake_bucket = MagicMock()
+    fake_bucket.blob.return_value = fake_blob
+    fake_client = MagicMock()
+    fake_client.bucket.return_value = fake_bucket
+
+    try:
+        with patch("app.storage._get_client", return_value=fake_client):
+            resp = client.post(
+                "/admin/music-tracks/upload-init-file",
+                json={
+                    "filename": "Some Random Clip.m4a",
+                    "ext": ".m4a",
+                    "byte_count": 4_000_000,
+                },
+                headers=admin_headers(),
+            )
+    finally:
+        _clear_db_override()
+
+    assert resp.status_code == 201, resp.text
+    track = session.add.call_args.args[0]
+    # Title fell back to filename rather than "Track <8-hex>" because the
+    # filename carries more user signal than a random UUID prefix.
+    assert track.title == "Some Random Clip.m4a"
+    assert track.artist == ""

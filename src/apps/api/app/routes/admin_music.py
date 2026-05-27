@@ -1,7 +1,8 @@
 """Admin endpoints for managing music tracks.
 
 POST   /admin/music-tracks                  — add track from YouTube/SoundCloud URL
-POST   /admin/music-tracks/upload           — add track from direct audio file upload
+POST   /admin/music-tracks/upload           — DEPRECATED: multipart upload (Vercel 4.5MB cap)
+POST   /admin/music-tracks/upload-init-file — signed-URL bypass for SPA direct-file upload
 POST   /admin/music-tracks/templated        — create templated track (typed-slot recipe)
 GET    /admin/music-tracks                  — list all tracks (including unpublished)
 GET    /admin/music-tracks/{id}             — full track detail + beat count
@@ -712,6 +713,114 @@ async def browser_upload_init(
         "music_track_browser_init",
         track_id=track_id,
         source_url=req.source_url,
+        ext=req.ext,
+        byte_count=req.byte_count,
+    )
+    return BrowserUploadInitResponse(
+        track_id=track_id,
+        upload_url=upload_url,
+        gcs_path=gcs_path,
+        content_type=content_type,
+        expires_in_s=int(_BROWSER_AUDIO_PUT_TTL.total_seconds()),
+    )
+
+
+class FileUploadInitRequest(BaseModel):
+    """Mint a signed PUT URL for the admin SPA's "Upload file" form.
+
+    The legacy multipart POST /admin/music-tracks/upload routes the entire blob
+    through the Next.js admin proxy on Vercel, which caps function bodies at
+    4.5 MB and silently 413s above that. This endpoint mirrors the extension's
+    /upload-init flow but skips the YouTube/SoundCloud URL validation and the
+    24h source_url dedup — the SPA flow has no canonical "source URL" to dedup
+    on and direct uploads have always produced fresh rows.
+    """
+
+    filename: str
+    title: str | None = None
+    artist: str | None = None
+    ext: str
+    byte_count: int
+
+    @field_validator("filename")
+    @classmethod
+    def validate_filename(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("filename cannot be empty")
+        # The value is persisted as `source_url = upload://{filename}` AND surfaced
+        # as the track's default title in the admin UI. Reject:
+        #  • slashes/backslashes — path-traversal in provenance
+        #  • C0 controls (incl. \0, \n, \r, \t) — break log + UI rendering and
+        #    enable log-line injection in any consumer that doesn't structure-log
+        if "/" in v or "\\" in v:
+            raise ValueError("filename must not contain slashes")
+        if any(ord(c) < 0x20 or ord(c) == 0x7F for c in v):
+            raise ValueError("filename must not contain control characters")
+        return v
+
+    @field_validator("ext")
+    @classmethod
+    def validate_ext(cls, v: str) -> str:
+        v = v.lower().strip()
+        if not v.startswith("."):
+            v = "." + v
+        if v not in _BROWSER_AUDIO_EXT_ALLOWLIST:
+            allowed = ", ".join(sorted(_BROWSER_AUDIO_EXT_ALLOWLIST))
+            raise ValueError(f"Unsupported audio extension: {v}. Allowed: {allowed}")
+        return v
+
+    @field_validator("byte_count")
+    @classmethod
+    def validate_byte_count(cls, v: int) -> int:
+        if v < _BROWSER_AUDIO_MIN_BYTES:
+            raise ValueError(
+                f"byte_count too small ({v}). Audio blob must be at least "
+                f"{_BROWSER_AUDIO_MIN_BYTES} bytes."
+            )
+        if v > _BROWSER_AUDIO_MAX_BYTES:
+            raise ValueError(
+                f"byte_count exceeds limit ({v} > {_BROWSER_AUDIO_MAX_BYTES} bytes / 100 MB)."
+            )
+        return v
+
+
+@router.post(
+    "/upload-init-file",
+    response_model=BrowserUploadInitResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_admin)],
+)
+async def file_upload_init(
+    req: FileUploadInitRequest,
+    db: AsyncSession = Depends(get_db),
+) -> BrowserUploadInitResponse:
+    """Phase 1 of admin-SPA direct-file upload: pending row + signed PUT URL.
+
+    The SPA PUTs the blob straight to GCS using the returned signed URL, then
+    calls /admin/music-tracks/{id}/upload-confirm to verify + dispatch Celery
+    (reusing the existing extension confirm handler).
+    """
+    track_id = str(uuid.uuid4())
+    gcs_path = f"music/{track_id}/audio{req.ext}"
+    content_type = _BROWSER_AUDIO_EXT_TO_CONTENT_TYPE[req.ext]
+    upload_url = _sign_track_audio_put(gcs_path, content_type)
+
+    track = MusicTrack(
+        id=track_id,
+        title=(req.title or "").strip() or req.filename or f"Track {track_id[:8]}",
+        artist=(req.artist or "").strip(),
+        source_url=f"upload://{req.filename}",
+        audio_gcs_path=gcs_path,
+        analysis_status="pending",
+    )
+    db.add(track)
+    await db.commit()
+
+    log.info(
+        "music_track_file_init",
+        track_id=track_id,
+        filename=req.filename,
         ext=req.ext,
         byte_count=req.byte_count,
     )

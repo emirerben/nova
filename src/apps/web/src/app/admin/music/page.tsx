@@ -108,8 +108,18 @@ export default function AdminMusicPage() {
     try {
       if (addMode === "upload") {
         if (!file) return;
-        await adminUploadMusicTrack(file, title || undefined, artist || undefined);
+        setExtProgress({ stage: "uploading", percent: 0 });
+        await adminUploadMusicTrack(
+          file,
+          title || undefined,
+          artist || undefined,
+          // Reuse the extension flow's 3-stage progress UI so the admin never
+          // sees a single spinner — uploads of ~10 MB on slow uplinks otherwise
+          // look like the browser hung.
+          (p) => setExtProgress(p),
+        );
         setFile(null);
+        setExtProgress(null);
       } else {
         await adminCreateMusicTrack(url, title || undefined, artist || undefined);
         setUrl("");
@@ -117,8 +127,18 @@ export default function AdminMusicPage() {
       setTitle("");
       setArtist("");
       await loadTracks();
-    } catch (e: unknown) {
-      setCreateError(e instanceof Error ? e.message : "Failed to create track");
+    } catch (err: unknown) {
+      // Fallback chain: prefer Error.message, then a generic message. The
+      // previous fetch wrapper used `?? "Failed..."` which let an empty string
+      // through (HTTP/2 + Vercel 413 returns "" statusText) so the red error
+      // box rendered "" — falsy — and the user saw "no reaction". Keeping the
+      // guard here belt-and-suspenders so any future blank-message error still
+      // surfaces something.
+      const raw = err instanceof Error ? err.message : "";
+      setCreateError(raw || "Failed to create track");
+      if (addMode === "upload") {
+        setExtProgress({ stage: "failed", detail: raw || "Upload failed" });
+      }
     } finally {
       setCreating(false);
     }
@@ -165,7 +185,7 @@ export default function AdminMusicPage() {
             <div>
               <input
                 type="file"
-                accept=".m4a,.mp3,.wav,.ogg,.aac,.mp4,audio/*"
+                accept=".m4a,.mp3,.wav,.ogg,.aac,.mp4,.webm,.opus,audio/*"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 className="w-full text-sm text-zinc-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-zinc-700 file:text-zinc-200 file:font-semibold file:text-sm hover:file:bg-zinc-600 file:cursor-pointer file:transition-colors"
               />
@@ -252,13 +272,22 @@ export default function AdminMusicPage() {
             )}
           </div>
 
-          {/* 3-stage progress UI for the extension flow. NEVER a single spinner —
-              admins need to see whether we're pulling from YouTube (their IP),
-              uploading bytes to Nova, or waiting on Celery. Conflating those into
-              "Processing..." has historically caused tab-close panic. */}
+          {/* 3-stage progress UI. NEVER a single spinner — admins need to see
+              whether bytes are leaving their machine, landing on our GCS, or
+              waiting on Celery. Conflating those into "Processing..." has
+              historically caused tab-close panic. The extension flow starts at
+              "extracting" (YouTube pull); the direct-file flow starts at
+              "uploading" (bytes already on disk locally). */}
           {extProgress && (
             <div className="mt-3 bg-zinc-800/60 border border-zinc-700 rounded-lg p-3 text-xs">
-              <ExtensionProgressBar progress={extProgress} />
+              <ExtensionProgressBar
+                progress={extProgress}
+                stages={
+                  addMode === "upload"
+                    ? FILE_UPLOAD_STAGES
+                    : EXTENSION_INGEST_STAGES
+                }
+              />
             </div>
           )}
         </form>
@@ -355,20 +384,38 @@ const STAGE_LABELS: Record<IngestProgress["stage"], string> = {
   failed: "Failed",
 };
 
-const STAGE_ORDER: IngestProgress["stage"][] = [
+// Extension ingest: browser pulls from googlevideo → uploads to our GCS →
+// Celery analyses. Three stages so the admin sees which leg is in flight.
+const EXTENSION_INGEST_STAGES: IngestProgress["stage"][] = [
   "extracting",
   "uploading",
   "analyzing",
 ];
 
-function ExtensionProgressBar({ progress }: { progress: IngestProgress }) {
-  const currentIdx = STAGE_ORDER.indexOf(progress.stage);
+// Direct file upload: bytes already on the admin's disk, so there's no
+// "extracting" leg. The "confirming" leg (GCS HEAD + ffprobe on the server) is
+// surfaced explicitly because it can briefly stall on cold Celery before
+// "analyzing" starts.
+const FILE_UPLOAD_STAGES: IngestProgress["stage"][] = [
+  "uploading",
+  "confirming",
+  "analyzing",
+];
+
+function ExtensionProgressBar({
+  progress,
+  stages = EXTENSION_INGEST_STAGES,
+}: {
+  progress: IngestProgress;
+  stages?: IngestProgress["stage"][];
+}) {
+  const currentIdx = stages.indexOf(progress.stage);
   const isFailed = progress.stage === "failed";
   const isReady = progress.stage === "ready";
   return (
     <div>
       <div className="flex items-center gap-2 font-mono">
-        {STAGE_ORDER.map((stage, i) => {
+        {stages.map((stage, i) => {
           const done = isReady || (currentIdx > i && !isFailed);
           const active = currentIdx === i && !isFailed && !isReady;
           const cls = isFailed
@@ -386,7 +433,7 @@ function ExtensionProgressBar({ progress }: { progress: IngestProgress }) {
                   ? ` (${Math.round(progress.percent * 100)}%)`
                   : ""}
               </span>
-              {i < STAGE_ORDER.length - 1 && (
+              {i < stages.length - 1 && (
                 <span className="text-zinc-600">→</span>
               )}
             </div>
