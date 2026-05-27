@@ -184,6 +184,9 @@ def _track_with_lines(line_starts: list[float], **overrides):
     """
     track = _track(**overrides)
     track.lyrics_cached = {
+        # Injector requires a publishable source after 2026-05-27 — see
+        # `_INJECTOR_ALLOWED_SOURCES` in app/pipeline/lyric_injector.py.
+        "source": "lrclib_synced+whisper",
         "lines": [
             {
                 "text": f"line {idx}",
@@ -194,7 +197,7 @@ def _track_with_lines(line_starts: list[float], **overrides):
                 ],
             }
             for idx, start in enumerate(line_starts)
-        ]
+        ],
     }
     return track
 
@@ -420,10 +423,12 @@ def test_preview_window_section_anchored_with_pre_section_overlap() -> None:
         track_config={"best_start_s": 127.2, "best_end_s": 141.0},
     )
     track.lyrics_cached = {
+        # Source required by injector's Layer-2 gate (added 2026-05-27).
+        "source": "lrclib_synced+whisper",
         "lines": [
             {"text": "intro", "start_s": 126.9, "end_s": 129.0},
             {"text": "more", "start_s": 130.0, "end_s": 131.0},
-        ]
+        ],
     }
     start_s, duration_s = _resolve_preview_window(track)
     assert start_s == 127.2  # clamped to section start, NOT 124.9
