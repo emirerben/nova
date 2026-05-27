@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+import structlog
 from pydantic import BaseModel, Field
 
 from app.agents._runtime import Agent, AgentSpec, TerminalError
@@ -48,6 +49,8 @@ from app.services.whisper_lyrics import (
     WhisperLyricsResult,
     transcribe_for_lyrics,
 )
+
+log = structlog.get_logger()
 
 # ── I/O schema ────────────────────────────────────────────────────────────────
 
@@ -74,6 +77,14 @@ class LyricsInput(BaseModel):
     # at extraction time, which helps when debugging timing mismatches).
     best_start_s: float = 0.0
     best_end_s: float = 0.0
+    # Full-track duration in seconds. Passed to LRCLIB as the `duration` query
+    # param so its `/api/get` only returns a row whose recording length matches
+    # the uploaded audio (±2s tolerance). Songs with multiple recordings
+    # (original vs remix, radio edit vs extended) share title+artist; without
+    # this hint LRCLIB happily returns a different recording's syncedLyrics
+    # and the line-anchored alignment writes wrong absolute timestamps. 0.0
+    # disables duration disambiguation.
+    duration_s: float = 0.0
     language: str | None = None  # ISO 639-1; None → Whisper auto-detect
 
 
@@ -141,6 +152,15 @@ _WHISPER_PROMPT_MAX_WORDS = 50
 # the truncation point predictable when reading agent logs.
 _WHISPER_PROMPT_MAX_CHARS = 800
 
+# Below this fraction of canonical-word matches, the LRCLIB synced anchors
+# are almost certainly for a different recording than the uploaded audio.
+# `align_with_line_anchors.confidence` is `matched_words / total_words`; a
+# correct recording typically scores >0.7 (Strategy 1 fast path or Strategy
+# 2 fuzzy match). A wrong recording scores ~0.0 (Strategy 3 across every
+# window — no Whisper words fall in any LRCLIB-defined window). 0.20 is a
+# wide safety margin; even rough alignment on a noisy track stays above it.
+_SYNCED_CONFIDENCE_MIN = 0.20
+
 
 class LyricsExtractionAgent(Agent[LyricsInput, LyricsOutput]):
     """Extract aligned lyrics for a music track. Rule-based (no LLM call).
@@ -155,7 +175,9 @@ class LyricsExtractionAgent(Agent[LyricsInput, LyricsOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.audio.lyrics",
         prompt_id="extract_lyrics",  # nominal — no template loaded
-        prompt_version="2026-05-20",  # bump on LRCLIB swap
+        # 2026-05-27: pass duration to LRCLIB + confidence-based fallback
+        # when synced anchors mismatch the actual recording (Hawai bug).
+        prompt_version="2026-05-27",
         model="rule_based",
         # LRCLIB + Whisper each have their own retry/timeout policy. The
         # agent runtime's retry loop doesn't apply to rule_based agents.
@@ -185,12 +207,27 @@ class LyricsExtractionAgent(Agent[LyricsInput, LyricsOutput]):
             this and persists `lyrics_status="unavailable"`.
           - Whisper miss → TerminalError (without timing, there's no usable
             output; the caller marks lyrics_status='failed' and continues).
+
+        Synced-anchor health check (the "Hawai" defense, 2026-05-27):
+            When LRCLIB returns syncedLyrics from a DIFFERENT recording of
+            the same song (no duration disambiguation possible, or duration
+            unknown), the anchored alignment will run almost every line
+            through Strategy 3 (linear interpolation across the LRCLIB
+            window) because no Whisper words fall inside any anchor's
+            window. That produces a confidence ≈ 0.0 result with timestamps
+            that are wildly wrong. We detect this post-alignment and fall
+            back to plain_lyrics+whisper (or whisper_only) where Whisper's
+            timings, not LRCLIB's anchors, drive the line bounds.
         """
         clean_title, clean_artist = build_lyrics_search_query(input.track_title, input.artist)
 
         lrclib_lyrics: LrclibLyrics | None = None
         try:
-            lrclib_lyrics = search_lrclib(clean_title, clean_artist)
+            lrclib_lyrics = search_lrclib(
+                clean_title,
+                clean_artist,
+                duration_s=input.duration_s or None,
+            )
         except LrclibNotFound:
             # Expected for obscure tracks — proceed with Whisper-only.
             lrclib_lyrics = None
@@ -223,7 +260,34 @@ class LyricsExtractionAgent(Agent[LyricsInput, LyricsOutput]):
             )
 
         if lrclib_lyrics is not None and lrclib_lyrics.synced_lines:
-            return _build_lrclib_synced_plus_whisper(lrclib_lyrics, whisper_result)
+            synced_output = _build_lrclib_synced_plus_whisper(lrclib_lyrics, whisper_result)
+            # Kill switch: when disabled, always trust the synced anchors
+            # regardless of confidence (pre-2026-05-27 behavior). Reserved
+            # for emergency rollback if the 0.20 threshold demotes too many
+            # legitimate extractions in prod. See settings docstring.
+            from app.config import settings as _app_settings  # noqa: PLC0415
+
+            fallback_enabled = getattr(_app_settings, "lyric_synced_anchor_fallback_enabled", True)
+            if not fallback_enabled or synced_output.confidence >= _SYNCED_CONFIDENCE_MIN:
+                return synced_output
+            # Synced anchors look like a different recording's. Fall through
+            # to the plain-text path so Whisper's timestamps win. This is
+            # the layer-2 safety net behind LRCLIB's `duration` disambiguation
+            # — covers tracks where LRCLIB has no duration metadata or
+            # duration matched ±2s but the recording is still different.
+            log.info(
+                "lyrics_synced_anchor_low_confidence_fallback",
+                confidence=synced_output.confidence,
+                threshold=_SYNCED_CONFIDENCE_MIN,
+                lrclib_id=lrclib_lyrics.lrclib_id,
+                track_title=input.track_title,
+                artist=input.artist,
+                duration_s=input.duration_s,
+                has_plain_lines=bool(lrclib_lyrics.plain_lines),
+            )
+            if lrclib_lyrics.plain_lines:
+                return _build_lrclib_plain_plus_whisper(lrclib_lyrics, whisper_result)
+            return _build_whisper_only(whisper_result)
         if lrclib_lyrics is not None and lrclib_lyrics.plain_lines:
             return _build_lrclib_plain_plus_whisper(lrclib_lyrics, whisper_result)
         return _build_whisper_only(whisper_result)

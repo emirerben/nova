@@ -234,6 +234,7 @@ def analyze_music_track_task(self, track_id: str) -> None:
                 track_id,
                 best_start_s=0.0,
                 best_end_s=float(duration_s or 0.0),
+                duration_s=float(duration_s or 0.0),
             )
             # `_run_lyrics_extraction` is documented to never raise + always
             # return a status dict, but tests mock it to return None and
@@ -312,9 +313,7 @@ def analyze_music_track_task(self, track_id: str) -> None:
                     # auto_best_section window we computed before.
                     best_start = float(new_config["best_start_s"])
                     best_end = float(new_config["best_end_s"])
-                    n_slots = max(
-                        1, int(new_config.get("required_clips_max", n_slots))
-                    )
+                    n_slots = max(1, int(new_config.get("required_clips_max", n_slots)))
                     # Templated music jobs render `recipe_cached` verbatim
                     # (see _run_templated_music_job). If we don't refresh
                     # it against the new bounds, those jobs keep using the
@@ -449,6 +448,7 @@ def extract_track_lyrics_task(self, track_id: str) -> None:
             return
         audio_gcs = track.audio_gcs_path
         cfg = track.track_config or {}
+        track_duration_s = float(track.duration_s or 0.0)
         track.lyrics_status = "extracting"
         track.lyrics_error_detail = None
         db.commit()
@@ -462,6 +462,7 @@ def extract_track_lyrics_task(self, track_id: str) -> None:
                 track_id,
                 best_start_s=float(cfg.get("best_start_s", 0.0)),
                 best_end_s=float(cfg.get("best_end_s", 0.0)),
+                duration_s=track_duration_s,
             )
         with _sync_session() as db:
             track = db.get(MusicTrack, track_id)
@@ -828,6 +829,7 @@ def _run_lyrics_extraction(
     *,
     best_start_s: float,
     best_end_s: float,
+    duration_s: float = 0.0,
 ) -> dict:
     """Call LyricsExtractionAgent and return a status-tagged result.
 
@@ -873,6 +875,7 @@ def _run_lyrics_extraction(
                 artist=artist,
                 best_start_s=float(best_start_s or 0.0),
                 best_end_s=float(best_end_s or 0.0),
+                duration_s=float(duration_s or 0.0),
             ),
             ctx=RunContext(job_id=f"track:{track_id}"),
         )

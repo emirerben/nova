@@ -160,6 +160,23 @@ class Settings(BaseSettings):
     # pass — they don't carry the `section_anchor_s` stamp.
     lyric_word_resync_enabled: bool = True
 
+    # Synced-anchor health check for the lyrics agent
+    # (`app.agents.lyrics.LyricsExtractionAgent.compute`). When True (default),
+    # if `align_with_line_anchors` returns confidence < 0.20, the agent
+    # treats the LRCLIB syncedLyrics as being from a different recording of
+    # the same song and falls back to plain_lyrics+whisper (or whisper_only)
+    # so Whisper's timestamps drive the line bounds. Pairs with the
+    # `duration` query param on `search_lrclib` as a two-layer defense
+    # against the "Hawai" version-mismatch bug (synced anchors at 4.59s,
+    # actual audio at 22s). Flip to False on Fly
+    # (`fly secrets set LYRIC_SYNCED_ANCHOR_FALLBACK_ENABLED=false
+    # --app nova-video` then restart workers) for emergency rollback if the
+    # threshold turns out to be too aggressive in prod and starts demoting
+    # legitimate synced extractions to plain+whisper. Read once per
+    # extraction inside `compute()`. Existing cached extractions are not
+    # touched by either value.
+    lyric_synced_anchor_fallback_enabled: bool = True
+
     # Universal text-overlay constraint pass. When True (default), every
     # overlay collected by `_collect_absolute_overlays` (agentic templates +
     # music lyrics + generative edits — NOT classic templates, which never

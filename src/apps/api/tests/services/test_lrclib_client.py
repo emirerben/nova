@@ -66,6 +66,71 @@ def test_happy_path_with_synced_lyrics(mock_client_cls: MagicMock) -> None:
 
 
 @patch("app.services.lrclib_client.httpx.Client")
+def test_search_lrclib_passes_duration_when_supplied(mock_client_cls: MagicMock) -> None:
+    """LRCLIB `/api/get` accepts a `duration` (integer seconds, ±2s tolerance)
+    that disambiguates between recordings of the same song (radio edit vs.
+    remix vs. extended). Without it, LRCLIB returns whatever row matches
+    title+artist first — its syncedLyrics line anchors then come from the
+    wrong recording and the line-anchored alignment writes wildly wrong
+    timestamps (the "Hawai" bug). When duration_s is supplied, it must
+    appear in the outgoing query as `duration=<int>` (no millis, no float).
+    """
+    body = {
+        "id": 1,
+        "trackName": "Hawai",
+        "artistName": "Maluma",
+        "instrumental": False,
+        "plainLyrics": "x",
+        "syncedLyrics": "[00:01.00]x",
+    }
+    client = MagicMock()
+    client.get.return_value = _resp(200, body)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    search_lrclib("Hawai", "Maluma", duration_s=211.6)
+
+    # Inspect what was actually sent to LRCLIB.
+    args, kwargs = client.get.call_args
+    sent_params = kwargs.get("params") if "params" in kwargs else args[1]
+    assert sent_params["duration"] == "212", (
+        f"duration must round to nearest int, got {sent_params.get('duration')!r}"
+    )
+    assert sent_params["track_name"] == "Hawai"
+    assert sent_params["artist_name"] == "Maluma"
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_search_lrclib_omits_duration_when_zero_or_none(mock_client_cls: MagicMock) -> None:
+    """`duration` param must NOT be sent when caller passes None or 0 —
+    that's the legacy "unknown duration" path. Sending `duration=0` would
+    cause LRCLIB to filter for ~instant tracks and 404 everything."""
+    body = {
+        "id": 1,
+        "trackName": "X",
+        "artistName": "Y",
+        "instrumental": False,
+        "plainLyrics": "x",
+        "syncedLyrics": None,
+    }
+    client = MagicMock()
+    client.get.return_value = _resp(200, body)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    # No duration arg → no duration param.
+    search_lrclib("X", "Y")
+    args, kwargs = client.get.call_args
+    sent_params = kwargs.get("params") if "params" in kwargs else args[1]
+    assert "duration" not in sent_params
+
+    # duration_s=0 → also no duration param (None and 0 are both "unknown").
+    client.get.reset_mock()
+    search_lrclib("X", "Y", duration_s=0.0)
+    args, kwargs = client.get.call_args
+    sent_params = kwargs.get("params") if "params" in kwargs else args[1]
+    assert "duration" not in sent_params
+
+
+@patch("app.services.lrclib_client.httpx.Client")
 def test_happy_path_with_plain_lyrics_only(mock_client_cls: MagicMock) -> None:
     body = {
         "id": 1,
