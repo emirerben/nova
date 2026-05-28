@@ -210,6 +210,10 @@ def analyze_music_track_task(self, track_id: str) -> None:
 
         track.analysis_status = "analyzing"
         track.error_detail = None
+        # Cleared at the start of every run so a successful re-analyze cannot
+        # leave a stale reason from a prior silent-fail attempt. _run_song_sections
+        # repopulates this on the broad-Exception branch (best-effort fail-open).
+        track.section_error_detail = None
         db.commit()
 
     try:
@@ -283,8 +287,16 @@ def analyze_music_track_task(self, track_id: str) -> None:
             recipe_cached = None
             ai_labels_dict: dict | None = None
             sections_dict: dict | None = None
+            # Populated by _run_song_sections' broad-Exception branch only;
+            # see its docstring for the (None, str) vs (None, None) contract.
+            sections_error: str | None = None
             if gemini_upload_and_wait is not None and analyze_audio_template is not None:
-                recipe_cached, ai_labels_dict, sections_dict = _run_gemini_audio_analysis(
+                (
+                    recipe_cached,
+                    ai_labels_dict,
+                    sections_dict,
+                    sections_error,
+                ) = _run_gemini_audio_analysis(
                     local_audio,
                     beats,
                     new_config,
@@ -361,6 +373,12 @@ def analyze_music_track_task(self, track_id: str) -> None:
                     # re-runs. See app/agents/_schemas/song_sections.py.
                     track.best_sections = sections_dict.get("sections")
                     track.section_version = sections_dict.get("section_version") or None
+                elif sections_error is not None:
+                    # Silent-fail branch: persist the truncated reason so admin
+                    # can see WHY song_sections returned None for this track
+                    # (was already cleared above when analyze started, so a
+                    # success-path on a re-analyze cannot leave stale text).
+                    track.section_error_detail = sections_error[:MAX_ERROR_DETAIL_LEN]
                 track.analysis_status = "ready"
                 db.commit()
 
@@ -1034,16 +1052,22 @@ def _run_gemini_audio_analysis(
     track_config: dict,
     duration_s: float,
     track_id: str,
-) -> tuple[dict | None, dict | None, dict | None]:
+) -> tuple[dict | None, dict | None, dict | None, str | None]:
     """Upload audio to Gemini, run structural analysis + song classifier + song sections.
 
-    Returns ``(recipe_cached, ai_labels, best_sections)``. Each side can
-    be ``None`` independently — a Gemini-recipe failure does not block
-    label generation, a classifier failure does not block recipe
-    caching. A song_sections refusal (all proposed sections invalid)
+    Returns ``(recipe_cached, ai_labels, best_sections, sections_error)``.
+    Each result side can be ``None`` independently — a Gemini-recipe failure
+    does not block label generation, a classifier failure does not block
+    recipe caching. A song_sections refusal (all proposed sections invalid)
     propagates so the track is visibly failed instead of carrying no
-    usable current-version section. Other Gemini failures still fall
-    back to a beat-only recipe where possible.
+    usable current-version section. Other Gemini failures still fall back
+    to a beat-only recipe where possible.
+
+    ``sections_error`` is the truthful reason ``_run_song_sections`` returned
+    ``None`` on its broad-Exception branch (or ``None`` when the agent
+    succeeded, was skipped for duration ≤ 0, or never ran because the
+    outer Gemini upload itself failed — those cases aren't actionable
+    "song_sections failed because X" signals).
     """
     try:
         log.info("gemini_audio_analysis_start", track_id=track_id)
@@ -1074,7 +1098,9 @@ def _run_gemini_audio_analysis(
         # Phase 2 (auto-music, library side): pick top-3 edit-worthy
         # sections. Reuses the same file_ref — no second Gemini upload.
         # Best-effort: matcher's NULL-section filter handles failure.
-        sections = _run_song_sections(file_ref, gemini_recipe, beats, duration_s, track_id)
+        sections, sections_error = _run_song_sections(
+            file_ref, gemini_recipe, beats, duration_s, track_id
+        )
 
         log.info(
             "gemini_audio_analysis_done",
@@ -1084,7 +1110,7 @@ def _run_gemini_audio_analysis(
             has_ai_labels=ai_labels is not None,
             has_best_sections=sections is not None,
         )
-        return merged, ai_labels, sections
+        return merged, ai_labels, sections, sections_error
 
     except RefusalError:
         log.warning(
@@ -1101,15 +1127,19 @@ def _run_gemini_audio_analysis(
         )
         # Return beat-only recipe as fallback. Labels and sections
         # can't be produced without the file_ref, so they stay None.
+        # sections_error stays None here — the failure happened before
+        # song_sections could be attempted, so "song_sections failed"
+        # would be misleading; the outer log line above carries the
+        # actual upload/analyze error.
         try:
             track_data = {
                 "beat_timestamps_s": beats,
                 "track_config": track_config,
                 "duration_s": duration_s,
             }
-            return generate_music_recipe(track_data), None, None
+            return generate_music_recipe(track_data), None, None, None
         except Exception:
-            return None, None, None
+            return None, None, None, None
 
 
 def _run_song_sections(
@@ -1118,19 +1148,26 @@ def _run_song_sections(
     beats: list[float],
     duration_s: float,
     track_id: str,
-) -> dict | None:
+) -> tuple[dict | None, str | None]:
     """Best-effort: pick top-3 edit-worthy sections.
 
-    Ordinary failures are logged and return ``None``; the matcher will
-    treat the track as unsectioned until backfill reruns. RefusalError
-    means every proposed section violated the hard constraints, so it
-    propagates and analyze_music_track_task marks the track failed.
+    Returns ``(sections_dict, error_message)``:
+      - ``(dict, None)`` on success — caller writes sections to the track.
+      - ``(None, str)`` on a non-Refusal Exception — caller persists the
+        message to ``MusicTrack.section_error_detail`` so admin can see
+        WHY this track ended up unsectioned without grepping worker logs.
+      - ``(None, None)`` when skipped because ``duration_s ≤ 0`` (a track
+        with no known duration isn't actionable, so "agent failed" would
+        be misleading text on the row).
+
+    ``RefusalError`` (every proposed section violated the hard constraints)
+    still propagates and ``analyze_music_track_task`` marks the track failed.
     """
     if duration_s <= 0.0:
         # SongSectionsInput requires duration_s > 0. A track with no
         # known duration cannot be sectioned — skip silently.
         log.debug("song_sections_skip_no_duration", track_id=track_id)
-        return None
+        return None, None
     try:
         from app.agents._model_client import default_client  # noqa: PLC0415
         from app.agents._runtime import RunContext  # noqa: PLC0415
@@ -1155,7 +1192,7 @@ def _run_song_sections(
             section_count=len(out.sections),
             ranks=[s.rank for s in out.sections],
         )
-        return out.to_dict()
+        return out.to_dict(), None
     except RefusalError as exc:
         log.warning(
             "song_sections_refused",
@@ -1169,7 +1206,7 @@ def _run_song_sections(
             track_id=track_id,
             error=str(exc),
         )
-        return None
+        return None, str(exc)
 
 
 def _run_song_classifier(

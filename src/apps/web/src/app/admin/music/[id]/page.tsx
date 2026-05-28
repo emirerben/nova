@@ -509,10 +509,26 @@ function ConfigTabContent({
             onEndChange={(s) => setBestEnd(s.toString())}
           />
           {(!track.best_sections || track.best_sections.length === 0) && (
-            <p className="text-xs text-zinc-500 mt-3 italic">
-              The agent has not picked any sections for this track yet. Click <span className="text-zinc-300">Re-analyze beats</span>{" "}
-              below — section analysis runs as part of the same task.
-            </p>
+            <>
+              <p className="text-xs text-zinc-500 mt-3 italic">
+                The agent has not picked any sections for this track yet. Click <span className="text-zinc-300">Re-analyze beats</span>{" "}
+                below — section analysis runs as part of the same task.
+              </p>
+              {/* When _run_song_sections caught a non-Refusal Exception on its
+                  last attempt for this track, surface the truncated reason so
+                  the operator can see WHY (Gemini transport, malformed JSON,
+                  schema drift) before re-analyzing blindly. Cleared as soon
+                  as the next analyze starts; NULL means "agent has not run"
+                  rather than "agent ran clean." */}
+              {track.section_error_detail && (
+                <div className="mt-3">
+                  <p className="text-xs text-zinc-500 mb-1">Last attempt failed:</p>
+                  <pre className="text-xs font-mono text-zinc-500 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 whitespace-pre-wrap break-words">
+                    {track.section_error_detail}
+                  </pre>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

@@ -188,8 +188,14 @@ class MusicTrackResponse(BaseModel):
     # Output of the song_sections agent — 1-3 ranked edit-worthy windows.
     # `section_version` mirrors CURRENT_SECTION_VERSION so the admin UI can
     # spot stale rows scored under an older prompt version at a glance.
+    # `section_error_detail` carries the last reason _run_song_sections
+    # returned None on the broad-Exception branch (best-effort fail-open).
+    # Cleared at the start of every analyze run; populated truncated to
+    # MAX_ERROR_DETAIL_LEN. NULL when sections are populated OR when the
+    # agent has not run yet.
     best_sections: list[SongSection] | None
     section_version: str | None
+    section_error_detail: str | None
     # Song-classifier coverage. `label_version` mirrors CURRENT_LABEL_VERSION;
     # `has_ai_labels` is true when the classifier blob is present at all.
     # `generative_matchable` is the at-a-glance "can generative auto-pick this
@@ -352,6 +358,7 @@ def _to_response(t: MusicTrack) -> MusicTrackResponse:
         lyrics_extracted_at=t.lyrics_extracted_at,
         best_sections=coerced_sections,
         section_version=t.section_version,
+        section_error_detail=t.section_error_detail,
         label_version=t.label_version,
         has_ai_labels=t.ai_labels is not None,
         generative_matchable=_compute_generative_matchable(t),
@@ -1752,6 +1759,12 @@ async def reanalyze_music_track(
 
     track.analysis_status = "queued"
     track.error_detail = None
+    # Clear per-agent error blobs at dispatch time so the admin UI does NOT
+    # display a stale reason while the worker is mid-flight. The analyze task
+    # also clears section_error_detail when it begins, but doing it here too
+    # is the user-visible signal: clicking "Re-analyze beats" should hide
+    # the failure text immediately, not wait for the worker to wake up.
+    track.section_error_detail = None
     await db.commit()
 
     from app.tasks.music_orchestrate import analyze_music_track_task  # noqa: PLC0415

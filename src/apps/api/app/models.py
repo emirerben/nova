@@ -294,6 +294,12 @@ class MusicTrack(Base):
     # Mirrors CURRENT_SECTION_VERSION so the matcher can refuse stale rows
     # without parsing the JSONB.
     section_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Last reason _run_song_sections returned None for this track (silent
+    # fail-open branch). NULL means "no failure since the last successful
+    # analyze." Populated truncated to MAX_ERROR_DETAIL_LEN; cleared at the
+    # start of every analyze_music_track_task run so a successful re-analyze
+    # cannot leave stale text on the row.
+    section_error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     __table_args__ = (

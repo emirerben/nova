@@ -365,8 +365,9 @@ def test_analyze_music_track_task_promotes_rank_one_to_track_config() -> None:
     # 240 beats every 0.5s across 120s — both windows have ample slots.
     mock_beats = [round(0.5 * i, 3) for i in range(1, 241)]
 
-    # _run_gemini_audio_analysis returns (recipe_cached, ai_labels, sections_dict).
-    # We control all three directly. recipe_cached starts as a 60s-window
+    # _run_gemini_audio_analysis returns
+    # (recipe_cached, ai_labels, sections_dict, sections_error).
+    # We control all four directly. recipe_cached starts as a 60s-window
     # merged recipe; the reconcile block should regenerate it for the new
     # rank-1 bounds.
     mock_recipe_cached = {
@@ -420,7 +421,7 @@ def test_analyze_music_track_task_promotes_rank_one_to_track_config() -> None:
         patch("app.tasks.music_orchestrate.auto_best_section", return_value=(5.0, 50.0)),
         patch(
             "app.tasks.music_orchestrate._run_gemini_audio_analysis",
-            return_value=(mock_recipe_cached, None, mock_sections_dict),
+            return_value=(mock_recipe_cached, None, mock_sections_dict, None),
         ),
         patch("app.tasks.music_orchestrate.gemini_upload_and_wait", new=MagicMock()),
         patch("app.tasks.music_orchestrate.analyze_audio_template", new=MagicMock()),
@@ -476,7 +477,7 @@ def test_analyze_music_track_task_keeps_legacy_when_no_sections() -> None:
         patch("app.tasks.music_orchestrate.auto_best_section", return_value=(5.0, 50.0)),
         patch(
             "app.tasks.music_orchestrate._run_gemini_audio_analysis",
-            return_value=(mock_recipe_cached, None, None),  # sections_dict=None
+            return_value=(mock_recipe_cached, None, None, None),  # sections_dict=None
         ),
         patch("app.tasks.music_orchestrate.gemini_upload_and_wait", new=MagicMock()),
         patch("app.tasks.music_orchestrate.analyze_audio_template", new=MagicMock()),
@@ -492,6 +493,11 @@ def test_analyze_music_track_task_keeps_legacy_when_no_sections() -> None:
     # Legacy auto_best_section bounds preserved when sections are missing.
     assert cfg["best_start_s"] == 5.0
     assert cfg["best_end_s"] == 50.0
+    # The (sections_dict=None, sections_error=None) skip branch must NOT
+    # write to section_error_detail — "agent skipped" is distinct from
+    # "agent failed", and the elif guard at the persistence step exists
+    # exactly to prevent the skip from leaving misleading text on the row.
+    assert mock_track.section_error_detail is None
 
 
 def test_analyze_music_track_task_gemini_failure_falls_back_to_beat_only() -> None:
@@ -1103,3 +1109,301 @@ def test_apply_lyrics_result_skipped_bypasses_version_gate() -> None:
     # `skipped` left a fresh row at `pending` because there was no prior
     # successful extraction to preserve.
     assert track.lyrics_status == "pending"
+
+
+# ── _run_song_sections return-shape contract ──────────────────────────────────
+#
+# These pin the (dict | None, str | None) tuple contract that
+# analyze_music_track_task relies on to populate vs clear
+# MusicTrack.section_error_detail. Drift here silently degrades the
+# admin observability: a returned-None on a real failure with no error
+# string puts the row back into the "no agent sections, no reason" state
+# the fix exists to eliminate.
+
+
+def test_run_song_sections_returns_dict_and_none_error_on_success() -> None:
+    from app.tasks.music_orchestrate import _run_song_sections
+
+    file_ref = MagicMock()
+    file_ref.uri = "gs://gemini/uploaded/abc"
+    file_ref.mime_type = "audio/mp4"
+
+    fake_output = MagicMock()
+    fake_output.sections = [MagicMock(rank=1)]
+    fake_output.to_dict.return_value = {
+        "sections": [{"rank": 1, "start_s": 30.0, "end_s": 48.0}],
+        "section_version": "2026-05-22",
+    }
+
+    with (
+        patch("app.agents.song_sections.SongSectionsAgent") as agent_cls,
+        patch("app.agents._model_client.default_client"),
+    ):
+        agent_cls.return_value.run.return_value = fake_output
+        sections, error = _run_song_sections(
+            file_ref=file_ref,
+            audio_template_output={},
+            beats=[0.5, 1.0, 1.5],
+            duration_s=180.0,
+            track_id=TRACK_ID,
+        )
+
+    assert error is None
+    assert sections is not None
+    assert sections["section_version"] == "2026-05-22"
+
+
+def test_run_song_sections_captures_exception_message_on_silent_fail() -> None:
+    """Non-Refusal Exception must NOT propagate — it must return
+    (None, str(exc)) so the caller can persist the reason to
+    MusicTrack.section_error_detail. This is the bug class the fix exists
+    to surface: without the error string, the admin UI shows
+    "no agent sections" with no clue why."""
+    from app.tasks.music_orchestrate import _run_song_sections
+
+    file_ref = MagicMock()
+    file_ref.uri = "gs://gemini/uploaded/abc"
+    file_ref.mime_type = "audio/mp4"
+
+    with (
+        patch("app.agents.song_sections.SongSectionsAgent") as agent_cls,
+        patch("app.agents._model_client.default_client"),
+    ):
+        agent_cls.return_value.run.side_effect = RuntimeError(
+            "song_sections: invalid JSON — Expecting value: line 1 column 1 (char 0)"
+        )
+        sections, error = _run_song_sections(
+            file_ref=file_ref,
+            audio_template_output={},
+            beats=[0.5, 1.0, 1.5],
+            duration_s=180.0,
+            track_id=TRACK_ID,
+        )
+
+    assert sections is None
+    assert error is not None
+    assert "invalid JSON" in error
+
+
+def test_run_song_sections_refusal_still_propagates() -> None:
+    """RefusalError means every proposed section violated hard constraints —
+    the task must visibly retry/fail rather than silently degrade. The
+    error-string capture must NOT swallow it."""
+    from app.tasks.music_orchestrate import _run_song_sections
+
+    file_ref = MagicMock()
+    file_ref.uri = "gs://gemini/uploaded/abc"
+    file_ref.mime_type = "audio/mp4"
+
+    with (
+        patch("app.agents.song_sections.SongSectionsAgent") as agent_cls,
+        patch("app.agents._model_client.default_client"),
+    ):
+        agent_cls.return_value.run.side_effect = RefusalError(
+            "song_sections: no valid sections after filter"
+        )
+        with pytest.raises(RefusalError):
+            _run_song_sections(
+                file_ref=file_ref,
+                audio_template_output={},
+                beats=[0.5, 1.0, 1.5],
+                duration_s=180.0,
+                track_id=TRACK_ID,
+            )
+
+
+def test_run_song_sections_returns_none_none_on_zero_duration() -> None:
+    """A duration ≤ 0 track is not actionable — _run_song_sections must
+    return (None, None) so the row carries NO error_detail (it's "skipped",
+    not "failed"). Pinned to prevent a regression where the skip branch
+    starts writing misleading "duration was zero" text to the row."""
+    from app.tasks.music_orchestrate import _run_song_sections
+
+    sections, error = _run_song_sections(
+        file_ref=MagicMock(),
+        audio_template_output={},
+        beats=[],
+        duration_s=0.0,
+        track_id=TRACK_ID,
+    )
+    assert sections is None
+    assert error is None
+
+
+def test_fail_track_preserves_section_error_detail() -> None:
+    """When a downstream stage marks a track failed (e.g. 0-slot guard at
+    music_orchestrate.py:266), _fail_track must NOT null section_error_detail.
+    A failed track keeps both signals: error_detail carries the whole-task
+    reason, section_error_detail carries the song_sections-step reason.
+    Pinned as documentation of intent — the analyze-start clear and the
+    persistence elif are the only writers; _fail_track is intentionally
+    silent on this field."""
+    from app.tasks.music_orchestrate import _fail_track
+
+    mock_track = _make_mock_track(analysis_status="analyzing")
+    mock_track.section_error_detail = "song_sections: invalid JSON — prior reason"
+    mock_track.best_sections = [{"rank": 1, "start_s": 30.0, "end_s": 50.0}]
+    mock_track.section_version = "2026-05-22"
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = lambda s: s
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = mock_track
+
+    with patch("app.tasks.music_orchestrate._sync_session", return_value=mock_session):
+        _fail_track(TRACK_ID, "downstream stage produced 0 slots")
+
+    assert mock_track.analysis_status == "failed"
+    assert mock_track.error_detail == "downstream stage produced 0 slots"
+    # Existing behavior: best_sections + section_version null on hard failure.
+    assert mock_track.best_sections is None
+    assert mock_track.section_version is None
+    # Intentional: section_error_detail is preserved so admin sees both signals
+    # (whole-task reason AND song_sections-step reason) as separate context
+    # fields on the failed row. Change this assertion deliberately if the
+    # product wants a single canonical error field on failed tracks.
+    assert mock_track.section_error_detail == "song_sections: invalid JSON — prior reason"
+
+
+def test_run_gemini_audio_analysis_outer_failure_keeps_sections_error_none() -> None:
+    """Pins the documented invariant: when the OUTER Gemini upload fails
+    (before _run_song_sections is even attempted), sections_error MUST be
+    None — not str(exc). Otherwise every Gemini transport blip would
+    falsely attribute itself to the song_sections agent on
+    MusicTrack.section_error_detail. The real outer error stays in
+    the worker log (`gemini_audio_analysis_failed`).
+    """
+    from app.tasks.music_orchestrate import _run_gemini_audio_analysis
+
+    with (
+        patch(
+            "app.tasks.music_orchestrate.gemini_upload_and_wait",
+            side_effect=RuntimeError("synthetic upload failure"),
+        ),
+        patch(
+            "app.tasks.music_orchestrate.generate_music_recipe",
+            return_value={"slots": [], "total_duration_s": 5.0},
+        ),
+    ):
+        recipe, labels, sections, sections_error = _run_gemini_audio_analysis(
+            local_audio="/tmp/audio.m4a",
+            beats=[0.5, 1.0, 1.5],
+            track_config={"slot_every_n_beats": 2},
+            duration_s=60.0,
+            track_id=TRACK_ID,
+        )
+
+    # Beat-only fallback fired so the track can still reach `ready`.
+    assert recipe is not None
+    # Labels + sections can't be produced without the file_ref.
+    assert labels is None
+    assert sections is None
+    # The load-bearing assertion: outer failure is NOT attributed to song_sections.
+    assert sections_error is None
+
+
+# ── analyze_music_track_task: section_error_detail persistence ────────────────
+
+
+def test_analyze_music_track_persists_section_error_detail_truncated() -> None:
+    """When _run_gemini_audio_analysis returns
+    (recipe_cached, ai_labels, None, "some error"), analyze_music_track_task
+    must write the truncated error to MusicTrack.section_error_detail.
+    This is the observability that closes the "no agent sections, no reason"
+    blind spot."""
+    from app.tasks.music_orchestrate import MAX_ERROR_DETAIL_LEN, analyze_music_track_task
+
+    mock_track = _make_mock_track(track_config={"slot_every_n_beats": 2})
+    mock_track.section_error_detail = None
+    mock_beats = [round(0.5 * i, 3) for i in range(1, 241)]
+    huge_error = "song_sections: invalid JSON — " + ("x" * (MAX_ERROR_DETAIL_LEN * 2))
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = lambda s: s
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = mock_track
+
+    with (
+        patch("app.tasks.music_orchestrate._sync_session", return_value=mock_session),
+        patch("app.tasks.music_orchestrate.download_to_file"),
+        patch("app.tasks.music_orchestrate._detect_music_beats", return_value=mock_beats),
+        patch("app.tasks.music_orchestrate.auto_best_section", return_value=(5.0, 50.0)),
+        patch(
+            "app.tasks.music_orchestrate._run_gemini_audio_analysis",
+            return_value=(None, None, None, huge_error),
+        ),
+        patch("app.tasks.music_orchestrate.gemini_upload_and_wait", new=MagicMock()),
+        patch("app.tasks.music_orchestrate.analyze_audio_template", new=MagicMock()),
+        patch("tempfile.TemporaryDirectory") as mock_td,
+    ):
+        mock_td.return_value.__enter__ = lambda s: "/tmp/fake"
+        mock_td.return_value.__exit__ = MagicMock(return_value=False)
+
+        analyze_music_track_task(TRACK_ID)
+
+    assert mock_track.analysis_status == "ready"
+    assert mock_track.best_sections is None
+    assert mock_track.section_version is None
+    assert mock_track.section_error_detail is not None
+    # Truncated — defends the row against an unbounded Gemini repr blowing
+    # up the DB column. Bound is MAX_ERROR_DETAIL_LEN, mirrored from the
+    # lyrics_error_detail precedent.
+    assert len(mock_track.section_error_detail) <= MAX_ERROR_DETAIL_LEN
+    assert mock_track.section_error_detail.startswith("song_sections: invalid JSON")
+
+
+def test_analyze_music_track_clears_section_error_detail_on_successful_run() -> None:
+    """A subsequent successful re-analyze must NOT leave a stale error
+    on the row. Pre-cleared in analyze_music_track_task right before the
+    analysis_status='analyzing' commit, AND not re-set on the success branch."""
+    from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
+    from app.tasks.music_orchestrate import analyze_music_track_task
+
+    mock_track = _make_mock_track(track_config={"slot_every_n_beats": 2})
+    # Row starts with a STALE error from a prior failed run.
+    mock_track.section_error_detail = "song_sections: stale prior failure"
+    mock_beats = [round(0.5 * i, 3) for i in range(1, 241)]
+    mock_sections_dict = {
+        "sections": [
+            {
+                "rank": 1,
+                "start_s": 30.0,
+                "end_s": 50.0,
+                "label": "chorus",
+                "energy": "high",
+                "suggested_use": "hook",
+                "rationale": "peak energy chorus.",
+            }
+        ],
+        "section_version": CURRENT_SECTION_VERSION,
+    }
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = lambda s: s
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = mock_track
+
+    with (
+        patch("app.tasks.music_orchestrate._sync_session", return_value=mock_session),
+        patch("app.tasks.music_orchestrate.download_to_file"),
+        patch("app.tasks.music_orchestrate._detect_music_beats", return_value=mock_beats),
+        patch("app.tasks.music_orchestrate.auto_best_section", return_value=(5.0, 50.0)),
+        patch(
+            "app.tasks.music_orchestrate._run_gemini_audio_analysis",
+            return_value=({"slots": []}, None, mock_sections_dict, None),
+        ),
+        patch("app.tasks.music_orchestrate.gemini_upload_and_wait", new=MagicMock()),
+        patch("app.tasks.music_orchestrate.analyze_audio_template", new=MagicMock()),
+        patch("tempfile.TemporaryDirectory") as mock_td,
+    ):
+        mock_td.return_value.__enter__ = lambda s: "/tmp/fake"
+        mock_td.return_value.__exit__ = MagicMock(return_value=False)
+
+        analyze_music_track_task(TRACK_ID)
+
+    assert mock_track.analysis_status == "ready"
+    # Sections wrote, version wrote, AND the stale error is gone — that
+    # last assertion is the load-bearing one. Without the analyze-start
+    # clear, the row would carry "stale prior failure" forever.
+    assert mock_track.section_version == CURRENT_SECTION_VERSION
+    assert mock_track.section_error_detail is None

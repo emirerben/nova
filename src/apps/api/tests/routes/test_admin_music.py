@@ -208,6 +208,7 @@ def test_to_response_round_trips_best_sections() -> None:
     track.track_config = {"best_start_s": 30.0, "best_end_s": 48.0}
     track.best_sections = sections_jsonb
     track.section_version = CURRENT_SECTION_VERSION
+    track.section_error_detail = None
     track.lyrics_status = "pending"
     track.lyrics_source = None
     track.lyrics_error_detail = None
@@ -258,6 +259,7 @@ def _matchable_track() -> MagicMock:
         }
     ]
     track.section_version = CURRENT_SECTION_VERSION
+    track.section_error_detail = None
     track.ai_labels = {"labels": {"label_version": CURRENT_LABEL_VERSION}}
     track.label_version = CURRENT_LABEL_VERSION
     track.lyrics_status = "pending"
@@ -351,6 +353,7 @@ def test_to_response_drops_invalid_section_rows() -> None:
     track.track_config = None
     track.best_sections = sections_jsonb
     track.section_version = "2026-05-15"
+    track.section_error_detail = None
     track.lyrics_status = "pending"
     track.lyrics_source = None
     track.lyrics_error_detail = None
@@ -402,6 +405,7 @@ def test_to_response_caps_overlong_best_sections() -> None:
         }
     ]
     track.section_version = "2026-05-15"
+    track.section_error_detail = None
     track.lyrics_status = "pending"
     track.lyrics_source = None
     track.lyrics_error_detail = None
@@ -443,6 +447,7 @@ def test_to_response_drops_all_when_every_section_invalid() -> None:
     track.track_config = None
     track.best_sections = [{"rank": "definitely_not_an_int"}]
     track.section_version = "2026-05-15"
+    track.section_error_detail = None
     track.lyrics_status = "pending"
     track.lyrics_source = None
     track.lyrics_error_detail = None
@@ -481,6 +486,7 @@ def test_to_response_handles_null_best_sections() -> None:
     track.track_config = None
     track.best_sections = None
     track.section_version = None
+    track.section_error_detail = None
     track.lyrics_status = "pending"
     track.lyrics_source = None
     track.lyrics_error_detail = None
@@ -494,3 +500,60 @@ def test_to_response_handles_null_best_sections() -> None:
     resp = _to_response(track)
     assert resp.best_sections is None
     assert resp.section_version is None
+    # Unsectioned-and-never-tried rows have NULL section_error_detail. The
+    # admin UI shows the "agent has not run" placeholder; the "Last attempt
+    # failed: …" block stays hidden. Locked by the FE Jest test.
+    assert resp.section_error_detail is None
+
+
+def test_to_response_surfaces_section_error_detail() -> None:
+    """When the song_sections agent ran but silently failed
+    (broad-Exception branch of _run_song_sections), the truncated reason
+    rides on MusicTrack.section_error_detail. The admin response must
+    expose it so the frontend can render "Last attempt failed: …" under
+    the existing amber "no agent sections" tag without an extra fetch.
+    """
+    from app.routes.admin_music import _to_response
+
+    track = MagicMock()
+    track.id = "track-failed-sections"
+    track.ai_labels = None
+    track.label_version = None
+    track.title = "Sections fell over"
+    track.artist = ""
+    track.source_url = "https://youtube.com/watch?v=ssfail"
+    track.audio_gcs_path = "music/track-failed-sections/audio.m4a"
+    track.duration_s = 200.0
+    track.beat_timestamps_s = []
+    track.analysis_status = "ready"
+    track.error_detail = None
+    track.thumbnail_url = None
+    track.published_at = None
+    track.archived_at = None
+    track.track_config = {"best_start_s": 30.0, "best_end_s": 75.0}
+    # Silent-fail row: best_sections + section_version NULL, error populated.
+    track.best_sections = None
+    track.section_version = None
+    track.section_error_detail = (
+        "song_sections: invalid JSON — Expecting value: line 1 column 1 (char 0)"
+    )
+    track.lyrics_status = "pending"
+    track.lyrics_source = None
+    track.lyrics_error_detail = None
+    track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
+    track.lyrics_extracted_at = None
+    track.created_at = datetime.now(UTC)
+
+    resp = _to_response(track)
+    assert resp.best_sections is None
+    assert resp.section_version is None
+    assert resp.section_error_detail is not None
+    assert "invalid JSON" in resp.section_error_detail
+    # Verbatim pass-through — truncation happens at write time in
+    # music_orchestrate.analyze_music_track_task, not in _to_response.
+    assert resp.section_error_detail == (
+        "song_sections: invalid JSON — Expecting value: line 1 column 1 (char 0)"
+    )
