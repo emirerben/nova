@@ -128,6 +128,13 @@ def _persist(track_id: str, sections_dict: dict) -> None:
             return
         track.best_sections = sections_dict.get("sections")
         track.section_version = sections_dict.get("section_version") or None
+        # Maintain the row invariant `best_sections IS NOT NULL => section_error_detail
+        # IS NULL` — a successful backfill replaces whatever silent-fail reason
+        # analyze_music_track_task previously persisted on this track. The UI's
+        # error block is invisible-to-affected today (gated on no-sections) but
+        # any future consumer that reads the field unconditionally must not see
+        # stale text on a row with valid sections.
+        track.section_error_detail = None
         db.commit()
     log.info("backfill_persisted", track_id=track_id, section_version=CURRENT_SECTION_VERSION)
 

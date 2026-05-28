@@ -108,6 +108,15 @@ export interface MusicTrackDetail {
   lyrics_extracted_at: string | null;
   best_sections: SongSection[] | null;
   section_version: string | null;
+  /**
+   * Last reason `_run_song_sections` returned None for this track on the
+   * broad-Exception (best-effort fail-open) branch. NULL when sections are
+   * populated, when the agent has not run yet, or after a successful
+   * re-analyze. Surfaced under the amber "no agent sections" tag in the
+   * admin UI so the operator can see WHY before re-analyzing blindly.
+   * Added 2026-05-28.
+   */
+  section_error_detail: string | null;
   label_version: string | null;
   has_ai_labels: boolean;
   generative_matchable: boolean;
