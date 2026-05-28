@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -47,6 +48,10 @@ class CreateGenerativeJobRequest(BaseModel):
     # field (default `extra="ignore"`).
     clip_gcs_paths: list[str]
     selected_platforms: list[str] = ["tiktok", "instagram", "youtube"]
+    # Closed allowlist: adding a new language requires (a) TR-style prompt branches
+    # in intro_writer + overlay_format_matcher, (b) a render-side glyph-presence
+    # assertion for any new diacritic ranges. Pydantic rejects unknowns at the edge.
+    language: Literal["en", "tr"] = "en"
 
     @field_validator("clip_gcs_paths")
     @classmethod
@@ -137,6 +142,7 @@ async def create_generative_job(
         selected_platforms=req.selected_platforms,
         all_candidates={
             "clip_paths": req.clip_gcs_paths,
+            "language": req.language,
         },
         status="queued",
     )
@@ -149,7 +155,12 @@ async def create_generative_job(
 
     await enqueue_orchestrator(orchestrate_generative_job, job.id, db)
 
-    log.info("generative_job_created", job_id=str(job.id), clips=len(req.clip_gcs_paths))
+    log.info(
+        "generative_job_created",
+        job_id=str(job.id),
+        clips=len(req.clip_gcs_paths),
+        language=req.language,
+    )
     return GenerativeJobResponse(job_id=str(job.id), status="queued")
 
 

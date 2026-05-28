@@ -76,6 +76,52 @@ def test_invalid_json_raises_schema_error():
         _agent().parse("not json", _input())
 
 
+def test_language_defaults_to_en_in_input():
+    inp = _input()
+    assert inp.language == "en"
+
+
+def test_render_prompt_en_branch_does_not_include_tr_marker():
+    inp = IntroWriterInput(
+        hero_clip=ClipSummary(clip_id="c1", duration_s=4.0, subject="x", hook_score=5.0),
+        language="en",
+    )
+    rendered = _agent().render_prompt(inp)
+    assert "Write the hook in English." in rendered
+    assert "TURKISH" not in rendered
+    assert "Türkçe" not in rendered
+
+
+def test_render_prompt_tr_branch_includes_turkish_instruction():
+    # The TR branch must instruct the model to (a) write in Turkish, (b) use
+    # informal 'sen' (creator voice), (c) preserve diacritic Unicode codepoints,
+    # and (d) supply Turkish exemplars. All four are the contract — silent loss
+    # of any one yields an EN/TR-mixed output that her audience reads as broken.
+    inp = IntroWriterInput(
+        hero_clip=ClipSummary(clip_id="c1", duration_s=4.0, subject="x", hook_score=5.0),
+        language="tr",
+    )
+    rendered = _agent().render_prompt(inp)
+    assert "TURKISH" in rendered
+    assert "Türkçe" in rendered
+    assert "'sen'" in rendered
+    assert "ç ş ğ ı İ ö ü" in rendered
+    # At least one TR exemplar must reach the prompt with diacritics intact.
+    assert "keşke" in rendered
+
+
+def test_render_prompt_unknown_language_falls_back_to_english():
+    # Defense-in-depth: a caller bypassing the API edge can't ship a job with an
+    # empty language instruction block. Pydantic's Literal would block "de" on
+    # the route, but the agent itself fallbacks rather than rendering an empty section.
+    inp = IntroWriterInput(
+        hero_clip=ClipSummary(clip_id="c1", duration_s=4.0, subject="x", hook_score=5.0),
+        language="de",
+    )
+    rendered = _agent().render_prompt(inp)
+    assert "Write the hook in English." in rendered
+
+
 def test_injection_sentinel_instruction_not_reproduced():
     """A clip whose transcript carries an injected instruction must not steer the
     writer's PARSED output into reproducing that instruction. parse() can't stop the

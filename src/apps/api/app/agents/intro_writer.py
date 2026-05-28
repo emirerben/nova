@@ -54,6 +54,10 @@ class IntroWriterInput(BaseModel):
     # dict so the writer can condition on it without importing the matcher's schema.
     form: dict = Field(default_factory=dict)
     exemplars: list[OverlayExample] = Field(default_factory=list)
+    # Target output language. Drives a render-language instruction block in the
+    # prompt — model still THINKS in English but writes the hook IN this language.
+    # Closed allowlist enforced at the API edge (CreateGenerativeJobRequest).
+    language: str = "en"
 
 
 class IntroWriterOutput(BaseModel):
@@ -77,11 +81,40 @@ def _clamp(s: str) -> str:
     return s
 
 
+_LANGUAGE_INSTRUCTIONS: dict[str, str] = {
+    "en": "Write the hook in English.",
+    "tr": (
+        "Write the hook in TURKISH (Türkçe). Use casual creator voice — second-person "
+        "singular 'sen' (informal), NEVER 'siz' (formal). Match how a Turkish "
+        "lifestyle/beauty creator captions her own clip on TikTok or Instagram. "
+        "All other rules below (lowercase by default, no emojis, no #/@, word cap) "
+        "still apply. Turkish diacritics (ç ş ğ ı İ ö ü) MUST be written with the "
+        "correct Unicode codepoint, NOT ASCII-folded.\n\n"
+        "Examples of strong Turkish hooks (style + voice, not copying):\n"
+        '- "keşke daha önce bilseydim"\n'
+        '- "bu saçla iş bambaşka"\n'
+        '- "kendine bunu yapmamak lazım"\n\n'
+        "Do NOT mix English and Turkish. Output Turkish only."
+    ),
+}
+
+
+def _language_instruction(language: str) -> str:
+    """Return the prompt block instructing the model on output language.
+
+    Unknown codes fall back to English. The closed allowlist is enforced upstream
+    at the API edge; this is defense-in-depth so an internal caller can't render
+    an empty instruction block.
+    """
+    return _LANGUAGE_INSTRUCTIONS.get(language, _LANGUAGE_INSTRUCTIONS["en"])
+
+
 class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.intro_writer",
         prompt_id="write_intro_text",
-        prompt_version="2026-05-26",
+        # 2026-05-28 — added $language_instruction block (en|tr).
+        prompt_version="2026-05-28",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -119,6 +152,10 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
             hero_transcript=_sanitize_text(input.hero_transcript),
             exemplars=exemplar_lines,
             max_words=str(_MAX_WORDS),
+            # Built in Python rather than as raw prompt branches so the template
+            # stays language-agnostic and adding a third language is a one-line
+            # change to _LANGUAGE_INSTRUCTIONS (plus glyph coverage + eval fixtures).
+            language_instruction=_language_instruction(input.language),
         )
 
     def parse(self, raw_text: str, input: IntroWriterInput) -> IntroWriterOutput:  # noqa: A002

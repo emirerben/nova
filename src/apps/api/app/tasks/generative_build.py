@@ -110,6 +110,8 @@ def _run_generative_job(job_id: str) -> None:
         db.commit()
         all_candidates = job.all_candidates or {}
         clip_paths_gcs: list[str] = all_candidates.get("clip_paths", []) or []
+        # Closed allowlist enforced at the API edge; legacy rows default to "en".
+        language: str = all_candidates.get("language") or "en"
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
@@ -158,7 +160,7 @@ def _run_generative_job(job_id: str) -> None:
         from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
         def _text_then_style():
-            text, form = _run_text_agents(clip_metas, hero, job_id=job_id)
+            text, form = _run_text_agents(clip_metas, hero, job_id=job_id, language=language)
             style = _select_generative_style_set(clip_metas, text, job_id=job_id)
             return text, form, style
 
@@ -463,6 +465,10 @@ def _run_regenerate_variant(
             log.error("generative_regenerate_job_not_found", job_id=job_id)
             return
         clip_paths_gcs = (job.all_candidates or {}).get("clip_paths", []) or []
+        # Re-renders inherit the language the user chose at job creation. Legacy
+        # jobs (pre-language-field) default to "en". Frontend NEVER passes language
+        # on retext/swap_song/change_style — single source of truth is the Job row.
+        language: str = (job.all_candidates or {}).get("language") or "en"
         variants = ((job.assembly_plan or {}).get("variants")) or []
         existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
         if existing is None:
@@ -539,7 +545,7 @@ def _run_regenerate_variant(
                 # else: nothing renderable after sanitization → no overlay (footage only).
             else:
                 agent_text, agent_form = _run_text_agents(
-                    ingest["clip_metas"], ingest["hero"], job_id=job_id
+                    ingest["clip_metas"], ingest["hero"], job_id=job_id, language=language
                 )
 
         variant_dir = os.path.join(tmpdir, f"variant_{rank}")
@@ -641,8 +647,14 @@ def _variant_specs(best_track: MusicTrack | None) -> list[dict[str, Any]]:
 # ── Agents (best-effort) ────────────────────────────────────────────────────────
 
 
-def _run_text_agents(clip_metas: list, hero, *, job_id: str) -> tuple[Any, dict]:
+def _run_text_agents(
+    clip_metas: list, hero, *, job_id: str, language: str = "en"
+) -> tuple[Any, dict]:
     """Run overlay_format_matcher → intro_writer. Returns (IntroWriterOutput|None, form dict).
+
+    `language` is the target render language (closed allowlist enforced at the API
+    edge). Forwarded to both agents so the intro is written in the right language
+    and the form matcher considers form-fit per language.
 
     Best-effort: any failure yields (None, {}) so the text variants render footage
     without an intro rather than failing the job.
@@ -663,7 +675,11 @@ def _run_text_agents(clip_metas: list, hero, *, job_id: str) -> tuple[Any, dict]
         client = default_client()
 
         form = OverlayFormatMatcherAgent(client).run(
-            OverlayFormatMatcherInput(clip_set_summary=clip_set_summary, hero_clip=hero_summary),
+            OverlayFormatMatcherInput(
+                clip_set_summary=clip_set_summary,
+                hero_clip=hero_summary,
+                language=language,
+            ),
             ctx=ctx,
         )
         by_id = examples_by_id()
@@ -676,6 +692,7 @@ def _run_text_agents(clip_metas: list, hero, *, job_id: str) -> tuple[Any, dict]
                 tone="",
                 form=form.model_dump(),
                 exemplars=exemplars,
+                language=language,
             ),
             ctx=ctx,
         )

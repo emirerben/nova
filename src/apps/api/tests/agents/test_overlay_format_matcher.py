@@ -97,3 +97,31 @@ def test_prompt_renders_with_library():
     text = _agent().render_prompt(_input())
     assert "karaoke-line" in text
     assert "pov-surprise-karaoke-01" in text
+
+
+def test_prompt_en_branch_no_turkish_hint():
+    text = _agent().render_prompt(_input())  # default language="en"
+    assert "Turkish" not in text
+    assert "agglutinative" not in text
+
+
+def test_prompt_tr_branch_includes_agglutinative_hint():
+    # The Turkish hint must reach the prompt — without it the matcher will pick
+    # karaoke-line form for any high-energy Turkish phrase, even though Turkish
+    # phrasings expand 30-50% over English and overflow snappy reveals.
+    tr_input = OverlayFormatMatcherInput(
+        clip_set_summary="hair tutorial",
+        hero_clip=ClipSummary(clip_id="c1", duration_s=4.0, subject="hair", hook_score=8.0),
+        language="tr",
+    )
+    text = _agent().render_prompt(tr_input)
+    assert "TURKISH" in text
+    assert "agglutinative" in text
+
+
+def test_language_defaults_to_en():
+    inp = OverlayFormatMatcherInput(
+        clip_set_summary="x",
+        hero_clip=ClipSummary(clip_id="c1", duration_s=4.0, subject="x", hook_score=5.0),
+    )
+    assert inp.language == "en"

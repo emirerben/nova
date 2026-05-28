@@ -59,6 +59,30 @@ def test_rejects_path_traversal():
         CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/../../etc/passwd"])
 
 
+def test_language_defaults_to_en():
+    # User selects language at job creation; the model remembers it so re-renders
+    # (retext/swap_song/change_style) inherit it without the frontend re-passing.
+    req = CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/a.mp4"])
+    assert req.language == "en"
+
+
+def test_language_accepts_tr():
+    req = CreateGenerativeJobRequest(
+        clip_gcs_paths=["music-uploads/a.mp4"], language="tr"
+    )
+    assert req.language == "tr"
+
+
+def test_language_rejects_unsupported_code():
+    # Closed allowlist (Literal["en","tr"]) — adding a new language requires
+    # corresponding render-side glyph coverage and TR-style prompt branches,
+    # so Pydantic must reject unknowns at the edge.
+    with pytest.raises(ValidationError):
+        CreateGenerativeJobRequest(
+            clip_gcs_paths=["music-uploads/a.mp4"], language="de"
+        )
+
+
 def test_swap_song_request():
     assert SwapSongRequest(new_track_id="t1").new_track_id == "t1"
 

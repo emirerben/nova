@@ -2,7 +2,21 @@
 
 The agent writes the opening on-screen hook for an edit made from the user's own
 footage. Copy quality is the value prop. Score each output on these dimensions,
-**integer 1-5**:
+**integer 1-5**.
+
+## Bilingual evaluation rule (read first)
+
+Outputs may be in English OR Turkish (the `language` field on the input — `en`
+or `tr` — specifies which). Evaluate the output **in the language it is written
+in**: apply the same craft criteria (hook strength, grounding, voice, lowercase
+default, no clickbait clichés) regardless of language. The reference voice
+descriptions below use English exemplars; the equivalent Turkish creator voice
+is **lowercase, casual `sen`-form (NOT formal `siz`), specific, in-the-moment**.
+Do NOT penalize a Turkish output for being Turkish; DO penalize an output that
+mixes English and Turkish, transliterates instead of using proper Unicode
+diacritics (ç ş ğ ı İ ö ü), or uses formal `siz` when casual `sen` is the norm.
+A Turkish hook that nails the voice scores **5** on voice_match, same as the
+English reference hooks.
 
 1. **hook_strength** — Would this line make a viewer stop scrolling? It should create a question or tension in the first 2-3 seconds.
    - 5: genuinely makes you want to see what happens next; reads like a human short-form editor wrote it
@@ -20,14 +34,16 @@ footage. Copy quality is the value prop. Score each output on these dimensions,
    - 1: awkward phrasing, padded, or leaks artifacts (a stray URL/handle, ASS tags)
 
 4. **voice_match** — Does it sound like a real creator captioning their own clip, in the target voice? The voice is lowercase-by-default, second-person or in-the-moment ("you", "imagine ...", "POV: ...", "this and ..."), specific, and aspirational — envy or curiosity, never ad-copy. Calibrate against these reference hooks, which are all a **5**:
-   - "POV: you found people who say yes"
-   - "imagine traveling solo in berlin and ending up here"
-   - "this and no job"
+   - EN: "POV: you found people who say yes"
+   - EN: "imagine traveling solo in berlin and ending up here"
+   - EN: "this and no job"
+   - TR: "bu saçla iş bambaşka" (informal sen-form, specific, lowercase)
+   - TR: "keşke daha önce konuşsaydım" (curiosity-gap, intimate, lowercase, diacritics intact)
 
    Score:
-   - 5: nails the voice — lowercase, specific, in-the-moment, makes the viewer want THIS life/place/moment
+   - 5: nails the voice — lowercase, specific, in-the-moment, makes the viewer want THIS life/place/moment. For TR: also casual sen-form with correct Unicode diacritics.
    - 3: right register but generic, or slightly off (e.g. Title Case, a touch of ad-speak)
-   - 1: wrong voice entirely — clickbait cliché, ALL-CAPS line, Title Case Sentence, or corporate/ad phrasing
+   - 1: wrong voice entirely — clickbait cliché, ALL-CAPS line, Title Case Sentence, corporate/ad phrasing, OR (TR) ASCII-folded diacritics / formal siz-form / EN-TR mixing
 
 Pass threshold: avg ≥ 3.5
 
