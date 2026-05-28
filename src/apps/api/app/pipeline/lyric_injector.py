@@ -138,6 +138,20 @@ _LINE_MAX_OVERLAP_S = 0.4
 _LINE_DEFAULT_FONT_FAMILY = "Inter Tight"
 _MIN_LINE_VISIBLE_S = 0.20
 
+# Trailing-line drop threshold for `_select_section_lines`. A line whose
+# clamped start lands in the last `_TRAILING_LINE_DROP_TAIL_S` of the
+# section AND whose clamped duration is below `_TRAILING_LINE_DROP_MIN_DUR_S`
+# is dropped rather than rendered as a sub-second flash that confuses the
+# viewer. Classic case: Instant Crush preview window ends at section 20.0;
+# L4 vocal starts at section 19.45 (after the LRC-anchor re-anchor), giving
+# only ~0.55s of L4 vocal before the preview ends — better to not show
+# any L4 text than to flash it. Distinct from `_MIN_LINE_VISIBLE_S` (which
+# only fires on partially-clamped lines and at 0.20s); this rule
+# additionally requires the line to be at the TAIL of the section, so a
+# legitimately short fully-contained ad-lib mid-section still renders.
+_TRAILING_LINE_DROP_TAIL_S = 1.0
+_TRAILING_LINE_DROP_MIN_DUR_S = 1.0
+
 # Crossfade duration clamps for the dynamic-scaling post-pass. Below the
 # floor, the fade reads as a hard cut and the user perceives a flash rather
 # than a transition. Above the ceiling, the fade visibly drags into L_N's
@@ -469,6 +483,33 @@ def _select_section_lines(
                 "original_words": original_words,
             }
         )
+
+    # Trailing-line drop: a line whose clamped start lands in the last
+    # `_TRAILING_LINE_DROP_TAIL_S` of the section AND whose clamped duration
+    # is below `_TRAILING_LINE_DROP_MIN_DUR_S` is dropped rather than
+    # rendered as a sub-second flash. The Instant Crush 20s preview lands
+    # L4 at clamped duration 0.55s — that's visually meaningless and the
+    # user sees text without ever hearing the matching vocal. Mid-section
+    # short lines are untouched: this rule fires only on the LAST emitted
+    # line, by tail-position, so legitimately short fully-contained ad-libs
+    # mid-section (e.g. "yeah!") still render.
+    if out:
+        last = out[-1]
+        section_dur_s = best_end_s - best_start_s
+        last_dur_s = last["end_s"] - last["start_s"]
+        starts_in_tail = last["start_s"] >= section_dur_s - _TRAILING_LINE_DROP_TAIL_S
+        if starts_in_tail and last_dur_s < _TRAILING_LINE_DROP_MIN_DUR_S:
+            log.info(
+                "lyric_inject_dropped_trailing_flash",
+                line_text=str(last.get("text", ""))[:80],
+                clamped_start_s=round(last["start_s"], 3),
+                clamped_end_s=round(last["end_s"], 3),
+                clamped_duration_s=round(last_dur_s, 3),
+                section_dur_s=round(section_dur_s, 3),
+                tail_threshold_s=_TRAILING_LINE_DROP_TAIL_S,
+                min_dur_threshold_s=_TRAILING_LINE_DROP_MIN_DUR_S,
+            )
+            out.pop()
     return out
 
 

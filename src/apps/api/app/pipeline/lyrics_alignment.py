@@ -408,6 +408,37 @@ _LAST_WORD_TAIL_PAD_S = 0.5
 _MAX_INTERP_SLICE_S = 0.8
 
 
+# LRC-anchor re-anchor threshold. When the detected audio-vs-LRC shift on
+# the first matched line exceeds this value, we conclude the audio cut
+# does not match the LRC-indexed cut (e.g. the "official video" cut of
+# Instant Crush is +2.57s vs the album cut LRCLIB indexed), and Whisper's
+# per-line `start_s` / `end_s` cannot be trusted as line bounds — Whisper
+# stacks tokens on instrumental moments and produces line spans 2-3s too
+# short relative to the actual audio. In that case we re-anchor every
+# `AlignedLine.start_s` / `end_s` to `LRC_anchor[i] + shift`, leaving the
+# per-word Whisper timings untouched (karaoke `\kf` + per-word-pop still
+# get the original Whisper word stream — they consume words, not line
+# bounds, so they're unaffected).
+#
+# Threshold sized so well-aligned tracks (Whisper accuracy ~100-300ms on
+# clean studio recordings) are unaffected. Only fires when there's a real
+# systematic misalignment.
+_AUDIO_SHIFT_THRESHOLD_S = 1.0
+
+# Safety gap subtracted from the next anchor when computing a re-anchored
+# line's end. Mirrors the renderer's `_LINE_NEXT_LINE_GAP_S` but kept
+# separate so the alignment-layer value can be tuned independently of the
+# renderer's gap_cap.
+_REANCHOR_NEXT_LINE_SAFETY_S = 0.05
+
+# Last-line fallback duration when re-anchoring and there's no `next_anchor`
+# (the final LRC line). Used in conjunction with `track_end_s` — we cap the
+# re-anchored end at `track_end_s + shift` (in case the shift extends past
+# track end) and floor at `start + this`. Sized to comfortably cover a
+# sung last line (most songs end with a 2-4s sustain on the final word).
+_REANCHOR_LAST_LINE_MIN_DUR_S = 3.0
+
+
 def align_with_line_anchors(
     anchor_lines: Sequence[SyncedLine],
     whisper_words: Sequence[WhisperWord] | tuple[WhisperWord, ...],
@@ -472,6 +503,36 @@ def align_with_line_anchors(
             matched_words += matched_in_line
 
     confidence = (matched_words / total_words) if total_words else 0.0
+
+    # LRC-anchor re-anchor for cases where the audio cut does not match the
+    # LRC-indexed cut (e.g. official-video cut vs album cut).
+    #
+    # Detection signal: the shift between the first aligned line's
+    # `start_s` (Whisper's first reliable detection of the song's first
+    # sung word) and the first LRC anchor. When |shift| > the threshold,
+    # we conclude Whisper is detecting vocals at a different audio offset
+    # than LRC was indexed for, AND Whisper's per-line `start_s` / `end_s`
+    # in subsequent lines are unreliable — Whisper systematically stacks
+    # tokens on instrumental moments and assigns them wrong line windows
+    # (the Instant Crush #361/362 class). LRC anchors with a uniform shift
+    # applied are far more reliable for line bounds than Whisper's
+    # per-line detection in this case.
+    #
+    # When triggered: rewrite every line's `start_s` to
+    # `LRC_anchor[i] + shift` and `end_s` to the next anchor + shift
+    # (minus a small safety gap), so the line spans the full LRC-implied
+    # vocal window aligned to the actual audio. The last line gets a
+    # bounded extension from `track_end_s` since it has no "next anchor".
+    # Per-word Whisper timings (`AlignedWord.start_s` / `end_s`) are NOT
+    # rewritten — karaoke `\kf` and per-word-pop consume per-word values
+    # and stay byte-identical regardless of the line-bound rewrite.
+    aligned_lines = _maybe_reanchor_to_lrc(
+        aligned_lines=aligned_lines,
+        anchor_lines=anchor_lines,
+        track_end_s=track_end_s,
+        whisper_words=whisper_list,
+    )
+
     log.info(
         "lyrics_alignment_anchored_done",
         anchor_lines=len(anchor_lines),
@@ -482,6 +543,145 @@ def align_with_line_anchors(
         confidence=round(confidence, 3),
     )
     return AlignmentResult(lines=tuple(aligned_lines), confidence=confidence)
+
+
+def _maybe_reanchor_to_lrc(
+    *,
+    aligned_lines: list[AlignedLine],
+    anchor_lines: Sequence[SyncedLine],
+    track_end_s: float | None,
+    whisper_words: list[WhisperWord],
+) -> list[AlignedLine]:
+    """If the audio-vs-LRC shift exceeds `_AUDIO_SHIFT_THRESHOLD_S`, rewrite
+    every line's `start_s` / `end_s` to `LRC_anchor[i] + shift`. Per-word
+    `AlignedWord` timings are NOT modified. Returns the (possibly rewritten)
+    list. See the call-site docstring for full rationale.
+    """
+    from dataclasses import replace  # noqa: PLC0415
+
+    if not aligned_lines or not anchor_lines:
+        return aligned_lines
+
+    # Map each aligned line back to its source anchor by canonical text +
+    # ordinal position. Since `align_with_line_anchors` iterates
+    # `anchor_lines` in order and appends one `AlignedLine` per anchor it
+    # successfully resolved, the i-th aligned line corresponds to the
+    # i-th anchor IF the lengths match. Some anchors may have been
+    # skipped (empty text, malformed window), so this is "best effort";
+    # if a length mismatch is detected, we bail rather than mis-align.
+    if len(aligned_lines) != len(anchor_lines):
+        log.info(
+            "lyrics_alignment_reanchor_skipped",
+            reason="anchor_alignment_length_mismatch",
+            anchor_count=len(anchor_lines),
+            aligned_count=len(aligned_lines),
+        )
+        return aligned_lines
+
+    first_aligned_start = aligned_lines[0].start_s
+    first_anchor_start = anchor_lines[0].start_s
+    audio_shift_s = first_aligned_start - first_anchor_start
+
+    if abs(audio_shift_s) <= _AUDIO_SHIFT_THRESHOLD_S:
+        # Audio matches LRC well — Whisper's per-line bounds are reliable.
+        log.info(
+            "lyrics_alignment_reanchor_below_threshold",
+            audio_shift_s=round(audio_shift_s, 3),
+            threshold_s=_AUDIO_SHIFT_THRESHOLD_S,
+        )
+        return aligned_lines
+
+    # Defensive upper bound: a shift larger than a third of the track is
+    # almost certainly a Whisper hallucination on L0 rather than a real
+    # cut difference. Bail rather than apply a garbage shift to every
+    # line.
+    track_dur = (
+        track_end_s
+        if track_end_s is not None
+        else (whisper_words[-1].end_s if whisper_words else 0.0)
+    )
+    if track_dur > 0 and abs(audio_shift_s) > track_dur / 3.0:
+        log.warning(
+            "lyrics_alignment_reanchor_skipped",
+            reason="implausible_shift",
+            audio_shift_s=round(audio_shift_s, 3),
+            track_dur_s=round(track_dur, 3),
+        )
+        return aligned_lines
+
+    log.info(
+        "lyrics_alignment_reanchor_applied",
+        audio_shift_s=round(audio_shift_s, 3),
+        anchor_count=len(anchor_lines),
+        first_anchor_s=round(first_anchor_start, 3),
+        first_aligned_s=round(first_aligned_start, 3),
+    )
+
+    rebuilt: list[AlignedLine] = []
+    for i, line in enumerate(aligned_lines):
+        anchor = anchor_lines[i]
+        new_start = anchor.start_s + audio_shift_s
+        if i + 1 < len(anchor_lines):
+            next_anchor = anchor_lines[i + 1]
+            new_end = next_anchor.start_s + audio_shift_s - _REANCHOR_NEXT_LINE_SAFETY_S
+        else:
+            # Final line — no next anchor. Use whisper's last-word end (when
+            # available) which is the most reliable signal we have for the
+            # actual sung tail of the last line. Floor at
+            # `_REANCHOR_LAST_LINE_MIN_DUR_S` past `new_start` so we render
+            # the line for at least a readable minimum even when whisper
+            # missed the tail. Cap at `track_end_s` so we never extend past
+            # the audio file's actual duration.
+            if line.words:
+                whisper_last_end = max(w.end_s for w in line.words)
+            elif whisper_words:
+                whisper_last_end = whisper_words[-1].end_s
+            else:
+                whisper_last_end = new_start + _FALLBACK_TRAILING_WINDOW_S
+            new_end = max(
+                whisper_last_end + _LAST_WORD_TAIL_PAD_S, new_start + _REANCHOR_LAST_LINE_MIN_DUR_S
+            )
+            if track_end_s is not None:
+                new_end = min(new_end, track_end_s)
+
+        # Guard: re-anchor never shrinks the line below its own audible
+        # words — if Whisper found a real word past the new_end, extend to
+        # cover it (otherwise per-word karaoke highlights would render past
+        # the line's nominal end_s and the line-style window would clip).
+        #
+        # CAP the extension at `next_anchor + shift` (or track_end_s for
+        # the last line) so a TRAILING-COLLAPSE interpolated word doesn't
+        # push the line bound past the next line's actual vocal. The L2
+        # case on Instant Crush demonstrates this: `_build_line` trailing
+        # interpolation placed 6 unmatched canonical words past the LRC
+        # window end (prev_end 39.64 with no usable cap), producing word
+        # timings up to 42.04 that should NOT extend L2 past LRC's L3
+        # anchor + shift.
+        if line.words:
+            words_max_end = max(w.end_s for w in line.words)
+            if words_max_end > new_end:
+                # Compute the hard upper bound for this line's end. Apply
+                # the same `_REANCHOR_NEXT_LINE_SAFETY_S` margin as the
+                # regular path so trailing-interp-driven extensions don't
+                # close the gap-cap-buffer the renderer relies on.
+                if i + 1 < len(anchor_lines):
+                    hard_cap_end = (
+                        anchor_lines[i + 1].start_s + audio_shift_s - _REANCHOR_NEXT_LINE_SAFETY_S
+                    )
+                elif track_end_s is not None:
+                    hard_cap_end = track_end_s
+                else:
+                    hard_cap_end = words_max_end  # no cap source — accept words' max
+                new_end = max(new_end, min(words_max_end, hard_cap_end))
+
+        rebuilt.append(
+            replace(
+                line,
+                start_s=round(new_start, 3),
+                end_s=round(new_end, 3),
+            )
+        )
+    return rebuilt
 
 
 def _align_within_window(
