@@ -292,6 +292,7 @@
 **Effort:** S (human: ~3hr / CC: ~30 min — prompt iteration + re-run live eval against the same 5 fixtures)
 **Priority:** P1 — affects every job
 **Depends on:** none
+**Completed:** v0.4.47.11 (2026-05-28) — `_enforce_moment_spread()` deterministic post-filter added in `clip_metadata.py::parse()` enforcing HARD RULE 2 (≥2s spacing) + HARD RULE 3 (≥1s duration). Eval structural rule relaxed to allow 0-5 entries (prompt explicitly permits empty).
 
 ---
 
