@@ -705,9 +705,7 @@ def _maybe_reanchor_to_lrc(
 
     # ── Path 1: multi-line median ──────────────────────────────────────
     eligible_indices = [
-        i
-        for i, mc in enumerate(matched_counts)
-        if mc >= _MULTILINE_MATCHED_COUNT_THRESHOLD
+        i for i, mc in enumerate(matched_counts) if mc >= _MULTILINE_MATCHED_COUNT_THRESHOLD
     ]
     multiline_diag: dict[str, object] = {
         "aligned_count": len(aligned_lines),
@@ -718,10 +716,7 @@ def _maybe_reanchor_to_lrc(
 
     if len(eligible_indices) >= _MULTILINE_MIN_ELIGIBLE_LINES:
         sample_indices = eligible_indices[:_MULTILINE_SAMPLE_SIZE]
-        shifts = [
-            aligned_lines[i].start_s - anchor_lines[i].start_s
-            for i in sample_indices
-        ]
+        shifts = [aligned_lines[i].start_s - anchor_lines[i].start_s for i in sample_indices]
         median_shift = statistics.median(shifts)
         spread_mad = _mad(shifts, median_shift)
 
@@ -740,9 +735,7 @@ def _maybe_reanchor_to_lrc(
         # cache) and safely above float noise.
         band_half = max(_MULTILINE_INLIER_K * spread_mad, 1e-3)
         inlier_shifts = [s for s in shifts if abs(s - median_shift) <= band_half]
-        refined_median = (
-            statistics.median(inlier_shifts) if inlier_shifts else median_shift
-        )
+        refined_median = statistics.median(inlier_shifts) if inlier_shifts else median_shift
 
         multiline_diag.update(
             {

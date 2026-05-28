@@ -23,16 +23,14 @@ and pull the median toward zero, silently disabling drift detection.
 
 from __future__ import annotations
 
-import logging
-
 import pytest
 
 from app.pipeline.lyrics_alignment import (
     _MULTILINE_MATCHED_COUNT_THRESHOLD,
-    _MULTILINE_MAX_MAD_S,
     _MULTILINE_MIN_APPLY_SHIFT_S,
     _MULTILINE_MIN_ELIGIBLE_LINES,
     _REANCHOR_NEXT_LINE_SAFETY_S,
+    AlignedLine,
     align_with_line_anchors,
 )
 from app.services.lrclib_client import SyncedLine
@@ -284,9 +282,7 @@ class TestSingleL0Fallback:
         assert len(applied) == 1
         assert applied[0]["path"] == "single_l0"
 
-    def test_single_l0_path_unchanged_at_3_aligned_lines_large_shift(
-        self, monkeypatch
-    ) -> None:
+    def test_single_l0_path_unchanged_at_3_aligned_lines_large_shift(self, monkeypatch) -> None:
         """3 eligible lines + large shift: multi-line median applies first
         (since 2.0 > 0.2 and spread = 0), single-L0 never runs. Line bounds
         produced are `LRC_anchor + shift` for start AND `next_anchor + shift
@@ -379,17 +375,23 @@ class TestConstants:
         assert _MULTILINE_MIN_APPLY_SHIFT_S == pytest.approx(0.2)
 
     def test_max_mad_is_0_22(self) -> None:
-        from app.pipeline.lyrics_alignment import _MULTILINE_MAX_MAD_S
+        from app.pipeline.lyrics_alignment import (  # noqa: PLC0415
+            _MULTILINE_MAX_MAD_S,
+        )
 
         assert _MULTILINE_MAX_MAD_S == pytest.approx(0.22)
 
     def test_inlier_k_is_1_5(self) -> None:
-        from app.pipeline.lyrics_alignment import _MULTILINE_INLIER_K
+        from app.pipeline.lyrics_alignment import (  # noqa: PLC0415
+            _MULTILINE_INLIER_K,
+        )
 
         assert _MULTILINE_INLIER_K == pytest.approx(1.5)
 
     def test_min_inliers_is_3(self) -> None:
-        from app.pipeline.lyrics_alignment import _MULTILINE_MIN_INLIERS
+        from app.pipeline.lyrics_alignment import (  # noqa: PLC0415
+            _MULTILINE_MIN_INLIERS,
+        )
 
         assert _MULTILINE_MIN_INLIERS == 3
 
@@ -416,14 +418,14 @@ class TestPromptVersionBump:
 # ────────────────────────────────────────────────────────────────────────────
 
 
-def _aligned_line_with_start(start_s: float, text: str = "x") -> "AlignedLine":
+def _aligned_line_with_start(start_s: float, text: str = "x") -> AlignedLine:
     """Build a synthetic AlignedLine carrying just enough info for
     `_maybe_reanchor_to_lrc` to compute shifts. Per-word AlignedWord is
     a single token at the line's start_s — the re-anchor reads
     `line.start_s` (for shift detection) and `line.words[-1].end_s`
     (for last-line tail extension). Both are honored.
     """
-    from app.pipeline.lyrics_alignment import AlignedLine, AlignedWord
+    from app.pipeline.lyrics_alignment import AlignedWord  # noqa: PLC0415
 
     return AlignedLine(
         text=text,
@@ -466,9 +468,7 @@ class TestOvernightRegression:
         rec = _LogRecorder()
         monkeypatch.setattr(lyrics_alignment, "log", rec)
 
-        aligned_lines = [
-            _aligned_line_with_start(s) for s in self.OVERNIGHT_ALIGNED_STARTS
-        ]
+        aligned_lines = [_aligned_line_with_start(s) for s in self.OVERNIGHT_ALIGNED_STARTS]
         matched_counts = [2] * len(aligned_lines)  # all Strategy 1 / 2
 
         rebuilt = _maybe_reanchor_to_lrc(
@@ -524,9 +524,7 @@ class TestTheBayRegression:
         rec = _LogRecorder()
         monkeypatch.setattr(lyrics_alignment, "log", rec)
 
-        aligned_lines = [
-            _aligned_line_with_start(s) for s in self.BAY_ALIGNED_STARTS
-        ]
+        aligned_lines = [_aligned_line_with_start(s) for s in self.BAY_ALIGNED_STARTS]
         matched_counts = [2] * len(aligned_lines)
 
         rebuilt = _maybe_reanchor_to_lrc(
