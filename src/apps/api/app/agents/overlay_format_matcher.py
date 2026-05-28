@@ -85,6 +85,10 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
+        # Cap reasoning: format selection from a fixed example set. A/B on a real
+        # clip showed default 13.5s vs ~5s at 512 with the same/larger matched
+        # set — no quality loss. See clip_metadata for the validation context.
+        thinking_budget=512,
     )
     Input = OverlayFormatMatcherInput
     Output = OverlayFormatMatcherOutput

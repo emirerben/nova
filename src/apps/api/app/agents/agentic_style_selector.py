@@ -56,6 +56,10 @@ class AgenticStyleSelectorAgent(Agent[AgenticStyleSelectorInput, AgenticStyleSel
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
+        # Cap reasoning: picks one style-set id from a fixed list — a pure
+        # selection task (like music_matcher, validated at low budget). 512
+        # keeps headroom. Lowest-risk of the capped agents.
+        thinking_budget=512,
     )
     Input = AgenticStyleSelectorInput
     Output = AgenticStyleSelectorOutput

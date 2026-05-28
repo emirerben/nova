@@ -183,6 +183,14 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         # Gemini pricing as of 2026 — input ~$0.075/M, output ~$0.30/M (2.5 Flash).
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
+        # Cap internal reasoning. Default dynamic thinking burned ~4k thought-
+        # tokens / 13-18s on real clips (A/B measured) vs ~5s at 512 — with NO
+        # quality loss: subject/hook_text/best_moments held or improved across
+        # 3 real clips + repeats (default occasionally returned an empty
+        # transcript / degenerate moment that the capped run did not). 512 keeps
+        # ample reasoning headroom for the vision extraction. Validated on real
+        # clips because the eval fixtures' source videos were GC'd from GCS.
+        thinking_budget=512,
         # Skip the clarification retry: prod logs showed `attempts=2
         # latency_ms=233209` (3m 53s) on schema/refusal retries that almost
         # always failed the same way. Caller (template_orchestrate) has a

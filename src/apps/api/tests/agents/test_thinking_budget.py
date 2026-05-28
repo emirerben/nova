@@ -73,3 +73,21 @@ def test_matcher_spec_caps_thinking_budget():
     # The matcher's ~30s thinking tax (vs ~4s capped) is the reason this exists.
     # 256 is honored by flash (prod) and pro (evals), so the eval validates prod.
     assert MusicMatcherAgent.spec.thinking_budget == 256
+
+
+def test_generative_critical_path_agents_cap_thinking():
+    """The generative first-variant critical path is gated by these flash agents.
+    Each had the same thinking tax (13-18s default vs ~5s capped, validated on
+    real clips with no quality loss). 512 keeps reasoning headroom for the
+    extraction/creative steps. Locking the budgets prevents a silent revert to
+    the slow default-thinking path.
+    """
+    from app.agents.agentic_style_selector import AgenticStyleSelectorAgent
+    from app.agents.clip_metadata import ClipMetadataAgent
+    from app.agents.intro_writer import IntroTextWriterAgent
+    from app.agents.overlay_format_matcher import OverlayFormatMatcherAgent
+
+    assert ClipMetadataAgent.spec.thinking_budget == 512
+    assert OverlayFormatMatcherAgent.spec.thinking_budget == 512
+    assert IntroTextWriterAgent.spec.thinking_budget == 512
+    assert AgenticStyleSelectorAgent.spec.thinking_budget == 512
