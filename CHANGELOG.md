@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.47.11] - 2026-05-28
+
+### Added
+- **Turkish output support on generative edits.** `POST /generative-jobs` accepts a closed-allowlist `language: "en" | "tr"` field (defaults to `"en"`). The language is persisted on `Job.all_candidates["language"]` so `swap-song` / `retext` / `change-style` re-renders inherit it without the frontend re-passing — set once at job creation, system remembers. `intro_writer` gains a TR prompt branch instructing creator-voice (informal `sen`, lowercase, diacritics preserved) with three Turkish exemplars. `overlay_format_matcher` gains a TR hint biasing form selection away from karaoke-line on agglutinative phrasings that would overflow snappy reveals. Both agents bump `prompt_version` to `2026-05-28`. Unknown language codes fall back to English in both agents (defense-in-depth — the API edge already rejects them with 422).
+- **Skia Turkish-diacritic regression test.** New `assert_glyphs_present(typeface, text)` helper + `MissingGlyphsError` exception in `text_overlay_skia.py` use `Typeface.unicharToGlyph` to verify every codepoint resolves to the bundled typeface (HarfBuzz/Skia draw `.notdef` tofu boxes for absent glyphs without raising). Bundle-wide regression test confirms every TR-safe font covers `ç Ç ş Ş ğ Ğ ı I İ ö Ö ü Ü`; `PermanentMarker-Regular.ttf` is documented as the lone TR-unsafe font (cycle-font filtering tracked as a follow-up TODO). Three Turkish golden eval fixtures added (`tr_hair_tutorial`, `tr_grwm_confessional`, `tr_food_reveal`); rubric updated with a bilingual evaluation rule so the LLM judge applies the same craft criteria to Turkish output.
+
+### Fixed
+- **`clip_metadata` best_moments clustering bug (P1 from TODOS.md 2026-05-13).** Gemini-2.5-flash periodically returned 3 best_moments compressed into <0.5s with near-identical energies on a meaningful fraction of prod clips, defeating downstream matcher variety on ~30% of jobs. Added `_enforce_moment_spread()` deterministic post-filter in `parse()`: drops moments with duration <1s (HARD RULE 3), sorts by `start_s`, greedy-accepts only moments at least 2s apart (HARD RULE 2). Bumped `prompt_version` to `2026-05-28` so agent_run telemetry reflects the output-semantics change. Eval structural rule relaxed to allow 0-5 entries (the prompt explicitly permits empty when no meaningful action — the LLM judge still scores quality regardless of count, so signal isn't lost).
+
 ## [0.4.47.10] - 2026-05-27
 
 ### Changed

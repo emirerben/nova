@@ -10,6 +10,8 @@ from app.agents._runtime import SchemaError
 from app.agents.clip_metadata import (
     ClipMetadataAgent,
     ClipMetadataInput,
+    Moment,
+    _enforce_moment_spread,
 )
 
 
@@ -106,3 +108,78 @@ class TestClipMetadataParse:
         # The two valid ones survive; the negative-start one is silently dropped.
         # Guard does NOT fire because we kept some.
         assert len(out.best_moments) == 2
+
+
+class TestEnforceMomentSpread:
+    """Locks the deterministic post-filter for the TODOS.md 2026-05-13 clustering
+    bug: Gemini periodically returns 3 moments inside 0.5s; matcher loses variety."""
+
+    def test_drops_moments_within_min_spacing(self):
+        # The bug fixture from TODOS.md: 3 moments inside <0.5s. The first wins;
+        # the next two are dropped because their start_s is too close.
+        clustered = [
+            Moment(start_s=0.0, end_s=2.0, energy=8.0, description="a"),
+            Moment(start_s=0.1, end_s=2.1, energy=7.5, description="b"),
+            Moment(start_s=0.3, end_s=2.3, energy=7.0, description="c"),
+        ]
+        out = _enforce_moment_spread(clustered)
+        assert len(out) == 1
+        assert out[0].description == "a"
+
+    def test_keeps_moments_spaced_at_or_above_2s(self):
+        # Spacing exactly at the threshold (2.0s) should be kept.
+        spaced = [
+            Moment(start_s=0.0, end_s=2.0, energy=8.0, description="a"),
+            Moment(start_s=2.0, end_s=4.0, energy=7.0, description="b"),
+            Moment(start_s=5.0, end_s=7.0, energy=6.0, description="c"),
+        ]
+        out = _enforce_moment_spread(spaced)
+        assert len(out) == 3
+
+    def test_drops_sub_second_durations(self):
+        # Frame-index-like windows (HARD RULE 3: ≥1s duration).
+        moments = [
+            Moment(start_s=0.0, end_s=0.1, energy=8.0, description="frame"),
+            Moment(start_s=3.0, end_s=5.0, energy=7.0, description="real"),
+        ]
+        out = _enforce_moment_spread(moments)
+        assert len(out) == 1
+        assert out[0].description == "real"
+
+    def test_sorts_by_start_s_before_filtering(self):
+        # Out-of-order input must be sorted before greedy-accept, otherwise a
+        # late-arriving early moment would reset the spacing window incorrectly.
+        out_of_order = [
+            Moment(start_s=5.0, end_s=7.0, energy=7.0, description="c"),
+            Moment(start_s=0.0, end_s=2.0, energy=8.0, description="a"),
+            Moment(start_s=2.5, end_s=4.5, energy=7.5, description="b"),
+        ]
+        out = _enforce_moment_spread(out_of_order)
+        assert [m.description for m in out] == ["a", "b", "c"]
+
+    def test_single_moment_returns_single_moment(self):
+        # The prompt says "fewer strong moments > padding". One legit moment in,
+        # one legit moment out — never invent siblings.
+        single = [Moment(start_s=0.0, end_s=4.0, energy=8.0, description="only")]
+        out = _enforce_moment_spread(single)
+        assert len(out) == 1
+
+    def test_empty_returns_empty(self):
+        assert _enforce_moment_spread([]) == []
+
+    def test_parse_applies_spread_filter_end_to_end(self):
+        # Integration: parse() must invoke the filter so the clustering bug
+        # CANNOT leak past the agent boundary into the orchestrator/matcher.
+        raw = json.dumps({
+            "transcript": "",
+            "hook_text": "",
+            "hook_score": 5.0,
+            "best_moments": [
+                {"start_s": 0.0, "end_s": 2.0, "energy": 8.0, "description": "a"},
+                {"start_s": 0.1, "end_s": 2.1, "energy": 7.5, "description": "b"},
+                {"start_s": 0.3, "end_s": 2.3, "energy": 7.0, "description": "c"},
+            ],
+        })
+        out = _agent().parse(raw, _make_input())
+        assert len(out.best_moments) == 1
+        assert out.best_moments[0].description == "a"

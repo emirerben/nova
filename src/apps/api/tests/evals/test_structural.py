@@ -522,14 +522,23 @@ class TestClipMetadataStructural:
         with pytest.raises(Exception):
             _good_clip_metadata(hook_score=42.0)
 
-    def test_too_few_moments(self):
+    def test_single_moment_passes_structural(self):
+        # As of v0.4.47.11 the structural rule is 0-5 entries (was 2-5). The prompt
+        # explicitly permits "fewer strong moments > padding the list" and an empty
+        # list when no meaningful action exists; the deterministic post-filter
+        # _enforce_moment_spread() can also legitimately reduce a clustered triple
+        # down to a single moment. The LLM judge still scores quality regardless
+        # of count, so signal isn't lost when count drops below the old floor.
         out = _good_clip_metadata(
             best_moments=[
                 Moment(start_s=0.0, end_s=3.5, energy=9.0, description="goalkeeper save attempt")
             ]
         )
         failures = check_clip_metadata(out, _input())
-        assert any("2-5" in f for f in failures)
+        # No structural failure citing the old 2-5 bound — single moment is valid now.
+        assert not any("2-5" in f for f in failures)
+        # And no failure about the count itself; only quality/content rules can fire.
+        assert not any("entries" in f for f in failures)
 
     def test_too_many_moments(self):
         out = _good_clip_metadata(

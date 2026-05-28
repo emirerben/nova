@@ -1,0 +1,43 @@
+{
+  "agent": "nova.compose.intro_writer",
+  "prompt_version": "2026-05-28",
+  "input": {
+    "hero_clip": {
+      "clip_id": "clip_tr_002",
+      "media_type": "video",
+      "duration_s": 6.0,
+      "subject": "kadın yatakta makyajsız selfie kamera, gece sohbet havası",
+      "hook_text": "",
+      "hook_score": 8.0,
+      "energy": 3.0,
+      "description": "intimate handheld, low-light bedroom, makyajsız, samimi-konuşma tonu, doğrudan kameraya bakıyor"
+    },
+    "hero_transcript": "bugün size çok dürüst bir şey anlatacağım",
+    "tone": "intimate",
+    "form": {"effect": "fade-in", "size_class": "jumbo", "position": "center"},
+    "exemplars": [
+      {
+        "id": "lifestyle-freedom-static-01",
+        "content_profile": "slow-living, freedom, working-from-anywhere, beach or remote scenery, quietly aspirational",
+        "effect": "fade-in",
+        "text": "this and no job",
+        "highlight_word": "no",
+        "position": "center",
+        "size_class": "jumbo",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A"
+      }
+    ],
+    "language": "tr"
+  },
+  "raw_text": "{\"text\": \"keşke daha önce konuşsaydım\", \"highlight_word\": \"keşke\"}",
+  "output": {
+    "text": "keşke daha önce konuşsaydım",
+    "highlight_word": "keşke"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "TR confessional GRWM/night-talk → curiosity-gap hook in casual sen-form, lowercase, ş diacritic preserved. Mirrors 'gece sohbetleri' creator voice. The fade-in effect respects the intimate tone.",
+    "language": "tr"
+  }
+}

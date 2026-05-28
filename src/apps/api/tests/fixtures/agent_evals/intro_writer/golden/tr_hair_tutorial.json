@@ -1,0 +1,43 @@
+{
+  "agent": "nova.compose.intro_writer",
+  "prompt_version": "2026-05-28",
+  "input": {
+    "hero_clip": {
+      "clip_id": "clip_tr_001",
+      "media_type": "video",
+      "duration_s": 5.5,
+      "subject": "uzun saçlı kadın aynanın karşısında balayage sonrası saçını tarıyor",
+      "hook_text": "",
+      "hook_score": 7.5,
+      "energy": 4.0,
+      "description": "yumuşak doğal ışık, banyo aynası önünde, hem yeni renk hem de sağlıklı saç ortaya çıkıyor"
+    },
+    "hero_transcript": "balayage sonrası saçımı tarıyorum bakın nasıl olmuş",
+    "tone": "warm",
+    "form": {"effect": "static", "size_class": "jumbo", "position": "center"},
+    "exemplars": [
+      {
+        "id": "lifestyle-freedom-static-01",
+        "content_profile": "slow-living, freedom, working-from-anywhere, beach or remote scenery, quietly aspirational",
+        "effect": "static",
+        "text": "this and no job",
+        "highlight_word": "no",
+        "position": "center",
+        "size_class": "jumbo",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A"
+      }
+    ],
+    "language": "tr"
+  },
+  "raw_text": "{\"text\": \"bu saçla iş bambaşka\", \"highlight_word\": \"bambaşka\"}",
+  "output": {
+    "text": "bu saçla iş bambaşka",
+    "highlight_word": "bambaşka"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "TR hair tutorial → casual creator voice in Turkish, lowercase, sen-form, diacritics preserved (ş ğ). Reference Nermin Özdemir's hair-tutorial caption voice. Form effect is static (TR-bias hint: agglutinative phrases overflow karaoke-line).",
+    "language": "tr"
+  }
+}

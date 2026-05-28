@@ -115,6 +115,36 @@ def _preload_typefaces() -> None:
 _preload_typefaces()
 
 
+class MissingGlyphsError(ValueError):
+    """Raised when a typeface lacks glyphs needed for the text it will render.
+
+    Skia draws `.notdef` (tofu box) for absent glyphs without raising — for
+    languages with diacritics (e.g. Turkish ç ş ğ ı İ ö ü) a font-bundle
+    regression would ship visually broken renders to users with NO log signal.
+    Callers verifying glyph coverage in advance (eval gates, CI, the language
+    rollout check) use this to fail loudly.
+    """
+
+
+def assert_glyphs_present(typeface: skia.Typeface, text: str) -> None:
+    """Verify every non-whitespace codepoint in `text` is present in `typeface`.
+
+    Whitespace is skipped because SkFont metrics for space/tab/newline are
+    layout-level concerns, not glyph-coverage concerns. Raises MissingGlyphsError
+    listing each missing codepoint as both U+HHHH and the literal character so
+    operators can grep the log for a known glyph.
+    """
+    missing = [
+        f"U+{ord(ch):04X} ({ch!r})"
+        for ch in dict.fromkeys(text)  # dedupe, preserve order
+        if not ch.isspace() and typeface.unicharToGlyph(ord(ch)) == 0
+    ]
+    if missing:
+        raise MissingGlyphsError(
+            f"Typeface missing {len(missing)} glyph(s): {', '.join(missing)}"
+        )
+
+
 def _overlay_text(overlay: dict) -> str:
     """Return the text the renderer should burn for this overlay.
 

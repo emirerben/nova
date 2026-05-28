@@ -40,6 +40,9 @@ _HEX_LEN = (4, 7)  # "#RGB" or "#RRGGBB"
 class OverlayFormatMatcherInput(BaseModel):
     clip_set_summary: str = ""
     hero_clip: ClipSummary
+    # Target render language. Drives form-bias hint in the prompt — some forms
+    # (e.g. dense list-of-3) read awkwardly in agglutinative languages like Turkish.
+    language: str = "en"
 
 
 class OverlayFormatMatcherOutput(BaseModel):
@@ -77,11 +80,28 @@ def _format_example(e) -> str:
     )
 
 
+_LANGUAGE_HINTS: dict[str, str] = {
+    "en": (
+        "Output text will be written in English. Pick the form that best suits the "
+        "content profile — no language-specific constraints."
+    ),
+    "tr": (
+        "Output text will be written in TURKISH. Turkish is agglutinative — words "
+        "are longer on average than English, so AVOID forms that depend on a short "
+        "snappy 2-3 word reveal (e.g. dense karaoke-line on a packed 10-word phrase). "
+        "Prefer simpler forms (`fade-in`, `static`) when a Turkish phrasing would "
+        "overflow a karaoke reveal. Lowercase Turkish is the norm; choose colors "
+        "that respect that voice."
+    ),
+}
+
+
 class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMatcherOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.overlay_format_matcher",
         prompt_id="match_overlay_format",
-        prompt_version="2026-05-26",
+        # 2026-05-28 — added $language_hint block (en|tr).
+        prompt_version="2026-05-28",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -114,6 +134,7 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
             valid_positions=", ".join(_POSITIONS),
             valid_sizes=", ".join(_SIZE_CLASSES),
             valid_anchors=", ".join(_ANCHORS),
+            language_hint=_LANGUAGE_HINTS.get(input.language, _LANGUAGE_HINTS["en"]),
         )
 
     def parse(

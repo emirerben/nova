@@ -259,9 +259,20 @@ def check_clip_metadata(
     if output.hook_score < 0 or output.hook_score > 10:
         failures.append(f"hook_score={output.hook_score} outside [0, 10]")
 
+    # Prompt contract (analyze_clip.txt):
+    #   - "list of 2-5 objects" in the schema description, AND
+    #   - "An empty best_moments list is a valid output when the segment has no
+    #     meaningful action — don't invent moments to satisfy the 2-5 range."
+    #
+    # Empty is therefore a legitimate output, NOT a structural failure. Additionally,
+    # `_enforce_moment_spread` (the 2026-05-28 post-filter for the TODOS.md
+    # 2026-05-13 clustering bug) can legitimately reduce a 3-moment cluster to
+    # 1 moment when all returned moments collapse into a sub-2s window. The
+    # structural rule must allow that path; the LLM judge scores the actual
+    # quality of the returned moment(s).
     n = len(output.best_moments)
-    if n < 2 or n > 5:
-        failures.append(f"best_moments has {n} entries; prompt requires 2-5")
+    if n > 5:
+        failures.append(f"best_moments has {n} entries; prompt caps at 5")
 
     for i, m in enumerate(output.best_moments):
         if m.start_s >= m.end_s:
