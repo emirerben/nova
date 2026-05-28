@@ -409,8 +409,38 @@ export async function adminUpdateMusicTrack(
     headers: JSON_HEADERS,
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Admin update failed: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(formatBackendDetail(body) || `Admin update failed: ${res.status}`);
+  }
   return res.json();
+}
+
+// FastAPI returns `detail` as a string for hand-raised HTTPException, but as
+// `list[{loc, msg, type, ...}]` for Pydantic validator failures (the
+// `track_config.slot_every_n_beats >= 1` style checks fire this shape).
+// `new Error([...])` coerces to "[object Object]" — surface a readable line
+// instead. Keep this near the network boundary so anything UI-side just
+// renders `err.message` and gets sane text either way.
+function formatBackendDetail(body: unknown): string {
+  if (!body || typeof body !== "object") return "";
+  const detail = (body as { detail?: unknown }).detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (item && typeof item === "object" && typeof (item as { msg?: unknown }).msg === "string") {
+          return (item as { msg: string }).msg;
+        }
+        try {
+          return JSON.stringify(item);
+        } catch {
+          return String(item);
+        }
+      })
+      .join("; ");
+  }
+  return "";
 }
 
 export async function adminPatchLyricsConfig(

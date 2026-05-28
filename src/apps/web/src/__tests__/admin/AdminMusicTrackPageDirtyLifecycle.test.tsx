@@ -73,7 +73,14 @@ function makeTrack(bestStart: number, bestEnd: number): MusicTrackDetail {
     audio_gcs_path: "music/track-1/audio.m4a",
     duration_s: 298,
     beat_count: 580,
-    beat_timestamps_s: [bestStart + 0.5, bestStart + 1.0, bestEnd - 0.5],
+    // Dense, uniformly-spaced beats covering 0..298s. The form lets the
+    // user retype start/end to any window inside the track, and the Save
+    // button is now disabled when countSlotsClient(beats, start, end, n)
+    // is 0. The original 3-beat fixture (bestStart+0.5, +1.0, bestEnd-0.5)
+    // 0-slotted on any window not centered on those exact beats, blocking
+    // Save and breaking this test's dirty-lifecycle assertions. Beats
+    // every 0.5s is plenty for any [start, end] window the test types.
+    beat_timestamps_s: Array.from({ length: 596 }, (_, i) => (i + 1) * 0.5),
     analysis_status: "ready",
     error_detail: null,
     thumbnail_url: null,

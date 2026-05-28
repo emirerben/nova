@@ -29,6 +29,12 @@ jest.mock("@/lib/music-api", () => {
   };
 });
 
+// Beats span 0..120s — deliberately leaves section #3 ([140, 156])
+// outside the beat range so the "beat-strip highlight" tests below can
+// assert "no beats inside #3 light up". Side effect of this fixture:
+// section #3 always 0-slots at any N (no beats in window), so its
+// AudioPlayer band renders the per-band warning marker (⚠ prefix).
+// Assertions on the #3 label account for this.
 const baseBeats = Array.from({ length: 240 }, (_, i) => (i + 1) * 0.5);
 
 // Three ranked sections used by the click-to-select tests below. Distinct
@@ -164,9 +170,13 @@ test("isSelected label gets ✓ prefix when form bounds match", async () => {
   // the 110px threshold for the long label, so the short branch renders
   // "✓#2" instead of "✓ #2 · bridge · medium".
   expect(screen.getByText("✓#2")).toBeInTheDocument();
+  // (Side note: section #3 sits outside baseBeats so its band carries
+  // the per-band 0-slot warning marker. See #3 assertion below.)
   // Unselected bands keep their plain rank label.
   expect(screen.getByText("#1")).toBeInTheDocument();
-  expect(screen.getByText("#3")).toBeInTheDocument();
+  // Section #3 ([140, 156]) is outside baseBeats so it 0-slots at N=8 →
+  // the AudioPlayer band renders "⚠#3" instead of plain "#3".
+  expect(screen.getByText("⚠#3")).toBeInTheDocument();
 });
 
 test("isSelected tolerates 0.3s drift but not 0.6s drift", async () => {
