@@ -152,7 +152,7 @@ _MIN_MOMENT_SPACING_S = 2.0
 _MIN_MOMENT_DURATION_S = 1.0
 
 
-def _enforce_moment_spread(moments: list["Moment"]) -> list["Moment"]:
+def _enforce_moment_spread(moments: list[Moment]) -> list[Moment]:
     """Deterministic post-filter on the Gemini-returned best_moments list.
 
     The prompt has explicit HARD RULES for spread + duration but Gemini still
