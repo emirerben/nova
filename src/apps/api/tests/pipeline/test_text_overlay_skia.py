@@ -56,6 +56,116 @@ def test_typeface_for_overlay_falls_back_when_font_unknown():
     assert isinstance(tf, skia.Typeface)
 
 
+# -- Turkish-diacritic glyph coverage (TR regression) -------------------------
+#
+# Adding Turkish-language support to intro_writer/overlay_format_matcher is
+# necessary but not sufficient: the model can produce ç ş ğ ı İ ö ü perfectly,
+# but if the bundled typeface lacks those glyphs Skia draws .notdef (tofu box)
+# with no error log. These tests lock the contract: every codepoint Turkish
+# creators actually use MUST be present in EVERY bundled typeface that can
+# ever be selected to render a TR overlay.
+
+# Codepoints the TR_DIACRITICS_REQUIRED set is built from. Sourced from the
+# canonical Turkish alphabet — lower + upper case — plus the dotless/dotted i
+# pair which is the most common font-fallback failure on Turkish text.
+_TR_DIACRITICS = "çÇşŞğĞıİöÖüÜ"
+
+
+def test_assert_glyphs_present_raises_on_missing():
+    # A null-font reference would be the simplest test, but Skia rejects it;
+    # use a real typeface and pick a codepoint nothing in our bundle covers
+    # (a CJK ideograph — Playfair Display is a Latin serif).
+    from app.pipeline.text_overlay import FONTS_DIR
+
+    tf = skia.Typeface.MakeFromFile(os.path.join(FONTS_DIR, "PlayfairDisplay-Bold.ttf"))
+    with pytest.raises(tos.MissingGlyphsError) as exc:
+        tos.assert_glyphs_present(tf, "hello 漢字")
+    # Error must name the missing codepoints so an operator can grep.
+    assert "U+6F22" in str(exc.value)
+    assert "U+5B57" in str(exc.value)
+
+
+def test_assert_glyphs_present_passes_for_ascii():
+    from app.pipeline.text_overlay import FONTS_DIR
+
+    tf = skia.Typeface.MakeFromFile(os.path.join(FONTS_DIR, "PlayfairDisplay-Bold.ttf"))
+    tos.assert_glyphs_present(tf, "hello world 12345")  # no raise
+
+
+def test_playfair_display_bold_covers_all_turkish_diacritics():
+    # THE regression test. If this fails after a font-bundle change, Turkish
+    # creators see tofu boxes on their hero overlay and the renderer logs nothing.
+    from app.pipeline.text_overlay import FONTS_DIR
+
+    tf = skia.Typeface.MakeFromFile(os.path.join(FONTS_DIR, "PlayfairDisplay-Bold.ttf"))
+    tos.assert_glyphs_present(tf, _TR_DIACRITICS)
+
+
+# Bundled fonts that knowingly LACK Turkish glyph coverage. Each entry should
+# point to the file name in font-registry.json. These fonts MUST NOT be selected
+# to render a TR overlay — see TODO below. Adding a font here is a deliberate
+# scope decision: it means "we ship this font for EN-only contexts and accept it
+# never renders TR jobs". The test below uses this set to allow exceptions without
+# silently regressing the rest of the bundle.
+_TR_UNSAFE_FONTS: set[str] = {
+    # Permanent Marker is a stylized handwriting font that lacks ş Ş ğ Ğ İ. It's
+    # registered as a font-cycle contrast font; if a TR generative overlay hits
+    # the font-cycle effect the cycle could land on this font mid-animation.
+    # TODO(tr-cycle-filter): the cycle-font selector in text_overlay_skia.py /
+    # text_overlay.py should consult a `tr_safe` flag in the registry and skip
+    # non-TR-safe fonts when the job's language is "tr". Until that ships, the
+    # only reachable path for PermanentMarker on a TR job is the font-cycle
+    # effect AND a glyph-bearing letter landing on a PermanentMarker frame;
+    # the form matcher's TR hint biases toward simpler effects which sharply
+    # narrows this exposure.
+    "PermanentMarker-Regular.ttf",
+}
+
+
+def test_tr_safe_bundled_typefaces_cover_turkish_diacritics():
+    # Bundle-wide invariant minus the documented exceptions: every TR-safe font
+    # MUST cover the Turkish diacritic alphabet. Adding a font that fails this
+    # test forces a deliberate choice: fix the glyph coverage, or add the font
+    # name to _TR_UNSAFE_FONTS and accept the EN-only scope.
+    failures: list[tuple[str, str]] = []
+    for path, tf in tos._TYPEFACE_BY_PATH.items():
+        if os.path.basename(path) in _TR_UNSAFE_FONTS:
+            continue
+        try:
+            tos.assert_glyphs_present(tf, _TR_DIACRITICS)
+        except tos.MissingGlyphsError as exc:
+            failures.append((os.path.basename(path), str(exc)))
+    assert not failures, (
+        "TR-safe bundled fonts missing Turkish glyph coverage — TR renders would tofu-box:\n"
+        + "\n".join(f"  {f}: {msg}" for f, msg in failures)
+        + "\n\nFix the font, or add the file to _TR_UNSAFE_FONTS with a TODO."
+    )
+
+
+def test_tr_unsafe_set_only_lists_fonts_that_actually_lack_glyphs():
+    # Sentinel for the exception list: if a "TR-unsafe" font is upgraded (e.g.
+    # we replace PermanentMarker with a variant covering Turkish), drop it from
+    # the set. This test fails when an entry is no longer needed so the exception
+    # list doesn't ossify into bit-rot.
+    from app.pipeline.text_overlay import FONTS_DIR
+
+    falsely_unsafe: list[str] = []
+    for name in _TR_UNSAFE_FONTS:
+        path = os.path.join(FONTS_DIR, name)
+        if not os.path.exists(path):
+            continue
+        tf = skia.Typeface.MakeFromFile(path)
+        try:
+            tos.assert_glyphs_present(tf, _TR_DIACRITICS)
+            falsely_unsafe.append(name)
+        except tos.MissingGlyphsError:
+            pass
+    assert not falsely_unsafe, (
+        f"{falsely_unsafe} are listed as TR-unsafe but DO cover Turkish glyphs — "
+        "remove them from _TR_UNSAFE_FONTS."
+    )
+
+
 # -- Static effect (effect=none) ---------------------------------------------
 
 
