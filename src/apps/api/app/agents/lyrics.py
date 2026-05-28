@@ -248,12 +248,16 @@ class LyricsExtractionAgent(Agent[LyricsInput, LyricsOutput]):
         # different cut (e.g. Instant Crush 339.79s official-video cut vs
         # LRCLIB album cut at 338.00s). Per-word AlignedWord timings stay
         # as Whisper produced them — karaoke `\kf` + per-word-pop are
-        # unaffected. Bumped from `2026-05-27.beauty` to force re-analyze
-        # of existing cached blobs on next preview / render.
-        # Previous: 2026-05-27 (PR Beauty And A Beat): forced-ID admin
-        # override, /api/search fuzzy fallback, diagnostic blob,
+        # unaffected. Bumped to force re-analyze of existing cached blobs
+        # on next preview / render.
+        # Previous: 2026-05-27.instant-crush (PR #363): single-L0 LRC
+        # re-anchor when |shift| > 1.0s for wrong-cut audio.
+        # Previous: 2026-05-27.beauty (PR Beauty And A Beat): forced-ID
+        # admin override, /api/search fuzzy fallback, diagnostic blob,
         # whisper_only demoted to non-publishable draft.
-        prompt_version="2026-05-27.instant-crush",
+        # Current: multi-line median re-anchor layered above single-L0
+        # to catch sub-second consistent drift (Overnight, The Bay class).
+        prompt_version="2026-05-28.median",
         model="rule_based",
         # LRCLIB + Whisper each have their own retry/timeout policy. The
         # agent runtime's retry loop doesn't apply to rule_based agents.
