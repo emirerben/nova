@@ -140,6 +140,49 @@ _BALL_BLACKLIST = (
 )
 
 
+# Minimum gap (seconds) between consecutive accepted moments. Mirrors HARD RULE 2
+# in prompts/analyze_clip.txt. Gemini-2.5-flash sometimes ignores the prompt rule
+# and emits 3 moments inside 0.5s; this post-filter is the deterministic safety net.
+# Bumping this past ~3s starts dropping legitimately tight moments on short clips,
+# so 2.0 matches the prompt's stated contract.
+_MIN_MOMENT_SPACING_S = 2.0
+
+# Minimum moment duration. Anything shorter is a frame index, not a moment
+# (HARD RULE 3 in the prompt).
+_MIN_MOMENT_DURATION_S = 1.0
+
+
+def _enforce_moment_spread(moments: list["Moment"]) -> list["Moment"]:
+    """Deterministic post-filter on the Gemini-returned best_moments list.
+
+    The prompt has explicit HARD RULES for spread + duration but Gemini still
+    occasionally returns 3 moments clustered inside 0.5s (TODOS.md 2026-05-13 —
+    affected 3/5 prod fixtures, judge avg 2.5/5). This filter applies the same
+    rules in code so the downstream matcher always sees distinct candidates:
+
+      1. Drop any moment whose duration < _MIN_MOMENT_DURATION_S (rule 3).
+      2. Sort the remainder by start_s.
+      3. Greedy-accept: keep a moment if its start_s is at least
+         _MIN_MOMENT_SPACING_S after the last accepted moment's start_s.
+
+    A clip with one legitimate moment correctly returns one moment — the prompt
+    explicitly says "fewer strong moments > padding the list" so we never invent.
+    """
+    valid = [
+        m for m in moments
+        if isinstance(m.end_s, (int, float))
+        and isinstance(m.start_s, (int, float))
+        and (m.end_s - m.start_s) >= _MIN_MOMENT_DURATION_S
+    ]
+    valid.sort(key=lambda m: m.start_s)
+
+    kept: list[Moment] = []
+    for m in valid:
+        if not kept or (m.start_s - kept[-1].start_s) >= _MIN_MOMENT_SPACING_S:
+            kept.append(m)
+    return kept
+
+
 def _filter_moments_by_action(moments: list[dict[str, Any]], hint: str) -> list[dict[str, Any]]:
     """Football-only post-filter. Pass-through for other hints / no hint."""
     hint_lower = hint.lower()
@@ -178,7 +221,10 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.video.clip_metadata",
         prompt_id="analyze_clip",
-        prompt_version="2026-05-14",
+        # 2026-05-28 — _enforce_moment_spread() post-filter added in parse().
+        # Prompt text unchanged; bump signals the output-semantics change in
+        # agent_run telemetry so scoring drift is attributable to the new filter.
+        prompt_version="2026-05-28",
         model="gemini-2.5-flash",
         # Gemini pricing as of 2026 — input ~$0.075/M, output ~$0.30/M (2.5 Flash).
         cost_per_1k_input_usd=0.000075,
@@ -317,6 +363,11 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
                 "every entry failed validation (likely wrong field names or "
                 "non-numeric start_s/end_s)"
             )
+
+        # Deterministic post-filter for the clustering bug (TODOS.md 2026-05-13):
+        # Gemini periodically returns 3 moments inside 0.5s despite the prompt's
+        # HARD RULES, defeating downstream matcher variety. Enforce spread in code.
+        moments = _enforce_moment_spread(moments)
 
         try:
             return ClipMetadataOutput(
