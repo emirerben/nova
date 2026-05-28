@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -17,6 +17,7 @@ import { adminCreateTemplateFromMusicTrack } from "@/lib/admin-api";
 import LyricsConfigPanel from "@/app/admin/_shared/LyricsConfigPanel";
 import type { LyricsConfig } from "@/lib/music-api";
 import { matchSectionByBounds } from "@/lib/music-section-match";
+import { countSlotsClient } from "@/lib/music-slot-count";
 import { AudioPlayer } from "./components/AudioPlayer";
 import { LyricsTab } from "./components/LyricsTab";
 import { TestTab } from "./components/TestTab";
@@ -403,6 +404,56 @@ function ConfigTabContent({
     bestEnd !== (cfg.best_end_s?.toString() ?? "") ||
     slotEveryN !== (cfg.slot_every_n_beats?.toString() ?? "8");
 
+  // Live "would produce N slots" preview. Mirrors the backend PATCH
+  // validator at `admin_music.py` so the user sees the same verdict
+  // before hitting Save. When previewSlots === 0 the Save button
+  // disables — never let the user submit a known-invalid combo only to
+  // round-trip a 422.
+  //
+  // submitStart/submitEnd/submitN are the SHAPE that would be sent on
+  // Save. Empty inputs become NaN (not the cfg fallback), so previewSlots
+  // correctly reports 0 and Save disables — submitting an empty field
+  // produces JSON `null` which 500s on int(None) at the backend.
+  // (liveStart/liveEnd above keep the cfg fallback because they drive the
+  // AudioPlayer's visible window and the matchedSection label, which
+  // must remain valid for display purposes while the user edits.)
+  const submitStart = bestStart === "" ? Number.NaN : parseFloat(bestStart);
+  const submitEnd = bestEnd === "" ? Number.NaN : parseFloat(bestEnd);
+  const submitN = slotEveryN === "" ? Number.NaN : parseInt(slotEveryN, 10);
+  const liveN = Number.isFinite(submitN) ? submitN : (cfg.slot_every_n_beats ?? 8);
+  const previewSlots = useMemo(
+    () =>
+      countSlotsClient(
+        track.beat_timestamps_s ?? [],
+        submitStart,
+        submitEnd,
+        submitN,
+      ),
+    [track.beat_timestamps_s, submitStart, submitEnd, submitN],
+  );
+
+  // F4 escape hatch: when the current (start, end, N) combo 0-slots and
+  // the track HAS beats (analyzer ran), search the lower-N candidates for
+  // one that would produce ≥1 slot. The user can click "Try N=k" inline
+  // next to the amber badge and recover without manual guesswork. Common
+  // hit: legacy rows saved before the slot-count validator, or tracks
+  // whose re-analyzed beat density dropped under N=8.
+  const suggestedN = useMemo(() => {
+    if (previewSlots > 0) return null;
+    const beats = track.beat_timestamps_s ?? [];
+    if (beats.length === 0) return null;
+    // Bounds must be finite to attempt a fix-by-N suggestion. If start/end
+    // are blank/invalid, lowering N can't recover the situation.
+    if (!Number.isFinite(submitStart) || !Number.isFinite(submitEnd)) return null;
+    const currentN = Number.isFinite(submitN) ? submitN : NaN;
+    for (const n of [4, 2, 1]) {
+      if (n === currentN) continue;
+      const slots = countSlotsClient(beats, submitStart, submitEnd, n);
+      if (slots > 0) return { n, slots };
+    }
+    return null;
+  }, [previewSlots, track.beat_timestamps_s, submitStart, submitEnd, submitN]);
+
   return (
     <>
       {/* Info card */}
@@ -505,6 +556,7 @@ function ConfigTabContent({
             start={bestStart === "" ? (cfg.best_start_s ?? 0) : parseFloat(bestStart)}
             end={bestEnd === "" ? (cfg.best_end_s ?? 0) : parseFloat(bestEnd)}
             sections={track.best_sections}
+            slotEveryN={Number.isFinite(liveN) ? liveN : 8}
             onStartChange={(s) => setBestStart(s.toString())}
             onEndChange={(s) => setBestEnd(s.toString())}
           />
@@ -540,9 +592,13 @@ function ConfigTabContent({
           <div className="grid grid-cols-2 gap-4">
             <label className="block">
               <span className="text-xs text-zinc-400 mb-1 block">Best section start (s)</span>
+              {/* step="any" intentionally: the song_sections agent stores
+                  raw floats (e.g. 56.25) and step="0.1" rejected them with
+                  a locale-formatted HTML5 popup. Bounds + slot-count are
+                  enforced by the backend PATCH validator + previewSlots. */}
               <input
                 type="number"
-                step="0.1"
+                step="any"
                 min="0"
                 value={bestStart}
                 onChange={(e) => setBestStart(e.target.value)}
@@ -553,7 +609,7 @@ function ConfigTabContent({
               <span className="text-xs text-zinc-400 mb-1 block">Best section end (s)</span>
               <input
                 type="number"
-                step="0.1"
+                step="any"
                 min="0"
                 value={bestEnd}
                 onChange={(e) => setBestEnd(e.target.value)}
@@ -585,15 +641,60 @@ function ConfigTabContent({
           <div className="flex items-center">
             <button
               type="submit"
-              disabled={saving}
-              className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
+              disabled={saving || previewSlots === 0}
+              data-testid="save-config-btn"
+              className="bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
             >
               {saving ? "Saving…" : "Save config"}
             </button>
-            {/* Amber, not red — "unsaved" is a state, not an error. */}
+            {/* Slot-count preview — mirrors backend admin_music.py PATCH
+                validator. Green when the (window, N) combo would produce
+                ≥1 slot; amber chip + Save disabled when it would 0-slot.
+                The 0-slot variant uses a heavier chip treatment (border
+                + ⚠ icon) so it doesn't visually equal the lighter
+                "Unsaved changes" notice rendered below. */}
+            {previewSlots > 0 ? (
+              <span
+                data-testid="slot-count-badge"
+                role="status"
+                aria-live="polite"
+                className="ml-3 text-xs text-emerald-400 inline-flex items-center gap-1.5"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
+                Would produce {previewSlots} slot{previewSlots === 1 ? "" : "s"}
+              </span>
+            ) : (
+              <span
+                data-testid="slot-count-badge"
+                role="status"
+                aria-live="polite"
+                className="ml-3 text-xs font-medium text-amber-200 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/40"
+              >
+                <span aria-hidden="true">⚠</span>
+                Cannot save: 0 slots — lower N or widen window
+              </span>
+            )}
+            {/* F4 escape: lower-N suggestion. Only shown when the user
+                is stuck (0-slot) AND a lower N would unblock them.
+                Clicking sets slotEveryN to the suggested value; the
+                badge re-renders green and Save enables. */}
+            {previewSlots === 0 && suggestedN && (
+              <button
+                type="button"
+                data-testid="apply-suggested-n"
+                onClick={() => setSlotEveryN(suggestedN.n.toString())}
+                className="ml-2 text-xs font-medium text-amber-100 underline decoration-amber-400 underline-offset-2 hover:text-white"
+              >
+                Try N={suggestedN.n} ({suggestedN.slots} slot
+                {suggestedN.slots === 1 ? "" : "s"})
+              </button>
+            )}
+            {/* Amber, not red — "unsaved" is a state, not an error.
+                Rendered subtler than the validation chip above so the
+                two never visually collide. */}
             {hasUnsavedChanges && (
-              <span className="ml-3 text-xs text-amber-400 inline-flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+              <span className="ml-3 text-xs text-amber-400/70 inline-flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 inline-block" />
                 Unsaved changes
               </span>
             )}

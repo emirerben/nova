@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { adminGetAudioUrl, type SongSection } from "@/lib/music-api";
 import { matchSectionByBounds } from "@/lib/music-section-match";
+import { countSlotsClient } from "@/lib/music-slot-count";
 
 // Extracted from page.tsx (Next.js rejects non-page named exports from
 // page files). The audio player + waveform interaction is its own unit so
@@ -46,6 +47,7 @@ export function AudioPlayer({
   start,
   end,
   sections,
+  slotEveryN = 8,
   onStartChange,
   onEndChange,
 }: {
@@ -55,6 +57,12 @@ export function AudioPlayer({
   start: number;
   end: number;
   sections: SongSection[] | null;
+  /**
+   * Current `slot_every_n_beats` from the form (NOT the saved cfg value),
+   * so the per-band 0-slot warning updates live as the user edits N.
+   * Defaults to 8 to keep existing call sites working.
+   */
+  slotEveryN?: number;
   onStartChange: (s: number) => void;
   onEndChange: (s: number) => void;
 }) {
@@ -184,6 +192,21 @@ export function AudioPlayer({
     }
   }
 
+  // Per-band 0-slot warning. Mirrors the backend PATCH validator
+  // (admin_music.py via music_recipe.count_slots) so the user sees the
+  // incompatibility BEFORE clicking the band — clicking would auto-fill
+  // the form into a state that 422s on Save.
+  // Hooks MUST run before any early return — keep this above the
+  // audioError / !audioUrl guards below.
+  const bandWouldZeroSlot = useMemo(() => {
+    if (!sections) return new Map<SongSection, boolean>();
+    const m = new Map<SongSection, boolean>();
+    for (const s of sections) {
+      m.set(s, countSlotsClient(beats, s.start_s, s.end_s, slotEveryN) === 0);
+    }
+    return m;
+  }, [sections, beats, slotEveryN]);
+
   if (audioError) {
     return <p className="text-sm text-red-400">Could not load audio: {audioError}</p>;
   }
@@ -249,6 +272,22 @@ export function AudioPlayer({
         style={{ cursor: selectMode ? "crosshair" : "pointer" }}
         onClick={handleWaveformClick}
       >
+        {/* Diagonal-stripe pattern for bands that would produce 0 slots
+            at the current slot_every_n_beats. Defined once; referenced by
+            fill={`url(#bandWarnStripes)`} on warning bands. */}
+        <defs>
+          <pattern
+            id="bandWarnStripes"
+            patternUnits="userSpaceOnUse"
+            width={6}
+            height={6}
+            patternTransform="rotate(45)"
+          >
+            <rect width={6} height={6} fill="rgba(245,158,11,0.18)" />
+            <line x1={0} y1={0} x2={0} y2={6} stroke="rgba(245,158,11,0.55)" strokeWidth={2} />
+          </pattern>
+        </defs>
+
         {/* Time ruler */}
         {ticks.map((t, i) => {
           const x = (t / duration) * W;
@@ -283,7 +322,11 @@ export function AudioPlayer({
           const y = bandY(rank);
           const showLabel = w > 110;
           const isSelected = matchedSection === s;
-          const label = `${isSelected ? "✓ " : ""}#${rank} · ${s.label} · ${s.energy}`;
+          const wouldZeroSlot = bandWouldZeroSlot.get(s) ?? false;
+          const label = `${isSelected ? "✓ " : ""}${wouldZeroSlot ? "⚠ " : ""}#${rank} · ${s.label} · ${s.energy}`;
+          const warnTitle = wouldZeroSlot
+            ? `Would produce 0 slots at N=${slotEveryN} — lower N or pick a wider band`
+            : null;
           return (
             // Key by array index — JSONB rows can theoretically duplicate ranks
             // (write-time parse() guards but read path trusts the data); using
@@ -294,6 +337,7 @@ export function AudioPlayer({
               // the write-time parse() uniqueness guard (same one called out
               // in the React-key comment below) for duplicate-free rendering.
               data-testid={`section-band-${rank}`}
+              data-zero-slot={wouldZeroSlot ? "true" : "false"}
               onMouseEnter={() => setHoverSection(s)}
               onMouseLeave={() => setHoverSection((prev) => (prev === s ? null : prev))}
               onClick={(e) => {
@@ -308,6 +352,7 @@ export function AudioPlayer({
               }}
               style={{ cursor: selectMode ? "crosshair" : "pointer" }}
             >
+              {warnTitle && <title>{warnTitle}</title>}
               <rect
                 x={x}
                 y={y}
@@ -318,6 +363,22 @@ export function AudioPlayer({
                 stroke={colors.stroke}
                 strokeWidth={isSelected ? 3 : 1}
               />
+              {wouldZeroSlot && (
+                // Striped overlay on warning bands. Drawn AFTER the fill
+                // so the rank color stays readable underneath, but BEFORE
+                // the text so the label outranks the pattern.
+                <rect
+                  x={x}
+                  y={y}
+                  width={w}
+                  height={BAND_ROW_H}
+                  rx={2}
+                  fill="url(#bandWarnStripes)"
+                  stroke="rgba(245,158,11,0.8)"
+                  strokeWidth={1.5}
+                  pointerEvents="none"
+                />
+              )}
               {showLabel ? (
                 <text
                   x={x + 4}
@@ -336,7 +397,7 @@ export function AudioPlayer({
                   fill={colors.text}
                   fontFamily="ui-sans-serif, system-ui"
                 >
-                  {`${isSelected ? "✓" : ""}#${rank}`}
+                  {`${isSelected ? "✓" : ""}${wouldZeroSlot ? "⚠" : ""}#${rank}`}
                 </text>
               )}
             </g>
@@ -414,7 +475,13 @@ export function AudioPlayer({
       </svg>
 
       {/* Section hover detail card. Always render the slot so the layout
-          doesn't jump as the user moves between bands. */}
+          doesn't jump as the user moves between bands.
+
+          Touch/a11y: the per-band ⚠ marker has an SVG <title> tooltip
+          that's hover-only, so we surface the same warning info in the
+          idle state too. Counts the 0-slot bands and names them — gives
+          touch users the same context hover users get without making
+          them tap each band. */}
       {bandRowCount > 0 && (
         <div className="mt-2 min-h-[44px] text-xs">
           {hoverSection ? (
@@ -435,10 +502,32 @@ export function AudioPlayer({
                 </span>
               </div>
               <div className="text-zinc-400">{hoverSection.rationale}</div>
+              {bandWouldZeroSlot.get(hoverSection) && (
+                <div
+                  data-testid="band-warn-hover"
+                  className="mt-1 text-amber-300"
+                >
+                  ⚠ Picking this section produces 0 slots at N={slotEveryN}.
+                  Lower N or pick a wider band before saving.
+                </div>
+              )}
             </div>
           ) : (
-            <div className="text-zinc-500 px-1 py-2">
-              Hover for rationale · click to preview + select as best section
+            <div className="text-zinc-500 px-1 py-2 flex flex-wrap items-center gap-x-3">
+              <span>Hover for rationale · click to preview + select as best section</span>
+              {(() => {
+                const warned = sections?.filter((s) => bandWouldZeroSlot.get(s)) ?? [];
+                if (warned.length === 0) return null;
+                const ranks = warned.map((s) => `#${s.rank}`).join(", ");
+                return (
+                  <span
+                    data-testid="band-warn-summary"
+                    className="text-amber-300"
+                  >
+                    ⚠ {ranks} would 0-slot at N={slotEveryN}
+                  </span>
+                );
+              })()}
             </div>
           )}
         </div>
