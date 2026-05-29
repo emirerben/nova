@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.53.0] - 2026-05-29
+
+### Changed
+- **Content-plan flow is now one guided wizard (was four disconnected pages).** The new-user plan flow felt old-fashioned and friction-heavy: onboarding → persona → plan → item lived on four separate full-page routes with no shared chrome, the persona page **dead-ended** (no way forward to build the plan), each async generation **blanked the whole screen**, and `/plan` was **linked from nowhere** (undiscoverable; the header had no auth state). This reworks the experience end-to-end, frontend-only — no API, schema, or render changes; every existing `plan-api` contract is reused verbatim.
+  - **Unified `/plan` wizard** (`app/plan/page.tsx`) derives its step (You → Persona → Plan) from the user's server data, with a persistent `Stepper`, auto-advance, back-navigation, and `?step=` deep-linking. No more dead-ends: the persona step now has a primary **"Plan my 30 days →"** CTA (which flushes any unsaved edits first, so the `createContentPlan` ready-gate can't 409).
+  - **One-question-at-a-time onboarding** (`OnboardingStep` + `QuestionCard`) replaces the 8-textarea wall — example chips, progress dots, Enter-to-advance, Back. Same `PersonaQuestionnaire` keys.
+  - **Inline generation states** (`GeneratingState`) replace the full-page blank takeovers, so the stepper stays visible while the persona/plan generate.
+  - **Wires up the previously-unused `generateFirstWeek`** as a **"Generate week 1"** batch CTA on the calendar's activation week (the endpoint shipped in 0.4.52.0 but had no UI).
+  - **Discoverable + auth-aware:** new `Providers` (`SessionProvider`) + a `useSession`-driven `Header` ("Sign in" / avatar + "My plan" / "Plan" entry), and a homepage CTA banner. `/plan/onboarding` + `/plan/persona` are now redirects so old links and sign-in `callbackUrl`s still resolve.
+  - **Editorial visual system:** Playfair Display wired into Tailwind as `font-display`, warm amber accent, generous spacing, CSS-only fade transitions (no new deps). Item page restyled to match. New shared `cn()` helper (`lib/cn.ts`).
+  - Fixes a polling bug introduced in the rewrite: the generation poll is now keyed on an `isGenerating` boolean via `setInterval`, so it keeps firing across polls where the status stays `generating` (a status-string dependency would re-arm only on change, killing the poll after one tick).
+
 ## [0.4.52.1] - 2026-05-29
 
 ### Fixed

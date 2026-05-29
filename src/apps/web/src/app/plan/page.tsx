@@ -1,307 +1,361 @@
 "use client";
 
-import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
+import { useCallback, useEffect, useState } from "react";
 import {
   type ContentPlan,
   createContentPlan,
+  createPersona,
   getContentPlan,
+  getPersona,
   NotAuthenticatedError,
-  type PlanItem,
-  type PlanItemStatus,
-  updatePlanItem,
+  type PersonaContent,
+  type PersonaQuestionnaire,
+  type PersonaResponse,
+  updatePersona,
 } from "@/lib/plan-api";
+import GeneratingState from "./_components/GeneratingState";
+import OnboardingStep from "./_components/OnboardingStep";
+import PersonaEditor from "./_components/PersonaEditor";
+import PlanCalendar from "./_components/PlanCalendar";
+import PlanShell from "./_components/PlanShell";
+import SignInPrompt from "./_components/SignInPrompt";
+import Stepper, { type WizardStep } from "./_components/Stepper";
 
 const POLL_MS = 2000;
+const ORDER: Record<WizardStep, number> = { you: 0, persona: 1, plan: 2 };
 
-export default function PlanPage() {
+/** Furthest step unlocked by the user's data. */
+function dataReached(p: PersonaResponse | null, pl: ContentPlan | null): WizardStep {
+  if (pl) return "plan";
+  if (p) return "persona";
+  return "you";
+}
+
+/** Where a returning user should land based purely on their data. */
+function naturalStep(p: PersonaResponse | null, pl: ContentPlan | null): WizardStep {
+  if (!p) return "you";
+  if (p.persona_status === "generating") return "persona";
+  if (pl) return "plan";
+  return "persona";
+}
+
+export default function PlanWizardPage() {
+  const { status: authStatus } = useSession();
+
+  const [persona, setPersona] = useState<PersonaResponse | null>(null);
   const [plan, setPlan] = useState<ContentPlan | null>(null);
   const [loading, setLoading] = useState(true);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [events, setEvents] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [step, setStep] = useState<WizardStep | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const p = await getContentPlan();
-      setPlan(p);
-      return p;
+      const [p, pl] = await Promise.all([getPersona(), getContentPlan()]);
+      setPersona(p);
+      setPlan(pl);
+      return { p, pl };
     } catch (err) {
       if (err instanceof NotAuthenticatedError) setNeedsAuth(true);
-      else setError(err instanceof Error ? err.message : "Failed to load plan");
+      else setError(err instanceof Error ? err.message : "Failed to load your plan");
       return null;
     } finally {
       setLoading(false);
     }
   }, []);
 
+  // Initial load (once authenticated). Skip the round-trip if we already know
+  // the user is signed out.
   useEffect(() => {
-    let cancelled = false;
-    async function tick() {
-      const p = await load();
-      if (cancelled) return;
-      if (p?.plan_status === "generating") pollRef.current = setTimeout(tick, POLL_MS);
+    if (authStatus === "unauthenticated") {
+      setNeedsAuth(true);
+      setLoading(false);
+      return;
     }
-    void tick();
-    return () => {
-      cancelled = true;
-      if (pollRef.current) clearTimeout(pollRef.current);
-    };
-  }, [load]);
+    if (authStatus === "authenticated") void load();
+  }, [authStatus, load]);
 
-  async function handleGenerate() {
-    setSubmitting(true);
+  // Poll while either generation is in flight. Keyed on the boolean (not the
+  // status string) so the interval keeps firing across polls where the status
+  // stays "generating" — a status-string dependency would re-arm only when the
+  // value *changes*, killing the poll after one tick. The interval clears the
+  // moment nothing is generating (or on unmount).
+  const isGenerating =
+    persona?.persona_status === "generating" || plan?.plan_status === "generating";
+  useEffect(() => {
+    if (!isGenerating) return;
+    const id = setInterval(() => void load(), POLL_MS);
+    return () => clearInterval(id);
+  }, [isGenerating, load]);
+
+  // Pick the initial step from ?step= (if unlocked) or the user's data.
+  useEffect(() => {
+    if (loading || step !== null || needsAuth) return;
+    const reached = dataReached(persona, plan);
+    const urlStep = new URLSearchParams(window.location.search).get("step") as WizardStep | null;
+    const valid = urlStep && urlStep in ORDER && ORDER[urlStep] <= ORDER[reached];
+    setStep(valid ? (urlStep as WizardStep) : naturalStep(persona, plan));
+  }, [loading, step, needsAuth, persona, plan]);
+
+  // Keep the URL in sync so refresh / share lands on the same step.
+  useEffect(() => {
+    if (!step) return;
+    const u = new URL(window.location.href);
+    u.searchParams.set("step", step);
+    window.history.replaceState(null, "", u);
+  }, [step]);
+
+  // ── Handlers ────────────────────────────────────────────────────────────
+  async function handleOnboardingSubmit(answers: PersonaQuestionnaire) {
+    setBusy(true);
+    setError(null);
+    try {
+      const p = await createPersona(answers);
+      setPersona(p);
+      setStep("persona");
+    } catch (err) {
+      if (err instanceof NotAuthenticatedError) setNeedsAuth(true);
+      else setError(err instanceof Error ? err.message : "Couldn't build your persona");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSavePersona(draft: PersonaContent) {
+    if (!persona) return;
+    const updated = await updatePersona(persona.id, draft);
+    setPersona(updated);
+  }
+
+  async function handleCreatePlan(events: string) {
+    setBusy(true);
     setError(null);
     try {
       const p = await createContentPlan(events);
       setPlan(p);
-      // Kick off polling for the async generation.
-      pollRef.current = setTimeout(async function tick() {
-        const next = await load();
-        if (next?.plan_status === "generating") pollRef.current = setTimeout(tick, POLL_MS);
-      }, POLL_MS);
+      setStep("plan");
     } catch (err) {
       if (err instanceof NotAuthenticatedError) setNeedsAuth(true);
-      else setError(err instanceof Error ? err.message : "Failed to start plan");
+      else setError(err instanceof Error ? err.message : "Couldn't start your plan");
     } finally {
-      setSubmitting(false);
+      setBusy(false);
     }
   }
 
+  // ── Render ──────────────────────────────────────────────────────────────
   if (needsAuth) {
     return (
-      <Shell>
-        <Centered>
-          <h1 className="mb-3 text-2xl font-semibold">Sign in to build your plan</h1>
-          <a
-            href="/api/auth/signin?callbackUrl=/plan"
-            className="inline-block rounded bg-white px-6 py-3 font-medium text-black hover:bg-zinc-200"
-          >
-            Sign in with Google
-          </a>
-        </Centered>
-      </Shell>
+      <PlanShell>
+        <SignInPrompt callbackUrl="/plan" />
+      </PlanShell>
     );
   }
 
-  if (loading) {
+  if (loading || step === null) {
     return (
-      <Shell>
-        <p className="py-20 text-center text-zinc-400">Loading…</p>
-      </Shell>
+      <PlanShell>
+        <p className="py-24 text-center text-zinc-400">Loading…</p>
+      </PlanShell>
     );
   }
 
-  // No plan yet (or a failed one): show the events step.
+  const reached = (() => {
+    const dr = dataReached(persona, plan);
+    return ORDER[step] > ORDER[dr] ? step : dr;
+  })();
+
+  return (
+    <PlanShell>
+      <Stepper current={step} reached={reached} onNavigate={setStep} />
+
+      {error && (
+        <div className="mb-6 rounded border border-red-700 bg-red-950/50 px-4 py-3 text-red-200">
+          {error}
+        </div>
+      )}
+
+      {step === "you" && (
+        <OnboardingStep onSubmit={handleOnboardingSubmit} submitting={busy} />
+      )}
+
+      {step === "persona" && (
+        <PersonaStepView
+          persona={persona}
+          busy={busy}
+          onSave={handleSavePersona}
+          onContinue={() => setStep("plan")}
+          onStartOver={() => setStep("you")}
+        />
+      )}
+
+      {step === "plan" && (
+        <PlanStepView
+          plan={plan}
+          busy={busy}
+          onCreatePlan={handleCreatePlan}
+          onError={setError}
+          onRefresh={load}
+          onReviewPersona={() => setStep("persona")}
+        />
+      )}
+    </PlanShell>
+  );
+}
+
+// ── Persona step ────────────────────────────────────────────────────────────
+function PersonaStepView({
+  persona,
+  busy,
+  onSave,
+  onContinue,
+  onStartOver,
+}: {
+  persona: PersonaResponse | null;
+  busy: boolean;
+  onSave: (draft: PersonaContent) => Promise<void>;
+  onContinue: () => void;
+  onStartOver: () => void;
+}) {
+  if (!persona) {
+    return (
+      <div className="animate-fade-up py-20 text-center">
+        <h1 className="mb-3 font-display text-3xl text-white">No persona yet</h1>
+        <p className="mb-8 text-zinc-400">Answer a few questions to get started.</p>
+        <button
+          onClick={onStartOver}
+          className="rounded-full bg-white px-6 py-3 font-medium text-black hover:bg-zinc-200"
+        >
+          Start
+        </button>
+      </div>
+    );
+  }
+
+  if (persona.persona_status === "generating") {
+    return (
+      <GeneratingState
+        title="Crafting your persona…"
+        subtitle="Reading your answers for the voice and themes behind your videos. This takes a few seconds."
+        lines={4}
+      />
+    );
+  }
+
+  if (persona.persona_status === "failed" && !persona.persona) {
+    return (
+      <div className="animate-fade-up py-16">
+        <h1 className="mb-3 font-display text-3xl text-white">
+          Generation didn&apos;t finish
+        </h1>
+        <p className="mb-2 text-zinc-400">
+          {persona.error_detail ?? "The persona generator hit an error."}
+        </p>
+        <p className="mb-8 text-zinc-400">
+          You can write it by hand — saving unblocks the rest of the flow.
+        </p>
+        <PersonaEditor
+          persona={blankPersona()}
+          status="failed"
+          onSave={onSave}
+          onContinue={onContinue}
+          continueLabel="Plan my 30 days →"
+          continuing={busy}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <PersonaEditor
+      persona={persona.persona ?? blankPersona()}
+      status={persona.persona_status}
+      onSave={onSave}
+      onContinue={onContinue}
+      continueLabel="Plan my 30 days →"
+      continuing={busy}
+    />
+  );
+}
+
+// ── Plan step ─────────────────────────────────────────────────────────────
+function PlanStepView({
+  plan,
+  busy,
+  onCreatePlan,
+  onError,
+  onRefresh,
+  onReviewPersona,
+}: {
+  plan: ContentPlan | null;
+  busy: boolean;
+  onCreatePlan: (events: string) => void;
+  onError: (msg: string) => void;
+  onRefresh: () => void;
+  onReviewPersona: () => void;
+}) {
+  const [events, setEvents] = useState("");
+
   if (plan === null || plan.plan_status === "failed") {
     return (
-      <Shell>
-        <div className="py-12">
-          <h1 className="mb-2 text-2xl font-semibold">Plan your next 30 days</h1>
-          <p className="mb-6 text-zinc-400">
-            Anything coming up we should lean into? Trips, launches, exams, events — optional, but it
-            makes the plan feel like yours.
-          </p>
-          {plan?.plan_status === "failed" && (
-            <div className="mb-6 rounded border border-amber-700 bg-amber-950/40 px-4 py-3 text-amber-200">
-              Last generation didn&apos;t finish. Try again.
-            </div>
-          )}
-          {error && (
-            <div className="mb-6 rounded border border-red-700 bg-red-950/50 px-4 py-3 text-red-200">
-              {error}
-            </div>
-          )}
-          <p className="mb-2 text-sm text-zinc-400">
-            Need a persona first?{" "}
-            <Link href="/plan/persona" className="underline hover:text-white">
-              Review it here
-            </Link>
-            .
-          </p>
-          <textarea
-            value={events}
-            onChange={(e) => setEvents(e.target.value)}
-            rows={4}
-            placeholder="e.g. moving apartments in week 2, gym comp at the end of the month"
-            className="w-full resize-y rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-white placeholder-zinc-600 focus:border-zinc-400 focus:outline-none"
-          />
+      <div className="animate-fade-up py-2">
+        <h1 className="mb-2 font-display text-3xl text-white">Plan your next 30 days</h1>
+        <p className="mb-6 text-zinc-400">
+          Anything coming up we should lean into? Trips, launches, exams, events — optional,
+          but it makes the plan feel like yours.
+        </p>
+        {plan?.plan_status === "failed" && (
+          <div className="mb-6 rounded border border-amber-700 bg-amber-950/40 px-4 py-3 text-amber-200">
+            Last generation didn&apos;t finish. Try again.
+          </div>
+        )}
+        <textarea
+          value={events}
+          onChange={(e) => setEvents(e.target.value)}
+          rows={4}
+          placeholder="e.g. moving apartments in week 2, gym comp at the end of the month"
+          className="w-full resize-y rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 text-white placeholder-zinc-600 transition-colors focus:border-amber-400/60 focus:outline-none"
+        />
+        <div className="mt-4 flex items-center gap-4">
           <button
-            onClick={handleGenerate}
-            disabled={submitting}
-            className="mt-4 rounded bg-white px-6 py-3 font-medium text-black hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-400"
+            onClick={() => onCreatePlan(events)}
+            disabled={busy}
+            className="rounded-full bg-amber-400 px-6 py-3 font-medium text-black transition-colors hover:bg-amber-300 disabled:bg-zinc-700 disabled:text-zinc-400"
           >
-            {submitting ? "Starting…" : "Generate my 30-day plan"}
+            {busy ? "Starting…" : "Generate my 30-day plan"}
+          </button>
+          <button
+            onClick={onReviewPersona}
+            className="text-sm text-zinc-400 underline transition-colors hover:text-white"
+          >
+            Review persona first
           </button>
         </div>
-      </Shell>
+      </div>
     );
   }
 
   if (plan.plan_status === "generating") {
     return (
-      <Shell>
-        <Centered>
-          <h1 className="mb-3 text-2xl font-semibold">Building your 30-day plan…</h1>
-          <p className="text-zinc-400">This takes a few seconds. The page will update itself.</p>
-        </Centered>
-      </Shell>
+      <GeneratingState
+        title="Building your 30-day plan…"
+        subtitle="Scripting a month of video ideas around your persona. This takes a few seconds."
+        lines={6}
+      />
     );
   }
 
-  // Ready/edited — render the calendar grouped by week.
-  const weeks = groupByWeek(plan.items);
-  return (
-    <Shell>
-      <div className="py-12">
-        <h1 className="mb-1 text-2xl font-semibold">Your 30-day plan</h1>
-        <p className="mb-8 text-zinc-400">
-          Edit any idea. Week 1 is your activation week — film those first.
-        </p>
-        {error && (
-          <div className="mb-6 rounded border border-red-700 bg-red-950/50 px-4 py-3 text-red-200">
-            {error}
-          </div>
-        )}
-        {weeks.map(({ week, items }) => (
-          <section key={week} className="mb-10">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-              Week {week}
-              {week === 1 && <span className="ml-2 text-amber-400">· activation</span>}
-            </h2>
-            <div className="space-y-3">
-              {items.map((item) => (
-                <PlanItemCard key={item.id} item={item} onError={setError} />
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
-    </Shell>
-  );
+  return <PlanCalendar plan={plan} onError={onError} onRefresh={onRefresh} />;
 }
 
-function PlanItemCard({
-  item,
-  onError,
-}: {
-  item: PlanItem;
-  onError: (msg: string) => void;
-}) {
-  const [theme, setTheme] = useState(item.theme);
-  const [idea, setIdea] = useState(item.idea);
-  const [filming, setFilming] = useState(item.filming_suggestion ?? "");
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  const dirty =
-    theme !== item.theme ||
-    idea !== item.idea ||
-    filming !== (item.filming_suggestion ?? "");
-
-  async function save() {
-    setSaving(true);
-    setSaved(false);
-    try {
-      await updatePlanItem(item.id, { theme, idea, filming_suggestion: filming });
-      setSaved(true);
-    } catch (err) {
-      onError(err instanceof Error ? err.message : "Failed to save item");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
-      <div className="mb-2 flex items-center gap-3">
-        <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
-          Day {item.day_index}
-        </span>
-        <input
-          value={theme}
-          onChange={(e) => setTheme(e.target.value)}
-          className="flex-1 bg-transparent text-sm font-medium text-zinc-200 focus:outline-none"
-        />
-        <ItemStatusBadge status={item.status} />
-      </div>
-      <textarea
-        value={idea}
-        onChange={(e) => setIdea(e.target.value)}
-        rows={2}
-        className="mb-2 w-full resize-y rounded border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white focus:border-zinc-600 focus:outline-none"
-      />
-      <input
-        value={filming}
-        onChange={(e) => setFilming(e.target.value)}
-        placeholder="filming tip"
-        className="w-full rounded border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-400 focus:border-zinc-600 focus:outline-none"
-      />
-      {(dirty || saved) && (
-        <div className="mt-3 flex items-center gap-3">
-          {dirty && (
-            <button
-              onClick={save}
-              disabled={saving}
-              className="rounded bg-white px-3 py-1 text-xs font-medium text-black hover:bg-zinc-200 disabled:bg-zinc-700"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-          )}
-          {saved && !dirty && <span className="text-xs text-emerald-400">Saved</span>}
-        </div>
-      )}
-      <div className="mt-3 border-t border-zinc-800 pt-3">
-        <Link
-          href={`/plan/items/${item.id}`}
-          className="text-xs text-zinc-400 underline hover:text-white"
-        >
-          {item.status === "ready"
-            ? "View videos →"
-            : item.clip_gcs_paths.length > 0
-              ? "Continue →"
-              : "Upload clips & generate →"}
-        </Link>
-      </div>
-    </div>
-  );
-}
-
-function ItemStatusBadge({ status }: { status: PlanItemStatus }) {
-  const map: Record<PlanItemStatus, string> = {
-    idea: "border-zinc-700 text-zinc-400",
-    awaiting_clips: "border-sky-700 text-sky-300",
-    generating: "border-amber-700 text-amber-300",
-    ready: "border-emerald-700 text-emerald-300",
-    failed: "border-red-700 text-red-300",
+function blankPersona(): PersonaContent {
+  return {
+    summary: "",
+    content_pillars: [],
+    tone: "",
+    audience: "",
+    posting_cadence: "",
+    sample_topics: [],
   };
-  const label = status === "awaiting_clips" ? "needs clips" : status;
-  return (
-    <span className={`rounded-full border px-2 py-0.5 text-xs ${map[status]}`}>{label}</span>
-  );
-}
-
-function groupByWeek(items: PlanItem[]): { week: number; items: PlanItem[] }[] {
-  const byWeek = new Map<number, PlanItem[]>();
-  const sorted = Array.from(items).sort((a, b) => a.day_index - b.day_index);
-  for (const it of sorted) {
-    const week = Math.floor((it.day_index - 1) / 7) + 1;
-    if (!byWeek.has(week)) byWeek.set(week, []);
-    byWeek.get(week)!.push(it);
-  }
-  return Array.from(byWeek.entries()).map(([week, weekItems]) => ({ week, items: weekItems }));
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="min-h-[calc(100vh-3.5rem)] bg-black text-white">
-      <div className="mx-auto max-w-2xl px-4">{children}</div>
-    </main>
-  );
-}
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="py-20 text-center">{children}</div>;
 }
