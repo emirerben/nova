@@ -76,7 +76,7 @@ export default function PlanPage() {
         <Centered>
           <h1 className="mb-3 text-2xl font-semibold">Sign in to build your plan</h1>
           <a
-            href="/api/auth/signin"
+            href="/api/auth/signin?callbackUrl=/plan"
             className="inline-block rounded bg-white px-6 py-3 font-medium text-black hover:bg-zinc-200"
           >
             Sign in with Google

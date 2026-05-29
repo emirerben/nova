@@ -65,7 +65,7 @@ export default function OnboardingPage() {
             We use your Google account to save your persona and content plan.
           </p>
           <a
-            href="/api/auth/signin"
+            href="/api/auth/signin?callbackUrl=/plan/onboarding"
             className="inline-block rounded bg-white px-6 py-3 font-medium text-black hover:bg-zinc-200"
           >
             Sign in with Google

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.52.1] - 2026-05-29
+
+### Fixed
+- **Content-plan UI polish (post-launch dogfood).** Two entry-flow rough edges: (1) the persona editor's **Save** gave no feedback — a successful PATCH (verified 200) just reverted the button, so it felt dead; it now shows **"Saved ✓"** and the button disables until you actually change a field (dirty-tracked against the last-saved persona). (2) The four "Sign in with Google" links pointed at `/api/auth/signin` with no `callbackUrl`, so NextAuth dropped you on the home page after login instead of returning to the plan flow; each now passes its own page as the `callbackUrl` (the item page uses its dynamic id). Frontend-only; no API/render change.
+
 ## [0.4.52.0] - 2026-05-29
 
 ### Added
