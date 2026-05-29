@@ -27,6 +27,7 @@ from app.agents._schemas.persona import (
     PersonaQuestionnaire,
 )
 from app.agents.music_matcher import _sanitize_text
+from app.agents.persona_examples import format_archetypes
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
@@ -58,6 +59,8 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
             travels=_sanitize_text(input.travels),
             passions=_sanitize_text(input.passions),
             tiktok_handle=_sanitize_text(input.tiktok_handle),
+            # Curated market-research style types (reference, not user data).
+            archetypes=format_archetypes(),
         )
 
     def parse(

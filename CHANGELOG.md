@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.53.0] - 2026-05-29
+## [0.4.54.0] - 2026-05-29
 
 ### Changed
 - **Content-plan flow is now one guided wizard (was four disconnected pages).** The new-user plan flow felt old-fashioned and friction-heavy: onboarding → persona → plan → item lived on four separate full-page routes with no shared chrome, the persona page **dead-ended** (no way forward to build the plan), each async generation **blanked the whole screen**, and `/plan` was **linked from nowhere** (undiscoverable; the header had no auth state). This reworks the experience end-to-end, frontend-only — no API, schema, or render changes; every existing `plan-api` contract is reused verbatim.
@@ -20,6 +20,13 @@ All notable changes to this project will be documented in this file.
 
 ### Added (dev/testing infra)
 - **Env-gated dev-login (`ALLOW_DEV_LOGIN`).** A NextAuth Credentials provider that mints a session from just an email (upserting via `/auth/google-upsert`), so the Google-gated content-plan flow can be driven end-to-end in local dev + automated QA without an interactive Google consent. Added **only** when `ALLOW_DEV_LOGIN === "true"` — never set in prod (Vercel/Fly). Guarded by `auth-dev-login.test.ts`, which fails if the provider ever appears without the flag.
+## [0.4.53.0] - 2026-05-29
+
+### Added
+- **Weekly TikTok market-research → agent training pipeline.** A self-refreshing reference layer that feeds Nova's plan + generative agents real market signal, mined locally with **no paid API** (the analyst is Claude Code; the fetch is `yt-dlp` metadata only — no video download, no Gemini). Three decoupled layers: (1) `scripts/research/fetch_tiktok.py` pulls captions + engagement metadata per account into gitignored `research/tiktok/raw/` (best-effort, standalone — no `app.*` import); (2) two new versioned few-shot banks — `prompts/persona_archetypes.json` (the persona pool / "style types") and `prompts/content_ideas.json` (templated, niche-tagged idea bank) — loaded via the new `app/agents/persona_examples.py` (mirrors `overlay_examples.py`: `lru_cache`, raise-on-malformed) and injected into `generate_persona.txt` + `generate_content_plan.txt`; plus market-derived hooks appended to `overlay_examples.json` for the generative `intro_writer`/`overlay_format_matcher`; (3) the `/research-tiktok` Claude Code skill that runs the fetch, mines new entries, bumps the coupled prompt versions, runs the guard tests, and opens a **PR for human review** (the gate that keeps unvetted data out of prod prompts) — scheduled to run weekly. Seeded from 4 real accounts. Bumped `PERSONA_PROMPT_VERSION`, `CONTENT_PLAN_PROMPT_VERSION`, and both overlay agents' `prompt_version`; a coupling-guard test (`tests/agents/test_market_research_banks.py`) fails CI if a bank's `version` moves without its agent bump. Banks are STYLE references only — `@handles`/brands stripped from bodies, attribution in `source`; the agents compose new text, never verbatim.
+
+### Note
+- Per the CLAUDE.md prompt-change rule, prompt edits ideally get a live + judge eval (paid Gemini, ~$2–5); this PR ships with the **free structural evals** green. Recommend one live-eval run before relying on the behavioral lift, or rely on per-PR human review of weekly refreshes.
 
 ## [0.4.52.1] - 2026-05-29
 

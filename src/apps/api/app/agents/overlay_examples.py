@@ -31,6 +31,11 @@ class OverlayExample(BaseModel):
     size_class: str = "jumbo"
     text_color: str = "#FFFFFF"
     highlight_color: str = "#FFD24A"
+    # Optional provenance from the weekly market-research agent. Hand-written
+    # entries omit these; mined entries tag their niche + attribution. Style
+    # reference only — the intro writer composes new text, never verbatim.
+    niche: str | None = None
+    source: str | None = None
 
 
 @lru_cache(maxsize=1)

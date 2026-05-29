@@ -1,0 +1,105 @@
+{
+  "version": "2026-05-29",
+  "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
+  "ideas": [
+    {
+      "id": "city-curated-guide-01",
+      "niche": "city lifestyle & food",
+      "pillar": "curated food guides",
+      "idea": "a very curated guide to the best places to indulge in [your city], framed as a save-for-later list",
+      "hook_pattern": "my very curated [city] guide — save this",
+      "filming_context": "fast cuts of each spot, warm natural light, on-screen place names",
+      "source": "tiktok:@allexmarielle (2026-05)"
+    },
+    {
+      "id": "city-perfect-day-01",
+      "niche": "city lifestyle & food",
+      "pillar": "a perfect day in the city",
+      "idea": "a perfect day in [your city] told as a morning-to-night montage of small rituals",
+      "hook_pattern": "my perfect day in [city]",
+      "filming_context": "POV handheld, golden-hour bookends, one clip per moment",
+      "source": "tiktok:@allexmarielle (2026-05)"
+    },
+    {
+      "id": "seasonal-outfit-rotation-01",
+      "niche": "city lifestyle & food",
+      "pillar": "seasonal outfit rotations",
+      "idea": "your [season] outfit rotation — a handful of repeatable, minimal looks",
+      "hook_pattern": "[season] outfit rotation",
+      "filming_context": "mirror or tripod, quick outfit-change cuts on the beat",
+      "source": "tiktok:@allexmarielle (2026-05)"
+    },
+    {
+      "id": "experiences-over-savings-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "mindset & growth",
+      "idea": "a single striking clip captioned with the 'experiences > savings' philosophy",
+      "hook_pattern": "experiences > savings",
+      "filming_context": "one hero wide shot of a view or climb, minimal text",
+      "source": "tiktok:@izzsiomoi (2026-05)"
+    },
+    {
+      "id": "core-memory-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "core memories",
+      "idea": "a 'core memory' recap of one experience you'll never forget",
+      "hook_pattern": "core memory: [the experience]",
+      "filming_context": "montage of the day, sentimental sound, slow final hold",
+      "source": "tiktok:@izzsiomoi (2026-05)"
+    },
+    {
+      "id": "fitness-milestone-braver-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "fitness milestones",
+      "idea": "document a milestone (2nd 10k run, first hike) framed as getting braver",
+      "hook_pattern": "[milestone] — getting braver",
+      "filming_context": "first-person, candid, show the effort not just the result",
+      "source": "tiktok:@izzsiomoi (2026-05)"
+    },
+    {
+      "id": "launch-countdown-01",
+      "niche": "founder / product launch",
+      "pillar": "launch countdown",
+      "idea": "a countdown post: how many days until your product drops, with one detail teased",
+      "hook_pattern": "X days until [product] drops",
+      "filming_context": "hands-on product b-roll, bold countdown number on screen",
+      "source": "tiktok:@nermozdemir (2026-05)"
+    },
+    {
+      "id": "product-reveal-surprise-01",
+      "niche": "founder / product launch",
+      "pillar": "product reveal",
+      "idea": "the big reveal of what you've been making, with genuine surprise/relief energy",
+      "hook_pattern": "surprise — what we finally made",
+      "filming_context": "open/unbox on camera, real reaction, tight on the product",
+      "source": "tiktok:@nermozdemir (2026-05)"
+    },
+    {
+      "id": "founder-standing-on-business-01",
+      "niche": "founder / product launch",
+      "pillar": "founder backstory",
+      "idea": "a confident 'it's live' post pointing people to where they can buy",
+      "hook_pattern": "i'm standing on business — it's live",
+      "filming_context": "to-camera, short, clear call to where it sells",
+      "source": "tiktok:@nermozdemir (2026-05)"
+    },
+    {
+      "id": "mood-diary-feeling-01",
+      "niche": "aesthetic mood diary",
+      "pillar": "mood diaries",
+      "idea": "a short mood b-roll diary that captures a feeling more than an event",
+      "hook_pattern": "a feeling, not a place",
+      "filming_context": "3-5 unhurried clips, trending soft sound, minimal or no text",
+      "source": "tiktok:@patricia.turchin (2026-05)"
+    },
+    {
+      "id": "hidden-gem-nobody-01",
+      "niche": "city lifestyle & food",
+      "pillar": "hidden gems to save",
+      "idea": "the spot in [your city] nobody tells you about, framed as insider knowledge",
+      "hook_pattern": "the [place] nobody told you about",
+      "filming_context": "reveal shot of the place, name on screen, save prompt",
+      "source": "tiktok:@allexmarielle (2026-05)"
+    }
+  ]
+}

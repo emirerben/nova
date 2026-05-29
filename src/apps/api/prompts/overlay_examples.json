@@ -1,5 +1,5 @@
 {
-  "version": "2026-05-26",
+  "version": "2026-05-29",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -121,6 +121,58 @@
       "size_class": "large",
       "text_color": "#FFFFFF",
       "highlight_color": "#FFD24A"
+    },
+    {
+      "id": "city-guide-save-popin-01",
+      "content_profile": "curated city food or travel guide, aesthetic and aspirational, a save-for-later list of places",
+      "effect": "pop-in",
+      "text": "my very curated guide — save this",
+      "highlight_word": "curated",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "niche": "city lifestyle & food",
+      "source": "tiktok market research 2026-05"
+    },
+    {
+      "id": "solo-adventure-mindset-fadein-01",
+      "content_profile": "solo travel or outdoors, one striking view or climb, introspective and quietly brave",
+      "effect": "fade-in",
+      "text": "experiences over savings",
+      "highlight_word": "experiences",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#7FD1FF",
+      "niche": "solo travel & outdoors",
+      "source": "tiktok market research 2026-05"
+    },
+    {
+      "id": "founder-launch-popin-01",
+      "content_profile": "build-in-public founder, product reveal or launch day, excited and personal behind-the-scenes",
+      "effect": "pop-in",
+      "text": "the day it all goes live",
+      "highlight_word": "live",
+      "position": "center",
+      "size_class": "jumbo",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "niche": "founder / product launch",
+      "source": "tiktok market research 2026-05"
+    },
+    {
+      "id": "mood-diary-feeling-fadein-01",
+      "content_profile": "aesthetic mood b-roll, sea or light or friends, vibe-forward and calm with minimal text",
+      "effect": "fade-in",
+      "text": "a feeling, not a place",
+      "highlight_word": "feeling",
+      "position": "center",
+      "size_class": "medium",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#7FD1FF",
+      "niche": "aesthetic mood diary",
+      "source": "tiktok market research 2026-05"
     }
   ]
 }
