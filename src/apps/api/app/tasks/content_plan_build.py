@@ -98,3 +98,66 @@ def _fail(session, plan: ContentPlan, detail: str) -> None:  # noqa: ANN001
     log.warning("content_plan_build.mark_failed", plan_id=str(plan.id), detail=detail[:300])
     plan.plan_status = "failed"
     session.commit()
+
+
+# Throttled queue: per-item generative renders are heavy (3 variants each). The
+# worker consumes `plan-jobs` with --concurrency=1 so generate-first-week can't
+# fire 7 simultaneous renders and OOM the 6GB worker (plan T3). See fly.toml.
+PLAN_JOBS_QUEUE = "plan-jobs"
+
+
+@celery_app.task(
+    name="app.tasks.content_plan_build.generate_plan_item_videos",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=15,
+)
+def generate_plan_item_videos(self, plan_item_id: str) -> None:  # noqa: ANN001
+    """Mint a generative Job for a plan item's themed clips and dispatch its render.
+
+    Reuses the generative pipeline verbatim: build_generative_job (shared with the
+    public route) → orchestrate_generative_job UNCHANGED. The only plan-specific
+    bits are mode="content_plan", the content_plan_item_id reverse link, and the
+    throttled queue. Item render state is derived from this Job's status at read
+    time (no PlanItem status write here — plan T2).
+    """
+    from app.services.generative_jobs import build_generative_job  # noqa: PLC0415
+    from app.services.job_dispatch import enqueue_orchestrator_sync  # noqa: PLC0415
+    from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
+
+    with sync_session() as session:
+        item = session.get(PlanItem, uuid.UUID(str(plan_item_id)))
+        if item is None:
+            log.warning("plan_item_videos.missing_item", plan_item_id=plan_item_id)
+            return
+        clip_paths = list(item.clip_gcs_paths or [])
+        if not clip_paths:
+            log.warning("plan_item_videos.no_clips", plan_item_id=plan_item_id)
+            return
+        plan = session.get(ContentPlan, item.content_plan_id)
+        if plan is None:
+            return
+        try:
+            job = build_generative_job(
+                user_id=plan.user_id,
+                clip_paths=clip_paths,
+                mode="content_plan",
+                content_plan_item_id=item.id,
+            )
+        except ValueError as exc:
+            log.warning("plan_item_videos.invalid_clips", plan_item_id=plan_item_id, error=str(exc))
+            return
+        session.add(job)
+        session.flush()  # populate job.id
+        item.current_job_id = job.id
+        # task_id == job id (the orchestrator contract); persist it before commit
+        # so the admin/reaper can correlate the Celery task with the Job row.
+        job.celery_task_id = str(job.id)
+        job_id = str(job.id)
+        session.commit()
+
+    # Dispatch onto the throttled plan-jobs queue (concurrency=1 worker) via the
+    # shared sync helper — keeps celery_task_id correlation and routes the queue
+    # without bypassing the job_dispatch contract (guarded in tests).
+    enqueue_orchestrator_sync(orchestrate_generative_job, job_id, queue=PLAN_JOBS_QUEUE)
+    log.info("plan_item_videos.dispatched", plan_item_id=plan_item_id, job_id=job_id)

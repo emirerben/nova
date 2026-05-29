@@ -133,17 +133,16 @@ async def create_generative_job(
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobResponse:
     """Create a generative edit job (auto song + AI text, three variants)."""
-    job = Job(
+    # Single source of truth for Job shape + clip validation, shared with the
+    # content-plan per-item task. Prefixes were already validated by the request
+    # schema; build_generative_job re-validates (cheap defense-in-depth).
+    from app.services.generative_jobs import build_generative_job  # noqa: PLC0415
+
+    job = build_generative_job(
         user_id=current_user.id,
-        job_type="generative",
-        mode="generative",
-        raw_storage_path=req.clip_gcs_paths[0],
+        clip_paths=req.clip_gcs_paths,
+        language=req.language,
         selected_platforms=req.selected_platforms,
-        all_candidates={
-            "clip_paths": req.clip_gcs_paths,
-            "language": req.language,
-        },
-        status="queued",
     )
     db.add(job)
     await db.commit()

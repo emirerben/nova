@@ -253,6 +253,18 @@ function PlanItemCard({
           {saved && !dirty && <span className="text-xs text-emerald-400">Saved</span>}
         </div>
       )}
+      <div className="mt-3 border-t border-zinc-800 pt-3">
+        <Link
+          href={`/plan/items/${item.id}`}
+          className="text-xs text-zinc-400 underline hover:text-white"
+        >
+          {item.status === "ready"
+            ? "View videos →"
+            : item.clip_gcs_paths.length > 0
+              ? "Continue →"
+              : "Upload clips & generate →"}
+        </Link>
+      </div>
     </div>
   );
 }

@@ -32,7 +32,12 @@ primary_region = "iad"
   # post-PR #103). One task per worker means each task gets the full CPU
   # allocation. Trade-off: half the parallel throughput, but each render
   # completes in roughly a quarter of the wall-clock.
-  worker = "celery -A app.worker worker --loglevel=info --concurrency=1"
+  # -Q celery,plan-jobs: also drain the content-plan render queue. Per-item plan
+  # renders (generate_plan_item_videos → orchestrate_generative_job) are routed to
+  # `plan-jobs` so generate-first-week can enqueue 7 at once; the single
+  # concurrency=1 slot serializes them, so they can never run simultaneously and
+  # OOM the 6GB worker (plan T3). One worker, two queues, still one task at a time.
+  worker = "celery -A app.worker worker --loglevel=info --concurrency=1 -Q celery,plan-jobs"
   # Celery Beat — single instance, drives the every-5-min stale-job
   # sweeper (app/tasks/maintenance.py) that catches orphans created when
   # autoretry budgets are exhausted AND _mark_failed itself failed.

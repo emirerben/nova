@@ -58,7 +58,11 @@ def test_create_generative_job_unauthenticated_uses_synthetic_user():
             # No Authorization or X-User-Id headers — exercises synthetic fallback.
             client.post(
                 "/generative-jobs",
-                json={"clip_gcs_paths": ["dev-user/batch-abc/clip_000.mp4"]},
+                # Real allowlisted prefix: build_generative_job (the shared service
+                # the route now delegates to) re-validates clip prefixes via
+                # admin_music._validate_clip_path_prefixes, which the route-level
+                # passthrough patch above does not cover.
+                json={"clip_gcs_paths": ["slot-uploads/batch-abc/clip_000.mp4"]},
             )
 
     app.dependency_overrides.clear()
