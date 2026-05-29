@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.48.0] - 2026-05-29
+
+### Added
+- **Real user accounts (Google sign-in) — Phase 1 of the Content Plan feature.** Lays the auth groundwork so future per-user features (persona, 30-day content plan) can attribute data to real users instead of the single shared synthetic user. Adds the NextAuth route handler (`/api/auth/[...nextauth]`) wired to the Google provider, a server-side Next.js proxy (`/api/plan/[...path]`) that reads the session and forwards requests to the API with an internal key (the browser never sees it — same pattern as the admin proxy), and a `POST /auth/google-upsert` endpoint that find-or-creates the user row on first sign-in. The FastAPI side gains `get_current_user` (strict, 401 without a valid identity) and `get_current_user_or_synthetic` (legacy fallback). New `users.auth_provider` + `users.onboarding_status` columns (migration `0035`).
+
+### Changed
+- **Existing public flows now resolve the user via a dependency instead of a hardcoded UUID.** `template-jobs`, `music-jobs`, `generative-jobs`, `presigned-urls`, and `uploads` routes switched from the literal synthetic user id to `get_current_user_or_synthetic`. Unauthenticated callers behave exactly as before (attributed to the synthetic user), so nothing user-facing changes yet — this is wiring for the authenticated flows that land in later phases. Per-user uploads now key their GCS path on the resolved user id.
+- **Google OAuth scope reduced to `openid email profile`.** Dropped the `youtube.upload` scope from the sign-in flow (it forced Google app verification and isn't needed for identity). Standardized the client-id/secret env vars to `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (old `YOUTUBE_*` names kept as a fallback). Added `INTERNAL_API_KEY` (must be set as a Fly secret in any non-local deployment).
+
 ## [0.4.47.11] - 2026-05-28
 
 ### Added
