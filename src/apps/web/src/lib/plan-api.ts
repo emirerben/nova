@@ -100,3 +100,63 @@ export function updatePersona(
     body: JSON.stringify(edit),
   });
 }
+
+// ── Content plan ─────────────────────────────────────────────────────────────
+
+export type PlanStatus = "generating" | "ready" | "failed" | "edited";
+
+/** Derived server-side from the linked Job.status — never a stored column. */
+export type PlanItemStatus =
+  | "idea"
+  | "awaiting_clips"
+  | "generating"
+  | "ready"
+  | "failed";
+
+export interface PlanItem {
+  id: string;
+  day_index: number;
+  theme: string;
+  idea: string;
+  filming_suggestion: string | null;
+  clip_gcs_paths: string[];
+  status: PlanItemStatus;
+  current_job_id: string | null;
+  user_edited: boolean;
+}
+
+export interface ContentPlan {
+  id: string;
+  plan_status: PlanStatus;
+  horizon_days: number;
+  events: { text?: string } | null;
+  items: PlanItem[];
+}
+
+/** Create a plan from the user's ready persona + optional events; generation runs async. */
+export function createContentPlan(events: string, horizonDays = 30): Promise<ContentPlan> {
+  return request<ContentPlan>("/content-plans", {
+    method: "POST",
+    body: JSON.stringify({ events, horizon_days: horizonDays }),
+  });
+}
+
+/** The user's latest plan with items, or null if none exists yet. */
+export async function getContentPlan(): Promise<ContentPlan | null> {
+  try {
+    return await request<ContentPlan>("/content-plans");
+  } catch (err) {
+    if (err instanceof Error && /\(404\)|No content plan yet/i.test(err.message)) return null;
+    throw err;
+  }
+}
+
+export function updatePlanItem(
+  id: string,
+  edit: { theme?: string; idea?: string; filming_suggestion?: string },
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(edit),
+  });
+}

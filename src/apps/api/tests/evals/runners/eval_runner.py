@@ -248,6 +248,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.persona_generator import PersonaGeneratorAgent
 
         return PersonaGeneratorAgent
+    if agent_name == "nova.plan.content_plan_generator":
+        from app.agents.content_plan_generator import ContentPlanGeneratorAgent
+
+        return ContentPlanGeneratorAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 

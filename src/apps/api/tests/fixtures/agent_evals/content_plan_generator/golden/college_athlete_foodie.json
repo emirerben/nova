@@ -1,0 +1,33 @@
+{
+  "agent": "nova.plan.content_plan_generator",
+  "prompt_version": "2026-05-29",
+  "input": {
+    "persona": {
+      "summary": "You are the welcoming face of beginner gym culture, blending powerlifting with approachable high-protein cooking.",
+      "content_pillars": ["beginner-friendly powerlifting form", "high-protein meals on a student budget", "gym-anxiety pep talks"],
+      "tone": "warm, encouraging, a little goofy",
+      "audience": "college students who want to start lifting but feel out of place at the gym",
+      "posting_cadence": "4 posts/week, heavier on Sunday meal-prep days",
+      "sample_topics": ["first-day-at-the-gym survival guide", "$5 high-protein lunch", "how to squat without fear"]
+    },
+    "events": "midterms in week 2; spring break road trip in week 4",
+    "horizon_days": 30
+  },
+  "raw_text": "{\"items\": [{\"day_index\": 1, \"theme\": \"gym-anxiety pep talk\", \"idea\": \"POV: your first day at the gym and nobody is actually watching you\", \"filming_suggestion\": \"film handheld walking into the gym at a quiet hour\"}, {\"day_index\": 2, \"theme\": \"beginner form\", \"idea\": \"3 squat cues that fix 90% of beginner mistakes\", \"filming_suggestion\": \"tripod side angle on the squat rack\"}, {\"day_index\": 3, \"theme\": \"budget meals\", \"idea\": \"$5 high-protein lunch you can prep between classes\", \"filming_suggestion\": \"overhead shot in a dorm kitchen, natural light\"}, {\"day_index\": 4, \"theme\": \"beginner form\", \"idea\": \"how to use the cable machine without asking anyone\", \"filming_suggestion\": \"close-ups of the pin and handle swaps\"}, {\"day_index\": 5, \"theme\": \"pep talk\", \"idea\": \"what I wish someone told me before my first deadlift\", \"filming_suggestion\": \"talking-head, golden hour by a window\"}, {\"day_index\": 6, \"theme\": \"budget meals\", \"idea\": \"meal prep 4 lunches for under $15\", \"filming_suggestion\": \"Sunday meal-prep montage, fast cuts\"}, {\"day_index\": 7, \"theme\": \"community\", \"idea\": \"reply to a DM: am I too out of shape to start?\", \"filming_suggestion\": \"selfie-style, warm and direct\"}, {\"day_index\": 10, \"theme\": \"midterms survival\", \"idea\": \"15-minute dorm workout for stressed midterm weeks\", \"filming_suggestion\": \"film in a dorm room with minimal equipment\"}]}",
+  "output": {
+    "items": [
+      {"day_index": 1, "theme": "gym-anxiety pep talk", "idea": "POV: your first day at the gym and nobody is actually watching you", "filming_suggestion": "film handheld walking into the gym at a quiet hour"},
+      {"day_index": 2, "theme": "beginner form", "idea": "3 squat cues that fix 90% of beginner mistakes", "filming_suggestion": "tripod side angle on the squat rack"},
+      {"day_index": 3, "theme": "budget meals", "idea": "$5 high-protein lunch you can prep between classes", "filming_suggestion": "overhead shot in a dorm kitchen, natural light"},
+      {"day_index": 4, "theme": "beginner form", "idea": "how to use the cable machine without asking anyone", "filming_suggestion": "close-ups of the pin and handle swaps"},
+      {"day_index": 5, "theme": "pep talk", "idea": "what I wish someone told me before my first deadlift", "filming_suggestion": "talking-head, golden hour by a window"},
+      {"day_index": 6, "theme": "budget meals", "idea": "meal prep 4 lunches for under $15", "filming_suggestion": "Sunday meal-prep montage, fast cuts"},
+      {"day_index": 7, "theme": "community", "idea": "reply to a DM: am I too out of shape to start?", "filming_suggestion": "selfie-style, warm and direct"},
+      {"day_index": 10, "theme": "midterms survival", "idea": "15-minute dorm workout for stressed midterm weeks", "filming_suggestion": "film in a dorm room with minimal equipment"}
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "persona + events -> varied plan; unique sorted day_index within 1..30, pillars rotate, activation week front-loaded"
+  }
+}

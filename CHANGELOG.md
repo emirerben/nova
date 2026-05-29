@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.51.0] - 2026-05-29
+
+### Added
+- **30-day content plan generation + calendar — Phase 4 of the Content Plan feature.** From a ready persona (+ optional free-text events), a new `nova.plan.content_plan_generator` agent (gemini-2.5-flash, `enable_json_repair=True` for the long-list truncation case) produces a day-by-day plan: `[{day_index, theme, idea, filming_suggestion}]`. `parse()` never persists partial garbage — it clamps day_index to `1..horizon`, drops duplicate days and empty fields, sorts, and refuses if nothing valid survives. Backend: `content_plans` route (`POST` create-from-persona + enqueue, `GET` latest plan) and `plan_items` route (`PATCH` hand-edit). **Item render state is derived from the linked `Job.status` at read time (plan T2)** — `item_status` only ever holds `idea`/`awaiting_clips`, so a reaper-killed job can't strand an item as "generating"; `derive_item_status` maps the Job's status to `generating`/`ready`/`failed`. The list endpoint eager-loads items + their jobs with `selectinload` (2 queries, not 1+N — plan T5). Off-Job Celery task `generate_content_plan` writes the items and advances `onboarding_status` to `plan_ready`. Replay-mode eval + golden fixture + structural floor. Frontend: `/plan` calendar — an events step, generation polling, and editable per-day cards grouped by week (Week 1 flagged as the activation week), with live status badges. No prod behavior change for existing flows; all new routes require a real user.
+
 ## [0.4.50.0] - 2026-05-29
 
 ### Added
