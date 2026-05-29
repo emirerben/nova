@@ -19,6 +19,7 @@ from app.routes import (
     generative_jobs,
     music,
     music_jobs,
+    personas,
     presigned,
     template_jobs,
     templates,
@@ -91,6 +92,7 @@ app.include_router(template_jobs.router, prefix="/template-jobs", tags=["templat
 app.include_router(music.router, prefix="/music-tracks", tags=["music"])
 app.include_router(music_jobs.router, prefix="/music-jobs", tags=["music-jobs"])
 app.include_router(generative_jobs.router, prefix="/generative-jobs", tags=["generative-jobs"])
+app.include_router(personas.router, prefix="/personas", tags=["personas"])
 app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])
 app.include_router(clips.router, prefix="/clips", tags=["clips"])
 app.include_router(templates.router, prefix="/templates", tags=["templates"])

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.50.0] - 2026-05-29
+
+### Added
+- **Persona generation + editor — Phase 3 of the Content Plan feature.** A signed-in user answers a short onboarding questionnaire (work / school / social / location / hobbies / travels / passions) and gets an editable AI **persona** — the voice and recurring themes behind their videos. New `nova.plan.persona_generator` agent (gemini-2.5-flash) turns the questionnaire into `{summary, content_pillars[], tone, audience, posting_cadence, sample_topics[]}`. The questionnaire is untrusted free-text: every field is sanitized (`_sanitize_text` — strips control chars, line-start role markers, code fences) before it reaches the prompt, and the model's echoed output is sanitized again on the way out, since the persona later threads into other agents' prompts (plan T7). Backend: `personas` routes (`POST` create-or-replace + enqueue, `GET` current user's persona, `PATCH` hand-edit — which also unblocks onboarding if generation failed), off-Job Celery task `generate_persona`, replay-mode eval + golden fixture + structural floor. Frontend: `/plan/onboarding` questionnaire wizard and `/plan/persona` editor (polls while generating, then editable), plus a typed `plan-api.ts` client that talks through the Phase 1 session proxy. No prod behavior change for existing flows — all new routes require a real user.
+
 ## [0.4.49.0] - 2026-05-29
 
 ### Added

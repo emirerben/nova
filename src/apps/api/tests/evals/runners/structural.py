@@ -14,6 +14,9 @@ import re
 from typing import Any
 
 from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION
+from app.agents._schemas.persona import _MAX_PILLARS as PERSONA_MAX_PILLARS
+from app.agents._schemas.persona import _MAX_TOPICS as PERSONA_MAX_TOPICS
+from app.agents._schemas.persona import Persona
 from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
 from app.agents.audio_template import AudioTemplateOutput
 from app.agents.clip_metadata import (
@@ -1171,6 +1174,34 @@ def check_intro_writer(output: IntroWriterOutput, input: IntroWriterInput) -> li
     return failures
 
 
+def check_persona_generator(output: Persona) -> list[str]:
+    """Structural floor for nova.plan.persona_generator.
+
+    The persona is editable user-facing text that later threads into other
+    agents' prompts, so parse()'s guarantees must hold: required fields
+    non-empty and pillar/topic list sizes within bounds. (Prompt-injection
+    resistance is covered by a dedicated unit test, not this structural floor —
+    the sanitizer intentionally leaves a `[role-marker-stripped]` breadcrumb,
+    so its presence is success, not failure.)
+    """
+    failures: list[str] = []
+    for field_name in ("summary", "tone", "audience", "posting_cadence"):
+        if not str(getattr(output, field_name, "")).strip():
+            failures.append(f"{field_name} is empty")
+    if not (1 <= len(output.content_pillars) <= PERSONA_MAX_PILLARS):
+        failures.append(
+            f"content_pillars has {len(output.content_pillars)} items "
+            f"(want 1..{PERSONA_MAX_PILLARS})"
+        )
+    if any(not p.strip() for p in output.content_pillars):
+        failures.append("content_pillars contains an empty item")
+    if len(output.sample_topics) > PERSONA_MAX_TOPICS:
+        failures.append(
+            f"sample_topics has {len(output.sample_topics)} items > {PERSONA_MAX_TOPICS}"
+        )
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
@@ -1205,4 +1236,6 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_text_designer(output, input)
     if agent_name == "nova.layout.transition_picker":
         return check_transition_picker(output, input)
+    if agent_name == "nova.plan.persona_generator":
+        return check_persona_generator(output)
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")
