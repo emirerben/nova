@@ -1,7 +1,7 @@
 """SQLAlchemy ORM models matching the plan's data model exactly."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     ARRAY,
@@ -9,6 +9,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     Float,
     ForeignKey,
     Index,
@@ -56,6 +57,8 @@ class User(Base):
 
     jobs: Mapped[list["Job"]] = relationship(back_populates="user")
     oauth_tokens: Mapped[list["OAuthToken"]] = relationship(back_populates="user")
+    # 1:1 — the user's onboarding persona (NULL until onboarding starts).
+    persona: Mapped["Persona | None"] = relationship(back_populates="user", uselist=False)
 
 
 class OAuthToken(Base):
@@ -373,6 +376,13 @@ class Job(Base):
     # and on rows whose orchestrator was never dispatched. Used by the
     # admin debug UI to call celery_app.control.{inspect,revoke}.
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Reverse link to the content-plan item that minted this job (mode="content_plan").
+    # Nullable: every non-plan job leaves it NULL. Used by the admin job-debug view
+    # for reverse lookup. The forward link lives on PlanItem.current_job_id; these two
+    # FKs are the circular pair resolved across migrations 0038/0039.
+    content_plan_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id"), nullable=True
+    )
     # True pipeline-wall-time anchors. Distinct from created_at (queue insert)
     # and updated_at (any column write).
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
@@ -384,6 +394,10 @@ class Job(Base):
 
     user: Mapped["User"] = relationship(back_populates="jobs")
     clips: Mapped[list["JobClip"]] = relationship(back_populates="job")
+    # The plan item this job was minted for (NULL for non-plan jobs). One-directional;
+    # PlanItem.current_job is the matching forward link (not a back_populates inverse —
+    # the two FKs are distinct columns, see PlanItem.current_job_id).
+    content_plan_item: Mapped["PlanItem | None"] = relationship(foreign_keys=[content_plan_item_id])
 
     __table_args__ = (
         Index("idx_jobs_user_id", "user_id"),
@@ -392,6 +406,7 @@ class Job(Base):
         Index("idx_jobs_music_track_id", "music_track_id"),
         Index("idx_jobs_failure_reason", "failure_reason"),
         Index("idx_jobs_created_at", "created_at"),
+        Index("idx_jobs_content_plan_item_id", "content_plan_item_id"),
     )
 
 
@@ -509,3 +524,109 @@ class AgentRun(Base):
             postgresql_where=text("music_track_id IS NOT NULL"),
         ),
     )
+
+
+class Persona(Base):
+    """1:1 with a user. The onboarding questionnaire plus the editable
+    AI-generated persona that threads into content-plan generation and
+    intro_writer. See the content-plan plan, Data model section."""
+
+    __tablename__ = "personas"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,  # enforces 1:1 with users
+    )
+    # Raw onboarding answers (work/school/social/location/hobbies/travels/passions,
+    # optional tiktok_handle). UNTRUSTED free text — sanitized before any agent call.
+    questionnaire: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Editable AI output: {summary, content_pillars[], tone, audience,
+    # posting_cadence, sample_topics[]}.
+    persona: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # generating | ready | failed | edited
+    persona_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="generating")
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship(back_populates="persona")
+    content_plans: Mapped[list["ContentPlan"]] = relationship(back_populates="persona")
+
+
+class ContentPlan(Base):
+    """A parent entity owning N PlanItems. NOT a column on Job — each generated
+    video stays one Job, and a PlanItem carries current_job_id."""
+
+    __tablename__ = "content_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    persona_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("personas.id", ondelete="CASCADE"), nullable=False
+    )
+    # Optional user-supplied events that bias generation (trips, launches, exams).
+    events: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # generating | ready | failed | edited
+    plan_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="generating")
+    horizon_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default="30")
+    # Day N maps to start_date + (N-1) days; first week = days 1-7. NULL until scheduled.
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped["User"] = relationship()
+    persona: Mapped["Persona"] = relationship(back_populates="content_plans")
+    items: Mapped[list["PlanItem"]] = relationship(
+        back_populates="content_plan", order_by="PlanItem.day_index"
+    )
+
+    __table_args__ = (Index("idx_content_plans_user_id", "user_id"),)
+
+
+class PlanItem(Base):
+    """One day's content idea inside a ContentPlan. Live generating/ready/failed
+    state is derived from current_job.status at read time — item_status only
+    distinguishes idea vs awaiting_clips (no duplicate state machine, see plan T2)."""
+
+    __tablename__ = "plan_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    content_plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("content_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    # 1..horizon_days, validated app-side
+    day_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    theme: Mapped[str] = mapped_column(Text, nullable=False)
+    idea: Mapped[str] = mapped_column(Text, nullable=False)
+    filming_suggestion: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Themed uploads land here (users/{user_id}/plan/{plan_item_id}/...).
+    clip_gcs_paths: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # idea | awaiting_clips ONLY. Render state is derived from current_job.status.
+    item_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="idea")
+    # Forward link to the job currently rendering this item (the circular pair's
+    # other half is Job.content_plan_item_id; resolved across migrations 0038/0039).
+    current_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=True
+    )
+    user_edited: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    content_plan: Mapped["ContentPlan"] = relationship(back_populates="items")
+    # One-directional (not the inverse of Job.content_plan_item — distinct FK column).
+    current_job: Mapped["Job | None"] = relationship(foreign_keys=[current_job_id])
+
+    __table_args__ = (Index("idx_plan_items_content_plan_id_day", "content_plan_id", "day_index"),)
