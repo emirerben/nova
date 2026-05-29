@@ -1832,7 +1832,9 @@ async def archive_music_track(
 # /clips/, processed outputs, internal artifacts) is rejected so an attacker
 # can't smuggle an arbitrary object key into the render pipeline and exfiltrate
 # it through the signed assembly_plan.output_url.
-_ALLOWED_CLIP_PREFIXES = ("music-uploads/", "slot-uploads/")
+# `users/` is the authenticated content-plan prefix (users/{user_id}/plan/...).
+# It is NOT matched by the 24h GCS delete rule, so plan content persists.
+_ALLOWED_CLIP_PREFIXES = ("music-uploads/", "slot-uploads/", "users/")
 
 
 def _validate_clip_path_prefixes(paths: list[str]) -> list[str]:

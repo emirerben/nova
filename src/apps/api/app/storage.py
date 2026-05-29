@@ -83,6 +83,31 @@ def presigned_put_url(
     return url, object_path
 
 
+def presigned_put_url_for_plan_item(
+    user_id: str,
+    plan_item_id: str,
+    filename: str,
+    content_type: str = "video/mp4",
+) -> tuple[str, str]:
+    """Signed PUT URL for an authenticated content-plan upload.
+
+    Lands under `users/{user_id}/plan/{plan_item_id}/...` — a PERSISTENT prefix
+    NOT matched by the 24h GCS delete rule (infra/gcs-lifecycle.json), unlike the
+    `dev-user/*` paths from presigned_put_url. Allowlisted in
+    admin_music._ALLOWED_CLIP_PREFIXES so the render pipeline accepts it.
+    """
+    object_path = f"users/{user_id}/plan/{plan_item_id}/{filename}"
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path)
+    url = blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(minutes=15),
+        method="PUT",
+        content_type=content_type,
+    )
+    return url, object_path
+
+
 def upload_public_read(local_path: str, object_path: str, content_type: str = "video/mp4") -> str:
     """Upload a local file to GCS and return a signed URL valid for 1 day.
 

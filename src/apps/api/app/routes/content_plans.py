@@ -10,6 +10,8 @@ GET  /content-plans   — the user's latest plan with its items. Each item's liv
 
 from __future__ import annotations
 
+import uuid
+
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -111,3 +113,48 @@ async def get_plan(
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No content plan yet")
     return _plan_response(plan)
+
+
+class GenerateFirstWeekResponse(BaseModel):
+    enqueued: int
+    skipped_no_clips: int
+
+
+@router.post("/{plan_id}/generate-first-week", response_model=GenerateFirstWeekResponse)
+async def generate_first_week(
+    plan_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> GenerateFirstWeekResponse:
+    """Enqueue one render per day-1..7 item that has clips. Empty ones are skipped.
+
+    Each item dispatches to the throttled `plan-jobs` queue (concurrency=1), so
+    seven items render one-at-a-time rather than OOM-ing the worker (plan T3).
+    """
+    try:
+        pid = uuid.UUID(plan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
+    plan = (
+        await db.execute(
+            select(ContentPlan)
+            .where(ContentPlan.id == pid, ContentPlan.user_id == user.id)
+            .options(selectinload(ContentPlan.items))
+        )
+    ).scalar_one_or_none()
+    if plan is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+
+    from app.tasks.content_plan_build import generate_plan_item_videos  # noqa: PLC0415
+
+    enqueued = 0
+    skipped = 0
+    for item in plan.items:
+        if item.day_index > 7:
+            continue
+        if item.clip_gcs_paths:
+            generate_plan_item_videos.delay(str(item.id))
+            enqueued += 1
+        else:
+            skipped += 1
+    return GenerateFirstWeekResponse(enqueued=enqueued, skipped_no_clips=skipped)

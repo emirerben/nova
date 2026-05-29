@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.52.0] - 2026-05-29
+
+### Added
+- **Themed uploads + per-item generation — Phase 5 of the Content Plan feature.** A plan item now goes from idea → finished videos. Upload themed clips per day (signed PUT URLs under the persistent `users/{user_id}/plan/{item_id}/` prefix — NOT swept by the 24h GCS delete rule, and now allowlisted in `_validate_clip_path_prefixes` so generation doesn't 422), then generate. Generation reuses the generative pipeline verbatim: a new shared `build_generative_job` service (extracted from `routes/generative_jobs.py` — single source of truth for Job shape + clip validation, plan T4) mints a `mode="content_plan"` Job, and `orchestrate_generative_job` renders it UNCHANGED. New `generate_plan_item_videos` Celery task dispatches to a throttled `plan-jobs` queue; the worker now consumes `-Q celery,plan-jobs` at `--concurrency=1`, so `POST /content-plans/{id}/generate-first-week` can enqueue all 7 day-1..7 items at once without OOM-ing the worker (plan T3). New endpoints: `POST /plan-items/{id}/upload-urls`, `/clips`, `/generate`, `GET /plan-items/{id}`, `POST /content-plans/{id}/generate-first-week`. Frontend: `/plan/items/[id]` (upload → generate → poll → variant playback) wired from the calendar cards. Per-item render state stays derived from `Job.status` (plan T2) — no new state machine.
+
+### Deferred (follow-ups; not in this PR)
+- **Persona-threaded `intro_writer` (the "coherence" refinement).** Weaving persona tone/pillars + the plan item's theme/idea into the on-screen hook text is a change to the *shared* `intro_writer` agent. Per CLAUDE.md it requires `make verify-overlays` (prod Docker image) + a live Gemini/Anthropic eval and a `prompt_version` bump (cache-busts product-wide) before merge — render gates that must run on a machine with the prod image + live keys. Per-item videos render correctly today; this adds persona-aware hooks on top.
+- **`clip_plan_matcher` activation seed (plan T8).** Auto-matching the user's existing clips to plan items for an instant first video before themed-upload "homework." Independent enhancement; the per-item upload flow stands on its own.
+
 ## [0.4.51.0] - 2026-05-29
 
 ### Added
