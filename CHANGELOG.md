@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.55.0] - 2026-05-29
+
+### Added
+- **Persona-coherent hooks — the content-plan "coherence" refinement (retires the 0.4.52.0 deferred follow-up).** Per-item content-plan videos rendered correctly but their on-screen hook text was persona-blind: `intro_writer`'s `tone` was hard-coded empty and it had no notion of the creator's pillars or the day's theme, so a "5am gym" day and a "budget travel" day read identically generic. Now the creator's persona (tone + content pillars) and the plan item's theme/idea thread down to the hook so it sounds like THIS creator on THIS day — while footage grounding still wins (the prompt forbids inventing a fact/place to fit the theme; if it can't be honored truthfully it writes from the footage).
+  - **Threaded down the existing `language` channel:** `build_generative_job` stashes the persona context onto `Job.all_candidates["persona"]`, `orchestrate_generative_job` reads it and forwards it through `_run_text_agents` → `IntroWriterInput`. The orchestrator stays fully decoupled from plan models (it only reads strings), and the async swap-song/retext re-render path inherits it for free. **Public (non-plan) generative jobs are unchanged** — they pass no persona, the key is omitted, and the prompt reads as a one-off edit (byte-identical `all_candidates` shape).
+  - **`intro_writer` prompt + `prompt_version` 2026-05-29 → 2026-05-30.** New `$persona_context` block; `intro_writer` is shared with the public generative pipeline, so the bump's blast radius is all generative hooks (behavioral — intro_writer is not in the `template_cache`/Layer-2 cache key, so this is not a literal cache invalidation). Persona fields are re-sanitized at the threading point (control/ASS chars **and** URLs/@handles stripped — persona labels never legitimately carry a link).
+  - **Gates (run per the prompt-change rule):** `make verify-overlays --fixtures` PASS 5/5 through the prod Docker image (renderer/burn-dict untouched). Live Gemini+Anthropic judge eval: two new persona golden fixtures pass (`persona_coherence` 5th rubric dimension added, scored N/A=5 when no persona is present). The 2-3 pre-existing borderline English fixtures fail identically on `origin/main` (threshold-bound live-judge jitter, not a regression — verified by an A/B baseline run).
+
 ## [0.4.54.1] - 2026-05-29
 
 ### Security

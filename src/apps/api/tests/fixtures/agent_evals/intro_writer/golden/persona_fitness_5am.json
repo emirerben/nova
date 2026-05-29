@@ -1,0 +1,44 @@
+{
+  "agent": "nova.compose.intro_writer",
+  "prompt_version": "2026-05-30",
+  "input": {
+    "hero_clip": {
+      "clip_id": "clip_001",
+      "media_type": "video",
+      "duration_s": 5.0,
+      "subject": "person training alone in a dim home gym before sunrise",
+      "hook_text": "",
+      "hook_score": 7.5,
+      "energy": 6.0,
+      "description": "low light, handheld, person chalking up and starting a heavy set in a garage gym, no one else around"
+    },
+    "hero_transcript": "alarm went off at 4:45, nobody's even awake yet, let's just get the first set in",
+    "tone": "high-energy, no-excuses gym motivation; talks like a tough-love trainer friend",
+    "content_pillars": ["morning workout routines", "discipline over motivation", "home gym setups"],
+    "theme": "first 5am workout of the 30-day challenge",
+    "idea": "film the dark early-morning start and the very first set",
+    "form": {"effect": "karaoke-line", "size_class": "jumbo", "position": "center"},
+    "exemplars": [
+      {
+        "id": "pov-surprise-karaoke-01",
+        "content_profile": "first-person POV, high energy, a surprising reveal or unexpected outcome",
+        "effect": "karaoke-line",
+        "text": "i did NOT expect this to happen",
+        "highlight_word": "NOT",
+        "position": "center",
+        "size_class": "jumbo",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A"
+      }
+    ]
+  },
+  "raw_text": "{\"text\": \"nobody's awake but the first set isn't waiting\", \"highlight_word\": \"first\"}",
+  "output": {
+    "text": "nobody's awake but the first set isn't waiting",
+    "highlight_word": "first"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "persona-threaded — fitness creator (discipline/morning-routine pillars), 5am-challenge theme. Hook coheres with the no-excuses tone + first-workout theme AND stays grounded in THIS clip (dark gym, nobody awake, the first set); invents nothing."
+  }
+}

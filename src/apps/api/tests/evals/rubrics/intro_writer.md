@@ -45,8 +45,14 @@ English reference hooks.
    - 3: right register but generic, or slightly off (e.g. Title Case, a touch of ad-speak)
    - 1: wrong voice entirely — clickbait cliché, ALL-CAPS line, Title Case Sentence, corporate/ad phrasing, OR (TR) ASCII-folded diacritics / formal siz-form / EN-TR mixing
 
+5. **persona_coherence** — Does the hook fit the creator's persona + this specific video, WITHOUT sacrificing footage grounding? Read the input's `tone`, `content_pillars`, `theme`, and `idea`.
+   - **Not applicable (score 5):** if the input carries NO persona/series context (`content_pillars` empty AND `theme` AND `idea` empty), there is nothing to cohere with — score **5** and do NOT penalize. This is the public one-off-edit case.
+   - 5: clearly belongs to THIS creator on THIS day — the voice matches the stated tone, it nods to a content pillar or the theme/idea, and it is still truthfully about the hero clip. Coherent AND grounded.
+   - 3: loosely on-persona/on-theme but generic, OR leans on the theme while only weakly tied to the footage.
+   - 1: ignores the persona/theme entirely when one was given, OR — worse — invents a fact/place/event to force the theme that the hero clip does not support (grounding violation in service of coherence).
+
 Pass threshold: avg ≥ 3.5
 
 Return ONLY:
 
-    {"scores": {"hook_strength": 4, "grounded_in_clip": 4, "craft": 4, "voice_match": 4}, "reasoning": "<one sentence>"}
+    {"scores": {"hook_strength": 4, "grounded_in_clip": 4, "craft": 4, "voice_match": 4, "persona_coherence": 4}, "reasoning": "<one sentence>"}

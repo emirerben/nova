@@ -12,6 +12,14 @@ $language_instruction
 
 $tone
 
+## Creator & this video
+
+This edit may be part of a creator's ongoing series. The context below is their persona and what this specific video is about:
+
+$persona_context
+
+Use it to shape the hook's VOICE and ANGLE — lean into the creator's tone, nod to one of their content pillars, and tease this video's theme/idea so the line feels like it belongs to THIS creator on THIS day. But the footage still rules: the hook must describe or tease what the hero clip actually shows. If the persona/theme can't be honored truthfully for this clip, ignore it and write from the footage — NEVER invent a fact, place, or event just to fit the theme. When the context says "(none …)", write purely from the footage.
+
 ## Chosen overlay effect
 
 $effect

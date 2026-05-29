@@ -58,6 +58,14 @@ class IntroWriterInput(BaseModel):
     # prompt — model still THINKS in English but writes the hook IN this language.
     # Closed allowlist enforced at the API edge (CreateGenerativeJobRequest).
     language: str = "en"
+    # Content-plan persona/series context (empty for public generative jobs). These
+    # steer the hook's VOICE + ANGLE toward the creator's pillars and this video's
+    # theme/idea — footage grounding still wins (the prompt forbids inventing facts).
+    # First-party (AI-authored persona + plan item) but re-sanitized in render_prompt
+    # as defense-in-depth at the threading point (see _schemas/persona.py docstring).
+    content_pillars: list[str] = Field(default_factory=list)
+    theme: str = ""
+    idea: str = ""
 
 
 class IntroWriterOutput(BaseModel):
@@ -109,13 +117,59 @@ def _language_instruction(language: str) -> str:
     return _LANGUAGE_INSTRUCTIONS.get(language, _LANGUAGE_INSTRUCTIONS["en"])
 
 
+# Cap the persona context so a runaway persona row can't flood the prompt (the
+# job builder caps too — this is the agent-side guard).
+_MAX_PILLARS_IN_PROMPT = 6
+
+
+def _clean_persona_field(s: str) -> str:
+    """Sanitize a persona field for the prompt: strip control/ASS chars (DATA
+    safety) AND URLs/@handles/#hashtags. Persona labels (tone, pillars, theme,
+    idea) never legitimately contain a link or handle, so unlike the hero-clip
+    DATA fields — where a URL may legitimately appear and is only stripped from
+    OUTPUT — we strip persona injections before they ever reach the prompt. This
+    is the defense-in-depth the threading point promises (see _schemas/persona.py).
+    """
+    return _strip_unsafe_tokens(_sanitize_text(s))
+
+
+def _persona_context(input: IntroWriterInput) -> str:  # noqa: A002
+    """Render the creator-persona / series-context block for the prompt.
+
+    Every field is re-sanitized here (defense-in-depth at the threading point —
+    see _schemas/persona.py). Returns a sentinel when no persona is supplied
+    (public generative jobs) so the prompt reads as footage-only and the model is
+    NOT nudged toward an invented series.
+    """
+    tone = _clean_persona_field(input.tone)
+    theme = _clean_persona_field(input.theme)
+    idea = _clean_persona_field(input.idea)
+    pillars = [
+        s for p in input.content_pillars[:_MAX_PILLARS_IN_PROMPT] if (s := _clean_persona_field(p))
+    ]
+    if not (tone or theme or idea or pillars):
+        return "(none — this is a one-off edit; write purely from the footage)"
+    lines: list[str] = []
+    if tone:
+        lines.append(f"- creator voice/tone: {tone}")
+    if pillars:
+        lines.append(f"- creator's content pillars: {', '.join(pillars)}")
+    if theme:
+        lines.append(f"- this video's theme: {theme}")
+    if idea:
+        lines.append(f"- this video's idea: {idea}")
+    return "\n".join(lines)
+
+
 class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.intro_writer",
         prompt_id="write_intro_text",
+        # 2026-05-30 — added $persona_context block (content-plan persona tone/
+        #              pillars + plan item theme/idea) for persona-coherent hooks.
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_instruction block (en|tr).
-        prompt_version="2026-05-29",
+        prompt_version="2026-05-30",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -157,6 +211,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
             # stays language-agnostic and adding a third language is a one-line
             # change to _LANGUAGE_INSTRUCTIONS (plus glyph coverage + eval fixtures).
             language_instruction=_language_instruction(input.language),
+            persona_context=_persona_context(input),
         )
 
     def parse(self, raw_text: str, input: IntroWriterInput) -> IntroWriterOutput:  # noqa: A002
