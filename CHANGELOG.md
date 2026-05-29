@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.54.0] - 2026-05-29
+
+### Changed
+- **Content-plan flow is now one guided wizard (was four disconnected pages).** The new-user plan flow felt old-fashioned and friction-heavy: onboarding → persona → plan → item lived on four separate full-page routes with no shared chrome, the persona page **dead-ended** (no way forward to build the plan), each async generation **blanked the whole screen**, and `/plan` was **linked from nowhere** (undiscoverable; the header had no auth state). This reworks the experience end-to-end, frontend-only — no API, schema, or render changes; every existing `plan-api` contract is reused verbatim.
+  - **Unified `/plan` wizard** (`app/plan/page.tsx`) derives its step (You → Persona → Plan) from the user's server data, with a persistent `Stepper`, auto-advance, back-navigation, and `?step=` deep-linking. No more dead-ends: the persona step now has a primary **"Plan my 30 days →"** CTA (which flushes any unsaved edits first, so the `createContentPlan` ready-gate can't 409).
+  - **One-question-at-a-time onboarding** (`OnboardingStep` + `QuestionCard`) replaces the 8-textarea wall — example chips, progress dots, Enter-to-advance, Back. Same `PersonaQuestionnaire` keys.
+  - **Inline generation states** (`GeneratingState`) replace the full-page blank takeovers, so the stepper stays visible while the persona/plan generate.
+  - **Wires up the previously-unused `generateFirstWeek`** as a **"Generate week 1"** batch CTA on the calendar's activation week (the endpoint shipped in 0.4.52.0 but had no UI).
+  - **Discoverable + auth-aware:** new `Providers` (`SessionProvider`) + a `useSession`-driven `Header` ("Sign in" / avatar + "My plan" / "Plan" entry), and a homepage CTA banner. `/plan/onboarding` + `/plan/persona` are now redirects so old links and sign-in `callbackUrl`s still resolve.
+  - **Editorial visual system:** Playfair Display wired into Tailwind as `font-display`, warm amber accent, generous spacing, CSS-only fade transitions (no new deps). Item page restyled to match. New shared `cn()` helper (`lib/cn.ts`).
+  - Fixes a polling bug introduced in the rewrite: the generation poll is now keyed on an `isGenerating` boolean via `setInterval`, so it keeps firing across polls where the status stays `generating` (a status-string dependency would re-arm only on change, killing the poll after one tick).
+
+### Fixed
+- **Plan item page 500'd once an item had a render job (`MissingGreenlet`).** `GET /plan-items/{id}` (and the PATCH/clips/generate responses) loaded the row with a bare `db.get()`, so serializing it lazy-loaded the `current_job` relationship on the async session → `MissingGreenlet` 500 on every poll after generation started — the user never saw their finished video. `_load_owned_item` now eager-loads `current_job` via `selectinload` (mirroring the list endpoint), and the mutate endpoints reload through it after commit. Caught dogfooding the full flow end-to-end.
+- **Plan item variants never displayed (`/generative-jobs/{id}/status` 404'd content_plan jobs).** The item page polls the generative status endpoint for per-variant `output_url`s, but its loader rejected any job with `mode != "generative"` — and plan-item renders are `mode="content_plan"`. The read-only status endpoint now also serves `content_plan` jobs (`_READABLE_MODES`); the song-swap/retext/change-style mutate endpoints stay generative-only. With both fixes the rendered variant now plays on the item page.
+
+### Added (dev/testing infra)
+- **Env-gated dev-login (`ALLOW_DEV_LOGIN`).** A NextAuth Credentials provider that mints a session from just an email (upserting via `/auth/google-upsert`), so the Google-gated content-plan flow can be driven end-to-end in local dev + automated QA without an interactive Google consent. Added **only** when `ALLOW_DEV_LOGIN === "true"` — never set in prod (Vercel/Fly). Guarded by `auth-dev-login.test.ts`, which fails if the provider ever appears without the flag.
 ## [0.4.53.0] - 2026-05-29
 
 ### Added

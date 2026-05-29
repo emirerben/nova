@@ -1,30 +1,75 @@
 import type { NextAuthOptions } from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
 
 const API_BASE =
   process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY ?? "";
 
-export const authOptions: NextAuthOptions = {
-  providers: [
-    GoogleProvider({
-      // GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are the canonical names.
-      // The old YOUTUBE_CLIENT_ID/SECRET still work as a fallback so
-      // existing deployments don't break until secrets are renamed.
-      clientId:
-        process.env.GOOGLE_CLIENT_ID ?? process.env.YOUTUBE_CLIENT_ID ?? "",
-      clientSecret:
-        process.env.GOOGLE_CLIENT_SECRET ?? process.env.YOUTUBE_CLIENT_SECRET ?? "",
-      authorization: {
-        params: {
-          // openid + email + profile is sufficient for identity.
-          // youtube.upload was here previously but requires Google app
-          // verification and is not needed for the content-plan feature.
-          scope: "openid email profile",
-        },
+// DEV-ONLY email login, gated entirely behind ALLOW_DEV_LOGIN. It exists so the
+// content-plan flow (which is Google-gated) can be exercised end-to-end in local
+// dev + automated QA without an interactive Google consent. It is NEVER enabled
+// in production: ALLOW_DEV_LOGIN must stay unset in Vercel/Fly. When the flag is
+// off, this provider is not added at all (see `auth-dev-login.test.ts`).
+//
+// SECURITY: this lets anyone who can reach the server mint a session for any
+// email. That is acceptable only because the flag is off everywhere except a
+// developer's localhost. Do not set ALLOW_DEV_LOGIN in any shared environment.
+const DEV_LOGIN_ENABLED = process.env.ALLOW_DEV_LOGIN === "true";
+
+const providers: NextAuthOptions["providers"] = [
+  GoogleProvider({
+    // GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are the canonical names.
+    // The old YOUTUBE_CLIENT_ID/SECRET still work as a fallback so
+    // existing deployments don't break until secrets are renamed.
+    clientId:
+      process.env.GOOGLE_CLIENT_ID ?? process.env.YOUTUBE_CLIENT_ID ?? "",
+    clientSecret:
+      process.env.GOOGLE_CLIENT_SECRET ?? process.env.YOUTUBE_CLIENT_SECRET ?? "",
+    authorization: {
+      params: {
+        // openid + email + profile is sufficient for identity.
+        // youtube.upload was here previously but requires Google app
+        // verification and is not needed for the content-plan feature.
+        scope: "openid email profile",
+      },
+    },
+  }),
+];
+
+if (DEV_LOGIN_ENABLED) {
+  providers.push(
+    CredentialsProvider({
+      id: "dev-login",
+      name: "Dev login (local only)",
+      credentials: { email: { label: "Email", type: "email" } },
+      // Mirror the Google path: upsert the user in Nova's DB and hand the UUID
+      // back as `dbId` so the jwt callback embeds it just like a Google sign-in.
+      async authorize(credentials) {
+        const email = credentials?.email?.trim();
+        if (!email) return null;
+        try {
+          const res = await fetch(`${API_BASE}/auth/google-upsert`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${INTERNAL_API_KEY}`,
+            },
+            body: JSON.stringify({ email, name: email.split("@")[0] }),
+          });
+          if (!res.ok) return null;
+          const data = (await res.json()) as { user_id: string };
+          return { id: data.user_id, email, name: email.split("@")[0], dbId: data.user_id };
+        } catch {
+          return null;
+        }
       },
     }),
-  ],
+  );
+}
+
+export const authOptions: NextAuthOptions = {
+  providers,
   callbacks: {
     async signIn({ user, account }) {
       // On first sign-in: upsert the user in the Nova DB and store the UUID.

@@ -103,14 +103,23 @@ class StyleSetListResponse(BaseModel):
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
-async def _load_generative_job(job_id: str, db: AsyncSession) -> Job:
+# content_plan jobs reuse the generative render + per-variant assembly_plan shape,
+# so they are READ-able via the status endpoint (the plan item page polls it). The
+# mutate endpoints (swap-song / retext / change-style) stay generative-only — those
+# are generative-UX affordances that don't apply to a plan item.
+_READABLE_MODES = ("generative", "content_plan")
+
+
+async def _load_generative_job(
+    job_id: str, db: AsyncSession, *, allowed_modes: tuple[str, ...] = ("generative",)
+) -> Job:
     try:
         job_uuid = uuid.UUID(job_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     result = await db.execute(select(Job).where(Job.id == job_uuid))
     job = result.scalar_one_or_none()
-    if job is None or job.mode != "generative":
+    if job is None or job.mode not in allowed_modes:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     return job
 
@@ -182,8 +191,11 @@ async def get_generative_job_status(
     job_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobStatusResponse:
-    """Poll generative job status. `variants` carries the per-variant render state."""
-    job = await _load_generative_job(job_id, db)
+    """Poll generative job status. `variants` carries the per-variant render state.
+
+    Also serves content_plan jobs (the plan item page polls this for variants).
+    """
+    job = await _load_generative_job(job_id, db, allowed_modes=_READABLE_MODES)
     return GenerativeJobStatusResponse(
         job_id=str(job.id),
         status=job.status,

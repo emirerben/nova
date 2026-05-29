@@ -14,6 +14,8 @@ import {
   requestUploadUrls,
   uploadToGcs,
 } from "@/lib/plan-api";
+import PlanShell from "../../_components/PlanShell";
+import SignInPrompt from "../../_components/SignInPrompt";
 
 const POLL_MS = 2500;
 
@@ -113,33 +115,29 @@ export default function PlanItemPage() {
 
   if (needsAuth) {
     return (
-      <Shell>
-        <div className="py-20 text-center">
-          <h1 className="mb-3 text-2xl font-semibold">Sign in to continue</h1>
-          <a
-            href={`/api/auth/signin?callbackUrl=/plan/items/${itemId}`}
-            className="inline-block rounded bg-white px-6 py-3 font-medium text-black hover:bg-zinc-200"
-          >
-            Sign in with Google
-          </a>
-        </div>
-      </Shell>
+      <PlanShell>
+        <SignInPrompt
+          callbackUrl={`/plan/items/${itemId}`}
+          title="Sign in to continue"
+          subtitle="We use your Google account to save your clips and renders."
+        />
+      </PlanShell>
     );
   }
 
   if (loading) {
     return (
-      <Shell>
-        <p className="py-20 text-center text-zinc-400">Loading…</p>
-      </Shell>
+      <PlanShell>
+        <p className="py-24 text-center text-zinc-400">Loading…</p>
+      </PlanShell>
     );
   }
 
   if (item === null) {
     return (
-      <Shell>
-        <p className="py-20 text-center text-zinc-400">Item not found.</p>
-      </Shell>
+      <PlanShell>
+        <p className="py-24 text-center text-zinc-400">Item not found.</p>
+      </PlanShell>
     );
   }
 
@@ -147,18 +145,18 @@ export default function PlanItemPage() {
   const ready = variants.filter((v) => v.output_url);
 
   return (
-    <Shell>
-      <div className="py-12">
-        <Link href="/plan" className="text-sm text-zinc-500 underline hover:text-white">
+    <PlanShell>
+      <div className="animate-fade-up py-12">
+        <Link href="/plan" className="text-sm text-zinc-500 underline transition-colors hover:text-white">
           ← back to plan
         </Link>
-        <div className="mt-3 mb-1 flex items-center gap-3">
+        <div className="mb-1 mt-4 flex items-center gap-3">
           <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
             Day {item.day_index}
           </span>
-          <h1 className="text-2xl font-semibold">{item.theme}</h1>
         </div>
-        <p className="mb-2 text-zinc-300">{item.idea}</p>
+        <h1 className="font-display text-3xl text-white">{item.theme}</h1>
+        <p className="mb-2 mt-2 text-zinc-300">{item.idea}</p>
         {item.filming_suggestion && (
           <p className="mb-8 text-sm text-zinc-500">🎬 {item.filming_suggestion}</p>
         )}
@@ -170,7 +168,7 @@ export default function PlanItemPage() {
         )}
 
         {/* Upload */}
-        <section className="mb-8 rounded-lg border border-zinc-800 bg-zinc-900/60 p-5">
+        <section className="mb-8 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
           <h2 className="mb-2 text-sm font-semibold text-zinc-300">Themed clips</h2>
           <p className="mb-4 text-sm text-zinc-500">
             Upload footage for this idea. {clipCount > 0 ? `${clipCount} uploaded.` : "None yet."}
@@ -181,7 +179,7 @@ export default function PlanItemPage() {
             multiple
             disabled={uploading}
             onChange={(e) => handleFiles(e.target.files)}
-            className="block w-full text-sm text-zinc-400 file:mr-3 file:rounded file:border-0 file:bg-white file:px-4 file:py-2 file:text-sm file:font-medium file:text-black hover:file:bg-zinc-200"
+            className="block w-full text-sm text-zinc-400 file:mr-3 file:rounded-full file:border-0 file:bg-white file:px-4 file:py-2 file:text-sm file:font-medium file:text-black hover:file:bg-zinc-200"
           />
           {uploading && <p className="mt-3 text-sm text-amber-300">Uploading…</p>}
         </section>
@@ -190,7 +188,7 @@ export default function PlanItemPage() {
         <button
           onClick={handleGenerate}
           disabled={generating || clipCount === 0 || item.status === "generating"}
-          className="rounded bg-white px-6 py-3 font-medium text-black hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+          className="rounded-full bg-amber-400 px-6 py-3 font-medium text-black transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
         >
           {item.status === "generating"
             ? "Generating…"
@@ -212,14 +210,14 @@ export default function PlanItemPage() {
                   key={v.variant_id}
                   src={v.output_url ?? undefined}
                   controls
-                  className="w-full rounded border border-zinc-800"
+                  className="w-full rounded-lg border border-zinc-800"
                 />
               ))}
             </div>
           )}
         </div>
       </div>
-    </Shell>
+    </PlanShell>
   );
 }
 
@@ -232,12 +230,4 @@ function StatusLine({ status }: { status: string }) {
     failed: "Generation failed. Try generating again.",
   };
   return <p className="text-sm text-zinc-400">{copy[status] ?? status}</p>;
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="min-h-[calc(100vh-3.5rem)] bg-black text-white">
-      <div className="mx-auto max-w-2xl px-4">{children}</div>
-    </main>
-  );
 }
