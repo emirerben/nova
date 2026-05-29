@@ -160,3 +160,65 @@ export function updatePlanItem(
     body: JSON.stringify(edit),
   });
 }
+
+// ── Themed uploads + per-item generation (Phase 5) ────────────────────────────
+
+export function getPlanItem(id: string): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${id}`);
+}
+
+interface UploadUrl {
+  upload_url: string;
+  gcs_path: string;
+}
+
+/** Ask the API for signed PUT URLs (lands under users/{uid}/plan/{itemId}/). */
+export async function requestUploadUrls(
+  itemId: string,
+  files: { filename: string; content_type: string; file_size_bytes: number }[],
+): Promise<UploadUrl[]> {
+  const res = await request<{ urls: UploadUrl[] }>(`/plan-items/${itemId}/upload-urls`, {
+    method: "POST",
+    body: JSON.stringify({ files }),
+  });
+  return res.urls;
+}
+
+/** PUT a file straight to GCS (direct, not through the proxy — avoids buffering bytes). */
+export async function uploadToGcs(uploadUrl: string, file: File): Promise<void> {
+  const res = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": file.type },
+    body: file,
+  });
+  if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+}
+
+export function attachClips(itemId: string, clipGcsPaths: string[]): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/clips`, {
+    method: "POST",
+    body: JSON.stringify({ clip_gcs_paths: clipGcsPaths }),
+  });
+}
+
+export function generatePlanItem(itemId: string): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/generate`, { method: "POST" });
+}
+
+export function generateFirstWeek(
+  planId: string,
+): Promise<{ enqueued: number; skipped_no_clips: number }> {
+  return request(`/content-plans/${planId}/generate-first-week`, { method: "POST" });
+}
+
+/** Variant output for a plan item's render — fetched via the generative status proxy. */
+export interface PlanItemVariant {
+  variant_id: string;
+  output_url: string | null;
+  render_status: string | null;
+}
+
+export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {
+  const res = await request<{ variants: PlanItemVariant[] }>(`/generative-jobs/${jobId}/status`);
+  return res.variants ?? [];
+}

@@ -112,3 +112,31 @@ async def enqueue_orchestrator(
         await db.rollback()
 
     return task_id
+
+
+def enqueue_orchestrator_sync(
+    task: Task,
+    job_id: str | uuid.UUID,
+    *,
+    queue: str | None = None,
+    kwargs: dict[str, Any] | None = None,
+) -> str:
+    """Sync-context analogue of `enqueue_orchestrator` for Celery tasks that
+    dispatch a sub-orchestrator (e.g. content-plan per-item generation).
+
+    A Celery task runs sync and holds a sync Session, so it can't await the
+    async helper. This dispatches with `task_id=str(job_id)` (same contract:
+    Celery task_id == Job id, so the reaper/admin can correlate) and routes to
+    `queue` when given (the throttled `plan-jobs` queue, plan T3). It does NOT
+    touch the DB — `task_id` is deterministically `str(job_id)`, so the calling
+    task sets `job.celery_task_id = str(job.id)` itself and commits BEFORE
+    calling this (the worker must be able to SELECT the row on pickup).
+
+    Returns the task_id (= `str(job_id)`).
+    """
+    task_id = str(job_id)
+    opts: dict[str, Any] = {"args": [task_id], "kwargs": kwargs or {}, "task_id": task_id}
+    if queue:
+        opts["queue"] = queue
+    task.apply_async(**opts)
+    return task_id
