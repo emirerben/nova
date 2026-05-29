@@ -1,14 +1,5 @@
 # Nova — Deferred Work
 
-## Auth / Content Plan
-
-### Harden internal-key check to fail closed (Phase 2)
-**What:** `_verify_internal_key` in `app/auth.py` currently bypasses verification when `INTERNAL_API_KEY` is unset (local-dev convenience). That means a deployment missing the secret would trust a forged `X-User-Id` header and allow user impersonation.
-**Why:** Acceptable in Phase 1 (no plan routes carry per-user data yet; legacy routes already attribute everything to the synthetic user, and no sign-in UI creates real users until Phase 3). Becomes a real impersonation hole the moment plan routes carry per-user data.
-**How:** When `get_current_user` (strict) guards plan routes in Phase 2, make an empty `INTERNAL_API_KEY` fail closed (401) rather than bypass — keep the synthetic fallback permissive for legacy routes only. Design the test env to set the key explicitly so strict-path tests exercise the real check.
-**Effort:** S (human: ~1h / CC: ~15 min)
-**Priority:** P1 (blocks Phase 2 plan routes shipping with real user data)
-
 ## Fonts
 
 ### Save the variable-font instancing helper as a committed script

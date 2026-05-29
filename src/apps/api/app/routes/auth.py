@@ -12,12 +12,12 @@ It is never called from the browser.
 import uuid
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.auth import _verify_internal_key
 from app.database import get_db
 from app.models import User
 
@@ -36,11 +36,9 @@ class GoogleUpsertResponse(BaseModel):
 
 
 def _require_internal_key(request: Request) -> None:
-    if not settings.internal_api_key:
-        return  # unconfigured = open in local dev
-    auth = request.headers.get("authorization", "")
-    if auth != f"Bearer {settings.internal_api_key}":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid internal key")
+    # Single source of truth for the fail-closed rule (see app.auth):
+    # an unset server key rejects rather than bypassing.
+    _verify_internal_key(request.headers.get("authorization"))
 
 
 @router.post("/google-upsert", response_model=GoogleUpsertResponse)

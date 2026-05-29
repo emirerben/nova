@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.54.1] - 2026-05-29
+
+### Security
+- **Internal-key auth now fails closed (Content Plan Phase 2 hardening).** `_verify_internal_key` (`app/auth.py`) previously **bypassed** verification when `INTERNAL_API_KEY` was unset — a local-dev convenience that was acceptable in Phase 1 (no plan routes carried per-user data). Phases 2–5 shipped strict plan routes (personas, content plans, plan items, per-item uploads) that carry real per-user data, so an unset key had become a **user-impersonation hole**: a deployment missing the Fly secret would trust a forged `X-User-Id` header. The strict path now **rejects with 401 when the server key is unset** (it never bypasses), and `/auth/google-upsert`'s twin check (`routes/auth.py`) now delegates to the same hardened helper so the two can't drift. Safe for local dev — the Next.js plan proxy and dev-login provider already refuse to forward without `INTERNAL_API_KEY`, so any flow that reaches a strict route already has the key set. The permissive synthetic fallback for legacy public routes (generative/template/music with no header) is unchanged. The test env now sets `INTERNAL_API_KEY` explicitly and strict-path tests pass the matching bearer; new tests assert an unset/wrong key is rejected **before** any DB lookup. `.env.example` ships a dev default on both the API and web slots.
+
 ## [0.4.54.0] - 2026-05-29
 
 ### Changed
