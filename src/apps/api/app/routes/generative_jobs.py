@@ -24,15 +24,13 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import CurrentUserOrSynthetic
 from app.database import get_db
 from app.models import Job, MusicTrack
 from app.routes.admin_music import _validate_clip_path_prefixes
 
 log = structlog.get_logger()
 router = APIRouter()
-
-# Synthetic user for MVP (matches music_jobs.py / template_jobs.py).
-SYNTHETIC_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 _MAX_CLIPS = 20
 
@@ -131,11 +129,12 @@ def _find_variant(job: Job, variant_id: str) -> dict | None:
 @router.post("", response_model=GenerativeJobResponse, status_code=status.HTTP_201_CREATED)
 async def create_generative_job(
     req: CreateGenerativeJobRequest,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobResponse:
     """Create a generative edit job (auto song + AI text, three variants)."""
     job = Job(
-        user_id=SYNTHETIC_USER_ID,
+        user_id=current_user.id,
         job_type="generative",
         mode="generative",
         raw_storage_path=req.clip_gcs_paths[0],

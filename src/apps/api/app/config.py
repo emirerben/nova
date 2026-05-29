@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     # Admin
     admin_api_key: str = ""
 
+    # Internal server-to-server auth (Next.js plan proxy → API).
+    # Must match INTERNAL_API_KEY in the Next.js environment.
+    internal_api_key: str = ""
+
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or
     # YTDLP_COOKIES_PATH for local development / mounted secret files.

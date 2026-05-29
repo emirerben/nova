@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from app import storage
+from app.auth import CurrentUserOrSynthetic
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -47,7 +48,10 @@ class BatchPresignedResponse(BaseModel):
 
 
 @router.post("", response_model=BatchPresignedResponse, status_code=status.HTTP_200_OK)
-async def create_batch_presigned(body: BatchPresignedRequest) -> BatchPresignedResponse:
+async def create_batch_presigned(
+    body: BatchPresignedRequest,
+    current_user: CurrentUserOrSynthetic,
+) -> BatchPresignedResponse:
     """Generate signed GCS PUT URLs for a batch of clip files.
 
     No job or DB row is created — this is purely for upload authorisation.
@@ -86,8 +90,7 @@ async def create_batch_presigned(body: BatchPresignedRequest) -> BatchPresignedR
             )
 
     # ── Generate signed URLs ────────────────────────────────────────────────
-    # Use a synthetic user_id and a shared batch_id for path grouping.
-    user_id = "00000000-0000-0000-0000-000000000001"
+    user_id = str(current_user.id)
     batch_id = uuid.uuid4().hex[:12]
 
     try:

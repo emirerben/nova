@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import CurrentUserOrSynthetic
 from app.database import AsyncSessionLocal, get_db
 from app.models import Job, VideoTemplate
 from app.services.template_validation import (
@@ -56,9 +57,6 @@ def _scrub(value: str) -> str:
 
 
 router = APIRouter()
-
-# Synthetic user for MVP (Phase 2 adds auth)
-SYNTHETIC_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
@@ -188,6 +186,7 @@ class TemplateJobListResponse(BaseModel):
 @router.post("", response_model=TemplateJobResponse, status_code=status.HTTP_201_CREATED)
 async def create_template_job(
     req: CreateTemplateJobRequest,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> TemplateJobResponse:
     """Create a template-mode job. Validates template existence and clip count."""
@@ -203,7 +202,7 @@ async def create_template_job(
     await validate_clips_processable(req.clip_gcs_paths)
 
     job = Job(
-        user_id=SYNTHETIC_USER_ID,
+        user_id=current_user.id,
         job_type="template",
         template_id=req.template_id,
         raw_storage_path=req.clip_gcs_paths[0],
@@ -248,16 +247,14 @@ async def create_template_job(
 
 @router.get("", response_model=TemplateJobListResponse)
 async def list_template_jobs(
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> TemplateJobListResponse:
-    """List template jobs ordered by created_at DESC. Scoped to synthetic user.
-
-    Used by the QA Dashboard for internal review of all template job outputs.
-    """
+    """List template jobs ordered by created_at DESC. Scoped to the current user."""
     base_query = (
-        select(Job).where(Job.user_id == SYNTHETIC_USER_ID).where(Job.job_type == "template")
+        select(Job).where(Job.user_id == current_user.id).where(Job.job_type == "template")
     )
 
     # Count total
@@ -292,6 +289,7 @@ async def list_template_jobs(
 )
 async def reroll_template_job(
     job_id: str,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> TemplateJobResponse:
     """Re-run template assembly with the same clips. Creates a new job.
@@ -330,7 +328,7 @@ async def reroll_template_job(
     inherited_inputs = original_candidates.get("inputs") or {}
 
     new_job = Job(
-        user_id=SYNTHETIC_USER_ID,
+        user_id=current_user.id,
         job_type="template",
         template_id=original.template_id,
         raw_storage_path=clip_paths[0],

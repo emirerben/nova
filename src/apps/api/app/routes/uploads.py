@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
+from app.auth import CurrentUserOrSynthetic
 from app.config import settings
 from app.database import get_db
 from app.models import Job, VideoTemplate
@@ -112,6 +113,7 @@ class PresignedResponse(BaseModel):
 async def create_presigned_upload(
     request: Request,
     body: PresignedRequest,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> PresignedResponse:
     # Validation happens here — before the client wastes bandwidth
@@ -152,9 +154,7 @@ async def create_presigned_upload(
     # URL content-type matches what the client PUT sends (NOV-8 fix).
     signing_content_type = _normalise_content_type(body.content_type)
 
-    # TODO: auth — replace with real user_id from JWT
-    user_id = "dev-user"
-
+    user_id = str(current_user.id)
     job_id = str(uuid.uuid4())
 
     try:
@@ -170,7 +170,7 @@ async def create_presigned_upload(
 
     job = Job(
         id=uuid.UUID(job_id),
-        user_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),  # TODO: real user
+        user_id=current_user.id,
         status="queued",
         raw_storage_path=gcs_path,
         selected_platforms=body.platforms,
@@ -212,6 +212,7 @@ class DriveImportResponse(BaseModel):
 )
 async def import_from_drive(
     body: DriveImportRequest,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> DriveImportResponse:
     """Import a video from Google Drive. The file is downloaded server-side to GCS."""
@@ -250,8 +251,7 @@ async def import_from_drive(
             detail="At least one platform must be selected",
         )
 
-    # TODO: auth — replace with real user_id from JWT
-    user_id = "dev-user"
+    user_id = str(current_user.id)
     job_id = str(uuid.uuid4())
     gcs_path = f"{user_id}/{job_id}/raw.mp4"
 
@@ -260,7 +260,7 @@ async def import_from_drive(
 
     job = Job(
         id=uuid.UUID(job_id),
-        user_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        user_id=current_user.id,
         status="importing",
         raw_storage_path=gcs_path,
         selected_platforms=body.platforms,

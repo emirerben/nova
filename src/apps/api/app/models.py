@@ -49,6 +49,9 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     name: Mapped[str | None] = mapped_column(Text)
+    auth_provider: Mapped[str] = mapped_column(Text, nullable=False, server_default="google")
+    # pending | persona_ready | plan_ready | complete
+    onboarding_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
 
     jobs: Mapped[list["Job"]] = relationship(back_populates="user")
