@@ -30,6 +30,8 @@ _EXPECTED = {
     # Layer-2 text-overlay pipeline agents
     "nova.compose.text_alignment",
     "nova.compose.text_classification",
+    # Content-plan agents
+    "nova.plan.persona_generator",
 }
 
 

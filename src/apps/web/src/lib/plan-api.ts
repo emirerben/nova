@@ -1,0 +1,102 @@
+/**
+ * API client for content-plan endpoints (Phase 3+).
+ *
+ * Calls go through the same-origin Next.js proxy at /api/plan/<path>, which
+ * injects the NextAuth session's X-User-Id + the server-only INTERNAL_API_KEY
+ * before forwarding to FastAPI. The browser never sees the internal key, and
+ * these helpers use RELATIVE URLs (no NEXT_PUBLIC_API_URL) so the request stays
+ * same-origin and carries the session cookie.
+ *
+ * A 401 from the proxy means "not signed in" — callers should send the user to
+ * /api/auth/signin (NextAuth's default Google sign-in page).
+ */
+
+const PLAN_BASE = "/api/plan";
+
+export class NotAuthenticatedError extends Error {
+  constructor() {
+    super("Not authenticated");
+    this.name = "NotAuthenticatedError";
+  }
+}
+
+export interface PersonaQuestionnaire {
+  work: string;
+  school: string;
+  social: string;
+  location: string;
+  hobbies: string;
+  travels: string;
+  passions: string;
+  tiktok_handle: string;
+}
+
+export interface PersonaContent {
+  summary: string;
+  content_pillars: string[];
+  tone: string;
+  audience: string;
+  posting_cadence: string;
+  sample_topics: string[];
+}
+
+export type PersonaStatus = "generating" | "ready" | "failed" | "edited";
+
+export interface PersonaResponse {
+  id: string;
+  persona_status: PersonaStatus;
+  questionnaire: PersonaQuestionnaire | null;
+  persona: PersonaContent | null;
+  error_detail: string | null;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${PLAN_BASE}${path}`, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+  });
+  if (res.status === 401) throw new NotAuthenticatedError();
+  if (!res.ok) {
+    let detail = `Request failed (${res.status})`;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (body?.detail) detail = body.detail;
+    } catch {
+      // non-JSON error body; keep the generic message
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as T;
+}
+
+/** Submit the onboarding questionnaire; creates/replaces the persona and enqueues generation. */
+export function createPersona(
+  questionnaire: Partial<PersonaQuestionnaire>,
+): Promise<PersonaResponse> {
+  return request<PersonaResponse>("/personas", {
+    method: "POST",
+    body: JSON.stringify(questionnaire),
+  });
+}
+
+/** Fetch the current user's persona, or null if they haven't started onboarding. */
+export async function getPersona(): Promise<PersonaResponse | null> {
+  try {
+    return await request<PersonaResponse>("/personas");
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("(404)")) return null;
+    if (err instanceof Error && /No persona yet/i.test(err.message)) return null;
+    throw err;
+  }
+}
+
+/** Hand-edit persona fields (also unblocks onboarding if generation failed). */
+export function updatePersona(
+  id: string,
+  edit: Partial<PersonaContent>,
+): Promise<PersonaResponse> {
+  return request<PersonaResponse>(`/personas/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(edit),
+  });
+}

@@ -64,6 +64,8 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "app.agents.text_classification",
         "TextClassificationAgent",
     ),
+    # Content-plan agents (no Job; off-job AgentRun path with job_id=None)
+    ("nova.plan.persona_generator", "app.agents.persona_generator", "PersonaGeneratorAgent"),
 )
 
 
