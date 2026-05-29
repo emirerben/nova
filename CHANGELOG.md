@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.49.0] - 2026-05-29
+
+### Added
+- **Content-plan data model — Phase 2 of the Content Plan feature.** Pure schema groundwork, no behavior change: three new tables and one column so later phases (persona generation, the 30-day plan, per-item themed generation) have somewhere to land. `personas` (1:1 with `users`, holds the onboarding questionnaire + editable AI persona), `content_plans` (a parent entity owning N items — NOT a column on `jobs`), and `plan_items` (one day's idea; live render state is derived from the linked `Job.status`, so `item_status` only distinguishes `idea` vs `awaiting_clips` — no duplicate state machine). Migrations `0036`–`0039`. The circular FK between `plan_items.current_job_id → jobs.id` and `jobs.content_plan_item_id → plan_items.id` is split across `0038`/`0039` (both columns nullable) so `alembic upgrade head` — the prod release command — never deadlocks. Verified up → down → up against Postgres 16; a no-DB structural test (`tests/test_content_plan_schema.py`) locks the single-head linear chain and the model shape so a future migration reorder can't silently break deploy.
+
 ## [0.4.48.0] - 2026-05-29
 
 ### Added
