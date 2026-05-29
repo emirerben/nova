@@ -18,6 +18,7 @@ celery_app = Celery(
         "app.tasks.lyrics_preview_task",
         "app.tasks.auto_music_orchestrate",
         "app.tasks.generative_build",
+        "app.tasks.persona_build",
         "app.tasks.online_eval",
         "app.tasks.maintenance",
     ],

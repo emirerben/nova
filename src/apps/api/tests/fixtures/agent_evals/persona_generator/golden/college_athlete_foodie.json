@@ -1,0 +1,39 @@
+{
+  "agent": "nova.plan.persona_generator",
+  "prompt_version": "2026-05-29",
+  "input": {
+    "work": "part-time barista",
+    "school": "junior at Michigan State, kinesiology major",
+    "social": "big friend group, always hosting game nights",
+    "location": "East Lansing, Michigan",
+    "hobbies": "powerlifting, cooking high-protein meals, thrifting",
+    "travels": "road trips to national parks every break",
+    "passions": "making gym culture feel welcoming to beginners",
+    "tiktok_handle": "liftandlentils"
+  },
+  "raw_text": "{\"summary\": \"You are the welcoming face of beginner gym culture, blending powerlifting with approachable high-protein cooking. You make strength feel doable for the nervous first-timer, not intimidating.\", \"content_pillars\": [\"beginner-friendly powerlifting form\", \"high-protein meals on a student budget\", \"gym-anxiety pep talks\", \"national-park road-trip recaps\"], \"tone\": \"warm, encouraging, a little goofy\", \"audience\": \"college students who want to start lifting but feel out of place at the gym\", \"posting_cadence\": \"4 posts/week, heavier on Sunday meal-prep days\", \"sample_topics\": [\"first-day-at-the-gym survival guide\", \"$5 high-protein lunch\", \"how to squat without fear\", \"thrift haul gym fits\", \"what I eat in a day on a budget\", \"road trip workout with no equipment\"]}",
+  "output": {
+    "summary": "You are the welcoming face of beginner gym culture, blending powerlifting with approachable high-protein cooking. You make strength feel doable for the nervous first-timer, not intimidating.",
+    "content_pillars": [
+      "beginner-friendly powerlifting form",
+      "high-protein meals on a student budget",
+      "gym-anxiety pep talks",
+      "national-park road-trip recaps"
+    ],
+    "tone": "warm, encouraging, a little goofy",
+    "audience": "college students who want to start lifting but feel out of place at the gym",
+    "posting_cadence": "4 posts/week, heavier on Sunday meal-prep days",
+    "sample_topics": [
+      "first-day-at-the-gym survival guide",
+      "$5 high-protein lunch",
+      "how to squat without fear",
+      "thrift haul gym fits",
+      "what I eat in a day on a budget",
+      "road trip workout with no equipment"
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "well-formed questionnaire -> grounded persona; pillars (4) and sample_topics (6) within bounds, all fields non-empty"
+  }
+}
