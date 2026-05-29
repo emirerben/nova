@@ -41,7 +41,7 @@ export const authOptions: NextAuthOptions = {
           if (res.ok) {
             const data = (await res.json()) as { user_id: string };
             // Attach DB uuid to the user object so jwt callback can embed it.
-            (user as Record<string, unknown>).dbId = data.user_id;
+            (user as unknown as Record<string, unknown>).dbId = data.user_id;
           }
         } catch {
           // Non-fatal: the user can still sign in; plan routes will 401.
@@ -52,15 +52,15 @@ export const authOptions: NextAuthOptions = {
 
     async jwt({ token, user }) {
       // On initial sign-in `user` is populated; persist dbId into the token.
-      if (user && (user as Record<string, unknown>).dbId) {
-        token.userId = (user as Record<string, unknown>).dbId as string;
+      if (user && (user as unknown as Record<string, unknown>).dbId) {
+        token.userId = (user as unknown as Record<string, unknown>).dbId as string;
       }
       return token;
     },
 
     async session({ session, token }) {
       if (session.user) {
-        (session.user as Record<string, unknown>).id = token.userId ?? token.sub ?? "";
+        (session.user as unknown as Record<string, unknown>).id = token.userId ?? token.sub ?? "";
       }
       return session;
     },
