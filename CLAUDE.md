@@ -6,14 +6,20 @@ Nova transforms raw real-life videos into viral short-form content (TikTok, Reel
 
 **Before starting non-trivial work, create a fresh worktree off `origin/main`.** The primary checkout at `/Users/emirerben/Projects/nova` is shared across sessions; uncommitted edits collide and the checkout stays pinned to whatever branch was last left there. Symptoms: stray `.venv` deletions, duplicate migration files, mixed `git status`, PRs with phantom conflicts because work landed against a stale base.
 
-One command does the whole flow (fetch origin/main + worktree off the fresh tip + correct branch naming):
+Fastest path — `nova-fresh <topic>` (zsh function in `~/.zshrc`) creates the worktree off `origin/main`, `cd`s into it, and launches Claude there in one step:
+
+```bash
+nova-fresh template-text-100             # = new-session.sh + cd + claude
+```
+
+Or run the underlying script yourself (fetch origin/main + worktree off the fresh tip + correct branch naming):
 
 ```bash
 bash scripts/new-session.sh <topic>      # e.g. template-text-100
 cd ../nova-<topic>                       # script prints this; copy it
 ```
 
-A `SessionStart` hook (`.claude/settings.json` → `scripts/session-check.sh`) fetches `origin/main` and prints a warning if the current worktree is behind. If you see that warning at session start, run `new-session.sh` for new work, or `git merge --ff-only origin/main` to update an in-flight branch.
+A `SessionStart` hook (`.claude/settings.json` → `scripts/session-check.sh`) fetches `origin/main`, then: on a **clean `main`** it auto fast-forwards (so the shared checkout never drifts); on a dirty `main` or any feature branch it only prints a warning (it can't relocate the session or discard work). If you see the stale-worktree warning, run `nova-fresh`/`new-session.sh` for new work, or `git merge --ff-only origin/main` to update an in-flight branch.
 
 Rules:
 - Run all edits, tests, and commits from the worktree path — never from `/Users/emirerben/Projects/nova` directly.

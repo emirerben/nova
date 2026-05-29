@@ -27,10 +27,25 @@ behind="$(git rev-list --count HEAD..origin/main 2>/dev/null || echo 0)"
 main_tip="$(git log -1 --format='%h %s' origin/main 2>/dev/null || echo 'unknown')"
 
 if [ "$branch" = "main" ]; then
-  cat <<EOF
-WARNING: local main is $behind commit(s) behind origin/main.
+  # Clean tree → auto fast-forward to the freshly-fetched origin/main so the
+  # shared checkout never drifts. Dirty tree or a diverged history → warn only
+  # (never discard local work or rewrite history from a SessionStart hook).
+  if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
+    if git merge --ff-only origin/main --quiet >/dev/null 2>&1; then
+      echo "Auto-updated local main to origin/main ($main_tip)."
+      exit 0
+    fi
+    cat <<EOF
+WARNING: local main is $behind commit(s) behind origin/main and could NOT fast-forward (history diverged).
   Origin tip: $main_tip
-  Run: git pull --ff-only
+  Resolve manually: git pull --rebase  (inspect with: git log --oneline main..origin/main)
+EOF
+    exit 0
+  fi
+  cat <<EOF
+WARNING: local main is $behind commit(s) behind origin/main (working tree dirty — not auto-updating).
+  Origin tip: $main_tip
+  Commit or stash, then: git pull --ff-only
 EOF
   exit 0
 fi
