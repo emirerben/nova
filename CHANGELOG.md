@@ -14,6 +14,13 @@ All notable changes to this project will be documented in this file.
   - **Editorial visual system:** Playfair Display wired into Tailwind as `font-display`, warm amber accent, generous spacing, CSS-only fade transitions (no new deps). Item page restyled to match. New shared `cn()` helper (`lib/cn.ts`).
   - Fixes a polling bug introduced in the rewrite: the generation poll is now keyed on an `isGenerating` boolean via `setInterval`, so it keeps firing across polls where the status stays `generating` (a status-string dependency would re-arm only on change, killing the poll after one tick).
 
+### Fixed
+- **Plan item page 500'd once an item had a render job (`MissingGreenlet`).** `GET /plan-items/{id}` (and the PATCH/clips/generate responses) loaded the row with a bare `db.get()`, so serializing it lazy-loaded the `current_job` relationship on the async session → `MissingGreenlet` 500 on every poll after generation started — the user never saw their finished video. `_load_owned_item` now eager-loads `current_job` via `selectinload` (mirroring the list endpoint), and the mutate endpoints reload through it after commit. Caught dogfooding the full flow end-to-end.
+- **Plan item variants never displayed (`/generative-jobs/{id}/status` 404'd content_plan jobs).** The item page polls the generative status endpoint for per-variant `output_url`s, but its loader rejected any job with `mode != "generative"` — and plan-item renders are `mode="content_plan"`. The read-only status endpoint now also serves `content_plan` jobs (`_READABLE_MODES`); the song-swap/retext/change-style mutate endpoints stay generative-only. With both fixes the rendered variant now plays on the item page.
+
+### Added (dev/testing infra)
+- **Env-gated dev-login (`ALLOW_DEV_LOGIN`).** A NextAuth Credentials provider that mints a session from just an email (upserting via `/auth/google-upsert`), so the Google-gated content-plan flow can be driven end-to-end in local dev + automated QA without an interactive Google consent. Added **only** when `ALLOW_DEV_LOGIN === "true"` — never set in prod (Vercel/Fly). Guarded by `auth-dev-login.test.ts`, which fails if the provider ever appears without the flag.
+
 ## [0.4.52.1] - 2026-05-29
 
 ### Fixed

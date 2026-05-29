@@ -16,7 +16,9 @@ import uuid
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app import storage
 from app.agents.music_matcher import _sanitize_text
@@ -107,18 +109,7 @@ async def edit_plan_item(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
-    try:
-        iid = uuid.UUID(item_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
-
-    item = await db.get(PlanItem, iid)
-    if item is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
-    # Ownership: the item's plan must belong to the caller.
-    plan = await db.get(ContentPlan, item.content_plan_id)
-    if plan is None or plan.user_id != user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
+    item = await _load_owned_item(item_id, user.id, db)
 
     updates = edit.model_dump(exclude_none=True)
     if "theme" in updates:
@@ -130,8 +121,8 @@ async def edit_plan_item(
     if updates:
         item.user_edited = True
     await db.commit()
-    await db.refresh(item)
-    return plan_item_response(item)
+    # Reload with current_job eager-loaded (commit expired it) before serializing.
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 
 # ── Themed uploads + per-item generation ──────────────────────────────────────
@@ -142,7 +133,15 @@ async def _load_owned_item(item_id: str, user_id: uuid.UUID, db: AsyncSession) -
         iid = uuid.UUID(item_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
-    item = await db.get(PlanItem, iid)
+    # Eager-load current_job: plan_item_response → derive_item_status reads the
+    # relationship, and a bare db.get() leaves it lazy → MissingGreenlet 500 on
+    # the async session once an item has a linked job (mirrors the list endpoint's
+    # selectinload in content_plans.py).
+    item = (
+        await db.execute(
+            select(PlanItem).where(PlanItem.id == iid).options(selectinload(PlanItem.current_job))
+        )
+    ).scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
     plan = await db.get(ContentPlan, item.content_plan_id)
@@ -228,8 +227,8 @@ async def attach_clips(
             )
     item.clip_gcs_paths = list(body.clip_gcs_paths)
     await db.commit()
-    await db.refresh(item)
-    return plan_item_response(item)
+    # Reload with current_job eager-loaded (commit expired it) before serializing.
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 
 @router.post("/{item_id}/generate", response_model=PlanItemResponse)
@@ -248,5 +247,6 @@ async def generate_item(
     from app.tasks.content_plan_build import generate_plan_item_videos  # noqa: PLC0415
 
     generate_plan_item_videos.delay(str(item.id))
-    await db.refresh(item)
-    return plan_item_response(item)
+    # current_job_id is set by the task, not synchronously here; reload with the
+    # relationship eager-loaded so serialization never lazy-loads on the session.
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))

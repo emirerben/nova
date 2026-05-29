@@ -54,11 +54,22 @@ def _owned_item(user_id: uuid.UUID, *, clips=None):
     return item, plan
 
 
+def _db_for(item, plan) -> AsyncMock:
+    """DB mock matching _load_owned_item: the item is loaded via
+    execute().scalar_one_or_none() (eager-loads current_job), the plan
+    ownership check via get()."""
+    db = _async_db()
+    result = MagicMock()
+    result.scalar_one_or_none = MagicMock(return_value=item)
+    db.execute = AsyncMock(return_value=result)
+    db.get = AsyncMock(return_value=plan)
+    return db
+
+
 def test_generate_requires_clips(client: TestClient) -> None:
     user = _user()
     item, plan = _owned_item(user.id, clips=[])
-    db = _async_db()
-    db.get = AsyncMock(side_effect=[item, plan])
+    db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
     resp = client.post(f"/plan-items/{item.id}/generate")
@@ -68,8 +79,7 @@ def test_generate_requires_clips(client: TestClient) -> None:
 def test_generate_enqueues_when_clips_present(client: TestClient) -> None:
     user = _user()
     item, plan = _owned_item(user.id, clips=[f"users/{0}/plan/0/a.mp4"])
-    db = _async_db()
-    db.get = AsyncMock(side_effect=[item, plan])
+    db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
     with patch("app.tasks.content_plan_build.generate_plan_item_videos") as task:
@@ -82,8 +92,7 @@ def test_generate_enqueues_when_clips_present(client: TestClient) -> None:
 def test_attach_clips_rejects_foreign_prefix(client: TestClient) -> None:
     user = _user()
     item, plan = _owned_item(user.id)
-    db = _async_db()
-    db.get = AsyncMock(side_effect=[item, plan])
+    db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
     resp = client.post(
@@ -96,8 +105,7 @@ def test_attach_clips_rejects_foreign_prefix(client: TestClient) -> None:
 def test_upload_urls_returns_signed_puts(client: TestClient) -> None:
     user = _user()
     item, plan = _owned_item(user.id)
-    db = _async_db()
-    db.get = AsyncMock(side_effect=[item, plan])
+    db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
     with patch(
