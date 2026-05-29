@@ -112,6 +112,9 @@ def _run_generative_job(job_id: str) -> None:
         clip_paths_gcs: list[str] = all_candidates.get("clip_paths", []) or []
         # Closed allowlist enforced at the API edge; legacy rows default to "en".
         language: str = all_candidates.get("language") or "en"
+        # Persona/series context for persona-coherent hooks (content-plan jobs
+        # only — public generative jobs omit the key). Forwarded to intro_writer.
+        persona: dict = all_candidates.get("persona") or {}
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
@@ -160,7 +163,9 @@ def _run_generative_job(job_id: str) -> None:
         from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
         def _text_then_style():
-            text, form = _run_text_agents(clip_metas, hero, job_id=job_id, language=language)
+            text, form = _run_text_agents(
+                clip_metas, hero, job_id=job_id, language=language, persona=persona
+            )
             style = _select_generative_style_set(clip_metas, text, job_id=job_id)
             return text, form, style
 
@@ -469,6 +474,9 @@ def _run_regenerate_variant(
         # jobs (pre-language-field) default to "en". Frontend NEVER passes language
         # on retext/swap_song/change_style — single source of truth is the Job row.
         language: str = (job.all_candidates or {}).get("language") or "en"
+        # Re-renders inherit the persona context too (content-plan jobs only), so a
+        # retext/swap_song hook stays persona-coherent. Same Job-row source of truth.
+        persona: dict = (job.all_candidates or {}).get("persona") or {}
         variants = ((job.assembly_plan or {}).get("variants")) or []
         existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
         if existing is None:
@@ -545,7 +553,11 @@ def _run_regenerate_variant(
                 # else: nothing renderable after sanitization → no overlay (footage only).
             else:
                 agent_text, agent_form = _run_text_agents(
-                    ingest["clip_metas"], ingest["hero"], job_id=job_id, language=language
+                    ingest["clip_metas"],
+                    ingest["hero"],
+                    job_id=job_id,
+                    language=language,
+                    persona=persona,
                 )
 
         variant_dir = os.path.join(tmpdir, f"variant_{rank}")
@@ -648,7 +660,7 @@ def _variant_specs(best_track: MusicTrack | None) -> list[dict[str, Any]]:
 
 
 def _run_text_agents(
-    clip_metas: list, hero, *, job_id: str, language: str = "en"
+    clip_metas: list, hero, *, job_id: str, language: str = "en", persona: dict | None = None
 ) -> tuple[Any, dict]:
     """Run overlay_format_matcher → intro_writer. Returns (IntroWriterOutput|None, form dict).
 
@@ -656,9 +668,16 @@ def _run_text_agents(
     edge). Forwarded to both agents so the intro is written in the right language
     and the form matcher considers form-fit per language.
 
+    `persona` is the optional content-plan creator context
+    (`{tone, content_pillars, theme, idea}`, stashed on `all_candidates["persona"]`).
+    When present it steers the hook's voice toward the creator's pillars + the
+    day's theme; empty/absent for public generative jobs → footage-only voice
+    (identical to pre-persona behavior). intro_writer re-sanitizes every field.
+
     Best-effort: any failure yields (None, {}) so the text variants render footage
     without an intro rather than failing the job.
     """
+    persona = persona or {}
     try:
         from app.agents._model_client import default_client  # noqa: PLC0415
         from app.agents._runtime import RunContext  # noqa: PLC0415
@@ -689,7 +708,10 @@ def _run_text_agents(
             IntroWriterInput(
                 hero_clip=hero_summary,
                 hero_transcript=str(getattr(hero, "transcript", "") or ""),
-                tone="",
+                tone=str(persona.get("tone", "") or ""),
+                content_pillars=list(persona.get("content_pillars", []) or []),
+                theme=str(persona.get("theme", "") or ""),
+                idea=str(persona.get("idea", "") or ""),
                 form=form.model_dump(),
                 exemplars=exemplars,
                 language=language,

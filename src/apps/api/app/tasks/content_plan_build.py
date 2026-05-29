@@ -137,12 +137,24 @@ def generate_plan_item_videos(self, plan_item_id: str) -> None:  # noqa: ANN001
         plan = session.get(ContentPlan, item.content_plan_id)
         if plan is None:
             return
+        # Persona context for persona-coherent hooks (intro_writer threading).
+        # Best-effort: a missing/empty persona must NOT block the render — the
+        # builder simply omits the persona key and intro_writer falls back to its
+        # footage-only voice, exactly as for public generative jobs.
+        persona_data = {}
+        persona_row = session.get(PersonaRow, plan.persona_id)
+        if persona_row is not None and persona_row.persona:
+            persona_data = persona_row.persona
         try:
             job = build_generative_job(
                 user_id=plan.user_id,
                 clip_paths=clip_paths,
                 mode="content_plan",
                 content_plan_item_id=item.id,
+                persona_tone=str(persona_data.get("tone", "") or ""),
+                persona_pillars=list(persona_data.get("content_pillars", []) or []),
+                item_theme=str(item.theme or ""),
+                item_idea=str(item.idea or ""),
             )
         except ValueError as exc:
             log.warning("plan_item_videos.invalid_clips", plan_item_id=plan_item_id, error=str(exc))

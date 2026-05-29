@@ -1,0 +1,44 @@
+{
+  "agent": "nova.compose.intro_writer",
+  "prompt_version": "2026-05-30",
+  "input": {
+    "hero_clip": {
+      "clip_id": "clip_001",
+      "media_type": "video",
+      "duration_s": 4.8,
+      "subject": "person stepping onto a hostel rooftop terrace overlooking a city at golden hour",
+      "hook_text": "",
+      "hook_score": 8.0,
+      "energy": 4.5,
+      "description": "handheld push toward a railing, warm low sun over old-city rooftops, quiet and uncrowded"
+    },
+    "hero_transcript": "okay this hostel was thirty euros a night and look at this view",
+    "tone": "warm, practical, slightly conspiratorial budget-travel friend",
+    "content_pillars": ["budget travel hacks", "solo female travel", "hidden city spots"],
+    "theme": "the cheap hostel with a rooftop nobody posts about",
+    "idea": "reveal the rooftop view at sunset and the nightly price",
+    "form": {"effect": "static", "size_class": "xlarge", "position": "center"},
+    "exemplars": [
+      {
+        "id": "lifestyle-freedom-static-01",
+        "content_profile": "slow-living, freedom, working-from-anywhere, beach or remote scenery, quietly aspirational",
+        "effect": "static",
+        "text": "this and no job",
+        "highlight_word": "no",
+        "position": "center",
+        "size_class": "xlarge",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A"
+      }
+    ]
+  },
+  "raw_text": "{\"text\": \"thirty euro hostel and a view like this\", \"highlight_word\": \"thirty\"}",
+  "output": {
+    "text": "thirty euro hostel and a view like this",
+    "highlight_word": "thirty"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "persona-threaded — budget-travel creator (budget-hacks/hidden-spots pillars), cheap-rooftop theme. Hook leans the budget pillar (the €30 price from the transcript) against the rooftop view in THIS clip; specific and grounded, not generic travel filler."
+  }
+}
