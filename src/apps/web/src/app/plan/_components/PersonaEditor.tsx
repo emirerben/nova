@@ -42,12 +42,26 @@ export default function PersonaEditor({
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(lastSaved);
 
+  // Trim + drop blank entries from the list fields. Done ONLY at save time, never
+  // per-keystroke — trimming/filtering on every change strips the trailing space
+  // you just typed (so you can't start the next word) and deletes blank lines as
+  // you make them, which is what made the list fields feel uneditable.
+  function normalize(p: PersonaContent): PersonaContent {
+    return {
+      ...p,
+      content_pillars: (p.content_pillars ?? []).map((s) => s.trim()).filter(Boolean),
+      sample_topics: (p.sample_topics ?? []).map((s) => s.trim()).filter(Boolean),
+    };
+  }
+
   async function save(): Promise<boolean> {
     setSaving(true);
     setError(null);
     try {
-      await onSave(draft);
-      setLastSaved(draft);
+      const clean = normalize(draft);
+      await onSave(clean);
+      setDraft(clean);
+      setLastSaved(clean);
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
@@ -105,10 +119,9 @@ export default function PersonaEditor({
             <textarea
               value={((draft[f.key] as string[]) ?? []).join("\n")}
               onChange={(e) =>
-                setDraft({
-                  ...draft,
-                  [f.key]: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean),
-                })
+                // Preserve raw text (incl. spaces + blank lines) while typing;
+                // normalize() handles trim/dedupe at save time.
+                setDraft({ ...draft, [f.key]: e.target.value.split("\n") })
               }
               rows={5}
               className="w-full resize-y rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white transition-colors focus:border-amber-400/60 focus:outline-none"
