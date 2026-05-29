@@ -11,8 +11,9 @@ from pydantic import BaseModel, Field
 
 from app.agents._schemas.persona import Persona
 
-# Bump when prompts/generate_content_plan.txt changes (CLAUDE.md prompt-change rule).
-CONTENT_PLAN_PROMPT_VERSION = "2026-05-29"
+# Bump when prompts/generate_content_plan.txt OR prompts/content_ideas.json
+# changes (CLAUDE.md prompt-change rule; the idea bank is part of the prompt).
+CONTENT_PLAN_PROMPT_VERSION = "2026-05-29.1"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60

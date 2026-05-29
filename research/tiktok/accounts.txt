@@ -1,0 +1,12 @@
+# TikTok accounts mined by the weekly market-research agent.
+# One handle per line (with or without the leading @). Blank lines and
+# lines starting with # are ignored.
+#
+# Seeded 2026-05-29 with the four example accounts. The /research-tiktok
+# skill grows this list as it discovers high-performing creators in niches
+# Nova's users care about. Keep it to accounts whose PUBLIC content is a good
+# style reference — we mine voice/format, never reproduce verbatim.
+allexmarielle
+izzsiomoi
+patricia.turchin
+nermozdemir

@@ -42,3 +42,6 @@ out/
 # Firebase
 firebase-debug.log
 .devtest/
+
+# Weekly TikTok research raw dumps (intermediate, reproducible — not committed).
+research/tiktok/raw/

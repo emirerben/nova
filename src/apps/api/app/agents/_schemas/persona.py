@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-# Bump when prompts/generate_persona.txt changes (CLAUDE.md prompt-change rule).
-PERSONA_PROMPT_VERSION = "2026-05-29"
+# Bump when prompts/generate_persona.txt OR prompts/persona_archetypes.json
+# changes (CLAUDE.md prompt-change rule; the archetype bank is part of the prompt).
+PERSONA_PROMPT_VERSION = "2026-05-29.1"
 
 # Upper bounds keep a runaway model response from bloating the persona row.
 _MAX_PILLARS = 8

@@ -18,6 +18,16 @@ passions: $passions
 tiktok handle (optional, do not fetch): $tiktok_handle
 QUESTIONNAIRE
 
+For reference, here are recognizable creator STYLE TYPES that are working right
+now (mined from the market). Use them only to land this person in a sharp,
+proven lane — match the closest one or two in spirit. They are reference, NOT
+content to copy: keep every field specific to THIS person and never reuse their
+wording.
+
+<<<STYLE_REFERENCES
+$archetypes
+STYLE_REFERENCES
+
 Write a persona that is specific to THIS person — reference their real details,
 not generic creator advice. The persona must feel like something they would
 proudly edit and keep, not a template.
