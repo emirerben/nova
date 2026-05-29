@@ -14,6 +14,7 @@ from app.routes import (
     admin_generative,
     admin_jobs,
     admin_music,
+    auth,
     clips,
     generative_jobs,
     music,
@@ -80,6 +81,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
 
 
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(admin_jobs.router, prefix="/admin/jobs", tags=["admin-jobs"])

@@ -51,13 +51,13 @@ from app.agents._schemas.song_sections import (
     SongSection,
     cap_song_section_duration,
 )
+from app.auth import SYNTHETIC_USER_ID
 from app.config import settings
 from app.database import get_db
 from app.models import Job, MusicTrack
 from app.pipeline.music_recipe import count_slots
 from app.routes.music_jobs import (
     _SLOT_UPLOAD_MAX_BYTES,
-    SYNTHETIC_USER_ID,
     MusicJobResponse,
     MusicJobStatusResponse,
     classify_slot_kind,

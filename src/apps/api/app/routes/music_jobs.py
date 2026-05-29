@@ -16,19 +16,13 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import CurrentUserOrSynthetic
 from app.config import settings
 from app.database import get_db
 from app.models import Job, MusicTrack
 
 log = structlog.get_logger()
 router = APIRouter()
-
-# Synthetic user for MVP (matches template_jobs.py).
-# TODO: replace with get_current_user(db) once auth infrastructure is built.
-#       POST /music-jobs is currently unauthenticated — any caller can trigger
-#       Gemini API calls and GCS reads. Acceptable for internal MVP; must be
-#       fixed before public launch.
-SYNTHETIC_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -148,6 +142,7 @@ def validate_clip_count(track: MusicTrack, n_clips: int) -> None:
 @router.post("", response_model=MusicJobResponse, status_code=status.HTTP_201_CREATED)
 async def create_music_job(
     req: CreateMusicJobRequest,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> MusicJobResponse:
     """Create a music beat-sync job."""
@@ -155,7 +150,7 @@ async def create_music_job(
     validate_clip_count(track, len(req.clip_gcs_paths))
 
     job = Job(
-        user_id=SYNTHETIC_USER_ID,
+        user_id=current_user.id,
         job_type="music",
         music_track_id=req.music_track_id,
         raw_storage_path=req.clip_gcs_paths[0],
