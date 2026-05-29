@@ -125,8 +125,14 @@ def test_overlay_bank_version_couples_to_agent_versions():
     from app.agents.intro_writer import IntroTextWriterAgent
     from app.agents.overlay_format_matcher import OverlayFormatMatcherAgent
 
+    # Each is an independent committed-constant tripwire: a bank edit must bump
+    # `library_version()` (and re-trip this guard), and a consuming-agent prompt
+    # change must bump that agent's prompt_version. They need not be equal — a
+    # prompt-template change can lead the bank version. intro_writer's prompt
+    # gained the $persona_context block in 2026-05-30 while the overlay_examples
+    # bank itself is unchanged from 2026-05-29.
     assert library_version() == "2026-05-29"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-05-29"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-05-30"
     assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-05-29"
 
 
