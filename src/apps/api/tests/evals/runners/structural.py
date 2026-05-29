@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.agents._schemas.content_plan import ContentPlanInput, ContentPlanOutput
 from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION
 from app.agents._schemas.persona import _MAX_PILLARS as PERSONA_MAX_PILLARS
 from app.agents._schemas.persona import _MAX_TOPICS as PERSONA_MAX_TOPICS
@@ -1202,6 +1203,34 @@ def check_persona_generator(output: Persona) -> list[str]:
     return failures
 
 
+def check_content_plan_generator(
+    output: ContentPlanOutput,
+    input: ContentPlanInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.plan.content_plan_generator.
+
+    parse() already clamps/dedupes, so this asserts those invariants held:
+    non-empty plan, every day_index unique and within 1..horizon, non-empty
+    theme/idea, and items sorted by day.
+    """
+    failures: list[str] = []
+    items = output.items
+    if not items:
+        failures.append("plan has no items")
+    horizon = max(1, min(input.horizon_days, 60))
+    days = [it.day_index for it in items]
+    if len(set(days)) != len(days):
+        failures.append(f"duplicate day_index values: {days}")
+    if days != sorted(days):
+        failures.append("items are not sorted by day_index")
+    for it in items:
+        if not (1 <= it.day_index <= horizon):
+            failures.append(f"day_index {it.day_index} outside 1..{horizon}")
+        if not it.theme.strip() or not it.idea.strip():
+            failures.append(f"day {it.day_index}: empty theme or idea")
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
@@ -1238,4 +1267,6 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_transition_picker(output, input)
     if agent_name == "nova.plan.persona_generator":
         return check_persona_generator(output)
+    if agent_name == "nova.plan.content_plan_generator":
+        return check_content_plan_generator(output, input)
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

@@ -16,10 +16,12 @@ from app.routes import (
     admin_music,
     auth,
     clips,
+    content_plans,
     generative_jobs,
     music,
     music_jobs,
     personas,
+    plan_items,
     presigned,
     template_jobs,
     templates,
@@ -93,6 +95,8 @@ app.include_router(music.router, prefix="/music-tracks", tags=["music"])
 app.include_router(music_jobs.router, prefix="/music-jobs", tags=["music-jobs"])
 app.include_router(generative_jobs.router, prefix="/generative-jobs", tags=["generative-jobs"])
 app.include_router(personas.router, prefix="/personas", tags=["personas"])
+app.include_router(content_plans.router, prefix="/content-plans", tags=["content-plans"])
+app.include_router(plan_items.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])
 app.include_router(clips.router, prefix="/clips", tags=["clips"])
 app.include_router(templates.router, prefix="/templates", tags=["templates"])

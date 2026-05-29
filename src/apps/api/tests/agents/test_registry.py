@@ -32,6 +32,7 @@ _EXPECTED = {
     "nova.compose.text_classification",
     # Content-plan agents
     "nova.plan.persona_generator",
+    "nova.plan.content_plan_generator",
 }
 
 

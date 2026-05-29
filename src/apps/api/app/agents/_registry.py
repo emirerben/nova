@@ -66,6 +66,11 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     ),
     # Content-plan agents (no Job; off-job AgentRun path with job_id=None)
     ("nova.plan.persona_generator", "app.agents.persona_generator", "PersonaGeneratorAgent"),
+    (
+        "nova.plan.content_plan_generator",
+        "app.agents.content_plan_generator",
+        "ContentPlanGeneratorAgent",
+    ),
 )
 
 
