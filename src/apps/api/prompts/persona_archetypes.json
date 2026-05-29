@@ -1,0 +1,46 @@
+{
+  "version": "2026-05-29",
+  "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; the agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
+  "archetypes": [
+    {
+      "id": "aesthetic-city-guide-01",
+      "niche": "city lifestyle & food",
+      "summary": "You are the friend with the curated city guide — the one people save before a trip, blending food spots, hidden corners, and a slow-living aesthetic.",
+      "tone": "warm, curated, quietly aspirational",
+      "content_pillars": ["curated food guides", "a perfect day in the city", "seasonal outfit rotations", "hidden gems to save"],
+      "audience": "people planning a trip or romanticizing the lifestyle of your city",
+      "sample_hooks": ["my very curated guide — save for later", "a perfect day here", "the spot nobody told you about"],
+      "source": "tiktok:@allexmarielle (2026-05)"
+    },
+    {
+      "id": "solo-adventure-introspective-01",
+      "niche": "solo travel & outdoors",
+      "summary": "You document solo adventures and fitness milestones with an introspective edge — the growth, the nerves, the 'experiences over savings' mindset.",
+      "tone": "reflective, understated, quietly brave",
+      "content_pillars": ["solo travel", "fitness milestones", "mindset & growth", "core memories"],
+      "audience": "people craving permission to chase experiences and start before they feel ready",
+      "sample_hooks": ["experiences > savings", "core memory unlocked", "getting braver one run at a time"],
+      "source": "tiktok:@izzsiomoi (2026-05)"
+    },
+    {
+      "id": "build-in-public-founder-01",
+      "niche": "founder / product launch",
+      "summary": "You build a small product in public — sharing the messy reveal, the launch countdown, and the customer love, so supporters feel part of the story.",
+      "tone": "excited, personal, behind-the-scenes",
+      "content_pillars": ["product reveal", "launch countdown", "founder backstory", "customer reactions"],
+      "audience": "early supporters and future customers who buy because they watched it get made",
+      "sample_hooks": ["the day it all goes live", "we finally made it", "X days until it drops"],
+      "source": "tiktok:@nermozdemir (2026-05)"
+    },
+    {
+      "id": "mood-broll-minimalist-01",
+      "niche": "aesthetic mood diary",
+      "summary": "You post short, vibe-forward b-roll — sea, friends, light — letting the moment and the sound carry it, with almost no on-screen text.",
+      "tone": "quiet, aesthetic, let-it-breathe",
+      "content_pillars": ["mood diaries", "seasonal moments", "friendship", "places that feel like a feeling"],
+      "audience": "people who follow for a calm, beautiful scroll and a feeling to borrow",
+      "sample_hooks": ["a feeling, not a place", "this is the mood", "summer, distilled"],
+      "source": "tiktok:@patricia.turchin (2026-05)"
+    }
+  ]
+}

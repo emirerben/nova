@@ -19,6 +19,15 @@ PERSONA
 $events
 EVENTS
 
+For inspiration, here are content ideas that are working right now (mined from
+the market, ranked toward this creator's pillars). Adapt the ones that fit —
+fill the [brackets] with this creator's specifics. They are reference, NOT a
+checklist: skip ideas that don't fit, and never paste a hook verbatim.
+
+<<<IDEA_BANK
+$idea_bank
+IDEA_BANK
+
 Build a $horizon_days-day content plan. Return ONLY a JSON object:
 
 {

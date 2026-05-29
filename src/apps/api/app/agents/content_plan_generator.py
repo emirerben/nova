@@ -26,6 +26,7 @@ from app.agents._schemas.content_plan import (
     PlanItemSpec,
 )
 from app.agents.music_matcher import _sanitize_text
+from app.agents.persona_examples import format_ideas_for_pillars
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
@@ -59,6 +60,8 @@ class ContentPlanGeneratorAgent(Agent[ContentPlanInput, ContentPlanOutput]):
             sample_topics=_sanitize_text(", ".join(p.sample_topics)),
             events=_sanitize_text(input.events) or "(none provided)",
             horizon_days=str(input.horizon_days),
+            # Market-research idea bank, ranked toward this creator's pillars.
+            idea_bank=format_ideas_for_pillars(p.content_pillars),
         )
 
     def parse(self, raw_text: str, input: ContentPlanInput) -> ContentPlanOutput:  # noqa: A002
