@@ -59,13 +59,27 @@ def test_new_tables_registered() -> None:
     assert "plan_items" in tables
 
     persona_cols = set(tables["personas"].columns.keys())
-    assert {"user_id", "questionnaire", "persona", "persona_status", "prompt_version"} <= persona_cols
+    assert {
+        "user_id",
+        "questionnaire",
+        "persona",
+        "persona_status",
+        "prompt_version",
+    } <= persona_cols
 
     plan_cols = set(tables["content_plans"].columns.keys())
     assert {"user_id", "persona_id", "horizon_days", "start_date", "plan_status"} <= plan_cols
 
     item_cols = set(tables["plan_items"].columns.keys())
-    assert {"content_plan_id", "day_index", "theme", "idea", "clip_gcs_paths", "item_status", "current_job_id"} <= item_cols
+    assert {
+        "content_plan_id",
+        "day_index",
+        "theme",
+        "idea",
+        "clip_gcs_paths",
+        "item_status",
+        "current_job_id",
+    } <= item_cols
 
 
 def test_jobs_has_content_plan_item_fk() -> None:
