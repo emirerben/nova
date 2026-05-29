@@ -33,25 +33,28 @@ _INTERNAL_API_KEY_HEADER = "authorization"
 
 
 def _verify_internal_key(authorization: str | None) -> None:
-    """Raise 401 if the bearer token doesn't match INTERNAL_API_KEY.
+    """Raise 401 unless the bearer token matches INTERNAL_API_KEY.
 
-    SECURITY CONTRACT: `INTERNAL_API_KEY` MUST be set as a Fly secret in any
-    non-local deployment. The X-User-Id header is the *only* thing identifying
-    the user, and it is trusted because the Next.js plan proxy attaches it ONLY
-    after verifying the server-side NextAuth session. The internal key is what
-    proves "this request came from our proxy, not a forged direct call."
+    SECURITY CONTRACT (fail-closed): `INTERNAL_API_KEY` MUST be set in every
+    environment that serves the strict plan routes. The X-User-Id header is the
+    *only* thing identifying the user, and it is trusted because the Next.js plan
+    proxy attaches it ONLY after verifying the server-side NextAuth session. The
+    internal key is what proves "this request came from our proxy, not a forged
+    direct call."
 
-    When the key is empty (local dev convenience), this check is bypassed, which
-    means a direct request carrying a forged X-User-Id would be trusted. That is
-    acceptable for Phase 1 (no plan routes carry per-user data yet; legacy routes
-    already attribute everything to the synthetic user) BUT is a fail-open footgun.
-    Phase 2 (plan routes with real user data) MUST harden this to fail closed when
-    the key is unset. Until then: never deploy without INTERNAL_API_KEY set.
+    If the server key is unset this REJECTS (it does not bypass) — a deployment
+    that forgets the secret returns 401 rather than trusting a forged X-User-Id.
+    This is safe for local dev: the Next.js plan proxy and dev-login provider both
+    already refuse to forward without INTERNAL_API_KEY, so any local flow that
+    reaches a strict route already has the key configured.
     """
-    if not settings.internal_api_key:
-        return  # key not configured: local-dev bypass (see SECURITY CONTRACT above)
-    expected = f"Bearer {settings.internal_api_key}"
-    if authorization != expected:
+    expected = settings.internal_api_key
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Server auth not configured",
+        )
+    if authorization != f"Bearer {expected}":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid internal key")
 
 

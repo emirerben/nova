@@ -23,6 +23,12 @@ from app.main import app
 
 SYNTHETIC_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
+# Matches conftest's INTERNAL_API_KEY. Strict-path auth fails closed when the
+# server key is unset, so tests that want to reach past the key check must send
+# the matching bearer.
+_TEST_KEY = "test-internal-key"
+_BEARER = f"Bearer {_TEST_KEY}"
+
 
 def _make_client(db_session):
     """Return a TestClient with the DB dependency overridden."""
@@ -144,7 +150,7 @@ async def test_get_current_user_invalid_uuid_raises_401():
 
     db = AsyncMock()
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_user(x_user_id="not-a-uuid", authorization=None, db=db)
+        await get_current_user(x_user_id="not-a-uuid", authorization=_BEARER, db=db)
     assert exc_info.value.status_code == 401
 
 
@@ -157,7 +163,7 @@ async def test_get_current_user_missing_header_raises_401():
 
     db = AsyncMock()
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_user(x_user_id=None, authorization=None, db=db)
+        await get_current_user(x_user_id=None, authorization=_BEARER, db=db)
     assert exc_info.value.status_code == 401
 
 
@@ -177,13 +183,12 @@ def test_google_upsert_creates_new_user():
     added: list = []
     db.add = lambda obj: added.append(obj)
 
-    with patch("app.config.settings") as mock_settings:
-        mock_settings.internal_api_key = ""  # unconfigured = open
-        client = _make_client(db)
-        resp = client.post(
-            "/auth/google-upsert",
-            json={"email": "new@example.com", "name": "New User"},
-        )
+    client = _make_client(db)
+    resp = client.post(
+        "/auth/google-upsert",
+        json={"email": "new@example.com", "name": "New User"},
+        headers={"Authorization": _BEARER},
+    )
 
     app.dependency_overrides.clear()
     assert resp.status_code == 200, resp.text
@@ -209,13 +214,12 @@ def test_google_upsert_returns_existing_user():
     added: list = []
     db.add = lambda obj: added.append(obj)
 
-    with patch("app.config.settings") as mock_settings:
-        mock_settings.internal_api_key = ""
-        client = _make_client(db)
-        resp = client.post(
-            "/auth/google-upsert",
-            json={"email": "existing@example.com"},
-        )
+    client = _make_client(db)
+    resp = client.post(
+        "/auth/google-upsert",
+        json={"email": "existing@example.com"},
+        headers={"Authorization": _BEARER},
+    )
 
     app.dependency_overrides.clear()
     assert resp.status_code == 200, resp.text
@@ -229,15 +233,13 @@ def test_google_upsert_wrong_internal_key_returns_401():
     """POST /auth/google-upsert with a bad INTERNAL_API_KEY returns 401."""
     db = AsyncMock()
 
-    # Must patch the settings object that routes/auth.py already imported.
-    with patch("app.routes.auth.settings") as mock_settings:
-        mock_settings.internal_api_key = "correct-key"
-        client = _make_client(db)
-        resp = client.post(
-            "/auth/google-upsert",
-            json={"email": "attacker@example.com"},
-            headers={"Authorization": "Bearer wrong-key"},
-        )
+    # Server key is set (conftest); a mismatched bearer is rejected.
+    client = _make_client(db)
+    resp = client.post(
+        "/auth/google-upsert",
+        json={"email": "attacker@example.com"},
+        headers={"Authorization": "Bearer wrong-key"},
+    )
 
     app.dependency_overrides.clear()
     assert resp.status_code == 401
@@ -259,7 +261,7 @@ async def test_get_current_user_user_not_found_returns_401():
     with pytest.raises(HTTPException) as exc_info:
         await get_current_user(
             x_user_id=str(uuid.uuid4()),
-            authorization=None,
+            authorization=_BEARER,
             db=db,
         )
     assert exc_info.value.status_code == 401
@@ -281,11 +283,92 @@ async def test_get_current_user_or_synthetic_with_header_delegates_to_strict():
     with pytest.raises(HTTPException) as exc_info:
         await get_current_user_or_synthetic(
             x_user_id=user_id,
-            authorization=None,
+            authorization=_BEARER,
             db=db,
         )
     assert exc_info.value.status_code == 401
     db.execute.assert_called_once()  # DB was hit — not the synthetic bypass
+
+
+# ── fail-closed internal-key check (Phase 2 hardening) ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_unset_key_fails_closed(monkeypatch):
+    """Strict path with an UNSET server key REJECTS (does not bypass).
+
+    This is the core hardening: a deployment that forgets INTERNAL_API_KEY must
+    return 401 to a forged X-User-Id rather than trusting it. The rejection
+    happens before any DB lookup.
+    """
+    from fastapi import HTTPException
+
+    from app.auth import get_current_user
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "internal_api_key", "")
+
+    db = AsyncMock()
+    db.execute = AsyncMock()
+    with pytest.raises(HTTPException) as exc_info:
+        # Valid UUID + a bearer that would have matched a real key — still rejected.
+        await get_current_user(x_user_id=str(uuid.uuid4()), authorization=_BEARER, db=db)
+    assert exc_info.value.status_code == 401
+    db.execute.assert_not_called()  # rejected before touching the DB
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_correct_key_returns_user():
+    """Strict path with the matching bearer + an existing user returns that user."""
+    from app.auth import get_current_user
+
+    user_id = uuid.uuid4()
+    existing = MagicMock()
+    existing.id = user_id
+
+    db = AsyncMock()
+    db.execute = AsyncMock(
+        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing))
+    )
+
+    result = await get_current_user(x_user_id=str(user_id), authorization=_BEARER, db=db)
+    assert result is existing
+    db.execute.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_wrong_key_fails_closed():
+    """Strict path with a non-matching bearer rejects before any DB lookup."""
+    from fastapi import HTTPException
+
+    from app.auth import get_current_user
+
+    db = AsyncMock()
+    db.execute = AsyncMock()
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_user(
+            x_user_id=str(uuid.uuid4()),
+            authorization="Bearer wrong-key",
+            db=db,
+        )
+    assert exc_info.value.status_code == 401
+    db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_synthetic_fallback_unaffected_when_key_set():
+    """With the server key set, no X-User-Id still yields the synthetic user.
+
+    Fail-closed must not regress the permissive legacy path — synthetic fallback
+    only ever triggers when there is no header, so it never reaches the key check.
+    """
+    from app.auth import SYNTHETIC_USER_ID as SYN_ID
+    from app.auth import get_current_user_or_synthetic
+
+    db = AsyncMock()
+    result = await get_current_user_or_synthetic(x_user_id=None, authorization=None, db=db)
+    assert result.id == SYN_ID
+    db.execute.assert_not_called()
 
 
 # Note: music_jobs / presigned / uploads use the identical CurrentUserOrSynthetic
