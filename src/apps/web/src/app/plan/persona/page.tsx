@@ -31,6 +31,7 @@ export default function PersonaPage() {
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<PersonaContent | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
@@ -75,6 +76,7 @@ export default function PersonaPage() {
       const updated = await updatePersona(row.id, draft);
       setRow(updated);
       if (updated.persona) setDraft(updated.persona);
+      setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
     } finally {
@@ -88,7 +90,7 @@ export default function PersonaPage() {
         <div className="text-center py-20">
           <h1 className="text-2xl font-semibold mb-3">Sign in to view your persona</h1>
           <a
-            href="/api/auth/signin"
+            href="/api/auth/signin?callbackUrl=/plan/persona"
             className="inline-block rounded bg-white px-6 py-3 font-medium text-black hover:bg-zinc-200"
           >
             Sign in with Google
@@ -157,6 +159,10 @@ export default function PersonaPage() {
   }
 
   const d = draft ?? blankPersona();
+  // Dirty when the draft diverges from the last-saved persona. Editing any field
+  // makes it dirty (which hides the "Saved" note + re-enables the button); after a
+  // successful save, draft == row.persona again, so it's clean.
+  const dirty = JSON.stringify(d) !== JSON.stringify(row.persona ?? blankPersona());
 
   return (
     <Shell>
@@ -208,13 +214,16 @@ export default function PersonaPage() {
           ))}
         </div>
 
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="mt-8 rounded bg-white px-6 py-3 font-medium text-black hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-400"
-        >
-          {saving ? "Saving…" : "Save persona"}
-        </button>
+        <div className="mt-8 flex items-center gap-4">
+          <button
+            onClick={handleSave}
+            disabled={saving || !dirty}
+            className="rounded bg-white px-6 py-3 font-medium text-black hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+          >
+            {saving ? "Saving…" : "Save persona"}
+          </button>
+          {saved && !dirty && <span className="text-sm text-emerald-400">Saved ✓</span>}
+        </div>
       </div>
     </Shell>
   );
