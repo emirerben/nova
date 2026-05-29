@@ -125,12 +125,23 @@ export interface PlanItem {
   user_edited: boolean;
 }
 
+/** Activation seed (T8) lifecycle: none→seeding→activating→activated|activated_empty|failed. */
+export type ActivationStatus =
+  | "none"
+  | "seeding"
+  | "activating"
+  | "activated"
+  | "activated_empty"
+  | "failed";
+
 export interface ContentPlan {
   id: string;
   plan_status: PlanStatus;
   horizon_days: number;
   events: { text?: string } | null;
   items: PlanItem[];
+  activation_status: ActivationStatus;
+  seed_clip_count: number;
 }
 
 /** Create a plan from the user's ready persona + optional events; generation runs async. */
@@ -221,4 +232,43 @@ export interface PlanItemVariant {
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {
   const res = await request<{ variants: PlanItemVariant[] }>(`/generative-jobs/${jobId}/status`);
   return res.variants ?? [];
+}
+
+// ── Activation seed: upload recent clips → auto-match → instant first video (T8) ──
+
+/** Signed PUT URLs for the seed batch (lands under users/{uid}/plan/{planId}/seed/). */
+export async function requestSeedUploadUrls(
+  planId: string,
+  files: { filename: string; content_type: string; file_size_bytes: number }[],
+): Promise<UploadUrl[]> {
+  const res = await request<{ urls: UploadUrl[] }>(`/content-plans/${planId}/seed-upload-urls`, {
+    method: "POST",
+    body: JSON.stringify({ files }),
+  });
+  return res.urls;
+}
+
+/** Record the uploaded seed batch on the plan (flips activation_status to "seeding"). */
+export function attachSeedClips(planId: string, clipGcsPaths: string[]): Promise<ContentPlan> {
+  return request<ContentPlan>(`/content-plans/${planId}/seed-clips`, {
+    method: "POST",
+    body: JSON.stringify({ clip_gcs_paths: clipGcsPaths }),
+  });
+}
+
+/** Kick off clip→item matching + auto-generation for the uploaded seed batch. */
+export function activatePlan(planId: string): Promise<ContentPlan> {
+  return request<ContentPlan>(`/content-plans/${planId}/activate`, { method: "POST" });
+}
+
+export interface ActivationState {
+  activation_status: ActivationStatus;
+  seed_clip_count: number;
+  generating_item_ids: string[];
+  ready_item_ids: string[];
+}
+
+/** Poll target while activation runs. */
+export function getActivation(planId: string): Promise<ActivationState> {
+  return request<ActivationState>(`/content-plans/${planId}/activation`);
 }

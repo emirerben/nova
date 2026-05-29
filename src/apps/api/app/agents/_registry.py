@@ -71,6 +71,7 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "app.agents.content_plan_generator",
         "ContentPlanGeneratorAgent",
     ),
+    ("nova.plan.clip_plan_matcher", "app.agents.clip_plan_matcher", "ClipPlanMatcherAgent"),
 )
 
 
