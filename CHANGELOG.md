@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.62.0] - 2026-05-30
+
+### Changed
+- **Plan item generated-video review/editing — focused-player redesign + live style & song preview (`/plan-design-review` → 4/10 → 9/10).** The per-video editing surface from #389 worked but the desktop layout crushed three 9:16 videos into a 672px column (~200px each) and every edit was blind — pick a style or song, then wait 2–3 min for a full re-render to see it. This reworks the plan item results view (`plan/items/[id]/page.tsx`) into a **focused player**: one large hero video on the left, a keyboard-navigable filmstrip of the variants (radiogroup, ← / →), and a legible, grouped editor (Caption / Style / Song) for the focused variant. All of #389's polling, optimistic-rendering, and `pendingEdits` machinery is preserved; a re-rendering hero keeps the previous video visible under a "Rendering new version…" overlay instead of blanking.
+  - **Style preview before re-render (`StyleChip.tsx`, backend `style_set_preview`).** `GET /generative-jobs/style-sets` now projects each set's representative-role typography (`font_family`, `css_family`, `text_color`, `effect`) read from `style_sets.py`. The picker renders each option **in its real bundled typeface + colors** via `@font-face` (TTFs already in `public/fonts/`; the registry-driven face generator was extracted to `lib/font-faces.ts` and shared with the admin layout). Display-only — these fields never reach the renderer burn dict, so the #296 parity invariant is untouched.
+  - **Song preview (`SongPicker.tsx`, backend `music.py`).** The public `/music-tracks` gallery now returns a short-lived (60 min) signed `preview_audio_url` + `preview_start_s` (the matched hook). The picker shows album art (gradient-initials fallback) and a play button that streams the song seeked to its hook, all client-side. Signing is best-effort — a failure hides the play button, never 500s the gallery. *(Note: full-track audio behind a public URL is a deliberate-but-flagged exposure; the documented mitigation is a pre-rendered ~6s hook clip if rights/abuse ever bite.)*
+  - **a11y / responsive.** Filmstrip + style chips are `radiogroup`s with roving tabindex; play/pause buttons carry toggling `aria-label`s; edit controls are ≥44px touch targets; mobile stacks hero → filmstrip → editor. The "Only N songs" short list is the prod publish/backfill gate (not a frontend cap) — tracked as a separate ops follow-up; the picker shows a "More songs coming soon" helper.
+  - **Refactor + tests.** `PlanVariantCard` → `PlanVariantEditor` (+ new `PlanFilmstrip`, `StyleChip`, `SongPicker`); `PlanShell` gains a wider `size="results"` tier. Jest tests migrated to `PlanVariantEditor` (controls, swap hidden on original-audio, callback args, disabled-while-rendering); backend tests for the new style-set typography fields + signed preview-audio (URL, hook offset, 60-min TTL, null-without-audio). No renderer/overlay/burn-dict code touched (`make verify-overlays` N/A).
+
 ## [0.4.61.0] - 2026-05-30
 
 ### Added

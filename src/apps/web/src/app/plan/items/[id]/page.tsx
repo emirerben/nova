@@ -19,8 +19,10 @@ import {
 } from "@/lib/plan-api";
 import { getGenerativeStyleSets, type GenerativeStyleSet } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
+import { FONT_FACES } from "@/lib/font-faces";
 import PlanShell from "../../_components/PlanShell";
-import PlanVariantCard from "../../_components/PlanVariantCard";
+import PlanFilmstrip from "../../_components/PlanFilmstrip";
+import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
 
 const POLL_MS = 2500;
@@ -44,6 +46,9 @@ export default function PlanItemPage() {
   // not through the authenticated /api/plan proxy.
   const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
   const [styleSets, setStyleSets] = useState<GenerativeStyleSet[]>([]);
+  // Which variant the hero shows + the editor edits. Kept valid by an effect
+  // below: defaults to the first ready variant, never points at a gone id.
+  const [focusedVariantId, setFocusedVariantId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // variant_id → the output_url at the moment the user submitted an edit. While a
   // variant is in here we keep polling and keep showing its spinner — we can't
@@ -134,6 +139,20 @@ export default function PlanItemPage() {
       if (pollRef.current) clearTimeout(pollRef.current);
     };
   }, [refresh, armPoll]);
+
+  // Keep a valid focused variant as renders land: default to the first variant
+  // with a playable output (else the first one), and reset if the focused id
+  // disappears (e.g. a fresh generate replaces the variant set).
+  useEffect(() => {
+    if (variants.length === 0) {
+      if (focusedVariantId !== null) setFocusedVariantId(null);
+      return;
+    }
+    if (!variants.some((v) => v.variant_id === focusedVariantId)) {
+      const firstReady = variants.find((v) => v.output_url) ?? variants[0];
+      setFocusedVariantId(firstReady.variant_id);
+    }
+  }, [variants, focusedVariantId]);
 
   // Optimistically flip a variant to "rendering" so the card shows a spinner and
   // the poll arms immediately — the worker only sets the real flag once it
@@ -242,77 +261,83 @@ export default function PlanItemPage() {
   const showResults = isGenerating || variants.length > 0;
   // Pad with skeletons while generating so the grid shows the shape of what's coming.
   const tileCount = isGenerating ? Math.max(EXPECTED_VARIANTS, variants.length) : variants.length;
+  const focused = variants.find((v) => v.variant_id === focusedVariantId) ?? null;
+  // The focused variant is editable once it has rendered (or failed) at least once.
+  const focusedEditable =
+    focused && (!!focused.output_url || focused.render_status === "failed");
 
   return (
-    <PlanShell>
+    <PlanShell size="results">
+      {/* @font-face for the style-preview chips — fonts lazy-load only when used. */}
+      <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
       <div className="animate-fade-up py-12">
-        <Link
-          href="/plan"
-          className="text-sm text-zinc-500 underline transition-colors hover:text-white"
-        >
-          ← back to plan
-        </Link>
-        <div className="mb-1 mt-4 flex items-center gap-3">
-          <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
-            Day {item.day_index}
-          </span>
-        </div>
-        <h1 className="font-display text-3xl text-white">{item.theme}</h1>
-        <p className="mb-2 mt-2 text-zinc-300">{item.idea}</p>
-        {item.rationale && (
-          <div className="mb-4 mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
-            <p className="mb-1 text-xs font-medium text-amber-300/80">Why this works</p>
-            <p className="text-sm text-zinc-300">{item.rationale}</p>
+        {/* ── Editorial header + controls (narrow, readable column) ── */}
+        <div className="max-w-2xl">
+          <Link
+            href="/plan"
+            className="text-sm text-zinc-500 underline transition-colors hover:text-white"
+          >
+            ← back to plan
+          </Link>
+          <div className="mb-1 mt-4 flex items-center gap-3">
+            <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
+              Day {item.day_index}
+            </span>
           </div>
-        )}
-        {item.filming_suggestion && (
-          <p className="mb-8 text-sm text-zinc-500">🎬 {item.filming_suggestion}</p>
-        )}
+          <h1 className="font-display text-3xl text-white">{item.theme}</h1>
+          <p className="mb-2 mt-2 text-zinc-300">{item.idea}</p>
+          {item.rationale && (
+            <div className="mb-4 mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
+              <p className="mb-1 text-xs font-medium text-amber-300/80">Why this works</p>
+              <p className="text-sm text-zinc-300">{item.rationale}</p>
+            </div>
+          )}
+          {item.filming_suggestion && (
+            <p className="mb-8 text-sm text-zinc-500">🎬 {item.filming_suggestion}</p>
+          )}
 
-        {error && (
-          <div className="mb-6 rounded border border-red-700 bg-red-950/50 px-4 py-3 text-red-200">
-            {error}
-          </div>
-        )}
+          {error && (
+            <div className="mb-6 rounded border border-red-700 bg-red-950/50 px-4 py-3 text-red-200">
+              {error}
+            </div>
+          )}
 
-        {/* Upload */}
-        <section className="mb-8 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-          <h2 className="mb-2 text-sm font-semibold text-zinc-300">Themed clips</h2>
-          <p className="mb-4 text-sm text-zinc-500">
-            Upload footage for this idea. {clipCount > 0 ? `${clipCount} uploaded.` : "None yet."}
-          </p>
-          <label className="block">
-            <span className="sr-only">Upload video clips for this idea</span>
-            <input
-              type="file"
-              accept="video/mp4,video/quicktime"
-              multiple
-              disabled={uploading}
-              onChange={(e) => handleFiles(e.target.files)}
-              className="block w-full text-sm text-zinc-400 file:mr-3 file:rounded-full file:border-0 file:bg-white file:px-4 file:py-2 file:text-sm file:font-medium file:text-black hover:file:bg-zinc-200"
-            />
-          </label>
-          {uploading && <p className="mt-3 text-sm text-amber-300">Uploading…</p>}
-        </section>
+          {/* Upload */}
+          <section className="mb-8 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
+            <h2 className="mb-2 text-sm font-semibold text-zinc-300">Themed clips</h2>
+            <p className="mb-4 text-sm text-zinc-500">
+              Upload footage for this idea. {clipCount > 0 ? `${clipCount} uploaded.` : "None yet."}
+            </p>
+            <label className="block">
+              <span className="sr-only">Upload video clips for this idea</span>
+              <input
+                type="file"
+                accept="video/mp4,video/quicktime"
+                multiple
+                disabled={uploading}
+                onChange={(e) => handleFiles(e.target.files)}
+                className="block w-full text-sm text-zinc-400 file:mr-3 file:rounded-full file:border-0 file:bg-white file:px-4 file:py-2 file:text-sm file:font-medium file:text-black hover:file:bg-zinc-200"
+              />
+            </label>
+            {uploading && <p className="mt-3 text-sm text-amber-300">Uploading…</p>}
+          </section>
 
-        {/* Generate */}
-        <button
-          onClick={handleGenerate}
-          disabled={generating || clipCount === 0 || isGenerating}
-          className="rounded-full bg-amber-400 px-6 py-3 font-medium text-black transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
-        >
-          {isGenerating ? "Generating…" : generating ? "Starting…" : "Generate videos"}
-        </button>
-        {clipCount === 0 && (
-          <p className="mt-2 text-sm text-zinc-500">Upload at least one clip first.</p>
-        )}
+          {/* Generate */}
+          <button
+            onClick={handleGenerate}
+            disabled={generating || clipCount === 0 || isGenerating}
+            className="rounded-full bg-amber-400 px-6 py-3 font-medium text-black transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+          >
+            {isGenerating ? "Generating…" : generating ? "Starting…" : "Generate videos"}
+          </button>
+          {clipCount === 0 && (
+            <p className="mt-2 text-sm text-zinc-500">Upload at least one clip first.</p>
+          )}
 
-        {/* Status / results */}
-        <div className="mt-8">
           {/* Ready-state moment: a render landed — mark the payoff, don't bury it. */}
           {item.status === "ready" && readyCount > 0 && (
             <div
-              className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-800/60 bg-emerald-950/20 px-4 py-3"
+              className="mb-2 mt-8 flex items-center gap-2 rounded-lg border border-emerald-800/60 bg-emerald-950/20 px-4 py-3"
               role="status"
             >
               <span aria-hidden="true" className="text-lg">
@@ -325,7 +350,7 @@ export default function PlanItemPage() {
               </p>
             </div>
           )}
-          <p className="text-sm text-zinc-400" aria-live="polite">
+          <p className={`text-sm text-zinc-400 ${item.status === "ready" ? "" : "mt-8"}`} aria-live="polite">
             <StatusLine status={item.status} />
             {isGenerating && variants.length > 0 && (
               <span className="ml-1 text-zinc-500">
@@ -338,61 +363,110 @@ export default function PlanItemPage() {
               Usually 2–3 minutes. You can leave this page — we&apos;ll keep rendering.
             </p>
           )}
-          {showResults && (
-            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-              {Array.from({ length: tileCount }).map((_, i) => {
-                const v = variants[i];
-                // A variant that has rendered (or failed) once is editable; a
-                // first-time-pending slot still shimmers as a skeleton.
-                const editable = v && (!!v.output_url || v.render_status === "failed");
-                if (!v) return <SkeletonTile key={`skeleton-${i}`} />;
-                return editable ? (
-                  <PlanVariantCard
-                    key={v.variant_id}
-                    variant={v}
-                    tracks={tracks}
-                    styleSets={styleSets}
-                    onSwap={(trackId) =>
-                      runEdit(v.variant_id, v.output_url, () =>
-                        swapPlanItemSong(itemId, v.variant_id, trackId),
-                      )
-                    }
-                    onRetext={(text) =>
-                      runEdit(v.variant_id, v.output_url, () =>
-                        retextPlanItem(itemId, v.variant_id, { text }),
-                      )
-                    }
-                    onRemoveText={() =>
-                      runEdit(v.variant_id, v.output_url, () =>
-                        retextPlanItem(itemId, v.variant_id, { remove: true }),
-                      )
-                    }
-                    onChangeStyle={(styleSetId) =>
-                      runEdit(v.variant_id, v.output_url, () =>
-                        changePlanItemStyle(itemId, v.variant_id, styleSetId),
-                      )
-                    }
-                  />
-                ) : (
-                  <SkeletonTile key={v.variant_id} />
-                );
-              })}
-            </div>
-          )}
           {item.status === "failed" && variants.length === 0 && (
             <p className="mt-2 text-sm text-zinc-500">
               Generation failed before any variant rendered. Try generating again.
             </p>
           )}
         </div>
+
+        {/* ── Results: focused player + filmstrip + editor (full width) ── */}
+        {showResults && (
+          <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start">
+            {/* Hero */}
+            <div className="w-full shrink-0 sm:max-w-sm lg:w-[380px]">
+              <Hero variant={focused} generating={isGenerating} />
+            </div>
+            {/* Filmstrip + editor */}
+            <div className="min-w-0 flex-1 space-y-5">
+              {variants.length > 0 && (
+                <PlanFilmstrip
+                  variants={variants}
+                  focusedId={focusedVariantId}
+                  onFocus={setFocusedVariantId}
+                />
+              )}
+              {focused && focusedEditable ? (
+                <PlanVariantEditor
+                  variant={focused}
+                  tracks={tracks}
+                  styleSets={styleSets}
+                  onSwap={(trackId) =>
+                    runEdit(focused.variant_id, focused.output_url, () =>
+                      swapPlanItemSong(itemId, focused.variant_id, trackId),
+                    )
+                  }
+                  onRetext={(text) =>
+                    runEdit(focused.variant_id, focused.output_url, () =>
+                      retextPlanItem(itemId, focused.variant_id, { text }),
+                    )
+                  }
+                  onRemoveText={() =>
+                    runEdit(focused.variant_id, focused.output_url, () =>
+                      retextPlanItem(itemId, focused.variant_id, { remove: true }),
+                    )
+                  }
+                  onChangeStyle={(styleSetId) =>
+                    runEdit(focused.variant_id, focused.output_url, () =>
+                      changePlanItemStyle(itemId, focused.variant_id, styleSetId),
+                    )
+                  }
+                />
+              ) : (
+                isGenerating && (
+                  <p className="text-sm text-zinc-500">
+                    Edit controls unlock as soon as a variant finishes rendering.
+                  </p>
+                )
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </PlanShell>
   );
 }
 
+/** Large hero player for the focused variant. Keeps the previous video visible
+ *  with an overlay while a re-render is in flight (never blanks the payoff). */
+function Hero({
+  variant,
+  generating,
+}: {
+  variant: PlanItemVariant | null;
+  generating: boolean;
+}) {
+  if (!variant) return <SkeletonTile />;
+  const rendering = variant.render_status === "rendering";
+  const failed = variant.render_status === "failed";
+  return (
+    <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-800 bg-black">
+      {variant.output_url ? (
+        <video src={variant.output_url} controls className="h-full w-full object-contain" />
+      ) : failed ? (
+        <div className="flex h-full items-center justify-center px-4 text-center text-sm text-red-300">
+          This variant failed — try editing again.
+        </div>
+      ) : (
+        <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+          {generating ? "Rendering…" : "No preview yet"}
+        </div>
+      )}
+      {rendering && variant.output_url && (
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-black/55 text-sm text-amber-300"
+          role="status"
+        >
+          Rendering new version…
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SkeletonTile() {
   return (
-    <div className="aspect-[9/16] w-full animate-shimmer rounded-lg border border-zinc-800 bg-[length:200%_100%] bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-900" />
+    <div className="aspect-[9/16] w-full animate-shimmer rounded-xl border border-zinc-800 bg-[length:200%_100%] bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-900" />
   );
 }
 

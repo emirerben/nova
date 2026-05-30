@@ -298,6 +298,34 @@ def resolve_overlay_style(
     return resolved
 
 
+# The role whose typography best represents a set in a UI preview chip — a
+# generative text variant burns the AI hero-intro, which uses the `hook` role.
+_PREVIEW_ROLE = "hook"
+
+
+def style_set_preview(set_id: str) -> dict:
+    """Display-only typography of a set's representative role, for the UI picker.
+
+    Resolves `font_family` → `css_family`/`file`/`weight` via the font registry so
+    the web app can render a style chip in the REAL typeface + colors BEFORE any
+    re-render. These fields are projected to the browser only — they never reach
+    the renderer burn dict, which keeps the #296 parity invariant intact. Walks
+    the role-fallback chain via `_role_block`; always returns a dict.
+    """
+    block = _role_block(get_style_set(set_id), _PREVIEW_ROLE) or {}
+    family = block.get("font_family")
+    reg = _FONT_REGISTRY.get("fonts", {}).get(family or "", {})
+    return {
+        "font_family": family,
+        "css_family": reg.get("css_family"),
+        "font_file": reg.get("file"),
+        "font_weight": reg.get("weight"),
+        "text_color": block.get("text_color"),
+        "highlight_color": block.get("highlight_color"),
+        "effect": block.get("effect"),
+    }
+
+
 # ── Lyric role ⇄ injector style mapping ──────────────────────────────────────
 # The music lyric injector (`app.pipeline.lyric_injector`) runs one of three
 # injectors keyed by `style`; each maps to a lyric role in a style set.

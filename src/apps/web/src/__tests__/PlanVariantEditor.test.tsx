@@ -1,13 +1,13 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import PlanVariantCard from "@/app/plan/_components/PlanVariantCard";
+import PlanVariantEditor from "@/app/plan/_components/PlanVariantEditor";
 import type { PlanItemVariant } from "@/lib/plan-api";
 import type { GenerativeStyleSet } from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 
 const TRACKS = [
-  { id: "t1", title: "Track One" },
-  { id: "t2", title: "Track Two" },
+  { id: "t1", title: "Track One", artist: "A" },
+  { id: "t2", title: "Track Two", artist: "B" },
 ] as unknown as MusicTrackSummary[];
 
 const STYLE_SETS: GenerativeStyleSet[] = [
@@ -35,7 +35,7 @@ const originalVariant: PlanItemVariant = {
   style_set_id: "default",
 };
 
-function renderCard(variant: PlanItemVariant, overrides = {}) {
+function renderEditor(variant: PlanItemVariant, overrides = {}) {
   const cbs = {
     onSwap: jest.fn().mockResolvedValue(undefined),
     onRetext: jest.fn().mockResolvedValue(undefined),
@@ -44,7 +44,7 @@ function renderCard(variant: PlanItemVariant, overrides = {}) {
     ...overrides,
   };
   render(
-    <PlanVariantCard
+    <PlanVariantEditor
       variant={variant}
       tracks={TRACKS}
       styleSets={STYLE_SETS}
@@ -58,23 +58,24 @@ function renderCard(variant: PlanItemVariant, overrides = {}) {
 }
 
 test("shows all edit controls for a song variant", () => {
-  renderCard(songVariant);
+  renderEditor(songVariant);
   expect(screen.getByText("Edit text")).toBeInTheDocument();
   expect(screen.getByText("Remove text")).toBeInTheDocument();
-  expect(screen.getByLabelText("Text style")).toBeInTheDocument();
-  expect(screen.getByLabelText("Swap song")).toBeInTheDocument();
+  expect(screen.getByRole("radiogroup", { name: "Text style" })).toBeInTheDocument();
+  // Song section present → has a "Change" toggle.
+  expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
 });
 
-test("hides swap-song for the original-audio variant (no track)", () => {
-  renderCard(originalVariant);
-  expect(screen.queryByLabelText("Swap song")).not.toBeInTheDocument();
+test("hides the song picker for the original-audio variant (no track)", () => {
+  renderEditor(originalVariant);
+  expect(screen.queryByRole("button", { name: "Change" })).not.toBeInTheDocument();
   // text + style controls still present
   expect(screen.getByText("Edit text")).toBeInTheDocument();
-  expect(screen.getByLabelText("Text style")).toBeInTheDocument();
+  expect(screen.getByRole("radiogroup", { name: "Text style" })).toBeInTheDocument();
 });
 
 test("inline edit submits trimmed text via onRetext", async () => {
-  const { onRetext } = renderCard(songVariant);
+  const { onRetext } = renderEditor(songVariant);
   fireEvent.click(screen.getByText("Edit text"));
   const input = screen.getByPlaceholderText("New intro text…");
   fireEvent.change(input, { target: { value: "  fresh hook  " } });
@@ -85,33 +86,37 @@ test("inline edit submits trimmed text via onRetext", async () => {
 });
 
 test("remove text fires onRemoveText", async () => {
-  const { onRemoveText } = renderCard(songVariant);
+  const { onRemoveText } = renderEditor(songVariant);
   await act(async () => {
     fireEvent.click(screen.getByText("Remove text"));
   });
   expect(onRemoveText).toHaveBeenCalledTimes(1);
 });
 
-test("swap-song fires onSwap with the chosen track id", async () => {
-  const { onSwap } = renderCard(songVariant);
+test("choosing a track in the picker fires onSwap with its id", async () => {
+  const { onSwap } = renderEditor(songVariant);
+  fireEvent.click(screen.getByRole("button", { name: "Change" }));
+  // Track Two is not current → its "Use" button is enabled.
   await act(async () => {
-    fireEvent.change(screen.getByLabelText("Swap song"), { target: { value: "t2" } });
+    fireEvent.click(screen.getByText("Use"));
   });
   expect(onSwap).toHaveBeenCalledWith("t2");
 });
 
-test("changing style fires onChangeStyle; re-selecting the current style is a no-op", async () => {
-  const { onChangeStyle } = renderCard(songVariant);
-  const select = screen.getByLabelText("Text style");
+test("selecting a different style chip fires onChangeStyle; re-selecting current is a no-op", async () => {
+  const { onChangeStyle } = renderEditor(songVariant);
   await act(async () => {
-    fireEvent.change(select, { target: { value: "bold" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Text style: Bold" }));
   });
   expect(onChangeStyle).toHaveBeenCalledWith("bold");
+  // Clicking the already-selected default does nothing.
+  fireEvent.click(screen.getByRole("radio", { name: "Text style: Default" }));
+  expect(onChangeStyle).toHaveBeenCalledTimes(1);
 });
 
 test("controls are disabled while the variant is rendering", () => {
-  renderCard({ ...songVariant, render_status: "rendering" });
-  expect(screen.getByText("Rendering…")).toBeInTheDocument();
+  renderEditor({ ...songVariant, render_status: "rendering" });
   expect(screen.getByText("Edit text")).toBeDisabled();
-  expect(screen.getByLabelText("Swap song")).toBeDisabled();
+  expect(screen.getByRole("radio", { name: "Text style: Bold" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Change" })).toBeDisabled();
 });

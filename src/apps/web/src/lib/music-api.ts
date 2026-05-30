@@ -27,6 +27,14 @@ export interface MusicTrackSummary {
   user_slot_count: number;
   /** One entry per user_upload slot; comma-joined accepted kinds, e.g. "video,image". */
   user_slot_accepts: string[];
+  /**
+   * Audio preview for the song picker: a short-lived signed URL to the track
+   * audio + the second to seek to (the matched hook). Both optional — null when
+   * the track has no stored audio or signing failed; the picker then hides the
+   * play button and shows art/metadata only.
+   */
+  preview_audio_url?: string | null;
+  preview_start_s?: number;
 }
 
 export interface SlotUploadResponse {

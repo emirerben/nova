@@ -3,47 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import fontRegistryJson from "@/data/font-registry.json";
 import {
   adminValidateToken,
   clearAdminToken,
   getAdminToken,
   setAdminToken,
 } from "@/lib/admin-api";
-
-// ── Font face declarations from the shared registry ──────────────────────────
-// Admin-only (2 users), so eager loading is fine. TTFs are served from /fonts/.
-// The CSS family deliberately collapses Inter Regular/Medium/Bold onto a single
-// `'Inter'` family with different `font-weight` values so the browser can pick
-// the right weight via standard CSS — matching how the registry resolves them.
-function buildFontFaces(
-  registry: { fonts: Record<string, { file: string; weight: number; css_family: string }> },
-): string {
-  // De-dup by (css-family, weight, file) so we don't emit the same @font-face
-  // multiple times when two registry keys share a CSS family (e.g. Inter).
-  const seen = new Set<string>();
-  const blocks: string[] = [];
-  for (const entry of Object.values(registry.fonts)) {
-    // Extract the first family from `'Family Name', fallback` so the @font-face
-    // family is the bare family token without the fallback list.
-    const match = entry.css_family.match(/^\s*['"]([^'"]+)['"]/);
-    const family = match ? match[1] : entry.css_family;
-    const key = `${family}|${entry.weight}|${entry.file}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    blocks.push(
-      `@font-face {\n` +
-      `  font-family: '${family}';\n` +
-      `  src: url('/fonts/${entry.file}') format('truetype');\n` +
-      `  font-weight: ${entry.weight};\n` +
-      `  font-display: swap;\n` +
-      `}`,
-    );
-  }
-  return blocks.join("\n");
-}
-
-const FONT_FACES = buildFontFaces(fontRegistryJson);
+// Shared registry-driven @font-face CSS (also used by the plan style-preview chips).
+import { FONT_FACES } from "@/lib/font-faces";
 
 /**
  * Admin layout: wraps all /admin pages with auth gate + nav.
