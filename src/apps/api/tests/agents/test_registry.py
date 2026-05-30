@@ -33,6 +33,7 @@ _EXPECTED = {
     # Content-plan agents
     "nova.plan.persona_generator",
     "nova.plan.content_plan_generator",
+    "nova.plan.clip_plan_matcher",
 }
 
 
