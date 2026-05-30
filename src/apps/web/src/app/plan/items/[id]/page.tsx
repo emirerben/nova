@@ -230,6 +230,22 @@ export default function PlanItemPage() {
 
         {/* Status / results */}
         <div className="mt-8">
+          {/* Ready-state moment: a render landed — mark the payoff, don't bury it. */}
+          {item.status === "ready" && readyCount > 0 && (
+            <div
+              className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-800/60 bg-emerald-950/20 px-4 py-3"
+              role="status"
+            >
+              <span aria-hidden="true" className="text-lg">
+                🎉
+              </span>
+              <p className="text-sm text-emerald-200">
+                {readyCount === 1
+                  ? "Your video is ready — play it below."
+                  : `${readyCount} videos are ready — play them below.`}
+              </p>
+            </div>
+          )}
           <p className="text-sm text-zinc-400" aria-live="polite">
             <StatusLine status={item.status} />
             {isGenerating && variants.length > 0 && (

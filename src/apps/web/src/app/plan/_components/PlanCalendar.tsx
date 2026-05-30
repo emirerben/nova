@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { cn } from "@/lib/cn";
 import { type ContentPlan, generateFirstWeek, type PlanItem } from "@/lib/plan-api";
@@ -24,6 +25,59 @@ export function planProgress(items: PlanItem[]): { total: number; made: number; 
   return { total, made, pct };
 }
 
+const weekOf = (dayIndex: number) => Math.floor((dayIndex - 1) / 7) + 1;
+
+export interface PlanNudge {
+  text: string;
+  itemId?: string;
+}
+
+/**
+ * The single clearest next action, computed from item statuses (no backend).
+ * Drives the momentum nudge: points the user at the one thing worth doing next
+ * and doubles as the "welcome back, you're on week N" beat for returning users.
+ * Returns null only for an empty plan.
+ */
+export function planNudge(items: PlanItem[]): PlanNudge | null {
+  if (items.length === 0) return null;
+  const sorted = Array.from(items).sort((a, b) => a.day_index - b.day_index);
+
+  if (sorted.every((i) => i.status === "ready")) {
+    return { text: `You've made all ${sorted.length} videos. Incredible run.` };
+  }
+
+  const week1 = sorted.filter((i) => weekOf(i.day_index) === 1);
+  const nextW1 = week1.find((i) => i.status !== "ready");
+  if (nextW1) {
+    if (nextW1.status === "generating") {
+      return { text: `Day ${nextW1.day_index} is rendering now.`, itemId: nextW1.id };
+    }
+    if (nextW1.clip_gcs_paths.length > 0) {
+      return { text: `Day ${nextW1.day_index} has clips — generate it next.`, itemId: nextW1.id };
+    }
+    const needClips = week1.filter(
+      (i) => i.status !== "ready" && i.clip_gcs_paths.length === 0,
+    ).length;
+    if (needClips > 1) {
+      return {
+        text: `${needClips} week-1 ideas still need clips — start with day ${nextW1.day_index}.`,
+        itemId: nextW1.id,
+      };
+    }
+    return { text: `Film day ${nextW1.day_index} next — upload its clips to get started.`, itemId: nextW1.id };
+  }
+
+  // Week 1 done — surface the resume beat for whatever's next.
+  const next = sorted.find((i) => i.status !== "ready");
+  if (next) {
+    return {
+      text: `Week 1 done — you're on week ${weekOf(next.day_index)}. Day ${next.day_index} is next.`,
+      itemId: next.id,
+    };
+  }
+  return null;
+}
+
 /**
  * Overview-first plan: a progress header + week accordion (week 1 "activation"
  * open, later weeks collapsed) so the month is scannable instead of a flat wall
@@ -45,6 +99,7 @@ export default function PlanCalendar({
   const [expanded, setExpanded] = useState<Set<number>>(new Set([1]));
 
   const { total, made, pct } = planProgress(plan.items);
+  const nudge = planNudge(plan.items);
 
   const week1 = weeks.find((w) => w.week === 1)?.items ?? [];
   const week1WithClips = week1.filter((i) => i.clip_gcs_paths.length > 0).length;
@@ -79,6 +134,27 @@ export default function PlanCalendar({
     }
   }
 
+  // Empty-calendar edge state: plan is ready but produced no day ideas.
+  if (plan.items.length === 0) {
+    return (
+      <div className="animate-fade-up py-2">
+        <h1 className="mb-1 font-display text-3xl text-white">Your 30-day plan</h1>
+        <div className="mt-6 rounded-xl border border-zinc-800 bg-zinc-900/60 p-8 text-center">
+          <p className="text-zinc-300">Your plan came back empty.</p>
+          <p className="mt-2 text-sm text-zinc-500">
+            That&apos;s unusual — regenerating from your persona usually fixes it.
+          </p>
+          <button
+            onClick={onRefresh}
+            className="mt-6 inline-flex min-h-[44px] items-center rounded-full border border-zinc-700 px-5 py-3 text-sm font-medium text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white"
+          >
+            Reload plan
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="animate-fade-up py-2">
       <h1 className="mb-1 font-display text-3xl text-white">Your 30-day plan</h1>
@@ -87,7 +163,7 @@ export default function PlanCalendar({
       </p>
 
       {/* Momentum header: how many videos are made of the whole plan. */}
-      <div className="mb-8">
+      <div className="mb-4">
         <div className="mb-2 flex items-center justify-between text-sm">
           <span className="text-zinc-300">
             {made} of {total} video{total === 1 ? "" : "s"} made
@@ -108,6 +184,22 @@ export default function PlanCalendar({
           />
         </div>
       </div>
+
+      {/* Next-action nudge: the one thing worth doing next (also the resume beat). */}
+      {nudge && (
+        <p className="mb-8 text-sm text-amber-300" aria-live="polite">
+          {nudge.itemId ? (
+            <Link
+              href={`/plan/items/${nudge.itemId}`}
+              className="underline-offset-2 transition-colors hover:text-amber-200 hover:underline"
+            >
+              {nudge.text}
+            </Link>
+          ) : (
+            nudge.text
+          )}
+        </p>
+      )}
 
       {weeks.map(({ week, items }) => {
         const isOpen = expanded.has(week);

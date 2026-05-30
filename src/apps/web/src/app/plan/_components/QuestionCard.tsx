@@ -37,6 +37,8 @@ export default function QuestionCard({
   submitting?: boolean;
 }) {
   const isLast = index === total - 1;
+  const promptId = `q-prompt-${index}`;
+  const hintId = hint ? `q-hint-${index}` : undefined;
 
   return (
     <div key={index} className="animate-fade-up py-4">
@@ -44,8 +46,14 @@ export default function QuestionCard({
         Question {index + 1} of {total}
         {optional && <span className="ml-2 text-zinc-500">· optional</span>}
       </p>
-      <h1 className="font-display text-3xl leading-snug text-white">{prompt}</h1>
-      {hint && <p className="mt-2 text-zinc-400">{hint}</p>}
+      <h1 id={promptId} className="font-display text-3xl leading-snug text-white">
+        {prompt}
+      </h1>
+      {hint && (
+        <p id={hintId} className="mt-2 text-zinc-400">
+          {hint}
+        </p>
+      )}
 
       <textarea
         autoFocus
@@ -59,6 +67,7 @@ export default function QuestionCard({
         }}
         rows={2}
         placeholder="Type your answer…"
+        aria-labelledby={hintId ? `${promptId} ${hintId}` : promptId}
         className="mt-6 w-full resize-y rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 text-lg text-white placeholder-zinc-600 transition-colors focus:border-amber-400/60 focus:outline-none"
       />
 
@@ -70,7 +79,7 @@ export default function QuestionCard({
               key={c}
               type="button"
               onClick={() => onChipPick(c)}
-              className="rounded-full border border-zinc-800 bg-zinc-900/60 px-3 py-1 text-xs text-zinc-300 transition-colors hover:border-amber-400/50 hover:text-white"
+              className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-800 bg-zinc-900/60 px-4 py-1 text-xs text-zinc-300 transition-colors hover:border-amber-400/50 hover:text-white"
             >
               {c}
             </button>
@@ -83,7 +92,7 @@ export default function QuestionCard({
           type="button"
           onClick={onBack}
           disabled={index === 0 || submitting}
-          className="text-sm text-zinc-500 transition-colors hover:text-white disabled:invisible"
+          className="inline-flex min-h-[44px] items-center text-sm text-zinc-500 transition-colors hover:text-white disabled:invisible"
         >
           ← Back
         </button>
@@ -104,7 +113,7 @@ export default function QuestionCard({
           type="button"
           onClick={onNext}
           disabled={submitting}
-          className="rounded-full bg-white px-5 py-2 text-sm font-medium text-black transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+          className="inline-flex min-h-[44px] items-center rounded-full bg-white px-5 py-2 text-sm font-medium text-black transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
         >
           {submitting ? "Building…" : isLast ? submitLabel : optional && !value.trim() ? "Skip →" : "Next →"}
         </button>

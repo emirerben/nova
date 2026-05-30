@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.60.0] - 2026-05-30
+
+### Changed
+- **Plan-experience polish — persona moment, momentum, edge states, accessibility (design-review T4–T7 + T5).** Follow-up to #383's visual core (T1–T3), finishing the deferred half of the `/plan-design-review` of the whole plan experience (7/10 → 9/10 planned). Frontend-only; no API change. T8 (activation step-feedback + backend `activation_phase`) stays a separate follow-up.
+  - **T4 — persona summary-first (`PersonaEditor.tsx`, `page.tsx`).** The persona step now leads with an editorial read view (summary as a display-type line, content pillars + sample topics as chips, tone/audience/cadence as labeled facts) so "here's who we think you are" lands as a moment before we ask for edits. A "Tweak" control opens the existing form; the "one per line" list textareas became a real add/remove **chip editor** (Enter or comma adds, × removes, Backspace on empty removes the last). The failed-generation hand-write path passes `startInEdit` so it opens straight in the form (nothing to read yet) and still saves to unblock plan generation. (Coexists with #387's read-only "Why this lane" rationale note above the persona fields.)
+  - **T6 — momentum layer (`PlanCalendar.tsx`, `items/[id]/page.tsx`).** New exported pure helper `planNudge(items)` computes the single clearest next action from item statuses — "Film day N next", "N week-1 ideas still need clips", "Day N has clips — generate it next", "Day N is rendering now", and the "Week 1 done — you're on week 2" resume beat for returning users — rendered as a tappable nudge under the progress header. The item page shows a ready-state moment (🎉, `role="status"`) when a render lands instead of burying it in one status line. Client-side from existing statuses; Jest-tested.
+  - **T7 — edge states (`PlanCalendar.tsx`).** Empty-calendar state (plan ready, zero items) with a reload path; the item-not-found path back to `/plan` (warmed in #383) is unchanged.
+  - **T5 — accessibility baseline (`QuestionCard.tsx`, `GeneratingState.tsx`, `SeedUploadCard.tsx`, `PersonaEditor.tsx`, `page.tsx`, `PlanItemCard.tsx`).** Every input now has an associated label (onboarding textarea via `aria-labelledby` → prompt+hint, plan-events textarea + seed file input via `sr-only` labels, chip editor via `htmlFor`). `role="status"`/`aria-live="polite"` on `GeneratingState` and the activation "Finding your best clip…" block so screen readers hear "still working". Touch targets bumped to ≥44px on example chips, onboarding back/next, and calendar row actions.
+  - **Gates:** `next lint` clean (only pre-existing warnings in untouched admin files); `tsc --noEmit` clean on all non-test source; Jest `planProgress` + new `planNudge` suites pass (11 tests). No renderer/overlay/burn-dict code touched (`make verify-overlays` N/A).
+
 ## [0.4.59.0] - 2026-05-30
 
 ### Added

@@ -263,6 +263,7 @@ function PersonaStepView({
           onContinue={onContinue}
           continueLabel="Plan my 30 days →"
           continuing={busy}
+          startInEdit
         />
       </div>
     );
@@ -311,13 +312,16 @@ function PlanStepView({
             Last generation didn&apos;t finish. Try again.
           </div>
         )}
-        <textarea
-          value={events}
-          onChange={(e) => setEvents(e.target.value)}
-          rows={4}
-          placeholder="e.g. moving apartments in week 2, gym comp at the end of the month"
-          className="w-full resize-y rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 text-white placeholder-zinc-600 transition-colors focus:border-amber-400/60 focus:outline-none"
-        />
+        <label className="block">
+          <span className="sr-only">Upcoming events to weave into your plan (optional)</span>
+          <textarea
+            value={events}
+            onChange={(e) => setEvents(e.target.value)}
+            rows={4}
+            placeholder="e.g. moving apartments in week 2, gym comp at the end of the month"
+            className="w-full resize-y rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 text-white placeholder-zinc-600 transition-colors focus:border-amber-400/60 focus:outline-none"
+          />
+        </label>
         <div className="mt-4 flex items-center gap-4">
           <button
             onClick={() => onCreatePlan(events)}

@@ -15,8 +15,10 @@ export default function GeneratingState({
 }) {
   return (
     <div className="animate-fade-up py-6">
-      <div className="mb-6 flex items-center gap-3">
-        <span className="relative flex h-3 w-3">
+      {/* Announce the working state once to screen readers (scoped to the heading
+          region so polling re-renders elsewhere don't re-trigger it). */}
+      <div className="mb-6 flex items-center gap-3" role="status" aria-live="polite">
+        <span className="relative flex h-3 w-3" aria-hidden="true">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400/70" />
           <span className="relative inline-flex h-3 w-3 rounded-full bg-amber-400" />
         </span>
