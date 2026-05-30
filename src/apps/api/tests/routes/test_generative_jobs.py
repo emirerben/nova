@@ -67,9 +67,7 @@ def test_language_defaults_to_en():
 
 
 def test_language_accepts_tr():
-    req = CreateGenerativeJobRequest(
-        clip_gcs_paths=["music-uploads/a.mp4"], language="tr"
-    )
+    req = CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/a.mp4"], language="tr")
     assert req.language == "tr"
 
 
@@ -78,9 +76,7 @@ def test_language_rejects_unsupported_code():
     # corresponding render-side glyph coverage and TR-style prompt branches,
     # so Pydantic must reject unknowns at the edge.
     with pytest.raises(ValidationError):
-        CreateGenerativeJobRequest(
-            clip_gcs_paths=["music-uploads/a.mp4"], language="de"
-        )
+        CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/a.mp4"], language="de")
 
 
 def test_swap_song_request():
@@ -115,3 +111,19 @@ async def test_list_style_sets_endpoint_returns_generative_only():
     assert "travel_editorial" in ids
     assert "lyric_line_calm" not in ids  # music-only set is filtered out
     assert all(s.label and isinstance(s.tags, list) for s in resp.style_sets)
+
+
+@pytest.mark.asyncio
+async def test_list_style_sets_endpoint_includes_real_typography():
+    """Each set projects its representative-role typography (font + colors) so the
+    plan picker can render a real-font preview chip before a re-render. The fields
+    are display-only and must resolve to a real registry font (css_family set)."""
+    resp = await list_generative_style_sets()
+    by_id = {s.id: s for s in resp.style_sets}
+    default = by_id["default"]
+    # font_family resolves to a registry entry → css_family + a colour are present.
+    assert default.font_family  # e.g. "Playfair Display"
+    assert default.css_family and "'" in default.css_family  # e.g. "'Playfair Display', serif"
+    assert default.text_color and default.text_color.startswith("#")
+    # Every generative set should carry a usable css_family for its chip.
+    assert all(s.css_family for s in resp.style_sets)

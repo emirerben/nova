@@ -94,6 +94,16 @@ class StyleSetSummary(BaseModel):
     id: str
     label: str
     tags: list[str]
+    # Display-only typography of the set's representative (hook) role so the picker
+    # can render a real-font preview chip BEFORE a re-render. Never reaches the
+    # renderer burn dict (see style_sets.style_set_preview — #296 parity invariant).
+    font_family: str | None = None
+    css_family: str | None = None
+    font_file: str | None = None
+    font_weight: int | None = None
+    text_color: str | None = None
+    highlight_color: str | None = None
+    effect: str | None = None
 
 
 class StyleSetListResponse(BaseModel):
@@ -264,10 +274,13 @@ async def list_generative_style_sets() -> StyleSetListResponse:
     — the gallery the swap-song picker reads. Declared BEFORE `/{job_id}/status` so
     the literal path isn't captured as a job id.
     """
-    from app.pipeline.style_sets import list_style_sets  # noqa: PLC0415
+    from app.pipeline.style_sets import list_style_sets, style_set_preview  # noqa: PLC0415
 
     return StyleSetListResponse(
-        style_sets=[StyleSetSummary(**s) for s in list_style_sets(applies_to="generative")]
+        style_sets=[
+            StyleSetSummary(**s, **style_set_preview(s["id"]))
+            for s in list_style_sets(applies_to="generative")
+        ]
     )
 
 

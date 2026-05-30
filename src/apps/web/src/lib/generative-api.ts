@@ -26,6 +26,17 @@ export interface GenerativeStyleSet {
   id: string;
   label: string;
   tags: string[];
+  // Display-only typography of the set's representative (hook) role, so the picker
+  // can render a real-font preview chip BEFORE a re-render. All optional — older
+  // API builds omit them and the chip falls back to the page font. `css_family`
+  // matches a `@font-face` from the shared registry (see lib/font-faces.ts).
+  font_family?: string | null;
+  css_family?: string | null;
+  font_file?: string | null;
+  font_weight?: number | null;
+  text_color?: string | null;
+  highlight_color?: string | null;
+  effect?: string | null;
 }
 
 export interface GenerativeJobResponse {

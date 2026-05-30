@@ -34,12 +34,16 @@ def _make_track(
     t.title = title
     t.artist = artist
     t.thumbnail_url = thumbnail_url
-    t.track_config = track_config if track_config is not None else {
-        "best_start_s": 10.0,
-        "best_end_s": 55.0,
-        "required_clips_min": 3,
-        "required_clips_max": 6,
-    }
+    t.track_config = (
+        track_config
+        if track_config is not None
+        else {
+            "best_start_s": 10.0,
+            "best_end_s": 55.0,
+            "required_clips_min": 3,
+            "required_clips_max": 6,
+        }
+    )
     t.published_at = published_at or datetime.now(UTC)
     t.archived_at = archived_at
     t.analysis_status = analysis_status
@@ -142,9 +146,9 @@ def test_list_music_tracks_missing_config_defaults(client: TestClient) -> None:
         app.dependency_overrides.clear()
 
     t = resp.json()["tracks"][0]
-    assert t["section_duration_s"] == 0.0   # 0 - 0 = 0, clamped to 0
-    assert t["required_clips_min"] == 1     # default
-    assert t["required_clips_max"] == 10    # default
+    assert t["section_duration_s"] == 0.0  # 0 - 0 = 0, clamped to 0
+    assert t["required_clips_min"] == 1  # default
+    assert t["required_clips_max"] == 10  # default
 
 
 def test_list_music_tracks_multiple_tracks(client: TestClient) -> None:
@@ -171,3 +175,55 @@ def test_list_music_tracks_null_thumbnail(client: TestClient) -> None:
 
     assert resp.status_code == 200
     assert resp.json()["tracks"][0]["thumbnail_url"] is None
+
+
+def test_list_music_tracks_preview_audio_signed_and_seeked(client: TestClient, monkeypatch) -> None:
+    """A track with stored audio gets a signed preview URL + the hook offset."""
+    track = _make_track(
+        track_config={"best_start_s": 12.5, "best_end_s": 42.5},
+    )
+    track.audio_gcs_path = "music/song-001.mp3"
+    track.recipe_cached = None  # force the beat_sync branch deterministically
+
+    captured = {}
+
+    def _fake_sign(path: str, expiration_minutes: int = 5) -> str:
+        captured["path"] = path
+        captured["ttl"] = expiration_minutes
+        return f"https://signed.example/{path}?ttl={expiration_minutes}"
+
+    monkeypatch.setattr("app.routes.music.signed_get_url", _fake_sign)
+
+    app.dependency_overrides[get_db] = _override_get_db([track])
+    try:
+        resp = client.get("/music-tracks")
+    finally:
+        app.dependency_overrides.clear()
+
+    t = resp.json()["tracks"][0]
+    assert t["preview_audio_url"] == "https://signed.example/music/song-001.mp3?ttl=60"
+    assert t["preview_start_s"] == 12.5  # seek to the matched hook
+    assert captured["path"] == "music/song-001.mp3"
+    assert captured["ttl"] == 60  # short TTL — full-track audio behind a public URL
+
+
+def test_list_music_tracks_preview_audio_none_without_audio(
+    client: TestClient, monkeypatch
+) -> None:
+    """No stored audio → preview_audio_url is null and signing is never attempted."""
+    track = _make_track()
+    track.audio_gcs_path = None
+    track.recipe_cached = None
+
+    def _boom(*_a, **_k):  # signing must NOT be called when there's no audio
+        raise AssertionError("signed_get_url should not be called without audio")
+
+    monkeypatch.setattr("app.routes.music.signed_get_url", _boom)
+
+    app.dependency_overrides[get_db] = _override_get_db([track])
+    try:
+        resp = client.get("/music-tracks")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.json()["tracks"][0]["preview_audio_url"] is None
