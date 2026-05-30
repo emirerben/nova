@@ -17,6 +17,16 @@ const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY ?? "";
 // developer's localhost. Do not set ALLOW_DEV_LOGIN in any shared environment.
 const DEV_LOGIN_ENABLED = process.env.ALLOW_DEV_LOGIN === "true";
 
+// Hard fail-safe: the comment above is not enough. If ALLOW_DEV_LOGIN ever leaks
+// into a production build, refuse to boot rather than silently exposing a
+// session-minting backdoor for any email. NODE_ENV is "production" on Vercel/Fly,
+// "test" under Jest, and "development" locally — so this only fires where it must.
+if (DEV_LOGIN_ENABLED && process.env.NODE_ENV === "production") {
+  throw new Error(
+    "ALLOW_DEV_LOGIN must never be set in production — it lets anyone mint a session for any email.",
+  );
+}
+
 const providers: NextAuthOptions["providers"] = [
   GoogleProvider({
     // GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are the canonical names.
@@ -105,7 +115,11 @@ export const authOptions: NextAuthOptions = {
 
     async session({ session, token }) {
       if (session.user) {
-        (session.user as unknown as Record<string, unknown>).id = token.userId ?? token.sub ?? "";
+        // Use ONLY the Nova DB uuid (token.userId). Do NOT fall back to
+        // token.sub: that is the raw Google OAuth id, which the backend rejects
+        // as a non-UUID anyway — forwarding it just masks a failed google-upsert
+        // behind a confusing 401 instead of an empty (clearly unauthenticated) id.
+        (session.user as unknown as Record<string, unknown>).id = token.userId ?? "";
       }
       return session;
     },
