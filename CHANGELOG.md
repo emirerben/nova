@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.62.0] - 2026-05-30
+
+### Added
+- **Video library — every video you've made in one place, pin any to a plan day (dashboard spine, Phase 1).** First slice of putting the plan at the center of the product (CEO + design + eng reviewed). A per-user library backed by a new strictly user-scoped API, plus the ability to attach a standalone video to a content-plan day. The full dashboard-home composition + the auth-first `/` redirect are a deliberate follow-up PR so the make-or-break screen and the funnel-changing redirect get Vercel-preview visual verification.
+  - **Backend — `GET /me/jobs` + `POST /me/jobs/{id}/add-to-plan` (`routes/me.py`, registered at `/me`).** The list returns the signed-in user's jobs across every mode (generative, content_plan, template, music), newest first, keyset-paginated on the indexed `created_at`; a derived `ready|generating|failed` status + a single playable `output_url` are computed across the two output shapes (`assembly_plan["variants"][*].output_url` vs `assembly_plan["output_url"]`). Both endpoints use the **strict** `CurrentUser` dependency (never the synthetic fallback), so scope comes from the validated `X-User-Id` header — there is no `user_id` input to forge, making the list IDOR-safe by construction. Add-to-plan verifies BOTH the job and the target plan day belong to the caller (404, not 403, on any cross-user reference) before linking the existing circular FK pair (`plan_items.current_job_id` + `jobs.content_plan_item_id`) — no migration.
+  - **Frontend — `/library` page + shared proxy (`api-proxy.ts`, `me-api.ts`, `app/library/`).** A "Your videos" grid wired to `GET /me/jobs` with all designed states (loading shimmer, first-run empty with a warm Create CTA, error+retry, 9:16 tiles, load-more). Each ready video plays inline and can be pinned to a plan day via a day picker; generating/failed render their own tiles. The `/api/plan` proxy was refactored to a shared `makeProxyHandlers` helper (the auth-sensitive `X-User-Id` injection now lives in ONE audited place) and reused by the new `/api/me` proxy. A "Library" nav link appears for signed-in users.
+  - **Tests.** Backend: 10 route tests (user-scoping, forged `?user_id` ignored, derived status + preview-url extraction across modes, pagination, add-to-plan ownership on both FK sides, bad-id 400). Frontend: 5 me-api client tests (URL/query construction, 401 → NotAuthenticatedError, error-detail surfacing). No renderer/overlay/burn-dict code touched (`make verify-overlays` N/A).
+
 ## [0.4.61.0] - 2026-05-30
 
 ### Added
