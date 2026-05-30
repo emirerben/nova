@@ -1,0 +1,304 @@
+"""Route tests for plan-item per-variant editing (swap-song / retext / change-style).
+
+Mock-DB style, mirroring test_plan_item_generation.py. These endpoints add only
+ownership enforcement + job resolution on top of the shared validate-and-dispatch
+helpers in routes/generative_jobs.py, so the happy paths assert the right
+`regenerate_generative_variant.delay(...)` kwargs and the error paths assert the
+shared validation rules fire identically to the generative surface.
+"""
+
+from __future__ import annotations
+
+import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+
+from app.auth import get_current_user
+from app.database import get_db
+from app.main import app
+from app.pipeline.style_sets import style_set_ids
+from app.routes.generative_jobs import (
+    dispatch_retext,
+    require_editable_variant,
+)
+
+REGEN = "app.tasks.generative_build.regenerate_generative_variant"
+
+
+def _user() -> MagicMock:
+    u = MagicMock()
+    u.id = uuid.uuid4()
+    return u
+
+
+def _result(value) -> MagicMock:
+    r = MagicMock()
+    r.scalar_one_or_none = MagicMock(return_value=value)
+    return r
+
+
+def _job(variants: list[dict]) -> MagicMock:
+    job = MagicMock()
+    job.id = uuid.uuid4()
+    job.status = "variants_ready"
+    job.assembly_plan = {"variants": variants}
+    return job
+
+
+def _owned_item(user_id: uuid.UUID, *, job=None):
+    item = MagicMock()
+    item.id = uuid.uuid4()
+    item.content_plan_id = uuid.uuid4()
+    item.clip_gcs_paths = ["users/x/plan/y/a.mp4"]
+    item.day_index = 1
+    item.theme = "t"
+    item.idea = "i"
+    item.filming_suggestion = None
+    item.rationale = None
+    item.current_job = job
+    item.current_job_id = job.id if job else None
+    item.item_status = "idea"
+    item.user_edited = False
+    plan = MagicMock()
+    plan.user_id = user_id
+    return item, plan
+
+
+def _db(execute_results: list, plan) -> AsyncMock:
+    """db.execute() yields the given scalar_one_or_none values in order; db.get()
+    (the ContentPlan ownership check + reload) always returns `plan`."""
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(v) for v in execute_results])
+    db.get = AsyncMock(return_value=plan)
+    return db
+
+
+@pytest.fixture()
+def client() -> TestClient:
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def teardown_function() -> None:
+    app.dependency_overrides.clear()
+
+
+SONG_VARIANT = {
+    "variant_id": "song_text",
+    "music_track_id": "track-123",
+    "render_status": "ready",
+    "rank": 2,
+    "style_set_id": "default",
+}
+ORIGINAL_VARIANT = {
+    "variant_id": "original_text",
+    "music_track_id": None,
+    "render_status": "ready",
+    "rank": 3,
+}
+
+
+def _override(user, db) -> None:
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+
+# ── swap-song ────────────────────────────────────────────────────────────────
+
+
+def test_swap_song_happy_path(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SONG_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    track = MagicMock(analysis_status="ready", audio_gcs_path="music/x.mp3")
+    # execute order: load item → load track → reload item (for the response).
+    db = _db([item, track, item], plan)
+    _override(user, db)
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/swap-song",
+            json={"new_track_id": "track-123"},
+        )
+    assert resp.status_code == 200
+    regen.delay.assert_called_once_with(str(job.id), "song_text", new_track_id="track-123")
+
+
+def test_swap_song_rejects_original_variant(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(ORIGINAL_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)  # rejected before any track lookup
+    _override(user, db)
+    resp = client.post(
+        f"/plan-items/{item.id}/variants/original_text/swap-song",
+        json={"new_track_id": "track-123"},
+    )
+    assert resp.status_code == 422
+
+
+def test_swap_song_rejects_unready_track(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SONG_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    track = MagicMock(analysis_status="analyzing", audio_gcs_path=None)
+    db = _db([item, track], plan)
+    _override(user, db)
+    resp = client.post(
+        f"/plan-items/{item.id}/variants/song_text/swap-song",
+        json={"new_track_id": "track-123"},
+    )
+    assert resp.status_code == 422
+
+
+# ── retext ───────────────────────────────────────────────────────────────────
+
+
+def test_retext_happy_path(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SONG_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/retext",
+            json={"text": "  new hook  "},
+        )
+    assert resp.status_code == 200
+    regen.delay.assert_called_once_with(
+        str(job.id), "song_text", override_text="new hook", remove_text=False
+    )
+
+
+def test_retext_remove_happy_path(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SONG_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/retext",
+            json={"remove": True},
+        )
+    assert resp.status_code == 200
+    regen.delay.assert_called_once_with(
+        str(job.id), "song_text", override_text=None, remove_text=True
+    )
+
+
+def test_retext_requires_text_or_remove(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SONG_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    resp = client.post(f"/plan-items/{item.id}/variants/song_text/retext", json={})
+    assert resp.status_code == 422
+
+
+# ── change-style ───────────────────────────────────────────────────────────────
+
+
+def test_change_style_happy_path(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SONG_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    valid_style = style_set_ids(applies_to="generative")[0]
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/change-style",
+            json={"style_set_id": valid_style},
+        )
+    assert resp.status_code == 200
+    regen.delay.assert_called_once_with(str(job.id), "song_text", style_set_id=valid_style)
+
+
+def test_change_style_rejects_unknown_style(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SONG_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    resp = client.post(
+        f"/plan-items/{item.id}/variants/song_text/change-style",
+        json={"style_set_id": "definitely-not-a-style"},
+    )
+    assert resp.status_code == 422
+
+
+# ── ownership + state guards ─────────────────────────────────────────────────
+
+
+def test_edit_404_when_not_owner(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SONG_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    plan.user_id = uuid.uuid4()  # different user owns the plan
+    db = _db([item], plan)
+    _override(user, db)
+    resp = client.post(f"/plan-items/{item.id}/variants/song_text/retext", json={"text": "x"})
+    assert resp.status_code == 404
+
+
+def test_edit_404_when_no_render_job(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id, job=None)
+    db = _db([item], plan)
+    _override(user, db)
+    resp = client.post(f"/plan-items/{item.id}/variants/song_text/retext", json={"text": "x"})
+    assert resp.status_code == 404
+
+
+def test_edit_404_when_variant_unknown(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SONG_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    resp = client.post(f"/plan-items/{item.id}/variants/no-such-variant/retext", json={"text": "x"})
+    assert resp.status_code == 404
+
+
+def test_edit_409_when_variant_rendering(client: TestClient) -> None:
+    user = _user()
+    rendering = {**SONG_VARIANT, "render_status": "rendering"}
+    job = _job([rendering])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    resp = client.post(f"/plan-items/{item.id}/variants/song_text/retext", json={"text": "x"})
+    assert resp.status_code == 409
+
+
+# ── shared-helper unit guards (single-sourced validation) ─────────────────────
+
+
+def test_require_editable_variant_raises_404_unknown() -> None:
+    job = _job([dict(SONG_VARIANT)])
+    with pytest.raises(HTTPException) as exc:
+        require_editable_variant(job, "nope")
+    assert exc.value.status_code == 404
+
+
+def test_require_editable_variant_raises_409_rendering() -> None:
+    job = _job([{**SONG_VARIANT, "render_status": "rendering"}])
+    with pytest.raises(HTTPException) as exc:
+        require_editable_variant(job, "song_text")
+    assert exc.value.status_code == 409
+
+
+def test_dispatch_retext_requires_text_or_remove() -> None:
+    job = _job([dict(SONG_VARIANT)])
+    with pytest.raises(HTTPException) as exc:
+        dispatch_retext(job, "song_text", text=None, remove=False)
+    assert exc.value.status_code == 422
