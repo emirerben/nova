@@ -66,6 +66,8 @@ class PlanItemResponse(BaseModel):
     theme: str
     idea: str
     filming_suggestion: str | None
+    # The AI's "why this works", surfaced read-only in the dashboard.
+    rationale: str | None
     clip_gcs_paths: list[str]
     status: str
     current_job_id: str | None
@@ -79,6 +81,7 @@ def plan_item_response(item: PlanItem) -> PlanItemResponse:
         theme=item.theme,
         idea=item.idea,
         filming_suggestion=item.filming_suggestion,
+        rationale=item.rationale,
         clip_gcs_paths=list(item.clip_gcs_paths or []),
         status=derive_item_status(item),
         current_job_id=str(item.current_job_id) if item.current_job_id else None,

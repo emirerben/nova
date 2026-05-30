@@ -97,6 +97,8 @@ class ContentPlanGeneratorAgent(Agent[ContentPlanInput, ContentPlanOutput]):
                     theme=theme,
                     idea=idea,
                     filming_suggestion=_sanitize_text(str(raw.get("filming_suggestion", ""))),
+                    # User-facing "why this works"; sanitized like the other fields.
+                    rationale=_sanitize_text(str(raw.get("rationale", ""))),
                 )
             )
 

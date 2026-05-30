@@ -96,6 +96,11 @@ export default function PlanItemCard({
       {!editing ? (
         <>
           {idea && <p className="mt-2 line-clamp-2 text-sm text-zinc-400">{idea}</p>}
+          {item.rationale && (
+            <p className="mt-2 text-xs text-zinc-500">
+              <span className="text-amber-300/80">Why this works:</span> {item.rationale}
+            </p>
+          )}
           <div className="mt-3 flex items-center justify-between border-t border-zinc-800 pt-3">
             <Link
               href={`/plan/items/${item.id}`}

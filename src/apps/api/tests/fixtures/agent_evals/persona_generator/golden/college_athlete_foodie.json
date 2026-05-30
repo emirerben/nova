@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.persona_generator",
-  "prompt_version": "2026-05-30",
+  "prompt_version": "2026-05-30.1",
   "input": {
     "work": "part-time barista",
     "school": "junior at Michigan State, kinesiology major",
@@ -11,32 +11,32 @@
     "passions": "making gym culture feel welcoming to beginners",
     "tiktok_handle": "liftandlentils"
   },
-  "raw_text": "{\n  \"summary\": \"You are the friendly powerlifter and kinesiology student making the gym feel less intimidating for beginners. Your content blends practical, high-protein recipes and accessible lifting advice with a down-to-earth, college-life aesthetic.\",\n  \"content_pillars\": [\n    \"Beginner-friendly powerlifting tips\",\n    \"High-protein student meals\",\n    \"Balancing fitness and college life\",\n    \"Thrifted gym outfits\",\n    \"National park road trips\"\n  ],\n  \"tone\": \"Welcoming, educational, and relatable big-sibling energy\",\n  \"audience\": \"Fellow college students and gym beginners who want approachable fitness and nutrition advice from someone who gets their lifestyle.\",\n  \"posting_cadence\": \"3-4 posts/week, likely batched on days with fewer classes\",\n  \"sample_topics\": [\n    \"How to set up for your first deadlift\",\n    \"My 20-minute high-protein lentil bolognese\",\n    \"A day in my life: kinesiology class, barista shift, and a lift\",\n    \"Rating my thrifted finds for the gym\",\n    \"Three things I wish I knew before I started lifting\",\n    \"Meal prepping protein snacks on a student budget\",\n    \"How to find a welcoming gym community\",\n    \"What I pack for a weekend national park trip\"\n  ]\n}",
+  "raw_text": "{\n  \"summary\": \"You're the kinesiology student and powerlifter who makes fitness feel welcoming and achievable. You blend your science-backed knowledge with a down-to-earth approach, sharing simple high-protein recipes and gym guides for beginners.\",\n  \"content_pillars\": [\n    \"Approachable powerlifting guides\",\n    \"High-protein meals for students\",\n    \"Thrifted gym outfits\",\n    \"Kinesiology insights in practice\",\n    \"Budget-friendly road trips\"\n  ],\n  \"tone\": \"Encouraging, knowledgeable, and like a helpful older friend\",\n  \"audience\": \"College students and gym beginners who want to build strength and healthy habits without the intimidating 'gym-bro' culture.\",\n  \"posting_cadence\": \"3-4 posts/week, balancing pre-filmed guides with in-the-moment student life\",\n  \"sample_topics\": [\n    \"My go-to high-protein grocery haul on a student budget\",\n    \"How to set up for hip thrusts without feeling awkward\",\n    \"Come thrifting with me for a week of gym clothes\",\n    \"A kinesiology myth I stopped believing\",\n    \"What I actually eat before a heavy lifting day\",\n    \"Hosting a healthy game night: what I cooked\",\n    \"Three things to do at a national park besides hike\"\n  ],\n  \"rationale\": \"This lane turns your passion into practical, save-worthy content that helps people feel confident at the gym. By being the friendly, knowledgeable guide, you create useful resources that viewers will save and return to, building a loyal community.\"\n}",
   "output": {
-    "summary": "You are the friendly powerlifter and kinesiology student making the gym feel less intimidating for beginners. Your content blends practical, high-protein recipes and accessible lifting advice with a down-to-earth, college-life aesthetic.",
+    "summary": "You're the kinesiology student and powerlifter who makes fitness feel welcoming and achievable. You blend your science-backed knowledge with a down-to-earth approach, sharing simple high-protein recipes and gym guides for beginners.",
     "content_pillars": [
-      "Beginner-friendly powerlifting tips",
-      "High-protein student meals",
-      "Balancing fitness and college life",
+      "Approachable powerlifting guides",
+      "High-protein meals for students",
       "Thrifted gym outfits",
-      "National park road trips"
+      "Kinesiology insights in practice",
+      "Budget-friendly road trips"
     ],
-    "tone": "Welcoming, educational, and relatable big-sibling energy",
-    "audience": "Fellow college students and gym beginners who want approachable fitness and nutrition advice from someone who gets their lifestyle.",
-    "posting_cadence": "3-4 posts/week, likely batched on days with fewer classes",
+    "tone": "Encouraging, knowledgeable, and like a helpful older friend",
+    "audience": "College students and gym beginners who want to build strength and healthy habits without the intimidating 'gym-bro' culture.",
+    "posting_cadence": "3-4 posts/week, balancing pre-filmed guides with in-the-moment student life",
     "sample_topics": [
-      "How to set up for your first deadlift",
-      "My 20-minute high-protein lentil bolognese",
-      "A day in my life: kinesiology class, barista shift, and a lift",
-      "Rating my thrifted finds for the gym",
-      "Three things I wish I knew before I started lifting",
-      "Meal prepping protein snacks on a student budget",
-      "How to find a welcoming gym community",
-      "What I pack for a weekend national park trip"
-    ]
+      "My go-to high-protein grocery haul on a student budget",
+      "How to set up for hip thrusts without feeling awkward",
+      "Come thrifting with me for a week of gym clothes",
+      "A kinesiology myth I stopped believing",
+      "What I actually eat before a heavy lifting day",
+      "Hosting a healthy game night: what I cooked",
+      "Three things to do at a national park besides hike"
+    ],
+    "rationale": "This lane turns your passion into practical, save-worthy content that helps people feel confident at the gym. By being the friendly, knowledgeable guide, you create useful resources that viewers will save and return to, building a loyal community."
   },
   "meta": {
-    "source": "live_capture_2026-05-30",
+    "source": "live_capture_2026-05-30b",
     "case": "well-formed questionnaire -> grounded persona; pillars (4) and sample_topics (6) within bounds, all fields non-empty"
   }
 }

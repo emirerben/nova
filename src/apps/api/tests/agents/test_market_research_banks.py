@@ -212,24 +212,26 @@ def test_intro_writer_prompt_injects_success_factors():
 
 
 def test_persona_bank_version_couples_to_prompt_version():
+    # Bank version need not equal the prompt version — each is its own tripwire.
+    # The prompt led to 2026-05-30.1 when `rationale` was added (no bank change).
     assert archetypes_version() == "2026-05-30"
-    assert PERSONA_PROMPT_VERSION == "2026-05-30"
+    assert PERSONA_PROMPT_VERSION == "2026-05-30.1"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
     assert content_ideas_version() == "2026-05-30"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-30"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-30.1"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     from app.agents.intro_writer import IntroTextWriterAgent
 
     # The success-factor bank is part of THREE prompts (persona, content plan,
-    # intro). A bank edit must bump its `version` AND every consuming agent's
-    # prompt_version (they all gained the $success_factors block in 2026-05-30).
+    # intro). The bank itself is unchanged (2026-05-30); the persona + content
+    # plan prompts later led to 2026-05-30.1 when the `rationale` field was added.
     assert success_factors_version() == "2026-05-30"
-    assert PERSONA_PROMPT_VERSION == "2026-05-30"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-30"
+    assert PERSONA_PROMPT_VERSION == "2026-05-30.1"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-30.1"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-05-30.1"
 
 

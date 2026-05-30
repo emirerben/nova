@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.59.0] - 2026-05-30
+
+### Added
+- **Surface the AI's reasoning in the dashboard + grade it.** v0.4.58.0 grounded the persona/plan agents in real TikTok performance, but the *why* stayed inside the prompt — the creator saw the theme/idea, never the reasoning they're paying us for. Now both agents emit a short `rationale` ("why this lane" / "why this video works + which proven lever it pulls"), shown read-only in the dashboard. Two `persona_generator`/`content_plan_generator` agents that were structural-only also get LLM-judge rubrics, so the reasoning is *graded*, not just displayed.
+  - **`rationale` end-to-end.** Added to `Persona` (JSONB — no migration) and `PlanItemSpec`; sanitized in each agent's `parse()` like every other user-facing field. `PlanItem` stores discrete columns, so **migration 0041** adds `plan_items.rationale Text NULL` (nullable, no backfill; up→down→up verified on PG16). Prompts ask for a lever-naming rationale; `PERSONA_PROMPT_VERSION` + `CONTENT_PLAN_PROMPT_VERSION` → 2026-05-30.1 (banks unchanged at 2026-05-30 — each version is its own tripwire). `PlanItemResponse` carries `rationale`; the persona's flows through the existing `personas.persona` dict (and round-trips through edits — it's read-only, never in `PersonaEdit`).
+  - **Dashboard.** A muted "Why this works" line on each `PlanItemCard` (read-only), a "Why this works" panel on the item detail page, and a "Why this lane" note above the `PersonaEditor` fields. All hide gracefully when rationale is absent (older items/personas).
+  - **Judge rubrics (new).** `tests/evals/rubrics/{persona_generator,content_plan_generator}.md`, each with a `reasoning_quality` dimension that scores whether the rationale names a *real* lever vs. generic praise. `--with-judge` now works for both agents (previously errored — no rubric). Persona structural floor asserts rationale is present + ≥10 chars; content-plan per-item rationale is left to the rubric (schema-optional → a missing one never drops an item).
+  - **Gates:** ruff clean; bank coupling tests 22 pass; 101 plan/persona/content tests pass; full suite collects 4008; **live Gemini + Claude-judge eval passes 4/4** against the new rubrics (avg ≥ 3.5) — golden fixtures regenerated live, and the output visibly cites levers ("save-worthy guide hooks with a relatable felt moment", "POV one-liner earns the first 2s"). Frontend: tsc + next lint clean, jest 300 pass. `make verify-overlays` N/A (no renderer/overlay code).
+
 ## [0.4.58.0] - 2026-05-30
 
 ### Added

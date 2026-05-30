@@ -14,8 +14,10 @@ from app.agents._schemas.persona import Persona
 # Bump when prompts/generate_content_plan.txt OR prompts/content_ideas.json OR
 # prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
 # idea bank + success-factor bank are part of the prompt).
+# 2026-05-30.1 — added per-item `rationale` (the AI's "why this video works",
+#                shown in the dashboard).
 # 2026-05-30 — added $success_factors block + performance-weighted idea ranking.
-CONTENT_PLAN_PROMPT_VERSION = "2026-05-30"
+CONTENT_PLAN_PROMPT_VERSION = "2026-05-30.1"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60
@@ -33,6 +35,10 @@ class PlanItemSpec(BaseModel):
     theme: str = Field(min_length=1)
     idea: str = Field(min_length=1)
     filming_suggestion: str = ""
+    # The AI's short "why this video works for you + which proven lever it pulls",
+    # surfaced in the dashboard. Optional so a missing rationale never drops an
+    # otherwise-good item (best-effort, like filming_suggestion).
+    rationale: str = ""
 
 
 class ContentPlanOutput(BaseModel):
