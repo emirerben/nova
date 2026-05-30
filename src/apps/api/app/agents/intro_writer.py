@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents.music_matcher import ClipSummary, _sanitize_text
 from app.agents.overlay_examples import OverlayExample
+from app.agents.persona_examples import format_success_factors
 from app.agents.text_alignment import _sanitize_aligned_line
 from app.pipeline.prompt_loader import load_prompt
 
@@ -165,11 +166,13 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.intro_writer",
         prompt_id="write_intro_text",
+        # 2026-05-30.1 — added $success_factors block (hook-relevant TikTok levers
+        #              from tiktok_success_factors.json) for evidence-grounded hooks.
         # 2026-05-30 — added $persona_context block (content-plan persona tone/
         #              pillars + plan item theme/idea) for persona-coherent hooks.
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_instruction block (en|tr).
-        prompt_version="2026-05-30",
+        prompt_version="2026-05-30.1",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -212,6 +215,8 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
             # change to _LANGUAGE_INSTRUCTIONS (plus glyph coverage + eval fixtures).
             language_instruction=_language_instruction(input.language),
             persona_context=_persona_context(input),
+            # Codified hook-relevant TikTok success factors (reference, not data).
+            success_factors=format_success_factors("hook"),
         )
 
     def parse(self, raw_text: str, input: IntroWriterInput) -> IntroWriterOutput:  # noqa: A002

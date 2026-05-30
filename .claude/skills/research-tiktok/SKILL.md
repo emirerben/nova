@@ -15,17 +15,37 @@ few-shot banks that steer Nova's plan + generative agents. **No paid API**: the
 fetch is `yt-dlp` metadata only; the *analysis* is you reasoning over it. The
 output is always a **PR for human review** — never a direct push to prod prompts.
 
-## What feeds what (the three banks)
+## What feeds what (the four banks)
 
 | Bank file (`src/apps/api/prompts/`) | Trains | Coupled version to bump |
 |---|---|---|
 | `persona_archetypes.json` | `generate_persona.txt` (persona pool / style types) | `PERSONA_PROMPT_VERSION` in `app/agents/_schemas/persona.py` |
 | `content_ideas.json` | `generate_content_plan.txt` (idea bank) | `CONTENT_PLAN_PROMPT_VERSION` in `app/agents/_schemas/content_plan.py` |
+| `tiktok_success_factors.json` | `generate_persona.txt` + `generate_content_plan.txt` + `write_intro_text.txt` (codified "why it performs" levers) | ALL THREE: `PERSONA_PROMPT_VERSION`, `CONTENT_PLAN_PROMPT_VERSION`, and `intro_writer.py`'s `prompt_version` |
 | `overlay_examples.json` | generative hook voice/form | `prompt_version` in BOTH `intro_writer.py` and `overlay_format_matcher.py` |
 
-Schemas: `app/agents/_schemas/market_research.py` (`PersonaArchetype`, `ContentIdea`)
-and `app/agents/overlay_examples.py` (`OverlayExample`). Loaders:
-`app/agents/persona_examples.py`.
+Schemas: `app/agents/_schemas/market_research.py` (`PersonaArchetype`, `ContentIdea`,
+`SuccessFactor`, `PerformanceSignal`) and `app/agents/overlay_examples.py`
+(`OverlayExample`). Loaders: `app/agents/persona_examples.py`.
+
+**Performance grounding.** `persona_archetypes.json` and `content_ideas.json`
+entries carry an optional `performance` block (`PerformanceSignal`: `views`,
+`engagement_rate`, `view_index`). The runtime ranks pillar fit first, then
+performance — so mine these from the fetched numbers, don't eyeball. `view_index`
+= a video's views ÷ the account's median views (outperformance vs the account's
+own baseline; account-size independent and the strongest signal). The fetch
+script pre-computes `engagement_rate` + `view_index` per video under `--enrich`
+(step 2) — copy them straight across. Entries with no `performance` still load,
+they just rank last within their fit tier.
+
+**Success factors.** `tiktok_success_factors.json` codifies WHY short-form
+content performs so the plan/hook agents cite strategy, not instinct. Every
+factor is tagged `provenance`: `"corpus"` (observed in OUR fetched engagement
+data — `evidence` cites the view_index you saw) or `"public"` (from TikTok's
+published creator docs — `source` MUST cite where). Keep the two honest and
+never conflated. Body fields (`factor`/`why`/`evidence`) carry NO @handles or
+verbatim captions — attribution lives in `source`. `applies_to` is a subset of
+`{persona, plan, hook, all}` and routes the factor to the right prompt(s).
 
 ## Procedure
 
@@ -48,11 +68,18 @@ and `app/agents/overlay_examples.py` (`OverlayExample`). Loaders:
      and `filming_context`. Use `[brackets]` for the creator-specific slot.
    - **OverlayExample** — only when you see a genuinely new hook *voice/form*;
      match the existing schema (`effect`, `position`, `size_class`, colors).
+   - **SuccessFactor** (`tiktok_success_factors.json`) — when a `--enrich` run
+     surfaces a pattern that clearly outperformed (high `view_index`), add a
+     `provenance:"corpus"` factor whose `evidence` cites the index you saw
+     ("indexed ~Nx the account median"). Only add `provenance:"public"` factors
+     from TikTok's own published creator guidance, each with a `source`.
+   On PersonaArchetype/ContentIdea, attach the `performance` block from the
+   fetched `view_index`/`engagement_rate` of the post you mined it from.
    Rules: dedup by `id` against existing entries (append, don't churn). Keep the
    bank curated — add a handful of strong entries, not everything. **Strip all
    @handles and brand names from every body field**; put attribution in `source`
-   only (`"tiktok:@handle (YYYY-MM)"`). These are STYLE references — never text to
-   reproduce verbatim.
+   only (`"tiktok:@handle (YYYY-MM)"`). These are STYLE/strategy references —
+   never text to reproduce verbatim.
 
 4. **Bump versions** (the coupling contract — a bank edit without the matching
    prompt_version bump is the "stale cache in prod" trap):
