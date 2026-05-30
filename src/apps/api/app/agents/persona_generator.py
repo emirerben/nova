@@ -59,6 +59,9 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
             travels=_sanitize_text(input.travels),
             passions=_sanitize_text(input.passions),
             tiktok_handle=_sanitize_text(input.tiktok_handle),
+            # Feedback-loop steer (already bounded + sanitized upstream; re-sanitized
+            # here like every other DATA field). "(none yet)" on first onboarding.
+            preferences=_sanitize_text(input.preference_summary) or "(none yet)",
             # Curated market-research style types (reference, not user data).
             archetypes=format_archetypes(),
             # Codified TikTok success factors relevant to lane/cadence choices.

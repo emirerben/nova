@@ -132,6 +132,34 @@ async def get_plan(
     return _plan_response(plan)
 
 
+@router.post("/{plan_id}/regenerate", response_model=ContentPlanResponse)
+async def regenerate_plan(
+    plan_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ContentPlanResponse:
+    """Re-tune the plan from the user's feedback (feedback loop, Phase 2).
+
+    User-triggered "regenerate plan with my feedback". Rolls the user's video
+    feedback into a bounded preference_summary and regenerates — but PROTECTED days
+    (hand-edited or already rendering) are kept verbatim by the task (the "their
+    say" rule). 409 if a (re)generation is already in flight.
+    """
+    plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
+    if plan.plan_status == "generating":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A plan generation is already in progress",
+        )
+    plan.plan_status = "generating"
+    await db.commit()
+
+    from app.tasks.content_plan_build import regenerate_content_plan  # noqa: PLC0415
+
+    regenerate_content_plan.delay(str(plan.id))
+    return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
+
+
 class GenerateFirstWeekResponse(BaseModel):
     enqueued: int
     skipped_no_clips: int

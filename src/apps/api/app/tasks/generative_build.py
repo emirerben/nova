@@ -712,6 +712,7 @@ def _run_text_agents(
                 content_pillars=list(persona.get("content_pillars", []) or []),
                 theme=str(persona.get("theme", "") or ""),
                 idea=str(persona.get("idea", "") or ""),
+                preference_summary=str(persona.get("preference_summary", "") or ""),
                 form=form.model_dump(),
                 exemplars=exemplars,
                 language=language,

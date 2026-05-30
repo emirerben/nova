@@ -215,12 +215,12 @@ def test_persona_bank_version_couples_to_prompt_version():
     # Bank version need not equal the prompt version — each is its own tripwire.
     # The prompt led to 2026-05-30.1 when `rationale` was added (no bank change).
     assert archetypes_version() == "2026-05-30"
-    assert PERSONA_PROMPT_VERSION == "2026-05-30.1"
+    assert PERSONA_PROMPT_VERSION == "2026-05-30.2"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
     assert content_ideas_version() == "2026-05-30"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-30.1"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-30.2"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -230,9 +230,9 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # intro). The bank itself is unchanged (2026-05-30); the persona + content
     # plan prompts later led to 2026-05-30.1 when the `rationale` field was added.
     assert success_factors_version() == "2026-05-30"
-    assert PERSONA_PROMPT_VERSION == "2026-05-30.1"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-30.1"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-05-30.1"
+    assert PERSONA_PROMPT_VERSION == "2026-05-30.2"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-30.2"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-05-30.2"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -246,7 +246,7 @@ def test_overlay_bank_version_couples_to_agent_versions():
     # gained $persona_context (2026-05-30) then $success_factors (2026-05-30.1)
     # while the overlay_examples bank itself is unchanged from 2026-05-29.
     assert library_version() == "2026-05-29"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-05-30.1"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-05-30.2"
     assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-05-29"
 
 

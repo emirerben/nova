@@ -60,6 +60,9 @@ class ContentPlanGeneratorAgent(Agent[ContentPlanInput, ContentPlanOutput]):
             sample_topics=_sanitize_text(", ".join(p.sample_topics)),
             events=_sanitize_text(input.events) or "(none provided)",
             horizon_days=str(input.horizon_days),
+            # Feedback-loop preference summary (already bounded + sanitized upstream;
+            # re-sanitized here as defense-in-depth, like every other DATA field).
+            preferences=_sanitize_text(input.preference_summary) or "(none yet)",
             # Market-research idea bank, ranked toward this creator's pillars.
             idea_bank=format_ideas_for_pillars(p.content_pillars),
             # Codified TikTok success factors for what makes a plan item perform.

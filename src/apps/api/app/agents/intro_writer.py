@@ -67,6 +67,11 @@ class IntroWriterInput(BaseModel):
     content_pillars: list[str] = Field(default_factory=list)
     theme: str = ""
     idea: str = ""
+    # Feedback-loop rollup (Phase 2): a bounded summary of what the creator has said
+    # they want more/less of (services/feedback_summary). Empty for public jobs and
+    # for plan jobs before any feedback. Steers the hook's voice/angle like the
+    # persona context — footage still rules; re-sanitized in render_prompt.
+    preference_summary: str = ""
 
 
 class IntroWriterOutput(BaseModel):
@@ -166,13 +171,15 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.intro_writer",
         prompt_id="write_intro_text",
+        # 2026-05-30.2 — added $preferences block (feedback-loop preference_summary)
+        #              so future hooks lean toward what the creator liked.
         # 2026-05-30.1 — added $success_factors block (hook-relevant TikTok levers
         #              from tiktok_success_factors.json) for evidence-grounded hooks.
         # 2026-05-30 — added $persona_context block (content-plan persona tone/
         #              pillars + plan item theme/idea) for persona-coherent hooks.
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_instruction block (en|tr).
-        prompt_version="2026-05-30.1",
+        prompt_version="2026-05-30.2",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -215,6 +222,9 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
             # change to _LANGUAGE_INSTRUCTIONS (plus glyph coverage + eval fixtures).
             language_instruction=_language_instruction(input.language),
             persona_context=_persona_context(input),
+            # Feedback-loop steer (already bounded; re-cleaned here like persona
+            # fields — notes are user free-text, so strip URLs/@handles too).
+            preferences=_clean_persona_field(input.preference_summary) or "(none)",
             # Codified hook-relevant TikTok success factors (reference, not data).
             success_factors=format_success_factors("hook"),
         )

@@ -16,6 +16,9 @@ const ME_BASE = "/api/me";
 
 export type LibraryJobStatus = "ready" | "generating" | "failed";
 
+/** The three mutually-exclusive thumb reactions on a video (a `note` is separate). */
+export type FeedbackSignal = "up" | "down" | "more_like_this";
+
 export interface LibraryJob {
   id: string;
   /** generative | content_plan | template | music | auto_music | default */
@@ -26,6 +29,8 @@ export interface LibraryJob {
   created_at: string;
   /** Set once the video has been pinned to a plan day. */
   content_plan_item_id: string | null;
+  /** The thumb the user left on this video, or null. */
+  feedback_signal: FeedbackSignal | null;
 }
 
 export interface LibraryPage {
@@ -49,6 +54,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new Error(detail);
   }
+  // 204 No Content (e.g. DELETE) has no body to parse.
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -67,4 +74,38 @@ export function addJobToPlan(jobId: string, dayIndex: number): Promise<LibraryJo
     method: "POST",
     body: JSON.stringify({ day_index: dayIndex }),
   });
+}
+
+export interface FeedbackResponse {
+  id: string;
+  signal: string;
+  job_id: string | null;
+  content_plan_id: string | null;
+}
+
+/**
+ * Leave feedback on a video (a thumb or a note) or a plan-level steer note.
+ * Pass exactly one of `jobId` / `contentPlanId`. A `note` signal requires `note`
+ * text; the three thumbs are mutually exclusive per video (server keeps one).
+ */
+export function sendFeedback(opts: {
+  signal: FeedbackSignal | "note";
+  jobId?: string;
+  contentPlanId?: string;
+  note?: string;
+}): Promise<FeedbackResponse> {
+  return request<FeedbackResponse>(`/feedback`, {
+    method: "POST",
+    body: JSON.stringify({
+      signal: opts.signal,
+      job_id: opts.jobId ?? null,
+      content_plan_id: opts.contentPlanId ?? null,
+      note: opts.note ?? null,
+    }),
+  });
+}
+
+/** Remove a feedback row the caller owns (e.g. toggle a thumb off). */
+export async function clearFeedback(feedbackId: string): Promise<void> {
+  await request<void>(`/feedback/${feedbackId}`, { method: "DELETE" });
 }

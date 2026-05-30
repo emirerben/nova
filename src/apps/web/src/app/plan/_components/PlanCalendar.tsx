@@ -3,8 +3,14 @@
 import Link from "next/link";
 import { useState } from "react";
 import { cn } from "@/lib/cn";
-import { type ContentPlan, generateFirstWeek, type PlanItem } from "@/lib/plan-api";
+import {
+  type ContentPlan,
+  generateFirstWeek,
+  type PlanItem,
+  regenerateContentPlan,
+} from "@/lib/plan-api";
 import PlanItemCard from "./PlanItemCard";
+import SteerInput from "./SteerInput";
 
 function groupByWeek(items: PlanItem[]): { week: number; items: PlanItem[] }[] {
   const byWeek = new Map<number, PlanItem[]>();
@@ -95,6 +101,7 @@ export default function PlanCalendar({
   const weeks = groupByWeek(plan.items);
   const [batching, setBatching] = useState(false);
   const [batchNote, setBatchNote] = useState<string | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
   // Week 1 expanded by default; later weeks collapsed (peek). Ephemeral UI state.
   const [expanded, setExpanded] = useState<Set<number>>(new Set([1]));
 
@@ -111,6 +118,20 @@ export default function PlanCalendar({
       else next.add(week);
       return next;
     });
+  }
+
+  async function handleRegenerate() {
+    setRegenerating(true);
+    try {
+      await regenerateContentPlan(plan.id);
+      // The plan is now `generating`; the parent re-polls and shows progress.
+      // Hand-edited and already-rendering days are preserved server-side.
+      onRefresh();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Couldn't regenerate the plan");
+    } finally {
+      setRegenerating(false);
+    }
   }
 
   async function handleGenerateWeek1() {
@@ -200,6 +221,27 @@ export default function PlanCalendar({
           )}
         </p>
       )}
+
+      {/* Steer the AI: leave a note any time, apply it with a deliberate regenerate.
+          Recessive by design — it sits below the plan, not above it. */}
+      <div className="mb-8 space-y-3">
+        <SteerInput contentPlanId={plan.id} />
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={handleRegenerate}
+            disabled={regenerating || plan.plan_status === "generating"}
+            className="min-h-11 rounded-full border border-zinc-700 px-4 py-2 text-xs font-medium text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white disabled:opacity-50"
+          >
+            {regenerating || plan.plan_status === "generating"
+              ? "Regenerating…"
+              : "Regenerate plan with my feedback"}
+          </button>
+          <span className="text-xs text-zinc-600">
+            Keeps the days you&apos;ve edited or already started.
+          </span>
+        </div>
+      </div>
 
       {weeks.map(({ week, items }) => {
         const isOpen = expanded.has(week);

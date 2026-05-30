@@ -164,3 +164,47 @@ async def edit_persona(
     await db.commit()
     await db.refresh(row)
     return PersonaResponse.of(row)
+
+
+@router.post("/{persona_id}/retune-from-feedback", response_model=PersonaResponse)
+async def retune_persona_from_feedback(
+    persona_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PersonaResponse:
+    """Re-run persona generation with the user's feedback as context (Phase 2).
+
+    The "their say" invariant: a hand-edited persona is authoritative and is NEVER
+    overwritten by inferred feedback — so we 409 when status is 'edited' (the user
+    must reset to AI or edit directly). For an AI-authored persona, this re-tunes
+    the lane toward what they reacted well to. Best-effort: the task leaves the
+    existing persona untouched on failure.
+    """
+    try:
+        pid = uuid.UUID(persona_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
+
+    row = await db.get(PersonaRow, pid)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    if row.persona_status == "edited":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Your persona is hand-edited and stays authoritative. "
+            "Edit it directly, or reset to AI before retuning from feedback.",
+        )
+    if row.persona is None or row.persona_status == "generating":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Persona must be ready before retuning",
+        )
+
+    row.persona_status = "generating"
+    await db.commit()
+
+    from app.tasks.persona_build import retune_persona_from_feedback as retune_task  # noqa: PLC0415
+
+    retune_task.delay(str(row.id))
+    await db.refresh(row)
+    return PersonaResponse.of(row)
