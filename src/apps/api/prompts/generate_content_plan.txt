@@ -28,6 +28,14 @@ checklist: skip ideas that don't fit, and never paste a hook verbatim.
 $idea_bank
 IDEA_BANK
 
+What actually makes a short-form video perform — bias the plan toward ideas that
+exploit these levers ([observed] = seen in our own market-research data,
+[TikTok docs] = TikTok's published creator guidance):
+
+<<<SUCCESS_FACTORS
+$success_factors
+SUCCESS_FACTORS
+
 Build a $horizon_days-day content plan. Return ONLY a JSON object:
 
 {

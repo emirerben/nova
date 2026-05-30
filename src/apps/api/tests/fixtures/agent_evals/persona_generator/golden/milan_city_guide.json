@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.persona_generator",
-  "prompt_version": "2026-05-29.1",
+  "prompt_version": "2026-05-30",
   "input": {
     "work": "part-time at a coffee bar",
     "school": "",
@@ -11,31 +11,30 @@
     "passions": "finding hidden spots in my city and slow mornings",
     "tiktok_handle": ""
   },
-  "raw_text": "{\"summary\": \"You are Milan's trusted local friend, sharing your city's hidden gems and best-kept secrets. Blending your passion for discovering unique spots, thrifting, and slow-morning aesthetics, you offer an authentic, curated guide to experiencing Milan.\", \"content_pillars\": [\"Milan's hidden spots\", \"Local food discoveries\", \"Thrifting finds & styling\", \"Film photography diaries\", \"Slow morning rituals\"], \"tone\": \"Warm, authentic, and quietly curated\", \"audience\": \"Your audience consists of travelers planning trips to Milan and locals seeking new experiences, drawn by your authentic recommendations and aspirational yet approachable city lifestyle.\", \"posting_cadence\": \"3 posts/week, focusing on weekend exploration and daily discoveries.\", \"sample_topics\": [\"My top 3 Milanese coffee bars for a slow morning\", \"A thrifting haul: finding unique pieces in Milan\", \"5 authentic Milan restaurants locals actually visit\", \"A film photo diary of Milan's secret courtyards\", \"How I spend a perfect slow Saturday in Milan\", \"The best vintage shops in Milan for unique finds\", \"An aesthetic guide to a less-known Milan neighborhood\"]}",
+  "raw_text": "{\n  \"summary\": \"You are the go-to friend for authentic Milan recommendations, turning your passion for hidden spots into curated city guides. Your content blends local food gems, unique thrift finds, and slow living, all with a dreamy, film-like aesthetic.\",\n  \"content_pillars\": [\n    \"Curated Milan Food Guides\",\n    \"Hidden City Spots\",\n    \"Milan Thrift Finds\",\n    \"Slow Morning Routines\"\n  ],\n  \"tone\": \"Warm, curated, and quietly authentic\",\n  \"audience\": \"Travelers and locals who want to experience an aesthetic, non-touristy side of Milan.\",\n  \"posting_cadence\": \"3-4 posts/week, filmed during city explorations\",\n  \"sample_topics\": [\n    \"A perfect aperitivo spot nobody knows about\",\n    \"The most beautiful hidden courtyard in Brera\",\n    \"What I found at a Navigli vintage market\",\n    \"My slow morning ritual: coffee bar edition\",\n    \"A 24-hour guide to a non-touristy Milan\",\n    \"Shooting a roll of film in the Isola district\",\n    \"Three Milan coffee bars that aren't Starbucks\"\n  ]\n}",
   "output": {
-    "summary": "You are Milan's trusted local friend, sharing your city's hidden gems and best-kept secrets. Blending your passion for discovering unique spots, thrifting, and slow-morning aesthetics, you offer an authentic, curated guide to experiencing Milan.",
+    "summary": "You are the go-to friend for authentic Milan recommendations, turning your passion for hidden spots into curated city guides. Your content blends local food gems, unique thrift finds, and slow living, all with a dreamy, film-like aesthetic.",
     "content_pillars": [
-      "Milan's hidden spots",
-      "Local food discoveries",
-      "Thrifting finds & styling",
-      "Film photography diaries",
-      "Slow morning rituals"
+      "Curated Milan Food Guides",
+      "Hidden City Spots",
+      "Milan Thrift Finds",
+      "Slow Morning Routines"
     ],
-    "tone": "Warm, authentic, and quietly curated",
-    "audience": "Your audience consists of travelers planning trips to Milan and locals seeking new experiences, drawn by your authentic recommendations and aspirational yet approachable city lifestyle.",
-    "posting_cadence": "3 posts/week, focusing on weekend exploration and daily discoveries.",
+    "tone": "Warm, curated, and quietly authentic",
+    "audience": "Travelers and locals who want to experience an aesthetic, non-touristy side of Milan.",
+    "posting_cadence": "3-4 posts/week, filmed during city explorations",
     "sample_topics": [
-      "My top 3 Milanese coffee bars for a slow morning",
-      "A thrifting haul: finding unique pieces in Milan",
-      "5 authentic Milan restaurants locals actually visit",
-      "A film photo diary of Milan's secret courtyards",
-      "How I spend a perfect slow Saturday in Milan",
-      "The best vintage shops in Milan for unique finds",
-      "An aesthetic guide to a less-known Milan neighborhood"
+      "A perfect aperitivo spot nobody knows about",
+      "The most beautiful hidden courtyard in Brera",
+      "What I found at a Navigli vintage market",
+      "My slow morning ritual: coffee bar edition",
+      "A 24-hour guide to a non-touristy Milan",
+      "Shooting a roll of film in the Isola district",
+      "Three Milan coffee bars that aren't Starbucks"
     ]
   },
   "meta": {
-    "source": "live_capture_2026-05-29",
+    "source": "live_capture_2026-05-30",
     "case": "market-trained: city-lifestyle questionnaire -> persona lands in the curated city-guide lane (banks-on); pillars (5) + sample_topics within bounds, all fields non-empty"
   }
 }

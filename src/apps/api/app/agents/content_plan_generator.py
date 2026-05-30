@@ -26,7 +26,7 @@ from app.agents._schemas.content_plan import (
     PlanItemSpec,
 )
 from app.agents.music_matcher import _sanitize_text
-from app.agents.persona_examples import format_ideas_for_pillars
+from app.agents.persona_examples import format_ideas_for_pillars, format_success_factors
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
@@ -62,6 +62,8 @@ class ContentPlanGeneratorAgent(Agent[ContentPlanInput, ContentPlanOutput]):
             horizon_days=str(input.horizon_days),
             # Market-research idea bank, ranked toward this creator's pillars.
             idea_bank=format_ideas_for_pillars(p.content_pillars),
+            # Codified TikTok success factors for what makes a plan item perform.
+            success_factors=format_success_factors("plan"),
         )
 
     def parse(self, raw_text: str, input: ContentPlanInput) -> ContentPlanOutput:  # noqa: A002

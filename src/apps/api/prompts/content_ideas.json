@@ -1,6 +1,6 @@
 {
-  "version": "2026-05-29",
-  "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
+  "version": "2026-05-30",
+  "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
       "id": "city-curated-guide-01",
@@ -18,7 +18,8 @@
       "idea": "a perfect day in [your city] told as a morning-to-night montage of small rituals",
       "hook_pattern": "my perfect day in [city]",
       "filming_context": "POV handheld, golden-hour bookends, one clip per moment",
-      "source": "tiktok:@allexmarielle (2026-05)"
+      "source": "tiktok:@allexmarielle (2026-05)",
+      "performance": {"engagement_rate": 0.2842, "view_index": 4.07, "sampled_at": "2026-05"}
     },
     {
       "id": "seasonal-outfit-rotation-01",
@@ -54,7 +55,8 @@
       "idea": "document a milestone (2nd 10k run, first hike) framed as getting braver",
       "hook_pattern": "[milestone] — getting braver",
       "filming_context": "first-person, candid, show the effort not just the result",
-      "source": "tiktok:@izzsiomoi (2026-05)"
+      "source": "tiktok:@izzsiomoi (2026-05)",
+      "performance": {"engagement_rate": 0.0381, "view_index": 5.23, "sampled_at": "2026-05"}
     },
     {
       "id": "launch-countdown-01",
@@ -81,7 +83,8 @@
       "idea": "a confident 'it's live' post pointing people to where they can buy",
       "hook_pattern": "i'm standing on business — it's live",
       "filming_context": "to-camera, short, clear call to where it sells",
-      "source": "tiktok:@nermozdemir (2026-05)"
+      "source": "tiktok:@nermozdemir (2026-05)",
+      "performance": {"views": 8308, "engagement_rate": 0.0643, "view_index": 2.81, "sampled_at": "2026-05"}
     },
     {
       "id": "mood-diary-feeling-01",

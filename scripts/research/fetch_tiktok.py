@@ -86,21 +86,54 @@ def _hashtags(text: str) -> list[str]:
     return _HASHTAG_RE.findall(text or "")
 
 
+def _engagement_rate(views, likes, comments, reposts) -> float | None:
+    """(likes + comments + reposts) / views — account-size independent.
+
+    None when views are missing/zero or no engagement counts are present (the
+    flat extract returns view_count but not likes/comments, so this stays None
+    unless --enrich was used). Mirrors PerformanceSignal.engagement_rate.
+    """
+    if not views or views <= 0:
+        return None
+    parts = [c for c in (likes, comments, reposts) if isinstance(c, (int, float))]
+    if not parts:
+        return None
+    return round(sum(parts) / views, 6)
+
+
 def _record(entry: dict) -> dict:
     """Normalize a yt-dlp entry to the fields the analyst mines."""
     caption = entry.get("description") or entry.get("title") or ""
+    views = entry.get("view_count")
+    likes = entry.get("like_count")
+    comments = entry.get("comment_count")
+    reposts = entry.get("repost_count")
     return {
         "id": str(entry.get("id") or ""),
         "url": entry.get("url") or entry.get("webpage_url") or "",
         "caption": caption,
         "hashtags": _hashtags(caption),
-        "view_count": entry.get("view_count"),
-        "like_count": entry.get("like_count"),
-        "comment_count": entry.get("comment_count"),
-        "repost_count": entry.get("repost_count"),
+        "view_count": views,
+        "like_count": likes,
+        "comment_count": comments,
+        "repost_count": reposts,
+        # Pre-computed so the analyst mines a grounded PerformanceSignal instead of
+        # eyeballing raw counts. view_index is filled in _fetch_account (needs the
+        # account median across all videos); engagement_rate is per-video here.
+        "engagement_rate": _engagement_rate(views, likes, comments, reposts),
+        "view_index": None,
         "duration": entry.get("duration"),
         "upload_date": entry.get("upload_date"),  # YYYYMMDD when available
     }
+
+
+def _median(values: list[float]) -> float | None:
+    vals = sorted(values)
+    n = len(vals)
+    if n == 0:
+        return None
+    mid = n // 2
+    return vals[mid] if n % 2 else (vals[mid - 1] + vals[mid]) / 2
 
 
 def _fetch_account(handle: str, limit: int, enrich: bool, cookies: str | None) -> dict:
@@ -121,6 +154,14 @@ def _fetch_account(handle: str, limit: int, enrich: bool, cookies: str | None) -
             videos.append(_record(entry))
         except Exception as exc:  # noqa: BLE001 - best-effort per video
             _log(f"  skip video {entry.get('id')}: {type(exc).__name__}: {exc}")
+
+    # view_index = views / account-median views — outperformance vs the account's
+    # own baseline (account-size independent). Computed across all fetched videos.
+    median_views = _median([v["view_count"] for v in videos if v.get("view_count")])
+    if median_views and median_views > 0:
+        for v in videos:
+            if v.get("view_count"):
+                v["view_index"] = round(v["view_count"] / median_views, 4)
 
     # Engagement-desc so the analyst sees top performers first.
     videos.sort(key=lambda v: v.get("view_count") or 0, reverse=True)

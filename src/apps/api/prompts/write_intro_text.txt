@@ -35,6 +35,15 @@ $effect
 
 $exemplars
 
+## What makes a hook land (strategy, not copying)
+
+These are levers that actually move watch-time and reach on short-form
+([observed] = seen in our own market-research data, [TikTok docs] = TikTok's
+published creator guidance). Let them shape HOW you open — they are not lines to
+reproduce:
+
+$success_factors
+
 ## Voice
 
 Write the way a real creator captions their own clip — casual and specific, not like an ad or a thumbnail. Study the examples above and match their voice, not their exact words.

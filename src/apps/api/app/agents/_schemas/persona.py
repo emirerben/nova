@@ -11,9 +11,11 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-# Bump when prompts/generate_persona.txt OR prompts/persona_archetypes.json
-# changes (CLAUDE.md prompt-change rule; the archetype bank is part of the prompt).
-PERSONA_PROMPT_VERSION = "2026-05-29.1"
+# Bump when prompts/generate_persona.txt OR prompts/persona_archetypes.json OR
+# prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
+# archetype bank + success-factor bank are part of the prompt).
+# 2026-05-30 — added $success_factors block + archetype performance ranking.
+PERSONA_PROMPT_VERSION = "2026-05-30"
 
 # Upper bounds keep a runaway model response from bloating the persona row.
 _MAX_PILLARS = 8

@@ -27,7 +27,7 @@ from app.agents._schemas.persona import (
     PersonaQuestionnaire,
 )
 from app.agents.music_matcher import _sanitize_text
-from app.agents.persona_examples import format_archetypes
+from app.agents.persona_examples import format_archetypes, format_success_factors
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
@@ -61,6 +61,8 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
             tiktok_handle=_sanitize_text(input.tiktok_handle),
             # Curated market-research style types (reference, not user data).
             archetypes=format_archetypes(),
+            # Codified TikTok success factors relevant to lane/cadence choices.
+            success_factors=format_success_factors("persona"),
         )
 
     def parse(

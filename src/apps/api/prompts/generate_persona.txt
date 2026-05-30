@@ -28,6 +28,14 @@ wording.
 $archetypes
 STYLE_REFERENCES
 
+What actually makes short-form content perform (use these to land this person in
+a focused lane and a realistic cadence — [observed] = seen in our own
+market-research data, [TikTok docs] = TikTok's published creator guidance):
+
+<<<SUCCESS_FACTORS
+$success_factors
+SUCCESS_FACTORS
+
 Write a persona that is specific to THIS person — reference their real details,
 not generic creator advice. The persona must feel like something they would
 proudly edit and keep, not a template.

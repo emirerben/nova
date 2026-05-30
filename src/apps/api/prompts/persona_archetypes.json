@@ -1,6 +1,6 @@
 {
-  "version": "2026-05-29",
-  "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; the agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
+  "version": "2026-05-30",
+  "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
       "id": "aesthetic-city-guide-01",
@@ -10,7 +10,8 @@
       "content_pillars": ["curated food guides", "a perfect day in the city", "seasonal outfit rotations", "hidden gems to save"],
       "audience": "people planning a trip or romanticizing the lifestyle of your city",
       "sample_hooks": ["my very curated guide — save for later", "a perfect day here", "the spot nobody told you about"],
-      "source": "tiktok:@allexmarielle (2026-05)"
+      "source": "tiktok:@allexmarielle (2026-05)",
+      "performance": {"engagement_rate": 0.2842, "view_index": 4.07, "sampled_at": "2026-05"}
     },
     {
       "id": "solo-adventure-introspective-01",
@@ -20,7 +21,8 @@
       "content_pillars": ["solo travel", "fitness milestones", "mindset & growth", "core memories"],
       "audience": "people craving permission to chase experiences and start before they feel ready",
       "sample_hooks": ["experiences > savings", "core memory unlocked", "getting braver one run at a time"],
-      "source": "tiktok:@izzsiomoi (2026-05)"
+      "source": "tiktok:@izzsiomoi (2026-05)",
+      "performance": {"engagement_rate": 0.0381, "view_index": 5.23, "sampled_at": "2026-05"}
     },
     {
       "id": "build-in-public-founder-01",
@@ -30,7 +32,8 @@
       "content_pillars": ["product reveal", "launch countdown", "founder backstory", "customer reactions"],
       "audience": "early supporters and future customers who buy because they watched it get made",
       "sample_hooks": ["the day it all goes live", "we finally made it", "X days until it drops"],
-      "source": "tiktok:@nermozdemir (2026-05)"
+      "source": "tiktok:@nermozdemir (2026-05)",
+      "performance": {"views": 8308, "engagement_rate": 0.0643, "view_index": 2.81, "sampled_at": "2026-05"}
     },
     {
       "id": "mood-broll-minimalist-01",
