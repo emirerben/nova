@@ -18,6 +18,9 @@ import PlanShell from "../../_components/PlanShell";
 import SignInPrompt from "../../_components/SignInPrompt";
 
 const POLL_MS = 2500;
+// Generative renders three variants; show that many tiles while waiting so the
+// grid doesn't reflow as each one lands.
+const EXPECTED_VARIANTS = 3;
 
 export default function PlanItemPage() {
   const params = useParams<{ id: string }>();
@@ -36,11 +39,13 @@ export default function PlanItemPage() {
     try {
       const it = await getPlanItem(itemId);
       setItem(it);
-      if (it.status === "ready" && it.current_job_id) {
+      // Hydrate variants whenever a render job exists — NOT only on "ready" — so
+      // each variant tile fills in (or fails) on its own as the render lands.
+      if (it.current_job_id) {
         try {
           setVariants(await getPlanItemVariants(it.current_job_id));
         } catch {
-          // best-effort; the status itself is the source of truth
+          // best-effort; the item status itself is the source of truth
         }
       }
       return it;
@@ -53,14 +58,17 @@ export default function PlanItemPage() {
     }
   }, [itemId]);
 
+  // Keep polling while a render is in flight (generating, or a job exists that
+  // hasn't reached a terminal item status). Stops on ready/failed and unmount.
   useEffect(() => {
     let cancelled = false;
     async function tick() {
       const it = await refresh();
-      if (cancelled) return;
-      if (it && (it.status === "generating" || it.current_job_id) && it.status !== "ready") {
-        pollRef.current = setTimeout(tick, POLL_MS);
-      }
+      if (cancelled || !it) return;
+      const inFlight =
+        it.status === "generating" ||
+        (!!it.current_job_id && it.status !== "ready" && it.status !== "failed");
+      if (inFlight) pollRef.current = setTimeout(tick, POLL_MS);
     }
     void tick();
     return () => {
@@ -136,18 +144,33 @@ export default function PlanItemPage() {
   if (item === null) {
     return (
       <PlanShell>
-        <p className="py-24 text-center text-zinc-400">Item not found.</p>
+        <div className="animate-fade-up py-24 text-center">
+          <p className="mb-6 text-zinc-400">We couldn&apos;t find that idea.</p>
+          <Link
+            href="/plan"
+            className="inline-block rounded-full bg-white px-6 py-3 text-sm font-medium text-black transition-colors hover:bg-zinc-200"
+          >
+            Back to your plan
+          </Link>
+        </div>
       </PlanShell>
     );
   }
 
   const clipCount = item.clip_gcs_paths.length;
-  const ready = variants.filter((v) => v.output_url);
+  const isGenerating = item.status === "generating";
+  const readyCount = variants.filter((v) => v.output_url).length;
+  const showResults = isGenerating || variants.length > 0;
+  // Pad with skeletons while generating so the grid shows the shape of what's coming.
+  const tileCount = isGenerating ? Math.max(EXPECTED_VARIANTS, variants.length) : variants.length;
 
   return (
     <PlanShell>
       <div className="animate-fade-up py-12">
-        <Link href="/plan" className="text-sm text-zinc-500 underline transition-colors hover:text-white">
+        <Link
+          href="/plan"
+          className="text-sm text-zinc-500 underline transition-colors hover:text-white"
+        >
           ← back to plan
         </Link>
         <div className="mb-1 mt-4 flex items-center gap-3">
@@ -173,28 +196,27 @@ export default function PlanItemPage() {
           <p className="mb-4 text-sm text-zinc-500">
             Upload footage for this idea. {clipCount > 0 ? `${clipCount} uploaded.` : "None yet."}
           </p>
-          <input
-            type="file"
-            accept="video/mp4,video/quicktime"
-            multiple
-            disabled={uploading}
-            onChange={(e) => handleFiles(e.target.files)}
-            className="block w-full text-sm text-zinc-400 file:mr-3 file:rounded-full file:border-0 file:bg-white file:px-4 file:py-2 file:text-sm file:font-medium file:text-black hover:file:bg-zinc-200"
-          />
+          <label className="block">
+            <span className="sr-only">Upload video clips for this idea</span>
+            <input
+              type="file"
+              accept="video/mp4,video/quicktime"
+              multiple
+              disabled={uploading}
+              onChange={(e) => handleFiles(e.target.files)}
+              className="block w-full text-sm text-zinc-400 file:mr-3 file:rounded-full file:border-0 file:bg-white file:px-4 file:py-2 file:text-sm file:font-medium file:text-black hover:file:bg-zinc-200"
+            />
+          </label>
           {uploading && <p className="mt-3 text-sm text-amber-300">Uploading…</p>}
         </section>
 
         {/* Generate */}
         <button
           onClick={handleGenerate}
-          disabled={generating || clipCount === 0 || item.status === "generating"}
+          disabled={generating || clipCount === 0 || isGenerating}
           className="rounded-full bg-amber-400 px-6 py-3 font-medium text-black transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
         >
-          {item.status === "generating"
-            ? "Generating…"
-            : generating
-              ? "Starting…"
-              : "Generate videos"}
+          {isGenerating ? "Generating…" : generating ? "Starting…" : "Generate videos"}
         </button>
         {clipCount === 0 && (
           <p className="mt-2 text-sm text-zinc-500">Upload at least one clip first.</p>
@@ -202,18 +224,35 @@ export default function PlanItemPage() {
 
         {/* Status / results */}
         <div className="mt-8">
-          <StatusLine status={item.status} />
-          {item.status === "ready" && ready.length > 0 && (
+          <p className="text-sm text-zinc-400" aria-live="polite">
+            <StatusLine status={item.status} />
+            {isGenerating && variants.length > 0 && (
+              <span className="ml-1 text-zinc-500">
+                ({readyCount} of {tileCount} ready)
+              </span>
+            )}
+          </p>
+          {isGenerating && (
+            <p className="mt-1 text-xs text-zinc-500">
+              Usually 2–3 minutes. You can leave this page — we&apos;ll keep rendering.
+            </p>
+          )}
+          {showResults && (
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-              {ready.map((v) => (
-                <video
-                  key={v.variant_id}
-                  src={v.output_url ?? undefined}
-                  controls
-                  className="w-full rounded-lg border border-zinc-800"
-                />
-              ))}
+              {Array.from({ length: tileCount }).map((_, i) => {
+                const v = variants[i];
+                return v ? (
+                  <VariantTile key={v.variant_id} variant={v} />
+                ) : (
+                  <SkeletonTile key={`skeleton-${i}`} />
+                );
+              })}
             </div>
+          )}
+          {item.status === "failed" && variants.length === 0 && (
+            <p className="mt-2 text-sm text-zinc-500">
+              Generation failed before any variant rendered. Try generating again.
+            </p>
           )}
         </div>
       </div>
@@ -221,13 +260,41 @@ export default function PlanItemPage() {
   );
 }
 
+/** One render variant: plays when its URL lands, shows a failed state, else shimmers. */
+function VariantTile({ variant }: { variant: PlanItemVariant }) {
+  if (variant.output_url) {
+    return (
+      <video
+        src={variant.output_url}
+        controls
+        className="w-full rounded-lg border border-zinc-800"
+      />
+    );
+  }
+  if (variant.render_status === "failed") {
+    return (
+      <div className="flex aspect-[9/16] w-full flex-col items-center justify-center rounded-lg border border-red-800/60 bg-red-950/20 p-4 text-center">
+        <p className="text-sm text-red-300">This variant failed</p>
+        <p className="mt-1 text-xs text-red-300/60">Re-generate to try again</p>
+      </div>
+    );
+  }
+  return <SkeletonTile />;
+}
+
+function SkeletonTile() {
+  return (
+    <div className="aspect-[9/16] w-full animate-shimmer rounded-lg border border-zinc-800 bg-[length:200%_100%] bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-900" />
+  );
+}
+
 function StatusLine({ status }: { status: string }) {
   const copy: Record<string, string> = {
     idea: "Not started — upload clips and generate.",
     awaiting_clips: "Waiting on your clips.",
-    generating: "Rendering your variants… this can take a couple of minutes.",
+    generating: "Rendering your variants…",
     ready: "Done — your videos are below.",
     failed: "Generation failed. Try generating again.",
   };
-  return <p className="text-sm text-zinc-400">{copy[status] ?? status}</p>;
+  return <>{copy[status] ?? status}</>;
 }

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.57.0] - 2026-05-30
+
+### Changed
+- **Plan-experience visual core — overview-first 30-day plan, real render-wait, discoverable inline edit (design-review T1–T3).** The plan flow worked but its back half was weak: the 30-day plan was a flat wall of 30 always-open edit cards (no overview or momentum), the 2–5 min per-item render showed a single static text line, and the calendar's borderless transparent inputs didn't read as editable. This ships the three highest-value fixes from the `/plan-design-review` of the whole plan experience (7/10 → 9/10 planned; full ASCII wireframe + decision log in the plan file).
+  - **T1 — overview-first plan (`PlanCalendar.tsx`).** Added a momentum header ("X of N videos made" + amber progress bar, `role="progressbar"`) and a week accordion: week 1 ("activation") expanded by default, weeks 2–4 collapsed with a peek (`N ideas · M ready`), `aria-expanded` on each toggle. The month is scannable instead of a 30-card scroll wall. Week 1 keeps its batch "Generate week 1" CTA. New exported pure helper `planProgress(items)` (ready/total/pct, divide-by-zero safe) with a Jest unit test.
+  - **T2 — view-then-edit rows (`PlanItemCard.tsx`).** Rows are read-only by default (day, theme, 2-line idea preview via `line-clamp-2`, status pill, one primary action); an explicit "Edit" reveals bordered, labeled fields with Save/Cancel. Status pills now carry a **glyph + text** (○ idea / ◔ needs clips / ◐ generating / ● ready / ✕ failed), so status no longer depends on color alone. `dirty` tracks a `baseline` that resets on save (the parent never refetches the item prop).
+  - **T3 — render wait with per-variant tiles (`items/[id]/page.tsx`).** The item page now polls `getPlanItemVariants(current_job_id)` *during* generation (not only on `ready`) and renders one tile per variant: shimmer skeleton → plays when `output_url` lands → per-variant "failed" tile on `render_status === "failed"`. Three placeholder tiles while generating (generative renders 3) so the grid doesn't reflow; reassurance copy ("usually 2–3 min, you can leave this page"); `aria-live="polite"` on the status line announces "X of N ready". Frontend-only — the generative status endpoint already surfaces per-variant state from `Job.assembly_plan["variants"]`. Warmed the item-not-found state with a path back to `/plan`.
+  - **Coexists with the 0.4.56.0 `SeedUploadCard`** (rendered above the calendar) — no change to the activation flow.
+  - **Scoped out (design-review follow-up):** T4 persona summary-first moment, T6 momentum nudge/celebration/welcome-back, T7 broader edge states, and the full cross-flow T5 accessibility sweep (new components here are written accessibly by default). Deferred to keep the diff focused on a live, actively-developed flow.
+  - **Gates:** `next lint` clean on changed files; `planProgress` Jest unit test passes (4/4); changed production files typecheck clean (the repo-wide bare `tsc --noEmit` jest-globals noise in `__tests__/` is pre-existing and unrelated). Backend untouched.
+
 ## [0.4.56.0] - 2026-05-29
 
 ### Added
