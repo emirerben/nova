@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.content_plan_generator",
-  "prompt_version": "2026-05-29.1",
+  "prompt_version": "2026-05-30",
   "input": {
     "persona": {
       "summary": "You are Milan's trusted local friend, sharing your city's hidden gems and best-kept secrets. Blending your passion for discovering unique spots, thrifting, and slow-morning aesthetics, you offer an authentic, curated guide to experiencing Milan.",
@@ -27,193 +27,193 @@
     "events": "visitors coming for design week",
     "horizon_days": 30
   },
-  "raw_text": "{\"items\": [{\"day_index\": 1, \"theme\": \"Milan's Hidden Spots\", \"idea\": \"A curated guide to design-forward cafes in Milan that offer a quiet escape during Design Week, perfect for creative professionals.\", \"filming_suggestion\": \"Capture the cafe's aesthetic details and a serene coffee moment, shoot in the morning.\"}, {\"day_index\": 2, \"theme\": \"Slow Morning Rituals\", \"idea\": \"My peaceful morning routine: preparing a simple Italian breakfast and enjoying a quiet moment before the Design Week rush.\", \"filming_suggestion\": \"Soft morning light, close-ups of coffee brewing, a croissant, a book, cozy home setting.\"}, {\"day_index\": 3, \"theme\": \"Local Food Discoveries\", \"idea\": \"The best Milanese *panzerotti* spot that's an institution, perfect for a quick, authentic Design Week lunch.\", \"filming_suggestion\": \"Capture the vibrant street food scene, close-ups of the panzerotti being made and eaten.\"}, {\"day_index\": 4, \"theme\": \"Thrifting Finds & Styling\", \"idea\": \"Styling a full outfit for a casual Design Week event using only my recent vintage and thrift store finds from Milan.\", \"filming_suggestion\": \"Showcase individual pieces, then a quick try-on montage in a well-lit space.\"}, {\"day_index\": 5, \"theme\": \"Film Photography Diaries\", \"idea\": \"A short film diary of unexpected design details and architectural textures I've noticed on my walks during Design Week, captured on film.\", \"filming_suggestion\": \"Focus on unique textures, patterns, and street art details, handheld shots, golden hour light.\"}, {\"day_index\": 6, \"theme\": \"Milan's Hidden Spots\", \"idea\": \"Uncovering a lesser-known design gallery or concept store that's part of Fuorisalone but tucked away from the main circuits.\", \"filming_suggestion\": \"Show exterior and interior, highlight a few key pieces, capture the quiet ambiance.\"}, {\"day_index\": 7, \"theme\": \"Local Food Discoveries\", \"idea\": \"My top 3 aperitivo spots in Milan that offer unique, artisanal cocktails and bites, avoiding the typical tourist traps during Design Week.\", \"filming_suggestion\": \"Shots of cocktails being made, stylish interiors, clinking glasses, capture the happy hour vibe.\"}, {\"day_index\": 8, \"theme\": \"Slow Morning Rituals\", \"idea\": \"My ideal slow Sunday morning in Milan, starting with fresh flowers from a local market and a quiet coffee on my balcony.\", \"filming_suggestion\": \"Capture the market's colors, bringing flowers home, enjoying coffee with soft morning light.\"}, {\"day_index\": 9, \"theme\": \"Thrifting Finds & Styling\", \"idea\": \"A thrift haul focusing on unique home decor pieces found in Milan's vintage markets, and how I style them in my apartment.\", \"filming_suggestion\": \"Showcase each item with close-ups, then show it integrated into a room, before/after styling.\"}, {\"day_index\": 10, \"theme\": \"Milan's Hidden Spots\", \"idea\": \"Discovering a secret garden or historic courtyard in the heart of Milan, a tranquil oasis perfect for reflection.\", \"filming_suggestion\": \"Slow panning shots, focus on greenery, water features, architectural details, quiet atmosphere.\"}, {\"day_index\": 11, \"theme\": \"Local Food Discoveries\", \"idea\": \"A deep dive into Milan's best places for a truly authentic *cotoletta alla Milanese*, sharing my top recommendation.\", \"filming_suggestion\": \"Plate presentation, close-ups of the cotoletta, the restaurant's ambiance, a delicious bite shot.\"}, {\"day_index\": 12, \"theme\": \"Film Photography Diaries\", \"idea\": \"A 'Milan in Monochrome' film photo diary, capturing the timeless beauty of the city's architecture and everyday life in black and white.\", \"filming_suggestion\": \"Quick cuts of film camera in hand, then a slideshow of developed black & white photos.\"}, {\"day_index\": 13, \"theme\": \"Slow Morning Rituals\", \"idea\": \"Elevating your coffee routine: my favorite Milanese coffee beans and how I brew them for the perfect slow start to my day.\", \"filming_suggestion\": \"Grind beans, pour-over process, steam rising from the cup, cozy kitchen setting.\"}, {\"day_index\": 14, \"theme\": \"Milan's Hidden Spots\", \"idea\": \"An aesthetic walking tour of a less-explored Milanese neighborhood, highlighting its unique shops, cafes, and street art.\", \"filming_suggestion\": \"Follow me style, showing points of interest, panning shots of street art, local life.\"}, {\"day_index\": 15, \"theme\": \"Thrifting Finds & Styling\", \"idea\": \"My 'capsule wardrobe' challenge using only thrifted items from Milan, showing how to create versatile looks.\", \"filming_suggestion\": \"Lay out all items, then quick outfit changes, showing different combinations for various occasions.\"}, {\"day_index\": 16, \"theme\": \"Local Food Discoveries\", \"idea\": \"Exploring a local Milanese food market (e.g., Mercato di Porta Romana) for fresh ingredients and regional delicacies.\", \"filming_suggestion\": \"Vibrant market scenes, close-ups of fresh produce, interactions with vendors, selection of ingredients.\"}, {\"day_index\": 17, \"theme\": \"Film Photography Diaries\", \"idea\": \"Capturing the magic of Milan at golden hour and sunset on film, focusing on iconic landmarks and hidden views bathed in soft light.\", \"filming_suggestion\": \"Time-lapse of light changing, camera panning across skylines, specific architectural details glowing.\"}, {\"day_index\": 18, \"theme\": \"Slow Morning Rituals\", \"idea\": \"My mindful journaling practice during a slow morning, reflecting on city discoveries and inspirations.\", \"filming_suggestion\": \"Close-ups of journal, pen writing, a hot drink nearby, soft background music, cozy nook.\"}, {\"day_index\": 19, \"theme\": \"Milan's Hidden Spots\", \"idea\": \"A mini-guide to independent bookstores and literary cafes in Milan, perfect for a quiet afternoon escape.\", \"filming_suggestion\": \"Cozy interiors, bookshelves, people reading, steam from coffee cups, focus on unique titles.\"}, {\"day_index\": 20, \"theme\": \"Thrifting Finds & Styling\", \"idea\": \"Revamping a classic thrifted piece (e.g., a blazer or trench coat) with modern styling tips to make it current and chic.\", \"filming_suggestion\": \"Before/after shots of the garment, different ways to accessorize and wear it, confident poses.\"}, {\"day_index\": 21, \"theme\": \"Local Food Discoveries\", \"idea\": \"Uncovering Milan's best artisanal gelato shops and my top picks for unique and traditional flavors.\", \"filming_suggestion\": \"Scooping gelato, close-ups of different flavors, tasting shots, people enjoying gelato.\"}, {\"day_index\": 22, \"theme\": \"Film Photography Diaries\", \"idea\": \"A 'people watching' film diary from my favorite Milanese piazza, capturing candid moments of local life.\", \"filming_suggestion\": \"Discreet shots of street life, interactions, expressions, focus on human element.\"}, {\"day_index\": 23, \"theme\": \"Slow Morning Rituals\", \"idea\": \"My gentle movement routine: starting the day with light yoga or stretching to prepare for city explorations.\", \"filming_suggestion\": \"Smooth transitions between poses, soft lighting, quiet home or park setting.\"}, {\"day_index\": 24, \"theme\": \"Milan's Hidden Spots\", \"idea\": \"The most beautiful public park or garden in Milan that tourists often overlook, perfect for a peaceful stroll.\", \"filming_suggestion\": \"Long, slow shots of pathways, flowers, benches, sculptures, sound of birds.\"}, {\"day_index\": 25, \"theme\": \"Thrifting Finds & Styling\", \"idea\": \"Accessorize like a local: finding unique vintage jewelry and scarves in Milan's markets to elevate any outfit.\", \"filming_suggestion\": \"Close-ups of jewelry, different ways to tie scarves, trying on accessories, mirror shots.\"}, {\"day_index\": 26, \"theme\": \"Local Food Discoveries\", \"idea\": \"An authentic Milanese pizzeria that feels like a hidden neighborhood secret, known for its traditional recipes.\", \"filming_suggestion\": \"Pizza being made in the oven, bubbling cheese, happy diners, cozy restaurant atmosphere.\"}, {\"day_index\": 27, \"theme\": \"Film Photography Diaries\", \"idea\": \"A rainy day film diary in Milan, capturing the city's melancholic beauty and reflections in puddles.\", \"filming_suggestion\": \"Raindrops on windows, people with umbrellas, wet cobblestones reflecting lights, mood shots.\"}, {\"day_index\": 28, \"theme\": \"Slow Morning Rituals\", \"idea\": \"My curated playlist for a slow morning in Milan, featuring Italian indie artists and calming tunes.\", \"filming_suggestion\": \"Visuals of a quiet morning, a record player spinning, cup of tea, with text overlay of playlist title/artists.\"}, {\"day_index\": 29, \"theme\": \"Milan's Hidden Spots\", \"idea\": \"Exploring the architectural details and hidden allegories of a historical Milanese building often passed by without a second glance.\", \"filming_suggestion\": \"Zoom in on intricate carvings, specific facades, unexpected details on doors or windows.\"}, {\"day_index\": 30, \"theme\": \"Local Food Discoveries\", \"idea\": \"My favorite spot for a leisurely weekend brunch in Milan, offering a sophisticated yet authentic menu.\", \"filming_suggestion\": \"Beautifully presented brunch dishes, mimosas, elegant interior, soft chatter, natural light.\"}]}",
+  "raw_text": "{\n  \"items\": [\n    {\n      \"day_index\": 1,\n      \"theme\": \"Slow morning rituals\",\n      \"idea\": \"An aesthetic montage of your slow morning routine. Hook: 'Mornings in Milan just feel different.' Show sunlight in your apartment, making coffee in a Moka pot, and journaling by the window.\",\n      \"filming_suggestion\": \"Film during the golden hour in the morning for soft, warm light. Use a mix of tight, detailed shots and wider, scene-setting shots.\"\n    },\n    {\n      \"day_index\": 2,\n      \"theme\": \"Milan's hidden spots\",\n      \"idea\": \"A fast-paced guide to 3 secret, beautiful courtyards in the Brera district. Hook: 'My curated guide to Milan's secret courtyards. You need to save this.'\",\n      \"filming_suggestion\": \"Use quick cuts synchronized to a trending sound. Film vertically to emphasize the height and architecture of the courtyards.\"\n    },\n    {\n      \"day_index\": 3,\n      \"theme\": \"Thrifting finds & styling\",\n      \"idea\": \"Show one unique thrifted piece (e.g., a silk scarf or vintage blazer) and style it in three different ways for a Milanese spring day.\",\n      \"filming_suggestion\": \"Use a tripod and film yourself in front of a neutral background to let the outfits stand out. A 'tap to change' transition could work well.\"\n    },\n    {\n      \"day_index\": 4,\n      \"theme\": \"Local food discoveries\",\n      \"idea\": \"Feature a tiny, family-run bakery that tourists don't know about. Hook: 'The one Milan bakery you won't find in the guidebooks.' Focus on their specialty, like a specific focaccia.\",\n      \"filming_suggestion\": \"Ask for permission to film. Get close-up shots of the food and capture the authentic, charming atmosphere of the shop.\"\n    },\n    {\n      \"day_index\": 5,\n      \"theme\": \"Film photography diaries\",\n      \"idea\": \"A moody, B-roll diary of moments from your latest roll of film. Hook: 'A feeling, not a place.' No talking, just visuals set to an atmospheric, trending sound.\",\n      \"filming_suggestion\": \"Overlay a subtle film grain effect in editing to match the aesthetic. Mix in a few shots of you holding or using your film camera.\"\n    },\n    {\n      \"day_index\": 6,\n      \"theme\": \"Event: Design Week\",\n      \"idea\": \"A short, talking-head video sharing your excitement for friends visiting for Design Week and your #1 tip for surviving the city's happy chaos.\",\n      \"filming_suggestion\": \"Film in a cozy corner of your apartment to maintain the warm, friendly tone. Speak directly and authentically to the camera.\"\n    },\n    {\n      \"day_index\": 7,\n      \"theme\": \"Thrifting finds & styling\",\n      \"idea\": \"A 'Come thrifting with me' video as you hunt for unique home goods or decor accents before your guests arrive. Show the process and the finds.\",\n      \"filming_suggestion\": \"Film on your phone for a casual, vlog-style feel. Speed up the clips of you browsing the aisles and slow down to show off your best finds.\"\n    },\n    {\n      \"day_index\": 8,\n      \"theme\": \"Milan's hidden spots\",\n      \"idea\": \"Spotlight a quiet, beautiful library or a historic bookshop as the perfect place to escape the city buzz. Frame it as a peaceful sanctuary.\",\n      \"filming_suggestion\": \"Be respectful and silent while filming. Focus on details: ornate shelves, texture of old books, quiet reading corners.\"\n    },\n    {\n      \"day_index\": 9,\n      \"theme\": \"Slow morning rituals\",\n      \"idea\": \"An ASMR-style video focusing on the ritual of making coffee. Close-up shots of the water, the coffee grounds, the steam. No talking, just the sounds.\",\n      \"filming_suggestion\": \"Use a microphone if possible, or keep your phone very close to the action to capture the satisfying sounds clearly.\"\n    },\n    {\n      \"day_index\": 10,\n      \"theme\": \"Event: Design Week\",\n      \"idea\": \"Your visitors have arrived! A quick montage of taking them to your favorite non-touristy aperitivo spot. Hook: 'First stop for my Design Week friends: an authentic aperitivo.'\",\n      \"filming_suggestion\": \"Capture candid moments of you and your friends enjoying yourselves. Focus on the drinks, the food, and the genuine atmosphere.\"\n    },\n    {\n      \"day_index\": 11,\n      \"theme\": \"Event: Design Week\",\n      \"idea\": \"A guide to 3 lesser-known but stunning Design Week installations. Hook: 'How to enjoy Design Week without the crowds.'\",\n      \"filming_suggestion\": \"Visit during off-peak hours if possible. Focus on the artistic details of the installations and your personal reaction to them.\"\n    },\n    {\n      \"day_index\": 12,\n      \"theme\": \"Local food discoveries\",\n      \"idea\": \"A 'Point of View' (POV) style video of you and your friends trying an authentic Cotoletta alla Milanese at a local trattoria for the first time.\",\n      \"filming_suggestion\": \"Film from your perspective, showing the dish arriving and your friends' reactions. It makes the viewer feel like they're at the table with you.\"\n    },\n    {\n      \"day_index\": 13,\n      \"theme\": \"Film photography diaries\",\n      \"idea\": \"A 'core memory' recap of one perfect moment with your visitors, like laughing in a piazza at sunset. Short, beautiful, and set to emotional music.\",\n      \"filming_suggestion\": \"Film this in slow-motion during golden hour for a cinematic, nostalgic feel. Keep the clip under 10 seconds.\"\n    },\n    {\n      \"day_index\": 14,\n      \"theme\": \"Event: Design Week\",\n      \"idea\": \"Showcase your 'Thrifted Design Week Outfits.' A quick-cut video showing a few looks you've put together from secondhand finds.\",\n      \"filming_suggestion\": \"Choose a location with interesting architecture as your backdrop, connecting the fashion to the design theme.\"\n    },\n    {\n      \"day_index\": 15,\n      \"theme\": \"Milan's hidden spots\",\n      \"idea\": \"A guide to the best streets for vintage furniture and design shops, tying into the Design Week theme. Perfect for visitors looking for unique souvenirs.\",\n      \"filming_suggestion\": \"Create a map-style graphic overlay with the street names to make the video extra 'saveable' for viewers.\"\n    },\n    {\n      \"day_index\": 16,\n      \"theme\": \"Slow morning rituals\",\n      \"idea\": \"A 'Post-Design Week Reset' routine. Show a very calm, quiet morning after your guests have left, emphasizing rest and recovery.\",\n      \"filming_suggestion\": \"Contrast the calm visuals with a text overlay like 'After a week of chaos...' to create a relatable narrative.\"\n    },\n    {\n      \"day_index\": 17,\n      \"theme\": \"Local food discoveries\",\n      \"idea\": \"Your definitive, curated guide to the best gelato in Milan. Hook: 'My very curated Milan gelato guide. Save this for your trip.' Feature 3 local-favorite spots.\",\n      \"filming_suggestion\": \"Get a satisfying slow-motion shot of the gelato being scooped. Add text overlays with the name and address of each gelateria.\"\n    },\n    {\n      \"day_index\": 18,\n      \"theme\": \"Film photography diaries\",\n      \"idea\": \"A quick 'How I shoot film in Milan' video. Show your camera, your favorite film stock, and one practical tip (e.g., 'always underexpose slightly').\",\n      \"filming_suggestion\": \"Film this 'get ready with me' style, as you pack your camera bag before heading out to shoot.\"\n    },\n    {\n      \"day_index\": 19,\n      \"theme\": \"Thrifting finds & styling\",\n      \"idea\": \"A haul from a specific flea market, like the one on the Naviglio Grande. Show the atmosphere of the market and then your top 3 finds.\",\n      \"filming_suggestion\": \"Start with a wide, bustling shot of the market, then transition to close-ups of your finds back at your apartment.\"\n    },\n    {\n      \"day_index\": 20,\n      \"theme\": \"Milan's hidden spots\",\n      \"idea\": \"A video guide to a 'perfect slow Saturday in the Navigli district,' combining your pillars: a canal-side cafe, browsing artists' studios, and an evening aperitivo.\",\n      \"filming_suggestion\": \"Film throughout the day to capture the changing light on the canals, from bright afternoon to sparkling evening.\"\n    },\n    {\n      \"day_index\": 21,\n      \"theme\": \"Local food discoveries\",\n      \"idea\": \"A guide to the 'panzerotti' rivalry: comparing the famous Luini with a lesser-known local spot. A fun, casual taste test.\",\n      \"filming_suggestion\": \"Film on the street right after buying them. Use text on screen to show your 'ratings' for each one on different criteria (crust, filling, etc.).\"\n    },\n    {\n      \"day_index\": 22,\n      \"theme\": \"Thrifting finds & styling\",\n      \"idea\": \"My Spring thrifted outfit rotation. A quick-cut video of 4 go-to, repeatable outfits you've built from secondhand pieces.\",\n      \"filming_suggestion\": \"Use the same spot for each outfit clip for a consistent look. A seamless loop transition would be very effective here.\"\n    },\n    {\n      \"day_index\": 23,\n      \"theme\": \"Slow morning rituals\",\n      \"idea\": \"A visit to a local neighborhood flower market. Show the colorful stalls and the process of picking out a fresh bouquet for your home.\",\n      \"filming_suggestion\": \"Focus on the textures and colors of the flowers. A slow-motion shot of you arranging the flowers in a vase at home would be a nice ending.\"\n    },\n    {\n      \"day_index\": 24,\n      \"theme\": \"Milan's hidden spots\",\n      \"idea\": \"The spot nobody told you about: feature a beautiful, quiet public garden like Guastalla Gardens or Parco Sempione's hidden corners.\",\n      \"filming_suggestion\": \"Capture the feeling of peace and quiet. Shots of people reading on benches, sun filtering through trees, and details of the fountains.\"\n    },\n    {\n      \"day_index\": 25,\n      \"theme\": \"Film photography diaries\",\n      \"idea\": \"A 'before and after' reveal of your film photos. Show a 2-second video clip of the scene you're shooting, then transition to the final, scanned film photograph.\",\n      \"filming_suggestion\": \"Use a 'camera shutter' sound effect for the transition between the video clip and the photo to make it satisfying.\"\n    },\n    {\n      \"day_index\": 26,\n      \"theme\": \"Local food discoveries\",\n      \"idea\": \"A guide to the different types of Italian coffee and how to order them like a local. (Caffè, macchiato, cappuccino, etc.).\",\n      \"filming_suggestion\": \"Film at the counter of a classic Milanese coffee bar. Use quick text overlays to explain each coffee type as you order and show it.\"\n    },\n    {\n      \"day_index\": 27,\n      \"theme\": \"Thrifting finds & styling\",\n      \"idea\": \"A talking video sharing your philosophy on slow fashion and why you choose to thrift, filmed while you mend or care for a vintage piece.\",\n      \"filming_suggestion\": \"Keep the action of you working on the garment in the frame to make the video visually engaging while you talk.\"\n    },\n    {\n      \"day_index\": 28,\n      \"theme\": \"Milan's hidden spots\",\n      \"idea\": \"Highlight Milan's iconic yellow trams. Share a tip on which line to take for the most scenic, unofficial city tour.\",\n      \"filming_suggestion\": \"Film from both inside the tram looking out, and from the street watching it go by. A shot of the old wooden interiors is a must.\"\n    },\n    {\n      \"day_index\": 29,\n      \"theme\": \"Local food discoveries\",\n      \"idea\": \"A visit to a local covered market, like Mercato Comunale Wagner. Show the vibrant produce, cheese counters, and pasta shops inside.\",\n      \"filming_suggestion\": \"Capture the lively interactions between vendors and customers to show the authentic market culture.\"\n    },\n    {\n      \"day_index\": 30,\n      \"theme\": \"Slow morning rituals\",\n      \"idea\": \"Re-creating the cafe experience at home. Show how you make a cafe-quality cappuccino and pastry for a cozy morning in.\",\n      \"filming_suggestion\": \"Focus on the details: the latte art, the flaky pastry, the steam from the cup, all set in a beautifully lit corner of your kitchen.\"\n    }\n  ]\n}",
   "output": {
     "items": [
       {
         "day_index": 1,
-        "theme": "Milan's Hidden Spots",
-        "idea": "A curated guide to design-forward cafes in Milan that offer a quiet escape during Design Week, perfect for creative professionals.",
-        "filming_suggestion": "Capture the cafe's aesthetic details and a serene coffee moment, shoot in the morning."
+        "theme": "Slow morning rituals",
+        "idea": "An aesthetic montage of your slow morning routine. Hook: 'Mornings in Milan just feel different.' Show sunlight in your apartment, making coffee in a Moka pot, and journaling by the window.",
+        "filming_suggestion": "Film during the golden hour in the morning for soft, warm light. Use a mix of tight, detailed shots and wider, scene-setting shots."
       },
       {
         "day_index": 2,
-        "theme": "Slow Morning Rituals",
-        "idea": "My peaceful morning routine: preparing a simple Italian breakfast and enjoying a quiet moment before the Design Week rush.",
-        "filming_suggestion": "Soft morning light, close-ups of coffee brewing, a croissant, a book, cozy home setting."
+        "theme": "Milan's hidden spots",
+        "idea": "A fast-paced guide to 3 secret, beautiful courtyards in the Brera district. Hook: 'My curated guide to Milan's secret courtyards. You need to save this.'",
+        "filming_suggestion": "Use quick cuts synchronized to a trending sound. Film vertically to emphasize the height and architecture of the courtyards."
       },
       {
         "day_index": 3,
-        "theme": "Local Food Discoveries",
-        "idea": "The best Milanese *panzerotti* spot that's an institution, perfect for a quick, authentic Design Week lunch.",
-        "filming_suggestion": "Capture the vibrant street food scene, close-ups of the panzerotti being made and eaten."
+        "theme": "Thrifting finds & styling",
+        "idea": "Show one unique thrifted piece (e.g., a silk scarf or vintage blazer) and style it in three different ways for a Milanese spring day.",
+        "filming_suggestion": "Use a tripod and film yourself in front of a neutral background to let the outfits stand out. A 'tap to change' transition could work well."
       },
       {
         "day_index": 4,
-        "theme": "Thrifting Finds & Styling",
-        "idea": "Styling a full outfit for a casual Design Week event using only my recent vintage and thrift store finds from Milan.",
-        "filming_suggestion": "Showcase individual pieces, then a quick try-on montage in a well-lit space."
+        "theme": "Local food discoveries",
+        "idea": "Feature a tiny, family-run bakery that tourists don't know about. Hook: 'The one Milan bakery you won't find in the guidebooks.' Focus on their specialty, like a specific focaccia.",
+        "filming_suggestion": "Ask for permission to film. Get close-up shots of the food and capture the authentic, charming atmosphere of the shop."
       },
       {
         "day_index": 5,
-        "theme": "Film Photography Diaries",
-        "idea": "A short film diary of unexpected design details and architectural textures I've noticed on my walks during Design Week, captured on film.",
-        "filming_suggestion": "Focus on unique textures, patterns, and street art details, handheld shots, golden hour light."
+        "theme": "Film photography diaries",
+        "idea": "A moody, B-roll diary of moments from your latest roll of film. Hook: 'A feeling, not a place.' No talking, just visuals set to an atmospheric, trending sound.",
+        "filming_suggestion": "Overlay a subtle film grain effect in editing to match the aesthetic. Mix in a few shots of you holding or using your film camera."
       },
       {
         "day_index": 6,
-        "theme": "Milan's Hidden Spots",
-        "idea": "Uncovering a lesser-known design gallery or concept store that's part of Fuorisalone but tucked away from the main circuits.",
-        "filming_suggestion": "Show exterior and interior, highlight a few key pieces, capture the quiet ambiance."
+        "theme": "Event: Design Week",
+        "idea": "A short, talking-head video sharing your excitement for friends visiting for Design Week and your #1 tip for surviving the city's happy chaos.",
+        "filming_suggestion": "Film in a cozy corner of your apartment to maintain the warm, friendly tone. Speak directly and authentically to the camera."
       },
       {
         "day_index": 7,
-        "theme": "Local Food Discoveries",
-        "idea": "My top 3 aperitivo spots in Milan that offer unique, artisanal cocktails and bites, avoiding the typical tourist traps during Design Week.",
-        "filming_suggestion": "Shots of cocktails being made, stylish interiors, clinking glasses, capture the happy hour vibe."
+        "theme": "Thrifting finds & styling",
+        "idea": "A 'Come thrifting with me' video as you hunt for unique home goods or decor accents before your guests arrive. Show the process and the finds.",
+        "filming_suggestion": "Film on your phone for a casual, vlog-style feel. Speed up the clips of you browsing the aisles and slow down to show off your best finds."
       },
       {
         "day_index": 8,
-        "theme": "Slow Morning Rituals",
-        "idea": "My ideal slow Sunday morning in Milan, starting with fresh flowers from a local market and a quiet coffee on my balcony.",
-        "filming_suggestion": "Capture the market's colors, bringing flowers home, enjoying coffee with soft morning light."
+        "theme": "Milan's hidden spots",
+        "idea": "Spotlight a quiet, beautiful library or a historic bookshop as the perfect place to escape the city buzz. Frame it as a peaceful sanctuary.",
+        "filming_suggestion": "Be respectful and silent while filming. Focus on details: ornate shelves, texture of old books, quiet reading corners."
       },
       {
         "day_index": 9,
-        "theme": "Thrifting Finds & Styling",
-        "idea": "A thrift haul focusing on unique home decor pieces found in Milan's vintage markets, and how I style them in my apartment.",
-        "filming_suggestion": "Showcase each item with close-ups, then show it integrated into a room, before/after styling."
+        "theme": "Slow morning rituals",
+        "idea": "An ASMR-style video focusing on the ritual of making coffee. Close-up shots of the water, the coffee grounds, the steam. No talking, just the sounds.",
+        "filming_suggestion": "Use a microphone if possible, or keep your phone very close to the action to capture the satisfying sounds clearly."
       },
       {
         "day_index": 10,
-        "theme": "Milan's Hidden Spots",
-        "idea": "Discovering a secret garden or historic courtyard in the heart of Milan, a tranquil oasis perfect for reflection.",
-        "filming_suggestion": "Slow panning shots, focus on greenery, water features, architectural details, quiet atmosphere."
+        "theme": "Event: Design Week",
+        "idea": "Your visitors have arrived! A quick montage of taking them to your favorite non-touristy aperitivo spot. Hook: 'First stop for my Design Week friends: an authentic aperitivo.'",
+        "filming_suggestion": "Capture candid moments of you and your friends enjoying yourselves. Focus on the drinks, the food, and the genuine atmosphere."
       },
       {
         "day_index": 11,
-        "theme": "Local Food Discoveries",
-        "idea": "A deep dive into Milan's best places for a truly authentic *cotoletta alla Milanese*, sharing my top recommendation.",
-        "filming_suggestion": "Plate presentation, close-ups of the cotoletta, the restaurant's ambiance, a delicious bite shot."
+        "theme": "Event: Design Week",
+        "idea": "A guide to 3 lesser-known but stunning Design Week installations. Hook: 'How to enjoy Design Week without the crowds.'",
+        "filming_suggestion": "Visit during off-peak hours if possible. Focus on the artistic details of the installations and your personal reaction to them."
       },
       {
         "day_index": 12,
-        "theme": "Film Photography Diaries",
-        "idea": "A 'Milan in Monochrome' film photo diary, capturing the timeless beauty of the city's architecture and everyday life in black and white.",
-        "filming_suggestion": "Quick cuts of film camera in hand, then a slideshow of developed black & white photos."
+        "theme": "Local food discoveries",
+        "idea": "A 'Point of View' (POV) style video of you and your friends trying an authentic Cotoletta alla Milanese at a local trattoria for the first time.",
+        "filming_suggestion": "Film from your perspective, showing the dish arriving and your friends' reactions. It makes the viewer feel like they're at the table with you."
       },
       {
         "day_index": 13,
-        "theme": "Slow Morning Rituals",
-        "idea": "Elevating your coffee routine: my favorite Milanese coffee beans and how I brew them for the perfect slow start to my day.",
-        "filming_suggestion": "Grind beans, pour-over process, steam rising from the cup, cozy kitchen setting."
+        "theme": "Film photography diaries",
+        "idea": "A 'core memory' recap of one perfect moment with your visitors, like laughing in a piazza at sunset. Short, beautiful, and set to emotional music.",
+        "filming_suggestion": "Film this in slow-motion during golden hour for a cinematic, nostalgic feel. Keep the clip under 10 seconds."
       },
       {
         "day_index": 14,
-        "theme": "Milan's Hidden Spots",
-        "idea": "An aesthetic walking tour of a less-explored Milanese neighborhood, highlighting its unique shops, cafes, and street art.",
-        "filming_suggestion": "Follow me style, showing points of interest, panning shots of street art, local life."
+        "theme": "Event: Design Week",
+        "idea": "Showcase your 'Thrifted Design Week Outfits.' A quick-cut video showing a few looks you've put together from secondhand finds.",
+        "filming_suggestion": "Choose a location with interesting architecture as your backdrop, connecting the fashion to the design theme."
       },
       {
         "day_index": 15,
-        "theme": "Thrifting Finds & Styling",
-        "idea": "My 'capsule wardrobe' challenge using only thrifted items from Milan, showing how to create versatile looks.",
-        "filming_suggestion": "Lay out all items, then quick outfit changes, showing different combinations for various occasions."
+        "theme": "Milan's hidden spots",
+        "idea": "A guide to the best streets for vintage furniture and design shops, tying into the Design Week theme. Perfect for visitors looking for unique souvenirs.",
+        "filming_suggestion": "Create a map-style graphic overlay with the street names to make the video extra 'saveable' for viewers."
       },
       {
         "day_index": 16,
-        "theme": "Local Food Discoveries",
-        "idea": "Exploring a local Milanese food market (e.g., Mercato di Porta Romana) for fresh ingredients and regional delicacies.",
-        "filming_suggestion": "Vibrant market scenes, close-ups of fresh produce, interactions with vendors, selection of ingredients."
+        "theme": "Slow morning rituals",
+        "idea": "A 'Post-Design Week Reset' routine. Show a very calm, quiet morning after your guests have left, emphasizing rest and recovery.",
+        "filming_suggestion": "Contrast the calm visuals with a text overlay like 'After a week of chaos...' to create a relatable narrative."
       },
       {
         "day_index": 17,
-        "theme": "Film Photography Diaries",
-        "idea": "Capturing the magic of Milan at golden hour and sunset on film, focusing on iconic landmarks and hidden views bathed in soft light.",
-        "filming_suggestion": "Time-lapse of light changing, camera panning across skylines, specific architectural details glowing."
+        "theme": "Local food discoveries",
+        "idea": "Your definitive, curated guide to the best gelato in Milan. Hook: 'My very curated Milan gelato guide. Save this for your trip.' Feature 3 local-favorite spots.",
+        "filming_suggestion": "Get a satisfying slow-motion shot of the gelato being scooped. Add text overlays with the name and address of each gelateria."
       },
       {
         "day_index": 18,
-        "theme": "Slow Morning Rituals",
-        "idea": "My mindful journaling practice during a slow morning, reflecting on city discoveries and inspirations.",
-        "filming_suggestion": "Close-ups of journal, pen writing, a hot drink nearby, soft background music, cozy nook."
+        "theme": "Film photography diaries",
+        "idea": "A quick 'How I shoot film in Milan' video. Show your camera, your favorite film stock, and one practical tip (e.g., 'always underexpose slightly').",
+        "filming_suggestion": "Film this 'get ready with me' style, as you pack your camera bag before heading out to shoot."
       },
       {
         "day_index": 19,
-        "theme": "Milan's Hidden Spots",
-        "idea": "A mini-guide to independent bookstores and literary cafes in Milan, perfect for a quiet afternoon escape.",
-        "filming_suggestion": "Cozy interiors, bookshelves, people reading, steam from coffee cups, focus on unique titles."
+        "theme": "Thrifting finds & styling",
+        "idea": "A haul from a specific flea market, like the one on the Naviglio Grande. Show the atmosphere of the market and then your top 3 finds.",
+        "filming_suggestion": "Start with a wide, bustling shot of the market, then transition to close-ups of your finds back at your apartment."
       },
       {
         "day_index": 20,
-        "theme": "Thrifting Finds & Styling",
-        "idea": "Revamping a classic thrifted piece (e.g., a blazer or trench coat) with modern styling tips to make it current and chic.",
-        "filming_suggestion": "Before/after shots of the garment, different ways to accessorize and wear it, confident poses."
+        "theme": "Milan's hidden spots",
+        "idea": "A video guide to a 'perfect slow Saturday in the Navigli district,' combining your pillars: a canal-side cafe, browsing artists' studios, and an evening aperitivo.",
+        "filming_suggestion": "Film throughout the day to capture the changing light on the canals, from bright afternoon to sparkling evening."
       },
       {
         "day_index": 21,
-        "theme": "Local Food Discoveries",
-        "idea": "Uncovering Milan's best artisanal gelato shops and my top picks for unique and traditional flavors.",
-        "filming_suggestion": "Scooping gelato, close-ups of different flavors, tasting shots, people enjoying gelato."
+        "theme": "Local food discoveries",
+        "idea": "A guide to the 'panzerotti' rivalry: comparing the famous Luini with a lesser-known local spot. A fun, casual taste test.",
+        "filming_suggestion": "Film on the street right after buying them. Use text on screen to show your 'ratings' for each one on different criteria (crust, filling, etc.)."
       },
       {
         "day_index": 22,
-        "theme": "Film Photography Diaries",
-        "idea": "A 'people watching' film diary from my favorite Milanese piazza, capturing candid moments of local life.",
-        "filming_suggestion": "Discreet shots of street life, interactions, expressions, focus on human element."
+        "theme": "Thrifting finds & styling",
+        "idea": "My Spring thrifted outfit rotation. A quick-cut video of 4 go-to, repeatable outfits you've built from secondhand pieces.",
+        "filming_suggestion": "Use the same spot for each outfit clip for a consistent look. A seamless loop transition would be very effective here."
       },
       {
         "day_index": 23,
-        "theme": "Slow Morning Rituals",
-        "idea": "My gentle movement routine: starting the day with light yoga or stretching to prepare for city explorations.",
-        "filming_suggestion": "Smooth transitions between poses, soft lighting, quiet home or park setting."
+        "theme": "Slow morning rituals",
+        "idea": "A visit to a local neighborhood flower market. Show the colorful stalls and the process of picking out a fresh bouquet for your home.",
+        "filming_suggestion": "Focus on the textures and colors of the flowers. A slow-motion shot of you arranging the flowers in a vase at home would be a nice ending."
       },
       {
         "day_index": 24,
-        "theme": "Milan's Hidden Spots",
-        "idea": "The most beautiful public park or garden in Milan that tourists often overlook, perfect for a peaceful stroll.",
-        "filming_suggestion": "Long, slow shots of pathways, flowers, benches, sculptures, sound of birds."
+        "theme": "Milan's hidden spots",
+        "idea": "The spot nobody told you about: feature a beautiful, quiet public garden like Guastalla Gardens or Parco Sempione's hidden corners.",
+        "filming_suggestion": "Capture the feeling of peace and quiet. Shots of people reading on benches, sun filtering through trees, and details of the fountains."
       },
       {
         "day_index": 25,
-        "theme": "Thrifting Finds & Styling",
-        "idea": "Accessorize like a local: finding unique vintage jewelry and scarves in Milan's markets to elevate any outfit.",
-        "filming_suggestion": "Close-ups of jewelry, different ways to tie scarves, trying on accessories, mirror shots."
+        "theme": "Film photography diaries",
+        "idea": "A 'before and after' reveal of your film photos. Show a 2-second video clip of the scene you're shooting, then transition to the final, scanned film photograph.",
+        "filming_suggestion": "Use a 'camera shutter' sound effect for the transition between the video clip and the photo to make it satisfying."
       },
       {
         "day_index": 26,
-        "theme": "Local Food Discoveries",
-        "idea": "An authentic Milanese pizzeria that feels like a hidden neighborhood secret, known for its traditional recipes.",
-        "filming_suggestion": "Pizza being made in the oven, bubbling cheese, happy diners, cozy restaurant atmosphere."
+        "theme": "Local food discoveries",
+        "idea": "A guide to the different types of Italian coffee and how to order them like a local. (Caffè, macchiato, cappuccino, etc.).",
+        "filming_suggestion": "Film at the counter of a classic Milanese coffee bar. Use quick text overlays to explain each coffee type as you order and show it."
       },
       {
         "day_index": 27,
-        "theme": "Film Photography Diaries",
-        "idea": "A rainy day film diary in Milan, capturing the city's melancholic beauty and reflections in puddles.",
-        "filming_suggestion": "Raindrops on windows, people with umbrellas, wet cobblestones reflecting lights, mood shots."
+        "theme": "Thrifting finds & styling",
+        "idea": "A talking video sharing your philosophy on slow fashion and why you choose to thrift, filmed while you mend or care for a vintage piece.",
+        "filming_suggestion": "Keep the action of you working on the garment in the frame to make the video visually engaging while you talk."
       },
       {
         "day_index": 28,
-        "theme": "Slow Morning Rituals",
-        "idea": "My curated playlist for a slow morning in Milan, featuring Italian indie artists and calming tunes.",
-        "filming_suggestion": "Visuals of a quiet morning, a record player spinning, cup of tea, with text overlay of playlist title/artists."
+        "theme": "Milan's hidden spots",
+        "idea": "Highlight Milan's iconic yellow trams. Share a tip on which line to take for the most scenic, unofficial city tour.",
+        "filming_suggestion": "Film from both inside the tram looking out, and from the street watching it go by. A shot of the old wooden interiors is a must."
       },
       {
         "day_index": 29,
-        "theme": "Milan's Hidden Spots",
-        "idea": "Exploring the architectural details and hidden allegories of a historical Milanese building often passed by without a second glance.",
-        "filming_suggestion": "Zoom in on intricate carvings, specific facades, unexpected details on doors or windows."
+        "theme": "Local food discoveries",
+        "idea": "A visit to a local covered market, like Mercato Comunale Wagner. Show the vibrant produce, cheese counters, and pasta shops inside.",
+        "filming_suggestion": "Capture the lively interactions between vendors and customers to show the authentic market culture."
       },
       {
         "day_index": 30,
-        "theme": "Local Food Discoveries",
-        "idea": "My favorite spot for a leisurely weekend brunch in Milan, offering a sophisticated yet authentic menu.",
-        "filming_suggestion": "Beautifully presented brunch dishes, mimosas, elegant interior, soft chatter, natural light."
+        "theme": "Slow morning rituals",
+        "idea": "Re-creating the cafe experience at home. Show how you make a cafe-quality cappuccino and pastry for a cozy morning in.",
+        "filming_suggestion": "Focus on the details: the latte art, the flaky pastry, the steam from the cup, all set in a beautifully lit corner of your kitchen."
       }
     ]
   },
   "meta": {
-    "source": "live_capture_2026-05-29",
+    "source": "live_capture_2026-05-30",
     "case": "market-trained: city-guide persona + event -> 30-day plan reuses mined idea patterns (perfect-day, hidden-gem) adapted to Milan; unique sorted day_index 1..30, pillars rotate, activation week front-loaded"
   }
 }

@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.persona_generator",
-  "prompt_version": "2026-05-29",
+  "prompt_version": "2026-05-30",
   "input": {
     "work": "part-time barista",
     "school": "junior at Michigan State, kinesiology major",
@@ -11,29 +11,32 @@
     "passions": "making gym culture feel welcoming to beginners",
     "tiktok_handle": "liftandlentils"
   },
-  "raw_text": "{\"summary\": \"You are the welcoming face of beginner gym culture, blending powerlifting with approachable high-protein cooking. You make strength feel doable for the nervous first-timer, not intimidating.\", \"content_pillars\": [\"beginner-friendly powerlifting form\", \"high-protein meals on a student budget\", \"gym-anxiety pep talks\", \"national-park road-trip recaps\"], \"tone\": \"warm, encouraging, a little goofy\", \"audience\": \"college students who want to start lifting but feel out of place at the gym\", \"posting_cadence\": \"4 posts/week, heavier on Sunday meal-prep days\", \"sample_topics\": [\"first-day-at-the-gym survival guide\", \"$5 high-protein lunch\", \"how to squat without fear\", \"thrift haul gym fits\", \"what I eat in a day on a budget\", \"road trip workout with no equipment\"]}",
+  "raw_text": "{\n  \"summary\": \"You are the friendly powerlifter and kinesiology student making the gym feel less intimidating for beginners. Your content blends practical, high-protein recipes and accessible lifting advice with a down-to-earth, college-life aesthetic.\",\n  \"content_pillars\": [\n    \"Beginner-friendly powerlifting tips\",\n    \"High-protein student meals\",\n    \"Balancing fitness and college life\",\n    \"Thrifted gym outfits\",\n    \"National park road trips\"\n  ],\n  \"tone\": \"Welcoming, educational, and relatable big-sibling energy\",\n  \"audience\": \"Fellow college students and gym beginners who want approachable fitness and nutrition advice from someone who gets their lifestyle.\",\n  \"posting_cadence\": \"3-4 posts/week, likely batched on days with fewer classes\",\n  \"sample_topics\": [\n    \"How to set up for your first deadlift\",\n    \"My 20-minute high-protein lentil bolognese\",\n    \"A day in my life: kinesiology class, barista shift, and a lift\",\n    \"Rating my thrifted finds for the gym\",\n    \"Three things I wish I knew before I started lifting\",\n    \"Meal prepping protein snacks on a student budget\",\n    \"How to find a welcoming gym community\",\n    \"What I pack for a weekend national park trip\"\n  ]\n}",
   "output": {
-    "summary": "You are the welcoming face of beginner gym culture, blending powerlifting with approachable high-protein cooking. You make strength feel doable for the nervous first-timer, not intimidating.",
+    "summary": "You are the friendly powerlifter and kinesiology student making the gym feel less intimidating for beginners. Your content blends practical, high-protein recipes and accessible lifting advice with a down-to-earth, college-life aesthetic.",
     "content_pillars": [
-      "beginner-friendly powerlifting form",
-      "high-protein meals on a student budget",
-      "gym-anxiety pep talks",
-      "national-park road-trip recaps"
+      "Beginner-friendly powerlifting tips",
+      "High-protein student meals",
+      "Balancing fitness and college life",
+      "Thrifted gym outfits",
+      "National park road trips"
     ],
-    "tone": "warm, encouraging, a little goofy",
-    "audience": "college students who want to start lifting but feel out of place at the gym",
-    "posting_cadence": "4 posts/week, heavier on Sunday meal-prep days",
+    "tone": "Welcoming, educational, and relatable big-sibling energy",
+    "audience": "Fellow college students and gym beginners who want approachable fitness and nutrition advice from someone who gets their lifestyle.",
+    "posting_cadence": "3-4 posts/week, likely batched on days with fewer classes",
     "sample_topics": [
-      "first-day-at-the-gym survival guide",
-      "$5 high-protein lunch",
-      "how to squat without fear",
-      "thrift haul gym fits",
-      "what I eat in a day on a budget",
-      "road trip workout with no equipment"
+      "How to set up for your first deadlift",
+      "My 20-minute high-protein lentil bolognese",
+      "A day in my life: kinesiology class, barista shift, and a lift",
+      "Rating my thrifted finds for the gym",
+      "Three things I wish I knew before I started lifting",
+      "Meal prepping protein snacks on a student budget",
+      "How to find a welcoming gym community",
+      "What I pack for a weekend national park trip"
     ]
   },
   "meta": {
-    "source": "hand_authored_golden",
+    "source": "live_capture_2026-05-30",
     "case": "well-formed questionnaire -> grounded persona; pillars (4) and sample_topics (6) within bounds, all fields non-empty"
   }
 }
