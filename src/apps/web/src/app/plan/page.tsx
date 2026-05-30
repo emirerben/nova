@@ -19,6 +19,7 @@ import OnboardingStep from "./_components/OnboardingStep";
 import PersonaEditor from "./_components/PersonaEditor";
 import PlanCalendar from "./_components/PlanCalendar";
 import PlanShell from "./_components/PlanShell";
+import SeedUploadCard from "./_components/SeedUploadCard";
 import SignInPrompt from "./_components/SignInPrompt";
 import Stepper, { type WizardStep } from "./_components/Stepper";
 
@@ -346,7 +347,12 @@ function PlanStepView({
     );
   }
 
-  return <PlanCalendar plan={plan} onError={onError} onRefresh={onRefresh} />;
+  return (
+    <>
+      <SeedUploadCard plan={plan} onError={onError} onRefresh={onRefresh} />
+      <PlanCalendar plan={plan} onError={onError} onRefresh={onRefresh} />
+    </>
+  );
 }
 
 function blankPersona(): PersonaContent {

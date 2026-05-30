@@ -252,6 +252,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.content_plan_generator import ContentPlanGeneratorAgent
 
         return ContentPlanGeneratorAgent
+    if agent_name == "nova.plan.clip_plan_matcher":
+        from app.agents.clip_plan_matcher import ClipPlanMatcherAgent
+
+        return ClipPlanMatcherAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 

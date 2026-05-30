@@ -26,6 +26,7 @@ from app.agents.clip_metadata import (
     ClipMetadataInput,
     ClipMetadataOutput,
 )
+from app.agents.clip_plan_matcher import ClipPlanMatcherInput, ClipPlanMatcherOutput
 from app.agents.clip_router import ClipRouterInput, ClipRouterOutput
 from app.agents.creative_direction import CreativeDirectionOutput
 from app.agents.intro_writer import (
@@ -1061,6 +1062,61 @@ def check_music_matcher(output: MusicMatcherOutput, input: MusicMatcherInput) ->
     return failures
 
 
+def check_clip_plan_matcher(
+    output: ClipPlanMatcherOutput,
+    input: ClipPlanMatcherInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.plan.clip_plan_matcher.
+
+    Pydantic enforces score bounds [0, 10] and per-entry required fields. This
+    layer asserts the cross-field invariants ``parse()`` upholds: every
+    ``clip_gcs_path`` and ``item_id`` resolves against the input set, no duplicate
+    ``(item, clip)`` pairs, rationale non-empty, scores monotonically
+    non-increasing (sorted highest-first), and the list capped at
+    ``max_assignments``. An EMPTY list is valid (best-effort no-match) and never
+    a failure.
+    """
+    failures: list[str] = []
+    valid_paths = {c.clip_gcs_path for c in input.clips}
+    valid_items = {it.item_id for it in input.items}
+
+    if len(output.assignments) > input.max_assignments:
+        failures.append(
+            f"{len(output.assignments)} assignments > max_assignments={input.max_assignments}"
+        )
+
+    seen: set[tuple[str, str]] = set()
+    last_score: float | None = None
+    for i, a in enumerate(output.assignments):
+        if a.clip_gcs_path not in valid_paths:
+            failures.append(
+                f"assignments[{i}].clip_gcs_path not in input clips "
+                "(parse() should have dropped this)"
+            )
+        if a.item_id not in valid_items:
+            failures.append(
+                f"assignments[{i}].item_id={a.item_id!r}: not in input items "
+                "(parse() should have dropped this)"
+            )
+        key = (a.item_id, a.clip_gcs_path)
+        if key in seen:
+            failures.append(f"assignments[{i}]: duplicate (item_id, clip_gcs_path) pair")
+        seen.add(key)
+
+        if not a.rationale.strip():
+            failures.append(f"assignments[{i}]: rationale empty after strip")
+        if a.score < 0.0 or a.score > 10.0:
+            failures.append(f"assignments[{i}]: score={a.score} outside [0, 10]")
+        if last_score is not None and a.score - last_score > 0.01:
+            failures.append(
+                f"assignments[{i}]: score={a.score:.2f} > assignments[{i - 1}].score="
+                f"{last_score:.2f} — assignments should be sorted highest-first"
+            )
+        last_score = a.score
+
+    return failures
+
+
 def check_template_text(
     output: TemplateTextOutput,
     input: TemplateTextInput,  # noqa: A002
@@ -1257,6 +1313,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_song_sections(output, input)
     if agent_name == "nova.audio.music_matcher":
         return check_music_matcher(output, input)
+    if agent_name == "nova.plan.clip_plan_matcher":
+        return check_clip_plan_matcher(output, input)
     if agent_name == "nova.video.clip_router":
         return check_clip_router(output, input)
     if agent_name == "nova.video.shot_ranker":

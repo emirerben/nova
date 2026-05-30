@@ -1,0 +1,41 @@
+{
+  "agent": "nova.plan.clip_plan_matcher",
+  "prompt_version": "2026-05-29",
+  "input": {
+    "clips": [
+      {
+        "clip_gcs_path": "users/u3/plan/p3/seed/c1-pasta.mp4",
+        "hook_text": "the easiest pasta you'll ever make",
+        "hook_score": 7.0,
+        "detected_subject": "cooking a one-pan tomato pasta on a stovetop, overhead",
+        "transcript_excerpt": "garlic in, tomatoes in, that's basically it",
+        "duration_s": 12.0
+      },
+      {
+        "clip_gcs_path": "users/u3/plan/p3/seed/c2-mealprep.mp4",
+        "hook_text": "sunday meal prep for the whole week",
+        "hook_score": 6.5,
+        "detected_subject": "filling five containers with rice, chicken and vegetables on a counter",
+        "transcript_excerpt": "five containers, same base, different sauces",
+        "duration_s": 10.0
+      }
+    ],
+    "items": [
+      {"item_id": "item_quick", "theme": "Quick recipe", "idea": "A fast weeknight dinner anyone can make", "filming_suggestion": "Overhead stovetop"},
+      {"item_id": "item_prep", "theme": "Meal prep", "idea": "Prep a week of lunches in one session", "filming_suggestion": "Counter shot of containers"},
+      {"item_id": "item_travel", "theme": "Travel", "idea": "A day trip near your city", "filming_suggestion": "Handheld outdoors"}
+    ],
+    "max_assignments": 2
+  },
+  "raw_text": "{\"assignments\": [{\"item_id\": \"item_quick\", \"clip_gcs_path\": \"users/u3/plan/p3/seed/c1-pasta.mp4\", \"score\": 8.8, \"rationale\": \"The one-pan tomato pasta is the textbook fast weeknight dinner the quick-recipe day wants.\"}, {\"item_id\": \"item_prep\", \"clip_gcs_path\": \"users/u3/plan/p3/seed/c2-mealprep.mp4\", \"score\": 8.2, \"rationale\": \"The five-container Sunday prep clip maps one-to-one onto the meal-prep day, so the two cooking clips activate two distinct items rather than doubling up.\"}]}",
+  "output": {
+    "assignments": [
+      {"item_id": "item_quick", "clip_gcs_path": "users/u3/plan/p3/seed/c1-pasta.mp4", "score": 8.8, "rationale": "The one-pan tomato pasta is the textbook fast weeknight dinner the quick-recipe day wants."},
+      {"item_id": "item_prep", "clip_gcs_path": "users/u3/plan/p3/seed/c2-mealprep.mp4", "score": 8.2, "rationale": "The five-container Sunday prep clip maps one-to-one onto the meal-prep day, so the two cooking clips activate two distinct items rather than doubling up."}
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "coverage/spread — both clips are food content that could pile onto one cooking item, but the matcher spreads them across the two distinct cooking items (quick recipe vs meal prep) to show range"
+  }
+}

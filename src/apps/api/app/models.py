@@ -579,6 +579,14 @@ class ContentPlan(Base):
     horizon_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default="30")
     # Day N maps to start_date + (N-1) days; first week = days 1-7. NULL until scheduled.
     start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Activation seed (T8): the one batch of recent clips the user uploads after the
+    # plan is ready, stored under users/{user_id}/plan/{plan_id}/seed/. clip_plan_matcher
+    # assigns these to plan items; a matched item references the seed path directly
+    # (no GCS copy — see activate_content_plan).
+    seed_clip_paths: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # none | seeding | activating | activated | activated_empty | failed.
+    # Plan-level poll scalar — per-item render state stays derived from Job.status (T2).
+    activation_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="none")
     prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
