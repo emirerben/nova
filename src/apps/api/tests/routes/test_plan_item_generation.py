@@ -45,6 +45,7 @@ def _owned_item(user_id: uuid.UUID, *, clips=None):
     item.theme = "t"
     item.idea = "i"
     item.filming_suggestion = None
+    item.rationale = None
     item.current_job_id = None
     item.current_job = None
     item.item_status = "idea"

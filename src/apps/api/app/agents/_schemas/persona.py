@@ -14,8 +14,9 @@ from pydantic import BaseModel, Field
 # Bump when prompts/generate_persona.txt OR prompts/persona_archetypes.json OR
 # prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
 # archetype bank + success-factor bank are part of the prompt).
+# 2026-05-30.1 — added `rationale` (the AI's "why this lane" shown in the dashboard).
 # 2026-05-30 — added $success_factors block + archetype performance ranking.
-PERSONA_PROMPT_VERSION = "2026-05-30"
+PERSONA_PROMPT_VERSION = "2026-05-30.1"
 
 # Upper bounds keep a runaway model response from bloating the persona row.
 _MAX_PILLARS = 8
@@ -46,6 +47,10 @@ class Persona(BaseModel):
     audience: str = Field(min_length=1)
     posting_cadence: str = Field(min_length=1)
     sample_topics: list[str] = Field(default_factory=list, max_length=_MAX_TOPICS)
+    # The AI's short "why this lane fits you + why it works on TikTok", surfaced
+    # read-only in the dashboard. Optional so a user edit that drops it never
+    # fails validation; the generator's prompt reliably fills it (structural-checked).
+    rationale: str = ""
 
     def to_dict(self) -> dict:
         return self.model_dump()

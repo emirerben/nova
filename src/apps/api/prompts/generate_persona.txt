@@ -49,11 +49,13 @@ the JSON):
   "tone": "a short phrase for their on-screen voice, e.g. 'warm and self-deprecating' or 'fast, punchy, confident'",
   "audience": "one sentence naming who watches and why they care",
   "posting_cadence": "a realistic weekly rhythm given their life, e.g. '3-4 posts/week, heavier on weekends'",
-  "sample_topics": ["5-8 concrete video ideas they could film this month, each a short specific phrase"]
+  "sample_topics": ["5-8 concrete video ideas they could film this month, each a short specific phrase"],
+  "rationale": "1-2 sentences, second person, shown to the creator as 'why this lane'. Say why this focus fits THEM and why it tends to work on TikTok — name one of the success factors above you leaned on (e.g. save-worthy guides, a felt-moment opener). Plain language, no jargon."
 }
 
 Rules:
 - Ground every field in the questionnaire. If a field is empty, infer gently from the rest; never invent a different person.
 - content_pillars: 3 to 5 items. sample_topics: 5 to 8 items. Keep each item short.
+- rationale: 1-2 sentences, concrete to THIS person, naming a real lever — not generic ("this will do well"). It is shown to the creator, so make it encouraging and clear.
 - No hashtags, no emoji, no @handles in the output.
 - Output must be valid JSON and nothing else.

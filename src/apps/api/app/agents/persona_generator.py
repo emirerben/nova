@@ -93,6 +93,9 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
             posting_cadence=_sanitize_text(persona.posting_cadence),
             content_pillars=[p for p in (_sanitize_text(x) for x in persona.content_pillars) if p],
             sample_topics=[t for t in (_sanitize_text(x) for x in persona.sample_topics) if t],
+            # User-facing "why this lane"; sanitized like the rest (it renders in
+            # the dashboard and round-trips through persona edits).
+            rationale=_sanitize_text(persona.rationale),
         )
         if not cleaned.content_pillars:
             raise RefusalError("persona_generator: content_pillars empty after sanitize")

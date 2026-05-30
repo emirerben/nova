@@ -110,6 +110,13 @@ export default function PersonaEditor({
         <StatusBadge status={status} />
       </div>
 
+      {draft.rationale && (
+        <div className="mb-8 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
+          <p className="mb-1 text-xs font-medium text-amber-300/80">Why this lane</p>
+          <p className="text-sm text-zinc-300">{draft.rationale}</p>
+        </div>
+      )}
+
       {error && (
         <div className="mb-6 rounded border border-red-700 bg-red-950/50 px-4 py-3 text-red-200">
           {error}

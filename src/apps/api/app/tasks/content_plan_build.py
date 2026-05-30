@@ -80,6 +80,7 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                     theme=spec.theme,
                     idea=spec.idea,
                     filming_suggestion=spec.filming_suggestion or None,
+                    rationale=spec.rationale or None,
                     item_status="idea",
                 )
             )

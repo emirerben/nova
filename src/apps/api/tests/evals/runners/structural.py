@@ -1256,6 +1256,13 @@ def check_persona_generator(output: Persona) -> list[str]:
         failures.append(
             f"sample_topics has {len(output.sample_topics)} items > {PERSONA_MAX_TOPICS}"
         )
+    # The dashboard "why this lane" — the prompt reliably fills it; an empty or
+    # boilerplate-length rationale means the reasoning surface is broken.
+    rationale = (output.rationale or "").strip()
+    if not rationale:
+        failures.append("rationale is empty")
+    elif len(rationale) < 10:
+        failures.append(f"rationale {rationale!r} is too short (<10 chars — likely boilerplate)")
     return failures
 
 

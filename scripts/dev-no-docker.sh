@@ -66,11 +66,14 @@ log "Starting API on :8000 (uvicorn --reload)..."
 echo $! >> "$PID_FILE"
 
 # ── Worker ───────────────────────────────────────────────────────────────────
+# -Q celery,plan-jobs: drain BOTH the default queue and the content-plan render
+# queue (per-item + activation renders route to plan-jobs). Must match prod
+# fly.toml — without plan-jobs those renders never run locally (no output).
 log "Starting Celery worker (watchfiles auto-restart)..."
 (
   cd "$REPO/src/apps/api"
   PATH="$REPO/src/apps/api/.venv/bin:$PATH" exec .venv/bin/watchfiles --filter python \
-    'celery -A app.worker:celery_app worker --loglevel=info --concurrency=2' \
+    'celery -A app.worker:celery_app worker --loglevel=info --concurrency=2 -Q celery,plan-jobs' \
     app
 ) > "$DEV_DIR/worker.log" 2>&1 &
 echo $! >> "$PID_FILE"
