@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.content_plan_generator",
-  "prompt_version": "2026-05-30",
+  "prompt_version": "2026-05-30.1",
   "input": {
     "persona": {
       "summary": "You are the welcoming face of beginner gym culture, blending powerlifting with approachable high-protein cooking.",
@@ -21,193 +21,223 @@
     "events": "midterms in week 2; spring break road trip in week 4",
     "horizon_days": 30
   },
-  "raw_text": "{\n  \"items\": [\n    {\n      \"day_index\": 1,\n      \"theme\": \"High-Protein Meal Prep\",\n      \"idea\": \"My $20 meal prep for a week of high-protein lunches. Show the budget grocery haul, the quick prep, and the final stacked containers.\",\n      \"filming_suggestion\": \"Use top-down shots for cooking sequences. Film near a window for bright, natural light. Add text overlay with macros per meal.\"\n    },\n    {\n      \"day_index\": 2,\n      \"theme\": \"Gym-Anxiety Pep Talk\",\n      \"idea\": \"POV: You think everyone is staring at you in the weight room. A relatable clip followed by a direct-to-camera reassurance that they're not.\",\n      \"filming_suggestion\": \"Film the POV part discreetly at the gym. For the pep talk, sit in your room and talk to the camera like you're on FaceTime with a friend.\"\n    },\n    {\n      \"day_index\": 3,\n      \"theme\": \"Beginner Powerlifting Form\",\n      \"idea\": \"The not-scary way to set up for a barbell squat. Break down 3 simple steps: bar height, hand placement, and walking it out.\",\n      \"filming_suggestion\": \"Set your phone on a tripod at a 45-degree angle to the squat rack to clearly show your body positioning from the side.\"\n    },\n    {\n      \"day_index\": 4,\n      \"theme\": \"High-Protein Recipe\",\n      \"idea\": \"The laziest 30g protein snack ever: Greek yogurt protein bark. A quick, goofy tutorial showing how easy it is.\",\n      \"filming_suggestion\": \"Film in your kitchen with fast cuts. End with a satisfying ASMR crunch sound as you take a bite.\"\n    },\n    {\n      \"day_index\": 5,\n      \"theme\": \"Beginner Powerlifting Form\",\n      \"idea\": \"Let's talk about progressive overload. Explain the concept in simple terms, using plates on a barbell as a visual aid.\",\n      \"filming_suggestion\": \"In the gym, stack plates onto a bar as you talk via voiceover, visually demonstrating the 'progressive' part.\"\n    },\n    {\n      \"day_index\": 6,\n      \"theme\": \"Gym-Anxiety Pep Talk\",\n      \"idea\": \"What's in my gym bag to feel 100% prepared and less anxious. Showcase essentials like headphones, a water bottle, and a workout plan.\",\n      \"filming_suggestion\": \"A flat-lay shot of the items, then quick cuts of you packing each one into your bag. Use a trending 'pack with me' sound.\"\n    },\n    {\n      \"day_index\": 7,\n      \"theme\": \"Beginner Powerlifting Form\",\n      \"idea\": \"Common mistake: Where to put your hands for a bench press? Show a narrow vs. a good-width grip and explain the difference.\",\n      \"filming_suggestion\": \"Film from an angle above the bench looking down towards your chest to clearly show hand spacing on the bar.\"\n    },\n    {\n      \"day_index\": 8,\n      \"theme\": \"High-Protein Meal Prep\",\n      \"idea\": \"Midterms week meal prep: Brain fuel edition. Focus on quick, no-reheat meals you can eat while studying.\",\n      \"filming_suggestion\": \"Show a textbook and highlighters on the counter next to your meal prep containers to connect with the student audience.\"\n    },\n    {\n      \"day_index\": 9,\n      \"theme\": \"Mindset\",\n      \"idea\": \"How I use a 30-min workout to manage study stress, not add to it. A short, gentle routine for mental clarity.\",\n      \"filming_suggestion\": \"Use a calming voiceover and show clips of simple exercises. The mood should be relaxing, not intense.\"\n    },\n    {\n      \"day_index\": 10,\n      \"theme\": \"High-Protein Recipe\",\n      \"idea\": \"My 3-minute protein coffee recipe for fueling a late-night study session. A quick tutorial with instant coffee and protein shake.\",\n      \"filming_suggestion\": \"Film in your kitchen with moody, lower lighting to fit the 'late-night' vibe. A satisfying swirl shot is key.\"\n    },\n    {\n      \"day_index\": 11,\n      \"theme\": \"Beginner Powerlifting Form\",\n      \"idea\": \"One simple cue that finally fixed my deadlift form. Show a 'before' (rounded back) and 'after' (flat back) using the cue.\",\n      \"filming_suggestion\": \"A clear side-profile shot is essential here. Use text overlay to pop the cue on screen during the 'after' clip.\"\n    },\n    {\n      \"day_index\": 12,\n      \"theme\": \"Gym-Anxiety Pep Talk\",\n      \"idea\": \"Friendly reminder: It's okay if your workout is just 20 minutes of stretching during midterms week. Rest is productive.\",\n      \"filming_suggestion\": \"Film yourself doing some simple stretches on a yoga mat in your room. Keep the tone gentle and reassuring.\"\n    },\n    {\n      \"day_index\": 13,\n      \"theme\": \"High-Protein Recipe\",\n      \"idea\": \"We survived midterms! Let's make celebratory (but still healthy) high-protein pancakes.\",\n      \"filming_suggestion\": \"Bright, cheerful lighting. Get a slow-motion shot of pouring the syrup for a satisfying payoff.\"\n    },\n    {\n      \"day_index\": 14,\n      \"theme\": \"Mindset\",\n      \"idea\": \"Rating my favorite 'main character' songs for lifting. A fun, lip-sync video showing you getting hyped in your headphones.\",\n      \"filming_suggestion\": \"In the gym before a lift. Use quick cuts between you pointing to text on screen listing the songs, and you mouthing the lyrics.\"\n    },\n    {\n      \"day_index\": 15,\n      \"theme\": \"High-Protein On a Budget\",\n      \"idea\": \"Come grocery shopping with me: My top 5 high-protein finds at Trader Joe's. A saveable guide for students.\",\n      \"filming_suggestion\": \"Film POV-style with your phone in the grocery cart. Point to the items on the shelf and use text overlay for price and protein content.\"\n    },\n    {\n      \"day_index\": 16,\n      \"theme\": \"Beginner Powerlifting Form\",\n      \"idea\": \"Let's master the hip-hinge at home. A tutorial using a wall or a broomstick to learn the pattern without weights.\",\n      \"filming_suggestion\": \"Film against a plain wall in your house so the movement is clear. A side profile view is best.\"\n    },\n    {\n      \"day_index\": 17,\n      \"theme\": \"Gym-Anxiety Pep Talk\",\n      \"idea\": \"My gym outfit rotation for when I want to feel confident, not self-conscious. Focus on comfort and function.\",\n      \"filming_suggestion\": \"A try-on style video in your bedroom. Use a trending outfit transition sound to reveal each look.\"\n    },\n    {\n      \"day_index\": 18,\n      \"theme\": \"High-Protein Recipe\",\n      \"idea\": \"What I eat in a day as a student who actually lifts. Quick, simple, high-protein meals shown in a montage.\",\n      \"filming_suggestion\": \"Compile short clips of each meal throughout the day. Start with making your first meal in the morning and end with your last.\"\n    },\n    {\n      \"day_index\": 19,\n      \"theme\": \"Beginner Powerlifting Form\",\n      \"idea\": \"Are you making this common lat pulldown mistake? Show the wrong way (shrugging shoulders) vs. the right way (depressing scapula).\",\n      \"filming_suggestion\": \"Film from a front/side angle to clearly show the shoulder and back movement. Use a pointer emoji in your text to highlight the area.\"\n    },\n    {\n      \"day_index\": 20,\n      \"theme\": \"Gym Milestone\",\n      \"idea\": \"Tried the assisted pull-up machine for the first time — getting braver. Show the nerves, the shaky reps, and the proud smile.\",\n      \"filming_suggestion\": \"Set up a tripod and film the whole set, including the moment before you start and your reaction after. Focus on the effort, not perfection.\"\n    },\n    {\n      \"day_index\": 21,\n      \"theme\": \"High-Protein Recipe\",\n      \"idea\": \"My secret to making protein oatmeal that doesn't taste like cardboard. A quick tip about mixing and toppings.\",\n      \"filming_suggestion\": \"A top-down shot into the bowl. Show the creamy texture and add colorful toppings for a visually appealing final shot.\"\n    },\n    {\n      \"day_index\": 22,\n      \"theme\": \"High-Protein On a Budget\",\n      \"idea\": \"Packing high-protein snacks for our spring break road trip. Save money and stay on track!\",\n      \"filming_suggestion\": \"A 'pack with me' style video. Lay out all the snacks on your floor or bed first for a satisfying shot, then pack them.\"\n    },\n    {\n      \"day_index\": 23,\n      \"theme\": \"Mindset & Rest\",\n      \"idea\": \"Friendly reminder: Your muscles grow when you REST. Take the spring break guilt-free.\",\n      \"filming_suggestion\": \"A simple selfie-style video talking to the camera from the passenger seat of the car. Authentic and low-production is the vibe.\"\n    },\n    {\n      \"day_index\": 24,\n      \"theme\": \"At-Home Fitness\",\n      \"idea\": \"No gym on vacation? No problem. A 5-minute bodyweight squat routine you can do in your hotel room.\",\n      \"filming_suggestion\": \"Find a spot with good natural light from a window in your room. Prop your phone up on a desk or chair.\"\n    },\n    {\n      \"day_index\": 25,\n      \"theme\": \"High-Protein On a Budget\",\n      \"idea\": \"How to build a high-protein meal at a gas station. A real-world example of picking smart choices on the road.\",\n      \"filming_suggestion\": \"Film POV-style walking through the gas station. Show the items you pick (jerky, protein shake, nuts) and the final combo.\"\n    },\n    {\n      \"day_index\": 26,\n      \"theme\": \"Gym-Anxiety Pep Talk\",\n      \"idea\": \"If you needed to hear this today: It's okay to fall off your routine on vacation. The gym will be there when you get back.\",\n      \"filming_suggestion\": \"Film against a scenic spring break backdrop, like a beach or a viewpoint. Connect the idea of a mental break with the physical one.\"\n    },\n    {\n      \"day_index\": 27,\n      \"theme\": \"Core Memory\",\n      \"idea\": \"A non-fitness 'core memory' from spring break. A montage of happy, goofy moments with friends.\",\n      \"filming_suggestion\": \"Use a cinematic, trending audio. Edit together short, aesthetic video clips from your trip to show your personality outside the gym.\"\n    },\n    {\n      \"day_index\": 28,\n      \"theme\": \"At-Home Fitness\",\n      \"idea\": \"A 5-minute morning mobility routine to do after a long car ride. Great for stiff hips and backs.\",\n      \"filming_suggestion\": \"Film on the floor of your Airbnb or hotel room. Speed up the clips slightly and point to the muscle being stretched with text.\"\n    },\n    {\n      \"day_index\": 29,\n      \"theme\": \"High-Protein Recipe\",\n      \"idea\": \"The 'I just got back from vacation and have no groceries' high-protein meal using only pantry staples.\",\n      \"filming_suggestion\": \"Film in your kitchen. Show the 'empty' fridge then pull out pantry items like canned tuna, beans, and rice to create the meal.\"\n    },\n    {\n      \"day_index\": 30,\n      \"theme\": \"Gym-Anxiety Pep Talk\",\n      \"idea\": \"First day back in the gym after a week off feels weird. Me too. Let's take it easy together.\",\n      \"filming_suggestion\": \"Show yourself warming up slowly and lifting lighter than usual. Use a voiceover about listening to your body and easing back in.\"\n    }\n  ]\n}",
+  "raw_text": "{\n  \"items\": [\n    {\n      \"day_index\": 1,\n      \"theme\": \"Meal Prep\",\n      \"idea\": \"My Go-To $30 Sunday Meal Prep for a High-Protein Week. Show the grocery haul and then quick cuts of making 2-3 simple meals (e.g., chicken and rice bowls, protein pasta salad).\",\n      \"filming_suggestion\": \"Use top-down shots for the cooking process and talk to the camera for the intro/outro in your kitchen to build connection.\",\n      \"rationale\": \"This is highly save-worthy content that provides direct, actionable value to your student audience on a budget.\"\n    },\n    {\n      \"day_index\": 2,\n      \"theme\": \"Gym Anxiety\",\n      \"idea\": \"POV: You're my new gym buddy and I'm showing you it's not that scary. A tour of the gym during off-peak hours, pointing out where things are, with encouraging text overlays.\",\n      \"filming_suggestion\": \"Film this POV-style, holding your phone as if you're on a video call with a friend to make it feel personal and immersive.\",\n      \"rationale\": \"The POV format is a relatable one-liner hook that immediately pulls the viewer into the story.\"\n    },\n    {\n      \"day_index\": 3,\n      \"theme\": \"Powerlifting Form\",\n      \"idea\": \"Let's Learn the Goblet Squat: Your First Step to Squatting Without Fear. Break down the form into 3 simple, memorable cues.\",\n      \"filming_suggestion\": \"Place the camera low and to the side to clearly show your squat depth and neutral back position. Add text callouts for each cue.\",\n      \"rationale\": \"This solves a specific beginner problem and is highly save-worthy for viewers to reference before they try it themselves.\"\n    },\n    {\n      \"day_index\": 4,\n      \"theme\": \"High-Protein Meal\",\n      \"idea\": \"The 5-Minute Protein Shake That Actually Tastes Like Dessert. A quick aesthetic recipe video with a trending sound.\",\n      \"filming_suggestion\": \"Use natural light from a window. Film quick cuts of adding ingredients and a final 'money shot' of the delicious-looking shake.\",\n      \"rationale\": \"A fast-paced edit with a strong payoff in the first 2s (the finished shake) maximizes early watch time.\"\n    },\n    {\n      \"day_index\": 5,\n      \"theme\": \"Pep Talk\",\n      \"idea\": \"A reminder that 'gymtimidation' is real, but so is your strength. You belong here. A single clip of you looking thoughtful pre-workout.\",\n      \"filming_suggestion\": \"Film a static, slightly moody shot in your car or a quiet corner of the gym before you start your workout, letting the on-screen text be the focus.\",\n      \"rationale\": \"This opens on a felt moment that deeply resonates with your audience's core anxiety and encourages shares.\"\n    },\n    {\n      \"day_index\": 6,\n      \"theme\": \"Goofy/Relatable\",\n      \"idea\": \"Rating my gym faces during a heavy lift. A montage of you making funny faces while lifting, with humorous on-screen scores.\",\n      \"filming_suggestion\": \"Set up your phone to record a full set and then punch in on your face in the edit. Use a trending, funny audio.\",\n      \"rationale\": \"This shows your personality and creates shareable, relatable content that makes viewers feel more comfortable.\"\n    },\n    {\n      \"day_index\": 7,\n      \"theme\": \"Powerlifting Form\",\n      \"idea\": \"The #1 Mistake Beginners Make with Dumbbell Rows (and how to fix it). Show the wrong way (jerky, rounded back) vs. the right way (controlled, flat back).\",\n      \"filming_suggestion\": \"Film from a side angle to clearly contrast the incorrect and correct back positions. Use clear '❌' and '✅' text.\",\n      \"rationale\": \"Educational content framed as fixing a common mistake is highly save-worthy and establishes your expertise.\"\n    },\n    {\n      \"day_index\": 8,\n      \"theme\": \"Meal Prep\",\n      \"idea\": \"Midterms Week Meal Prep: 5 High-Protein Lunches You Can Make in Under an Hour. Focus on speed and brain-boosting foods.\",\n      \"filming_suggestion\": \"Film on your kitchen counter with a textbook or laptop visible in the background to set the 'midterms' scene.\",\n      \"rationale\": \"This is timely content that solves a specific pain point for your student audience, making it very save-worthy.\"\n    },\n    {\n      \"day_index\": 9,\n      \"theme\": \"Pep Talk\",\n      \"idea\": \"Feeling Burnt Out From Studying? Let's Move Together for 10 Minutes. A guided, low-impact stretching or mobility routine.\",\n      \"filming_suggestion\": \"Film in your dorm or apartment living room to create an accessible, no-gym-required feel that anyone can do.\",\n      \"rationale\": \"Provides immediate value and a clear reason to save the video for a quick study break.\"\n    },\n    {\n      \"day_index\": 10,\n      \"theme\": \"High-Protein Meal\",\n      \"idea\": \"My 2-minute 'I have no time to cook' midterm snack: Greek yogurt bowl with three toppings. A super fast-cut recipe.\",\n      \"filming_suggestion\": \"Use quick, snappy cuts in time with a trending sound. Show the protein count on screen at the end.\",\n      \"rationale\": \"The short video length needed for this simple idea guarantees a high completion rate.\"\n    },\n    {\n      \"day_index\": 11,\n      \"theme\": \"Gym Anxiety\",\n      \"idea\": \"It's okay to have a 'bad' gym day, especially during midterms. A short voiceover talking about giving yourself grace over a clip of you just sitting on a bench.\",\n      \"filming_suggestion\": \"Film a simple, authentic clip of you taking a breather between sets, looking tired but content. The focus is the message.\",\n      \"rationale\": \"Leading with a relatable, felt moment ('bad gym day') builds trust and encourages supportive comments.\"\n    },\n    {\n      \"day_index\": 12,\n      \"theme\": \"Powerlifting Form\",\n      \"idea\": \"De-stress with Deadlifts (the right way!). A calm, focused tutorial on Romanian Deadlifts (RDLs) as a great stress-reliever.\",\n      \"filming_suggestion\": \"Film from a side angle to emphasize the hip hinge and flat back. Use a calm voiceover instead of loud music.\",\n      \"rationale\": \"The hook 'De-stress with Deadlifts' reframes a daunting exercise as a solution, earning the first 2s.\"\n    },\n    {\n      \"day_index\": 13,\n      \"theme\": \"Goofy/Relatable\",\n      \"idea\": \"My brain cells after my last midterm. A short, funny clip of you dramatically (and safely) failing a very light lift.\",\n      \"filming_suggestion\": \"Film a staged, goofy 'fail' with an empty or very light barbell to keep it safe and funny. Use a popular 'fail' audio.\",\n      \"rationale\": \"Humor and timeliness make this highly shareable among students who just finished exams.\"\n    },\n    {\n      \"day_index\": 14,\n      \"theme\": \"Pep Talk\",\n      \"idea\": \"Post-midterm recovery day routine: gentle stretching, a good meal, and zero pressure. A montage of your relaxing day.\",\n      \"filming_suggestion\": \"Film short, aesthetic clips: steam from tea, stretching in sunlight, closing a textbook. Use a calming, trending sound.\",\n      \"rationale\": \"This 'mood diary' style opens on a felt moment of relief that your audience is also experiencing.\"\n    },\n    {\n      \"day_index\": 15,\n      \"theme\": \"Meal Prep\",\n      \"idea\": \"Meal prepping for the week before Spring Break! Simple meals to feel strong and energized. Focus on non-bloating foods.\",\n      \"filming_suggestion\": \"Standard kitchen setup. Add text overlays like 'Fueling up for sunshine' to build excitement for the upcoming event.\",\n      \"rationale\": \"Tying a routine task to an exciting event makes it more engaging and save-worthy for others with similar plans.\"\n    },\n    {\n      \"day_index\": 16,\n      \"theme\": \"Powerlifting Milestone\",\n      \"idea\": \"Finally hit a new PR on squats! A clip of you successfully hitting the lift, followed by your genuinely happy reaction.\",\n      \"filming_suggestion\": \"Set the camera up, hit record, and capture the whole set, including the celebration. Edit to show the hardest part and the success.\",\n      \"rationale\": \"This frames a milestone as getting braver, inviting the viewer to root for you and feel inspired.\"\n    },\n    {\n      \"day_index\": 17,\n      \"theme\": \"High-Protein Meal\",\n      \"idea\": \"The easiest road trip-friendly protein balls. No-bake recipe that you can make in your dorm room.\",\n      \"filming_suggestion\": \"Film the whole process at your desk or a small table to emphasize how easy and accessible it is for students.\",\n      \"rationale\": \"A useful, save-worthy recipe that's perfectly timed for your audience's spring break plans.\"\n    },\n    {\n      \"day_index\": 18,\n      \"theme\": \"Gym Anxiety\",\n      \"idea\": \"Don't know what to do at the gym? Save this simple 3-move full-body workout for your next visit. (e.g., Goblet Squat, DB Row, Overhead Press).\",\n      \"filming_suggestion\": \"Clearly demonstrate all three exercises with on-screen text specifying sets and reps. Keep the video concise.\",\n      \"rationale\": \"The hook 'Save this' gives a direct command and provides a clear utility, boosting a key engagement signal.\"\n    },\n    {\n      \"day_index\": 19,\n      \"theme\": \"Powerlifting Form\",\n      \"idea\": \"A quick tutorial on lateral raises for that 'spring break ready' feeling. Focus on form over weight.\",\n      \"filming_suggestion\": \"Film from the front to show the proper range of motion. Emphasize the 'no swinging' rule with on-screen text.\",\n      \"rationale\": \"Connects a specific exercise to a desired feeling ('spring break ready') to create a strong, timely hook.\"\n    },\n    {\n      \"day_index\": 20,\n      \"theme\": \"Goofy/Relatable\",\n      \"idea\": \"Packing for spring break: 1 outfit, 10 tubs of protein powder. A funny video showing your suitcase with mostly gym gear and supplements.\",\n      \"filming_suggestion\": \"Use a wide shot to show the ridiculous ratio of gym stuff to normal clothes in your suitcase. Use a funny, trending audio.\",\n      \"rationale\": \"A highly relatable one-liner for the fitness community that is extremely shareable.\"\n    },\n    {\n      \"day_index\": 21,\n      \"theme\": \"Pep Talk\",\n      \"idea\": \"Friendly reminder: You don't need to 'earn' your vacation food. Enjoy your spring break! A simple to-camera chat.\",\n      \"filming_suggestion\": \"Film this selfie-style in your car as you're about to leave for your trip. Speak authentically and from the heart.\",\n      \"rationale\": \"Tackles a common anxiety with a warm, encouraging tone that builds community trust.\"\n    },\n    {\n      \"day_index\": 22,\n      \"theme\": \"High-Protein Meal\",\n      \"idea\": \"How I eat high-protein on a road trip (gas station edition). Show yourself making smart choices like jerky, protein bars, and greek yogurt.\",\n      \"filming_suggestion\": \"Film this in your car right after stopping. Quick cuts showing the products you picked and the protein count.\",\n      \"rationale\": \"This provides non-intuitive, useful information that is highly save-worthy for anyone who travels.\"\n    },\n    {\n      \"day_index\": 23,\n      \"theme\": \"Powerlifting Form\",\n      \"idea\": \"Making the most of a tiny hotel gym. A full workout using only dumbbells and an adjustable bench.\",\n      \"filming_suggestion\": \"Emphasize the limited space in your opening shot. Use a voiceover to explain how to modify exercises for the equipment available.\",\n      \"rationale\": \"Solves a common problem for people who want to stay active while traveling, making it a save-worthy resource.\"\n    },\n    {\n      \"day_index\": 24,\n      \"theme\": \"Milestone\",\n      \"idea\": \"Core memory: This morning's sunrise hike on spring break. A single, beautiful clip of the view.\",\n      \"filming_suggestion\": \"Just one stunning shot of a view you earned on a hike or walk. Add simple text 'core memory unlocked'.\",\n      \"rationale\": \"This adapts the 'getting braver' concept to an experience, opening on a powerful felt moment.\"\n    },\n    {\n      \"day_index\": 25,\n      \"theme\": \"Workout Idea\",\n      \"idea\": \"No gym on vacation? No problem. Try this 15-minute bodyweight circuit you can do in your hotel room.\",\n      \"filming_suggestion\": \"Film in your actual hotel room to prove it can be done. Speed up the clips and use on-screen timers.\",\n      \"rationale\": \"A useful, save-worthy routine that removes all excuses for not being able to exercise.\"\n    },\n    {\n      \"day_index\": 26,\n      \"theme\": \"High-Protein Meal\",\n      \"idea\": \"Finding a high-protein meal while eating out on vacation. My strategy: look for a protein and a vegetable on any menu.\",\n      \"filming_suggestion\": \"Show the menu, then a shot of the delicious (and balanced) food you ordered. Quick and to the point.\",\n      \"rationale\": \"Provides a simple, memorable tip that is useful and save-worthy for anyone who eats out.\"\n    },\n    {\n      \"day_index\": 27,\n      \"theme\": \"Goofy/Relatable\",\n      \"idea\": \"A montage of fun, non-fitness moments from the road trip. Use a trending 'photo dump' style audio.\",\n      \"filming_suggestion\": \"Edit together very short clips: laughing with friends, a beautiful view, a funny moment. Keep it fast-paced.\",\n      \"rationale\": \"Shows your personality outside the gym, making your content more varied and relatable.\"\n    },\n    {\n      \"day_index\": 28,\n      \"theme\": \"Pep Talk\",\n      \"idea\": \"The post-road trip stretch you desperately need after hours in a car. A simple, guided stretching routine.\",\n      \"filming_suggestion\": \"Film this in your living room, looking comfy. Use a calm voiceover explaining each stretch.\",\n      \"rationale\": \"This is a timely solution to a very specific, relatable pain point, making it instantly save-worthy.\"\n    },\n    {\n      \"day_index\": 29,\n      \"theme\": \"Meal Prep\",\n      \"idea\": \"My 'Back on Track' grocery haul and meal prep after a week of vacation food. Focus on simple, whole foods.\",\n      \"filming_suggestion\": \"Show the grocery haul first, then a montage of you prepping simple meals. Frame it as a satisfying reset.\",\n      \"rationale\": \"This content is relatable and motivating for viewers also getting back to their routines, making it save-worthy.\"\n    },\n    {\n      \"day_index\": 30,\n      \"theme\": \"Gym Anxiety\",\n      \"idea\": \"First day back at the gym after a break? Me too. Here’s the simple workout I’m doing to ease back in. Let's do it together.\",\n      \"filming_suggestion\": \"Talk to the camera at the beginning, acknowledging the awkward feeling of coming back. Then show clips of your workout.\",\n      \"rationale\": \"Opens on a shared felt moment ('first day back') that makes viewers feel seen and understood.\"\n    }\n  ]\n}",
   "output": {
     "items": [
       {
         "day_index": 1,
-        "theme": "High-Protein Meal Prep",
-        "idea": "My $20 meal prep for a week of high-protein lunches. Show the budget grocery haul, the quick prep, and the final stacked containers.",
-        "filming_suggestion": "Use top-down shots for cooking sequences. Film near a window for bright, natural light. Add text overlay with macros per meal."
+        "theme": "Meal Prep",
+        "idea": "My Go-To $30 Sunday Meal Prep for a High-Protein Week. Show the grocery haul and then quick cuts of making 2-3 simple meals (e.g., chicken and rice bowls, protein pasta salad).",
+        "filming_suggestion": "Use top-down shots for the cooking process and talk to the camera for the intro/outro in your kitchen to build connection.",
+        "rationale": "This is highly save-worthy content that provides direct, actionable value to your student audience on a budget."
       },
       {
         "day_index": 2,
-        "theme": "Gym-Anxiety Pep Talk",
-        "idea": "POV: You think everyone is staring at you in the weight room. A relatable clip followed by a direct-to-camera reassurance that they're not.",
-        "filming_suggestion": "Film the POV part discreetly at the gym. For the pep talk, sit in your room and talk to the camera like you're on FaceTime with a friend."
+        "theme": "Gym Anxiety",
+        "idea": "POV: You're my new gym buddy and I'm showing you it's not that scary. A tour of the gym during off-peak hours, pointing out where things are, with encouraging text overlays.",
+        "filming_suggestion": "Film this POV-style, holding your phone as if you're on a video call with a friend to make it feel personal and immersive.",
+        "rationale": "The POV format is a relatable one-liner hook that immediately pulls the viewer into the story."
       },
       {
         "day_index": 3,
-        "theme": "Beginner Powerlifting Form",
-        "idea": "The not-scary way to set up for a barbell squat. Break down 3 simple steps: bar height, hand placement, and walking it out.",
-        "filming_suggestion": "Set your phone on a tripod at a 45-degree angle to the squat rack to clearly show your body positioning from the side."
+        "theme": "Powerlifting Form",
+        "idea": "Let's Learn the Goblet Squat: Your First Step to Squatting Without Fear. Break down the form into 3 simple, memorable cues.",
+        "filming_suggestion": "Place the camera low and to the side to clearly show your squat depth and neutral back position. Add text callouts for each cue.",
+        "rationale": "This solves a specific beginner problem and is highly save-worthy for viewers to reference before they try it themselves."
       },
       {
         "day_index": 4,
-        "theme": "High-Protein Recipe",
-        "idea": "The laziest 30g protein snack ever: Greek yogurt protein bark. A quick, goofy tutorial showing how easy it is.",
-        "filming_suggestion": "Film in your kitchen with fast cuts. End with a satisfying ASMR crunch sound as you take a bite."
+        "theme": "High-Protein Meal",
+        "idea": "The 5-Minute Protein Shake That Actually Tastes Like Dessert. A quick aesthetic recipe video with a trending sound.",
+        "filming_suggestion": "Use natural light from a window. Film quick cuts of adding ingredients and a final 'money shot' of the delicious-looking shake.",
+        "rationale": "A fast-paced edit with a strong payoff in the first 2s (the finished shake) maximizes early watch time."
       },
       {
         "day_index": 5,
-        "theme": "Beginner Powerlifting Form",
-        "idea": "Let's talk about progressive overload. Explain the concept in simple terms, using plates on a barbell as a visual aid.",
-        "filming_suggestion": "In the gym, stack plates onto a bar as you talk via voiceover, visually demonstrating the 'progressive' part."
+        "theme": "Pep Talk",
+        "idea": "A reminder that 'gymtimidation' is real, but so is your strength. You belong here. A single clip of you looking thoughtful pre-workout.",
+        "filming_suggestion": "Film a static, slightly moody shot in your car or a quiet corner of the gym before you start your workout, letting the on-screen text be the focus.",
+        "rationale": "This opens on a felt moment that deeply resonates with your audience's core anxiety and encourages shares."
       },
       {
         "day_index": 6,
-        "theme": "Gym-Anxiety Pep Talk",
-        "idea": "What's in my gym bag to feel 100% prepared and less anxious. Showcase essentials like headphones, a water bottle, and a workout plan.",
-        "filming_suggestion": "A flat-lay shot of the items, then quick cuts of you packing each one into your bag. Use a trending 'pack with me' sound."
+        "theme": "Goofy/Relatable",
+        "idea": "Rating my gym faces during a heavy lift. A montage of you making funny faces while lifting, with humorous on-screen scores.",
+        "filming_suggestion": "Set up your phone to record a full set and then punch in on your face in the edit. Use a trending, funny audio.",
+        "rationale": "This shows your personality and creates shareable, relatable content that makes viewers feel more comfortable."
       },
       {
         "day_index": 7,
-        "theme": "Beginner Powerlifting Form",
-        "idea": "Common mistake: Where to put your hands for a bench press? Show a narrow vs. a good-width grip and explain the difference.",
-        "filming_suggestion": "Film from an angle above the bench looking down towards your chest to clearly show hand spacing on the bar."
+        "theme": "Powerlifting Form",
+        "idea": "The #1 Mistake Beginners Make with Dumbbell Rows (and how to fix it). Show the wrong way (jerky, rounded back) vs. the right way (controlled, flat back).",
+        "filming_suggestion": "Film from a side angle to clearly contrast the incorrect and correct back positions. Use clear '❌' and '✅' text.",
+        "rationale": "Educational content framed as fixing a common mistake is highly save-worthy and establishes your expertise."
       },
       {
         "day_index": 8,
-        "theme": "High-Protein Meal Prep",
-        "idea": "Midterms week meal prep: Brain fuel edition. Focus on quick, no-reheat meals you can eat while studying.",
-        "filming_suggestion": "Show a textbook and highlighters on the counter next to your meal prep containers to connect with the student audience."
+        "theme": "Meal Prep",
+        "idea": "Midterms Week Meal Prep: 5 High-Protein Lunches You Can Make in Under an Hour. Focus on speed and brain-boosting foods.",
+        "filming_suggestion": "Film on your kitchen counter with a textbook or laptop visible in the background to set the 'midterms' scene.",
+        "rationale": "This is timely content that solves a specific pain point for your student audience, making it very save-worthy."
       },
       {
         "day_index": 9,
-        "theme": "Mindset",
-        "idea": "How I use a 30-min workout to manage study stress, not add to it. A short, gentle routine for mental clarity.",
-        "filming_suggestion": "Use a calming voiceover and show clips of simple exercises. The mood should be relaxing, not intense."
+        "theme": "Pep Talk",
+        "idea": "Feeling Burnt Out From Studying? Let's Move Together for 10 Minutes. A guided, low-impact stretching or mobility routine.",
+        "filming_suggestion": "Film in your dorm or apartment living room to create an accessible, no-gym-required feel that anyone can do.",
+        "rationale": "Provides immediate value and a clear reason to save the video for a quick study break."
       },
       {
         "day_index": 10,
-        "theme": "High-Protein Recipe",
-        "idea": "My 3-minute protein coffee recipe for fueling a late-night study session. A quick tutorial with instant coffee and protein shake.",
-        "filming_suggestion": "Film in your kitchen with moody, lower lighting to fit the 'late-night' vibe. A satisfying swirl shot is key."
+        "theme": "High-Protein Meal",
+        "idea": "My 2-minute 'I have no time to cook' midterm snack: Greek yogurt bowl with three toppings. A super fast-cut recipe.",
+        "filming_suggestion": "Use quick, snappy cuts in time with a trending sound. Show the protein count on screen at the end.",
+        "rationale": "The short video length needed for this simple idea guarantees a high completion rate."
       },
       {
         "day_index": 11,
-        "theme": "Beginner Powerlifting Form",
-        "idea": "One simple cue that finally fixed my deadlift form. Show a 'before' (rounded back) and 'after' (flat back) using the cue.",
-        "filming_suggestion": "A clear side-profile shot is essential here. Use text overlay to pop the cue on screen during the 'after' clip."
+        "theme": "Gym Anxiety",
+        "idea": "It's okay to have a 'bad' gym day, especially during midterms. A short voiceover talking about giving yourself grace over a clip of you just sitting on a bench.",
+        "filming_suggestion": "Film a simple, authentic clip of you taking a breather between sets, looking tired but content. The focus is the message.",
+        "rationale": "Leading with a relatable, felt moment ('bad gym day') builds trust and encourages supportive comments."
       },
       {
         "day_index": 12,
-        "theme": "Gym-Anxiety Pep Talk",
-        "idea": "Friendly reminder: It's okay if your workout is just 20 minutes of stretching during midterms week. Rest is productive.",
-        "filming_suggestion": "Film yourself doing some simple stretches on a yoga mat in your room. Keep the tone gentle and reassuring."
+        "theme": "Powerlifting Form",
+        "idea": "De-stress with Deadlifts (the right way!). A calm, focused tutorial on Romanian Deadlifts (RDLs) as a great stress-reliever.",
+        "filming_suggestion": "Film from a side angle to emphasize the hip hinge and flat back. Use a calm voiceover instead of loud music.",
+        "rationale": "The hook 'De-stress with Deadlifts' reframes a daunting exercise as a solution, earning the first 2s."
       },
       {
         "day_index": 13,
-        "theme": "High-Protein Recipe",
-        "idea": "We survived midterms! Let's make celebratory (but still healthy) high-protein pancakes.",
-        "filming_suggestion": "Bright, cheerful lighting. Get a slow-motion shot of pouring the syrup for a satisfying payoff."
+        "theme": "Goofy/Relatable",
+        "idea": "My brain cells after my last midterm. A short, funny clip of you dramatically (and safely) failing a very light lift.",
+        "filming_suggestion": "Film a staged, goofy 'fail' with an empty or very light barbell to keep it safe and funny. Use a popular 'fail' audio.",
+        "rationale": "Humor and timeliness make this highly shareable among students who just finished exams."
       },
       {
         "day_index": 14,
-        "theme": "Mindset",
-        "idea": "Rating my favorite 'main character' songs for lifting. A fun, lip-sync video showing you getting hyped in your headphones.",
-        "filming_suggestion": "In the gym before a lift. Use quick cuts between you pointing to text on screen listing the songs, and you mouthing the lyrics."
+        "theme": "Pep Talk",
+        "idea": "Post-midterm recovery day routine: gentle stretching, a good meal, and zero pressure. A montage of your relaxing day.",
+        "filming_suggestion": "Film short, aesthetic clips: steam from tea, stretching in sunlight, closing a textbook. Use a calming, trending sound.",
+        "rationale": "This 'mood diary' style opens on a felt moment of relief that your audience is also experiencing."
       },
       {
         "day_index": 15,
-        "theme": "High-Protein On a Budget",
-        "idea": "Come grocery shopping with me: My top 5 high-protein finds at Trader Joe's. A saveable guide for students.",
-        "filming_suggestion": "Film POV-style with your phone in the grocery cart. Point to the items on the shelf and use text overlay for price and protein content."
+        "theme": "Meal Prep",
+        "idea": "Meal prepping for the week before Spring Break! Simple meals to feel strong and energized. Focus on non-bloating foods.",
+        "filming_suggestion": "Standard kitchen setup. Add text overlays like 'Fueling up for sunshine' to build excitement for the upcoming event.",
+        "rationale": "Tying a routine task to an exciting event makes it more engaging and save-worthy for others with similar plans."
       },
       {
         "day_index": 16,
-        "theme": "Beginner Powerlifting Form",
-        "idea": "Let's master the hip-hinge at home. A tutorial using a wall or a broomstick to learn the pattern without weights.",
-        "filming_suggestion": "Film against a plain wall in your house so the movement is clear. A side profile view is best."
+        "theme": "Powerlifting Milestone",
+        "idea": "Finally hit a new PR on squats! A clip of you successfully hitting the lift, followed by your genuinely happy reaction.",
+        "filming_suggestion": "Set the camera up, hit record, and capture the whole set, including the celebration. Edit to show the hardest part and the success.",
+        "rationale": "This frames a milestone as getting braver, inviting the viewer to root for you and feel inspired."
       },
       {
         "day_index": 17,
-        "theme": "Gym-Anxiety Pep Talk",
-        "idea": "My gym outfit rotation for when I want to feel confident, not self-conscious. Focus on comfort and function.",
-        "filming_suggestion": "A try-on style video in your bedroom. Use a trending outfit transition sound to reveal each look."
+        "theme": "High-Protein Meal",
+        "idea": "The easiest road trip-friendly protein balls. No-bake recipe that you can make in your dorm room.",
+        "filming_suggestion": "Film the whole process at your desk or a small table to emphasize how easy and accessible it is for students.",
+        "rationale": "A useful, save-worthy recipe that's perfectly timed for your audience's spring break plans."
       },
       {
         "day_index": 18,
-        "theme": "High-Protein Recipe",
-        "idea": "What I eat in a day as a student who actually lifts. Quick, simple, high-protein meals shown in a montage.",
-        "filming_suggestion": "Compile short clips of each meal throughout the day. Start with making your first meal in the morning and end with your last."
+        "theme": "Gym Anxiety",
+        "idea": "Don't know what to do at the gym? Save this simple 3-move full-body workout for your next visit. (e.g., Goblet Squat, DB Row, Overhead Press).",
+        "filming_suggestion": "Clearly demonstrate all three exercises with on-screen text specifying sets and reps. Keep the video concise.",
+        "rationale": "The hook 'Save this' gives a direct command and provides a clear utility, boosting a key engagement signal."
       },
       {
         "day_index": 19,
-        "theme": "Beginner Powerlifting Form",
-        "idea": "Are you making this common lat pulldown mistake? Show the wrong way (shrugging shoulders) vs. the right way (depressing scapula).",
-        "filming_suggestion": "Film from a front/side angle to clearly show the shoulder and back movement. Use a pointer emoji in your text to highlight the area."
+        "theme": "Powerlifting Form",
+        "idea": "A quick tutorial on lateral raises for that 'spring break ready' feeling. Focus on form over weight.",
+        "filming_suggestion": "Film from the front to show the proper range of motion. Emphasize the 'no swinging' rule with on-screen text.",
+        "rationale": "Connects a specific exercise to a desired feeling ('spring break ready') to create a strong, timely hook."
       },
       {
         "day_index": 20,
-        "theme": "Gym Milestone",
-        "idea": "Tried the assisted pull-up machine for the first time — getting braver. Show the nerves, the shaky reps, and the proud smile.",
-        "filming_suggestion": "Set up a tripod and film the whole set, including the moment before you start and your reaction after. Focus on the effort, not perfection."
+        "theme": "Goofy/Relatable",
+        "idea": "Packing for spring break: 1 outfit, 10 tubs of protein powder. A funny video showing your suitcase with mostly gym gear and supplements.",
+        "filming_suggestion": "Use a wide shot to show the ridiculous ratio of gym stuff to normal clothes in your suitcase. Use a funny, trending audio.",
+        "rationale": "A highly relatable one-liner for the fitness community that is extremely shareable."
       },
       {
         "day_index": 21,
-        "theme": "High-Protein Recipe",
-        "idea": "My secret to making protein oatmeal that doesn't taste like cardboard. A quick tip about mixing and toppings.",
-        "filming_suggestion": "A top-down shot into the bowl. Show the creamy texture and add colorful toppings for a visually appealing final shot."
+        "theme": "Pep Talk",
+        "idea": "Friendly reminder: You don't need to 'earn' your vacation food. Enjoy your spring break! A simple to-camera chat.",
+        "filming_suggestion": "Film this selfie-style in your car as you're about to leave for your trip. Speak authentically and from the heart.",
+        "rationale": "Tackles a common anxiety with a warm, encouraging tone that builds community trust."
       },
       {
         "day_index": 22,
-        "theme": "High-Protein On a Budget",
-        "idea": "Packing high-protein snacks for our spring break road trip. Save money and stay on track!",
-        "filming_suggestion": "A 'pack with me' style video. Lay out all the snacks on your floor or bed first for a satisfying shot, then pack them."
+        "theme": "High-Protein Meal",
+        "idea": "How I eat high-protein on a road trip (gas station edition). Show yourself making smart choices like jerky, protein bars, and greek yogurt.",
+        "filming_suggestion": "Film this in your car right after stopping. Quick cuts showing the products you picked and the protein count.",
+        "rationale": "This provides non-intuitive, useful information that is highly save-worthy for anyone who travels."
       },
       {
         "day_index": 23,
-        "theme": "Mindset & Rest",
-        "idea": "Friendly reminder: Your muscles grow when you REST. Take the spring break guilt-free.",
-        "filming_suggestion": "A simple selfie-style video talking to the camera from the passenger seat of the car. Authentic and low-production is the vibe."
+        "theme": "Powerlifting Form",
+        "idea": "Making the most of a tiny hotel gym. A full workout using only dumbbells and an adjustable bench.",
+        "filming_suggestion": "Emphasize the limited space in your opening shot. Use a voiceover to explain how to modify exercises for the equipment available.",
+        "rationale": "Solves a common problem for people who want to stay active while traveling, making it a save-worthy resource."
       },
       {
         "day_index": 24,
-        "theme": "At-Home Fitness",
-        "idea": "No gym on vacation? No problem. A 5-minute bodyweight squat routine you can do in your hotel room.",
-        "filming_suggestion": "Find a spot with good natural light from a window in your room. Prop your phone up on a desk or chair."
+        "theme": "Milestone",
+        "idea": "Core memory: This morning's sunrise hike on spring break. A single, beautiful clip of the view.",
+        "filming_suggestion": "Just one stunning shot of a view you earned on a hike or walk. Add simple text 'core memory unlocked'.",
+        "rationale": "This adapts the 'getting braver' concept to an experience, opening on a powerful felt moment."
       },
       {
         "day_index": 25,
-        "theme": "High-Protein On a Budget",
-        "idea": "How to build a high-protein meal at a gas station. A real-world example of picking smart choices on the road.",
-        "filming_suggestion": "Film POV-style walking through the gas station. Show the items you pick (jerky, protein shake, nuts) and the final combo."
+        "theme": "Workout Idea",
+        "idea": "No gym on vacation? No problem. Try this 15-minute bodyweight circuit you can do in your hotel room.",
+        "filming_suggestion": "Film in your actual hotel room to prove it can be done. Speed up the clips and use on-screen timers.",
+        "rationale": "A useful, save-worthy routine that removes all excuses for not being able to exercise."
       },
       {
         "day_index": 26,
-        "theme": "Gym-Anxiety Pep Talk",
-        "idea": "If you needed to hear this today: It's okay to fall off your routine on vacation. The gym will be there when you get back.",
-        "filming_suggestion": "Film against a scenic spring break backdrop, like a beach or a viewpoint. Connect the idea of a mental break with the physical one."
+        "theme": "High-Protein Meal",
+        "idea": "Finding a high-protein meal while eating out on vacation. My strategy: look for a protein and a vegetable on any menu.",
+        "filming_suggestion": "Show the menu, then a shot of the delicious (and balanced) food you ordered. Quick and to the point.",
+        "rationale": "Provides a simple, memorable tip that is useful and save-worthy for anyone who eats out."
       },
       {
         "day_index": 27,
-        "theme": "Core Memory",
-        "idea": "A non-fitness 'core memory' from spring break. A montage of happy, goofy moments with friends.",
-        "filming_suggestion": "Use a cinematic, trending audio. Edit together short, aesthetic video clips from your trip to show your personality outside the gym."
+        "theme": "Goofy/Relatable",
+        "idea": "A montage of fun, non-fitness moments from the road trip. Use a trending 'photo dump' style audio.",
+        "filming_suggestion": "Edit together very short clips: laughing with friends, a beautiful view, a funny moment. Keep it fast-paced.",
+        "rationale": "Shows your personality outside the gym, making your content more varied and relatable."
       },
       {
         "day_index": 28,
-        "theme": "At-Home Fitness",
-        "idea": "A 5-minute morning mobility routine to do after a long car ride. Great for stiff hips and backs.",
-        "filming_suggestion": "Film on the floor of your Airbnb or hotel room. Speed up the clips slightly and point to the muscle being stretched with text."
+        "theme": "Pep Talk",
+        "idea": "The post-road trip stretch you desperately need after hours in a car. A simple, guided stretching routine.",
+        "filming_suggestion": "Film this in your living room, looking comfy. Use a calm voiceover explaining each stretch.",
+        "rationale": "This is a timely solution to a very specific, relatable pain point, making it instantly save-worthy."
       },
       {
         "day_index": 29,
-        "theme": "High-Protein Recipe",
-        "idea": "The 'I just got back from vacation and have no groceries' high-protein meal using only pantry staples.",
-        "filming_suggestion": "Film in your kitchen. Show the 'empty' fridge then pull out pantry items like canned tuna, beans, and rice to create the meal."
+        "theme": "Meal Prep",
+        "idea": "My 'Back on Track' grocery haul and meal prep after a week of vacation food. Focus on simple, whole foods.",
+        "filming_suggestion": "Show the grocery haul first, then a montage of you prepping simple meals. Frame it as a satisfying reset.",
+        "rationale": "This content is relatable and motivating for viewers also getting back to their routines, making it save-worthy."
       },
       {
         "day_index": 30,
-        "theme": "Gym-Anxiety Pep Talk",
-        "idea": "First day back in the gym after a week off feels weird. Me too. Let's take it easy together.",
-        "filming_suggestion": "Show yourself warming up slowly and lifting lighter than usual. Use a voiceover about listening to your body and easing back in."
+        "theme": "Gym Anxiety",
+        "idea": "First day back at the gym after a break? Me too. Here’s the simple workout I’m doing to ease back in. Let's do it together.",
+        "filming_suggestion": "Talk to the camera at the beginning, acknowledging the awkward feeling of coming back. Then show clips of your workout.",
+        "rationale": "Opens on a shared felt moment ('first day back') that makes viewers feel seen and understood."
       }
     ]
   },
   "meta": {
-    "source": "live_capture_2026-05-30",
+    "source": "live_capture_2026-05-30b",
     "case": "persona + events -> varied plan; unique sorted day_index within 1..30, pillars rotate, activation week front-loaded"
   }
 }

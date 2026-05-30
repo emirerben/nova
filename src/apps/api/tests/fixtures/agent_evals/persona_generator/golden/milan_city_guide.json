@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.persona_generator",
-  "prompt_version": "2026-05-30",
+  "prompt_version": "2026-05-30.1",
   "input": {
     "work": "part-time at a coffee bar",
     "school": "",
@@ -11,30 +11,32 @@
     "passions": "finding hidden spots in my city and slow mornings",
     "tiktok_handle": ""
   },
-  "raw_text": "{\n  \"summary\": \"You are the go-to friend for authentic Milan recommendations, turning your passion for hidden spots into curated city guides. Your content blends local food gems, unique thrift finds, and slow living, all with a dreamy, film-like aesthetic.\",\n  \"content_pillars\": [\n    \"Curated Milan Food Guides\",\n    \"Hidden City Spots\",\n    \"Milan Thrift Finds\",\n    \"Slow Morning Routines\"\n  ],\n  \"tone\": \"Warm, curated, and quietly authentic\",\n  \"audience\": \"Travelers and locals who want to experience an aesthetic, non-touristy side of Milan.\",\n  \"posting_cadence\": \"3-4 posts/week, filmed during city explorations\",\n  \"sample_topics\": [\n    \"A perfect aperitivo spot nobody knows about\",\n    \"The most beautiful hidden courtyard in Brera\",\n    \"What I found at a Navigli vintage market\",\n    \"My slow morning ritual: coffee bar edition\",\n    \"A 24-hour guide to a non-touristy Milan\",\n    \"Shooting a roll of film in the Isola district\",\n    \"Three Milan coffee bars that aren't Starbucks\"\n  ]\n}",
+  "raw_text": "{\n  \"summary\": \"You are the in-the-know Milan friend whose recommendations people save for their own trips. Your content is a curated guide to the city's hidden gems, blending aesthetic cafes, unique restaurants, and thrifted finds with a slow-living, film photography vibe.\",\n  \"content_pillars\": [\n    \"Curated Milan Guides\",\n    \"Hidden Gem Discoveries\",\n    \"Thrifted Outfit Finds\",\n    \"Aesthetic Slow Mornings\"\n  ],\n  \"tone\": \"Warm, aesthetic, and like a trusted friend\",\n  \"audience\": \"Locals and travelers who want to experience the authentic, curated side of Milan, beyond the typical guidebook spots.\",\n  \"posting_cadence\": \"3-4 posts/week, mixing spontaneous finds with planned guides.\",\n  \"sample_topics\": [\n    \"A perfect slow morning in my neighborhood\",\n    \"Three vintage stores you can't miss\",\n    \"The best aperitivo spot nobody knows about\",\n    \"POV: I'm your friend showing you Milan's secrets\",\n    \"Unlocking a hidden courtyard I just found\",\n    \"My go-to restaurant for a quiet dinner\",\n    \"A film photo diary of my week in the city\",\n    \"The coffee bar I go to on my day off\"\n  ],\n  \"rationale\": \"This lane turns your real life and passions—finding hidden spots for friends—into highly useful content that people will instinctively save for a future trip. Creating save-worthy guides is a powerful way to build an audience and signal value to the algorithm.\"\n}",
   "output": {
-    "summary": "You are the go-to friend for authentic Milan recommendations, turning your passion for hidden spots into curated city guides. Your content blends local food gems, unique thrift finds, and slow living, all with a dreamy, film-like aesthetic.",
+    "summary": "You are the in-the-know Milan friend whose recommendations people save for their own trips. Your content is a curated guide to the city's hidden gems, blending aesthetic cafes, unique restaurants, and thrifted finds with a slow-living, film photography vibe.",
     "content_pillars": [
-      "Curated Milan Food Guides",
-      "Hidden City Spots",
-      "Milan Thrift Finds",
-      "Slow Morning Routines"
+      "Curated Milan Guides",
+      "Hidden Gem Discoveries",
+      "Thrifted Outfit Finds",
+      "Aesthetic Slow Mornings"
     ],
-    "tone": "Warm, curated, and quietly authentic",
-    "audience": "Travelers and locals who want to experience an aesthetic, non-touristy side of Milan.",
-    "posting_cadence": "3-4 posts/week, filmed during city explorations",
+    "tone": "Warm, aesthetic, and like a trusted friend",
+    "audience": "Locals and travelers who want to experience the authentic, curated side of Milan, beyond the typical guidebook spots.",
+    "posting_cadence": "3-4 posts/week, mixing spontaneous finds with planned guides.",
     "sample_topics": [
-      "A perfect aperitivo spot nobody knows about",
-      "The most beautiful hidden courtyard in Brera",
-      "What I found at a Navigli vintage market",
-      "My slow morning ritual: coffee bar edition",
-      "A 24-hour guide to a non-touristy Milan",
-      "Shooting a roll of film in the Isola district",
-      "Three Milan coffee bars that aren't Starbucks"
-    ]
+      "A perfect slow morning in my neighborhood",
+      "Three vintage stores you can't miss",
+      "The best aperitivo spot nobody knows about",
+      "POV: I'm your friend showing you Milan's secrets",
+      "Unlocking a hidden courtyard I just found",
+      "My go-to restaurant for a quiet dinner",
+      "A film photo diary of my week in the city",
+      "The coffee bar I go to on my day off"
+    ],
+    "rationale": "This lane turns your real life and passions—finding hidden spots for friends—into highly useful content that people will instinctively save for a future trip. Creating save-worthy guides is a powerful way to build an audience and signal value to the algorithm."
   },
   "meta": {
-    "source": "live_capture_2026-05-30",
+    "source": "live_capture_2026-05-30b",
     "case": "market-trained: city-lifestyle questionnaire -> persona lands in the curated city-guide lane (banks-on); pillars (5) + sample_topics within bounds, all fields non-empty"
   }
 }

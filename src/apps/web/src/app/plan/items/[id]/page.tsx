@@ -180,6 +180,12 @@ export default function PlanItemPage() {
         </div>
         <h1 className="font-display text-3xl text-white">{item.theme}</h1>
         <p className="mb-2 mt-2 text-zinc-300">{item.idea}</p>
+        {item.rationale && (
+          <div className="mb-4 mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
+            <p className="mb-1 text-xs font-medium text-amber-300/80">Why this works</p>
+            <p className="text-sm text-zinc-300">{item.rationale}</p>
+          </div>
+        )}
         {item.filming_suggestion && (
           <p className="mb-8 text-sm text-zinc-500">🎬 {item.filming_suggestion}</p>
         )}

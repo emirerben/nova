@@ -618,6 +618,8 @@ class PlanItem(Base):
     theme: Mapped[str] = mapped_column(Text, nullable=False)
     idea: Mapped[str] = mapped_column(Text, nullable=False)
     filming_suggestion: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The AI's short "why this video works", shown read-only in the dashboard.
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Themed uploads land here (users/{user_id}/plan/{plan_item_id}/...).
     clip_gcs_paths: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # idea | awaiting_clips ONLY. Render state is derived from current_job.status.

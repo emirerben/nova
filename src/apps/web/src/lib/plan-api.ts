@@ -38,6 +38,9 @@ export interface PersonaContent {
   audience: string;
   posting_cadence: string;
   sample_topics: string[];
+  // The AI's "why this lane" — shown read-only in the dashboard. Optional:
+  // personas generated before this field shipped won't have it.
+  rationale?: string;
 }
 
 export type PersonaStatus = "generating" | "ready" | "failed" | "edited";
@@ -119,6 +122,9 @@ export interface PlanItem {
   theme: string;
   idea: string;
   filming_suggestion: string | null;
+  // The AI's "why this works" — shown read-only. null for items made before
+  // this field shipped (the UI hides the line).
+  rationale: string | null;
   clip_gcs_paths: string[];
   status: PlanItemStatus;
   current_job_id: string | null;
