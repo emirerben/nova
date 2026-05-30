@@ -66,6 +66,7 @@ export default function Header() {
 function AuthControl() {
   const { data: session, status } = useSession();
   const [open, setOpen] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -83,10 +84,18 @@ function AuthControl() {
   if (!session?.user) {
     return (
       <button
-        onClick={() => signIn("google", { callbackUrl: "/plan" })}
-        className="rounded-full border border-zinc-700 px-4 py-1.5 text-sm font-medium text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white"
+        onClick={() => {
+          setSigningIn(true);
+          // signIn redirects away on success; if it returns (popup blocked,
+          // back button) the component is still mounted so re-enable the button.
+          void signIn("google", { callbackUrl: "/plan" }).finally(() =>
+            setSigningIn(false),
+          );
+        }}
+        disabled={signingIn}
+        className="rounded-full border border-zinc-700 px-4 py-1.5 text-sm font-medium text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
       >
-        Sign in
+        {signingIn ? "Signing in…" : "Sign in"}
       </button>
     );
   }

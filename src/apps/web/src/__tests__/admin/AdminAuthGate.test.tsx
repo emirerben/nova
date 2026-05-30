@@ -46,7 +46,7 @@ describe("AdminAuthGate", () => {
   });
 
   it("shows error on invalid token", async () => {
-    mockValidateToken.mockResolvedValue(false);
+    mockValidateToken.mockResolvedValue({ ok: false, reason: "invalid_token" });
 
     render(
       <AdminLayout>
@@ -69,10 +69,53 @@ describe("AdminAuthGate", () => {
     });
   });
 
+  it("distinguishes a misconfigured server from a bad token", async () => {
+    mockValidateToken.mockResolvedValue({ ok: false, reason: "server_error" });
+
+    render(
+      <AdminLayout>
+        <div>Protected content</div>
+      </AdminLayout>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("Admin token")).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText("Admin token");
+    const button = screen.getByRole("button", { name: /sign in/i });
+
+    fireEvent.change(input, { target: { value: "any-token" } });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText(/service unavailable/i)).toBeInTheDocument();
+    });
+    // Must NOT mislead the operator into thinking their token was wrong.
+    expect(screen.queryByText("Invalid admin token")).not.toBeInTheDocument();
+  });
+
+  it("shows the unavailable screen when validation fails server-side on load", async () => {
+    const adminApi = require("@/lib/admin-api");
+    adminApi.getAdminToken.mockReturnValue("stored-token");
+    mockValidateToken.mockResolvedValue({ ok: false, reason: "server_error" });
+
+    render(
+      <AdminLayout>
+        <div>Protected content</div>
+      </AdminLayout>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Admin auth unavailable")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Protected content")).not.toBeInTheDocument();
+  });
+
   it("shows content after valid token", async () => {
     const adminApi = require("@/lib/admin-api");
     adminApi.getAdminToken.mockReturnValue("valid-token");
-    mockValidateToken.mockResolvedValue(true);
+    mockValidateToken.mockResolvedValue({ ok: true });
 
     render(
       <AdminLayout>
