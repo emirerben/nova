@@ -53,6 +53,7 @@ const FONT_FACES = buildFontFaces(fontRegistryJson);
  */
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [authed, setAuthed] = useState<boolean | null>(null); // null = checking
+  const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
     const token = getAdminToken();
@@ -60,13 +61,38 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       setAuthed(false);
       return;
     }
-    adminValidateToken().then(setAuthed);
+    adminValidateToken().then((result) => {
+      if (result.ok) {
+        setAuthed(true);
+      } else if (result.reason === "server_error") {
+        // Server misconfigured (e.g. ADMIN_TOKEN unset) — not a bad token.
+        setUnavailable(true);
+        setAuthed(false);
+      } else {
+        setAuthed(false);
+      }
+    });
   }, []);
 
   if (authed === null) {
     return (
       <main className="min-h-screen bg-black text-white flex items-center justify-center">
         <div className="w-6 h-6 border-2 border-zinc-600 border-t-white rounded-full animate-spin" />
+      </main>
+    );
+  }
+
+  if (unavailable) {
+    return (
+      <main className="min-h-screen bg-black text-white flex items-center justify-center px-4">
+        <div className="max-w-sm text-center space-y-2">
+          <h1 className="text-xl font-semibold">Admin auth unavailable</h1>
+          <p className="text-sm text-zinc-500">
+            The admin authentication service isn&apos;t reachable (the server may be
+            misconfigured — check that <code className="text-zinc-400">ADMIN_TOKEN</code> is
+            set). This is not a problem with your token.
+          </p>
+        </div>
       </main>
     );
   }
@@ -100,13 +126,17 @@ function AuthGate({ onAuth }: { onAuth: () => void }) {
       setError(null);
 
       setAdminToken(token.trim());
-      const valid = await adminValidateToken();
+      const result = await adminValidateToken();
 
-      if (valid) {
+      if (result.ok) {
         onAuth();
       } else {
         clearAdminToken();
-        setError("Invalid admin token");
+        setError(
+          result.reason === "server_error"
+            ? "Admin auth service unavailable — the server may be misconfigured."
+            : "Invalid admin token",
+        );
       }
       setChecking(false);
     },
