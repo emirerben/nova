@@ -96,10 +96,10 @@ export default function PlanItemCard({
       {!editing ? (
         <>
           {idea && <p className="mt-2 line-clamp-2 text-sm text-zinc-400">{idea}</p>}
-          <div className="mt-3 flex items-center justify-between border-t border-zinc-800 pt-3">
+          <div className="mt-2 flex items-center justify-between border-t border-zinc-800 pt-1">
             <Link
               href={`/plan/items/${item.id}`}
-              className="text-xs font-medium text-amber-300 transition-colors hover:text-amber-200"
+              className="inline-flex min-h-[44px] items-center text-xs font-medium text-amber-300 transition-colors hover:text-amber-200"
             >
               {actionLabel(item)}
             </Link>
@@ -108,7 +108,7 @@ export default function PlanItemCard({
               <button
                 type="button"
                 onClick={() => setEditing(true)}
-                className="text-xs text-zinc-500 transition-colors hover:text-white"
+                className="inline-flex min-h-[44px] items-center text-xs text-zinc-500 transition-colors hover:text-white"
               >
                 Edit
               </button>

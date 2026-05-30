@@ -112,7 +112,11 @@ export default function SeedUploadCard({
 
   if (activating) {
     return (
-      <section className="mb-8 rounded-xl border border-amber-700/50 bg-amber-950/20 p-5">
+      <section
+        className="mb-8 rounded-xl border border-amber-700/50 bg-amber-950/20 p-5"
+        role="status"
+        aria-live="polite"
+      >
         <h2 className="mb-1 font-display text-lg text-amber-200">Finding your best clip…</h2>
         <p className="text-sm text-amber-200/70">
           Matching your footage to the days it fits best and rendering a first video. This takes a
@@ -153,14 +157,17 @@ export default function SeedUploadCard({
           Something went wrong matching your clips. Try uploading again.
         </div>
       )}
-      <input
-        type="file"
-        accept={ACCEPT}
-        multiple
-        disabled={uploading}
-        onChange={(e) => void handleFiles(e.target.files)}
-        className="block w-full text-sm text-zinc-400 file:mr-3 file:rounded-full file:border-0 file:bg-white file:px-4 file:py-2 file:text-sm file:font-medium file:text-black hover:file:bg-zinc-200"
-      />
+      <label className="block">
+        <span className="sr-only">Upload recent video clips to activate your plan</span>
+        <input
+          type="file"
+          accept={ACCEPT}
+          multiple
+          disabled={uploading}
+          onChange={(e) => void handleFiles(e.target.files)}
+          className="block w-full text-sm text-zinc-400 file:mr-3 file:rounded-full file:border-0 file:bg-white file:px-4 file:py-2 file:text-sm file:font-medium file:text-black hover:file:bg-zinc-200"
+        />
+      </label>
       {uploading && <p className="mt-3 text-sm text-amber-300">Uploading…</p>}
       <button
         onClick={() => void handleActivate()}
