@@ -132,6 +132,91 @@ def _find_variant(job: Job, variant_id: str) -> dict | None:
     return next((v for v in _variants_of(job) if v.get("variant_id") == variant_id), None)
 
 
+# ── Shared variant-edit validation + dispatch ───────────────────────────────────
+# These are public (no leading underscore) so the content-plan routes
+# (`routes/plan_items.py`) can reuse them verbatim across modules — content_plan
+# jobs share the generative per-variant assembly_plan shape, so the validation
+# rules and the `regenerate_generative_variant` dispatch are identical. The only
+# difference between the two surfaces is how the Job is loaded (public job-id vs
+# ownership-checked plan item), so that stays in each route; everything below the
+# loaded Job is single-sourced here.
+
+
+def require_editable_variant(job: Job, variant_id: str) -> dict:
+    """Return the variant; 404 if unknown, 409 if it's already re-rendering."""
+    variant = _find_variant(job, variant_id)
+    if variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    if variant.get("render_status") == "rendering":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
+        )
+    return variant
+
+
+async def dispatch_swap_song(
+    job: Job, variant_id: str, *, new_track_id: str, db: AsyncSession
+) -> None:
+    """Validate + enqueue a song swap for one variant (async re-slot)."""
+    variant = require_editable_variant(job, variant_id)
+    # Swapping a song only makes sense on a song variant. The original-audio variant
+    # has no track; converting it to a song variant would silently change its identity.
+    if variant.get("variant_id") == "original_text" or variant.get("music_track_id") is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This is the original-audio edit — it has no song to swap.",
+        )
+    # The new track must exist and be ready (published not required — swap is a
+    # deliberate user pick from the gallery, mirroring admin test-job semantics).
+    track = (
+        await db.execute(select(MusicTrack).where(MusicTrack.id == new_track_id))
+    ).scalar_one_or_none()
+    if track is None or track.analysis_status != "ready" or not track.audio_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Requested song is not available for rendering.",
+        )
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.delay(str(job.id), variant_id, new_track_id=new_track_id)
+
+
+def dispatch_retext(job: Job, variant_id: str, *, text: str | None, remove: bool) -> None:
+    """Validate + enqueue an intro-text edit/removal for one variant."""
+    require_editable_variant(job, variant_id)
+    if not remove and not (text and text.strip()):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide `text` to update, or set `remove=true` to clear the overlay.",
+        )
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.delay(
+        str(job.id),
+        variant_id,
+        override_text=(text.strip() if (text and not remove) else None),
+        remove_text=bool(remove),
+    )
+
+
+def dispatch_change_style(job: Job, variant_id: str, *, style_set_id: str) -> None:
+    """Validate + enqueue a text-style-set change for one variant."""
+    from app.pipeline.style_sets import style_set_ids  # noqa: PLC0415
+
+    require_editable_variant(job, variant_id)
+    if style_set_id not in set(style_set_ids(applies_to="generative")):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unknown or non-generative style set.",
+        )
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.delay(str(job.id), variant_id, style_set_id=style_set_id)
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 
@@ -215,35 +300,7 @@ async def swap_song(
 ) -> GenerativeJobResponse:
     """Re-render a variant against a different library song (async re-slot)."""
     job = await _load_generative_job(job_id, db)
-    variant = _find_variant(job, variant_id)
-    if variant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
-    if variant.get("render_status") == "rendering":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
-        )
-    # Swapping a song only makes sense on a song variant. The original-audio variant
-    # has no track; converting it to a song variant would silently change its identity.
-    if variant.get("variant_id") == "original_text" or variant.get("music_track_id") is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="This is the original-audio edit — it has no song to swap.",
-        )
-
-    # The new track must exist and be ready (published not required — swap is a
-    # deliberate user pick from the gallery, mirroring admin test-job semantics).
-    track = (
-        await db.execute(select(MusicTrack).where(MusicTrack.id == req.new_track_id))
-    ).scalar_one_or_none()
-    if track is None or track.analysis_status != "ready" or not track.audio_gcs_path:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Requested song is not available for rendering.",
-        )
-
-    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
-
-    regenerate_generative_variant.delay(str(job.id), variant_id, new_track_id=req.new_track_id)
+    await dispatch_swap_song(job, variant_id, new_track_id=req.new_track_id, db=db)
     log.info(
         "generative_swap_song", job_id=str(job.id), variant_id=variant_id, track_id=req.new_track_id
     )
@@ -259,27 +316,7 @@ async def retext(
 ) -> GenerativeJobResponse:
     """Re-render a variant with user-supplied intro text, or remove the text."""
     job = await _load_generative_job(job_id, db)
-    variant = _find_variant(job, variant_id)
-    if variant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
-    if variant.get("render_status") == "rendering":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
-        )
-    if not req.remove and not (req.text and req.text.strip()):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Provide `text` to update, or set `remove=true` to clear the overlay.",
-        )
-
-    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
-
-    regenerate_generative_variant.delay(
-        str(job.id),
-        variant_id,
-        override_text=(req.text.strip() if (req.text and not req.remove) else None),
-        remove_text=bool(req.remove),
-    )
+    dispatch_retext(job, variant_id, text=req.text, remove=req.remove)
     log.info("generative_retext", job_id=str(job.id), variant_id=variant_id, remove=req.remove)
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
 
@@ -296,25 +333,8 @@ async def change_style(
     Unlike swap-song this applies to ALL variants — the style set governs the AI
     intro on the text variants and the lyric typography on the lyrics variant.
     """
-    from app.pipeline.style_sets import style_set_ids  # noqa: PLC0415
-
     job = await _load_generative_job(job_id, db)
-    variant = _find_variant(job, variant_id)
-    if variant is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
-    if variant.get("render_status") == "rendering":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="Variant is already re-rendering."
-        )
-    if req.style_set_id not in set(style_set_ids(applies_to="generative")):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Unknown or non-generative style set.",
-        )
-
-    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
-
-    regenerate_generative_variant.delay(str(job.id), variant_id, style_set_id=req.style_set_id)
+    dispatch_change_style(job, variant_id, style_set_id=req.style_set_id)
     log.info(
         "generative_change_style",
         job_id=str(job.id),

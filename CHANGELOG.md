@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.61.0] - 2026-05-30
+
+### Added
+- **Per-video editing in the plan feature — swap song, edit text, edit text style.** Each video a plan item generates is a generative-mode `Job` with the identical per-variant `assembly_plan["variants"]` shape, so the existing generative refine controls now apply on the plan item page too. The plan item detail page (`plan/items/[id]/page.tsx`) was display-only; it now exposes, per rendered variant: **edit text** (inline field, not a browser prompt), **remove text**, **swap song** (hidden on the original-audio variant, which has no track), and **change text style** (curated style sets). Re-renders are async and the page keeps polling until each one visibly lands.
+  - **Backend — ownership-checked plan endpoints (`routes/plan_items.py`).** New `POST /plan-items/{id}/variants/{vid}/swap-song|retext|change-style`. Each loads the item via `_load_owned_item` (per-user 404), resolves its `current_job`, and reuses `regenerate_generative_variant` — the same Celery task the generative surface drives (already mode-agnostic, with content-plan persona handling). The validate-and-dispatch logic was extracted out of `routes/generative_jobs.py` into shared public helpers (`require_editable_variant`, `dispatch_swap_song`/`dispatch_retext`/`dispatch_change_style`) so both surfaces single-source the rules. Mutation is reachable **only** through the authenticated `/api/plan` proxy — the public unauthenticated `/generative-jobs` mutate endpoints stay generative-only.
+  - **Frontend (`plan-api.ts`, `PlanVariantCard.tsx`, item page).** Widened `PlanItemVariant` to the fields the controls need (already returned by the status endpoint); added proxy-routed `swapPlanItemSong`/`retextPlanItem`/`changePlanItemStyle`. The song gallery + style sets load from the public GET endpoints (same as the generative page). Polling tracks pending edits until the output URL changes — the throttled `plan-jobs` queue can flip the worker's transient "rendering" flag between polls, so without this an edit's result could land silently.
+  - **Tests.** Backend route tests (ownership 404, no-job 404, unknown-variant 404, rendering 409, validation 422s, happy-path dispatch kwargs) + shared-helper unit guards; Jest tests for `PlanVariantCard` (control presence, swap hidden on original-audio, callback args, disabled-while-rendering). No renderer/overlay/burn-dict code touched (`make verify-overlays` N/A).
+
 ## [0.4.60.0] - 2026-05-30
 
 ### Changed

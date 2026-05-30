@@ -228,16 +228,64 @@ export function generateFirstWeek(
   return request(`/content-plans/${planId}/generate-first-week`, { method: "POST" });
 }
 
-/** Variant output for a plan item's render — fetched via the generative status proxy. */
+/**
+ * Variant output for a plan item's render — fetched via the generative status proxy.
+ * Mirrors the subset of generative `GenerativeVariant` the plan editor needs: the
+ * status endpoint already returns these fields, this type just surfaces them.
+ */
 export interface PlanItemVariant {
   variant_id: string;
   output_url: string | null;
   render_status: string | null;
+  // Edit controls: swap-song is hidden when music_track_id is null (the
+  // original-audio variant has no song), and the style picker reflects style_set_id.
+  text_mode?: "lyrics" | "agent_text" | "none";
+  music_track_id?: string | null;
+  track_title?: string | null;
+  style_set_id?: string | null;
 }
 
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {
   const res = await request<{ variants: PlanItemVariant[] }>(`/generative-jobs/${jobId}/status`);
   return res.variants ?? [];
+}
+
+// ── Per-variant editing (swap song / edit text / change style) ────────────────
+// These POST through the authenticated /api/plan proxy (it injects X-User-Id +
+// the server-only INTERNAL_API_KEY), so mutation is ownership-checked server-side.
+// All three return the refreshed PlanItem.
+
+export function swapPlanItemSong(
+  itemId: string,
+  variantId: string,
+  newTrackId: string,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/swap-song`, {
+    method: "POST",
+    body: JSON.stringify({ new_track_id: newTrackId }),
+  });
+}
+
+export function retextPlanItem(
+  itemId: string,
+  variantId: string,
+  opts: { text?: string; remove?: boolean },
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/retext`, {
+    method: "POST",
+    body: JSON.stringify({ text: opts.text ?? null, remove: opts.remove ?? false }),
+  });
+}
+
+export function changePlanItemStyle(
+  itemId: string,
+  variantId: string,
+  styleSetId: string,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/change-style`, {
+    method: "POST",
+    body: JSON.stringify({ style_set_id: styleSetId }),
+  });
 }
 
 // ── Activation seed: upload recent clips → auto-match → instant first video (T8) ──

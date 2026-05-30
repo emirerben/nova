@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   attachClips,
+  changePlanItemStyle,
   generatePlanItem,
   getPlanItem,
   getPlanItemVariants,
@@ -12,9 +13,14 @@ import {
   type PlanItem,
   type PlanItemVariant,
   requestUploadUrls,
+  retextPlanItem,
+  swapPlanItemSong,
   uploadToGcs,
 } from "@/lib/plan-api";
+import { getGenerativeStyleSets, type GenerativeStyleSet } from "@/lib/generative-api";
+import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import PlanShell from "../../_components/PlanShell";
+import PlanVariantCard from "../../_components/PlanVariantCard";
 import SignInPrompt from "../../_components/SignInPrompt";
 
 const POLL_MS = 2500;
@@ -33,7 +39,26 @@ export default function PlanItemPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  // Song gallery + curated style sets for the per-variant edit controls. Both are
+  // public GET endpoints (same as the generative page), so fetch them directly —
+  // not through the authenticated /api/plan proxy.
+  const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
+  const [styleSets, setStyleSets] = useState<GenerativeStyleSet[]>([]);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // variant_id → the output_url at the moment the user submitted an edit. While a
+  // variant is in here we keep polling and keep showing its spinner — we can't
+  // rely on catching the worker's transient "rendering" flag (the throttled
+  // plan-jobs queue may flip it between polls), so we wait for the URL to change.
+  const pendingEdits = useRef<Map<string, string | null>>(new Map());
+
+  useEffect(() => {
+    getMusicTracks()
+      .then((r) => setTracks(r.tracks))
+      .catch(() => setTracks([]));
+    getGenerativeStyleSets()
+      .then(setStyleSets)
+      .catch(() => setStyleSets([]));
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -41,14 +66,30 @@ export default function PlanItemPage() {
       setItem(it);
       // Hydrate variants whenever a render job exists — NOT only on "ready" — so
       // each variant tile fills in (or fails) on its own as the render lands.
+      let vs: PlanItemVariant[] = [];
       if (it.current_job_id) {
         try {
-          setVariants(await getPlanItemVariants(it.current_job_id));
+          vs = await getPlanItemVariants(it.current_job_id);
+          // Retire a pending edit once its render visibly lands (URL changed) or
+          // fails; until then keep the variant displayed as "rendering".
+          const pending = pendingEdits.current;
+          if (pending.size > 0) {
+            for (const sv of vs) {
+              if (!pending.has(sv.variant_id)) continue;
+              const prevUrl = pending.get(sv.variant_id) ?? null;
+              const landed = !!sv.output_url && sv.output_url !== prevUrl;
+              if (landed || sv.render_status === "failed") pending.delete(sv.variant_id);
+            }
+            vs = vs.map((sv) =>
+              pending.has(sv.variant_id) ? { ...sv, render_status: "rendering" } : sv,
+            );
+          }
+          setVariants(vs);
         } catch {
           // best-effort; the item status itself is the source of truth
         }
       }
-      return it;
+      return { item: it, variants: vs };
     } catch (err) {
       if (err instanceof NotAuthenticatedError) setNeedsAuth(true);
       else setError(err instanceof Error ? err.message : "Failed to load item");
@@ -58,24 +99,67 @@ export default function PlanItemPage() {
     }
   }, [itemId]);
 
-  // Keep polling while a render is in flight (generating, or a job exists that
-  // hasn't reached a terminal item status). Stops on ready/failed and unmount.
+  // A render is in flight while the item is generating, OR a job exists that
+  // hasn't reached a terminal status, OR any single variant is re-rendering (a
+  // swap/retext/restyle flips one variant back to "rendering" while the item
+  // stays "ready").
+  const inFlight = (it: PlanItem, vs: PlanItemVariant[]): boolean =>
+    it.status === "generating" ||
+    (!!it.current_job_id && it.status !== "ready" && it.status !== "failed") ||
+    pendingEdits.current.size > 0 ||
+    vs.some((v) => v.render_status === "rendering");
+
+  // Arm a single recursive poll loop (deduped via pollRef) that runs until
+  // nothing is in flight. Shared by mount, generate, and the edit actions.
+  const armPoll = useCallback(() => {
+    if (pollRef.current) clearTimeout(pollRef.current);
+    pollRef.current = setTimeout(async function tick() {
+      const res = await refresh();
+      if (!res) return;
+      if (inFlight(res.item, res.variants)) {
+        pollRef.current = setTimeout(tick, POLL_MS);
+      }
+    }, POLL_MS);
+  }, [refresh]);
+
   useEffect(() => {
     let cancelled = false;
-    async function tick() {
-      const it = await refresh();
-      if (cancelled || !it) return;
-      const inFlight =
-        it.status === "generating" ||
-        (!!it.current_job_id && it.status !== "ready" && it.status !== "failed");
-      if (inFlight) pollRef.current = setTimeout(tick, POLL_MS);
-    }
-    void tick();
+    void (async () => {
+      const res = await refresh();
+      if (cancelled || !res) return;
+      if (inFlight(res.item, res.variants)) armPoll();
+    })();
     return () => {
       cancelled = true;
       if (pollRef.current) clearTimeout(pollRef.current);
     };
-  }, [refresh]);
+  }, [refresh, armPoll]);
+
+  // Optimistically flip a variant to "rendering" so the card shows a spinner and
+  // the poll arms immediately — the worker only sets the real flag once it
+  // dequeues the task, after the POST returns.
+  const markVariantRendering = useCallback((variantId: string) => {
+    setVariants((vs) =>
+      vs.map((v) => (v.variant_id === variantId ? { ...v, render_status: "rendering" } : v)),
+    );
+  }, []);
+
+  const runEdit = useCallback(
+    async (variantId: string, prevUrl: string | null, action: () => Promise<unknown>) => {
+      markVariantRendering(variantId);
+      setError(null);
+      try {
+        await action();
+        // Track until the re-rendered URL lands (see pendingEdits) and keep polling.
+        pendingEdits.current.set(variantId, prevUrl);
+        armPoll();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to update variant");
+        await refresh(); // clear the optimistic spinner if the request was rejected
+      }
+    },
+    [armPoll, markVariantRendering, refresh],
+  );
 
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
@@ -108,12 +192,7 @@ export default function PlanItemPage() {
     try {
       await generatePlanItem(itemId);
       await refresh();
-      pollRef.current = setTimeout(async function tick() {
-        const it = await refresh();
-        if (it && it.status !== "ready" && it.status !== "failed") {
-          pollRef.current = setTimeout(tick, POLL_MS);
-        }
-      }, POLL_MS);
+      armPoll();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start generation");
     } finally {
@@ -263,10 +342,39 @@ export default function PlanItemPage() {
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
               {Array.from({ length: tileCount }).map((_, i) => {
                 const v = variants[i];
-                return v ? (
-                  <VariantTile key={v.variant_id} variant={v} />
+                // A variant that has rendered (or failed) once is editable; a
+                // first-time-pending slot still shimmers as a skeleton.
+                const editable = v && (!!v.output_url || v.render_status === "failed");
+                if (!v) return <SkeletonTile key={`skeleton-${i}`} />;
+                return editable ? (
+                  <PlanVariantCard
+                    key={v.variant_id}
+                    variant={v}
+                    tracks={tracks}
+                    styleSets={styleSets}
+                    onSwap={(trackId) =>
+                      runEdit(v.variant_id, v.output_url, () =>
+                        swapPlanItemSong(itemId, v.variant_id, trackId),
+                      )
+                    }
+                    onRetext={(text) =>
+                      runEdit(v.variant_id, v.output_url, () =>
+                        retextPlanItem(itemId, v.variant_id, { text }),
+                      )
+                    }
+                    onRemoveText={() =>
+                      runEdit(v.variant_id, v.output_url, () =>
+                        retextPlanItem(itemId, v.variant_id, { remove: true }),
+                      )
+                    }
+                    onChangeStyle={(styleSetId) =>
+                      runEdit(v.variant_id, v.output_url, () =>
+                        changePlanItemStyle(itemId, v.variant_id, styleSetId),
+                      )
+                    }
+                  />
                 ) : (
-                  <SkeletonTile key={`skeleton-${i}`} />
+                  <SkeletonTile key={v.variant_id} />
                 );
               })}
             </div>
@@ -280,28 +388,6 @@ export default function PlanItemPage() {
       </div>
     </PlanShell>
   );
-}
-
-/** One render variant: plays when its URL lands, shows a failed state, else shimmers. */
-function VariantTile({ variant }: { variant: PlanItemVariant }) {
-  if (variant.output_url) {
-    return (
-      <video
-        src={variant.output_url}
-        controls
-        className="w-full rounded-lg border border-zinc-800"
-      />
-    );
-  }
-  if (variant.render_status === "failed") {
-    return (
-      <div className="flex aspect-[9/16] w-full flex-col items-center justify-center rounded-lg border border-red-800/60 bg-red-950/20 p-4 text-center">
-        <p className="text-sm text-red-300">This variant failed</p>
-        <p className="mt-1 text-xs text-red-300/60">Re-generate to try again</p>
-      </div>
-    );
-  }
-  return <SkeletonTile />;
 }
 
 function SkeletonTile() {

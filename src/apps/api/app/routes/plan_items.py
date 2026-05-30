@@ -24,7 +24,15 @@ from app import storage
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.database import get_db
-from app.models import ContentPlan, PlanItem
+from app.models import ContentPlan, Job, PlanItem
+from app.routes.generative_jobs import (
+    ChangeStyleRequest,
+    RetextRequest,
+    SwapSongRequest,
+    dispatch_change_style,
+    dispatch_retext,
+    dispatch_swap_song,
+)
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -252,4 +260,68 @@ async def generate_item(
     generate_plan_item_videos.delay(str(item.id))
     # current_job_id is set by the task, not synchronously here; reload with the
     # relationship eager-loaded so serialization never lazy-loads on the session.
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+# ── Per-variant editing (swap song / edit text / change style) ────────────────
+# The render job behind a plan item is a generative-mode Job, so each variant can
+# be re-rendered exactly like a public generative edit. These endpoints add only
+# ownership enforcement (`_load_owned_item`) + job resolution on top of the shared
+# validate-and-dispatch helpers in `routes/generative_jobs.py` — the validation
+# rules and the `regenerate_generative_variant` dispatch stay single-sourced there.
+# Mutation is reachable ONLY here (authenticated, per-user), never on the public
+# unauthenticated `/generative-jobs` surface.
+
+
+async def _owned_item_render_job(item_id: str, user_id: uuid.UUID, db: AsyncSession) -> Job:
+    """Load the user-owned item and return its current render Job (404 if none yet)."""
+    item = await _load_owned_item(item_id, user_id, db)
+    job = item.current_job
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    return job
+
+
+@router.post("/{item_id}/variants/{variant_id}/swap-song", response_model=PlanItemResponse)
+async def swap_item_song(
+    item_id: str,
+    variant_id: str,
+    req: SwapSongRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Re-render one of this item's variants against a different library song."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    await dispatch_swap_song(job, variant_id, new_track_id=req.new_track_id, db=db)
+    log.info("plan_item_swap_song", item_id=item_id, variant_id=variant_id)
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post("/{item_id}/variants/{variant_id}/retext", response_model=PlanItemResponse)
+async def retext_item(
+    item_id: str,
+    variant_id: str,
+    req: RetextRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Re-render one of this item's variants with new intro text, or remove it."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    dispatch_retext(job, variant_id, text=req.text, remove=req.remove)
+    log.info("plan_item_retext", item_id=item_id, variant_id=variant_id, remove=req.remove)
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post("/{item_id}/variants/{variant_id}/change-style", response_model=PlanItemResponse)
+async def change_item_style(
+    item_id: str,
+    variant_id: str,
+    req: ChangeStyleRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Re-render one of this item's variants with a different curated text style set."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    dispatch_change_style(job, variant_id, style_set_id=req.style_set_id)
+    log.info("plan_item_change_style", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
