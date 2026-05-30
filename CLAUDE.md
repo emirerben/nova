@@ -62,6 +62,9 @@ cp .env.example .env            # fill in values
 
 `dev-auto.sh` starts redis + postgres via `docker-compose up -d redis db` (infra only — not the app), runs migrations, then launches API (`uvicorn --reload`), Celery worker (`watchfiles` auto-restart on `.py` edits), and Next.js (HMR) natively. Logs go to `.dev/<service>.log`. Do NOT restart servers manually — hot reload handles all code edits. Stop with `./scripts/dev-stop.sh`.
 
+### Local sign-in (dev-login)
+The content-plan / generative flows are Google-gated. To sign in on localhost without Google consent, the repo ships a `dev-login` NextAuth provider (`src/apps/web/src/lib/auth.ts`) gated behind `ALLOW_DEV_LOGIN=true`. Because `dev-auto.sh` sources the repo-root `.env`, setting `ALLOW_DEV_LOGIN=true` + `INTERNAL_API_KEY=<any-string>` there (see `.env.example`) makes dev-login work in **every worktree** automatically — no per-worktree setup. Sign in at `http://localhost:3000/api/auth/signin` → "Dev login (local only)" → any email. Both the API and web must read the same `INTERNAL_API_KEY` (sourcing root `.env` guarantees this); the API fail-closes (401 on plan routes) if it's unset. NEVER set `ALLOW_DEV_LOGIN` in Vercel/Fly. If you run web/API by hand (not via `dev-auto.sh`), remember Next.js loads env from `src/apps/web/`, not repo root — so `source ../../../.env` into the launch shell or the web process won't see `INTERNAL_API_KEY`/`NEXTAUTH_SECRET`.
+
 Alternatives:
 - `./scripts/dev-no-docker.sh` — same flow but assumes postgres@16 + redis are already running (e.g. via `brew services`)
 - `docker-compose up` — runs the full stack (web/api/worker) in containers; rarely needed since hot-reload native dev is faster
