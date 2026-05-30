@@ -18,6 +18,7 @@ from app.routes import (
     clips,
     content_plans,
     generative_jobs,
+    me,
     music,
     music_jobs,
     personas,
@@ -97,6 +98,7 @@ app.include_router(generative_jobs.router, prefix="/generative-jobs", tags=["gen
 app.include_router(personas.router, prefix="/personas", tags=["personas"])
 app.include_router(content_plans.router, prefix="/content-plans", tags=["content-plans"])
 app.include_router(plan_items.router, prefix="/plan-items", tags=["plan-items"])
+app.include_router(me.router, prefix="/me", tags=["me"])
 app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])
 app.include_router(clips.router, prefix="/clips", tags=["clips"])
 app.include_router(templates.router, prefix="/templates", tags=["templates"])
