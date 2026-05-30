@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 export default function Header() {
   const pathname = usePathname() ?? "";
   const isAdmin = pathname.startsWith("/admin");
+  const { status: authStatus } = useSession();
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
@@ -56,6 +57,16 @@ export default function Header() {
           >
             Plan
           </Link>
+          {authStatus === "authenticated" && (
+            <Link
+              href="/library"
+              className={`text-sm transition-colors hover:text-white ${
+                pathname.startsWith("/library") ? "text-white" : "text-zinc-400"
+              }`}
+            >
+              Library
+            </Link>
+          )}
           <AuthControl />
         </nav>
       </div>
@@ -127,6 +138,13 @@ function AuthControl() {
             className="block px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-900"
           >
             My plan
+          </Link>
+          <Link
+            href="/library"
+            onClick={() => setOpen(false)}
+            className="block px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-900"
+          >
+            My videos
           </Link>
           <button
             onClick={() => signOut({ callbackUrl: "/" })}
