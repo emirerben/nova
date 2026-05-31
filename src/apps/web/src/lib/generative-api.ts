@@ -6,6 +6,12 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+// Intro font-size envelope + nudge step (mirrors overlay_sizing.MIN/MAX_INTRO_PX
+// on the backend, which clamps server-side regardless of what the UI sends).
+export const INTRO_SIZE_MIN = 56;
+export const INTRO_SIZE_MAX = 240;
+export const INTRO_SIZE_STEP = 16;
+
 export type GenerativeTextMode = "lyrics" | "agent_text" | "none";
 
 export interface GenerativeVariant {
@@ -20,6 +26,9 @@ export interface GenerativeVariant {
   render_status: "ready" | "rendering" | "failed" | null;
   ok: boolean;
   error: string | null;
+  // Agent-decided (or user-pinned) intro size. null for non-text variants.
+  intro_text_size_px: number | null;
+  intro_size_source: "computed" | "user" | null;
 }
 
 export interface GenerativeStyleSet {
@@ -156,6 +165,26 @@ export async function changeVariantStyle(
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail ?? "Failed to change style");
+  }
+  return res.json();
+}
+
+export async function setVariantIntroSize(
+  jobId: string,
+  variantId: string,
+  textSizePx: number,
+): Promise<GenerativeJobResponse> {
+  const res = await fetch(
+    `${API_BASE}/generative-jobs/${jobId}/variants/${variantId}/intro-size`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text_size_px: Math.round(textSizePx) }),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? "Failed to resize intro text");
   }
   return res.json();
 }

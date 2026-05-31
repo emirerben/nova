@@ -8,6 +8,7 @@ import {
   getGenerativeStyleSets,
   GENERATIVE_TERMINAL_STATUSES,
   retextVariant,
+  setVariantIntroSize,
   swapVariantSong,
   uploadGenerativeClip,
   type GenerativeJobStatus,
@@ -242,6 +243,11 @@ export default function GenerativePage() {
                   onChangeStyle={async (styleSetId) => {
                     markVariantRendering(v.variant_id);
                     await changeVariantStyle(jobId, v.variant_id, styleSetId);
+                    await refresh();
+                  }}
+                  onResize={async (px) => {
+                    markVariantRendering(v.variant_id);
+                    await setVariantIntroSize(jobId, v.variant_id, px);
                     await refresh();
                   }}
                 />

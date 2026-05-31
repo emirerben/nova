@@ -52,6 +52,9 @@ class ClipMeta:
     analysis_degraded: bool = False
     failed: bool = False
     clip_path: str = ""  # set by caller for fallback
+    # Composition signal for agent-decided overlay sizing (overlay_sizing.py).
+    text_safe_zone: dict | None = None  # {"x","y","w","h"} normalized to the 9:16 frame
+    visual_density: float = 5.0  # 0 (empty) .. 10 (cluttered)
 
 
 @dataclass
@@ -112,12 +115,14 @@ class TemplateRecipe:
 #     dataclass or the downstream pipeline (matcher / assembler).
 # Any new field that lives on the recipe dict but isn't a TemplateRecipe field
 # must be added here, otherwise `build_recipe()` will raise TypeError.
-NON_RECIPE_KEYS: frozenset[str] = frozenset({
-    "template_kind",
-    "has_intro_slot",
-    "required_clips_min",
-    "required_clips_max",
-})
+NON_RECIPE_KEYS: frozenset[str] = frozenset(
+    {
+        "template_kind",
+        "has_intro_slot",
+        "required_clips_min",
+        "required_clips_max",
+    }
+)
 
 
 def build_recipe(recipe_data: dict) -> TemplateRecipe:
@@ -437,6 +442,10 @@ def analyze_clip(
         hook_score=out.hook_score,
         best_moments=[m.model_dump() for m in out.best_moments],
         detected_subject=out.detected_subject,
+        # getattr-with-default: ClipMetadataOutput always carries these, but a
+        # partial shim/mock output may not — fall back to the ClipMeta defaults.
+        text_safe_zone=getattr(out, "text_safe_zone", None),
+        visual_density=getattr(out, "visual_density", 5.0),
     )
 
 

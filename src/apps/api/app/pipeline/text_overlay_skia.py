@@ -140,9 +140,7 @@ def assert_glyphs_present(typeface: skia.Typeface, text: str) -> None:
         if not ch.isspace() and typeface.unicharToGlyph(ord(ch)) == 0
     ]
     if missing:
-        raise MissingGlyphsError(
-            f"Typeface missing {len(missing)} glyph(s): {', '.join(missing)}"
-        )
+        raise MissingGlyphsError(f"Typeface missing {len(missing)} glyph(s): {', '.join(missing)}")
 
 
 def _overlay_text(overlay: dict) -> str:
@@ -380,6 +378,40 @@ def _measure_block(font: skia.Font, lines: list[str]) -> dict[str, Any]:
         "block_h": block_h,
         "ascent_offset": -metrics.fAscent,
     }
+
+
+def fit_text_size_px(
+    text: str,
+    typeface: skia.Typeface,
+    box_w_px: float,
+    box_h_px: float,
+    *,
+    max_px: int,
+    min_px: int = _MIN_FONT_SIZE,
+) -> int:
+    """Largest px (<= max_px, >= min_px) at which `text` — word-wrapped to
+    `box_w_px` — fits inside a (box_w_px x box_h_px) box without clipping.
+
+    The inverse of `_shrink_to_fit`: that one only shrinks a known start size to
+    stop horizontal overflow; this searches DOWNWARD from `max_px` to FILL an
+    empty box (both width and stacked-line height), so a calm frame gets large
+    text and a tight one gets small text. Uses the same wrap + block-measure
+    primitives the renderer uses, so the size this returns is the size that
+    actually renders. `_shrink_to_fit` still runs at draw time as the final
+    clip-safety clamp.
+    """
+    min_px = max(_MIN_FONT_SIZE, int(min_px))
+    size = max(min_px, int(max_px))
+    while size > min_px:
+        font = skia.Font(typeface, size)
+        font.setSubpixel(True)
+        lines = _wrap_text_to_lines(text, font, box_w_px)
+        widest = max((font.measureText(ln) for ln in lines), default=0.0)
+        block_h = _measure_block(font, lines)["block_h"]
+        if widest <= box_w_px and block_h <= box_h_px:
+            return size
+        size = int(size * 0.92)
+    return min_px
 
 
 # -- Per-frame drawing -------------------------------------------------------

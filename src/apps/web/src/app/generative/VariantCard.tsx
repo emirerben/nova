@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import type { GenerativeStyleSet, GenerativeVariant } from "@/lib/generative-api";
+import {
+  INTRO_SIZE_MAX,
+  INTRO_SIZE_MIN,
+  INTRO_SIZE_STEP,
+  type GenerativeStyleSet,
+  type GenerativeVariant,
+} from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 
 export const TEXT_MODE_LABEL: Record<string, string> = {
@@ -24,6 +30,7 @@ export function VariantCard({
   onRetext,
   onRemoveText,
   onChangeStyle,
+  onResize,
 }: {
   variant: GenerativeVariant;
   tracks: MusicTrackSummary[];
@@ -32,10 +39,16 @@ export function VariantCard({
   onRetext: (text: string) => Promise<void>;
   onRemoveText: () => Promise<void>;
   onChangeStyle: (styleSetId: string) => Promise<void>;
+  onResize?: (textSizePx: number) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const rendering = variant.render_status === "rendering" || busy;
   const failed = variant.render_status === "failed";
+  // The ±size nudge applies only to the AI-intro text variants, and only once a
+  // size exists to nudge from (set on first render). curPx is the current pinned
+  // or agent-decided size; null hides the control.
+  const curPx =
+    variant.text_mode === "agent_text" ? variant.intro_text_size_px : null;
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -91,6 +104,43 @@ export function VariantCard({
         >
           Remove text
         </button>
+        {/* ±size nudge — re-renders the AI intro at a bigger/smaller font. Hidden
+            on lyrics / no-text variants (no resizable overlay) and until a size
+            exists to nudge from. Clamped both client- and server-side. */}
+        {onResize && curPx != null && (
+          <div className="flex items-center overflow-hidden rounded border border-zinc-700">
+            <button
+              disabled={rendering || curPx <= INTRO_SIZE_MIN}
+              onClick={() =>
+                run(() => onResize(Math.max(INTRO_SIZE_MIN, curPx - INTRO_SIZE_STEP)))
+              }
+              aria-label="Smaller intro text"
+              className="px-2.5 py-1 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
+            >
+              A−
+            </button>
+            <span
+              title={
+                variant.intro_size_source === "user"
+                  ? `Your size · ${curPx}px`
+                  : `Auto-sized · ${curPx}px`
+              }
+              className="select-none border-x border-zinc-700 px-2 py-1 text-xs tabular-nums text-zinc-500"
+            >
+              {variant.intro_size_source === "user" ? `${curPx}` : `${curPx} auto`}
+            </span>
+            <button
+              disabled={rendering || curPx >= INTRO_SIZE_MAX}
+              onClick={() =>
+                run(() => onResize(Math.min(INTRO_SIZE_MAX, curPx + INTRO_SIZE_STEP)))
+              }
+              aria-label="Bigger intro text"
+              className="px-2.5 py-1 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
+            >
+              A+
+            </button>
+          </div>
+        )}
         {/* Change text style — applies to ALL variants (the set governs the AI
             intro on text variants and the lyric typography on the lyrics variant). */}
         {styleSets.length > 0 && (

@@ -55,6 +55,13 @@ class ClipMetadataOutput(BaseModel):
     hook_score: float = Field(..., ge=0, le=10)
     best_moments: list[Moment] = Field(default_factory=list)
     detected_subject: str = ""
+    # Composition signal for agent-decided overlay sizing (see overlay_sizing.py).
+    # Deliberately loose-typed: generative is best-effort and must never hard-fail
+    # parsing on a drifted value, so a bad safe_zone/density is tolerated here and
+    # validated/clamped downstream rather than rejected at the schema.
+    text_safe_zone: dict | None = None  # {"x","y","w","h"} normalized to the 9:16 frame
+    visual_density: float = 5.0  # 0 (empty) .. 10 (cluttered); clamped at use
+    composition_note: str = ""
 
 
 # ── Domain-specific post-filter (lifted verbatim from gemini_analyzer.py) ────
@@ -169,7 +176,8 @@ def _enforce_moment_spread(moments: list[Moment]) -> list[Moment]:
     explicitly says "fewer strong moments > padding the list" so we never invent.
     """
     valid = [
-        m for m in moments
+        m
+        for m in moments
         if isinstance(m.end_s, (int, float))
         and isinstance(m.start_s, (int, float))
         and (m.end_s - m.start_s) >= _MIN_MOMENT_DURATION_S
@@ -222,9 +230,10 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         name="nova.video.clip_metadata",
         prompt_id="analyze_clip",
         # 2026-05-28 — _enforce_moment_spread() post-filter added in parse().
-        # Prompt text unchanged; bump signals the output-semantics change in
-        # agent_run telemetry so scoring drift is attributable to the new filter.
-        prompt_version="2026-05-28",
+        # Bumped 2026-05-31: prompt now emits composition fields (text_safe_zone /
+        # visual_density / composition_note) consumed by overlay_sizing for the
+        # agent-decided generative intro size.
+        prompt_version="2026-05-31",
         model="gemini-2.5-flash",
         # Gemini pricing as of 2026 — input ~$0.075/M, output ~$0.30/M (2.5 Flash).
         cost_per_1k_input_usd=0.000075,
