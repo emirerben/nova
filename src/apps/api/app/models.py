@@ -628,6 +628,11 @@ class PlanItem(Base):
     filming_suggestion: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The AI's short "why this video works", shown read-only in the dashboard.
     rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The edit shape this day is meant to become (montage|talking_head|day_vlog|
+    # single_hero). Plain Text + server_default like item_status — validated in
+    # the schema layer (app.agents._schemas.edit_format), not a DB CHECK, so the
+    # vocabulary can grow without a migration. Legacy rows read 'montage'.
+    edit_format: Mapped[str] = mapped_column(Text, nullable=False, server_default="montage")
     # Themed uploads land here (users/{user_id}/plan/{plan_item_id}/...).
     clip_gcs_paths: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # idea | awaiting_clips ONLY. Render state is derived from current_job.status.

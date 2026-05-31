@@ -97,6 +97,28 @@ def test_persona_pillars_capped_and_trimmed() -> None:
     assert pillars[0] == "pillar0"  # trimmed
 
 
+def test_edit_format_defaults_to_montage() -> None:
+    # Public job with no declared format → montage (today's behavior), always present.
+    job = build_generative_job(user_id=uuid.uuid4(), clip_paths=["slot-uploads/a.mp4"])
+    assert job.all_candidates["edit_format"] == "montage"
+
+
+def test_edit_format_passthrough_and_coercion() -> None:
+    job = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+        edit_format="talking_head",
+    )
+    assert job.all_candidates["edit_format"] == "talking_head"
+    # An unknown/legacy value must coerce to montage, never reach the render path raw.
+    job2 = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+        edit_format="cinematic-banger",
+    )
+    assert job2.all_candidates["edit_format"] == "montage"
+
+
 def test_users_prefix_is_allowlisted() -> None:
     # The whole point of the Phase 5 allowlist change — plan uploads must pass.
     job = build_generative_job(user_id=uuid.uuid4(), clip_paths=["users/u/plan/i/clip.mp4"])

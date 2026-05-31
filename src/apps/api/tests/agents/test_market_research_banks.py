@@ -219,21 +219,22 @@ def test_persona_bank_version_couples_to_prompt_version():
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
-    # Prompt led to 2026-05-31 (anti-cringe guardrails); idea bank unchanged.
+    # Prompt led to 2026-05-31 (anti-cringe), then 2026-05-31.1 (edit_format
+    # emission, format-aware edit engine); idea bank unchanged.
     assert content_ideas_version() == "2026-05-30"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-31"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-31.1"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     from app.agents.intro_writer import IntroTextWriterAgent
 
     # The success-factor bank is part of THREE prompts (persona, content plan,
-    # intro). The bank itself is unchanged (2026-05-30); the persona + content
-    # plan prompts later led to 2026-05-31 (anti-cringe guardrails) while the
-    # intro prompt is untouched, so its version stays behind at 2026-05-30.2.
+    # intro). The bank itself is unchanged (2026-05-30); persona led to 2026-05-31
+    # (anti-cringe) and content plan to 2026-05-31.1 (anti-cringe + edit_format
+    # emission) while the intro prompt is untouched, so it stays at 2026-05-30.2.
     assert success_factors_version() == "2026-05-30"
     assert PERSONA_PROMPT_VERSION == "2026-05-31"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-31"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-31.1"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-05-30.2"
 
 
