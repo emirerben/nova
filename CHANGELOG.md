@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.70.0] - 2026-05-31
+
+### Added
+- **`talking_head` video assembler — the first format-aware archetype (format-aware edit engine, Lane C of N).** A talking-head edit has a different *shape* than the beat-synced montage: ONE clip's full audio track (the "spine") carries the whole video while the OTHER clips' video is cut in as B-roll over the spine at intervals. This lands the assembler as a self-contained, unit-tested module. It is **not yet wired into the generative dispatch** (that is Lane D) — no prod render-behavior change yet; this is the render machinery the dispatch will route to.
+  - **Dedicated assembler (`app/pipeline/talking_head_assembler.py`).** A separate path on purpose (plan decision D2): NOT an extension of the ~3000-line `_assemble_clips`. It owns its own one-shot timeline — reframe every clip via the shared `reframe_and_export`, then a single FFmpeg pass lays B-roll over the spine video and muxes the spine audio. Reuses the encoder policy (`_encoding_args`, `preset="fast"`), the CFR-normalised reframe output, and the loudnorm/aresample-48k tail from `intro_voiceover_mix`. Montage + music beat-snap paths untouched.
+  - **Spine selection.** Ranks clips by `speech_coverage`, nudged by the Lane A `content_type=="talking_head"` / `audio_type∈{dialogue,voiceover}` labels so a clearly-labelled talking clip wins a near-tie; an explicit `spine_clip_id` (user override) always wins. Reads labels via `getattr` defaults so it tolerates a drifted/missing label and the alternate clip-meta carrier.
+  - **Speech coverage (`app/services/clip_speech.py`).** Fraction of a clip that carries non-silent audio, via FFmpeg `silencedetect` (NOT an LLM signal). Best-effort: no audio stream / probe failure / ffmpeg error → `0.0`, never raises — an unmeasurable clip simply isn't promoted to the spine.
+  - **B-roll scheduling.** Fixed even cadence v1 (explicit over clever): evenly-spaced cutaway windows after a lead-in, each clamped to its clip's source duration. `setpts` PTS-shift so a cutaway plays from its own start during the window, and `eof_action=pass` so a B-roll shorter than its window lets the spine show through (no frozen-frame loop). Transcript/energy-driven placement is the eventual goal (Phase 2 spice).
+  - **Best-effort failure model.** A corrupt/unreadable spine raises `SpineExtractionError` so the (future) Lane D dispatch can degrade to montage + trace the fallback; a failed B-roll reframe just drops that one cutaway and the job continues. Emits `archetype_selected` / `spine_selected` / `broll_scheduled` pipeline-trace events.
+  - **Kill switch + encoder gate.** `EDIT_FORMAT_TALKING_HEAD_ENABLED` (default off) ships alongside the feature for Lane D to gate on (Fly-secret flip + worker restart, no redeploy — mirrors `LYRIC_DYNAMIC_CROSSFADE_ENABLED`). The final composite encode is registered in `tests/test_encoder_policy.py` (`preset="fast"`, banding policy). Unit tests cover spine ranking/override, schedule math, the composite filtergraph (PTS-shift / `enable` / `eof_action=pass` / 48k audio), no-broll + dropped-broll + spine-failure paths, and `speech_coverage` edge cases.
 ## [0.4.69.0] - 2026-05-31
 
 ### Changed
