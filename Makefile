@@ -63,7 +63,8 @@ local-render: local-render-migrate
 			exit 2; \
 		fi; \
 		python3 scripts/local-render.py --mode generative \
-			$(foreach c,$(CLIPS),--clip "$(c)"); \
+			$(foreach c,$(CLIPS),--clip "$(c)") \
+			$(if $(EDIT_FORMAT),--edit-format $(EDIT_FORMAT)); \
 	else \
 		if [ -z "$(CLIP)" ] || [ -z "$(TEMPLATE)" ]; then \
 			echo "Usage: make local-render CLIP=/path/to/video.mp4 TEMPLATE=<uuid> [MODE=template|music] [INPUTS='{\"location\":\"Tokyo\"}']"; \

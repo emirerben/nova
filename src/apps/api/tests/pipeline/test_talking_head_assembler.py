@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -178,6 +179,45 @@ def test_assemble_drops_failed_broll_but_completes():
     assert out == "out.mp4"
     # Only 'c' survived as a cutaway → one B-roll input beyond the spine.
     assert captured["cmd"].count("-i") == 2
+
+
+def test_safe_stem_strips_path_separators():
+    # Generative clip_ids are Gemini ref names like "files/abc" — the stem must be
+    # a single writable filename component.
+    assert tha._safe_stem("files/t1eq2y5u9km4") == "files_t1eq2y5u9km4"
+    assert "/" not in tha._safe_stem("a/b/c")
+    assert tha._safe_stem("") == "clip"
+
+
+def test_assemble_sanitizes_slashed_clip_ids_in_reframe_paths():
+    # Regression (caught by make local-render, 2026-05-31): generative clip_ids are
+    # Gemini ref names containing "/", so f"{tmpdir}/spine_{clip_id}.mp4" pointed into
+    # a phantom subdir and ffmpeg's output-open failed → SpineExtractionError → the
+    # whole talking_head job silently degraded to montage. Every reframe intermediate
+    # must sit DIRECTLY under tmpdir with a slash-free basename.
+    metas = [_meta("files/spine1", "talking_head", "dialogue"), _meta("files/broll1")]
+    paths = {"files/spine1": "s.mp4", "files/broll1": "b.mp4"}
+    out_paths: list[str] = []
+
+    def fake_reframe(input_path, *args, **kwargs):
+        out_paths.append(args[-1])  # output_path is the last positional arg
+
+    with (
+        patch.object(tha, "speech_coverage", lambda p: 1.0 if p == "s.mp4" else 0.0),
+        patch.object(tha, "reframe_and_export", side_effect=fake_reframe),
+        patch.object(tha.subprocess, "run", return_value=SimpleNamespace(returncode=0, stderr=b"")),
+    ):
+        assemble_talking_head(
+            clip_paths=paths,
+            clip_metas=metas,
+            probe_map=_probe_map("files/spine1", "files/broll1"),
+            output_path="out.mp4",
+            tmpdir="/tmp/thtest",
+        )
+    assert out_paths, "reframe_and_export should have been called for spine + broll"
+    for p in out_paths:
+        assert os.path.dirname(p) == "/tmp/thtest", f"phantom subdir in {p!r}"
+        assert "/" not in os.path.basename(p)
 
 
 def test_assemble_raises_on_composite_ffmpeg_failure():

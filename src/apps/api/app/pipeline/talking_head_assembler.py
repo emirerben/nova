@@ -25,6 +25,7 @@ CLAUDE.md anti-pattern guard: subprocess FFmpeg only, never MoviePy.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import dataclass
 
@@ -36,6 +37,19 @@ from app.services.clip_speech import speech_coverage
 from app.services.pipeline_trace import record_pipeline_event
 
 log = structlog.get_logger()
+
+
+def _safe_stem(clip_id: str) -> str:
+    """A filesystem-safe filename stem from a clip_id.
+
+    Generative clip_ids are Gemini upload ref names like ``files/t1eq2y5u9km4`` —
+    the ``/`` would make ``f"{tmpdir}/spine_{clip_id}.mp4"`` point into a nonexistent
+    subdirectory and ffmpeg's output open fails (the spine reframe then raises
+    SpineExtractionError and the whole job degrades to montage). Collapse anything
+    that isn't alphanumeric to ``_`` so the intermediate path is always writable.
+    """
+    return re.sub(r"[^A-Za-z0-9]+", "_", str(clip_id)).strip("_") or "clip"
+
 
 # 9:16 vertical output (all generative output is portrait).
 _ASPECT = "9:16"
@@ -292,7 +306,7 @@ def assemble_talking_head(
         raise SpineExtractionError(f"spine clip {selection.spine_clip_id} has no usable duration")
     usable_s = min(spine_dur, target_duration_s) if target_duration_s else spine_dur
 
-    spine_reframed = f"{tmpdir}/spine_{selection.spine_clip_id}.mp4"
+    spine_reframed = f"{tmpdir}/spine_{_safe_stem(selection.spine_clip_id)}.mp4"
     try:
         reframe_and_export(spine_path, 0.0, spine_dur, _ASPECT, None, spine_reframed)
     except Exception as exc:  # noqa: BLE001 — ReframeError or any probe/IO failure degrades
@@ -302,13 +316,14 @@ def assemble_talking_head(
 
     # ── B-roll: reframe each; a failure drops that clip (best-effort). ──
     broll_sources: list[BrollSource] = []
-    for cid in selection.broll_clip_ids:
+    for i, cid in enumerate(selection.broll_clip_ids):
         path = clip_paths[cid]
         dur = _duration(path, probe_map, cid)
         if dur <= 0:
             log.warning("talking_head_broll_no_duration", job_id=job_id, clip_id=cid)
             continue
-        reframed = f"{tmpdir}/broll_{cid}.mp4"
+        # Index-prefixed so two clip_ids that sanitize to the same stem can't collide.
+        reframed = f"{tmpdir}/broll_{i}_{_safe_stem(cid)}.mp4"
         try:
             reframe_and_export(path, 0.0, dur, _ASPECT, None, reframed)
         except Exception as exc:  # noqa: BLE001 — drop this window, keep the job
