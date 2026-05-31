@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.72.1] - 2026-05-31
+
+### Fixed
+- **`talking_head` archetype was dead-on-arrival — slashed clip_ids broke the spine reframe.** Caught by the first real `make local-render` of Lane D: generative `clip_id`s are Gemini upload ref names like `files/t1eq2y5u9km4`, and the assembler built reframe intermediates as `f"{tmpdir}/spine_{clip_id}.mp4"` — the `/` pointed into a nonexistent `spine_files/` subdir, so ffmpeg's output-open failed → `SpineExtractionError` → every talking_head job silently degraded to montage (even with `EDIT_FORMAT_TALKING_HEAD_ENABLED=true` and a clear spine). The assembler's unit tests used slash-free ids (`"c1"`), so it passed CI but never produced a talking_head render. Added `_safe_stem()` to collapse non-alphanumeric chars to `_` for both spine and (index-prefixed) B-roll intermediates; regression tests assert `_safe_stem` strips separators and that every reframe path sits directly under tmpdir. Verified end-to-end via local-render: spine speech runs full length, B-roll composites over it at the scheduled windows (PTS-shift exact), and the AI intro overlay burns and holds.
+- **`make local-render MODE=generative` couldn't reach the new `--edit-format` flag.** The Lane D driver gained `--edit-format`, but the Makefile's generative branch didn't forward it, so the documented talking_head verification was unreachable via `make`. Added `EDIT_FORMAT` passthrough — `make local-render MODE=generative CLIPS="…" EDIT_FORMAT=talking_head`.
+
 ## [0.4.72.0] - 2026-05-31
 
 ### Added
