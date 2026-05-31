@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import type { PlanItemVariant } from "@/lib/plan-api";
-import type { GenerativeStyleSet } from "@/lib/generative-api";
+import {
+  INTRO_SIZE_MAX,
+  INTRO_SIZE_MIN,
+  INTRO_SIZE_STEP,
+  type GenerativeStyleSet,
+} from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import SongPicker from "./SongPicker";
 import StyleChip from "./StyleChip";
@@ -25,6 +30,7 @@ export default function PlanVariantEditor({
   onRetext,
   onRemoveText,
   onChangeStyle,
+  onResize,
 }: {
   variant: PlanItemVariant;
   tracks: MusicTrackSummary[];
@@ -33,6 +39,7 @@ export default function PlanVariantEditor({
   onRetext: (text: string) => Promise<void>;
   onRemoveText: () => Promise<void>;
   onChangeStyle: (styleSetId: string) => Promise<void>;
+  onResize?: (textSizePx: number) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -40,6 +47,10 @@ export default function PlanVariantEditor({
   const rendering = variant.render_status === "rendering" || busy;
   // Swap only applies to song variants — the original-audio edit has no track.
   const canSwap = tracks.length > 0 && variant.music_track_id != null;
+  // Text-size nudge: only the AI-intro variants have a resizable hero overlay,
+  // and only once a size exists to nudge from (set on first render).
+  const curPx =
+    variant.text_mode === "agent_text" ? variant.intro_text_size_px ?? null : null;
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -114,6 +125,47 @@ export default function PlanVariantEditor({
           </div>
         )}
       </section>
+
+      {/* ── Text size ───────────────────────────────────────────── */}
+      {onResize && curPx != null && (
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-zinc-200">Text size</h3>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center overflow-hidden rounded-full border border-zinc-700">
+              <button
+                type="button"
+                disabled={rendering || curPx <= INTRO_SIZE_MIN}
+                onClick={() =>
+                  run(() => onResize(Math.max(INTRO_SIZE_MIN, curPx - INTRO_SIZE_STEP)))
+                }
+                aria-label="Smaller intro text"
+                className="px-4 py-2 text-sm text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                A&minus;
+              </button>
+              <span className="border-x border-zinc-700 px-3 py-2 text-sm tabular-nums text-zinc-400">
+                {variant.intro_size_source === "user" ? `${curPx}` : `${curPx} · auto`}
+              </span>
+              <button
+                type="button"
+                disabled={rendering || curPx >= INTRO_SIZE_MAX}
+                onClick={() =>
+                  run(() => onResize(Math.min(INTRO_SIZE_MAX, curPx + INTRO_SIZE_STEP)))
+                }
+                aria-label="Bigger intro text"
+                className="px-4 py-2 text-base text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                A+
+              </button>
+            </div>
+            <span className="text-xs text-zinc-500">
+              {variant.intro_size_source === "user"
+                ? "your size"
+                : "auto-sized to the footage"}
+            </span>
+          </div>
+        </section>
+      )}
 
       {/* ── Text style ──────────────────────────────────────────── */}
       {styleSets.length > 0 && (

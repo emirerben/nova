@@ -28,9 +28,11 @@ from app.models import ContentPlan, Job, PlanItem
 from app.routes.generative_jobs import (
     ChangeStyleRequest,
     RetextRequest,
+    SetIntroSizeRequest,
     SwapSongRequest,
     dispatch_change_style,
     dispatch_retext,
+    dispatch_set_intro_size,
     dispatch_swap_song,
 )
 
@@ -324,4 +326,21 @@ async def change_item_style(
     job = await _owned_item_render_job(item_id, user.id, db)
     dispatch_change_style(job, variant_id, style_set_id=req.style_set_id)
     log.info("plan_item_change_style", item_id=item_id, variant_id=variant_id)
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post("/{item_id}/variants/{variant_id}/intro-size", response_model=PlanItemResponse)
+async def set_item_intro_size(
+    item_id: str,
+    variant_id: str,
+    req: SetIntroSizeRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Re-render one of this item's variants with a user-pinned AI-intro font size."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    dispatch_set_intro_size(job, variant_id, text_size_px=req.text_size_px)
+    log.info(
+        "plan_item_set_intro_size", item_id=item_id, variant_id=variant_id, px=req.text_size_px
+    )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))

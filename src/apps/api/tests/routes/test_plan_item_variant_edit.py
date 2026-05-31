@@ -236,6 +236,63 @@ def test_change_style_rejects_unknown_style(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
+# ── intro-size ───────────────────────────────────────────────────────────────
+
+# The size nudge only applies to the AI-intro text variant; SONG_VARIANT alone
+# lacks text_mode, so these add it explicitly.
+_AGENT_TEXT_VARIANT = {**SONG_VARIANT, "text_mode": "agent_text"}
+
+
+def test_intro_size_happy_path(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(_AGENT_TEXT_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/intro-size",
+            json={"text_size_px": 72},
+        )
+    assert resp.status_code == 200
+    regen.delay.assert_called_once_with(str(job.id), "song_text", size_override_px=72)
+
+
+def test_intro_size_clamps_to_envelope(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(_AGENT_TEXT_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/intro-size",
+            json={"text_size_px": 9999},
+        )
+    assert resp.status_code == 200
+    # over the ceiling → clamped server-side to MAX_INTRO_PX (80)
+    assert regen.delay.call_args.kwargs["size_override_px"] == 80
+
+
+def test_intro_size_rejects_non_agent_text_variant(client: TestClient) -> None:
+    # A lyrics variant has no resizable AI intro → 422, no re-render queued.
+    user = _user()
+    job = _job([{**SONG_VARIANT, "text_mode": "lyrics"}])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/intro-size",
+            json={"text_size_px": 72},
+        )
+    assert resp.status_code == 422
+    regen.delay.assert_not_called()
+
+
 # ── ownership + state guards ─────────────────────────────────────────────────
 
 

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.70.0] - 2026-05-31
+
+### Added
+- **Intro font-size control in the content-plan flow.** The ±size nudge existed only on the public `/generative` page; the plan-item editor (`/plan/items/[id]`) — the main UX — had swap-song / retext / change-style but no way to resize the intro. Added an A− / A+ stepper to `PlanVariantEditor` (shown only on AI-text variants, once a size exists), backed by a new `POST /plan-items/{id}/variants/{variant_id}/intro-size` endpoint that reuses the generative `dispatch_set_intro_size` (clamped to the editorial `[40,80]` envelope, persisted as `intro_size_source="user"` so it survives later re-renders). The plan-item variant type now carries `intro_text_size_px` / `intro_size_source`, surfaced through the existing status endpoint. Backend route tests (happy / clamp / rejects-non-intro-variant) + `PlanVariantEditor` stepper tests added.
+
 ## [0.4.69.0] - 2026-05-31
 
 ### Changed

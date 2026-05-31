@@ -14,6 +14,7 @@ import {
   type PlanItemVariant,
   requestUploadUrls,
   retextPlanItem,
+  setPlanItemIntroSize,
   swapPlanItemSong,
   uploadToGcs,
 } from "@/lib/plan-api";
@@ -410,6 +411,11 @@ export default function PlanItemPage() {
                   onChangeStyle={(styleSetId) =>
                     runEdit(focused.variant_id, focused.output_url, () =>
                       changePlanItemStyle(itemId, focused.variant_id, styleSetId),
+                    )
+                  }
+                  onResize={(px) =>
+                    runEdit(focused.variant_id, focused.output_url, () =>
+                      setPlanItemIntroSize(itemId, focused.variant_id, px),
                     )
                   }
                 />

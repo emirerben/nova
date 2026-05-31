@@ -41,6 +41,7 @@ function renderEditor(variant: PlanItemVariant, overrides = {}) {
     onRetext: jest.fn().mockResolvedValue(undefined),
     onRemoveText: jest.fn().mockResolvedValue(undefined),
     onChangeStyle: jest.fn().mockResolvedValue(undefined),
+    onResize: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   };
   render(
@@ -52,6 +53,7 @@ function renderEditor(variant: PlanItemVariant, overrides = {}) {
       onRetext={cbs.onRetext}
       onRemoveText={cbs.onRemoveText}
       onChangeStyle={cbs.onChangeStyle}
+      onResize={cbs.onResize}
     />,
   );
   return cbs;
@@ -119,4 +121,33 @@ test("controls are disabled while the variant is rendering", () => {
   expect(screen.getByText("Edit text")).toBeDisabled();
   expect(screen.getByRole("radio", { name: "Text style: Bold" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Change" })).toBeDisabled();
+});
+
+// ── Text size stepper ──────────────────────────────────────────────────────
+
+test("size stepper hidden until a computed size exists", () => {
+  renderEditor(songVariant); // no intro_text_size_px
+  expect(screen.queryByRole("button", { name: "Bigger intro text" })).not.toBeInTheDocument();
+});
+
+test("A+ / A- nudge the size by the step via onResize", async () => {
+  const { onResize } = renderEditor({
+    ...songVariant,
+    intro_text_size_px: 72,
+    intro_size_source: "computed",
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Bigger intro text" }));
+  });
+  expect(onResize).toHaveBeenCalledWith(78); // 72 + step(6)
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Smaller intro text" }));
+  });
+  expect(onResize).toHaveBeenCalledWith(66); // 72 - step(6)
+});
+
+test("size stepper clamps at the envelope bounds", () => {
+  renderEditor({ ...songVariant, intro_text_size_px: 80, intro_size_source: "user" });
+  expect(screen.getByRole("button", { name: "Bigger intro text" })).toBeDisabled(); // at MAX
+  expect(screen.getByRole("button", { name: "Smaller intro text" })).not.toBeDisabled();
 });
