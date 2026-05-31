@@ -208,6 +208,75 @@ def inject_intro_overlay(recipe: dict, hero_slot_index: int, overlay: dict | Non
 _HOLD_TO_END_S = 3600.0
 
 
+def build_persistent_intro_overlays(
+    *,
+    text: str,
+    effect: str,
+    reveal_window_s: float,
+    beats: list[float] | None = None,
+    text_color: str = _DEFAULT_TEXT_COLOR,
+    highlight_color: str = _DEFAULT_HIGHLIGHT_COLOR,
+    **style_kwargs,
+) -> list[dict]:
+    """Build the persistent hero-intro as a [reveal, hold] overlay list (absolute,
+    section-relative timestamps from 0). Returns [] when nothing is renderable.
+
+    A persistent intro keeps the hero text on screen for the WHOLE video: animate it in
+    over the opening, then hold the settled text statically until the video ends. The
+    Skia renderer caps ANIMATED overlays at `MAX_OVERLAY_FRAMES` (~4s), so a single
+    animated overlay stretched across a longer video would vanish at the cap. Hence two
+    overlays:
+
+    - A bounded animated **reveal** `[0, reveal_window_s]` (the agent's effect), short
+      enough to stay under the frame cap.
+    - A **static hold** `[reveal_window_s, EOF]` in the effect's *settled* color
+      (karaoke settles every word to `highlight_color`; other effects settle to
+      `text_color`). A static overlay is one looped PNG — no frame cap — and its `end_s`
+      spans the entire joined video.
+
+    Both carry `role="generative_intro"`, which the Dedup-1 pass in
+    `_collect_absolute_overlays` treats as no-merge (without that the static hold would
+    merge into the animated reveal and re-extend it past the frame cap).
+
+    Timestamps run from 0, so for the hero slot (which begins at video t=0) they are
+    already absolute — the recipe path (`inject_persistent_intro`) lets
+    `_collect_absolute_overlays` rebase them, while the talking-head path burns them
+    directly onto the composite via `burn_text_overlays_skia` (also absolute).
+    """
+    if not (text or "").strip():
+        return []
+    reveal_end = max(0.0, float(reveal_window_s))
+    overlays: list[dict] = []
+    reveal = build_intro_overlay(
+        text,
+        effect=effect,
+        start_s=0.0,
+        end_s=reveal_end,
+        beats=beats,
+        text_color=text_color,
+        highlight_color=highlight_color,
+        **style_kwargs,
+    )
+    if reveal is not None:
+        overlays.append(reveal)
+
+    # Settled color = what the animated reveal looks like once it finishes. Karaoke
+    # sweeps every word to the highlight color; all other effects settle on text_color.
+    settled_color = highlight_color if effect == "karaoke-line" else text_color
+    hold = build_intro_overlay(
+        text,
+        effect="static",
+        start_s=reveal_end,
+        end_s=_HOLD_TO_END_S,
+        text_color=settled_color,
+        highlight_color=highlight_color,
+        **style_kwargs,
+    )
+    if hold is not None:
+        overlays.append(hold)
+    return overlays
+
+
 def inject_persistent_intro(
     recipe: dict,
     hero_slot_index: int,
@@ -220,26 +289,10 @@ def inject_persistent_intro(
     highlight_color: str = _DEFAULT_HIGHLIGHT_COLOR,
     **style_kwargs,
 ) -> dict:
-    """Keep the hero intro on screen for the WHOLE video: animate it in over the
-    opening, then hold the settled text statically until the video ends.
+    """Inject the persistent hero intro (reveal + static hold) into the hero slot.
 
-    Music/generative jobs burn overlays onto the JOINED video with absolute
-    timestamps (`_collect_absolute_overlays`), and the Skia renderer caps ANIMATED
-    overlays at `MAX_OVERLAY_FRAMES` (~4s) — a single animated overlay stretched
-    across a longer video would vanish at the cap. So we emit TWO overlays into the
-    hero slot:
-
-    - A bounded animated **reveal** `[0, reveal_window_s]` (the agent's effect). Short
-      enough to stay under the frame cap.
-    - A **static hold** `[reveal_window_s, EOF]` rendered in the effect's *settled*
-      color (karaoke settles every word to `highlight_color`; other effects settle to
-      `text_color`). A static overlay is one looped PNG — no frame cap — and its
-      `end_s` is not clamped to the hero slot, so it spans the entire joined video.
-
-    Both carry `role="generative_intro"`, which the Dedup-1 pass in
-    `_collect_absolute_overlays` treats as no-merge: without that the static hold would
-    merge into the animated reveal (same text/position, and for non-karaoke effects the
-    same color) and re-extend it past the frame cap.
+    Thin wrapper over `build_persistent_intro_overlays`: builds the [reveal, hold]
+    overlay list and appends each into `slots[hero_slot_index]["text_overlays"]`.
 
     No-op (recipe unchanged) on empty text, missing/empty slots, or an out-of-range
     hero index — same defensive contract as `inject_intro_overlay`.
@@ -258,30 +311,15 @@ def inject_persistent_intro(
         )
         return recipe
 
-    reveal_end = max(0.0, float(reveal_window_s))
-    reveal = build_intro_overlay(
-        text,
+    overlays = build_persistent_intro_overlays(
+        text=text,
         effect=effect,
-        start_s=0.0,
-        end_s=reveal_end,
+        reveal_window_s=reveal_window_s,
         beats=beats,
         text_color=text_color,
         highlight_color=highlight_color,
         **style_kwargs,
     )
-    inject_intro_overlay(recipe, hero_slot_index, reveal)
-
-    # Settled color = what the animated reveal looks like once it finishes. Karaoke
-    # sweeps every word to the highlight color; all other effects settle on text_color.
-    settled_color = highlight_color if effect == "karaoke-line" else text_color
-    hold = build_intro_overlay(
-        text,
-        effect="static",
-        start_s=reveal_end,
-        end_s=_HOLD_TO_END_S,
-        text_color=settled_color,
-        highlight_color=highlight_color,
-        **style_kwargs,
-    )
-    inject_intro_overlay(recipe, hero_slot_index, hold)
+    for overlay in overlays:
+        inject_intro_overlay(recipe, hero_slot_index, overlay)
     return recipe

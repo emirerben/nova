@@ -20,6 +20,7 @@ export interface AdminGenerativeVariant {
   render_status: string | null;
   ok: boolean | null;
   error: string | null;
+  resolved_archetype?: string | null;
 }
 
 export interface AdminGenerativeListItem {
@@ -30,6 +31,9 @@ export interface AdminGenerativeListItem {
   error_detail: string | null;
   clip_count: number;
   variants: AdminGenerativeVariant[];
+  // Plan-declared format vs what rendered — a mismatch flags a dispatch fallback.
+  edit_format?: string | null;
+  resolved_archetype?: string | null;
 }
 
 export interface AdminGenerativeListResponse {

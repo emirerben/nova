@@ -29,6 +29,9 @@ export interface GenerativeVariant {
   // Agent-decided (or user-pinned) intro size. null for non-text variants.
   intro_text_size_px: number | null;
   intro_size_source: "computed" | "user" | null;
+  // The archetype that actually rendered this variant (Lane D). null on montage
+  // variants. Carried for verification + Lane E UI; current UI ignores it.
+  resolved_archetype?: string | null;
 }
 
 export interface GenerativeStyleSet {
@@ -60,6 +63,9 @@ export interface GenerativeJobStatus {
   error_detail: string | null;
   created_at: string;
   updated_at: string;
+  // Plan-declared edit format (montage default). Per-variant `resolved_archetype`
+  // says what actually rendered. Optional — older API builds omit it.
+  edit_format?: string | null;
 }
 
 /** Terminal statuses the poller should stop on. */

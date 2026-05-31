@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.72.0] - 2026-05-31
+
+### Added
+- **`talking_head` archetype dispatch — wiring the format-aware edit engine into generation (Lane D of N).** Lane C shipped the `talking_head` assembler as an inert module; this routes generative jobs to it. The orchestrator now reads the plan-declared `edit_format` (Lane A), resolves it against the actual footage, and renders the matching archetype — still **default-safe**: with the kill switch off, a non-talking_head format, or footage without speech, the job renders the byte-identical montage path it does today. Behind `EDIT_FORMAT_TALKING_HEAD_ENABLED` (default off).
+  - **Archetype resolution (`_resolve_archetype` in `app/tasks/generative_build.py`).** `talking_head` resolves only when the flag is on AND a clip clears `_MIN_SPINE_COVERAGE` (0.15) of speech; the highest-speech clip becomes the spine. Everything else (montage, the not-yet-built `day_vlog`/`single_hero`, flag-off, no-speech footage) falls back to montage and emits an `archetype_fallback` trace with the reason (`flag_disabled` / `no_speech` / `archetype_not_implemented`); a successful talking_head pick emits `archetype_selected`. A `speech_coverage` probe failure scores 0 rather than aborting.
+  - **Per-archetype variant set (`_specs_for_archetype`).** Single source of truth for which variants an archetype renders. `talking_head` → ONE variant (the spine's own audio + the AI intro overlay) — no song-lyrics variant fighting the speech. montage → today's song/original variants, unchanged. (The ducked music-bed talking_head variant + spine-speech captions are deliberate follow-ups.)
+  - **Talking-head render (`_render_talking_head_variant`).** Calls `assemble_talking_head` for the spine+B-roll composite, then burns the AI hero-intro onto it via the standalone Skia path (`burn_text_overlays_skia`) — the assembler itself draws no text. A corrupt spine (`SpineExtractionError`) degrades the WHOLE job to montage (+ `archetype_fallback` trace); every other render error becomes a per-variant failure record (never hard-fails the job).
+  - **Shared intro builders (DRY).** Extracted `build_persistent_intro_overlays` (`generative_overlays.py`) and `_resolve_intro_overlay_params` (`generative_build.py`) so the montage (recipe-injected) and talking_head (directly-burned) paths resolve intro look/size/effect through ONE code path and can't drift. `inject_persistent_intro` is now a thin wrapper.
+  - **Observability + verification plumbing.** `edit_format` (declared) + per-variant `resolved_archetype` (what rendered) surface on the public job-status and `/admin/generative` responses (web types mirrored) so a declared≠resolved mismatch flags a fallback at a glance. The public `POST /generative-jobs` accepts an optional `edit_format` and `scripts/local-render.py` gains `--edit-format`, so `make local-render MODE=generative --edit-format talking_head` can exercise the archetype end-to-end (the flag still gates routing). Unit tests cover the resolution matrix, the variant-set mapping, the degrade-vs-failure contract, and intro-builder parity.
+
 ## [0.4.71.0] - 2026-05-31
 
 ### Added

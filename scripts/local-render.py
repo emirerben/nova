@@ -194,13 +194,19 @@ def _submit_music_job(api_url: str, track_id: str, gcs_paths: list[str]) -> str:
     return json.loads(body)["job_id"]
 
 
-def _submit_generative_job(api_url: str, gcs_paths: list[str]) -> str:
+def _submit_generative_job(api_url: str, gcs_paths: list[str], edit_format: str | None = None) -> str:
     # No target length: the API derives output length from the uploaded footage
     # (and the matched song's beat structure). The edit can never run longer than
     # the clips uploaded here — that's exactly what this render verifies.
+    payload: dict = {"clip_gcs_paths": gcs_paths}
+    # Exercise a format-aware archetype (talking_head). The API still gates on
+    # EDIT_FORMAT_TALKING_HEAD_ENABLED + footage speech, so set the flag for the
+    # worker container too. Omitted → montage (the public default).
+    if edit_format:
+        payload["edit_format"] = edit_format
     code, body = _post_json(
         f"{api_url}/generative-jobs",
-        {"clip_gcs_paths": gcs_paths},
+        payload,
     )
     if not (200 <= code < 300):
         print(f"ERROR: POST /generative-jobs failed: HTTP {code} {body[:500]!r}", file=sys.stderr)
@@ -343,6 +349,14 @@ def main() -> int:
         help='Template inputs as JSON, e.g. \'{"location":"Tokyo"}\'',
     )
     p.add_argument(
+        "--edit-format",
+        dest="edit_format",
+        default=None,
+        choices=["montage", "talking_head", "day_vlog", "single_hero"],
+        help="Generative mode only: declared edit_format. talking_head also needs "
+        "EDIT_FORMAT_TALKING_HEAD_ENABLED=true on the worker. Default: montage.",
+    )
+    p.add_argument(
         "--api-url",
         default=os.environ.get("LOCAL_RENDER_API_URL", DEFAULT_API_URL),
         help=f"API base URL (default: {DEFAULT_API_URL})",
@@ -411,7 +425,7 @@ def main() -> int:
     elif args.mode == "music":
         job_id = _submit_music_job(args.api_url, args.template, gcs_paths)
     else:
-        job_id = _submit_generative_job(args.api_url, gcs_paths)
+        job_id = _submit_generative_job(args.api_url, gcs_paths, edit_format=args.edit_format)
     print(f"  → job_id: {job_id}")
 
     print("\n[5/5] polling status…")
