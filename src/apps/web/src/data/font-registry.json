@@ -272,6 +272,78 @@
       "category": "sans",
       "css_family": "'Poppins', sans-serif",
       "vibe": "clean_captions"
+    },
+    "DM Serif Display": {
+      "file": "DMSerifDisplay-Regular.ttf",
+      "ass_name": "DM Serif Display",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'DM Serif Display', serif",
+      "vibe": "editorial"
+    },
+    "Gloock": {
+      "file": "Gloock-Regular.ttf",
+      "ass_name": "Gloock",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Gloock', serif",
+      "vibe": "editorial"
+    },
+    "Cormorant Garamond": {
+      "file": "CormorantGaramond-Bold.ttf",
+      "ass_name": "Cormorant Garamond",
+      "weight": 700,
+      "category": "serif",
+      "css_family": "'Cormorant Garamond', serif",
+      "vibe": "editorial"
+    },
+    "Bricolage Grotesque": {
+      "file": "BricolageGrotesque-ExtraBold.ttf",
+      "ass_name": "Bricolage Grotesque",
+      "weight": 800,
+      "category": "sans",
+      "css_family": "'Bricolage Grotesque', sans-serif",
+      "vibe": "viral_headlines"
+    },
+    "Hanken Grotesk": {
+      "file": "HankenGrotesk-ExtraBold.ttf",
+      "ass_name": "Hanken Grotesk",
+      "weight": 800,
+      "category": "sans",
+      "css_family": "'Hanken Grotesk', sans-serif",
+      "vibe": "clean_captions"
+    },
+    "Archivo Black": {
+      "file": "ArchivoBlack-Regular.ttf",
+      "ass_name": "Archivo Black",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'Archivo Black', sans-serif",
+      "vibe": "viral_headlines"
+    },
+    "Big Shoulders Display": {
+      "file": "BigShouldersDisplay-ExtraBold.ttf",
+      "ass_name": "Big Shoulders Display",
+      "weight": 800,
+      "category": "sans",
+      "css_family": "'Big Shoulders Display', sans-serif",
+      "vibe": "viral_headlines"
+    },
+    "Syne": {
+      "file": "Syne-ExtraBold.ttf",
+      "ass_name": "Syne",
+      "weight": 800,
+      "category": "sans",
+      "css_family": "'Syne', sans-serif",
+      "vibe": "viral_headlines"
+    },
+    "Unbounded": {
+      "file": "Unbounded-Bold.ttf",
+      "ass_name": "Unbounded",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Unbounded', sans-serif",
+      "vibe": "viral_headlines"
     }
   },
   "style_defaults": {
