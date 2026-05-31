@@ -31,7 +31,10 @@ from app.agents._schemas.persona import Persona
 #              ideas as an explicit "avoid these" list (the model won't self-impose
 #              variety in one pass). Block is empty on the first pass, so that
 #              render stays the proven baseline.
-CONTENT_PLAN_PROMPT_VERSION = "2026-06-01"
+# 2026-06-01.1 — weekly research refresh: content_ideas.json bumped to 2026-05-31
+#                (new market-research ideas). Bump invalidates the planner cache so
+#                the new ideas take effect on top of the dedup block.
+CONTENT_PLAN_PROMPT_VERSION = "2026-06-01.1"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60

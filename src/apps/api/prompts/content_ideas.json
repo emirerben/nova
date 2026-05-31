@@ -1,5 +1,5 @@
 {
-  "version": "2026-05-30",
+  "version": "2026-05-31",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -103,6 +103,55 @@
       "hook_pattern": "the [place] nobody told you about",
       "filming_context": "reveal shot of the place, name on screen, save prompt",
       "source": "tiktok:@allexmarielle (2026-05)"
+    },
+    {
+      "id": "solo-travel-destination-curiosity-01",
+      "niche": "city lifestyle & food",
+      "pillar": "a perfect day in the city",
+      "idea": "a single short clip of a striking moment in [destination], captioned to create selective resonance with anyone who has been or wants to go",
+      "hook_pattern": "especially if you've been to [destination]",
+      "filming_context": "5-10s hero moment, wide or intimate, let the place carry it — no narration needed",
+      "source": "tiktok:@allexmarielle (2026-05)",
+      "performance": {"engagement_rate": 0.234, "view_index": 10.0, "sampled_at": "2026-05"}
+    },
+    {
+      "id": "city-morning-sensory-01",
+      "niche": "city lifestyle & food",
+      "pillar": "seasonal moments",
+      "idea": "a morning sensory moment in [your city] — coffee, light, a quiet ritual — that makes the place feel alive",
+      "hook_pattern": "mornings in [city] just hit different",
+      "filming_context": "7-10s, natural morning light, one sensory detail close-up",
+      "source": "tiktok:@allexmarielle (2026-05)",
+      "performance": {"engagement_rate": 0.277, "sampled_at": "2026-05"}
+    },
+    {
+      "id": "gap-in-market-origin-01",
+      "niche": "founder / product launch",
+      "pillar": "gap-in-market origin story",
+      "idea": "the moment you decided to create [your product] because the exact thing you wanted didn't exist — told from frustration to first step",
+      "hook_pattern": "i couldn't find [x] anywhere — so i made it from scratch",
+      "filming_context": "talking-head or b-roll of the gap, honest and personal, no polish needed",
+      "source": "tiktok:@nermozdemir (2026-05)",
+      "performance": {"engagement_rate": 0.044, "view_index": 3.52, "sampled_at": "2026-05"}
+    },
+    {
+      "id": "brand-naming-struggle-01",
+      "niche": "founder / product launch",
+      "pillar": "brand naming struggles",
+      "idea": "the unexpected difficulty of naming your [product or brand] — the false starts, the constraints, the moment it finally clicked",
+      "hook_pattern": "nobody told me naming a [thing] would be this hard",
+      "filming_context": "candid to-camera, show the struggle honestly, let the relief at the end land",
+      "source": "tiktok:@nermozdemir (2026-05)"
+    },
+    {
+      "id": "sunrise-hike-reveal-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "core memories",
+      "idea": "a sunrise hike reveal — the effort it took to get there followed by the moment the view pays off",
+      "hook_pattern": "witnessed [location]'s beautiful sunrise",
+      "filming_context": "timelapse or quick cuts of the climb, hold on the sunrise payoff — let it breathe",
+      "source": "tiktok:@izzsiomoi (2026-05)",
+      "performance": {"engagement_rate": 0.103, "sampled_at": "2026-05"}
     }
   ]
 }

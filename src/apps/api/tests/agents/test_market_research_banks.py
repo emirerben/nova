@@ -212,32 +212,32 @@ def test_intro_writer_prompt_injects_success_factors():
 
 
 def test_persona_bank_version_couples_to_prompt_version():
-    # Bank version need not equal the prompt version — each is its own tripwire.
-    # The prompt led to 2026-05-31 (anti-cringe concrete-pillar rule, no bank change).
-    assert archetypes_version() == "2026-05-30"
-    assert PERSONA_PROMPT_VERSION == "2026-05-31"
+    # Bump 2026-05-31: added gap-in-market-founder-01 archetype (nermozdemir origin-story pattern).
+    assert archetypes_version() == "2026-05-31"
+    assert PERSONA_PROMPT_VERSION == "2026-05-31.1"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
     # Prompt led to 2026-05-31 (anti-cringe), 2026-05-31.1 (edit_format emission),
-    # then 2026-06-01 (post-generation near-duplicate dedup / $variety_constraint
-    # regeneration block); idea bank unchanged.
-    assert content_ideas_version() == "2026-05-30"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-01"
+    # 2026-06-01 (near-duplicate dedup / $variety_constraint regeneration block),
+    # then 2026-06-01.1 (weekly research refresh: idea bank bumped to 2026-05-31 —
+    # allexmarielle qualifier hook + morning sensory, nermozdemir origin/naming,
+    # izzsiomoi sunrise hike).
+    assert content_ideas_version() == "2026-05-31"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-01.1"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     from app.agents.intro_writer import IntroTextWriterAgent
 
     # The success-factor bank is part of THREE prompts (persona, content plan,
-    # intro). The bank itself is unchanged (2026-05-30); persona led to 2026-05-31
-    # (anti-cringe) and content plan to 2026-06-01 (anti-cringe + edit_format
-    # emission + dedup regeneration block) while the intro prompt is untouched, so
-    # it stays at 2026-05-30.2.
+    # intro). The bank itself is unchanged (2026-05-30); persona led to 2026-05-31.1
+    # (new archetype bank), content plan to 2026-06-01.1 (dedup block + new idea
+    # bank), and intro_writer to 2026-05-31 (new overlay bank).
     assert success_factors_version() == "2026-05-30"
-    assert PERSONA_PROMPT_VERSION == "2026-05-31"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-01"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-05-30.2"
+    assert PERSONA_PROMPT_VERSION == "2026-05-31.1"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-01.1"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-05-31"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -246,13 +246,11 @@ def test_overlay_bank_version_couples_to_agent_versions():
 
     # Each is an independent committed-constant tripwire: a bank edit must bump
     # `library_version()` (and re-trip this guard), and a consuming-agent prompt
-    # change must bump that agent's prompt_version. They need not be equal — a
-    # prompt-template change can lead the bank version. intro_writer's prompt
-    # gained $persona_context (2026-05-30) then $success_factors (2026-05-30.1)
-    # while the overlay_examples bank itself is unchanged from 2026-05-29.
-    assert library_version() == "2026-05-29"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-05-30.2"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-05-29"
+    # change must bump that agent's prompt_version. Bump 2026-05-31: added 2 new
+    # overlay examples (destination-qualifier-popin-01, city-morning-sensory-fadein-01).
+    assert library_version() == "2026-05-31"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-05-31"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-05-31"
 
 
 @pytest.mark.parametrize(

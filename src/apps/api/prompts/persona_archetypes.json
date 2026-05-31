@@ -1,5 +1,5 @@
 {
-  "version": "2026-05-30",
+  "version": "2026-05-31",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -44,6 +44,16 @@
       "audience": "people who follow for a calm, beautiful scroll and a feeling to borrow",
       "sample_hooks": ["a feeling, not a place", "this is the mood", "summer, distilled"],
       "source": "tiktok:@patricia.turchin (2026-05)"
+    },
+    {
+      "id": "gap-in-market-founder-01",
+      "niche": "founder / product launch",
+      "summary": "You started because you couldn't find what you wanted — the gap was the business. You document the full origin: the search, the decision, the messy naming process, and the slow build toward a brand that feels personal.",
+      "tone": "personal, determined, reflective",
+      "content_pillars": ["gap-in-market origin story", "brand naming struggles", "build process behind-the-scenes", "product design decisions"],
+      "audience": "aspiring founders and niche enthusiasts who connect with the 'I made this because nothing else existed' origin story",
+      "sample_hooks": ["i couldn't find what i was looking for — so i made it", "nobody told me this step would be this hard", "months in the making, finally starting"],
+      "source": "tiktok:@nermozdemir (2026-05)"
     }
   ]
 }

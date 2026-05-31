@@ -1,5 +1,5 @@
 {
-  "version": "2026-05-29",
+  "version": "2026-05-31",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -172,6 +172,32 @@
       "text_color": "#FFFFFF",
       "highlight_color": "#7FD1FF",
       "niche": "aesthetic mood diary",
+      "source": "tiktok market research 2026-05"
+    },
+    {
+      "id": "destination-qualifier-popin-01",
+      "content_profile": "short travel clip with one striking location moment — creates selective resonance for people in or dreaming of that place",
+      "effect": "pop-in",
+      "text": "especially if you've been here",
+      "highlight_word": "especially",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "niche": "city lifestyle & food",
+      "source": "tiktok market research 2026-05"
+    },
+    {
+      "id": "city-morning-sensory-fadein-01",
+      "content_profile": "morning ritual in a beautiful city — coffee, light, a quiet detail — sensory and unhurried",
+      "effect": "fade-in",
+      "text": "mornings here just hit different",
+      "highlight_word": "different",
+      "position": "bottom",
+      "size_class": "medium",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFE08A",
+      "niche": "city lifestyle & food",
       "source": "tiktok market research 2026-05"
     }
   ]
