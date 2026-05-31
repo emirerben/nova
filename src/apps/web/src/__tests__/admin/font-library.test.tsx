@@ -118,9 +118,9 @@ describe("FontAlternatives", () => {
 describe("FontLibraryBrowser", () => {
   test("groups active fonts by vibe and dispatches picks", () => {
     const grouped = fontsByVibe();
-    expect(grouped.viral_headlines).toHaveLength(6);
-    expect(grouped.clean_captions).toHaveLength(9);
-    expect(grouped.editorial).toHaveLength(7);
+    expect(grouped.viral_headlines).toHaveLength(11);
+    expect(grouped.clean_captions).toHaveLength(10);
+    expect(grouped.editorial).toHaveLength(10);
     expect(grouped.handwritten).toHaveLength(1);
     expect(grouped.script).toHaveLength(1);
     expect(Object.values(grouped).flat()).not.toContain("Outfit");
