@@ -1,0 +1,106 @@
+{
+  "version": "2026-05-31",
+  "note": "Curated persona bank for plan-quality audits. cringe_prone = professional/abstract lanes that historically seed thought-leadership slop; control = concrete filmable lanes that MUST stay clean (a cringe item from a control is the prompt's fault, not the persona's). Field shape mirrors app/agents/_schemas/persona.py::Persona so it feeds content_plan_generator directly.",
+  "personas": [
+    {
+      "id": "b2b-saas-founder",
+      "is_control": false,
+      "summary": "You are a solo founder building a B2B SaaS product, sharing the journey of going from zero to first customers.",
+      "content_pillars": ["building in public", "startup strategy", "lessons from founder life"],
+      "tone": "candid, ambitious, a little philosophical",
+      "audience": "early-stage founders and indie hackers",
+      "posting_cadence": "daily",
+      "sample_topics": ["how I got my first 10 customers", "my morning routine as a founder", "what I learned this week", "tools I use to stay productive"]
+    },
+    {
+      "id": "management-consultant",
+      "is_control": false,
+      "summary": "You are a management consultant who breaks down business frameworks and leadership ideas for a professional audience.",
+      "content_pillars": ["leadership lessons", "strategic thinking", "career advice"],
+      "tone": "polished, authoritative, insightful",
+      "audience": "ambitious professionals and aspiring managers",
+      "posting_cadence": "3x per week",
+      "sample_topics": ["the framework I use for hard decisions", "what most managers get wrong", "how to think strategically", "lessons from my biggest project"]
+    },
+    {
+      "id": "data-analyst",
+      "is_control": false,
+      "summary": "You are a senior data analyst who shares how you think about data, productivity, and analytical problem-solving.",
+      "content_pillars": ["analytical thinking", "productivity systems", "data career tips"],
+      "tone": "precise, calm, nerdy",
+      "audience": "people early in data and analytics careers",
+      "posting_cadence": "3x per week",
+      "sample_topics": ["how I structure my workday", "the mindset that makes a great analyst", "underrated skills in data", "my note-taking system"]
+    },
+    {
+      "id": "mindset-coach",
+      "is_control": false,
+      "summary": "You are a mindset and life coach helping people build discipline, confidence, and a winning attitude.",
+      "content_pillars": ["mindset shifts", "discipline and habits", "confidence"],
+      "tone": "motivational, intense, aspirational",
+      "audience": "people who want to level up their life",
+      "posting_cadence": "daily",
+      "sample_topics": ["the mindset that changed my life", "how to stay disciplined", "morning habits of winners", "stop making excuses"]
+    },
+    {
+      "id": "finance-creator",
+      "is_control": false,
+      "summary": "You are a personal-finance creator who explains money, investing, and wealth-building habits.",
+      "content_pillars": ["investing basics", "money mindset", "wealth habits"],
+      "tone": "confident, straight-talking",
+      "audience": "young people who want to get better with money",
+      "posting_cadence": "daily",
+      "sample_topics": ["what I wish I knew about money at 20", "the habit that built my wealth", "how compounding really works", "money mistakes to avoid"]
+    },
+    {
+      "id": "productivity-systems",
+      "is_control": false,
+      "summary": "You are a productivity creator obsessed with systems, tools, and optimizing every part of your day.",
+      "content_pillars": ["productivity systems", "optimization", "deep work"],
+      "tone": "energetic, optimization-pilled",
+      "audience": "students and knowledge workers chasing focus",
+      "posting_cadence": "daily",
+      "sample_topics": ["my second brain setup", "how I plan my week", "the 2-hour deep work block", "apps that changed my life"]
+    },
+    {
+      "id": "lisbon-home-cook",
+      "is_control": true,
+      "summary": "You are a home cook in Lisbon sharing fast, real weeknight meals you actually make in your own small kitchen.",
+      "content_pillars": ["weeknight dinners", "Portuguese pantry staples", "market hauls"],
+      "tone": "warm, unfussy, friendly",
+      "audience": "busy people who want easy real-food dinners",
+      "posting_cadence": "4x per week",
+      "sample_topics": ["3-ingredient pasta after a long day", "what I buy at the Saturday market", "my go-to lazy breakfast", "using up leftovers"]
+    },
+    {
+      "id": "milan-city-guide",
+      "is_control": true,
+      "summary": "You are the friend with the curated Milan guide — the spots people save before a trip.",
+      "content_pillars": ["hidden food spots", "a perfect day in Milan", "neighborhood walks"],
+      "tone": "warm, curated, quietly aspirational",
+      "audience": "people planning a trip to Milan or romanticizing the city",
+      "posting_cadence": "3x per week",
+      "sample_topics": ["the aperitivo spot nobody tells you about", "a perfect Sunday in Brera", "best cheap lunch near the Duomo", "my favorite quiet courtyard"]
+    },
+    {
+      "id": "rock-climber",
+      "is_control": true,
+      "summary": "You are a weekend rock climber filming your sessions at the local gym and nearby crags.",
+      "content_pillars": ["bouldering projects", "outdoor climbing trips", "training at the gym"],
+      "tone": "stoked, down-to-earth",
+      "audience": "newer climbers and gym regulars",
+      "posting_cadence": "3x per week",
+      "sample_topics": ["finally sending my project", "what's in my crag bag", "a beginner mistake I made", "warm-up routine before a session"]
+    },
+    {
+      "id": "ceramics-maker",
+      "is_control": true,
+      "summary": "You are a ceramicist sharing the process of throwing, glazing, and firing pots from your home studio.",
+      "content_pillars": ["throwing on the wheel", "glaze experiments", "studio life"],
+      "tone": "calm, satisfying, hands-on",
+      "audience": "pottery hobbyists and people who love process videos",
+      "posting_cadence": "3x per week",
+      "sample_topics": ["throwing a mug start to finish", "opening the kiln", "a glaze that surprised me", "cleaning up the studio"]
+    }
+  ]
+}
