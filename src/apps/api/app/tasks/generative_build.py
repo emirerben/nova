@@ -34,6 +34,7 @@ from typing import Any
 import structlog
 from sqlalchemy.exc import OperationalError
 
+from app.agents._schemas.edit_format import coerce_edit_format
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
@@ -51,6 +52,11 @@ HERO_SLOT_INDEX = 0
 # Variant 3 (original audio) arrangement: one slot per clip, capped so a 20-clip
 # upload doesn't produce 20 micro-cuts with no song to justify them.
 _MAX_NO_MUSIC_SLOTS = 6
+# Minimum speech_coverage (0-1) for ANY clip to qualify a talking_head edit. Below
+# this the footage carries no usable spoken spine, so the job degrades to montage.
+# Deliberately low — silencedetect undercounts quiet/lapel speech; we only want to
+# reject footage that is essentially silent (b-roll, ambience, music-over).
+_MIN_SPINE_COVERAGE = 0.15
 
 
 @celery_app.task(
@@ -115,6 +121,10 @@ def _run_generative_job(job_id: str) -> None:
         # Persona/series context for persona-coherent hooks (content-plan jobs
         # only — public generative jobs omit the key). Forwarded to intro_writer.
         persona: dict = all_candidates.get("persona") or {}
+        # Plan-declared edit format (Lane A). Coerced defensively — a drifted token
+        # falls back to montage rather than failing the job. Resolved against the
+        # footage after ingest (see _resolve_archetype).
+        edit_format = coerce_edit_format(all_candidates.get("edit_format"))
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
@@ -184,9 +194,15 @@ def _run_generative_job(job_id: str) -> None:
             "assembly", "song_match_done", {"track_id": best_track.id if best_track else None}
         )
 
-        # [Phase 4/5] Build the variant spec list and render each.
+        # [Phase 4/5] Resolve the archetype against the footage, then render its
+        # variant set. Default-safe: montage (today's path) unless the plan declares
+        # talking_head AND the flag is on AND a clip actually carries speech.
+        from app.pipeline.talking_head_assembler import SpineExtractionError  # noqa: PLC0415
+
+        archetype, spine_clip_id = _resolve_archetype(
+            edit_format, clip_metas, clip_id_to_local, job_id=job_id
+        )
         _set_status(job_id, "rendering")
-        specs = _variant_specs(best_track)
 
         # Resume support. A prior run of THIS job (killed mid-render by a CI
         # deploy / OOM, then redelivered via Celery acks_late) may have already
@@ -202,39 +218,77 @@ def _run_generative_job(job_id: str) -> None:
             for v in _existing_variants(job_id)
             if v.get("ok") and v.get("output_url")
         }
-        results: list[dict[str, Any]] = []
-        for rank, spec in enumerate(specs, start=1):
-            variant_id = spec["variant_id"]
-            spec_track_id = spec["track"].id if spec["track"] else None
-            reusable = prior.get(variant_id)
-            if reusable is not None and reusable.get("music_track_id") == spec_track_id:
-                record_pipeline_event(
-                    "assembly", "variant_resumed", {"variant_id": variant_id, "rank": rank}
-                )
-                results.append({**reusable, "rank": rank})
-                continue
 
-            variant_dir = os.path.join(tmpdir, f"variant_{rank}")
-            os.makedirs(variant_dir, exist_ok=True)
-            result = _render_generative_variant(
-                job_id=job_id,
-                rank=rank,
-                spec=spec,
-                clip_metas=clip_metas,
-                clip_id_to_local=clip_id_to_local,
-                clip_id_to_gcs=clip_id_to_gcs,
-                probe_map=probe_map,
-                available_footage_s=available_footage_s,
-                agent_text=agent_text,
-                agent_form=agent_form,
-                variant_dir=variant_dir,
-                style_set_id=style_set_id,
+        def _render_spec_set(
+            specs: list[dict[str, Any]], spine: str | None
+        ) -> list[dict[str, Any]]:
+            """Render every spec, with resume reuse + immediate persist. Lets a
+            talking_head SpineExtractionError propagate so the caller can degrade the
+            WHOLE job to montage; per-variant non-spine errors become failure records
+            inside the render functions."""
+            out: list[dict[str, Any]] = []
+            for rank, spec in enumerate(specs, start=1):
+                variant_id = spec["variant_id"]
+                spec_track_id = spec["track"].id if spec["track"] else None
+                reusable = prior.get(variant_id)
+                if reusable is not None and reusable.get("music_track_id") == spec_track_id:
+                    record_pipeline_event(
+                        "assembly", "variant_resumed", {"variant_id": variant_id, "rank": rank}
+                    )
+                    out.append({**reusable, "rank": rank})
+                    continue
+
+                variant_dir = os.path.join(tmpdir, f"variant_{rank}")
+                os.makedirs(variant_dir, exist_ok=True)
+                if spec.get("archetype") == "talking_head":
+                    result = _render_talking_head_variant(
+                        job_id=job_id,
+                        rank=rank,
+                        spine_clip_id=spine,
+                        clip_metas=clip_metas,
+                        clip_id_to_local=clip_id_to_local,
+                        probe_map=probe_map,
+                        available_footage_s=available_footage_s,
+                        agent_text=agent_text,
+                        agent_form=agent_form,
+                        variant_dir=variant_dir,
+                        style_set_id=style_set_id,
+                    )
+                else:
+                    result = _render_generative_variant(
+                        job_id=job_id,
+                        rank=rank,
+                        spec=spec,
+                        clip_metas=clip_metas,
+                        clip_id_to_local=clip_id_to_local,
+                        clip_id_to_gcs=clip_id_to_gcs,
+                        probe_map=probe_map,
+                        available_footage_s=available_footage_s,
+                        agent_text=agent_text,
+                        agent_form=agent_form,
+                        variant_dir=variant_dir,
+                        style_set_id=style_set_id,
+                    )
+                # Persist immediately so a deploy/OOM after this point can't lose it,
+                # and so the status endpoint reveals variants as they finish rather
+                # than all-at-once at _finalize_job.
+                _upsert_variant_entry(job_id, result)
+                out.append(result)
+            return out
+
+        try:
+            results = _render_spec_set(_specs_for_archetype(archetype, best_track), spine_clip_id)
+        except SpineExtractionError as exc:
+            # Critical failure mode: a corrupt/unreadable spine clip degrades the whole
+            # job to montage rather than hard-failing (best-effort invariant). Any
+            # talking_head partials are discarded — _render_spec_set starts montage fresh.
+            record_pipeline_event(
+                "assembly",
+                "archetype_fallback",
+                {"declared": edit_format, "reason": "spine_extraction_failed"},
             )
-            # Persist immediately so a deploy/OOM after this point can't lose it,
-            # and so the status endpoint reveals variants as they finish rather
-            # than all-at-once at _finalize_job.
-            _upsert_variant_entry(job_id, result)
-            results.append(result)
+            log.warning("generative_talking_head_degrade_montage", job_id=job_id, error=str(exc))
+            results = _render_spec_set(_variant_specs(best_track), None)
 
     _finalize_job(job_id, results)
 
@@ -679,6 +733,110 @@ def _variant_specs(best_track: MusicTrack | None) -> list[dict[str, Any]]:
     return specs
 
 
+# ── Archetype dispatch (Lane D) ─────────────────────────────────────────────────
+
+
+def _resolve_archetype(
+    edit_format: str,
+    clip_metas: list,
+    clip_id_to_local: dict[str, str],
+    *,
+    job_id: str,
+) -> tuple[str, str | None]:
+    """Resolve the plan-declared edit_format against the footage → (archetype, spine).
+
+    Default-safe: returns `("montage", None)` for every case except a talking_head edit
+    that is enabled AND backed by footage with usable speech. Emits an
+    `archetype_fallback` / `archetype_selected` trace event so the admin job-debug view
+    explains why a declared format did or didn't take. The returned `spine_clip_id` is
+    fed straight to `assemble_talking_head`, whose override path then only re-scores
+    that one clip.
+
+    Reasons for montage fallback: `archetype_not_implemented` (day_vlog/single_hero —
+    no assembler yet), `flag_disabled` (kill switch off), `no_speech` (no clip clears
+    `_MIN_SPINE_COVERAGE`).
+    """
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    def _fallback(reason: str) -> tuple[str, None]:
+        record_pipeline_event(
+            "assembly", "archetype_fallback", {"declared": edit_format, "reason": reason}
+        )
+        log.info(
+            "generative_archetype_fallback", job_id=job_id, declared=edit_format, reason=reason
+        )
+        return "montage", None
+
+    if edit_format == "montage":
+        return "montage", None
+    if edit_format != "talking_head":
+        # day_vlog / single_hero declared but no assembler exists yet.
+        return _fallback("archetype_not_implemented")
+    if not settings.edit_format_talking_head_enabled:
+        return _fallback("flag_disabled")
+
+    # Pick the highest-speech clip; reject the format if none carries real speech.
+    from app.services.clip_speech import speech_coverage  # noqa: PLC0415
+
+    best_id: str | None = None
+    best_cov = -1.0
+    for m in clip_metas:
+        cid = str(getattr(m, "clip_id", "") or "")
+        path = clip_id_to_local.get(cid)
+        if not path:
+            continue
+        try:
+            cov = float(speech_coverage(path))
+        except Exception as exc:  # noqa: BLE001 — best-effort; a probe failure scores 0
+            log.warning(
+                "generative_speech_coverage_failed", job_id=job_id, clip_id=cid, error=str(exc)
+            )
+            cov = 0.0
+        if cov > best_cov:
+            best_cov, best_id = cov, cid
+
+    if best_id is None or best_cov < _MIN_SPINE_COVERAGE:
+        return _fallback("no_speech")
+
+    record_pipeline_event(
+        "assembly",
+        "archetype_selected",
+        {
+            "archetype": "talking_head",
+            "spine_clip_id": best_id,
+            "speech_coverage": round(best_cov, 3),
+        },
+    )
+    log.info(
+        "generative_archetype_selected",
+        job_id=job_id,
+        archetype="talking_head",
+        spine_clip_id=best_id,
+        speech_coverage=round(best_cov, 3),
+    )
+    return "talking_head", best_id
+
+
+def _specs_for_archetype(archetype: str, best_track: MusicTrack | None) -> list[dict[str, Any]]:
+    """The variant set to render for a resolved archetype (single source of truth).
+
+    montage → today's song/original variants. talking_head → ONE variant (the spine's
+    own audio + the AI intro overlay); the music-bed variant is a follow-up. Each spec
+    carries its `archetype` so the render loop dispatches to the right assembler; specs
+    from `_variant_specs` default to montage (no `archetype` key).
+    """
+    if archetype == "talking_head":
+        return [
+            {
+                "variant_id": "talking_head",
+                "text_mode": "agent_text",
+                "track": None,
+                "archetype": "talking_head",
+            }
+        ]
+    return _variant_specs(best_track)
+
+
 # ── Agents (best-effort) ────────────────────────────────────────────────────────
 
 
@@ -1030,6 +1188,127 @@ def _render_generative_variant(
         return {**base, "ok": False, "render_status": "failed", "error": err}
 
 
+def _render_talking_head_variant(
+    *,
+    job_id: str,
+    rank: int,
+    spine_clip_id: str | None,
+    clip_metas: list,
+    clip_id_to_local: dict[str, str],
+    probe_map: dict,
+    available_footage_s: float,
+    agent_text,
+    agent_form: dict,
+    variant_dir: str,
+    style_set_id: str | None = None,
+    intro_size_override_px: int | None = None,
+) -> dict[str, Any]:
+    """Render the talking_head variant: spine audio + B-roll, then burn the AI intro.
+
+    `assemble_talking_head` produces the composite (one clip's full audio under the
+    other clips' video). It RAISES `SpineExtractionError` on a corrupt spine — that
+    propagates to the caller (`_run_generative_job`) to degrade the WHOLE job to
+    montage. Every other failure becomes a per-variant failure record (matching
+    `_render_generative_variant`'s never-raise contract). The AI intro is burned onto
+    the composite via the standalone Skia path (`burn_text_overlays_skia`) — the
+    assembler itself draws no text. Shape-compatible with `_render_generative_variant`
+    plus a `resolved_archetype` field.
+    """
+    from app.pipeline.generative_overlays import build_persistent_intro_overlays  # noqa: PLC0415
+    from app.pipeline.probe import probe_video  # noqa: PLC0415
+    from app.pipeline.talking_head_assembler import (  # noqa: PLC0415
+        SpineExtractionError,
+        assemble_talking_head,
+    )
+    from app.pipeline.text_overlay_skia import burn_text_overlays_skia  # noqa: PLC0415
+    from app.storage import upload_public_read  # noqa: PLC0415
+
+    variant_id = "talking_head"
+    base = {
+        "variant_id": variant_id,
+        "rank": rank,
+        "text_mode": "agent_text" if agent_text is not None else "none",
+        "music_track_id": None,
+        "track_title": None,
+        "style_set_id": style_set_id,
+        "intro_text_size_px": None,
+        "intro_size_source": None,
+        "resolved_archetype": "talking_head",
+    }
+
+    try:
+        # SpineExtractionError (corrupt spine) is re-raised below for the job-level
+        # montage degrade; every OTHER failure — a composite ffmpeg error, a burn or
+        # upload failure — becomes a per-variant failure record (the never-raise
+        # contract `_render_generative_variant` also honors).
+        base_path = os.path.join(variant_dir, "base.mp4")
+        assemble_talking_head(
+            clip_paths=clip_id_to_local,
+            clip_metas=clip_metas,
+            probe_map=probe_map,
+            target_duration_s=available_footage_s or None,
+            output_path=base_path,
+            tmpdir=variant_dir,
+            job_id=job_id,
+            spine_clip_id=spine_clip_id,
+        )
+
+        final_path = base_path
+        if agent_text is not None:
+            try:
+                base_dur = float(probe_video(base_path).duration_s)
+            except Exception:  # noqa: BLE001 — reveal window falls back to the cap
+                base_dur = MAX_INTRO_S
+            reveal_window_s = min(base_dur, MAX_INTRO_S) if base_dur > 0 else MAX_INTRO_S
+            hero_safe_zone, hero_density = _hero_composition(clip_metas)
+            params, intro_px, intro_source = _resolve_intro_overlay_params(
+                agent_text,
+                agent_form,
+                style_set_id,
+                hero_safe_zone=hero_safe_zone,
+                hero_density=hero_density,
+                size_override_px=intro_size_override_px,
+            )
+            # No song → no beats; the intro reveals on an even split. Slot-0-relative
+            # timestamps (from 0) are already absolute on the composite, which is what
+            # burn_text_overlays_skia expects.
+            overlays = build_persistent_intro_overlays(
+                reveal_window_s=reveal_window_s, beats=[], **params
+            )
+            if overlays:
+                burned = os.path.join(variant_dir, "final.mp4")
+                burn_text_overlays_skia(base_path, overlays, burned, variant_dir)
+                final_path = burned
+                base["intro_text_size_px"] = intro_px
+                base["intro_size_source"] = intro_source
+
+        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+            raise RuntimeError(f"variant {variant_id} produced empty output")
+
+        output_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}.mp4"
+        output_url = upload_public_read(final_path, output_gcs)
+        log.info("generative_variant_uploaded", job_id=job_id, variant_id=variant_id)
+        return {
+            **base,
+            "ok": True,
+            "render_status": "ready",
+            "video_path": output_gcs,
+            "output_url": output_url,
+        }
+    except SpineExtractionError:
+        raise  # job-level degrade to montage (handled by the caller)
+    except Exception as exc:
+        err = str(exc)[:MAX_ERROR_DETAIL_LEN]
+        log.error(
+            "generative_variant_failed",
+            job_id=job_id,
+            variant_id=variant_id,
+            error=err,
+            exc_info=True,
+        )
+        return {**base, "ok": False, "render_status": "failed", "error": err}
+
+
 def _inject_lyrics(recipe_dict: dict, track: MusicTrack, style_set_id: str | None = None) -> dict:
     from app.pipeline.lyric_injector import inject_lyric_overlays  # noqa: PLC0415
     from app.services.lyrics_config_effective import effective_lyrics_config  # noqa: PLC0415
@@ -1133,6 +1412,50 @@ def _inject_agent_intro(
     # MAX_INTRO_S caps only the reveal/animation window, not how long the text shows.
     reveal_window_s = min(slot0_dur, MAX_INTRO_S) if slot0_dur > 0 else MAX_INTRO_S
 
+    params, intro_px, intro_source = _resolve_intro_overlay_params(
+        agent_text,
+        agent_form,
+        style_set_id,
+        hero_safe_zone=hero_safe_zone,
+        hero_density=hero_density,
+        size_override_px=size_override_px,
+    )
+    recipe_dict = inject_persistent_intro(
+        recipe_dict,
+        HERO_SLOT_INDEX,
+        reveal_window_s=reveal_window_s,
+        beats=beats,  # slot-0 / section-relative; empty for the no-music variant
+        **params,
+    )
+    return recipe_dict, intro_px, intro_source
+
+
+def _resolve_intro_overlay_params(
+    agent_text,
+    agent_form: dict,
+    style_set_id: str | None,
+    *,
+    hero_safe_zone: dict | None = None,
+    hero_density: float = 5.0,
+    size_override_px: int | None = None,
+) -> tuple[dict, int | None, str | None]:
+    """Resolve the hero-intro look + size into kwargs for the overlay builders.
+
+    The SINGLE source of truth for intro styling/sizing, shared by the montage path
+    (`_inject_agent_intro` → `inject_persistent_intro`) and the talking-head path
+    (`_render_talking_head_variant` → `build_persistent_intro_overlays`) so the two
+    can never drift on font/size/color/effect/position.
+
+    Returns `(params, intro_text_size_px, size_source)` where `params` is a kwargs dict
+    accepted by both `inject_persistent_intro` and `build_persistent_intro_overlays`
+    (everything except `recipe`/`hero_slot_index`/`reveal_window_s`/`beats`).
+
+    Size precedence (the user's "no default size" rule — never a constant):
+      1. `size_override_px` — the public ±nudge → source "user" (preserved on later
+         re-renders so swap-song/retext don't recompute over a manual pin).
+      2. curated style-set `text_size_px` — source "computed" (set-driven).
+      3. `compute_overlay_size(...)` from the hero clip's safe-zone + density.
+    """
     # Curated style set owns the intro look (font, size, color, effect, position).
     # The agent_form fields drop to ADVISORY: `resolve_overlay_style` lets the set
     # win and only fills from `advisory` what the set leaves null. Resolving here
@@ -1167,26 +1490,22 @@ def _inject_agent_intro(
         )
         intro_source = "computed"
 
-    recipe_dict = inject_persistent_intro(
-        recipe_dict,
-        HERO_SLOT_INDEX,
-        text=agent_text.text,
-        effect=style.get("effect") or agent_form.get("effect", "karaoke-line"),
-        reveal_window_s=reveal_window_s,
-        beats=beats,  # slot-0 / section-relative; empty for the no-music variant
-        position=style.get("position") or agent_form.get("position", "center"),
-        text_color=style.get("text_color") or agent_form.get("text_color", "#FFFFFF"),
-        highlight_color=style.get("highlight_color")
+    params = {
+        "text": agent_text.text,
+        "effect": style.get("effect") or agent_form.get("effect", "karaoke-line"),
+        "position": style.get("position") or agent_form.get("position", "center"),
+        "text_color": style.get("text_color") or agent_form.get("text_color", "#FFFFFF"),
+        "highlight_color": style.get("highlight_color")
         or agent_form.get("highlight_color", "#FFD24A"),
-        text_anchor=style.get("text_anchor") or agent_form.get("text_anchor", "center"),
-        highlight_word=getattr(agent_text, "highlight_word", None),
-        font_family=font_family,
-        stroke_width=style.get("stroke_width"),
-        text_size_px=intro_px,  # computed/user/set px — no hardcoded jumbo default
-        position_x_frac=style.get("position_x_frac"),
-        position_y_frac=style.get("position_y_frac"),
-    )
-    return recipe_dict, intro_px, intro_source
+        "text_anchor": style.get("text_anchor") or agent_form.get("text_anchor", "center"),
+        "highlight_word": getattr(agent_text, "highlight_word", None),
+        "font_family": font_family,
+        "stroke_width": style.get("stroke_width"),
+        "text_size_px": intro_px,  # computed/user/set px — no hardcoded jumbo default
+        "position_x_frac": style.get("position_x_frac"),
+        "position_y_frac": style.get("position_y_frac"),
+    }
+    return params, intro_px, intro_source
 
 
 def _build_no_music_recipe(clip_metas: list, available_footage_s: float) -> dict:
@@ -1293,6 +1612,7 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "error": r.get("error"),
                     "intro_text_size_px": r.get("intro_text_size_px"),
                     "intro_size_source": r.get("intro_size_source"),
+                    "resolved_archetype": r.get("resolved_archetype"),
                 }
                 for r in results
             ],

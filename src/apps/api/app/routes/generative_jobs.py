@@ -50,6 +50,12 @@ class CreateGenerativeJobRequest(BaseModel):
     # in intro_writer + overlay_format_matcher, (b) a render-side glyph-presence
     # assertion for any new diacritic ranges. Pydantic rejects unknowns at the edge.
     language: Literal["en", "tr"] = "en"
+    # Optional declared edit format. The web UI does NOT send it (format selection is
+    # a content-plan affordance + Lane E) — public jobs default to montage. Accepted
+    # here so local-render / API clients can exercise the talking_head archetype;
+    # `coerce_edit_format` normalizes it and the EDIT_FORMAT_TALKING_HEAD_ENABLED flag
+    # still gates whether it actually routes. A bad token harmlessly coerces to montage.
+    edit_format: str | None = None
 
     @field_validator("clip_gcs_paths")
     @classmethod
@@ -74,6 +80,10 @@ class GenerativeJobStatusResponse(BaseModel):
     error_detail: str | None
     created_at: datetime
     updated_at: datetime
+    # The plan-declared edit format (montage default). Per-variant `resolved_archetype`
+    # (what actually rendered, after footage resolution + fallback) lives on each
+    # variant dict. Carried for verification + Lane E UI; the current UI ignores it.
+    edit_format: str | None = None
 
 
 class SwapSongRequest(BaseModel):
@@ -267,6 +277,7 @@ async def create_generative_job(
     # Single source of truth for Job shape + clip validation, shared with the
     # content-plan per-item task. Prefixes were already validated by the request
     # schema; build_generative_job re-validates (cheap defense-in-depth).
+    from app.agents._schemas.edit_format import DEFAULT_EDIT_FORMAT  # noqa: PLC0415
     from app.services.generative_jobs import build_generative_job  # noqa: PLC0415
 
     job = build_generative_job(
@@ -274,6 +285,7 @@ async def create_generative_job(
         clip_paths=req.clip_gcs_paths,
         language=req.language,
         selected_platforms=req.selected_platforms,
+        edit_format=req.edit_format or DEFAULT_EDIT_FORMAT,
     )
     db.add(job)
     await db.commit()
@@ -328,6 +340,7 @@ async def get_generative_job_status(
         error_detail=job.error_detail,
         created_at=job.created_at,
         updated_at=job.updated_at,
+        edit_format=(job.all_candidates or {}).get("edit_format"),
     )
 
 

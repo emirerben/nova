@@ -38,6 +38,9 @@ class AdminGenerativeVariant(BaseModel):
     render_status: str | None = None
     ok: bool | None = None
     error: str | None = None
+    # The archetype that actually rendered this variant (Lane D). None on montage
+    # variants (the default path doesn't stamp it).
+    resolved_archetype: str | None = None
 
 
 class AdminGenerativeListItem(BaseModel):
@@ -48,6 +51,11 @@ class AdminGenerativeListItem(BaseModel):
     error_detail: str | None = None
     clip_count: int
     variants: list[AdminGenerativeVariant]
+    # Plan-declared format vs what actually rendered. A mismatch (e.g. declared
+    # talking_head, resolved montage) is the at-a-glance signal that dispatch fell
+    # back — the trace event carries the reason.
+    edit_format: str | None = None
+    resolved_archetype: str | None = None
 
 
 class AdminGenerativeListResponse(BaseModel):
@@ -77,6 +85,7 @@ def _variant_summaries(job: Job) -> list[AdminGenerativeVariant]:
                 render_status=v.get("render_status"),
                 ok=v.get("ok"),
                 error=v.get("error"),
+                resolved_archetype=v.get("resolved_archetype"),
             )
         )
     return out
@@ -86,6 +95,24 @@ def _clip_count(job: Job) -> int:
     cand = job.all_candidates if isinstance(job.all_candidates, dict) else {}
     paths = cand.get("clip_paths")
     return len(paths) if isinstance(paths, list) else 0
+
+
+def _declared_edit_format(job: Job) -> str | None:
+    cand = job.all_candidates if isinstance(job.all_candidates, dict) else {}
+    fmt = cand.get("edit_format")
+    return fmt if isinstance(fmt, str) else None
+
+
+def _resolved_archetype(job: Job) -> str | None:
+    """The archetype that rendered this job — the first variant that stamped one."""
+    plan = job.assembly_plan if isinstance(job.assembly_plan, dict) else {}
+    raw = plan.get("variants")
+    if not isinstance(raw, list):
+        return None
+    for v in raw:
+        if isinstance(v, dict) and isinstance(v.get("resolved_archetype"), str):
+            return v["resolved_archetype"]
+    return None
 
 
 @router.get("", response_model=AdminGenerativeListResponse)
@@ -111,6 +138,8 @@ async def list_generative_jobs(
                 error_detail=job.error_detail,
                 clip_count=_clip_count(job),
                 variants=_variant_summaries(job),
+                edit_format=_declared_edit_format(job),
+                resolved_archetype=_resolved_archetype(job),
             )
         )
     return AdminGenerativeListResponse(items=items, total=len(items))

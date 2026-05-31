@@ -9,6 +9,7 @@ from __future__ import annotations
 from app.pipeline.generative_overlays import (
     _HOLD_TO_END_S,
     build_intro_overlay,
+    build_persistent_intro_overlays,
     inject_intro_overlay,
     inject_persistent_intro,
 )
@@ -204,6 +205,45 @@ def test_inject_no_slots_is_noop():
     recipe = {"slots": []}
     ov = build_intro_overlay("hi", effect="static", start_s=0.0, end_s=1.0)
     assert inject_intro_overlay(recipe, 0, ov) == {"slots": []}
+
+
+# -- build_persistent_intro_overlays: the recipe-free [reveal, hold] builder --
+# Lane D burns these directly onto the talking_head composite (no recipe slot), so
+# the list builder must produce exactly what inject_persistent_intro injects.
+
+
+def test_build_persistent_overlays_returns_reveal_and_hold():
+    overlays = build_persistent_intro_overlays(
+        text="i did not expect this",
+        effect="karaoke-line",
+        reveal_window_s=3.0,
+        position="center",
+    )
+    assert len(overlays) == 2
+    reveal, hold = overlays
+    assert reveal["effect"] == "karaoke-line"
+    assert reveal["start_s"] == 0.0
+    assert reveal["end_s"] == 3.0
+    assert hold["effect"] == "static"
+    assert hold["start_s"] == 3.0
+    assert hold["end_s"] == _HOLD_TO_END_S
+    # Same screen slot, back-to-back, both no-merge.
+    assert reveal["text"] == hold["text"] == "i did not expect this"
+    assert reveal["position"] == hold["position"] == "center"
+    assert reveal["role"] == hold["role"] == "generative_intro"
+
+
+def test_build_persistent_overlays_matches_injected_recipe():
+    # The list builder and the recipe injector must stay byte-identical (one wraps the
+    # other) — guards the Lane D refactor against drift between the two paths.
+    kwargs = dict(text="hello world", effect="pop-in", reveal_window_s=2.5, position="top")
+    standalone = build_persistent_intro_overlays(**kwargs)
+    injected = inject_persistent_intro({"slots": [{"position": 0}]}, 0, **kwargs)
+    assert injected["slots"][0]["text_overlays"] == standalone
+
+
+def test_build_persistent_overlays_empty_text_returns_empty_list():
+    assert build_persistent_intro_overlays(text="  ", effect="static", reveal_window_s=3.0) == []
 
 
 # -- inject_persistent_intro: reveal then hold for the whole video --
