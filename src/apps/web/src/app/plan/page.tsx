@@ -12,6 +12,7 @@ import {
   type PersonaContent,
   type PersonaQuestionnaire,
   type PersonaResponse,
+  retunePersonaFromFeedback,
   updatePersona,
 } from "@/lib/plan-api";
 import GeneratingState from "./_components/GeneratingState";
@@ -130,6 +131,13 @@ export default function PlanWizardPage() {
     setPersona(updated);
   }
 
+  async function handleRetunePersona() {
+    if (!persona) return;
+    // Kicks off async re-tune (status → generating); reload to surface it + poll.
+    const updated = await retunePersonaFromFeedback(persona.id);
+    setPersona(updated);
+  }
+
   async function handleCreatePlan(events: string) {
     setBusy(true);
     setError(null);
@@ -188,6 +196,7 @@ export default function PlanWizardPage() {
           onSave={handleSavePersona}
           onContinue={() => setStep("plan")}
           onStartOver={() => setStep("you")}
+          onRetune={handleRetunePersona}
         />
       )}
 
@@ -212,12 +221,14 @@ function PersonaStepView({
   onSave,
   onContinue,
   onStartOver,
+  onRetune,
 }: {
   persona: PersonaResponse | null;
   busy: boolean;
   onSave: (draft: PersonaContent) => Promise<void>;
   onContinue: () => void;
   onStartOver: () => void;
+  onRetune: () => Promise<void>;
 }) {
   if (!persona) {
     return (
@@ -277,6 +288,7 @@ function PersonaStepView({
       onContinue={onContinue}
       continueLabel="Plan my 30 days →"
       continuing={busy}
+      onRetuneFromFeedback={onRetune}
     />
   );
 }

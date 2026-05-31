@@ -587,6 +587,14 @@ class ContentPlan(Base):
     # none | seeding | activating | activated | activated_empty | failed.
     # Plan-level poll scalar — per-item render state stays derived from Job.status (T2).
     activation_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="none")
+    # Feedback loop (Phase 2): a bounded, deterministic rollup of the user's
+    # video_feedback (signal counts + recent notes) — see services/feedback_summary.
+    # Additive AI CONTEXT, never a mutation of the plan: it threads into
+    # content_plan_generator (on user-triggered regenerate) and intro_writer (future
+    # videos), but explicit user edits (PlanItem.user_edited) always win over it.
+    # NULL until the user leaves feedback + regenerates; the generator treats NULL
+    # as "(none)".
+    preference_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -640,3 +648,55 @@ class PlanItem(Base):
     current_job: Mapped["Job | None"] = relationship(foreign_keys=[current_job_id])
 
     __table_args__ = (Index("idx_plan_items_content_plan_id_day", "content_plan_id", "day_index"),)
+
+
+# Allowed signals — kept in lockstep with the CHECK constraint in migration 0043
+# and the Literal on the POST /me/feedback body. 'note' carries free text; the
+# three thumb-class signals (up/down/more_like_this) are mutually exclusive per
+# video (enforced in the write endpoint, not the DB, so a note can coexist).
+VIDEO_FEEDBACK_SIGNALS = ("up", "down", "more_like_this", "note")
+VIDEO_FEEDBACK_THUMB_SIGNALS = ("up", "down", "more_like_this")
+
+
+class VideoFeedback(Base):
+    """One feedback signal a user left on their own video or content plan (Phase 2).
+
+    The raw signal store behind the feedback loop. Rows are user-scoped writes;
+    a deterministic rollup (services/feedback_summary) compresses them into the
+    bounded ContentPlan.preference_summary that re-tunes generation. `job_id` is
+    set for per-video feedback (👍/👎/more-like-this/note on a library tile);
+    `content_plan_id` is set for the plan-level "Tell the AI" steer note. Exactly
+    one of the two is set per row (enforced in the write endpoint)."""
+
+    __tablename__ = "video_feedback"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    # Per-video feedback target (NULL for plan-level steer notes).
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=True
+    )
+    # Plan-level steer target (NULL for per-video feedback).
+    content_plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("content_plans.id", ondelete="CASCADE"), nullable=True
+    )
+    # up | down | more_like_this | note (CHECK-constrained, see migration 0043).
+    signal: Mapped[str] = mapped_column(Text, nullable=False)
+    # Free text for `signal == 'note'`; UNTRUSTED — sanitized before it enters any
+    # agent prompt (services/feedback_summary).
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "signal IN ('up', 'down', 'more_like_this', 'note')",
+            name="ck_video_feedback_signal",
+        ),
+        # Bounded most-recent-N rollup query: WHERE user_id ORDER BY created_at DESC.
+        Index("idx_video_feedback_user_created", "user_id", "created_at"),
+        # Batched feedback_signal lookup for GET /me/jobs (job_id = ANY(:ids)).
+        Index("idx_video_feedback_job", "job_id"),
+        Index("idx_video_feedback_content_plan", "content_plan_id"),
+    )

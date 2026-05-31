@@ -89,3 +89,64 @@ def test_patch_persona_404_for_other_users_persona(client: TestClient) -> None:
 
     resp = client.patch(f"/personas/{other_persona.id}", json={"tone": "edgy"})
     assert resp.status_code == 404
+
+
+# ── POST /personas/{id}/retune-from-feedback (feedback loop, Phase 2) ──────────
+
+
+def _persona_row(user_id: uuid.UUID, *, status: str) -> MagicMock:
+    row = MagicMock()
+    row.id = uuid.uuid4()
+    row.user_id = user_id
+    row.persona_status = status
+    row.persona = {"summary": "you", "content_pillars": ["a"], "tone": "warm"}
+    row.questionnaire = {"work": "barista"}
+    row.error_detail = None
+    return row
+
+
+def test_retune_blocks_when_persona_hand_edited(client: TestClient) -> None:
+    """The 'their say' invariant: a hand-edited persona is authoritative — 409,
+    never silently overwritten by inferred feedback."""
+    user = _fake_user()
+    row = _persona_row(user.id, status="edited")
+    db = _async_db()
+    db.get = AsyncMock(return_value=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.tasks.persona_build.retune_persona_from_feedback") as task:
+        task.delay = MagicMock()
+        resp = client.post(f"/personas/{row.id}/retune-from-feedback")
+    assert resp.status_code == 409
+    task.delay.assert_not_called()
+    # The persona JSON is untouched.
+    assert row.persona == {"summary": "you", "content_pillars": ["a"], "tone": "warm"}
+
+
+def test_retune_enqueues_when_persona_ready(client: TestClient) -> None:
+    user = _fake_user()
+    row = _persona_row(user.id, status="ready")
+    db = _async_db()
+    db.get = AsyncMock(return_value=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.tasks.persona_build.retune_persona_from_feedback") as task:
+        task.delay = MagicMock()
+        resp = client.post(f"/personas/{row.id}/retune-from-feedback")
+    assert resp.status_code == 200
+    assert resp.json()["persona_status"] == "generating"
+    task.delay.assert_called_once_with(str(row.id))
+
+
+def test_retune_404_for_other_users_persona(client: TestClient) -> None:
+    user = _fake_user()
+    row = _persona_row(uuid.uuid4(), status="ready")  # different owner
+    db = _async_db()
+    db.get = AsyncMock(return_value=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.post(f"/personas/{row.id}/retune-from-feedback")
+    assert resp.status_code == 404

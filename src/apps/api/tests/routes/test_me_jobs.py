@@ -60,6 +60,13 @@ def _scalars(rows: list) -> MagicMock:
     return r
 
 
+def _rows(rows: list) -> MagicMock:
+    """A result whose `.all()` yields tuple rows (the batched feedback lookup)."""
+    r = MagicMock()
+    r.all = MagicMock(return_value=rows)
+    return r
+
+
 def _db(execute_results: list) -> AsyncMock:
     db = AsyncMock()
     db.commit = AsyncMock()
@@ -101,7 +108,7 @@ def test_list_returns_users_jobs_with_derived_status_and_preview() -> None:
         job_type="template",
         assembly_plan={"output_url": "gs://x/tpl.mp4"},
     )
-    db = _db([_scalars([ready_variant_job, single_output_job])])
+    db = _db([_scalars([ready_variant_job, single_output_job]), _rows([])])
     _override(user, db)
 
     resp = client.get("/me/jobs")
@@ -121,7 +128,7 @@ def test_list_generating_job_has_no_preview_url() -> None:
         status="processing",
         assembly_plan={"variants": [{"variant_id": "song_text", "render_status": "rendering"}]},
     )
-    db = _db([_scalars([job])])
+    db = _db([_scalars([job]), _rows([])])
     _override(user, db)
 
     resp = client.get("/me/jobs")
@@ -136,7 +143,7 @@ def test_list_forged_user_id_query_param_is_ignored() -> None:
     the scope always comes from the authenticated dependency."""
     user = _user()
     own_job = _job(user_id=user.id, status="done", assembly_plan={"output_url": "gs://x/own.mp4"})
-    db = _db([_scalars([own_job])])
+    db = _db([_scalars([own_job]), _rows([])])
     _override(user, db)
 
     resp = client.get(f"/me/jobs?user_id={uuid.uuid4()}")
@@ -151,7 +158,7 @@ def test_list_paginates_with_next_cursor() -> None:
     older = _job(user_id=user.id, created_at=datetime(2026, 5, 29, tzinfo=UTC))
     newer = _job(user_id=user.id, created_at=datetime(2026, 5, 30, tzinfo=UTC))
     # limit=1 → route fetches limit+1=2 rows, returns 1, emits cursor from it.
-    db = _db([_scalars([newer, older])])
+    db = _db([_scalars([newer, older]), _rows([])])
     _override(user, db)
 
     resp = client.get("/me/jobs?limit=1")
@@ -168,6 +175,21 @@ def test_list_rejects_bad_cursor() -> None:
     _override(user, db)
     resp = client.get("/me/jobs?cursor=not-a-date")
     assert resp.status_code == 400
+
+
+def test_list_populates_feedback_signal_from_batch_lookup() -> None:
+    user = _user()
+    liked = _job(user_id=user.id, status="done", assembly_plan={"output_url": "gs://x/a.mp4"})
+    none = _job(user_id=user.id, status="done", assembly_plan={"output_url": "gs://x/b.mp4"})
+    # The batched second query returns (job_id, signal) tuples for thumbed jobs only.
+    db = _db([_scalars([liked, none]), _rows([(liked.id, "up")])])
+    _override(user, db)
+
+    resp = client.get("/me/jobs")
+    assert resp.status_code == 200
+    by_id = {j["id"]: j["feedback_signal"] for j in resp.json()["jobs"]}
+    assert by_id[str(liked.id)] == "up"
+    assert by_id[str(none.id)] is None
 
 
 # ── POST /me/jobs/{id}/add-to-plan ────────────────────────────────────────────

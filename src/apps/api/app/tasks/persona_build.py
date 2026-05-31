@@ -68,3 +68,55 @@ def generate_persona(self, persona_id: str) -> None:  # noqa: ANN001
             user.onboarding_status = "persona_ready"
         session.commit()
     log.info("persona_build.ready", persona_id=persona_id)
+
+
+@celery_app.task(
+    name="app.tasks.persona_build.retune_persona_from_feedback",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=10,
+)
+def retune_persona_from_feedback(self, persona_id: str) -> None:  # noqa: ANN001
+    """Re-run persona generation with the user's feedback as context (Phase 2).
+
+    User-triggered "update persona from feedback". The route guards that a
+    hand-edited persona (status 'edited') is authoritative and 409s before we get
+    here, so this only ever re-tunes an AI-authored persona. Failure is non-fatal:
+    the existing persona JSON is untouched (only written on success) and status
+    reverts to 'ready', so a flaky retune never nukes a working persona.
+    """
+    from app.services.feedback_summary import rollup_user_feedback  # noqa: PLC0415
+
+    with sync_session() as session:
+        row = session.get(Persona, uuid.UUID(str(persona_id)))
+        if row is None:
+            log.warning("persona_retune.missing_row", persona_id=persona_id)
+            return
+        summary = rollup_user_feedback(session, row.user_id)
+        questionnaire = PersonaQuestionnaire(**(row.questionnaire or {})).model_copy(
+            update={"preference_summary": summary}
+        )
+
+    try:
+        agent = PersonaGeneratorAgent(default_client())
+        persona = agent.run(questionnaire, ctx=RunContext(job_id=None))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("persona_retune.failed", persona_id=persona_id, error=str(exc))
+        with sync_session() as session:
+            row = session.get(Persona, uuid.UUID(str(persona_id)))
+            if row is not None:
+                # Keep the existing good persona; just clear the 'generating' state.
+                row.persona_status = "ready"
+                session.commit()
+        raise self.retry(exc=exc) from exc
+
+    with sync_session() as session:
+        row = session.get(Persona, uuid.UUID(str(persona_id)))
+        if row is None:
+            return
+        row.persona = persona.to_dict()
+        row.persona_status = "ready"
+        row.error_detail = None
+        row.prompt_version = PERSONA_PROMPT_VERSION
+        session.commit()
+    log.info("persona_retune.ready", persona_id=persona_id, has_summary=bool(summary))

@@ -14,9 +14,11 @@ from pydantic import BaseModel, Field
 # Bump when prompts/generate_persona.txt OR prompts/persona_archetypes.json OR
 # prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
 # archetype bank + success-factor bank are part of the prompt).
+# 2026-05-30.2 — added $preferences block (feedback-loop preference_summary) so
+#                "update persona from feedback" re-tunes the lane toward what works.
 # 2026-05-30.1 — added `rationale` (the AI's "why this lane" shown in the dashboard).
 # 2026-05-30 — added $success_factors block + archetype performance ranking.
-PERSONA_PROMPT_VERSION = "2026-05-30.1"
+PERSONA_PROMPT_VERSION = "2026-05-30.2"
 
 # Upper bounds keep a runaway model response from bloating the persona row.
 _MAX_PILLARS = 8
@@ -35,6 +37,11 @@ class PersonaQuestionnaire(BaseModel):
     passions: str = ""
     # Optional handle the user can paste; never fetched in v1 (TikTok API deferred).
     tiktok_handle: str = ""
+    # Feedback-loop rollup (Phase 2): empty on first onboarding; set only when the
+    # user clicks "update persona from feedback" (services/feedback_summary). Steers
+    # the regenerated lane toward what they reacted well to. NOT stored on the
+    # questionnaire row — injected at call time by retune_persona_from_feedback.
+    preference_summary: str = ""
 
 
 class Persona(BaseModel):

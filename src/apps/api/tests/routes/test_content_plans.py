@@ -129,3 +129,53 @@ def test_patch_item_404_for_other_users_plan(client: TestClient) -> None:
     app.dependency_overrides[get_db] = lambda: db
     resp = client.patch(f"/plan-items/{item.id}", json={"idea": "hijack"})
     assert resp.status_code == 404
+
+
+# ── POST /content-plans/{id}/regenerate (feedback loop, Phase 2) ───────────────
+
+
+def _plan_mock(user_id: uuid.UUID, *, status: str = "ready") -> MagicMock:
+    plan = MagicMock()
+    plan.id = uuid.uuid4()
+    plan.user_id = user_id
+    plan.plan_status = status
+    plan.horizon_days = 30
+    plan.events = None
+    plan.activation_status = "none"
+    plan.seed_clip_paths = []
+    plan.items = []
+    return plan
+
+
+def test_regenerate_enqueues_and_sets_generating(client: TestClient) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id, status="ready")
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: _async_db(scalar_result=plan)
+    with patch("app.tasks.content_plan_build.regenerate_content_plan") as task:
+        task.delay = MagicMock()
+        resp = client.post(f"/content-plans/{plan.id}/regenerate")
+    assert resp.status_code == 200
+    assert resp.json()["plan_status"] == "generating"
+    task.delay.assert_called_once_with(str(plan.id))
+
+
+def test_regenerate_409_when_already_generating(client: TestClient) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id, status="generating")
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: _async_db(scalar_result=plan)
+    with patch("app.tasks.content_plan_build.regenerate_content_plan") as task:
+        task.delay = MagicMock()
+        resp = client.post(f"/content-plans/{plan.id}/regenerate")
+    assert resp.status_code == 409
+    task.delay.assert_not_called()
+
+
+def test_regenerate_404_for_other_users_plan(client: TestClient) -> None:
+    user = _fake_user()
+    # _load_owned_plan filters on user_id, so a cross-user plan resolves to None.
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: _async_db(scalar_result=None)
+    resp = client.post(f"/content-plans/{uuid.uuid4()}/regenerate")
+    assert resp.status_code == 404

@@ -41,6 +41,7 @@ export default function PersonaEditor({
   continueLabel,
   continuing,
   startInEdit = false,
+  onRetuneFromFeedback,
 }: {
   persona: PersonaContent;
   status: PersonaStatus;
@@ -49,12 +50,30 @@ export default function PersonaEditor({
   continueLabel: string;
   continuing?: boolean;
   startInEdit?: boolean;
+  // When provided, shows "Update from feedback" in the read view (feedback loop,
+  // Phase 2). Disabled when the persona is hand-edited — an explicit edit is
+  // authoritative and never overwritten by inferred feedback ("their say" rule).
+  onRetuneFromFeedback?: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState<PersonaContent>(persona);
   const [lastSaved, setLastSaved] = useState<PersonaContent>(persona);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(startInEdit);
+  const [retuning, setRetuning] = useState(false);
+
+  async function handleRetune() {
+    if (!onRetuneFromFeedback) return;
+    setRetuning(true);
+    setError(null);
+    try {
+      await onRetuneFromFeedback();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't update from feedback");
+    } finally {
+      setRetuning(false);
+    }
+  }
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(lastSaved);
 
@@ -158,6 +177,21 @@ export default function PersonaEditor({
 
         {!dirty && status === "edited" && !editing && (
           <span className="text-sm text-emerald-400">Saved ✓</span>
+        )}
+
+        {onRetuneFromFeedback && !editing && (
+          <button
+            onClick={handleRetune}
+            disabled={retuning || continuing || saving || status === "edited"}
+            title={
+              status === "edited"
+                ? "Your hand-edited persona stays as you wrote it. Reset to AI to retune."
+                : "Re-tune this persona from your video feedback"
+            }
+            className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-700 px-5 py-3 text-sm font-medium text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white disabled:opacity-60"
+          >
+            {retuning ? "Updating…" : "Update from feedback"}
+          </button>
         )}
       </div>
     </div>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ContentPlan } from "@/lib/plan-api";
 import { addJobToPlan, type LibraryJob } from "@/lib/me-api";
+import FeedbackButtons from "./FeedbackButtons";
 
 /**
  * One 9:16 video in the library. Three visual states mirror the design spec:
@@ -52,6 +53,7 @@ export default function LibraryTile({
           ) : (
             <AddToPlan job={job} plan={plan} onPinned={onPinned} />
           )}
+          <FeedbackButtons jobId={job.id} initialSignal={job.feedback_signal} />
         </div>
       )}
     </div>

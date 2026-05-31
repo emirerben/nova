@@ -104,6 +104,16 @@ export function updatePersona(
   });
 }
 
+/**
+ * Re-tune the persona from the user's feedback (feedback loop, Phase 2). Returns
+ * the persona in `generating` status; callers re-poll getPersona. A hand-edited
+ * persona is authoritative and rejected with 409 (the caller should disable the
+ * action and explain rather than call this).
+ */
+export function retunePersonaFromFeedback(id: string): Promise<PersonaResponse> {
+  return request<PersonaResponse>(`/personas/${id}/retune-from-feedback`, { method: "POST" });
+}
+
 // ── Content plan ─────────────────────────────────────────────────────────────
 
 export type PlanStatus = "generating" | "ready" | "failed" | "edited";
@@ -166,6 +176,15 @@ export async function getContentPlan(): Promise<ContentPlan | null> {
     if (err instanceof Error && /\(404\)|No content plan yet/i.test(err.message)) return null;
     throw err;
   }
+}
+
+/**
+ * Regenerate the plan with the user's feedback (feedback loop, Phase 2). Returns
+ * the plan in `generating` status; callers re-poll getContentPlan. Days the user
+ * hand-edited or already started rendering are preserved server-side.
+ */
+export function regenerateContentPlan(planId: string): Promise<ContentPlan> {
+  return request<ContentPlan>(`/content-plans/${planId}/regenerate`, { method: "POST" });
 }
 
 export function updatePlanItem(

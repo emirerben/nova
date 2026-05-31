@@ -25,8 +25,19 @@ _MAX_PERSONA_PILLARS = 8
 _MAX_PERSONA_FIELD_CHARS = 400
 
 
+# Storage-side cap on the feedback summary stashed on the job. The summary is
+# already bounded upstream (services/feedback_summary, ≤800), but cap again so a
+# stale/oversized value can't bloat all_candidates / the intro_writer prompt.
+_MAX_PREFERENCE_SUMMARY_CHARS = 1000
+
+
 def _build_persona_context(
-    *, tone: str, pillars: list[str] | None, theme: str, idea: str
+    *,
+    tone: str,
+    pillars: list[str] | None,
+    theme: str,
+    idea: str,
+    preference_summary: str = "",
 ) -> dict | None:
     """Assemble the persona/series context stashed on the job for intro_writer.
 
@@ -37,12 +48,19 @@ def _build_persona_context(
     tone = (tone or "").strip()[:_MAX_PERSONA_FIELD_CHARS]
     theme = (theme or "").strip()[:_MAX_PERSONA_FIELD_CHARS]
     idea = (idea or "").strip()[:_MAX_PERSONA_FIELD_CHARS]
+    prefs = (preference_summary or "").strip()[:_MAX_PREFERENCE_SUMMARY_CHARS]
     clean_pillars = [
         str(p).strip()[:_MAX_PERSONA_FIELD_CHARS] for p in (pillars or []) if str(p).strip()
     ][:_MAX_PERSONA_PILLARS]
-    if not (tone or clean_pillars or theme or idea):
+    if not (tone or clean_pillars or theme or idea or prefs):
         return None
-    return {"tone": tone, "content_pillars": clean_pillars, "theme": theme, "idea": idea}
+    return {
+        "tone": tone,
+        "content_pillars": clean_pillars,
+        "theme": theme,
+        "idea": idea,
+        "preference_summary": prefs,
+    }
 
 
 def build_generative_job(
@@ -57,6 +75,7 @@ def build_generative_job(
     persona_pillars: list[str] | None = None,
     item_theme: str = "",
     item_idea: str = "",
+    preference_summary: str = "",
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -77,7 +96,11 @@ def build_generative_job(
     _validate_clip_path_prefixes(clip_paths)
     all_candidates: dict = {"clip_paths": clip_paths, "language": language}
     persona_ctx = _build_persona_context(
-        tone=persona_tone, pillars=persona_pillars, theme=item_theme, idea=item_idea
+        tone=persona_tone,
+        pillars=persona_pillars,
+        theme=item_theme,
+        idea=item_idea,
+        preference_summary=preference_summary,
     )
     if persona_ctx is not None:
         all_candidates["persona"] = persona_ctx

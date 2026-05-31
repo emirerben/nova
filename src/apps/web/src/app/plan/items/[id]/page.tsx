@@ -24,6 +24,7 @@ import PlanShell from "../../_components/PlanShell";
 import PlanFilmstrip from "../../_components/PlanFilmstrip";
 import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
+import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 
 const POLL_MS = 2500;
 // Generative renders three variants; show that many tiles while waiting so the
@@ -418,6 +419,16 @@ export default function PlanItemPage() {
                     Edit controls unlock as soon as a variant finishes rendering.
                   </p>
                 )
+              )}
+              {/* Per-video feedback (feedback loop, Phase 2): keyed to the item's
+                  Job so a reaction here lands in the same store as the library. */}
+              {item.current_job_id && !isGenerating && (
+                <div className="border-t border-zinc-800 pt-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    How&apos;s this one?
+                  </p>
+                  <FeedbackButtons jobId={item.current_job_id} initialSignal={null} />
+                </div>
               )}
             </div>
           </div>

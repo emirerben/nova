@@ -101,6 +101,92 @@ def _fail(session, plan: ContentPlan, detail: str) -> None:  # noqa: ANN001
     session.commit()
 
 
+@celery_app.task(
+    name="app.tasks.content_plan_build.regenerate_content_plan",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=10,
+)
+def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
+    """Re-tune a plan from the user's feedback (feedback loop, Phase 2).
+
+    User-triggered (never silent). Rolls the user's video_feedback into a bounded
+    `preference_summary`, persists it, regenerates the plan with that context, and
+    replaces ONLY regenerable items — a day the user hand-edited (`user_edited`) OR
+    already started rendering (`current_job_id`) is PROTECTED and kept byte-for-byte.
+    This is the "their say" invariant: inferred feedback biases new ideas, but never
+    overwrites an explicit edit or orphans an in-flight render.
+    """
+    from app.services.feedback_summary import rollup_user_feedback  # noqa: PLC0415
+
+    with sync_session() as session:
+        plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
+        if plan is None:
+            log.warning("content_plan_regen.missing_row", plan_id=plan_id)
+            return
+        persona_row = session.get(PersonaRow, plan.persona_id)
+        if persona_row is None or not persona_row.persona:
+            _fail(session, plan, "persona is not ready")
+            return
+        summary = rollup_user_feedback(session, plan.user_id)
+        plan.preference_summary = summary or None
+        session.commit()
+        agent_input = ContentPlanInput(
+            persona=Persona(**persona_row.persona),
+            events=str((plan.events or {}).get("text", "") or ""),
+            horizon_days=plan.horizon_days or 30,
+            preference_summary=summary or "",
+        )
+
+    try:
+        agent = ContentPlanGeneratorAgent(default_client())
+        output = agent.run(agent_input, ctx=RunContext(job_id=None))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("content_plan_regen.failed", plan_id=plan_id, error=str(exc))
+        with sync_session() as session:
+            plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
+            if plan is not None:
+                _fail(session, plan, str(exc))
+        raise self.retry(exc=exc) from exc
+
+    with sync_session() as session:
+        plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
+        if plan is None:
+            return
+        # PROTECTED days win: an item the user edited or already started rendering is
+        # kept verbatim and never replaced. Everything else is regenerable.
+        protected_days = {
+            it.day_index for it in plan.items if it.user_edited or it.current_job_id is not None
+        }
+        for existing in list(plan.items):
+            if existing.day_index not in protected_days:
+                session.delete(existing)
+        session.flush()
+        for spec in output.items:
+            if spec.day_index in protected_days:
+                continue  # never collide with a protected day
+            session.add(
+                PlanItem(
+                    content_plan_id=plan.id,
+                    day_index=spec.day_index,
+                    theme=spec.theme,
+                    idea=spec.idea,
+                    filming_suggestion=spec.filming_suggestion or None,
+                    rationale=spec.rationale or None,
+                    item_status="idea",
+                )
+            )
+        plan.plan_status = "ready"
+        plan.prompt_version = CONTENT_PLAN_PROMPT_VERSION
+        session.commit()
+    log.info(
+        "content_plan_regen.ready",
+        plan_id=plan_id,
+        protected=len(protected_days),
+        has_summary=bool(summary),
+    )
+
+
 # Throttled queue: per-item generative renders are heavy (3 variants each). The
 # worker consumes `plan-jobs` with --concurrency=1 so generate-first-week can't
 # fire 7 simultaneous renders and OOM the 6GB worker (plan T3). See fly.toml.
@@ -144,6 +230,9 @@ def _dispatch_item_render(
             persona_pillars=list(persona_data.get("content_pillars", []) or []),
             item_theme=str(item.theme or ""),
             item_idea=str(item.idea or ""),
+            # Feedback-loop steer for future hooks: the plan's bounded preference
+            # summary rides the same persona channel down to intro_writer.
+            preference_summary=str(plan.preference_summary or ""),
         )
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))

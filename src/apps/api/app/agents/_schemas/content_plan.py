@@ -14,10 +14,12 @@ from app.agents._schemas.persona import Persona
 # Bump when prompts/generate_content_plan.txt OR prompts/content_ideas.json OR
 # prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
 # idea bank + success-factor bank are part of the prompt).
+# 2026-05-30.2 — added $preferences block (feedback-loop preference_summary) so a
+#                user-triggered regenerate biases new ideas toward what they liked.
 # 2026-05-30.1 — added per-item `rationale` (the AI's "why this video works",
 #                shown in the dashboard).
 # 2026-05-30 — added $success_factors block + performance-weighted idea ranking.
-CONTENT_PLAN_PROMPT_VERSION = "2026-05-30.1"
+CONTENT_PLAN_PROMPT_VERSION = "2026-05-30.2"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60
@@ -28,6 +30,11 @@ class ContentPlanInput(BaseModel):
     # Optional free-text: trips, launches, exams the plan should lean into. UNTRUSTED.
     events: str = ""
     horizon_days: int = DEFAULT_HORIZON_DAYS
+    # Feedback-loop rollup (Phase 2): a bounded, already-sanitized summary of the
+    # creator's reactions + steer notes (services/feedback_summary). Empty for a
+    # first generation; set on a user-triggered regenerate. Biases NEW ideas only —
+    # the regenerate task preserves hand-edited days verbatim (the "their say" rule).
+    preference_summary: str = ""
 
 
 class PlanItemSpec(BaseModel):
