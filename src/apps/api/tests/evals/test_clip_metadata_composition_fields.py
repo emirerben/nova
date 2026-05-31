@@ -36,24 +36,8 @@ def test_composition_fields_round_trip():
     assert out.composition_note == "open sky above"
 
 
-def test_clip_meta_fields_feed_the_sizer_within_envelope():
-    # The contract that matters downstream: the agent's composition fields produce
-    # a concrete, in-envelope intro size (never a hardcoded default).
-    from app.pipeline.overlay_sizing import (
-        MAX_INTRO_PX,
-        MIN_INTRO_PX,
-        compute_overlay_size,
-    )
-
-    out = ClipMetadataOutput(
-        hook_text="x",
-        hook_score=5,
-        text_safe_zone={"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.5},
-        visual_density=1.0,
-    )
-    px = compute_overlay_size(
-        "hello world",
-        safe_zone=out.text_safe_zone,
-        visual_density=out.visual_density,
-    )
-    assert MIN_INTRO_PX <= px <= MAX_INTRO_PX
+# NOTE: the agent-fields → sizer → in-envelope-px integration is asserted in
+# tests/pipeline/test_overlay_sizing.py, not here. That path lazy-imports skia,
+# which the lightweight "Structural evals" CI job (tests/evals/ only) runs WITHOUT
+# system GL libs (libEGL). Keep this eval file skia-free: it covers the agent's
+# OUTPUT CONTRACT (schema), which is the eval-layer concern.
