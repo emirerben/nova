@@ -7,6 +7,14 @@
           { "type": "command", "command": "bash scripts/session-check.sh" }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "bash scripts/hooks/format-on-save.sh" }
+        ]
+      }
     ]
   }
 }
