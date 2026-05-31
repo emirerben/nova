@@ -292,3 +292,57 @@ tree, not the image). The deploy then failed on Fly. PR #119 (`121a6e9`) hotfixe
 every PR that touches `Dockerfile`, `.dockerignore`, or `src/apps/api/**` — so this
 class of bug fails on the PR, not on merge-to-main.
 
+
+## Agentic workflow (how to work fast here)
+
+The fastest way to work in this repo is to delegate, not to open a new session per
+subtask. Context isolation is already automatic — use it.
+
+- **Default to subagents, not new sessions.** When a task splits into subtasks, spawn
+  a subagent (Agent tool) per heavy subtask from ONE orchestrating session. Each
+  subagent burns its own context window and returns only a summary, so the
+  orchestrator stays lean no matter how many subtasks run. Do NOT finish subtask 1,
+  open a new session, do subtask 2, etc. — that is hand-rolling what the Agent tool
+  does for free.
+- **Parallelize independent subtasks** in one message (multiple Agent calls) so they
+  run concurrently. Use `isolation: "worktree"` on any subagent that edits files in
+  parallel so they don't collide.
+- **For batchable work** — the same operation across N items (per-file transforms,
+  audits, migrations, multi-variant renders) — run the decompose workflow instead of
+  doing items one at a time: `Workflow({ scriptPath: ".claude/workflows/decompose.js",
+  args: { subtasks: [{title, prompt}, ...] } })`. Running ANY workflow needs explicit
+  opt-in — include the word "workflow" in the request. It fans out across subagents in
+  the background and returns one synthesized report.
+- **Prefer gbrain over grep for semantic lookups.** `gbrain search "<intent>"`,
+  `gbrain code-def <symbol>`, `gbrain code-callers <symbol>` for "where is X handled".
+  Grep is still right for exact strings and regex. (Pinned per-worktree via
+  `.gbrain-source`; `new-session.sh` propagates the pin to new worktrees.)
+- **Only start a new session when** the work is genuinely unrelated, or after a
+  deliberate `/context-save` → `/context-restore` handoff. Not per subtask.
+
+## GBrain Search Guidance (configured by /sync-gbrain)
+<!-- gstack-gbrain-search-guidance:start -->
+
+GBrain is set up and synced on this machine. The agent should prefer gbrain
+over Grep when the question is semantic or when you don't know the exact
+identifier yet.
+
+**This worktree is pinned to a worktree-scoped code source** via the
+`.gbrain-source` file in the repo root (kubectl-style context). Any
+`gbrain code-def`, `code-refs`, `code-callers`, `code-callees`, or `query`
+call from anywhere under this worktree routes to that source by default —
+no `--source` flag needed.
+
+Prefer gbrain when:
+- "Where is X handled?" / semantic intent, no exact string yet:
+    `gbrain search "<terms>"` or `gbrain query "<question>"`
+- "Where is symbol Y defined?" / symbol-based code questions:
+    `gbrain code-def <symbol>` or `gbrain code-refs <symbol>`
+- "What calls Y?" / "What does Y depend on?":
+    `gbrain code-callers <symbol>` / `gbrain code-callees <symbol>`
+
+Grep is still right for known exact strings, regex, multiline patterns, and
+file globs. Run `/sync-gbrain` after meaningful code changes; for ongoing
+auto-sync, run `gbrain autopilot --install` once per machine.
+
+<!-- gstack-gbrain-search-guidance:end -->

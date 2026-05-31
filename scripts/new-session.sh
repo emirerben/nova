@@ -46,6 +46,13 @@ echo "→ Creating worktree: $target_path"
 echo "→ Branch:            $branch (off origin/main)"
 git worktree add -b "$branch" "$target_path" origin/main
 
+# Propagate the gbrain per-worktree pin (toplevel-scoped) so the new worktree
+# gets semantic code search instead of silently falling back to grep.
+if [ -f "$repo_root/.gbrain-source" ]; then
+  cp "$repo_root/.gbrain-source" "$target_path/.gbrain-source" 2>/dev/null || true
+  echo "→ Copied .gbrain-source pin to $target_path"
+fi
+
 cat <<EOF
 
 Fresh worktree ready. Next step (run this yourself — scripts can't cd for you):

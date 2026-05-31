@@ -45,3 +45,6 @@ firebase-debug.log
 
 # Weekly TikTok research raw dumps (intermediate, reproducible — not committed).
 research/tiktok/raw/
+
+# gbrain per-worktree pin (machine-local, not shared)
+.gbrain-source
