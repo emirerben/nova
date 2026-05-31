@@ -348,20 +348,24 @@ def test_render_variant_persists_style_set_id(monkeypatch, tmp_path):
     assert res["style_set_id"] == "film_mono"
 
 
-def test_inject_agent_intro_applies_style_set():
-    # The curated set OWNS the look: its font/effect/size win over the agent_form
-    # advisory (here advisory says karaoke-line, high_fashion says fade-in + Bodoni).
+def test_inject_agent_intro_applies_style_set_look_but_agent_sizes():
+    # The curated set OWNS the LOOK (font/effect/color) — but NOT the size. Style
+    # sets no longer pin intro `text_size_px` (v0.4.69), so the size is computed
+    # from the clip composition. high_fashion still forces fade-in + Bodoni; the
+    # px is whatever the sizer decides, not a hardcoded set value.
+    from app.pipeline.overlay_sizing import MAX_INTRO_PX, MIN_INTRO_PX
+
     recipe = {"slots": [{"position": 1, "target_duration_s": 3.0, "text_overlays": []}]}
     agent_text = types.SimpleNamespace(text="hello world", highlight_word=None)
     out, px, source = gb._inject_agent_intro(
         recipe, agent_text, {"effect": "karaoke-line"}, [], style_set_id="high_fashion"
     )
     ov = out["slots"][0]["text_overlays"][0]
-    assert ov["font_family"] == "Bodoni Moda"
-    assert ov["effect"] == "fade-in"
-    assert ov["text_size_px"] == 80
-    # The set's px is honored and recorded as system-decided (not a user pin).
-    assert px == 80 and source == "computed"
+    assert ov["font_family"] == "Bodoni Moda"  # set owns the font
+    assert ov["effect"] == "fade-in"  # set owns the effect
+    assert source == "computed"  # size came from the sizer, not the set
+    assert MIN_INTRO_PX <= px <= MAX_INTRO_PX
+    assert ov["text_size_px"] == px
 
 
 def test_inject_agent_intro_no_set_uses_agent_form():

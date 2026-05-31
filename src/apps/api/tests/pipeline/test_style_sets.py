@@ -84,6 +84,25 @@ def test_all_roles_recognized() -> None:
             assert role in VALID_STYLE_ROLES
 
 
+def test_no_set_pins_intro_size() -> None:
+    """The generative AI hero-intro size is agent-decided from clip composition
+    (overlay_sizing) — NOT a curated constant. A style set may own the intro's
+    font/color/effect/position, but pinning `text_size_px` on the `intro` role
+    short-circuits the sizer (precedence: set px > computed), which is the
+    "default size" we removed in v0.4.69. Guard so it can't silently come back.
+    Other roles (hook/body/lyrics) keep their pinned sizes — this is intro-only.
+    """
+    offenders = []
+    for set_id in style_set_ids():
+        intro = (get_style_set(set_id).get("roles") or {}).get("intro") or {}
+        if intro.get("text_size_px") is not None:
+            offenders.append(f"{set_id}={intro['text_size_px']}")
+    assert not offenders, (
+        "style sets must not pin intro text_size_px (intro size is agent-decided): "
+        + ", ".join(offenders)
+    )
+
+
 def test_validation_catches_bad_font() -> None:
     bad = {
         "version": "x",
