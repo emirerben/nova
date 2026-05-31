@@ -82,6 +82,11 @@ FINAL_OUTPUT_REQUIRED: set[tuple[str, str]] = {
     # routed through _encoding_args (include_audio=False) so it picks up the 16M
     # capped-CRF ceiling and bt709 tagging like every other final-class encode.
     ("app/pipeline/transitions.py", "join_with_transitions"),
+    # Talking-head archetype (format-aware edit engine, Lane C). The ONE final
+    # composite that lays B-roll over the spine video + muxes the spine audio —
+    # the bytes that ship for a talking_head job. include_audio=False because the
+    # audio is built by the filtergraph (loudnorm + 48k), not the slot-layout args.
+    ("app/pipeline/talking_head_assembler.py", "build_talking_head_command"),
 }
 
 # libx264 presets ordered from fastest to slowest. Anything at or stricter
@@ -106,6 +111,7 @@ FILES_TO_AUDIT: list[str] = [
     "app/pipeline/text_overlay_skia.py",
     "app/pipeline/lyrics_preview.py",
     "app/pipeline/transitions.py",
+    "app/pipeline/talking_head_assembler.py",
 ]
 
 

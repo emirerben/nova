@@ -102,6 +102,16 @@ class Settings(BaseSettings):
     # orchestrate_template_job.
     single_pass_encode_enabled: bool = False
 
+    # Kill switch for the format-aware talking-head archetype (Lane C/D). When
+    # False, a job whose plan declares edit_format="talking_head" renders as the
+    # default montage — the assembler module exists but the dispatch never routes
+    # to it. Lane D (generative_build dispatch) is the consumer; Lane C only
+    # defines the flag so the kill switch ships alongside the feature. Mirrors the
+    # LYRIC_DYNAMIC_CROSSFADE_ENABLED rollback pattern: flip the Fly secret +
+    # restart workers, no redeploy. Default OFF until the assembler is wired +
+    # verified end-to-end.
+    edit_format_talking_head_enabled: bool = False
+
     # Layer-2 text-overlay extraction pipeline. When False, the existing
     # single-call `nova.compose.template_text` Gemini agent runs unchanged.
     # When True, the OCR + grouping + transcript-alignment pipeline replaces
