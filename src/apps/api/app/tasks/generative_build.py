@@ -1055,29 +1055,49 @@ def _inject_lyrics(recipe_dict: dict, track: MusicTrack, style_set_id: str | Non
     )
 
 
-def _hero_composition(clip_metas: list) -> tuple[dict | None, float]:
-    """The opening clip's composition signal for intro sizing.
+def _safe_density(m) -> float:
+    """visual_density of a clip meta, clamped to [0, 10]; 5.0 on junk/missing."""
+    try:
+        return max(0.0, min(10.0, float(getattr(m, "visual_density", 5.0))))
+    except (TypeError, ValueError):
+        return 5.0
 
-    Picks the highest-`hook_score` clip (same hero rule `_ingest_clips` uses) —
-    the matcher assigns clips to slots only AFTER intro injection, so we can't yet
-    know the exact slot-0 clip; the strongest-hook clip is the deterministic proxy
-    for what leads the edit. Tolerates metas from a pre-bump analysis cache that
-    lack the new fields → `(None, 5.0)`, which `compute_overlay_size` handles as a
-    full-width fallback box (never crashes, never a hardcoded size)."""
-    hero = None
+
+def _hero_composition(clip_metas: list) -> tuple[dict | None, float]:
+    """Composition signal for intro SIZING: the most text-friendly clip — the
+    largest CALM safe zone — not the highest-hook clip.
+
+    The intro overlay persists across the whole video, so its size should track
+    the clip with the most room for text, letting it breathe when the footage
+    allows. This previously used the highest-`hook_score` clip, but hook strength
+    is uncorrelated with open space (a punchy clip is often the busiest), which
+    forced almost every intro to the small end. The openness score is safe-zone
+    AREA discounted by visual density, so a big-but-cluttered box can't beat a
+    slightly smaller open one; `_shrink_to_fit` + the overlay's drop shadow keep
+    the text legible over the busier clips it also overlaps.
+
+    Returns `(None, 5.0)` when no clip reported a usable safe zone (degraded /
+    pre-bump cache) — `compute_overlay_size` handles that as a computed full-width
+    fallback, never a hardcoded size, never a crash."""
+    best = None
     best_score = -1.0
     for m in clip_metas or []:
-        score = float(getattr(m, "hook_score", 0.0) or 0.0)
+        sz = getattr(m, "text_safe_zone", None)
+        if not isinstance(sz, dict):
+            continue
+        try:
+            w, h = float(sz.get("w")), float(sz.get("h"))
+        except (TypeError, ValueError):
+            continue
+        if not (0.0 < w <= 1.0 and 0.0 < h <= 1.0):
+            continue
+        # Bigger AND calmer wins: halve the area weight as density climbs 0 → 10.
+        score = (w * h) * (1.0 - 0.5 * _safe_density(m) / 10.0)
         if score > best_score:
-            best_score, hero = score, m
-    if hero is None:
+            best_score, best = score, m
+    if best is None:
         return None, 5.0
-    density = getattr(hero, "visual_density", 5.0)
-    try:
-        density = float(density)
-    except (TypeError, ValueError):
-        density = 5.0
-    return getattr(hero, "text_safe_zone", None), density
+    return best.text_safe_zone, _safe_density(best)
 
 
 def _inject_agent_intro(

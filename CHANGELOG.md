@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.68.0] - 2026-05-31
+
+### Changed
+- **Generative intro size now follows the most OPEN clip, not the punchiest one.** The agent-decided intro overlay persists across the whole edit, so its size should track the footage with the most room for text. v0.4.66 sized it from the highest-`hook_score` clip — but hook strength is uncorrelated with open space (the punchiest clip is often the busiest), so almost every intro got squeezed small. A real two-clip render exposed this: a calm Lisbon job sized its intro from a dense "leading lines" shot (`density 8`, safe-zone height `0.2`) instead of the open sunset (`density 2.5`, height `0.4`) that was sitting right there.
+  - `_hero_composition` now picks the clip with the highest **openness score** = safe-zone area discounted by visual density (so a big-but-cluttered box can't beat a slightly smaller calm one). On that calm job the sizer now selects the sunset → ~195px instead of ~90px. Clips with no reported safe zone are skipped; if none have one it returns the computed full-width fallback (unchanged).
+  - Sizing-only change — the clip that *leads* the edit is still chosen by the matcher; this only decouples which clip's empty space sets the text size. The overlay's drop shadow + the renderer's `_shrink_to_fit` width clamp keep the larger text legible over the busier clips it also overlaps.
+
 ## [0.4.67.0] - 2026-05-31
 
 ### Added
