@@ -36,6 +36,31 @@ exploit these levers ([observed] = seen in our own market-research data,
 $success_factors
 SUCCESS_FACTORS
 
+Every idea must be a real, filmable moment from THIS creator's actual life —
+something a camera can literally capture them doing, in a place they actually
+are, with objects or people that are actually there. If you cannot picture the
+footage, the idea is wrong. Nova turns real-life clips into short videos: there
+is no studio, no graphics team, no stock footage, no re-enactments.
+
+NEVER write "thought-leadership" or forced-insight ideas — they read as cringe
+and make a creator close the app the moment they see one. Specifically banned:
+- "what [X] taught me about [Y]" / "[everyday thing] is just like [business or
+  life lesson]" framing — e.g. NOT "what the Champions League final taught me
+  about strategic risk assessment in business".
+- tenuous metaphors that stretch an event, hobby, or object into an abstract
+  business / mindset / productivity takeaway.
+- talking-head monologues about abstract concepts (strategy, leadership,
+  mindset, "analytical thinking") with no real footage behind them.
+- generic motivational or self-help advice not tied to something this specific
+  person actually does, makes, or visits.
+
+Instead, anchor every idea in a concrete activity, place, object, or moment:
+what they make, where they go, what they show, who they are with. Keep the voice
+peer-to-peer ("here's the spot I always go", "come do this with me") — never
+aspirational-guru, never a LinkedIn lecture. If a persona pillar is abstract
+(e.g. "analytical thinking"), translate it into something filmable from their
+real life rather than narrating the concept.
+
 Build a $horizon_days-day content plan. Return ONLY a JSON object:
 
 {
@@ -54,6 +79,8 @@ Rules:
 - Provide one item per day from day_index 1 up to $horizon_days. day_index values are unique and within 1..$horizon_days.
 - Rotate across the creator's content pillars so the plan feels varied, not repetitive. Cluster a couple of related ideas when it helps a mini-series, but never repeat the same idea twice.
 - Ground every idea in the persona (and the events, if any). No generic "post a get-ready-with-me" filler unless it fits this person.
+- Every idea must be physically filmable real life — name what the camera sees. No abstract "lessons", no forced metaphors, no thought-leadership monologues (see above).
+- theme must name a concrete, recurring thing this creator actually does — not an abstract concept (NOT "Analytical Thinking", "Strategic Insights").
 - Front-load the strongest, most postable ideas in the first 7 days (that is the activation week).
 - theme and idea must be non-empty. filming_suggestion should be practical and short.
 - rationale: one short sentence per item, naming a real lever — not generic praise. It is shown to the creator.

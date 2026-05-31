@@ -14,11 +14,14 @@ from pydantic import BaseModel, Field
 # Bump when prompts/generate_persona.txt OR prompts/persona_archetypes.json OR
 # prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
 # archetype bank + success-factor bank are part of the prompt).
+# 2026-05-31 — concrete-pillar constraint: content_pillars + sample_topics must be
+#              filmable real-life moments, never abstract concepts ("Analytical
+#              Thinking") — stops the abstract pillar that seeds plan-agent cringe.
 # 2026-05-30.2 — added $preferences block (feedback-loop preference_summary) so
 #                "update persona from feedback" re-tunes the lane toward what works.
 # 2026-05-30.1 — added `rationale` (the AI's "why this lane" shown in the dashboard).
 # 2026-05-30 — added $success_factors block + archetype performance ranking.
-PERSONA_PROMPT_VERSION = "2026-05-30.2"
+PERSONA_PROMPT_VERSION = "2026-05-31"
 
 # Upper bounds keep a runaway model response from bloating the persona row.
 _MAX_PILLARS = 8

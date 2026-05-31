@@ -213,14 +213,15 @@ def test_intro_writer_prompt_injects_success_factors():
 
 def test_persona_bank_version_couples_to_prompt_version():
     # Bank version need not equal the prompt version — each is its own tripwire.
-    # The prompt led to 2026-05-30.1 when `rationale` was added (no bank change).
+    # The prompt led to 2026-05-31 (anti-cringe concrete-pillar rule, no bank change).
     assert archetypes_version() == "2026-05-30"
-    assert PERSONA_PROMPT_VERSION == "2026-05-30.2"
+    assert PERSONA_PROMPT_VERSION == "2026-05-31"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
+    # Prompt led to 2026-05-31 (anti-cringe guardrails); idea bank unchanged.
     assert content_ideas_version() == "2026-05-30"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-30.2"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-31"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -228,10 +229,11 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
 
     # The success-factor bank is part of THREE prompts (persona, content plan,
     # intro). The bank itself is unchanged (2026-05-30); the persona + content
-    # plan prompts later led to 2026-05-30.1 when the `rationale` field was added.
+    # plan prompts later led to 2026-05-31 (anti-cringe guardrails) while the
+    # intro prompt is untouched, so its version stays behind at 2026-05-30.2.
     assert success_factors_version() == "2026-05-30"
-    assert PERSONA_PROMPT_VERSION == "2026-05-30.2"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-30.2"
+    assert PERSONA_PROMPT_VERSION == "2026-05-31"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-31"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-05-30.2"
 
 

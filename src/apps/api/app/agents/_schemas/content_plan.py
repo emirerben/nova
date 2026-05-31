@@ -14,12 +14,15 @@ from app.agents._schemas.persona import Persona
 # Bump when prompts/generate_content_plan.txt OR prompts/content_ideas.json OR
 # prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
 # idea bank + success-factor bank are part of the prompt).
+# 2026-05-31 — anti-cringe guardrails: ideas must be filmable real-life moments;
+#              banned thought-leadership / forced-insight framing (the "what the
+#              Champions League final taught me about business" class).
 # 2026-05-30.2 — added $preferences block (feedback-loop preference_summary) so a
 #                user-triggered regenerate biases new ideas toward what they liked.
 # 2026-05-30.1 — added per-item `rationale` (the AI's "why this video works",
 #                shown in the dashboard).
 # 2026-05-30 — added $success_factors block + performance-weighted idea ranking.
-CONTENT_PLAN_PROMPT_VERSION = "2026-05-30.2"
+CONTENT_PLAN_PROMPT_VERSION = "2026-05-31"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60
