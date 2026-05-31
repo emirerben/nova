@@ -127,3 +127,128 @@ async def test_list_style_sets_endpoint_includes_real_typography():
     assert default.text_color and default.text_color.startswith("#")
     # Every generative set should carry a usable css_family for its chip.
     assert all(s.css_family for s in resp.style_sets)
+
+
+# ── Voiceover request validation + mix dispatch ─────────────────────────────────
+
+
+def test_voiceover_path_accepted():
+    req = CreateGenerativeJobRequest(
+        clip_gcs_paths=["slot-uploads/b.mp4"],
+        voiceover_gcs_path="voiceover-uploads/abc/voice.webm",
+    )
+    assert req.voiceover_gcs_path == "voiceover-uploads/abc/voice.webm"
+
+
+def test_voiceover_path_defaults_none():
+    req = CreateGenerativeJobRequest(clip_gcs_paths=["slot-uploads/b.mp4"])
+    assert req.voiceover_gcs_path is None
+
+
+def test_voiceover_path_rejects_clip_prefix():
+    # A footage-clip prefix must NOT be accepted as a voiceover (no cross-contamination).
+    with pytest.raises(ValidationError):
+        CreateGenerativeJobRequest(
+            clip_gcs_paths=["slot-uploads/b.mp4"], voiceover_gcs_path="slot-uploads/voice.mp3"
+        )
+
+
+def test_voiceover_path_rejects_traversal():
+    with pytest.raises(ValidationError):
+        CreateGenerativeJobRequest(
+            clip_gcs_paths=["slot-uploads/b.mp4"],
+            voiceover_gcs_path="voiceover-uploads/../etc/passwd",
+        )
+
+
+def test_clip_allowlist_rejects_voiceover_prefix():
+    # The inverse guard: a voiceover path must NOT be usable as a footage clip.
+    with pytest.raises(ValidationError):
+        CreateGenerativeJobRequest(clip_gcs_paths=["voiceover-uploads/abc/voice.webm"])
+
+
+def _voiceover_job():
+    import types
+    import uuid
+
+    return types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [
+                {"variant_id": "voiceover_only", "render_status": "ready", "mix": 1.0},
+                {
+                    "variant_id": "voiceover_music",
+                    "render_status": "ready",
+                    "mix": 0.7,
+                    "music_track_id": "t1",
+                },
+            ]
+        },
+    )
+
+
+def test_dispatch_set_mix_enqueues_override(monkeypatch):
+    import types
+
+    import app.tasks.generative_build as gb
+    from app.routes.generative_jobs import dispatch_set_mix
+
+    calls: list = []
+    fake = types.SimpleNamespace(delay=lambda *a, **k: calls.append((a, k)))
+    monkeypatch.setattr(gb, "regenerate_generative_variant", fake, raising=False)
+
+    dispatch_set_mix(_voiceover_job(), "voiceover_only", mix=0.4)
+    assert len(calls) == 1
+    assert calls[0][1]["mix_override"] == 0.4
+
+
+def test_dispatch_set_mix_rejects_non_voiceover_variant(monkeypatch):
+    import types
+    import uuid
+
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_set_mix
+
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={"variants": [{"variant_id": "song_text", "render_status": "ready"}]},
+    )
+    with pytest.raises(HTTPException) as exc:
+        dispatch_set_mix(job, "song_text", mix=0.5)
+    assert exc.value.status_code == 422
+
+
+def test_build_generative_job_stores_voiceover_path():
+    import uuid
+
+    from app.services.generative_jobs import build_generative_job
+
+    job = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["slot-uploads/b.mp4"],
+        voiceover_gcs_path="voiceover-uploads/abc/voice.webm",
+    )
+    assert job.all_candidates["voiceover_gcs_path"] == "voiceover-uploads/abc/voice.webm"
+
+
+def test_build_generative_job_omits_voiceover_when_absent():
+    import uuid
+
+    from app.services.generative_jobs import build_generative_job
+
+    job = build_generative_job(user_id=uuid.uuid4(), clip_paths=["slot-uploads/b.mp4"])
+    assert "voiceover_gcs_path" not in job.all_candidates
+
+
+def test_build_generative_job_rejects_bad_voiceover_path():
+    import uuid
+
+    from app.services.generative_jobs import build_generative_job
+
+    with pytest.raises(ValueError):
+        build_generative_job(
+            user_id=uuid.uuid4(),
+            clip_paths=["slot-uploads/b.mp4"],
+            voiceover_gcs_path="processed-outputs/voice.mp3",
+        )

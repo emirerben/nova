@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.73.0] - 2026-05-31
+
+### Added
+- **Voiceover edits — record (or upload) a narration and play your footage over it.** Users asked for the next step beyond the `talking_head` archetype: instead of filming themselves talking, just supply a voice and let their clips be the visuals. A generative job now accepts an optional `voiceover_gcs_path`; when present the orchestrator resolves a new **`voiceover` archetype** (in `_resolve_archetype`, ahead of the footage-speech logic — it's an uploaded-asset signal, not a footage-derived one) and renders voiceover variants instead of the song/original set.
+  - **Reuses the montage renderer, not a new spine engine.** A voiceover edit is a footage montage whose audio bed is the user's voice, so it routes through the existing `_render_generative_variant` / `_assemble_clips` path (full-frame tiling + Skia intro overlay) rather than the spine-video `talking_head` assembler. The only net-new render primitive is `_mix_user_voiceover` (modeled on `_mix_template_audio`, video stream-copied so it is **not** a new final-encode site — encoder policy unchanged).
+  - **Two variants (`_specs_for_archetype`).** `voiceover_only` (the clips' footage audio ducked under the voice) and, when a track matches, `voiceover_music` (a matched track as a low bed under the voice — not beat-synced). A `mix` slider (1.0 = voice only / bed fully ducked, the default; 0.0 = bed full) is persisted per-variant and re-rendered via a new `POST /generative-jobs/{id}/variants/{vid}/mix` endpoint (mirrors set-intro-size). The default voice-only mix maps the voice directly so footage with no audio stream still produces the voiceover.
+  - **Duration is capped to `min(footage, voice, 60)`** — the voice trims/fades to fit, preserving the existing "never stretch footage" invariant; a voice longer than the footage ends with the footage rather than looping clips.
+  - **Audio upload + retention.** The public `POST /music-jobs/upload-slot` classifier now accepts `audio/*` (mp3/m4a/wav/webm) → `kind:"audio"`, stored under a new `voiceover-uploads/` prefix. That prefix has its **own** path validator (`_validate_voiceover_path`) — deliberately NOT folded into the footage-clip allowlist, so a voice can't be submitted as a clip or vice-versa — and a new `voiceover-uploads/` GCS lifecycle delete rule (age 1 day) so user voice recordings (PII) are swept like other per-job uploads.
+  - **Web UI.** A new `VoiceRecorder` component on `/generative` (in-browser `MediaRecorder` capture with live waveform / timer / retake, plus an `audio/*` file-upload fallback and a mic-permission-denied path), wired above Generate; voiceover variant cards gain the debounced mix slider. Backend unit tests cover the archetype resolution, the voiceover variant set, the path validators (both directions), the audio classifier, the build-job plumbing, the mix dispatcher, and the render branch's voice-mix + duration cap.
+
 ## [0.4.72.1] - 2026-05-31
 
 ### Fixed

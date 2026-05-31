@@ -29,6 +29,9 @@ export interface GenerativeVariant {
   // Agent-decided (or user-pinned) intro size. null for non-text variants.
   intro_text_size_px: number | null;
   intro_size_source: "computed" | "user" | null;
+  // Voice/bed mix for voiceover variants (0..1; 1.0 = voice only / bed ducked,
+  // 0.0 = bed full). null on non-voiceover variants.
+  mix?: number | null;
   // The archetype that actually rendered this variant (Lane D). null on montage
   // variants. Carried for verification + Lane E UI; current UI ignores it.
   resolved_archetype?: string | null;
@@ -89,16 +92,40 @@ export async function uploadGenerativeClip(
   return res.json();
 }
 
+/** Upload a voiceover (a recorded Blob or a chosen audio File). Reuses the music
+ * slot-upload endpoint; for an audio file the backend returns `kind: "audio"`. */
+export async function uploadVoiceover(
+  file: File | Blob,
+  filename = "voiceover.webm",
+): Promise<{ gcs_path: string; kind: string }> {
+  const fd = new FormData();
+  // A MediaRecorder Blob has no filename; give it one so the backend can sniff
+  // the extension. A real File already carries its name, so prefer that.
+  if (file instanceof File) {
+    fd.append("file", file);
+  } else {
+    fd.append("file", file, filename);
+  }
+  const res = await fetch(`${API_BASE}/music-jobs/upload-slot`, { method: "POST", body: fd });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? "Voiceover upload failed");
+  }
+  return res.json();
+}
+
 export async function createGenerativeJob(
   clip_gcs_paths: string[],
+  voiceover_gcs_path: string | null = null,
 ): Promise<GenerativeJobResponse> {
   // No target length: the backend derives output length from the uploaded
   // footage (and the matched song's beat structure), so the edit can never run
-  // longer than the clips the user provided.
+  // longer than the clips the user provided. When a voiceover is provided the
+  // backend renders voiceover variants instead.
   const res = await fetch(`${API_BASE}/generative-jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ clip_gcs_paths }),
+    body: JSON.stringify({ clip_gcs_paths, voiceover_gcs_path }),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
@@ -173,6 +200,27 @@ export async function changeVariantStyle(
     throw new Error(detail.detail ?? "Failed to change style");
   }
   return res.json();
+}
+
+/** Set the voice/bed mix for a voiceover variant (0..1) — re-renders the variant.
+ * Mirrors setVariantIntroSize; treats any non-ok response as an error. */
+export async function setVariantMix(
+  jobId: string,
+  variantId: string,
+  mix: number,
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/generative-jobs/${jobId}/variants/${variantId}/mix`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mix }),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? "Failed to set mix");
+  }
 }
 
 export async function setVariantIntroSize(

@@ -220,3 +220,48 @@ def test_talking_head_success_no_text(monkeypatch, tmp_path):
     assert res["music_track_id"] is None
     assert res["text_mode"] == "none"
     assert res["output_url"].startswith("https://signed/generative-jobs/j/")
+
+
+# ── Voiceover archetype ────────────────────────────────────────────────────────
+
+
+def test_resolve_voiceover_wins_over_footage(monkeypatch):
+    """A user-supplied voiceover forces the voiceover archetype regardless of the
+    declared edit_format or what the footage contains (it's an uploaded-asset signal,
+    not a footage-derived one)."""
+    events = _trace_capture(monkeypatch)
+    archetype, spine = gb._resolve_archetype(
+        "talking_head",
+        [_Meta("c1")],
+        {"c1": "/a.mp4"},
+        job_id="j",
+        voiceover_gcs_path="voiceover-uploads/abc/voice.webm",
+    )
+    assert (archetype, spine) == ("voiceover", None)
+    assert any(
+        e[1] == "archetype_selected" and e[2].get("archetype") == "voiceover" for e in events
+    )
+
+
+def test_specs_for_voiceover_only_when_no_track():
+    specs = gb._specs_for_archetype(
+        "voiceover", None, voiceover_gcs_path="voiceover-uploads/a/voice.webm"
+    )
+    assert [s["variant_id"] for s in specs] == ["voiceover_only"]
+    s = specs[0]
+    assert s["archetype"] == "voiceover"
+    assert s["track"] is None
+    assert s["voiceover_gcs_path"] == "voiceover-uploads/a/voice.webm"
+    assert s["mix"] == gb._VOICEOVER_ONLY_DEFAULT_MIX
+
+
+def test_specs_for_voiceover_includes_music_when_track():
+    track = types.SimpleNamespace(id="t1", lyrics_cached={})
+    specs = gb._specs_for_archetype(
+        "voiceover", track, voiceover_gcs_path="voiceover-uploads/a/voice.webm"
+    )
+    assert [s["variant_id"] for s in specs] == ["voiceover_only", "voiceover_music"]
+    music = specs[1]
+    assert music["track"] is track
+    assert music["voiceover_gcs_path"] == "voiceover-uploads/a/voice.webm"
+    assert music["mix"] == gb._VOICEOVER_MUSIC_DEFAULT_MIX
