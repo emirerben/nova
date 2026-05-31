@@ -20,7 +20,7 @@ from typing import Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -88,6 +88,12 @@ class RetextRequest(BaseModel):
 
 class ChangeStyleRequest(BaseModel):
     style_set_id: str
+
+
+class SetIntroSizeRequest(BaseModel):
+    # Absolute font size in px for the AI intro overlay; clamped to the intro
+    # envelope server-side. The frontend ±stepper sends current_px ± step.
+    text_size_px: int = Field(..., gt=0)
 
 
 class StyleSetSummary(BaseModel):
@@ -227,6 +233,27 @@ def dispatch_change_style(job: Job, variant_id: str, *, style_set_id: str) -> No
     regenerate_generative_variant.delay(str(job.id), variant_id, style_set_id=style_set_id)
 
 
+def dispatch_set_intro_size(job: Job, variant_id: str, *, text_size_px: int) -> None:
+    """Validate + enqueue a user intro font-size override for one variant."""
+    from app.pipeline.overlay_sizing import clamp_intro_px  # noqa: PLC0415
+
+    variant = require_editable_variant(job, variant_id)
+    # Only the AI-intro text variants carry a resizable hero overlay. The lyrics
+    # variant's typography is governed by its style set and a text-removed variant
+    # has no overlay, so resizing either is a no-op — reject rather than spin up a
+    # render that changes nothing.
+    if variant.get("text_mode") != "agent_text":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This edit has no resizable intro text.",
+        )
+    px = clamp_intro_px(text_size_px)
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.delay(str(job.id), variant_id, size_override_px=px)
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 
@@ -353,5 +380,24 @@ async def change_style(
         job_id=str(job.id),
         variant_id=variant_id,
         style_set_id=req.style_set_id,
+    )
+    return GenerativeJobResponse(job_id=str(job.id), status="rendering")
+
+
+@router.post("/{job_id}/variants/{variant_id}/intro-size", response_model=GenerativeJobResponse)
+async def set_intro_size(
+    job_id: str,
+    variant_id: str,
+    req: SetIntroSizeRequest,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobResponse:
+    """Re-render a variant with a user-pinned AI-intro font size (the ±size nudge)."""
+    job = await _load_generative_job(job_id, db)
+    dispatch_set_intro_size(job, variant_id, text_size_px=req.text_size_px)
+    log.info(
+        "generative_set_intro_size",
+        job_id=str(job.id),
+        variant_id=variant_id,
+        px=req.text_size_px,
     )
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")

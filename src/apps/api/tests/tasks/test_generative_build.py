@@ -353,22 +353,43 @@ def test_inject_agent_intro_applies_style_set():
     # advisory (here advisory says karaoke-line, high_fashion says fade-in + Bodoni).
     recipe = {"slots": [{"position": 1, "target_duration_s": 3.0, "text_overlays": []}]}
     agent_text = types.SimpleNamespace(text="hello world", highlight_word=None)
-    out = gb._inject_agent_intro(
+    out, px, source = gb._inject_agent_intro(
         recipe, agent_text, {"effect": "karaoke-line"}, [], style_set_id="high_fashion"
     )
     ov = out["slots"][0]["text_overlays"][0]
     assert ov["font_family"] == "Bodoni Moda"
     assert ov["effect"] == "fade-in"
     assert ov["text_size_px"] == 80
+    # The set's px is honored and recorded as system-decided (not a user pin).
+    assert px == 80 and source == "computed"
 
 
 def test_inject_agent_intro_no_set_uses_agent_form():
+    from app.pipeline.overlay_sizing import MAX_INTRO_PX, MIN_INTRO_PX
+
     recipe = {"slots": [{"position": 1, "target_duration_s": 3.0, "text_overlays": []}]}
     agent_text = types.SimpleNamespace(text="hello", highlight_word=None)
-    out = gb._inject_agent_intro(recipe, agent_text, {"effect": "pop-in"}, [], style_set_id=None)
+    out, px, source = gb._inject_agent_intro(
+        recipe, agent_text, {"effect": "pop-in"}, [], style_set_id=None
+    )
     ov = out["slots"][0]["text_overlays"][0]
     assert ov["effect"] == "pop-in"
     assert "font_family" not in ov
+    # No style set, no override → size is COMPUTED from composition, never a constant.
+    assert source == "computed"
+    assert ov["text_size_px"] == px
+    assert MIN_INTRO_PX <= px <= MAX_INTRO_PX
+
+
+def test_inject_agent_intro_user_override_wins_and_marks_source():
+    recipe = {"slots": [{"position": 1, "target_duration_s": 3.0, "text_overlays": []}]}
+    agent_text = types.SimpleNamespace(text="hello world", highlight_word=None)
+    out, px, source = gb._inject_agent_intro(
+        recipe, agent_text, {"effect": "pop-in"}, [], style_set_id=None, size_override_px=140
+    )
+    ov = out["slots"][0]["text_overlays"][0]
+    assert px == 140 and source == "user"
+    assert ov["text_size_px"] == 140
 
 
 def test_inject_lyrics_passes_style_set_id(monkeypatch):

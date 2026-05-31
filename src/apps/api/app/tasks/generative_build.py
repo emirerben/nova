@@ -416,8 +416,9 @@ def regenerate_generative_variant(
     override_text: str | None = None,
     remove_text: bool = False,
     style_set_id: str | None = None,
+    size_override_px: int | None = None,
 ) -> None:
-    """Re-render ONE variant of an existing generative job (swap-song / retext / restyle).
+    """Re-render ONE variant of an existing generative job (swap-song / retext / restyle / resize).
 
     Async by design (plan Decision 4): a re-slot against a new song is a full pipeline
     re-run, not an instant preview. Re-runs clip ingest, renders just the target
@@ -437,7 +438,13 @@ def regenerate_generative_variant(
     with pipeline_trace_for(job_id):
         try:
             _run_regenerate_variant(
-                job_id, variant_id, new_track_id, override_text, remove_text, style_set_id
+                job_id,
+                variant_id,
+                new_track_id,
+                override_text,
+                remove_text,
+                style_set_id,
+                size_override_px,
             )
         except OperationalError:
             raise
@@ -461,6 +468,7 @@ def _run_regenerate_variant(
     override_text: str | None,
     remove_text: bool,
     style_set_id: str | None = None,
+    size_override_px: int | None = None,
 ) -> None:
     import types  # noqa: PLC0415
 
@@ -485,6 +493,8 @@ def _run_regenerate_variant(
         rank = int(existing.get("rank", 1))
         existing_track_id = existing.get("music_track_id")
         existing_text_mode = existing.get("text_mode", "agent_text")
+        existing_size_source = existing.get("intro_size_source")
+        existing_size_px = existing.get("intro_text_size_px")
         # Style precedence: explicit restyle request → the variant's persisted set →
         # any sibling variant's set (the job-level default) → "default".
         existing_style_set_id = existing.get("style_set_id")
@@ -493,6 +503,18 @@ def _run_regenerate_variant(
                 (v.get("style_set_id") for v in variants if v.get("style_set_id")), None
             )
     resolved_style_set_id = style_set_id or existing_style_set_id or "default"
+
+    # Intro-size precedence on a re-render:
+    #   explicit resize request  → new user pin
+    #   prior pin was the user's → preserve it (swap-song/retext must not recompute
+    #                              over a size the user set by hand)
+    #   otherwise                → None → recompute from the hero clip's composition
+    if size_override_px is not None:
+        resolved_size_override_px = int(size_override_px)
+    elif existing_size_source == "user" and existing_size_px is not None:
+        resolved_size_override_px = int(existing_size_px)
+    else:
+        resolved_size_override_px = None
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths to re-render from")
@@ -575,6 +597,7 @@ def _run_regenerate_variant(
             agent_form=agent_form,
             variant_dir=variant_dir,
             style_set_id=resolved_style_set_id,
+            intro_size_override_px=resolved_size_override_px,
         )
 
     _update_variant_entry(job_id, variant_id, result)
@@ -850,8 +873,15 @@ def _render_generative_variant(
     agent_form: dict,
     variant_dir: str,
     style_set_id: str | None = None,
+    intro_size_override_px: int | None = None,
 ) -> dict[str, Any]:
-    """Render one variant. Never raises — failures become a failure record."""
+    """Render one variant. Never raises — failures become a failure record.
+
+    `intro_size_override_px` carries a user-pinned intro size (the public ±size
+    nudge). When None the size is computed from the hero clip's composition; when
+    set it wins and the variant records `intro_size_source="user"` so later
+    re-renders (swap-song/retext/restyle) preserve it instead of recomputing.
+    """
     from app.pipeline.agents.gemini_analyzer import build_recipe  # noqa: PLC0415
     from app.pipeline.music_recipe import generate_music_recipe  # noqa: PLC0415
     from app.pipeline.template_matcher import (  # noqa: PLC0415
@@ -879,6 +909,9 @@ def _render_generative_variant(
         "music_track_id": track_id,
         "track_title": track_title,
         "style_set_id": style_set_id,
+        # Agent-decided (or user-pinned) intro size. None for non-text variants.
+        "intro_text_size_px": None,
+        "intro_size_source": None,  # "computed" | "user" | None
     }
     try:
         beats: list[float] = []
@@ -914,9 +947,19 @@ def _render_generative_variant(
         if text_mode == "lyrics" and track is not None:
             recipe_dict = _inject_lyrics(recipe_dict, track, style_set_id=style_set_id)
         elif text_mode == "agent_text" and agent_text is not None:
-            recipe_dict = _inject_agent_intro(
-                recipe_dict, agent_text, agent_form, beats, style_set_id=style_set_id
+            hero_safe_zone, hero_density = _hero_composition(clip_metas)
+            recipe_dict, intro_px, intro_source = _inject_agent_intro(
+                recipe_dict,
+                agent_text,
+                agent_form,
+                beats,
+                style_set_id=style_set_id,
+                hero_safe_zone=hero_safe_zone,
+                hero_density=hero_density,
+                size_override_px=intro_size_override_px,
             )
+            base["intro_text_size_px"] = intro_px
+            base["intro_size_source"] = intro_source
 
         recipe = build_recipe(recipe_dict)
         try:
@@ -1012,20 +1055,59 @@ def _inject_lyrics(recipe_dict: dict, track: MusicTrack, style_set_id: str | Non
     )
 
 
+def _hero_composition(clip_metas: list) -> tuple[dict | None, float]:
+    """The opening clip's composition signal for intro sizing.
+
+    Picks the highest-`hook_score` clip (same hero rule `_ingest_clips` uses) —
+    the matcher assigns clips to slots only AFTER intro injection, so we can't yet
+    know the exact slot-0 clip; the strongest-hook clip is the deterministic proxy
+    for what leads the edit. Tolerates metas from a pre-bump analysis cache that
+    lack the new fields → `(None, 5.0)`, which `compute_overlay_size` handles as a
+    full-width fallback box (never crashes, never a hardcoded size)."""
+    hero = None
+    best_score = -1.0
+    for m in clip_metas or []:
+        score = float(getattr(m, "hook_score", 0.0) or 0.0)
+        if score > best_score:
+            best_score, hero = score, m
+    if hero is None:
+        return None, 5.0
+    density = getattr(hero, "visual_density", 5.0)
+    try:
+        density = float(density)
+    except (TypeError, ValueError):
+        density = 5.0
+    return getattr(hero, "text_safe_zone", None), density
+
+
 def _inject_agent_intro(
     recipe_dict: dict,
     agent_text,
     agent_form: dict,
     beats: list[float],
     style_set_id: str | None = None,
-) -> dict:
+    *,
+    hero_safe_zone: dict | None = None,
+    hero_density: float = 5.0,
+    size_override_px: int | None = None,
+) -> tuple[dict, int | None, str | None]:
+    """Inject the hero intro and return (recipe, intro_text_size_px, size_source).
+
+    Size precedence (the user's "no default size" rule — never a constant):
+      1. `size_override_px` — the public ±nudge → source "user" (preserved on
+         later re-renders so swap-song/retext don't recompute over a manual pin).
+      2. curated style-set `text_size_px` — source "computed" (set-driven; safe to
+         re-resolve from the set on re-render).
+      3. `compute_overlay_size(...)` from the hero clip's safe-zone + density —
+         source "computed".
+    """
     from app.pipeline.generative_overlays import (  # noqa: PLC0415
         inject_persistent_intro,
     )
 
     slots = recipe_dict.get("slots") or []
     if not slots:
-        return recipe_dict
+        return recipe_dict, None, None
     slot0_dur = float(slots[HERO_SLOT_INDEX].get("target_duration_s", 0.0) or 0.0)
     # The intro now persists for the whole video (held statically after the reveal), so
     # MAX_INTRO_S caps only the reveal/animation window, not how long the text shows.
@@ -1048,7 +1130,24 @@ def _inject_agent_intro(
         }
         style = resolve_overlay_style(style_set_id, "intro", advisory=advisory)
 
-    return inject_persistent_intro(
+    font_family = style.get("font_family")
+    set_px = style.get("text_size_px")
+    if size_override_px is not None:
+        intro_px, intro_source = int(size_override_px), "user"
+    elif set_px is not None:
+        intro_px, intro_source = int(set_px), "computed"
+    else:
+        from app.pipeline.overlay_sizing import compute_overlay_size  # noqa: PLC0415
+
+        intro_px = compute_overlay_size(
+            agent_text.text,
+            font_family=font_family,
+            safe_zone=hero_safe_zone,
+            visual_density=hero_density,
+        )
+        intro_source = "computed"
+
+    recipe_dict = inject_persistent_intro(
         recipe_dict,
         HERO_SLOT_INDEX,
         text=agent_text.text,
@@ -1056,18 +1155,18 @@ def _inject_agent_intro(
         reveal_window_s=reveal_window_s,
         beats=beats,  # slot-0 / section-relative; empty for the no-music variant
         position=style.get("position") or agent_form.get("position", "center"),
-        size_class=agent_form.get("size_class", "jumbo"),
         text_color=style.get("text_color") or agent_form.get("text_color", "#FFFFFF"),
         highlight_color=style.get("highlight_color")
         or agent_form.get("highlight_color", "#FFD24A"),
         text_anchor=style.get("text_anchor") or agent_form.get("text_anchor", "center"),
         highlight_word=getattr(agent_text, "highlight_word", None),
-        font_family=style.get("font_family"),
+        font_family=font_family,
         stroke_width=style.get("stroke_width"),
-        text_size_px=style.get("text_size_px"),
+        text_size_px=intro_px,  # computed/user/set px — no hardcoded jumbo default
         position_x_frac=style.get("position_x_frac"),
         position_y_frac=style.get("position_y_frac"),
     )
+    return recipe_dict, intro_px, intro_source
 
 
 def _build_no_music_recipe(clip_metas: list, available_footage_s: float) -> dict:
@@ -1172,6 +1271,8 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "render_status": r.get("render_status"),
                     "ok": bool(r.get("ok")),
                     "error": r.get("error"),
+                    "intro_text_size_px": r.get("intro_text_size_px"),
+                    "intro_size_source": r.get("intro_size_source"),
                 }
                 for r in results
             ],

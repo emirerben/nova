@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.66.0] - 2026-05-31
+
+### Added
+- **Agent-decided intro text size + a public "bigger/smaller" nudge for generative edits (Part 2 of the fonts/size plan).** The generative hero-intro no longer renders at a hardcoded `jumbo` size for every clip. The size is now computed from the footage's composition — large on calm, open frames; smaller on busy ones — and the viewer can fine-tune it.
+  - **Composition signal on the existing clip-analysis call (no new LLM round-trip).** `nova.video.clip_metadata` now also emits `text_safe_zone` (the calm rectangle for a caption, normalized to the final 9:16 crop), `visual_density` (0–10), and `composition_note`. The hero clip's `file_ref` is already uploaded, so this is near-zero added latency/cost. Fields are additive + loose-typed so a drifted value never hard-fails the best-effort generative path. `prompt_version` bumped `2026-05-28 → 2026-05-31`.
+  - **Deterministic fit-to-box sizer (`app/pipeline/overlay_sizing.py`).** `compute_overlay_size` finds the largest font px that fits the safe box without clipping (via a new upward-searching `fit_text_size_px` reusing the Skia renderer's own wrap/measure primitives), biased smaller by density. **No default constant** — a missing/degraded safe zone falls back to a *computed* full-width fit, never a magic number. The renderer's `_shrink_to_fit` stays as the final clip-safety clamp.
+  - **Public ±size nudge (`POST /generative-jobs/{id}/variants/{vid}/intro-size`).** A −/A+ stepper on each AI-text variant re-renders at a bigger/smaller font, clamped to `[56, 240]px` both client- and server-side. The pin persists in `Job.assembly_plan["variants"]` (`intro_text_size_px` + `intro_size_source`) and **survives other re-renders** — a swap-song/retext won't recompute over a size the user set by hand (`intro_size_source="user"` wins; otherwise the size re-derives from the footage). Hidden on lyrics / no-text variants; registry-driven, no DB migration.
+  - Size-only in v1 (centered position unchanged — repositioning across the reframe crop is deferred). Verification before prod impact: live `clip_metadata` eval for prompt drift + `make local-render MODE=generative` on busy/calm clips.
+
 ## [0.4.65.0] - 2026-05-31
 
 ### Added
