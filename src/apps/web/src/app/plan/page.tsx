@@ -186,7 +186,11 @@ export default function PlanWizardPage() {
       )}
 
       {step === "you" && (
-        <OnboardingStep onSubmit={handleOnboardingSubmit} submitting={busy} />
+        <OnboardingStep
+          onSubmit={handleOnboardingSubmit}
+          submitting={busy}
+          initialAnswers={persona?.questionnaire ?? null}
+        />
       )}
 
       {step === "persona" && (
@@ -264,8 +268,15 @@ function PersonaStepView({
         <p className="mb-2 text-zinc-400">
           {persona.error_detail ?? "The persona generator hit an error."}
         </p>
-        <p className="mb-8 text-zinc-400">
-          You can write it by hand — saving unblocks the rest of the flow.
+        <p className="mb-4 text-zinc-400">
+          Your answers are saved.{" "}
+          <button
+            onClick={onStartOver}
+            className="text-amber-300 underline transition-colors hover:text-amber-200"
+          >
+            Edit your answers and try again
+          </button>
+          , or write the persona by hand below — either unblocks the rest of the flow.
         </p>
         <PersonaEditor
           persona={blankPersona()}
