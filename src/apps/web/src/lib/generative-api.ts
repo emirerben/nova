@@ -8,9 +8,9 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // Intro font-size envelope + nudge step (mirrors overlay_sizing.MIN/MAX_INTRO_PX
 // on the backend, which clamps server-side regardless of what the UI sends).
-export const INTRO_SIZE_MIN = 56;
-export const INTRO_SIZE_MAX = 240;
-export const INTRO_SIZE_STEP = 16;
+export const INTRO_SIZE_MIN = 40;
+export const INTRO_SIZE_MAX = 80;
+export const INTRO_SIZE_STEP = 6;
 
 export type GenerativeTextMode = "lyrics" | "agent_text" | "none";
 
