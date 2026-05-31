@@ -1,0 +1,48 @@
+{
+  "skill_name": "audit-plan-quality",
+  "evals": [
+    {
+      "id": 0,
+      "name": "full-audit-and-fix",
+      "prompt": "Audit the content plans our planner is generating for cringe and unrealistic items, and tell me what to fix in the prompt.",
+      "expected_output": "A markdown report: which plan items got flagged (by failure mode, with rates and verbatim quotes), traced to the clause in generate_content_plan.txt / generate_persona.txt that allows them, plus concrete proposed prompt edits ending with the version-bump + eval re-run rule. No prompt file is actually edited.",
+      "files": [],
+      "assertions": [
+        "Report contains all four required sections (Summary, Failure modes, Root cause, Proposed edits)",
+        "Reports a rubric-graded flag rate and mean score across all graded items",
+        "Separates control personas from cringe-prone personas (the control canary)",
+        "Quotes at least two flagged plan items verbatim",
+        "Traces at least one failure mode to a specific clause/line in the plan or persona prompt",
+        "Proposes concrete prompt edits AND cites the version-bump + eval re-run rule",
+        "Does not edit any prompt file (report-and-propose only)"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "founder-consultant-thought-leadership",
+      "prompt": "Run the founder, consultant, and analyst personas through our content-plan generator and flag any thought-leadership or 'what X taught me about Y' slop. Is the anti-cringe guardrail actually holding?",
+      "expected_output": "Mode A run scoped to the professional/abstract personas; per-item cringe grades; an explicit verdict on whether thought_leadership/tenuous_metaphor items leaked through, with quotes; if any leaked, the prompt clause at fault and a proposed tightening. No prompt edited.",
+      "files": [],
+      "assertions": [
+        "Directly answers whether the anti-cringe guardrail is holding",
+        "Reports per-failure-mode rates for the banned classes (thought_leadership / tenuous_metaphor / talking_head_abstract)",
+        "Quotes any leaked items verbatim, or states explicitly that none leaked",
+        "Traces dominant residual failure modes to a specific prompt clause",
+        "Does not edit any prompt file"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "prod-reality-check",
+      "prompt": "Are real users actually getting unrealistic or cheesy plan items in production? Check and report.",
+      "expected_output": "Attempts Mode B (export real plans, grade them). If the DB isn't reachable it says so clearly and falls back to the synthetic bank rather than fabricating prod data. Report quotes the worst real/synthetic offenders with flag rates and a mean score. No prompt edited.",
+      "files": [],
+      "assertions": [
+        "Attempts Mode B (production/DB export) before any fallback",
+        "If prod data is unavailable, states so explicitly and does not fabricate prod numbers",
+        "Grades the data it actually obtained and labels it (real vs synthetic)",
+        "Does not edit any prompt file"
+      ]
+    }
+  ]
+}
