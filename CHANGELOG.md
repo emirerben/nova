@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.71.0] - 2026-05-31
+
+### Added
+- **Intro font-size control in the content-plan flow.** The ±size nudge existed only on the public `/generative` page; the plan-item editor (`/plan/items/[id]`) — the main UX — had swap-song / retext / change-style but no way to resize the intro. Added an A− / A+ stepper to `PlanVariantEditor` (shown only on AI-text variants, once a size exists), backed by a new `POST /plan-items/{id}/variants/{variant_id}/intro-size` endpoint that reuses the generative `dispatch_set_intro_size` (clamped to the editorial `[40,80]` envelope, persisted as `intro_size_source="user"` so it survives later re-renders). The plan-item variant type now carries `intro_text_size_px` / `intro_size_source`, surfaced through the existing status endpoint. Backend route tests (happy / clamp / rejects-non-intro-variant) + `PlanVariantEditor` stepper tests added.
+
 ## [0.4.70.0] - 2026-05-31
 
 ### Added
@@ -12,6 +17,7 @@ All notable changes to this project will be documented in this file.
   - **B-roll scheduling.** Fixed even cadence v1 (explicit over clever): evenly-spaced cutaway windows after a lead-in, each clamped to its clip's source duration. `setpts` PTS-shift so a cutaway plays from its own start during the window, and `eof_action=pass` so a B-roll shorter than its window lets the spine show through (no frozen-frame loop). Transcript/energy-driven placement is the eventual goal (Phase 2 spice).
   - **Best-effort failure model.** A corrupt/unreadable spine raises `SpineExtractionError` so the (future) Lane D dispatch can degrade to montage + trace the fallback; a failed B-roll reframe just drops that one cutaway and the job continues. Emits `archetype_selected` / `spine_selected` / `broll_scheduled` pipeline-trace events.
   - **Kill switch + encoder gate.** `EDIT_FORMAT_TALKING_HEAD_ENABLED` (default off) ships alongside the feature for Lane D to gate on (Fly-secret flip + worker restart, no redeploy — mirrors `LYRIC_DYNAMIC_CROSSFADE_ENABLED`). The final composite encode is registered in `tests/test_encoder_policy.py` (`preset="fast"`, banding policy). Unit tests cover spine ranking/override, schedule math, the composite filtergraph (PTS-shift / `enable` / `eof_action=pass` / 48k audio), no-broll + dropped-broll + spine-failure paths, and `speech_coverage` edge cases.
+
 ## [0.4.69.0] - 2026-05-31
 
 ### Changed

@@ -262,6 +262,9 @@ export interface PlanItemVariant {
   music_track_id?: string | null;
   track_title?: string | null;
   style_set_id?: string | null;
+  // Agent-decided (or user-pinned) intro size — drives the ±size stepper.
+  intro_text_size_px?: number | null;
+  intro_size_source?: "computed" | "user" | null;
 }
 
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {
@@ -304,6 +307,17 @@ export function changePlanItemStyle(
   return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/change-style`, {
     method: "POST",
     body: JSON.stringify({ style_set_id: styleSetId }),
+  });
+}
+
+export function setPlanItemIntroSize(
+  itemId: string,
+  variantId: string,
+  textSizePx: number,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/intro-size`, {
+    method: "POST",
+    body: JSON.stringify({ text_size_px: Math.round(textSizePx) }),
   });
 }
 
