@@ -392,6 +392,49 @@ def test_inject_agent_intro_user_override_wins_and_marks_source():
     assert ov["text_size_px"] == 140
 
 
+def test_hero_composition_picks_most_open_not_highest_hook():
+    # The busy clip has the strongest hook; the calm clip has a big open safe zone.
+    # Intro sizing should follow the OPEN clip so the text can breathe.
+    busy = types.SimpleNamespace(
+        hook_score=9.0, visual_density=8.0, text_safe_zone={"x": 0.1, "y": 0.05, "w": 0.8, "h": 0.2}
+    )
+    open_calm = types.SimpleNamespace(
+        hook_score=1.0,
+        visual_density=2.5,
+        text_safe_zone={"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.4},
+    )
+    sz, density = gb._hero_composition([busy, open_calm])
+    assert sz == {"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.4}
+    assert density == 2.5
+
+
+def test_hero_composition_density_discount_beats_raw_area():
+    # A slightly larger but very cluttered box must NOT beat a calm one — the
+    # density discount is what prevents "big but busy" from winning.
+    big_busy = types.SimpleNamespace(
+        hook_score=1.0, visual_density=10.0, text_safe_zone={"x": 0, "y": 0, "w": 1.0, "h": 0.5}
+    )  # area 0.50 * (1-0.5) = 0.25
+    calm = types.SimpleNamespace(
+        hook_score=1.0, visual_density=1.0, text_safe_zone={"x": 0, "y": 0, "w": 0.8, "h": 0.45}
+    )  # area 0.36 * (1-0.05) = 0.342
+    sz, _ = gb._hero_composition([big_busy, calm])
+    assert sz["w"] == 0.8 and sz["h"] == 0.45
+
+
+def test_hero_composition_skips_clips_without_safe_zone():
+    no_zone = types.SimpleNamespace(hook_score=9.0, visual_density=3.0, text_safe_zone=None)
+    has_zone = types.SimpleNamespace(
+        hook_score=1.0, visual_density=4.0, text_safe_zone={"x": 0, "y": 0, "w": 0.7, "h": 0.3}
+    )
+    sz, _ = gb._hero_composition([no_zone, has_zone])
+    assert sz == {"x": 0, "y": 0, "w": 0.7, "h": 0.3}
+
+
+def test_hero_composition_none_when_no_clip_has_safe_zone():
+    metas = [types.SimpleNamespace(hook_score=5.0, visual_density=3.0, text_safe_zone=None)]
+    assert gb._hero_composition(metas) == (None, 5.0)
+
+
 def test_inject_lyrics_passes_style_set_id(monkeypatch):
     captured: dict = {}
 
