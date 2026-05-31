@@ -36,12 +36,14 @@ def test_calm_open_frame_sizes_larger_than_busy_tight_frame():
 
 
 def test_longer_text_sizes_down_vs_short_in_same_box():
-    box = {"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.5}
+    # A tight box so the long line genuinely can't fit at the editorial cap and
+    # must shrink below the short line (in a roomy box both just hit the cap).
+    box = {"x": 0.2, "y": 0.4, "w": 0.6, "h": 0.15}
     short = compute_overlay_size(
         "go", font_family="Bricolage Grotesque", safe_zone=box, visual_density=2.0
     )
     long = compute_overlay_size(
-        "when in rome you simply must follow every rule",
+        "when in rome you simply must follow every single rule they have here",
         font_family="Bricolage Grotesque",
         safe_zone=box,
         visual_density=2.0,
@@ -88,9 +90,9 @@ def test_density_monotonic_within_same_box():
     [
         (10, MIN_INTRO_PX),
         (9999, MAX_INTRO_PX),
-        (120, 120),
+        (64, 64),  # in-range value passes through
         (MIN_INTRO_PX, MIN_INTRO_PX),
-        ("140", 140),
+        ("72", 72),  # numeric string, in range
     ],
 )
 def test_clamp_intro_px(raw, expected):

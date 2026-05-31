@@ -32,9 +32,15 @@ from __future__ import annotations
 _CANVAS_W = 1080
 _CANVAS_H = 1920
 
-# Intro size envelope. Shared with the size-override endpoint's clamp.
-MIN_INTRO_PX = 56
-MAX_INTRO_PX = 240
+# Intro size envelope — EDITORIAL, not billboard. The fit-to-box search below
+# maximizes size to fill the safe zone, so the ceiling is what actually decides
+# the look: a high cap makes the intro fill the frame (covers the footage, reads
+# as cheap/un-viral). This range matches the curated style-set scale the project
+# already settled on ("restrained sizes ~38-88px", style-sets.json _doc) so the
+# agent picks a TASTEFUL size from the footage instead of the largest that fits.
+# Shared with the size-override endpoint's clamp + the public ±nudge.
+MIN_INTRO_PX = 40
+MAX_INTRO_PX = 80
 
 # Busy frames get smaller text even when the safe box is large: density 0 keeps the
 # full ceiling, density 10 cuts it by this fraction.

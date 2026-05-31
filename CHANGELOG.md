@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.69.0] - 2026-05-31
+## [0.4.70.0] - 2026-05-31
 
 ### Added
 - **`talking_head` video assembler — the first format-aware archetype (format-aware edit engine, Lane C of N).** A talking-head edit has a different *shape* than the beat-synced montage: ONE clip's full audio track (the "spine") carries the whole video while the OTHER clips' video is cut in as B-roll over the spine at intervals. This lands the assembler as a self-contained, unit-tested module. It is **not yet wired into the generative dispatch** (that is Lane D) — no prod render-behavior change yet; this is the render machinery the dispatch will route to.
@@ -12,6 +12,13 @@ All notable changes to this project will be documented in this file.
   - **B-roll scheduling.** Fixed even cadence v1 (explicit over clever): evenly-spaced cutaway windows after a lead-in, each clamped to its clip's source duration. `setpts` PTS-shift so a cutaway plays from its own start during the window, and `eof_action=pass` so a B-roll shorter than its window lets the spine show through (no frozen-frame loop). Transcript/energy-driven placement is the eventual goal (Phase 2 spice).
   - **Best-effort failure model.** A corrupt/unreadable spine raises `SpineExtractionError` so the (future) Lane D dispatch can degrade to montage + trace the fallback; a failed B-roll reframe just drops that one cutaway and the job continues. Emits `archetype_selected` / `spine_selected` / `broll_scheduled` pipeline-trace events.
   - **Kill switch + encoder gate.** `EDIT_FORMAT_TALKING_HEAD_ENABLED` (default off) ships alongside the feature for Lane D to gate on (Fly-secret flip + worker restart, no redeploy — mirrors `LYRIC_DYNAMIC_CROSSFADE_ENABLED`). The final composite encode is registered in `tests/test_encoder_policy.py` (`preset="fast"`, banding policy). Unit tests cover spine ranking/override, schedule math, the composite filtergraph (PTS-shift / `enable` / `eof_action=pass` / 48k audio), no-broll + dropped-broll + spine-failure paths, and `speech_coverage` edge cases.
+## [0.4.69.0] - 2026-05-31
+
+### Changed
+- **Style sets no longer pin the generative intro size — the agent actually decides it now.** This is what makes the v0.4.66–0.4.68 composition-sizing work real. Every curated style set hardcoded `text_size_px` on its `intro` role (default 88, high_fashion 80, film_mono 56, …), and the size precedence is `user > style-set px > computed` — so the style-set constant **always won** and the composition-computed size never ran. A local render made it undeniable: across calm and busy clips, with 3-word and 7-word intros, every job rendered at exactly 88px (the default set's pin). The agent-decided sizing (#395), the parse fix that lets the composition reach it (#398), and the openness pick (#399) were all inert in production.
+  - Removed `text_size_px` from the `intro` role of all 9 sets that pinned it (`style-sets.json`); `STYLE_SETS_VERSION` bumped `2026-05-25e → 2026-05-31` (folds into the Layer-2 cache key, so the change takes effect on the next render). Sets still own the intro's **font / color / effect / position** — they just no longer dictate its **size**, which is now computed from the clip's empty space per the original "no default size, the agent decides" intent. Other roles (hook/body/lyrics) keep their pinned sizes; this is intro-only.
+  - Guard test `test_no_set_pins_intro_size` locks it so a curated-set edit can't silently reintroduce a default intro size. `_inject_agent_intro`'s style-set-px branch stays as a deliberate override path (none of the shipped sets use it for intros).
+  - **Editorial size envelope, not billboard.** With the pins gone, the fit-to-box sizer maximized the intro to fill the safe zone (up to a 240px ceiling) — a real render came out at 196–213px, covering the footage. Tightened the envelope to `MIN_INTRO_PX=40 / MAX_INTRO_PX=80` (matching the curated "restrained sizes ~38–88" the style-set doc already specified), and the public ±nudge to match (`[40,80]`, step 6). The agent now picks a TASTEFUL size from the footage — calm/open ~72px, busy ~65px, very cluttered ~45px — instead of the largest that fits.
 
 ## [0.4.68.0] - 2026-05-31
 
