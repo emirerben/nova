@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.66.1] - 2026-05-31
+
+### Fixed
+- **Agent-decided intro sizing was inert — the composition signal never reached the sizer (caught by local-render).** v0.4.66.0 added `text_safe_zone` / `visual_density` / `composition_note` to the `clip_metadata` schema + prompt, and a real prod render confirmed **Gemini returns them correctly** (e.g. a calm Lisbon sunset → `visual_density: 2`, a wide-open safe zone, note "horizon line low, open sky above"). But `ClipMetadataAgent.parse()` reconstructs its output **field-by-field**, and the new fields were never added to that constructor — so they silently defaulted (`visual_density=5.0`, `text_safe_zone=None`) before the pipeline saw them. Every generative intro was therefore sized by the degraded full-width fallback, not the actual footage composition. CI couldn't catch this: unit tests exercised the schema directly (which has the fields) and the eval fixtures replay old recordings; only a live render through `parse()` surfaced the drop.
+  - `parse()` now threads `text_safe_zone` (dict-or-null), `visual_density` (via new `_coerce_density`, which clamps to [0,10] and rejects NaN/inf so a drifted value can't poison the sizer's clamp math), and `composition_note`. On the verified sunset clip the sizer now computes ~218px (composition-aware) vs the 186px fallback.
+  - Regression locked by `tests/evals/test_clip_metadata_composition_fields.py::test_parse_threads_composition_fields_through` (+ a junk-tolerance case) — asserts the fields survive `parse()`, not just the schema.
+
 ## [0.4.66.0] - 2026-05-31
 
 ### Added

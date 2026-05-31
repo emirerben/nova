@@ -15,6 +15,7 @@ when `filter_hint` mentions ball/football/soccer.
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field, ValidationError
@@ -189,6 +190,20 @@ def _enforce_moment_spread(moments: list[Moment]) -> list[Moment]:
         if not kept or (m.start_s - kept[-1].start_s) >= _MIN_MOMENT_SPACING_S:
             kept.append(m)
     return kept
+
+
+def _coerce_density(value: object) -> float:
+    """Clamp a model-supplied visual_density into [0, 10]; default 5.0 on junk.
+    Loose by design — a drifted value must never fail the best-effort clip parse.
+    Non-finite (NaN/inf, which `float("NaN")` produces) is treated as junk so it
+    can't poison the sizer's clamp math downstream."""
+    try:
+        d = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 5.0
+    if not math.isfinite(d):
+        return 5.0
+    return max(0.0, min(10.0, d))
 
 
 def _filter_moments_by_action(moments: list[dict[str, Any]], hint: str) -> list[dict[str, Any]]:
@@ -385,6 +400,18 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
                 hook_score=hook_score,
                 best_moments=moments,
                 detected_subject=str(data.get("detected_subject", "") or ""),
+                # Composition fields drive overlay_sizing. parse() reconstructs the
+                # output field-by-field, so these MUST be threaded explicitly or the
+                # model's values are silently dropped (the inert-feature bug caught by
+                # local-render: Gemini returned them but the sizer never saw them).
+                # Loose/defensive to match the schema's best-effort contract.
+                text_safe_zone=(
+                    safe_zone
+                    if isinstance((safe_zone := data.get("text_safe_zone")), dict)
+                    else None
+                ),
+                visual_density=_coerce_density(data.get("visual_density")),
+                composition_note=str(data.get("composition_note", "") or ""),
             )
         except ValidationError as exc:
             raise SchemaError(f"clip_metadata: output validation — {exc}") from exc

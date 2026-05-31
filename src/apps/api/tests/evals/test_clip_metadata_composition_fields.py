@@ -11,7 +11,54 @@ drift on the richer prompt is a separate manual gate
 
 from __future__ import annotations
 
-from app.agents.clip_metadata import ClipMetadataOutput
+import json
+
+from app.agents.clip_metadata import (
+    ClipMetadataAgent,
+    ClipMetadataInput,
+    ClipMetadataOutput,
+)
+
+
+def test_parse_threads_composition_fields_through():
+    # REGRESSION (inert-feature bug, caught by local-render): parse() rebuilds the
+    # output field-by-field, so the composition fields must be passed explicitly or
+    # the model's real values are silently dropped before the sizer sees them.
+    agent = ClipMetadataAgent(model_client=None)
+    raw = json.dumps(
+        {
+            "hook_text": "x",
+            "hook_score": 1,
+            "detected_subject": "sunset over bridge",
+            "text_safe_zone": {"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.5},
+            "visual_density": 2,
+            "composition_note": "horizon line low, open sky above",
+            "best_moments": [
+                {"start_s": 0.0, "end_s": 5.0, "energy": 1, "description": "static sunset"}
+            ],
+        }
+    )
+    out = agent.parse(raw, ClipMetadataInput(file_uri="x"))
+    assert out.text_safe_zone == {"x": 0.05, "y": 0.05, "w": 0.9, "h": 0.5}
+    assert out.visual_density == 2.0
+    assert out.composition_note == "horizon line low, open sky above"
+
+
+def test_parse_tolerates_missing_or_junk_composition():
+    agent = ClipMetadataAgent(model_client=None)
+    raw = json.dumps(
+        {
+            "hook_text": "x",
+            "hook_score": 1,
+            "text_safe_zone": "not-a-dict",
+            "visual_density": "NaN",
+            "best_moments": [{"start_s": 0, "end_s": 2, "energy": 1, "description": "d"}],
+        }
+    )
+    out = agent.parse(raw, ClipMetadataInput(file_uri="x"))
+    assert out.text_safe_zone is None
+    assert out.visual_density == 5.0
+    assert out.composition_note == ""
 
 
 def test_composition_fields_default_when_absent():
