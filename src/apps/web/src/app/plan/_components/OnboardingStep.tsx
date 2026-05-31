@@ -138,16 +138,26 @@ const EMPTY: PersonaQuestionnaire = {
 /**
  * Drives the onboarding questionnaire. Owns the field index + answers; calls
  * `onSubmit` with the full questionnaire once the user finishes the last card.
+ *
+ * `initialAnswers` pre-fills the form from a previously-saved questionnaire so a
+ * returning user (e.g. retrying after a failed generation) never retypes — the
+ * answers are persisted server-side on submit and returned by GET /personas.
+ * Merged over EMPTY so a partial/older saved shape still yields every field.
  */
 export default function OnboardingStep({
   onSubmit,
   submitting,
+  initialAnswers,
 }: {
   onSubmit: (answers: PersonaQuestionnaire) => void | Promise<void>;
   submitting: boolean;
+  initialAnswers?: PersonaQuestionnaire | null;
 }) {
   const [index, setIndex] = useState(0);
-  const [answers, setAnswers] = useState<PersonaQuestionnaire>(EMPTY);
+  const [answers, setAnswers] = useState<PersonaQuestionnaire>(() => ({
+    ...EMPTY,
+    ...(initialAnswers ?? {}),
+  }));
 
   const field = FIELDS[index];
 

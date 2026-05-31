@@ -11,6 +11,14 @@ All notable changes to this project will be documented in this file.
   - **Public ±size nudge (`POST /generative-jobs/{id}/variants/{vid}/intro-size`).** A −/A+ stepper on each AI-text variant re-renders at a bigger/smaller font, clamped to `[56, 240]px` both client- and server-side. The pin persists in `Job.assembly_plan["variants"]` (`intro_text_size_px` + `intro_size_source`) and **survives other re-renders** — a swap-song/retext won't recompute over a size the user set by hand (`intro_size_source="user"` wins; otherwise the size re-derives from the footage). Hidden on lyrics / no-text variants; registry-driven, no DB migration.
   - Size-only in v1 (centered position unchanged — repositioning across the reframe crop is deferred). Verification before prod impact: live `clip_metadata` eval for prompt drift + `make local-render MODE=generative` on busy/calm clips.
 
+## [0.4.65.2] - 2026-05-31
+
+### Fixed
+- **Onboarding questionnaire answers survive a failed persona generation — no more retyping.** When persona generation failed (e.g. the Gemini monthly spend-cap 429), returning to the questionnaire showed a blank form even though the answers were already saved server-side, forcing the user to type all 8 answers again. The backend already persisted `Persona.questionnaire` on submit and returned it from `GET /personas` — the gap was purely frontend: `OnboardingStep` always seeded from an empty state.
+  - **`OnboardingStep` now accepts `initialAnswers`** and seeds its state from the saved questionnaire (merged over the empty shape, so an older/partial saved record still yields every field). `/plan` passes `persona?.questionnaire`, so any return to the "You" step — via the stepper, "Start Over", or a page reload — pre-fills the prior answers.
+  - **The failed-generation state gets an explicit retry path.** It previously only offered "write the persona by hand"; it now leads with "Your answers are saved — *edit your answers and try again*" (routing to the pre-filled questionnaire), which is the natural recovery for a transient failure like a rate-limit/spend-cap 429. Hand-writing remains as the fallback.
+  - **No backend change.** Frontend-only. New `OnboardingStep.test.tsx` locks the behavior: blank without saved answers, pre-filled with them, null-safe, and untouched saved fields flow through on submit.
+
 ## [0.4.65.1] - 2026-05-31
 
 ### Fixed
