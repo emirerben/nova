@@ -72,11 +72,11 @@ class TestFontRegistryFile:
             )
 
     def test_expected_font_count(self):
-        """Registry has 24 active + 9 soft-deprecated fonts."""
+        """Registry has 33 active + 9 soft-deprecated fonts."""
         fonts = _FONT_REGISTRY.get("fonts", {})
-        assert len(fonts) == 33
+        assert len(fonts) == 42
         assert sum(1 for entry in fonts.values() if entry.get("deprecated") is True) == 9
-        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is not True) == 24
+        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is not True) == 33
 
     def test_expected_styles(self):
         """All 5 font styles should have defaults."""
@@ -118,6 +118,7 @@ class TestFontRegistryFile:
         # font and renders the wrong glyphs. Caught in prod after a variable-font
         # instancer left family="Montserrat Thin" on the static Regular cut.
         from fontTools.ttLib import TTFont
+
         fonts = _FONT_REGISTRY.get("fonts", {})
         mismatches = []
         for name, entry in fonts.items():

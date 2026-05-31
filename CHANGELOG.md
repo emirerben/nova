@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.65.0] - 2026-05-31
+
+### Added
+- **9 new editorial/display Google fonts for video text overlays.** Expands the overlay font roster from 24 to 33 active faces across four taste lanes: editorial serifs (DM Serif Display, Gloock, Cormorant Garamond), modern statement sans (Bricolage Grotesque, Hanken Grotesk), bold poster/display (Archivo Black, Big Shoulders Display, Syne), and playful-premium (Unbounded). Each was approved off a live specimen sheet rendering the real glyphs.
+  - **Turkish-safe by construction.** Every face was verified to carry the full Turkish Latin-Extended set (`İ ı Ş ş Ğ ğ Ç ç Ö ö Ü ü`) plus the registry's extended-Latin sample before bundling, so `tr` generative intros render correctly (no system-font fallback).
+  - **Variable fonts statically instanced + name-normalized.** Cormorant Garamond, Bricolage Grotesque, Hanken Grotesk, Big Shoulders Display, Syne, and Unbounded ship as pinned single-weight static cuts with their `name` table rewritten to a clean family (e.g. not `Big Shoulders Display Thin`), so libass/fontconfig resolves them by `ass_name` instead of silently falling back.
+  - **Purely additive, zero behavior change to existing jobs.** New faces are selectable by exact `font_family` in the admin overlay editor and flow into generative style sets; no `cycle_role` was assigned, so the font-cycle pool for existing agentic/music renders is unchanged. Heavy faces (weight ≥ 700) auto-skip libass synthetic bolding via the existing `_registry_ass_bold` rule.
+  - **Wired end-to-end via the existing registry mirror.** `font-registry.json` (API canonical) + the web mirror + `web/public/fonts/*.ttf` are kept in sync by `sync-font-registry.mjs`; the admin font picker and `@font-face` preview blocks are registry-driven, so all nine appear with no hand-edited UI. Registry count test updated 33→42 total.
+
 ## [0.4.64.0] - 2026-05-30
 
 ### Added
