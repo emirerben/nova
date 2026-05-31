@@ -81,6 +81,7 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                     idea=spec.idea,
                     filming_suggestion=spec.filming_suggestion or None,
                     rationale=spec.rationale or None,
+                    edit_format=spec.edit_format,
                     item_status="idea",
                 )
             )
@@ -173,6 +174,7 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                     idea=spec.idea,
                     filming_suggestion=spec.filming_suggestion or None,
                     rationale=spec.rationale or None,
+                    edit_format=spec.edit_format,
                     item_status="idea",
                 )
             )
@@ -233,6 +235,8 @@ def _dispatch_item_render(
             # Feedback-loop steer for future hooks: the plan's bounded preference
             # summary rides the same persona channel down to intro_writer.
             preference_summary=str(plan.preference_summary or ""),
+            # The plan's declared edit shape → render archetype dispatch.
+            edit_format=str(item.edit_format or "montage"),
         )
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))

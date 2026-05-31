@@ -70,7 +70,8 @@ Build a $horizon_days-day content plan. Return ONLY a JSON object:
       "theme": "short label for the day's content pillar",
       "idea": "one concrete video concept, specific to this creator",
       "filming_suggestion": "a practical tip for shooting it (setting, shot, time of day)",
-      "rationale": "one short sentence, shown to the creator as 'why this works': why this idea fits them AND which proven lever it pulls (name a success factor above, e.g. save-worthy, hook in the first 2s, relatable one-liner)."
+      "rationale": "one short sentence, shown to the creator as 'why this works': why this idea fits them AND which proven lever it pulls (name a success factor above, e.g. save-worthy, hook in the first 2s, relatable one-liner).",
+      "edit_format": "one of: montage | talking_head | day_vlog | single_hero — the edit shape this idea should become (see rules)"
     }
   ]
 }
@@ -84,4 +85,10 @@ Rules:
 - Front-load the strongest, most postable ideas in the first 7 days (that is the activation week).
 - theme and idea must be non-empty. filming_suggestion should be practical and short.
 - rationale: one short sentence per item, naming a real lever — not generic praise. It is shown to the creator.
+- edit_format: choose the shape that matches how the idea is filmed:
+    - talking_head — the creator speaks to camera and that voice carries the video (a take, a story, a tip, an explainer). B-roll may cut over it.
+    - day_vlog — several clips from across one day/outing, shown in time order (morning to night, a trip, "a day in my life").
+    - single_hero — one strong continuous shot stands on its own (one cooked dish, one view, one outfit), minimal cutting.
+    - montage — default: multiple short clips cut to music with text. Use when none of the above clearly fits.
+  When unsure, use montage. Match the filming_suggestion: if it says "to camera", that is talking_head; if it spans a day, that is day_vlog.
 - Output valid JSON and nothing else. No markdown.

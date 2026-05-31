@@ -29,6 +29,18 @@ Return a JSON object with these exact fields:
 
 - "composition_note": string — one short phrase on the frame's key compositional element, for the designer's reference (e.g. "subject centered, open sky above", "rule-of-thirds, subject left", "busy crowd fills frame"). "" if nothing notable.
 
+- "content_type": one of "talking_head" | "broll" | "action" | "ambience" — what this clip IS, for edit assembly:
+    • talking_head — a person speaking to camera; their voice is the point (a take, story, tip, explainer). Use ONLY when a person is clearly talking on camera.
+    • broll — supporting footage with no one talking to camera (hands, scenery, the thing being made/shown).
+    • action — a distinct physical event is the focus (a shot on goal, a jump, a flip).
+    • ambience — mood/atmosphere with no clear action or speaker (a quiet room, a view, a slow pan).
+  Default to "broll" when unsure. Do NOT label a clip talking_head just because a face is visible — they must be speaking.
+
+- "audio_type": one of "dialogue" | "voiceover" | "ambient" | "music" | "mixed" — the dominant audio:
+    • dialogue — a person speaking on camera. • voiceover — narration over footage where the speaker isn't the on-camera subject.
+    • ambient — natural background sound, no speech. • music — music dominates. • mixed — a blend with no clear dominant.
+  Default to "ambient" when unsure.
+
 - "best_moments": list of 2–5 objects with {"start_s": float, "end_s": float, "energy": float 0–10, "description": string} — pick the BEST moments only; do NOT pad the list with filler. Include a mix of durations (3–5s, 8–12s, and at least one ≥13s when meaningful action exists). "energy" anchors (0–10):
     • 0–2   silence, ambient, slow setup, holding
     • 3–4   conversational, single-subject mid-shot, mid-energy

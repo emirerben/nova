@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.agents._runtime import (
     Agent,
@@ -49,6 +49,17 @@ class ClipMetadataInput(BaseModel):
     filter_hint: str = ""
 
 
+# Clip-understanding labels for the format-aware edit engine (Lane A / D1).
+# content_type feeds archetype dispatch (talking_head spine vs B-roll cutaway);
+# audio_type guides which variants make sense (e.g. a dialogue clip shouldn't get
+# a lyrics overlay). Safe defaults ('broll' / 'ambient') never falsely promote a
+# clip to the talking-head spine when the model omits or drifts the label.
+ClipContentType = Literal["talking_head", "broll", "action", "ambience"]
+ClipAudioType = Literal["dialogue", "voiceover", "ambient", "music", "mixed"]
+_CONTENT_TYPES = ("talking_head", "broll", "action", "ambience")
+_AUDIO_TYPES = ("dialogue", "voiceover", "ambient", "music", "mixed")
+
+
 class ClipMetadataOutput(BaseModel):
     clip_id: str = ""
     transcript: str = ""
@@ -63,6 +74,28 @@ class ClipMetadataOutput(BaseModel):
     text_safe_zone: dict | None = None  # {"x","y","w","h"} normalized to the 9:16 frame
     visual_density: float = 5.0  # 0 (empty) .. 10 (cluttered); clamped at use
     composition_note: str = ""
+    # Format-aware labels. Defaulted + coerced so the existing hook/transcript
+    # fields stay authoritative and a missing/drifted label can't break parsing.
+    content_type: ClipContentType = "broll"
+    audio_type: ClipAudioType = "ambient"
+
+    @field_validator("content_type", mode="before")
+    @classmethod
+    def _coerce_content_type(cls, v: object) -> str:
+        if isinstance(v, str):
+            n = v.strip().lower().replace("-", "_").replace(" ", "_")
+            if n in _CONTENT_TYPES:
+                return n
+        return "broll"
+
+    @field_validator("audio_type", mode="before")
+    @classmethod
+    def _coerce_audio_type(cls, v: object) -> str:
+        if isinstance(v, str):
+            n = v.strip().lower().replace("-", "_").replace(" ", "_")
+            if n in _AUDIO_TYPES:
+                return n
+        return "ambient"
 
 
 # ── Domain-specific post-filter (lifted verbatim from gemini_analyzer.py) ────
@@ -245,10 +278,14 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         name="nova.video.clip_metadata",
         prompt_id="analyze_clip",
         # 2026-05-28 — _enforce_moment_spread() post-filter added in parse().
-        # Bumped 2026-05-31: prompt now emits composition fields (text_safe_zone /
+        # 2026-05-31 — prompt emits composition fields (text_safe_zone /
         # visual_density / composition_note) consumed by overlay_sizing for the
         # agent-decided generative intro size.
-        prompt_version="2026-05-31",
+        # 2026-05-31.1 — added content_type + audio_type labels (format-aware edit
+        # engine), layered on the composition fields above. New fields default +
+        # coerce, so a hook_score regression here is attributable; D4 eval gate
+        # compares hook_score against the prior baseline before merge.
+        prompt_version="2026-05-31.1",
         model="gemini-2.5-flash",
         # Gemini pricing as of 2026 — input ~$0.075/M, output ~$0.30/M (2.5 Flash).
         cost_per_1k_input_usd=0.000075,
@@ -412,6 +449,12 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
                 ),
                 visual_density=_coerce_density(data.get("visual_density")),
                 composition_note=str(data.get("composition_note", "") or ""),
+                # Format-aware labels — same field-by-field threading rule: pass the
+                # raw values; the schema's before-validators coerce None/unknown to
+                # the safe defaults (broll/ambient), so a missing label never breaks
+                # parse and never falsely promotes a clip to the talking-head spine.
+                content_type=data.get("content_type"),
+                audio_type=data.get("audio_type"),
             )
         except ValidationError as exc:
             raise SchemaError(f"clip_metadata: output validation — {exc}") from exc

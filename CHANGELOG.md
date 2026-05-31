@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.67.0] - 2026-05-31
+
+### Added
+- **`edit_format` intent contract — the content plan now declares the edit shape, and it reaches the render path instead of being inferred from clips alone (format-aware edit engine, Lane A of N).** Foundation slice: the plan generator now tags each day with an intended edit shape (`montage` | `talking_head` | `day_vlog` | `single_hero`), it persists, and it flows into the generative job's `all_candidates` where the future archetype dispatch (later lanes) will consume it. No render-behavior change yet — every job still renders as `montage` (today's beat-synced behavior). This is the data/contract spine the talking-head and day-vlog assemblers build on.
+  - **Shared vocabulary (`app/agents/_schemas/edit_format.py`).** A single `EditFormat` literal + `coerce_edit_format()` normalization point. Unknown / missing / wrong-cased values coerce to `montage` and never raise — one drifted LLM token can't 422 a whole plan (mirrors how `filming_suggestion`/`rationale` degrade).
+  - **`content_plan` agent emits it.** `PlanItemSpec.edit_format` (defensive validator) + `generate_content_plan.txt` gains concrete rules for choosing the shape from the idea/filming tip. `prompt_version` bumped `2026-05-31 → 2026-05-31.1`.
+  - **Persisted + plumbed.** Migration `0044` adds `plan_items.edit_format` (Text, `NOT NULL server_default 'montage'` — existing rows backfill to today's behavior). Written at both `PlanItem` creation sites and threaded through `build_generative_job(edit_format=...)` into `Job.all_candidates["edit_format"]` (coerced at the boundary).
+  - **Clip-understanding labels for the archetype dispatch.** `clip_metadata` now also emits `content_type` (`talking_head`/`broll`/`action`/`ambience`) + `audio_type` (`dialogue`/`voiceover`/`ambient`/`music`/`mixed`), layered on the composition fields from 0.4.66.0. Defaulted + coerced (safe defaults never falsely promote a clip to the talking-head spine). `prompt_version` → `2026-05-31.1`.
+  - **Best-effort, default-safe.** No new infra, no new agent, no render change. Public generative jobs, music jobs, and template jobs are untouched. Tests cover coercion, schema defaults, plumbing, and the migration-chain guard.
+  - **Merge gate (per the approved eng review D4 + CLAUDE.md prompt-change rule):** because `clip_metadata` + `content_plan` `prompt_version`s changed, the full live eval + LLM judge + new-label fixtures + `hook_score` regression compare must run before this is considered prod-verified. content_plan ran clean live (3/3); clip_metadata's live eval is blocked by GC'd fixture videos, so its eval-layer guard is the output-contract lock in `tests/evals/test_format_aware_fields.py`.
+
 ## [0.4.66.1] - 2026-05-31
 
 ### Fixed

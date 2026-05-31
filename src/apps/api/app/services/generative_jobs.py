@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import uuid
 
+from app.agents._schemas.edit_format import DEFAULT_EDIT_FORMAT, coerce_edit_format
 from app.models import Job
 from app.routes.admin_music import _validate_clip_path_prefixes
 
@@ -76,6 +77,7 @@ def build_generative_job(
     item_theme: str = "",
     item_idea: str = "",
     preference_summary: str = "",
+    edit_format: str = DEFAULT_EDIT_FORMAT,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -94,7 +96,14 @@ def build_generative_job(
     if not clip_paths:
         raise ValueError("At least 1 clip is required")
     _validate_clip_path_prefixes(clip_paths)
-    all_candidates: dict = {"clip_paths": clip_paths, "language": language}
+    # Declared edit shape (montage default). The orchestrator's archetype dispatch
+    # resolves it against the footage and falls back to montage when unsupported.
+    # Coerce here so an unknown/legacy value can never reach the render path.
+    all_candidates: dict = {
+        "clip_paths": clip_paths,
+        "language": language,
+        "edit_format": coerce_edit_format(edit_format),
+    }
     persona_ctx = _build_persona_context(
         tone=persona_tone,
         pillars=persona_pillars,

@@ -7,8 +7,9 @@ is a list of per-day PlanItemSpec the user can edit before generating videos.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from app.agents._schemas.edit_format import DEFAULT_EDIT_FORMAT, EditFormat, coerce_edit_format
 from app.agents._schemas.persona import Persona
 
 # Bump when prompts/generate_content_plan.txt OR prompts/content_ideas.json OR
@@ -22,7 +23,10 @@ from app.agents._schemas.persona import Persona
 # 2026-05-30.1 — added per-item `rationale` (the AI's "why this video works",
 #                shown in the dashboard).
 # 2026-05-30 — added $success_factors block + performance-weighted idea ranking.
-CONTENT_PLAN_PROMPT_VERSION = "2026-05-31"
+# 2026-05-31.1 — emit per-item edit_format (montage|talking_head|day_vlog|
+#                single_hero) so the plan's intended shape reaches the render
+#                archetype dispatch instead of being inferred from clips alone.
+CONTENT_PLAN_PROMPT_VERSION = "2026-05-31.1"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60
@@ -49,6 +53,15 @@ class PlanItemSpec(BaseModel):
     # surfaced in the dashboard. Optional so a missing rationale never drops an
     # otherwise-good item (best-effort, like filming_suggestion).
     rationale: str = ""
+    # The edit shape this idea is meant to become. Drives the render archetype
+    # dispatch. Defaults to (and coerces unknowns to) montage so a missing or
+    # drifted LLM value never drops the item.
+    edit_format: EditFormat = DEFAULT_EDIT_FORMAT
+
+    @field_validator("edit_format", mode="before")
+    @classmethod
+    def _coerce_edit_format(cls, v: object) -> EditFormat:
+        return coerce_edit_format(v)
 
 
 class ContentPlanOutput(BaseModel):
