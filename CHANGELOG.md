@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.74.2] - 2026-06-01
+
+### Fixed
+- **Template music renders now avoid underexposed source clips when brighter footage is available.** The template matcher previously ranked candidate moments by semantic energy, duration fit, and clip-coverage variety, so a dark or low-light clip could win simply because it matched the beat better. Clip analysis now attaches deterministic FFmpeg luma summaries (`visual_quality`) to every clip and best moment, cache entries include the new field, prefetch warms it, and the matcher penalizes `low_light` / `very_dark` candidates unless the recipe explicitly asks for night, neon, club, concert, stage, laser, skyline, or other after-dark footage.
+  - **Fallback analysis no longer blindly starts at a dark intro.** Whisper-fallback moments use the brightest viable luma window for 5s / 10s / 15s candidates, while still rendering dark-only uploads instead of failing them. Visual-quality sampling is best-effort and fail-open: bad FFmpeg output, timeouts, or spawn failures become `unavailable` quality metadata rather than killing the render.
+  - Regression tests cover bright-over-dark selection, usage-cap relaxation when the only under-cap candidate is dark, intentional neon/night recipes, dark-only uploads, fallback window shifting, cache schema invalidation, prefetch annotation, and FFmpeg failure handling. Local before/after proof showed the old dark candidate at average luma ~54.7 (`low_light`) and the selected replacement at average luma ~79.6 (`usable`).
+
 ## [0.4.74.1] - 2026-06-01
 
 ### Fixed
