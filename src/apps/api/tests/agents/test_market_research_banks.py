@@ -219,10 +219,11 @@ def test_persona_bank_version_couples_to_prompt_version():
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
-    # Prompt led to 2026-05-31 (anti-cringe), then 2026-05-31.1 (edit_format
-    # emission, format-aware edit engine); idea bank unchanged.
+    # Prompt led to 2026-05-31 (anti-cringe), 2026-05-31.1 (edit_format emission),
+    # then 2026-06-01 (post-generation near-duplicate dedup / $variety_constraint
+    # regeneration block); idea bank unchanged.
     assert content_ideas_version() == "2026-05-30"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-31.1"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-01"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -230,11 +231,12 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
 
     # The success-factor bank is part of THREE prompts (persona, content plan,
     # intro). The bank itself is unchanged (2026-05-30); persona led to 2026-05-31
-    # (anti-cringe) and content plan to 2026-05-31.1 (anti-cringe + edit_format
-    # emission) while the intro prompt is untouched, so it stays at 2026-05-30.2.
+    # (anti-cringe) and content plan to 2026-06-01 (anti-cringe + edit_format
+    # emission + dedup regeneration block) while the intro prompt is untouched, so
+    # it stays at 2026-05-30.2.
     assert success_factors_version() == "2026-05-30"
     assert PERSONA_PROMPT_VERSION == "2026-05-31"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-05-31.1"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-01"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-05-30.2"
 
 

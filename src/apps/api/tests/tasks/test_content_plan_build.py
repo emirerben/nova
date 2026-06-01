@@ -98,6 +98,120 @@ def test_missing_persona_falls_back_to_empty() -> None:
     assert kwargs["item_theme"] == "first 5am workout"
 
 
+# ---- post-generation near-duplicate dedup (_dedup_and_replace) --------------
+
+from app.agents._schemas.content_plan import ContentPlanInput, ContentPlanOutput  # noqa: E402
+from app.agents._schemas.persona import Persona  # noqa: E402
+from app.tasks.content_plan_build import _dedup_and_replace  # noqa: E402
+
+
+class _FakeAgent:
+    """Stands in for ContentPlanGeneratorAgent: records calls, returns a canned
+    regen output (or raises) so the dedup orchestration is testable with no LLM."""
+
+    def __init__(self, regen=None, raises=False) -> None:  # noqa: ANN001
+        self.calls = 0
+        self._regen = regen
+        self._raises = raises
+
+    def run(self, agent_input, ctx):  # noqa: ANN001, ARG002
+        self.calls += 1
+        if self._raises:
+            raise RuntimeError("regen boom")
+        return self._regen
+
+
+def _spec(day: int, idea: str, **kw) -> PlanItemSpec:  # noqa: ANN003
+    return PlanItemSpec(day_index=day, theme=kw.pop("theme", "pillar"), idea=idea, **kw)
+
+
+def _plan_input() -> ContentPlanInput:
+    return ContentPlanInput(
+        persona=Persona(
+            summary="s",
+            content_pillars=["a"],
+            tone="warm",
+            audience="x",
+            posting_cadence="4/wk",
+            sample_topics=["y"],
+        ),
+        horizon_days=3,
+    )
+
+
+def test_dedup_skips_regen_when_no_duplicates() -> None:
+    output = ContentPlanOutput(
+        items=[
+            _spec(1, "tour of my favorite coffee shops"),
+            _spec(2, "best hiking trails near me"),
+            _spec(3, "how I meal prep for the week"),
+        ]
+    )
+    agent = _FakeAgent(raises=True)  # would blow up if regen were attempted
+    result = _dedup_and_replace(agent, _plan_input(), output, "pid")
+    assert agent.calls == 0  # no extra LLM call when the plan is already varied
+    assert result is output
+
+
+def test_dedup_replaces_duplicate_with_distinct_regen_idea() -> None:
+    output = ContentPlanOutput(
+        items=[
+            _spec(1, "5am gym workout motivation routine"),
+            _spec(2, "my favorite weekend brunch spots downtown"),
+            _spec(3, "early morning gym workout motivation routine"),  # dup of day 1
+        ]
+    )
+    regen = ContentPlanOutput(
+        items=[
+            _spec(
+                7,
+                "a guide to local hiking trails",
+                theme="outdoors",
+                rationale="save-worthy",
+                edit_format="single_hero",
+            ),
+        ]
+    )
+    agent = _FakeAgent(regen=regen)
+    result = _dedup_and_replace(agent, _plan_input(), output, "pid")
+
+    assert agent.calls == 1
+    assert [it.day_index for it in result.items] == [1, 2, 3]  # full length, day kept
+    day3 = next(it for it in result.items if it.day_index == 3)
+    assert day3.idea == "a guide to local hiking trails"
+    assert day3.edit_format == "single_hero"  # content fields carried from candidate
+    assert day3.rationale == "save-worthy"
+
+
+def test_dedup_keeps_original_when_regen_fails() -> None:
+    output = ContentPlanOutput(
+        items=[
+            _spec(1, "5am gym workout motivation routine"),
+            _spec(2, "early morning gym workout motivation routine"),  # dup
+        ]
+    )
+    agent = _FakeAgent(raises=True)
+    result = _dedup_and_replace(agent, _plan_input(), output, "pid")
+    assert result is output  # best-effort: a failed regen never degrades the plan
+
+
+def test_dedup_keeps_original_slot_when_regen_has_no_distinct_idea() -> None:
+    output = ContentPlanOutput(
+        items=[
+            _spec(1, "5am gym workout motivation routine"),
+            _spec(2, "early morning gym workout motivation routine"),  # dup of day 1
+        ]
+    )
+    # Regen only offers another near-dup → nothing distinct to swap in.
+    regen = ContentPlanOutput(items=[_spec(9, "5am gym workout motivation session")])
+    agent = _FakeAgent(regen=regen)
+    result = _dedup_and_replace(agent, _plan_input(), output, "pid")
+    assert [it.idea for it in result.items] == [
+        "5am gym workout motivation routine",
+        "early morning gym workout motivation routine",
+    ]
+
+
 # ── regenerate_content_plan: the "their say" invariant ────────────────────────
 
 

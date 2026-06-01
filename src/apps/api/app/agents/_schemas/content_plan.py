@@ -26,7 +26,12 @@ from app.agents._schemas.persona import Persona
 # 2026-05-31.1 — emit per-item edit_format (montage|talking_head|day_vlog|
 #                single_hero) so the plan's intended shape reaches the render
 #                archetype dispatch instead of being inferred from clips alone.
-CONTENT_PLAN_PROMPT_VERSION = "2026-05-31.1"
+# 2026-06-01 — added $variety_constraint block: code detects near-duplicate ideas
+#              post-generation and re-invokes the generator once with the kept
+#              ideas as an explicit "avoid these" list (the model won't self-impose
+#              variety in one pass). Block is empty on the first pass, so that
+#              render stays the proven baseline.
+CONTENT_PLAN_PROMPT_VERSION = "2026-06-01"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60
@@ -42,6 +47,11 @@ class ContentPlanInput(BaseModel):
     # first generation; set on a user-triggered regenerate. Biases NEW ideas only —
     # the regenerate task preserves hand-edited days verbatim (the "their say" rule).
     preference_summary: str = ""
+    # Internal-only (never user-set): on the constrained-regeneration pass, the
+    # ideas already kept in the plan. The generator renders them as an explicit
+    # "generate ideas DISTINCT from these" block so the second pass refills the
+    # near-duplicate day slots with genuinely new ideas. Empty on the first pass.
+    exclude_ideas: list[str] = Field(default_factory=list)
 
 
 class PlanItemSpec(BaseModel):
