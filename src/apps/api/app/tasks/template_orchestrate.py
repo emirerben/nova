@@ -5539,6 +5539,117 @@ def _mix_template_audio(
         shutil.copy2(video_path, output_path)
 
 
+# Music bed can never overpower the narration, no matter where the slider sits.
+_VOICEOVER_MUSIC_BED_MAX_GAIN = 0.5
+
+
+def _mix_user_voiceover(
+    video_path: str,
+    voiceover_local_path: str,
+    output_path: str,
+    tmpdir: str,
+    *,
+    mix: float = 1.0,
+    target_duration_s: float | None = None,
+    music_gcs_path: str | None = None,
+    music_start_offset_s: float = 0.0,
+) -> None:
+    """Mix a user-supplied voiceover over the assembled video.
+
+    The voice plays at full level. The "bed" — the clips' own footage audio, or a
+    matched music track when `music_gcs_path` is set — is attenuated by `(1 - mix)`:
+    `mix=1.0` fully ducks the bed (voice only, the default), `mix=0.0` brings the bed
+    up to full. A music bed is additionally clamped to `_VOICEOVER_MUSIC_BED_MAX_GAIN`
+    so it can never bury the narration.
+
+    Video is stream-copied (`-c:v copy`), exactly like `_mix_template_audio`, so this
+    is NOT a final-output encode for encoder-policy purposes — the final video encode
+    already happened in `_assemble_clips`. Non-fatal: any failure copies
+    `video_path → output_path` (the assembled montage still carries footage audio).
+
+    `target_duration_s` bounds the output (the voiceover edit is capped to
+    `min(footage, voice, 60)` by the caller); the voice fades out 0.5s before it.
+    """
+    mix = max(0.0, min(1.0, float(mix)))
+    lufs = settings.output_target_lufs
+
+    use_duration = float(target_duration_s or 0.0)
+    if use_duration <= 0:
+        use_duration = _probe_duration(video_path)
+    fade_start = max(0.0, use_duration - 0.5)
+
+    inputs: list[str] = ["-i", video_path, "-i", voiceover_local_path]
+    voice_chain = f"[1:a]volume=1.0,afade=t=out:st={fade_start:.3f}:d=0.5[vo]"
+
+    if music_gcs_path:
+        music_local = os.path.join(tmpdir, "voiceover_bed.m4a")
+        try:
+            download_to_file(music_gcs_path, music_local)
+        except Exception as exc:
+            log.warning("voiceover_music_bed_download_failed", error=str(exc))
+            music_gcs_path = None  # degrade to voice-only below
+    if music_gcs_path:
+        bed_gain = max(0.0, min(1.0 - mix, _VOICEOVER_MUSIC_BED_MAX_GAIN))
+        safe_offset = max(0.0, float(music_start_offset_s or 0.0))
+        inputs += [
+            "-stream_loop",
+            "-1",
+            *(["-ss", f"{safe_offset:.3f}"] if safe_offset else []),
+            "-i",
+            music_local,
+        ]
+        filter_complex = (
+            f"[2:a]volume={bed_gain:.3f}[bed];{voice_chain};"
+            f"[bed][vo]amix=inputs=2:normalize=0:duration=longest[m];"
+            f"[m]loudnorm=I={lufs}:TP=-1.5:LRA=11[a]"
+        )
+    elif mix >= 0.999:
+        # Default: footage fully ducked → the voice IS the whole bed. Deliberately do
+        # NOT reference [0:a]: a clip with no audio stream would make that graph error
+        # and the fallback would drop the voice (the whole point of the variant).
+        bed_gain = 0.0
+        voice_only = voice_chain.replace("[vo]", "[m]")
+        filter_complex = f"{voice_only};[m]loudnorm=I={lufs}:TP=-1.5:LRA=11[a]"
+    else:
+        # User dialed footage back up: mix the clips' own audio under the voice. If the
+        # footage has no audio track this errors → fallback copies the assembled video.
+        bed_gain = max(0.0, 1.0 - mix)
+        filter_complex = (
+            f"[0:a]volume={bed_gain:.3f}[bed];{voice_chain};"
+            f"[bed][vo]amix=inputs=2:normalize=0:duration=first[m];"
+            f"[m]loudnorm=I={lufs}:TP=-1.5:LRA=11[a]"
+        )
+
+    cmd = [
+        "ffmpeg",
+        *inputs,
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "0:v",
+        "-map",
+        "[a]",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        *(["-t", f"{use_duration:.3f}"] if use_duration > 0 else []),
+        "-y",
+        output_path,
+    ]
+    log.info(
+        "voiceover_mix",
+        mix=round(mix, 3),
+        bed_gain=round(bed_gain, 3),
+        bed="music" if music_gcs_path else "footage",
+        use_duration=round(use_duration, 2),
+    )
+    result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
+    if result.returncode != 0:
+        log.warning("voiceover_mix_failed", stderr=result.stderr.decode()[:300])
+        shutil.copy2(video_path, output_path)
+
+
 # ── Copy helpers ───────────────────────────────────────────────────────────────
 
 

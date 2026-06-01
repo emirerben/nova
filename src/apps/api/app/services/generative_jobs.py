@@ -14,7 +14,7 @@ import uuid
 
 from app.agents._schemas.edit_format import DEFAULT_EDIT_FORMAT, coerce_edit_format
 from app.models import Job
-from app.routes.admin_music import _validate_clip_path_prefixes
+from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
 
 DEFAULT_PLATFORMS = ["tiktok", "instagram", "youtube"]
 
@@ -78,6 +78,7 @@ def build_generative_job(
     item_idea: str = "",
     preference_summary: str = "",
     edit_format: str = DEFAULT_EDIT_FORMAT,
+    voiceover_gcs_path: str | None = None,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -104,6 +105,11 @@ def build_generative_job(
         "language": language,
         "edit_format": coerce_edit_format(edit_format),
     }
+    # Optional voiceover bed (audio-only). Validated against its own prefix so it can
+    # never be mistaken for a footage clip. Omitted entirely when absent → public/song
+    # jobs keep their exact pre-voiceover all_candidates shape.
+    if voiceover_gcs_path:
+        all_candidates["voiceover_gcs_path"] = _validate_voiceover_path(voiceover_gcs_path)
     persona_ctx = _build_persona_context(
         tone=persona_tone,
         pillars=persona_pillars,

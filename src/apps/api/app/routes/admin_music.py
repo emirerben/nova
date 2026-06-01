@@ -1847,6 +1847,21 @@ def _validate_clip_path_prefixes(paths: list[str]) -> list[str]:
     return paths
 
 
+# Voiceover uploads get their OWN single-prefix allowlist, deliberately NOT folded
+# into _ALLOWED_CLIP_PREFIXES: a voiceover path must never be acceptable as a footage
+# clip (and vice-versa), so the two validators can't cross-contaminate. PII retention
+# also keys on this prefix — see infra/gcs-lifecycle.json.
+_VOICEOVER_PREFIX = "voiceover-uploads/"
+
+
+def _validate_voiceover_path(path: str) -> str:
+    if not isinstance(path, str) or ".." in path or path.startswith("/"):
+        raise ValueError(f"Invalid voiceover path: {path!r}")
+    if not path.startswith(_VOICEOVER_PREFIX):
+        raise ValueError(f"Voiceover path must start with {_VOICEOVER_PREFIX!r}. Got: {path!r}")
+    return path
+
+
 class SlotPresignItem(BaseModel):
     client_id: str
     filename: str

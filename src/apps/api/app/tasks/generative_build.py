@@ -58,6 +58,15 @@ _MAX_NO_MUSIC_SLOTS = 6
 # reject footage that is essentially silent (b-roll, ambience, music-over).
 _MIN_SPINE_COVERAGE = 0.15
 
+# Voiceover edits: the user's recorded/uploaded voice is the audio bed. `mix` is the
+# voice-prominence slider (1.0 = bed fully ducked, voice only; 0.0 = bed full).
+# Defaults differ per variant: voice-over-footage starts with footage muted, while
+# voice+music starts with the music audibly under the voice. Output is capped so a
+# long voiceover can never run past the footage OR the sub-60s short-form ceiling.
+_VOICEOVER_ONLY_DEFAULT_MIX = 1.0
+_VOICEOVER_MUSIC_DEFAULT_MIX = 0.7
+_VOICEOVER_MAX_DURATION_S = 60.0
+
 
 @celery_app.task(
     name="orchestrate_generative_job",
@@ -125,6 +134,10 @@ def _run_generative_job(job_id: str) -> None:
         # falls back to montage rather than failing the job. Resolved against the
         # footage after ingest (see _resolve_archetype).
         edit_format = coerce_edit_format(all_candidates.get("edit_format"))
+        # Optional user-supplied voiceover (audio-only). When present it becomes the
+        # narration bed and the job renders voiceover variants instead of song/original
+        # — resolved in _resolve_archetype below, ahead of the footage-speech logic.
+        voiceover_gcs_path: str | None = all_candidates.get("voiceover_gcs_path") or None
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
@@ -200,7 +213,11 @@ def _run_generative_job(job_id: str) -> None:
         from app.pipeline.talking_head_assembler import SpineExtractionError  # noqa: PLC0415
 
         archetype, spine_clip_id = _resolve_archetype(
-            edit_format, clip_metas, clip_id_to_local, job_id=job_id
+            edit_format,
+            clip_metas,
+            clip_id_to_local,
+            job_id=job_id,
+            voiceover_gcs_path=voiceover_gcs_path,
         )
         _set_status(job_id, "rendering")
 
@@ -277,7 +294,10 @@ def _run_generative_job(job_id: str) -> None:
             return out
 
         try:
-            results = _render_spec_set(_specs_for_archetype(archetype, best_track), spine_clip_id)
+            results = _render_spec_set(
+                _specs_for_archetype(archetype, best_track, voiceover_gcs_path=voiceover_gcs_path),
+                spine_clip_id,
+            )
         except SpineExtractionError as exc:
             # Critical failure mode: a corrupt/unreadable spine clip degrades the whole
             # job to montage rather than hard-failing (best-effort invariant). Any
@@ -471,8 +491,9 @@ def regenerate_generative_variant(
     remove_text: bool = False,
     style_set_id: str | None = None,
     size_override_px: int | None = None,
+    mix_override: float | None = None,
 ) -> None:
-    """Re-render ONE variant of an existing generative job (swap-song / retext / restyle / resize).
+    """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
     Async by design (plan Decision 4): a re-slot against a new song is a full pipeline
     re-run, not an instant preview. Re-runs clip ingest, renders just the target
@@ -499,6 +520,7 @@ def regenerate_generative_variant(
                 remove_text,
                 style_set_id,
                 size_override_px,
+                mix_override,
             )
         except OperationalError:
             raise
@@ -523,6 +545,7 @@ def _run_regenerate_variant(
     remove_text: bool,
     style_set_id: str | None = None,
     size_override_px: int | None = None,
+    mix_override: float | None = None,
 ) -> None:
     import types  # noqa: PLC0415
 
@@ -539,6 +562,11 @@ def _run_regenerate_variant(
         # Re-renders inherit the persona context too (content-plan jobs only), so a
         # retext/swap_song hook stays persona-coherent. Same Job-row source of truth.
         persona: dict = (job.all_candidates or {}).get("persona") or {}
+        # Voiceover jobs re-render the same voice bed; the mix slider is the only knob
+        # that changes here. Both come from the Job row (single source of truth).
+        voiceover_gcs_path: str | None = (job.all_candidates or {}).get(
+            "voiceover_gcs_path"
+        ) or None
         variants = ((job.assembly_plan or {}).get("variants")) or []
         existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
         if existing is None:
@@ -547,6 +575,7 @@ def _run_regenerate_variant(
         rank = int(existing.get("rank", 1))
         existing_track_id = existing.get("music_track_id")
         existing_text_mode = existing.get("text_mode", "agent_text")
+        existing_mix = existing.get("mix")
         existing_size_source = existing.get("intro_size_source")
         existing_size_px = existing.get("intro_text_size_px")
         # Style precedence: explicit restyle request → the variant's persisted set →
@@ -595,12 +624,27 @@ def _run_regenerate_variant(
     else:
         text_mode = existing_text_mode
 
-    spec = {
+    spec: dict[str, Any] = {
         "variant_id": variant_id,
         "rank": rank,
         "text_mode": text_mode,
         "track": track,
     }
+    # Voiceover variant re-render (e.g. the mix slider): re-attach the voice bed and
+    # the resolved mix. Precedence: explicit slider value → the variant's persisted
+    # mix → the per-variant default. The track (voiceover_music's bed) is already
+    # resolved above via existing_track_id.
+    if voiceover_gcs_path and variant_id in ("voiceover_only", "voiceover_music"):
+        if mix_override is not None:
+            resolved_mix = max(0.0, min(1.0, float(mix_override)))
+        elif existing_mix is not None:
+            resolved_mix = max(0.0, min(1.0, float(existing_mix)))
+        elif variant_id == "voiceover_music":
+            resolved_mix = _VOICEOVER_MUSIC_DEFAULT_MIX
+        else:
+            resolved_mix = _VOICEOVER_ONLY_DEFAULT_MIX
+        spec["voiceover_gcs_path"] = voiceover_gcs_path
+        spec["mix"] = resolved_mix
 
     with tempfile.TemporaryDirectory(prefix="nova_generative_re_") as tmpdir:
         # PERF/TODO: this re-runs the full clip ingest (re-download + re-Gemini
@@ -742,6 +786,7 @@ def _resolve_archetype(
     clip_id_to_local: dict[str, str],
     *,
     job_id: str,
+    voiceover_gcs_path: str | None = None,
 ) -> tuple[str, str | None]:
     """Resolve the plan-declared edit_format against the footage → (archetype, spine).
 
@@ -766,6 +811,14 @@ def _resolve_archetype(
             "generative_archetype_fallback", job_id=job_id, declared=edit_format, reason=reason
         )
         return "montage", None
+
+    # A user-supplied voiceover wins over any footage-derived archetype: the voice is
+    # the spine. Resolved BEFORE the speech-coverage logic because it's driven by an
+    # uploaded asset, not by what the footage happens to contain.
+    if voiceover_gcs_path:
+        record_pipeline_event("assembly", "archetype_selected", {"archetype": "voiceover"})
+        log.info("generative_archetype_selected", job_id=job_id, archetype="voiceover")
+        return "voiceover", None
 
     if edit_format == "montage":
         return "montage", None
@@ -817,14 +870,46 @@ def _resolve_archetype(
     return "talking_head", best_id
 
 
-def _specs_for_archetype(archetype: str, best_track: MusicTrack | None) -> list[dict[str, Any]]:
+def _specs_for_archetype(
+    archetype: str,
+    best_track: MusicTrack | None,
+    *,
+    voiceover_gcs_path: str | None = None,
+) -> list[dict[str, Any]]:
     """The variant set to render for a resolved archetype (single source of truth).
 
     montage → today's song/original variants. talking_head → ONE variant (the spine's
-    own audio + the AI intro overlay); the music-bed variant is a follow-up. Each spec
-    carries its `archetype` so the render loop dispatches to the right assembler; specs
-    from `_variant_specs` default to montage (no `archetype` key).
+    own audio + the AI intro overlay); the music-bed variant is a follow-up. voiceover →
+    the user's recorded voice over a footage montage: `voiceover_only` (footage ducked
+    under the voice) plus, when a track matched, `voiceover_music` (matched track as a
+    low bed under the voice). Both render through the montage path (`_render_generative_variant`)
+    — the voiceover specs carry no `talking_head` archetype, just the voiceover params.
+    Each spec carries its `archetype` so the render loop dispatches correctly; specs from
+    `_variant_specs` default to montage (no `archetype` key).
     """
+    if archetype == "voiceover":
+        specs: list[dict[str, Any]] = [
+            {
+                "variant_id": "voiceover_only",
+                "text_mode": "agent_text",
+                "track": None,
+                "archetype": "voiceover",
+                "voiceover_gcs_path": voiceover_gcs_path,
+                "mix": _VOICEOVER_ONLY_DEFAULT_MIX,
+            }
+        ]
+        if best_track is not None:
+            specs.append(
+                {
+                    "variant_id": "voiceover_music",
+                    "text_mode": "agent_text",
+                    "track": best_track,
+                    "archetype": "voiceover",
+                    "voiceover_gcs_path": voiceover_gcs_path,
+                    "mix": _VOICEOVER_MUSIC_DEFAULT_MIX,
+                }
+            )
+        return specs
     if archetype == "talking_head":
         return [
             {
@@ -1047,11 +1132,13 @@ def _render_generative_variant(
         consolidate_slots,
         match,
     )
-    from app.storage import upload_public_read  # noqa: PLC0415
+    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
     from app.tasks.template_orchestrate import (  # noqa: PLC0415
         _assemble_clips,
         _enrich_slots_with_energy,
         _mix_template_audio,
+        _mix_user_voiceover,
+        _probe_duration,
     )
 
     variant_id = spec["variant_id"]
@@ -1059,6 +1146,11 @@ def _render_generative_variant(
     track: MusicTrack | None = spec["track"]
     track_id = track.id if track else None
     track_title = track.title if track else None
+    # Voiceover variants: the user's audio is the narration bed, footage tiles as
+    # visuals. `mix` is the voice-prominence slider (persisted so the UI slider and
+    # re-renders can read it back). Absent on song/original/talking_head specs.
+    voiceover_gcs_path: str | None = spec.get("voiceover_gcs_path")
+    mix: float = float(spec.get("mix", _VOICEOVER_ONLY_DEFAULT_MIX))
 
     base = {
         "variant_id": variant_id,
@@ -1070,10 +1162,28 @@ def _render_generative_variant(
         # Agent-decided (or user-pinned) intro size. None for non-text variants.
         "intro_text_size_px": None,
         "intro_size_source": None,  # "computed" | "user" | None
+        # Voice-prominence slider for voiceover variants; None otherwise.
+        "mix": mix if voiceover_gcs_path else None,
     }
     try:
         beats: list[float] = []
-        if track is not None:
+        voiceover_local: str | None = None
+        voiceover_target_s = available_footage_s
+        if voiceover_gcs_path:
+            # Voiceover edit: download the voice, then size the footage montage to
+            # min(footage, voice, 60) — never stretch footage past what was uploaded
+            # (D5), never exceed the short-form ceiling. The matched track (if this is
+            # the voiceover_music variant) is layered as a low bed afterwards, NOT
+            # beat-synced into slots, so the visuals are a plain footage montage.
+            voiceover_local = os.path.join(variant_dir, "voiceover_src")
+            download_to_file(voiceover_gcs_path, voiceover_local)
+            voice_dur = _probe_duration(voiceover_local)
+            _cands = [available_footage_s, _VOICEOVER_MAX_DURATION_S]
+            if voice_dur > 0:
+                _cands.append(voice_dur)
+            voiceover_target_s = min(_cands)
+            recipe_dict = _build_no_music_recipe(clip_metas, voiceover_target_s)
+        elif track is not None:
             from app.services.music_sections import (  # noqa: PLC0415
                 track_config_with_rank_one,
             )
@@ -1148,7 +1258,34 @@ def _render_generative_variant(
         )
 
         final_path = os.path.join(variant_dir, "final.mp4")
-        if track is not None:
+        if voiceover_gcs_path:
+            # Voiceover variants: the user's voice is the bed. voiceover_only ducks the
+            # footage audio under the voice; voiceover_music drops a matched track low
+            # under the voice instead. `mix` is the voice-prominence slider.
+            cfg = (track.track_config or {}) if track is not None else {}
+            _mix_user_voiceover(
+                assembled_path,
+                voiceover_local,
+                final_path,
+                variant_dir,
+                mix=mix,
+                target_duration_s=voiceover_target_s,
+                music_gcs_path=track.audio_gcs_path if track is not None else None,
+                music_start_offset_s=float(cfg.get("best_start_s", 0.0)),
+            )
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            record_pipeline_event(
+                "audio_mix",
+                "voiceover_mixed",
+                {
+                    "variant_id": variant_id,
+                    "mix": round(mix, 3),
+                    "bed": "music" if track is not None else "footage",
+                    "target_s": round(voiceover_target_s, 3),
+                },
+            )
+        elif track is not None:
             # Song variants: replace source audio with the matched track.
             cfg = track.track_config or {}
             _mix_template_audio(

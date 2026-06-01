@@ -123,6 +123,12 @@ def _content_type_for(path: Path) -> str:
         ".png": "image/png",
         ".heic": "image/heic",
         ".webp": "image/webp",
+        ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4",
+        ".wav": "audio/wav",
+        ".aac": "audio/aac",
+        ".webm": "audio/webm",
+        ".ogg": "audio/ogg",
     }.get(path.suffix.lower(), "application/octet-stream")
 
 
@@ -194,7 +200,12 @@ def _submit_music_job(api_url: str, track_id: str, gcs_paths: list[str]) -> str:
     return json.loads(body)["job_id"]
 
 
-def _submit_generative_job(api_url: str, gcs_paths: list[str], edit_format: str | None = None) -> str:
+def _submit_generative_job(
+    api_url: str,
+    gcs_paths: list[str],
+    edit_format: str | None = None,
+    voiceover_gcs_path: str | None = None,
+) -> str:
     # No target length: the API derives output length from the uploaded footage
     # (and the matched song's beat structure). The edit can never run longer than
     # the clips uploaded here — that's exactly what this render verifies.
@@ -204,6 +215,10 @@ def _submit_generative_job(api_url: str, gcs_paths: list[str], edit_format: str 
     # worker container too. Omitted → montage (the public default).
     if edit_format:
         payload["edit_format"] = edit_format
+    # A user-supplied voiceover forces the "voiceover" archetype: footage montage
+    # with the recorded voice as the audio bed (replaces the variant set).
+    if voiceover_gcs_path:
+        payload["voiceover_gcs_path"] = voiceover_gcs_path
     code, body = _post_json(
         f"{api_url}/generative-jobs",
         payload,
@@ -357,6 +372,15 @@ def main() -> int:
         "EDIT_FORMAT_TALKING_HEAD_ENABLED=true on the worker. Default: montage.",
     )
     p.add_argument(
+        "--voiceover",
+        dest="voiceover",
+        default=None,
+        help="Generative mode only: an audio file (mp3/m4a/wav/webm) to use as the "
+        "voiceover bed. Forces the 'voiceover' archetype: footage montage with the "
+        "recorded voice as audio. Renders voiceover_only (+ voiceover_music if a "
+        "track matches) instead of the default variant set.",
+    )
+    p.add_argument(
         "--api-url",
         default=os.environ.get("LOCAL_RENDER_API_URL", DEFAULT_API_URL),
         help=f"API base URL (default: {DEFAULT_API_URL})",
@@ -419,13 +443,28 @@ def main() -> int:
         print(f"  → {gcs}")
         gcs_paths.append(gcs)
 
+    voiceover_gcs: str | None = None
+    if args.mode == "generative" and args.voiceover:
+        voice = Path(args.voiceover).expanduser().resolve()
+        if not voice.is_file():
+            print(f"ERROR: voiceover file not found: {voice}", file=sys.stderr)
+            return 2
+        print(f"\n[3b/5] uploading voiceover {voice.name}…")
+        voiceover_gcs = _upload_via_slot(args.api_url, voice)
+        print(f"  → {voiceover_gcs}")
+
     print(f"\n[4/5] creating {args.mode} job…")
     if args.mode == "template":
         job_id = _submit_template_job(args.api_url, args.template, gcs_paths, inputs)
     elif args.mode == "music":
         job_id = _submit_music_job(args.api_url, args.template, gcs_paths)
     else:
-        job_id = _submit_generative_job(args.api_url, gcs_paths, edit_format=args.edit_format)
+        job_id = _submit_generative_job(
+            args.api_url,
+            gcs_paths,
+            edit_format=args.edit_format,
+            voiceover_gcs_path=voiceover_gcs,
+        )
     print(f"  → job_id: {job_id}")
 
     print("\n[5/5] polling status…")

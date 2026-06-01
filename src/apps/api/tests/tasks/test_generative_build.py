@@ -323,6 +323,59 @@ def test_song_variant_calls_mix(monkeypatch, tmp_path):
     assert len(mix_calls) == 1  # song variant DOES mix the track audio
 
 
+def test_voiceover_variant_mixes_voice_and_caps_to_voice_length(monkeypatch, tmp_path):
+    """voiceover_only: mixes the user's voice (NOT the template-audio path), persists
+    the mix slider value, and caps the edit to min(footage, voice, 60)."""
+    import app.storage as storage
+    import app.tasks.template_orchestrate as to
+
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)  # patches _mix_template_audio etc.
+    monkeypatch.setattr(storage, "download_to_file", lambda gcs, local: None, raising=False)
+    # Voice is 5s; footage is 12s → the edit must cap to 5s (D5: never stretch footage).
+    monkeypatch.setattr(to, "_probe_duration", lambda p: 5.0, raising=False)
+    vo_calls: list = []
+
+    def _fake_vo(video, voice, out, tmpdir, **kw):
+        vo_calls.append(kw)
+        with open(out, "wb") as f:
+            f.write(b"\x00" * 16)
+
+    monkeypatch.setattr(to, "_mix_user_voiceover", _fake_vo, raising=False)
+
+    vdir = tmp_path / "v1"
+    vdir.mkdir()
+    spec = {
+        "variant_id": "voiceover_only",
+        "rank": 1,
+        "text_mode": "agent_text",
+        "track": None,
+        "archetype": "voiceover",
+        "voiceover_gcs_path": "voiceover-uploads/abc/voice.webm",
+        "mix": 1.0,
+    }
+    res = gb._render_generative_variant(
+        job_id="j",
+        rank=1,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "music-uploads/x.mp4"},
+        probe_map={},
+        available_footage_s=12.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+    )
+    assert res["ok"] is True
+    assert res["mix"] == 1.0  # slider value persisted for the UI + re-renders
+    assert mix_calls == []  # voiceover must NOT use the song/template-audio mixer
+    assert len(vo_calls) == 1
+    assert vo_calls[0]["mix"] == 1.0
+    assert vo_calls[0]["target_duration_s"] == 5.0  # min(12, 5, 60)
+    assert vo_calls[0]["music_gcs_path"] is None  # voiceover_only → footage bed, no music
+
+
 # ── Style sets (curated typography) ────────────────────────────────────────────
 
 

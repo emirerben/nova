@@ -9,6 +9,7 @@ import {
   GENERATIVE_TERMINAL_STATUSES,
   retextVariant,
   setVariantIntroSize,
+  setVariantMix,
   swapVariantSong,
   uploadGenerativeClip,
   type GenerativeJobStatus,
@@ -16,11 +17,13 @@ import {
 } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { VariantCard } from "./VariantCard";
+import { VoiceRecorder } from "./VoiceRecorder";
 
 const POLL_MS = 2000;
 
 export default function GenerativePage() {
   const [uploads, setUploads] = useState<{ gcs_path: string; name: string }[]>([]);
+  const [voiceoverPath, setVoiceoverPath] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [status, setStatus] = useState<GenerativeJobStatus | null>(null);
@@ -128,13 +131,16 @@ export default function GenerativePage() {
   const handleGenerate = useCallback(async () => {
     setError(null);
     try {
-      const res = await createGenerativeJob(uploads.map((u) => u.gcs_path));
+      const res = await createGenerativeJob(
+        uploads.map((u) => u.gcs_path),
+        voiceoverPath,
+      );
       setJobId(res.job_id);
       setStatus(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start");
     }
-  }, [uploads]);
+  }, [uploads, voiceoverPath]);
 
   const refresh = useCallback(async () => {
     if (jobId) setStatus(await getGenerativeJobStatus(jobId));
@@ -176,6 +182,11 @@ export default function GenerativePage() {
               )}
             </div>
 
+            <div>
+              <label className="block text-sm text-zinc-400 mb-2">Voiceover (optional)</label>
+              <VoiceRecorder onVoiceover={setVoiceoverPath} />
+            </div>
+
             <p className="text-xs text-zinc-500">
               Length is set automatically from your clips and the matched song —
               the edit is never longer than the footage you upload.
@@ -188,6 +199,11 @@ export default function GenerativePage() {
             >
               Generate edits
             </button>
+            <p className="text-xs text-zinc-500">
+              {voiceoverPath
+                ? "We'll build voiceover edits around your recording — sync your footage to your voice."
+                : "Add a voiceover above and you'll get voiceover edits instead."}
+            </p>
           </section>
         )}
 
@@ -248,6 +264,11 @@ export default function GenerativePage() {
                   onResize={async (px) => {
                     markVariantRendering(v.variant_id);
                     await setVariantIntroSize(jobId, v.variant_id, px);
+                    await refresh();
+                  }}
+                  onSetMix={async (mix) => {
+                    markVariantRendering(v.variant_id);
+                    await setVariantMix(jobId, v.variant_id, mix);
                     await refresh();
                   }}
                 />
