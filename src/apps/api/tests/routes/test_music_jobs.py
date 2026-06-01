@@ -224,6 +224,22 @@ def test_classify_slot_kind_accepts_audio() -> None:
     assert classify_slot_kind("voiceover.webm", "audio/webm") == "audio"
 
 
+def test_classify_slot_kind_accepts_parameterized_audio_mime() -> None:
+    """Browser MediaRecorder tags blobs with a codec parameter
+    (e.g. "audio/webm;codecs=opus"); the bare media type must still classify.
+
+    Regression: exact-set matching rejected the codec-qualified string with 422,
+    so Chrome voiceover uploads dropped and only the non-voiceover variant rendered.
+    """
+    from app.routes.music_jobs import classify_slot_kind
+
+    assert classify_slot_kind("voiceover.webm", "audio/webm;codecs=opus") == "audio"
+    assert classify_slot_kind("voice.m4a", "audio/mp4;codecs=mp4a.40.2") == "audio"
+    # Tolerate whitespace after the semicolon, and uppercase media types.
+    assert classify_slot_kind("voice.ogg", "audio/ogg; codecs=opus") == "audio"
+    assert classify_slot_kind("clip.mp4", "VIDEO/MP4") == "video"
+
+
 def test_classify_slot_kind_audio_by_extension_when_ct_unknown() -> None:
     from app.routes.music_jobs import classify_slot_kind
 
