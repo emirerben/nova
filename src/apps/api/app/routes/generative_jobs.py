@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import CurrentUserOrSynthetic
 from app.database import get_db
 from app.models import Job, MusicTrack
-from app.routes.admin_music import _validate_clip_path_prefixes
+from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -56,6 +56,10 @@ class CreateGenerativeJobRequest(BaseModel):
     # `coerce_edit_format` normalizes it and the EDIT_FORMAT_TALKING_HEAD_ENABLED flag
     # still gates whether it actually routes. A bad token harmlessly coerces to montage.
     edit_format: str | None = None
+    # Optional user-supplied voiceover (audio-only). When present the job renders
+    # voiceover variants (voice over a footage montage) instead of song/original.
+    # Validated against its OWN prefix so it can't be smuggled in as a footage clip.
+    voiceover_gcs_path: str | None = None
 
     @field_validator("clip_gcs_paths")
     @classmethod
@@ -66,6 +70,11 @@ class CreateGenerativeJobRequest(BaseModel):
             raise ValueError(f"Maximum {_MAX_CLIPS} clips allowed")
         # Reject arbitrary bucket keys — only upload-endpoint prefixes are allowed.
         return _validate_clip_path_prefixes(v)
+
+    @field_validator("voiceover_gcs_path")
+    @classmethod
+    def validate_voiceover(cls, v: str | None) -> str | None:
+        return _validate_voiceover_path(v) if v else v
 
 
 class GenerativeJobResponse(BaseModel):
@@ -104,6 +113,12 @@ class SetIntroSizeRequest(BaseModel):
     # Absolute font size in px for the AI intro overlay; clamped to the intro
     # envelope server-side. The frontend ±stepper sends current_px ± step.
     text_size_px: int = Field(..., gt=0)
+
+
+class SetMixRequest(BaseModel):
+    # Voice-prominence for a voiceover variant: 1.0 = bed fully ducked (voice only),
+    # 0.0 = bed at full. The frontend slider sends the absolute value.
+    mix: float = Field(..., ge=0.0, le=1.0)
 
 
 class StyleSetSummary(BaseModel):
@@ -264,6 +279,23 @@ def dispatch_set_intro_size(job: Job, variant_id: str, *, text_size_px: int) -> 
     regenerate_generative_variant.delay(str(job.id), variant_id, size_override_px=px)
 
 
+def dispatch_set_mix(job: Job, variant_id: str, *, mix: float) -> None:
+    """Validate + enqueue a voice/bed mix change for one voiceover variant."""
+    variant = require_editable_variant(job, variant_id)
+    # Only voiceover variants carry a voice bed to rebalance. A song/original/lyrics
+    # variant has no `mix`, so adjusting it is a no-op — reject rather than spin up a
+    # render that changes nothing. (Voiceover variants persist a non-None `mix`.)
+    if variant.get("mix") is None and not variant_id.startswith("voiceover"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This edit has no voiceover to mix.",
+        )
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.delay(str(job.id), variant_id, mix_override=float(mix))
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 
@@ -286,6 +318,7 @@ async def create_generative_job(
         language=req.language,
         selected_platforms=req.selected_platforms,
         edit_format=req.edit_format or DEFAULT_EDIT_FORMAT,
+        voiceover_gcs_path=req.voiceover_gcs_path,
     )
     db.add(job)
     await db.commit()
@@ -413,4 +446,18 @@ async def set_intro_size(
         variant_id=variant_id,
         px=req.text_size_px,
     )
+    return GenerativeJobResponse(job_id=str(job.id), status="rendering")
+
+
+@router.post("/{job_id}/variants/{variant_id}/mix", response_model=GenerativeJobResponse)
+async def set_mix(
+    job_id: str,
+    variant_id: str,
+    req: SetMixRequest,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobResponse:
+    """Re-render a voiceover variant at a new voice/bed mix (the mix slider)."""
+    job = await _load_generative_job(job_id, db)
+    dispatch_set_mix(job, variant_id, mix=req.mix)
+    log.info("generative_set_mix", job_id=str(job.id), variant_id=variant_id, mix=req.mix)
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")

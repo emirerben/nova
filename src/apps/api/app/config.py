@@ -157,6 +157,14 @@ class Settings(BaseSettings):
     # scheduling time.
     lyric_dynamic_crossfade_enabled: bool = True
 
+    # Linear LRCLIB re-anchor for synced lyrics. When True (default), the
+    # alignment layer can fit a small per-time drift curve before falling
+    # back to the existing uniform median / single-L0 paths. This catches
+    # official-video cuts whose vocals diverge progressively from the album
+    # recording indexed by LRCLIB. When False, the linear path is skipped and
+    # the old uniform-only behavior is preserved.
+    lyric_linear_reanchor_enabled: bool = True
+
     # Post-snap re-anchor for karaoke + per-word-pop lyric overlays
     # (`app.pipeline.lyric_word_resync`). When True (default), each music-job
     # render rewrites karaoke/popup overlay `start_s`/`end_s` so the per-word

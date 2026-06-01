@@ -215,6 +215,57 @@ def test_preview_window_anchors_at_first_lyric_in_section() -> None:
     assert _resolve_preview_window(track) == (128.0, 13.0)
 
 
+def test_preview_line_style_drops_text_whose_words_are_outside_audio_window() -> None:
+    """Regression for lyrics-preview job 48c7f737.
+
+    The selected preview window was [130, 148]. The line bounds for
+    "Some more again" overlapped that window after LRC re-anchoring, but
+    the line's word timings were all before 124s. Full renders run the
+    audible-window finalizer and drop that stale line; preview must do the
+    same before writing ASS.
+    """
+    track = _track(
+        duration_s=339.792,
+        track_config={"best_start_s": 130.0, "best_end_s": 148.0},
+        lyrics_cached={
+            "source": "lrclib_synced+whisper",
+            "lines": [
+                {
+                    "text": "Some more again",
+                    "start_s": 123.96,
+                    "end_s": 133.37,
+                    "words": [
+                        {"text": "Some", "start_s": 121.59, "end_s": 122.39},
+                        {"text": "more", "start_s": 122.39, "end_s": 123.19},
+                        {"text": "again", "start_s": 123.19, "end_s": 123.99},
+                    ],
+                },
+                {
+                    "text": "It didn't matter what they wanted to see",
+                    "start_s": 133.42,
+                    "end_s": 137.55,
+                    "words": [
+                        {"text": "It", "start_s": 133.58, "end_s": 134.38},
+                        {"text": "didn't", "start_s": 134.38, "end_s": 135.06},
+                        {"text": "matter", "start_s": 135.06, "end_s": 135.5},
+                        {"text": "what", "start_s": 135.52, "end_s": 135.9},
+                        {"text": "they", "start_s": 135.92, "end_s": 136.3},
+                        {"text": "wanted", "start_s": 136.32, "end_s": 136.7},
+                        {"text": "to", "start_s": 136.72, "end_s": 137.1},
+                        {"text": "see", "start_s": 137.12, "end_s": 137.5},
+                    ],
+                },
+            ],
+        },
+    )
+
+    recipe = build_lyrics_preview_recipe(track, {"enabled": True, "style": "line"})
+    texts = [o.get("display_text") or o.get("text") for o in recipe["slots"][0]["text_overlays"]]
+
+    assert "Some more again" not in texts
+    assert "It didn't matter what they wanted to see" in texts
+
+
 def test_preview_window_falls_back_when_section_has_no_lyrics() -> None:
     """Section contains no lyrics → falls back to first-vocal-of-song policy.
 

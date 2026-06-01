@@ -115,6 +115,7 @@ def test_get_music_job_status_invalid_uuid(client: TestClient) -> None:
 def test_get_music_job_status_nonexistent(client: TestClient) -> None:
     """GET with valid UUID but non-existent job returns 404."""
     import uuid
+
     job_id = str(uuid.uuid4())
     resp = client.get(f"/music-jobs/{job_id}/status")
     assert resp.status_code in (404, 500)
@@ -208,3 +209,31 @@ def test_create_music_job_clip_count_above_max(client: TestClient) -> None:
     finally:
         app.dependency_overrides.clear()
     assert resp.status_code == 422
+
+
+# ── Audio slot classification (voiceover uploads) ───────────────────────────────
+
+
+def test_classify_slot_kind_accepts_audio() -> None:
+    from app.routes.music_jobs import classify_slot_kind
+
+    assert classify_slot_kind("voice.mp3", "audio/mpeg") == "audio"
+    assert classify_slot_kind("voice.m4a", "audio/mp4") == "audio"
+    assert classify_slot_kind("voice.wav", "audio/wav") == "audio"
+    # MediaRecorder blob: webm audio with the synthetic name we upload.
+    assert classify_slot_kind("voiceover.webm", "audio/webm") == "audio"
+
+
+def test_classify_slot_kind_audio_by_extension_when_ct_unknown() -> None:
+    from app.routes.music_jobs import classify_slot_kind
+
+    assert classify_slot_kind("voice.mp3", "application/octet-stream") == "audio"
+
+
+def test_classify_slot_kind_still_rejects_junk() -> None:
+    from fastapi import HTTPException
+
+    from app.routes.music_jobs import classify_slot_kind
+
+    with pytest.raises(HTTPException):
+        classify_slot_kind("malware.exe", "application/x-msdownload")

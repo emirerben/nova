@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   INTRO_SIZE_MAX,
   INTRO_SIZE_MIN,
@@ -31,6 +31,7 @@ export function VariantCard({
   onRemoveText,
   onChangeStyle,
   onResize,
+  onSetMix,
 }: {
   variant: GenerativeVariant;
   tracks: MusicTrackSummary[];
@@ -40,10 +41,29 @@ export function VariantCard({
   onRemoveText: () => Promise<void>;
   onChangeStyle: (styleSetId: string) => Promise<void>;
   onResize?: (textSizePx: number) => Promise<void>;
+  onSetMix?: (mix: number) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const rendering = variant.render_status === "rendering" || busy;
   const failed = variant.render_status === "failed";
+
+  // Voice/footage mix for voiceover variants. The slider updates local state
+  // immediately (responsive) but only fires the re-render after a debounce so a
+  // drag doesn't enqueue a render per step. `music_track_id` decides whether the
+  // "Footage" side of the mix is the original audio or the matched music bed.
+  const isVoiceover = variant.variant_id.startsWith("voiceover");
+  const [mix, setMix] = useState<number>(variant.mix ?? 1);
+  const mixTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Re-sync local mix when the server reports a new value (e.g. after a render).
+  useEffect(() => {
+    setMix(variant.mix ?? 1);
+  }, [variant.mix]);
+  useEffect(() => {
+    return () => {
+      if (mixTimer.current) clearTimeout(mixTimer.current);
+    };
+  }, []);
+  const bedLabel = variant.music_track_id !== null ? "Music" : "Footage";
   // The ±size nudge applies only to the AI-intro text variants, and only once a
   // size exists to nudge from (set on first render). curPx is the current pinned
   // or agent-decided size; null hides the control.
@@ -182,6 +202,36 @@ export function VariantCard({
           </select>
         )}
       </div>
+
+      {/* Voice / bed mix — voiceover variants only. Debounced re-render; disabled
+          while the variant is rendering, mirroring the other controls. */}
+      {isVoiceover && onSetMix && (
+        <div className="mt-3">
+          <div className="mb-1 flex items-center justify-between text-xs text-zinc-400">
+            <label htmlFor={`mix-${variant.variant_id}`}>Voice / {bedLabel}</label>
+            <span className="tabular-nums text-zinc-500">{Math.round(mix * 100)}% voice</span>
+          </div>
+          <input
+            id={`mix-${variant.variant_id}`}
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={mix}
+            disabled={rendering}
+            aria-label={`Voice versus ${bedLabel.toLowerCase()} mix`}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              setMix(next);
+              if (mixTimer.current) clearTimeout(mixTimer.current);
+              mixTimer.current = setTimeout(() => {
+                run(() => onSetMix(next));
+              }, 600);
+            }}
+            className="w-full accent-white disabled:opacity-40"
+          />
+        </div>
+      )}
     </div>
   );
 }

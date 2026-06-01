@@ -51,7 +51,7 @@ from typing import Any
 
 from app.config import settings
 from app.pipeline._ffmpeg_filter_paths import escape_ffmpeg_filter_path
-from app.pipeline.lyric_injector import inject_lyric_overlays
+from app.pipeline.lyric_injector import _finalize_lyric_audible_window, inject_lyric_overlays
 from app.pipeline.reframe import _encoding_args
 from app.pipeline.text_overlay import FONTS_DIR, generate_animated_overlay_ass
 from app.services.pipeline_trace import record_pipeline_event
@@ -387,13 +387,24 @@ def build_lyrics_preview_recipe(track: Any, lyrics_config_effective: dict) -> di
     }
     cfg = {**lyrics_config_effective, "enabled": True}
     cfg.setdefault("style", "line")
-    return inject_lyric_overlays(
+    recipe = inject_lyric_overlays(
         recipe,
         lyrics_cached,
         best_start_s=preview_start_s,
         best_end_s=preview_start_s + preview_duration_s,
         lyrics_config=cfg,
     )
+    if cfg.get("style") == "line":
+        # Full music renders run this after slot collection. Preview has one
+        # synthetic slot, so slot-relative time already equals absolute video
+        # time; running it here keeps stale line-bound text out of the preview.
+        slot = recipe["slots"][0]
+        slot["text_overlays"] = _finalize_lyric_audible_window(
+            slot.get("text_overlays") or [],
+            audio_mix_song_start_s=preview_start_s,
+            audio_mix_song_end_s=preview_start_s + preview_duration_s,
+        )
+    return recipe
 
 
 def build_lyrics_preview_ass_files(

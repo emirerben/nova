@@ -187,8 +187,23 @@ _SLOT_UPLOAD_IMAGE_CT = {
     "image/heic",
     "image/heif",
 }
+# Voiceover audio (generative voiceover edits). Lands under voiceover-uploads/, not
+# music-uploads/, and never qualifies as a footage clip — see _validate_voiceover_path.
+_SLOT_UPLOAD_AUDIO_CT = {
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/mp4",
+    "audio/x-m4a",
+    "audio/aac",
+    "audio/wav",
+    "audio/x-wav",
+    "audio/wave",
+    "audio/webm",
+    "audio/ogg",
+}
 _SLOT_UPLOAD_VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi"}
 _SLOT_UPLOAD_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+_SLOT_UPLOAD_AUDIO_EXT = {".mp3", ".m4a", ".wav", ".webm", ".ogg", ".aac"}
 _SLOT_UPLOAD_MAX_BYTES = 200 * 1024 * 1024  # 200 MB — short user clips, not full source
 _UNKNOWN_CONTENT_TYPES = {"", "application/octet-stream"}
 
@@ -199,6 +214,8 @@ def _kind_from_extension(filename: str) -> str | None:
         return "video"
     if ext in _SLOT_UPLOAD_IMAGE_EXT:
         return "image"
+    if ext in _SLOT_UPLOAD_AUDIO_EXT:
+        return "audio"
     return None
 
 
@@ -208,6 +225,8 @@ def _kind_from_content_type(content_type: str) -> str | None:
         return "video"
     if ct in _SLOT_UPLOAD_IMAGE_CT:
         return "image"
+    if ct in _SLOT_UPLOAD_AUDIO_CT:
+        return "audio"
     return None
 
 
@@ -223,7 +242,8 @@ def classify_slot_kind(filename: str, content_type: str) -> str:
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
                     f"unsupported file type {content_type!r} / {ext!r}. "
-                    "Use mp4/mov for video or jpg/png/webp/heic for image."
+                    "Use mp4/mov for video, jpg/png/webp/heic for image, "
+                    "or mp3/m4a/wav for audio."
                 ),
             )
         return ext_kind
@@ -246,7 +266,7 @@ def classify_slot_kind(filename: str, content_type: str) -> str:
 
 class SlotUploadResponse(BaseModel):
     gcs_path: str
-    kind: str  # "video" | "image"
+    kind: str  # "video" | "image" | "audio"
 
 
 @router.post(
@@ -271,7 +291,15 @@ async def upload_slot_clip(
     kind = classify_slot_kind(file.filename or "upload", ct)
 
     upload_id = uuid.uuid4().hex[:12]
-    gcs_path = f"music-uploads/{upload_id}/slot{ext or ('.mp4' if kind == 'video' else '.jpg')}"
+    # Audio voiceovers land under voiceover-uploads/ (PII-swept by the GCS lifecycle
+    # rule + validated by _validate_voiceover_path); video/image stay under music-uploads/.
+    if kind == "audio":
+        prefix, stem, default_ext, default_ct = "voiceover-uploads", "voice", ".webm", "audio/webm"
+    elif kind == "video":
+        prefix, stem, default_ext, default_ct = "music-uploads", "slot", ".mp4", "video/mp4"
+    else:
+        prefix, stem, default_ext, default_ct = "music-uploads", "slot", ".jpg", "image/jpeg"
+    gcs_path = f"{prefix}/{upload_id}/{stem}{ext or default_ext}"
 
     with tempfile.NamedTemporaryFile(suffix=ext or ".bin", delete=True) as tmp:
         content = await file.read()
@@ -293,7 +321,7 @@ async def upload_slot_clip(
         bucket = _get_client().bucket(settings.storage_bucket)
         bucket.blob(gcs_path).upload_from_filename(
             tmp.name,
-            content_type=ct or ("video/mp4" if kind == "video" else "image/jpeg"),
+            content_type=ct or default_ct,
         )
 
     log.info("slot_upload_done", gcs_path=gcs_path, kind=kind, bytes=len(content))
