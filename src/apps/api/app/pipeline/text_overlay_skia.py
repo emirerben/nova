@@ -86,6 +86,9 @@ _ENCODE_WORKERS = 4
 _MAX_LINE_W_FRAC = 0.9
 _LINE_SPACING = 1.15
 _MIN_FONT_SIZE = 24
+_POP_IN_KEYFRAMES_S = (0.0, 0.150, 0.250)
+_POP_IN_SCALES = (0.30, 1.15, 1.00)
+_POP_IN_MAX_SCALE = max(_POP_IN_SCALES)
 
 
 # -- Typeface cache (load once at import) -------------------------------------
@@ -632,6 +635,28 @@ def _ease_out_cubic(t: float) -> float:
     return 1.0 - (1.0 - t) ** 3
 
 
+def _clamped_keyframes_s(keyframes_s: tuple[float, ...], duration_s: float) -> tuple[float, ...]:
+    last = keyframes_s[-1]
+    if last <= 0 or last <= duration_s:
+        return keyframes_s
+    ratio = max(0.0, duration_s) / last
+    return tuple(k * ratio for k in keyframes_s)
+
+
+def _pop_in_scale_at(t_local: float, duration_s: float) -> float:
+    k0, k1, k2 = _clamped_keyframes_s(_POP_IN_KEYFRAMES_S, duration_s)
+    s0, s1, s2 = _POP_IN_SCALES
+    if t_local <= k0:
+        return s0
+    if t_local < k1 and k1 > k0:
+        p = (t_local - k0) / (k1 - k0)
+        return s0 + (s1 - s0) * p
+    if t_local < k2 and k2 > k1:
+        p = (t_local - k1) / (k2 - k1)
+        return s1 + (s2 - s1) * p
+    return s2
+
+
 def _draw_pop_in_with_suffix(
     canvas: skia.Canvas, overlay: dict, t_local: float, duration_s: float
 ) -> None:
@@ -654,88 +679,88 @@ def _draw_pop_in_with_suffix(
         _draw_with_animation(canvas, overlay, t_local, duration_s, effect="pop-in")
         return
 
-    prefix = text[: -len(suffix)].rstrip()
-
     typeface = _typeface_for_overlay(overlay)
     initial_size = _resolve_font_size_px(overlay)
     # Lay out the FULL line so prefix + suffix stay in their original positions
-    full_font, full_size, full_lines = _shrink_to_fit(
-        text, typeface, initial_size, CANVAS_W * _MAX_LINE_W_FRAC
+    # even when the suffix overshoots to 115%.
+    full_font, _full_size, full_lines = _shrink_to_fit(
+        text,
+        typeface,
+        initial_size,
+        CANVAS_W * _MAX_LINE_W_FRAC / _POP_IN_MAX_SCALE,
     )
-    # The suffix-pop layout puts prefix + suffix on ONE baseline. If the line
-    # is too wide to fit on a single line (a manually-edited phrase grew past
-    # ~90% canvas, or the analysis-time line-split didn't apply), that layout
-    # would clip off the right edge ("combination of hard work" → "combination
-    # of har"). Fall back to the wrapping/shrinking path, which stacks lines
-    # and honors text_anchor. Because pop-in no longer scales (scale=1.0, see
-    # below) and _draw_centered_text now top-anchors left-anchored blocks
-    # (_vertical_block_top), the wrapped fallback renders the prior words in
-    # the SAME positions as the previous stage — no whole-line re-pop, no
-    # vertical re-center. The cumulative reveal stays spatially stable.
-    if len(full_lines) > 1:
+    if not full_lines:
+        return
+
+    suffix_line_idx: int | None = None
+    for i in range(len(full_lines) - 1, -1, -1):
+        if full_lines[i].rstrip().endswith(suffix):
+            suffix_line_idx = i
+            break
+    if suffix_line_idx is None:
         _draw_with_animation(canvas, overlay, t_local, duration_s, effect="pop-in")
         return
-    full_w = full_font.measureText(text)
-    prefix_w = full_font.measureText((prefix + " ") if prefix else "")
-    suffix_w = full_font.measureText(suffix)
 
+    block = _measure_block(full_font, full_lines)
     cx, cy = _resolve_anchor(overlay)
     anchor = _resolve_text_anchor(overlay)
-    line_start_x = _anchored_left_x(anchor, cx, full_w)
-
-    metrics = full_font.getMetrics()
-    line_height_raw = metrics.fDescent - metrics.fAscent
-    # Top-anchor the single-line baseline for left/right (matching
-    # _vertical_block_top + _measure_block's single-line block_h) so a phrase's
-    # first stage (one line, here) sits at the SAME vertical position as the
-    # later stages that wrap to multiple lines via the bail above. Without
-    # this, stage 1 vertically centers and the line visibly jumps up when
-    # stage 2 wraps and top-anchors.
-    baseline_y = _vertical_block_top(anchor, cy, line_height_raw) + (-metrics.fAscent)
+    block_top = _vertical_block_top(anchor, cy, block["block_h"])
+    first_baseline = block_top + block["ascent_offset"]
 
     fill_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
 
-    # Draw prefix statically
-    if prefix:
+    for i, line in enumerate(full_lines):
+        if i > suffix_line_idx:
+            continue
+        baseline_y = first_baseline + i * block["line_step"]
+        line_w = block["widths"][i]
+        line_start_x = _anchored_left_x(anchor, cx, line_w)
+        if i < suffix_line_idx:
+            _draw_line_with_layers(
+                canvas,
+                line,
+                line_start_x,
+                baseline_y,
+                full_font,
+                fill_color,
+                stroke_px,
+                shadow_alpha=160,
+            )
+            continue
+        prefix_for_width = line[: -len(suffix)]
+        prefix_draw = prefix_for_width.rstrip()
+        if prefix_draw:
+            _draw_line_with_layers(
+                canvas,
+                prefix_draw,
+                line_start_x,
+                baseline_y,
+                full_font,
+                fill_color,
+                stroke_px,
+                shadow_alpha=160,
+            )
+        suffix_x = line_start_x + full_font.measureText(prefix_for_width)
+        suffix_w = full_font.measureText(suffix)
+        suffix_cx = suffix_x + suffix_w / 2.0
+        scale = _pop_in_scale_at(t_local, duration_s)
+
+        canvas.save()
+        canvas.translate(suffix_cx, baseline_y)
+        canvas.scale(scale, scale)
+        canvas.translate(-suffix_cx, -baseline_y)
         _draw_line_with_layers(
             canvas,
-            prefix,
-            line_start_x,
+            suffix,
+            suffix_x,
             baseline_y,
             full_font,
             fill_color,
             stroke_px,
             shadow_alpha=160,
         )
-
-    # No bounce: the revealed word appears at full size. The word-by-word
-    # reveal comes from the per-stage timing (each stage adds one word), not
-    # from a scale animation — so dropping the 30→115→100 overshoot keeps the
-    # progressive reveal but removes the springy pop the words used to do as
-    # they showed up.
-    scale = 1.0
-
-    # Suffix is centered on its slot; scale around that center so the suffix
-    # doesn't visibly shift its baseline x while it pops.
-    suffix_x = line_start_x + prefix_w
-    suffix_cx = suffix_x + suffix_w / 2.0
-
-    canvas.save()
-    canvas.translate(suffix_cx, baseline_y)
-    canvas.scale(scale, scale)
-    canvas.translate(-suffix_cx, -baseline_y)
-    _draw_line_with_layers(
-        canvas,
-        suffix,
-        suffix_x,
-        baseline_y,
-        full_font,
-        fill_color,
-        stroke_px,
-        shadow_alpha=160,
-    )
-    canvas.restore()
+        canvas.restore()
 
 
 def _draw_karaoke_line(
@@ -906,8 +931,7 @@ def _draw_with_animation(
         direction = -1.0 if effect == "slide-up" else 1.0
         y_translate = direction * 220.0 * (1.0 - eased)
     elif effect == "pop-in":
-        # No bounce: word appears at full size (see _draw_pop_in_with_suffix).
-        scale = 1.0
+        scale = _pop_in_scale_at(t_local, duration_s)
     elif effect == "bounce":
         animate_for = min(0.5, duration_s * 0.8)
         if t_local < animate_for:

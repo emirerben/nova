@@ -48,6 +48,9 @@ from typing import Any
 import structlog
 
 from app.pipeline.text_reveal import (
+    LAST_WORD_DWELL_S as _LAST_WORD_DWELL_S,
+)
+from app.pipeline.text_reveal import (
     MIN_RENDERABLE_S as _MIN_RENDERABLE_S,
 )
 from app.pipeline.text_reveal import (
@@ -92,6 +95,7 @@ class _SlotWindow:
 # which drops stages shorter than _MIN_RENDERABLE_S because forcing a floor
 # would overlap the next stage and glitch the screen.
 _MIN_OVERLAY_DURATION_S = 0.18
+_WORD_POP_LINE_CLEAR_GAP_S = 1.0 / 30.0
 
 # `_LAST_WORD_DWELL_S` and `_MIN_RENDERABLE_S` are re-exported from
 # `text_reveal` (above) so existing callers/tests that import these names from
@@ -707,7 +711,7 @@ def _inject_per_word_pop(
     base = _common_overlay_fields(cfg)
     injected = 0
 
-    for line in section_lines:
+    for line_idx, line in enumerate(section_lines):
         word_dicts = [w for w in line.get("words", []) if (w.get("text") or "").strip()]
         if not word_dicts:
             continue
@@ -719,7 +723,23 @@ def _inject_per_word_pop(
             )
             for w in word_dicts
         ]
-        stages = build_cumulative_stages(words, line_end_s=float(line["end_s"]))
+        line_end_s = float(line["end_s"])
+        dwell_s = _LAST_WORD_DWELL_S
+        if line_idx + 1 < len(section_lines):
+            next_line_start_s = float(section_lines[line_idx + 1]["start_s"])
+            dwell_budget_s = next_line_start_s - line_end_s
+            if dwell_budget_s < dwell_s:
+                # First words should pop onto a clean screen. The terminal
+                # dwell is only breathing room, so spend it before the next
+                # line and leave one video frame for the previous line to
+                # clear when there is enough slack.
+                dwell_s = max(0.0, dwell_budget_s - _WORD_POP_LINE_CLEAR_GAP_S)
+
+        stages = build_cumulative_stages(
+            words,
+            line_end_s=line_end_s,
+            dwell_s=dwell_s,
+        )
 
         for stage in stages:
             slot_win = _slot_for_time(stage.start_s, windows)

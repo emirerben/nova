@@ -356,6 +356,43 @@ class TestAnimatedOverlayASS:
                 f"suffix 'room' must appear after the scale-init tag: {dialogue}"
             )
 
+    def test_pop_in_cumulative_stage_prewraps_before_suffix_splice(self):
+        """Long per-word-pop lyric stages must wrap before suffix animation.
+
+        Repro: lyrics preview job 9ee75e6e rendered the cumulative stage
+        "Let's make this happen let's make this happen let's make this happen"
+        with \\q2 and no \\N,
+        so libass clipped both horizontal edges instead of wrapping.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{
+                    "text": (
+                        "Let's make this happen let's make this happen "
+                        "let's make this happen"
+                    ),
+                    "start_s": 0.0,
+                    "end_s": 1.5,
+                    "position": "bottom",
+                    "effect": "pop-in",
+                    "pop_animated_suffix": "happen",
+                }],
+                5.0,
+                tmpdir,
+                0,
+            )
+            assert result is not None and len(result) == 1
+            dialogue = next(
+                ln for ln in open(result[0]).read().splitlines()
+                if ln.startswith("Dialogue:")
+            )
+            assert "\\q2" in dialogue, dialogue
+            assert "\\N" in dialogue, dialogue
+
+            fscx30_idx = dialogue.find("\\fscx30")
+            suffix_idx = dialogue.rfind("happen")
+            assert 0 <= fscx30_idx < suffix_idx, dialogue
+
     def test_pop_in_first_stage_with_suffix_only_animates_suffix(self):
         """First cumulative stage has no prefix — the suffix IS the whole text.
 

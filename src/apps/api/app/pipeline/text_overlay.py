@@ -738,31 +738,39 @@ def _pick_font_cycle_font_at(specs: list[tuple], t: float):
 # -- ASS Animation Rendering --------------------------------------------------
 
 
-def _pre_wrap_for_scale_animation(text: str, font_family: str | None) -> str:
+def _pre_wrap_for_scale_animation(
+    text: str,
+    font_family: str | None,
+    *,
+    max_scale_pct: int = 100,
+) -> str:
     """Insert ASS line breaks (`\\N`) so libass doesn't re-wrap during scale.
 
     libass decides line breaks against the *scaled* glyph widths. For effects
     that animate `\\fscx`/`\\fscy` (pop-in, bounce), the wrap point shifts as
     the scale crosses the canvas-width threshold — long text appears on one
     line at \\fscx30 and rewraps to two lines at \\fscx100, which reads as a
-    jitter at the entrance. Pre-wrapping at the final (100 %) Style size and
-    setting WrapStyle 2 via the inline `\\q2` tag freezes the layout so only
-    glyph size animates.
+    jitter at the entrance. Pre-wrapping against the animation's largest scale
+    and setting WrapStyle 2 via the inline `\\q2` tag freezes the layout so
+    only glyph size animates.
 
-    Wrap budget mirrors the PNG path's `_TEXT_MAX_LINE_W * CANVAS_W` so the
-    final, settled frame matches what `generate_text_overlay_png` would
-    produce. If the font cannot be resolved (missing entry, registry load
-    failure), returns the original text — animation still plays correctly,
-    only the wrap stays at libass's auto-wrap default.
+    Wrap budget mirrors the PNG path's `_TEXT_MAX_LINE_W * CANVAS_W`, divided
+    by the largest animation overshoot, so both the settled frame and the
+    115%/125% peak stay inside the safe width. If the font cannot be resolved
+    (missing entry, registry load failure), returns the original text —
+    animation still plays correctly, only the wrap stays at libass's auto-wrap
+    default.
     """
-    if not text or not font_family:
+    if not text:
         return text
     from PIL import Image, ImageDraw  # noqa: PLC0415
 
-    font = _resolve_font_family(font_family, OVERLAY_FONT_SIZE)
+    family = font_family or "Playfair Display"
+    font = _resolve_font_family(family, OVERLAY_FONT_SIZE)
     if font is None:
         return text
-    max_width = int(CANVAS_W * _TEXT_MAX_LINE_W)
+    scale = max(1.0, max_scale_pct / 100.0)
+    max_width = int((CANVAS_W * _TEXT_MAX_LINE_W) / scale)
     dummy = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(dummy)
     lines = _wrap_text_to_lines(text, font, max_width, draw)
@@ -979,25 +987,31 @@ def _write_animated_ass(
 
         # Cumulative-stage path (used by the lyrics per-word-pop injector):
         # the suffix is the newly added word, the prefix is the accumulated
-        # line up to but not including it. We render the prefix statically at
-        # 100% scale and apply the scale animation only to the suffix so the
-        # already-visible words don't re-pop on every new word. Skip pre-wrap
-        # here: lyric lines are short (one wrap line at most in 9:16 layout)
-        # and splitting on a wrap break inside the prefix would put the
-        # animated suffix on its own line, which looks worse than the
-        # occasional long line.
+        # line up to but not including it. Pre-wrap the full phrase before
+        # splicing so the static prefix and animated suffix share the same
+        # fixed layout under \q2; otherwise long cumulative lyric lines clip
+        # off-screen instead of wrapping.
         suffix_stripped = (pop_animated_suffix or "").strip()
         if suffix_stripped and text.rstrip().endswith(suffix_stripped):
             stripped_text = text.rstrip()
+            wrapped_text = _pre_wrap_for_scale_animation(
+                stripped_text,
+                font_family,
+                max_scale_pct=max(_POP_IN_SCALES),
+            ).rstrip()
             # Trim the suffix from the right; whatever's left (minus its
             # trailing whitespace) is the static prefix. If text is "I got
             # room" and suffix is "room", prefix becomes "I got" and the
             # rendered dialogue reads "I got <animated>room</animated>".
-            prefix_text = stripped_text[: -len(suffix_stripped)].rstrip()
+            prefix_source = (
+                wrapped_text if wrapped_text.endswith(suffix_stripped) else stripped_text
+            )
+            prefix_text = prefix_source[: -len(suffix_stripped)].rstrip()
             if prefix_text:
+                separator = "" if prefix_text.endswith(r"\N") else " "
                 dialogue_text = (
                     f"{{{pos_or_align}\\q2{outline_tag}}}"
-                    f"{prefix_text} "
+                    f"{prefix_text}{separator}"
                     f"{{{scale_anim}}}{suffix_stripped}"
                 )
             else:
@@ -1005,7 +1019,11 @@ def _write_animated_ass(
                 # the same way the legacy single-word pop did.
                 dialogue_text = f"{{{pos_or_align}\\q2{outline_tag}{scale_anim}}}{suffix_stripped}"
         else:
-            wrapped = _pre_wrap_for_scale_animation(text, font_family)
+            wrapped = _pre_wrap_for_scale_animation(
+                text,
+                font_family,
+                max_scale_pct=max(_POP_IN_SCALES),
+            )
             dialogue_text = f"{{{pos_or_align}\\q2{outline_tag}{scale_anim}}}{wrapped}"
 
     elif effect == "karaoke-line":
@@ -1076,7 +1094,11 @@ def _write_animated_ass(
         # Used for hero reactions like the "shukran Morocco!" outro label.
         # Pre-wrap with \N + \q2: same rationale as pop-in — fixed line layout
         # so the squash/stretch doesn't drag libass through a wrap threshold.
-        wrapped = _pre_wrap_for_scale_animation(text, font_family)
+        wrapped = _pre_wrap_for_scale_animation(
+            text,
+            font_family,
+            max_scale_pct=max(_BOUNCE_SCALES),
+        )
         duration_ms = int((end_s - start_s) * 1000)
         k0, k1, k2, k3 = _clamp_keyframes(_BOUNCE_KEYFRAMES_MS, duration_ms)
         s0, s1, s2, s3 = _BOUNCE_SCALES
