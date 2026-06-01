@@ -24,6 +24,11 @@ const savedConfig = {
   hold_to_next_threshold_ms: 500,
 };
 
+const karaokeConfig = {
+  enabled: true,
+  style: "karaoke" as const,
+};
+
 describe("LyricsTimingPanel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -140,6 +145,50 @@ describe("LyricsTimingPanel", () => {
       "full_test",
       expectedSnapshot,
     );
+  });
+
+  it("keeps lyrics preview disabled when parent section bounds are dirty", () => {
+    render(
+      <LyricsTimingPanel
+        trackId="track-1"
+        savedConfig={savedConfig}
+        onSubmit={jest.fn()}
+        previewDisabled
+        previewHint="Save section bounds first."
+      />,
+    );
+
+    expect(screen.getByTestId("lyrics-timing-preview-button")).toBeDisabled();
+    expect(screen.getByTestId("lyrics-timing-preview-hint")).toHaveTextContent(
+      "Save section bounds first.",
+    );
+  });
+
+  it("does not send line timing overrides for karaoke configs", async () => {
+    const onSubmit = jest.fn();
+    const onWorkingChange = jest.fn();
+    render(
+      <LyricsTimingPanel
+        trackId="track-1"
+        savedConfig={karaokeConfig}
+        onSubmit={onSubmit}
+        onWorkingChange={onWorkingChange}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Pre-roll")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Post-dwell")).not.toBeInTheDocument();
+    expect(screen.queryByText("Save as track defaults")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(onWorkingChange).toHaveBeenLastCalledWith(null);
+    });
+
+    fireEvent.click(screen.getByText("Preview lyrics only"));
+    fireEvent.click(screen.getByText("Render full test job"));
+
+    expect(onSubmit).toHaveBeenNthCalledWith(1, "preview", undefined);
+    expect(onSubmit).toHaveBeenNthCalledWith(2, "full_test", undefined);
   });
 
   it("reports the current timing snapshot to the parent for re-render actions", async () => {
