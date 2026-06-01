@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.74.5] - 2026-06-01
+
+### Fixed
+- **Generative edits no longer freeze forever on "Analyzing your clips" with heavy 4K/HDR footage.** The HDR→SDR pre-tonemap (`_pretonemap_hdr_clips` in `app/tasks/generative_build.py`) converted every uploaded clip serially, and on heavy footage each clip costs 4-8 min of zscale linear-light tonemap on the shared-CPU prod worker. Seven clips ran ~25-45 min — past the task's 30-min `soft_time_limit` — before a single variant rendered, and the job stayed at `status="processing"` (prod job `d30c61fe`). Two failure modes turned "slow" into "stuck forever": the `with ThreadPoolExecutor` block's `shutdown(wait=True)` blocked the soft-limit exception from ever reaching the failure handler before the hard `time_limit` SIGKILL, and `processing` is not a terminal state so the frontend polled "Analyzing your clips…" indefinitely (and `acks_late` redelivered the job back into the same wall).
+  - **Throughput:** the per-clip tonemaps now run on a bounded pool (`_PRETONEMAP_MAX_WORKERS = 2`, sized for the shared-cpu-4x/6144MB worker) instead of strictly serially, roughly halving wall-clock. Maps are mutated on the calling thread after join (dict mutation isn't thread-safe), `sdr_{idx}` naming stays collision-free via stable enumeration, and parity with the v0.4.45.7 anti-banding `_ZSCALE_SDR_PIPELINE` is unchanged.
+  - **Fail visibly, never freeze:** the outer pool now shuts down with `wait=False, cancel_futures=True` on the error path so `SoftTimeLimitExceeded` propagates immediately; the orchestrator catches it and fails the job with an actionable message (`failure_reason="processing_timeout"`, "your clips are heavy (likely 4K/HDR), try fewer or shorter clips") instead of a silent freeze. A terminal-status redelivery guard (`_NO_RERUN_STATUSES`) stops a redelivered finished/failed job from re-running the full pipeline, and `TemporaryDirectory(ignore_cleanup_errors=True)` keeps a teardown race from masking the timeout exception. Per-clip `pretonemap_progress` trace events make a slow-but-alive job distinguishable from a hang in the admin job-debug view.
+  - Regression tests cover concurrent execution, mutate-after-join correctness, partial-failure, the timeout→`processing_failed` mapping, the terminal-status guard (all members), and progress-event emission. Three follow-up speed levers (tonemap only used footage, parallel variant renders, cheaper/cap-res HDR tonemap) filed in `TODOS.md`.
+
 ## [0.4.74.4] - 2026-06-01
 
 ### Fixed
