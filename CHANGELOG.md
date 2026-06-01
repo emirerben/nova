@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.74.1] - 2026-06-01
+
+### Fixed
+- **Content-plan / generative items read "ready" but their videos were empty and wouldn't open after ~24h.** The render pipeline persisted each variant's `output_url` as a signed URL minted for 1 day (`storage.upload_public_read`), but variant blobs live under `generative-jobs/` — a prefix that is NOT in the GCS delete rule, so the bytes persist indefinitely. The stored signature therefore expired 24h after render while the video itself stayed alive: the item still derived status `ready` (from `Job.status`), the web page still saw a truthy `output_url` and rendered `<video src=…>`, and the browser got a GCS `400 ExpiredToken` → an empty player. Reproduced in prod on a 3-day-old job (`Request signature expired at: 2026-05-30T13:40:00`).
+  - **Fix: re-sign the playback URL on read, not at render time.** `GET /generative-jobs/{id}/status` now re-mints each ready variant's `output_url` from the already-persisted relative key (`video_path`) via a new `_variants_for_response` helper (`app/routes/generative_jobs.py`, `PLAYBACK_URL_TTL_MIN = 360`). URLs are always fresh on every poll. This **self-heals existing items** (including ones rendered days ago) with no re-render, no migration, and no backfill.
+  - The raw `_variants_of` stays unsigned so the swap-song / retext / change-style / mix mutation paths never write a short-lived re-signed URL back into the DB. A signing failure logs and falls back to the stored URL rather than 500-ing the poll. A global signed-URL TTL bump was rejected as the wrong fix — it would make `dev-user/` + `music-jobs/` URLs outlive their 1-day-deleted blobs (the inverse lie). The admin debug/list views still surface stored (stale) URLs — noted as a follow-up.
+
 ## [0.4.74.0] - 2026-06-01
 
 ### Added

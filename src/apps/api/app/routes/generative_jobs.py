@@ -28,11 +28,21 @@ from app.auth import CurrentUserOrSynthetic
 from app.database import get_db
 from app.models import Job, MusicTrack
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
+from app.storage import signed_get_url
 
 log = structlog.get_logger()
 router = APIRouter()
 
 _MAX_CLIPS = 20
+
+# Variant blobs live under `generative-jobs/` which is NOT in the GCS delete rule
+# (infra/gcs-lifecycle.json) — the bytes persist indefinitely. But `output_url` is
+# persisted at render time as a 1-day-TTL signed URL (storage.upload_public_read),
+# so after ~24h the stored URL is an expired signature pointing at live bytes: the
+# item still reads "ready" but `<video>` gets a 400 ExpiredToken. Re-sign on every
+# read from the persisted relative key (`video_path`) so playback URLs are always
+# fresh. 6h comfortably covers a viewing session; the page re-polls to refresh.
+PLAYBACK_URL_TTL_MIN = 360
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -167,6 +177,35 @@ async def _load_generative_job(
 
 def _variants_of(job: Job) -> list[dict]:
     return ((job.assembly_plan or {}).get("variants")) or []
+
+
+def _variants_for_response(job: Job) -> list[dict]:
+    """Variants with `output_url` re-signed fresh on read.
+
+    The stored `output_url` is a 1-day-TTL signature minted at render time, but the
+    blob persists forever (see PLAYBACK_URL_TTL_MIN). Return shallow copies with a
+    freshly-signed URL derived from the persisted `video_path` key so playback never
+    serves an expired signature. Must NOT mutate the raw variant dicts — the mutate
+    endpoints read those via `_variants_of` and we never want a re-signed URL written
+    back to the DB. Failed/unrendered variants (no `video_path`) keep their value.
+    """
+    out: list[dict] = []
+    for v in _variants_of(job):
+        video_path = v.get("video_path")
+        if v.get("render_status") == "ready" and video_path:
+            try:
+                v = {**v, "output_url": signed_get_url(video_path, PLAYBACK_URL_TTL_MIN)}
+            except Exception:  # noqa: BLE001 — one bad sign must not 500 the poll
+                log.warning(
+                    "variant_resign_failed",
+                    job_id=str(job.id),
+                    variant_id=v.get("variant_id"),
+                    video_path=video_path,
+                    exc_info=True,
+                )
+                # fall through with the stored (possibly stale) output_url
+        out.append(v)
+    return out
 
 
 def _find_variant(job: Job, variant_id: str) -> dict | None:
@@ -369,7 +408,7 @@ async def get_generative_job_status(
     return GenerativeJobStatusResponse(
         job_id=str(job.id),
         status=job.status,
-        variants=_variants_of(job),
+        variants=_variants_for_response(job),
         error_detail=job.error_detail,
         created_at=job.created_at,
         updated_at=job.updated_at,
