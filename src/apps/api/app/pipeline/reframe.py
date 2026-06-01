@@ -18,6 +18,7 @@ CRITICAL: Never use shell=True. Always pass args as a list.
 """
 
 import os
+import re
 import subprocess
 
 import structlog
@@ -42,10 +43,29 @@ class ReframeError(Exception):
     pass
 
 
+def _double_rate(rate: str) -> str:
+    """Double an ffmpeg bitrate string (e.g. "12M" -> "24M", "800K" -> "1600K").
+
+    Used to derive the VBV bufsize from the maxrate. A bufsize of ~2× maxrate
+    gives x264 enough of a buffer window to smooth complexity spikes (the bright
+    sunset band) without letting the average blow past the ceiling. Falls back
+    to the input unchanged if the format is unexpected.
+    """
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([KkMmGg]?)", rate.strip())
+    if not match:
+        return rate
+    value = float(match.group(1)) * 2
+    suffix = match.group(2).upper()
+    # Drop a trailing ".0" so "4M" -> "8M" not "8.0M".
+    num = f"{value:g}"
+    return f"{num}{suffix}"
+
+
 def _encoding_args(
     output_path: str,
     preset: str = "fast",
     crf: str = "18",
+    include_audio: bool = True,
 ) -> list[str]:
     """Shared FFmpeg output encoding arguments (DRY).
 
@@ -56,9 +76,24 @@ def _encoding_args(
              18 is visually lossless, 23 is default (too lossy for
              multi-pass pipelines with 3+ re-encodes).
 
+    Rate control: capped CRF, NOT ABR. We pass `-crf` + `-maxrate` + `-bufsize`
+    and deliberately do NOT pass `-b:v`. Passing `-b:v` forces x264 into ABR
+    mode, which IGNORES `-crf` entirely and holds a flat average bitrate — that
+    starves low-complexity-but-gradient regions (a dark twilight sky next to a
+    bright sunset band) and macroblocks them. Capped CRF means "CRF `crf`
+    quality unless it would exceed `settings.output_video_bitrate`," so smooth
+    skies stay clean while the ceiling still bounds file size. `bufsize` is
+    derived as 2× the ceiling (`_double_rate`) — the old hardcoded "8M" against
+    a 4M maxrate was a 2× window by accident and broke the moment the ceiling
+    moved. History: prod job rendering a 10-bit HLG iPhone sunset
+    (lisbon1.MOV, 2026-05-25) showed 16×16 blocking in the dark sky because the
+    4M `-b:v` ABR ceiling, not CRF 18, governed the encode.
+
     Color handling: HDR/HLG sources (bt2020, arib-std-b67) are converted
-    to SDR (bt709) via the colorspace filter in _build_video_filter. This
-    function tags the output as bt709 so players render colors correctly.
+    to SDR (bt709) via the colorspace filter in _build_video_filter. The
+    10→8-bit downconvert there uses error-diffusion dither (_ZSCALE_SDR_PIPELINE)
+    to avoid contour banding on smooth gradients. This function tags the output
+    as bt709 so players render colors correctly.
 
     Preset policy (locked by tests/test_encoder_policy.py — audit before
     flipping any of these):
@@ -81,6 +116,7 @@ def _encoding_args(
         - apply_curtain_close_tail       interstitials.py:250 (+ tune=film)
         - join_with_transitions          transitions.py:110
         - _burn_text_overlays            template_orchestrate.py:2671
+        - build_talking_head_command     talking_head_assembler.py (Lane C)
 
     Why this matters: libx264 preset=ultrafast disables mb-tree, psy-rd,
     B-frames and trellis quant. On smooth gradients (sky, dark canopy)
@@ -139,14 +175,21 @@ def _encoding_args(
         "-color_primaries", "bt709",
         "-color_trc", "bt709",
         "-colorspace", "bt709",
-        "-b:v", settings.output_video_bitrate,
+        # Capped CRF, not ABR — see the rate-control note in the docstring.
+        # `-crf` (set above) is the quality driver; `-maxrate`/`-bufsize` are the
+        # ceiling. No `-b:v` here, on purpose.
         "-maxrate", settings.output_video_bitrate,
-        "-bufsize", "8M",
+        "-bufsize", _double_rate(settings.output_video_bitrate),
         "-r", str(settings.output_fps),
+    ]
+    if include_audio:
         # Force identical body-slot audio layout (44.1kHz stereo AAC 192k) so
         # the downstream concat can stream-copy. See app/pipeline/audio_layout.py
         # for the contract — drift here re-introduces the silent-truncation bug.
-        *BODY_SLOT_AUDIO_OUT_ARGS,
+        # Video-only encodes (e.g. join_with_transitions, which mixes template
+        # audio separately and passes -an) set include_audio=False to skip these.
+        args += [*BODY_SLOT_AUDIO_OUT_ARGS]
+    args += [
         "-s", f"{settings.output_width}x{settings.output_height}",
         "-movflags", "+faststart",
         "-y",
@@ -262,7 +305,13 @@ def reframe_and_export(
             cmd += ["-map", "0:v:0", "-map", "1:a:0", "-shortest"]
         cmd += [
             "-vf", vf_string,
-            *_encoding_args(output_path, preset="ultrafast"),
+            # Intermediate (re-encoded by the final burn). ultrafast keeps per-slot
+            # render speed, but its weaker tools macroblock dark gradients and the
+            # final fast pass can't recover that. crf=14 (vs the 18 default) spends
+            # more bits here so the temp file stays clean for the final encode —
+            # ~38% less dark-region distortion in local A/B (job 792f2d52). Temp-only;
+            # shipped bytes still come from the final fast pass.
+            *_encoding_args(output_path, preset="ultrafast", crf="14"),
         ]
 
     log.info(
@@ -419,7 +468,10 @@ def _build_overlay_cmd(
         cmd.extend(["-map", "0:a?"])
     else:
         cmd.extend(["-map", f"{silent_audio_idx}:a:0", "-shortest"])
-    cmd.extend(_encoding_args(output_path, preset="ultrafast"))
+    # Intermediate (re-encoded downstream). crf=14 keeps this overlay-on-base temp
+    # file clean so the final pass isn't fed pre-baked dark-gradient blocking. See
+    # the matching note in reframe_and_export.
+    cmd.extend(_encoding_args(output_path, preset="ultrafast", crf="14"))
 
     return cmd
 
@@ -469,7 +521,13 @@ _ZSCALE_SDR_PIPELINE = (
     ",format=gbrpf32le"
     ",zscale=p=bt709"
     ",tonemap=tonemap=mobius"
-    ",zscale=t=bt709:m=bt709:r=tv"
+    # dither=error_diffusion: the only place a 10-bit HDR gradient collapses to
+    # 8-bit. Without error diffusion this stair-steps into visible contour
+    # bands on smooth skies (zscale defaults to dither=none). Error diffusion
+    # spreads quantization error into adjacent pixels so the gradient reads
+    # smooth. SDR (bt709) sources never reach this pipeline, so this is a no-op
+    # for non-HDR footage. History: lisbon1.MOV HLG sunset, 2026-05-25.
+    ",zscale=t=bt709:m=bt709:r=tv:dither=error_diffusion"
     ",format=yuv420p"
 )
 

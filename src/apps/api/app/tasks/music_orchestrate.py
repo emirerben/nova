@@ -37,10 +37,15 @@ from app.pipeline.lyric_injector import inject_lyric_overlays
 from app.pipeline.music_recipe import (
     DEFAULT_WINDOW_S,
     auto_best_section,
+    count_slots,
     generate_music_recipe,
     merge_audio_recipe,
 )
 from app.services.lyrics_config_effective import effective_lyrics_config
+from app.services.music_sections import (
+    reconcile_track_config_to_rank_one,
+    refresh_recipe_cached_for_bounds,
+)
 from app.storage import download_to_file
 from app.tasks.template_orchestrate import (
     _analyze_clips_parallel,
@@ -71,6 +76,28 @@ except ImportError:
 log = structlog.get_logger()
 
 MAX_ERROR_DETAIL_LEN = 2000
+
+
+def _coerce_best_start_s(track_config: dict | None) -> float:
+    """Parse `best_start_s` from a track_config dict, treating None / invalid
+    as 0.0. The DB column allows NULL (admins who never set the section
+    leave it unset), and pydantic validation upstream may pass NaN/string
+    on partial config writes. Crashing the music orchestrator on
+    `float(None)` would brick the entire job — this helper keeps the
+    pipeline going with the sensible default.
+    """
+    if not track_config:
+        return 0.0
+    raw = track_config.get("best_start_s")
+    if raw is None:
+        return 0.0
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    if v != v:  # NaN
+        return 0.0
+    return v
 
 
 # ── Music-specific beat detection ────────────────────────────────────────────
@@ -183,6 +210,10 @@ def analyze_music_track_task(self, track_id: str) -> None:
 
         track.analysis_status = "analyzing"
         track.error_detail = None
+        # Cleared at the start of every run so a successful re-analyze cannot
+        # leave a stale reason from a prior silent-fail attempt. _run_song_sections
+        # repopulates this on the broad-Exception branch (best-effort fail-open).
+        track.section_error_detail = None
         db.commit()
 
     try:
@@ -193,7 +224,34 @@ def analyze_music_track_task(self, track_id: str) -> None:
             beats = _detect_music_beats(local_audio)
             log.info("music_beats_detected", track_id=track_id, count=len(beats))
 
-            # Auto-select best section only if not already admin-configured
+            # ── Lyric extraction (fail-open, moved before section pick) ──
+            # Layer 3: feed full-track lyrics into auto_best_section so the
+            # picked window favors vocal-rich passages over beat-only peaks.
+            # `best_start_s`/`best_end_s` on LyricsInput are advisory (the agent
+            # transcribes the whole track regardless — see
+            # `app/agents/lyrics.py`), so passing full-track bounds here costs
+            # nothing extra and gives us the lines we need at scoring time.
+            # Reuses the already-downloaded audio file; any failure here is
+            # surfaced as `lyrics_status` but never blocks `analysis_status=ready`.
+            lyrics_result = _run_lyrics_extraction(
+                local_audio,
+                track_id,
+                best_start_s=0.0,
+                best_end_s=float(duration_s or 0.0),
+                duration_s=float(duration_s or 0.0),
+            )
+            # `_run_lyrics_extraction` is documented to never raise + always
+            # return a status dict, but tests mock it to return None and
+            # other call sites have done the same historically — guard so a
+            # None doesn't crash the analyze flow before Gemini gets a chance.
+            lyric_lines: list[dict] | None = None
+            if lyrics_result and lyrics_result.get("status") == "ready":
+                lyric_lines = (lyrics_result.get("output") or {}).get("lines") or None
+
+            # Auto-select best section only if not already admin-configured.
+            # Pass lyric_lines so the score becomes
+            # `beats + 0.5 * overlapping_lyric_lines` (see music_recipe.py:
+            # _LYRIC_LINE_WEIGHT). Backward-compat: None falls back to beat-only.
             best_start: float = float(existing_config.get("best_start_s", 0.0))
             best_end: float = float(existing_config.get("best_end_s", 0.0))
             if best_end <= best_start:
@@ -201,12 +259,12 @@ def analyze_music_track_task(self, track_id: str) -> None:
                     beats,
                     window_s=DEFAULT_WINDOW_S,
                     track_duration_s=float(duration_s or 0.0),
+                    lyric_lines=lyric_lines,
                 )
 
             # Slot count from best section
             n = int(existing_config.get("slot_every_n_beats", 8))
-            window_beats = [b for b in beats if best_start <= b <= best_end]
-            n_slots = len(range(0, max(0, len(window_beats) - n), n))
+            n_slots = count_slots(beats, best_start, best_end, n)
 
             if n_slots == 0:
                 _fail_track(
@@ -229,8 +287,16 @@ def analyze_music_track_task(self, track_id: str) -> None:
             recipe_cached = None
             ai_labels_dict: dict | None = None
             sections_dict: dict | None = None
+            # Populated by _run_song_sections' broad-Exception branch only;
+            # see its docstring for the (None, str) vs (None, None) contract.
+            sections_error: str | None = None
             if gemini_upload_and_wait is not None and analyze_audio_template is not None:
-                recipe_cached, ai_labels_dict, sections_dict = _run_gemini_audio_analysis(
+                (
+                    recipe_cached,
+                    ai_labels_dict,
+                    sections_dict,
+                    sections_error,
+                ) = _run_gemini_audio_analysis(
                     local_audio,
                     beats,
                     new_config,
@@ -238,16 +304,48 @@ def analyze_music_track_task(self, track_id: str) -> None:
                     track_id,
                 )
 
-            # ── Lyric extraction (new, fail-open) ────────────────────────
-            # Runs INSIDE the same temp dir so we reuse the already-downloaded
-            # audio file instead of re-downloading from GCS. Any failure here
-            # never blocks the track from being marked `analysis_status=ready`.
-            lyrics_result = _run_lyrics_extraction(
-                local_audio,
-                track_id,
-                best_start_s=new_config["best_start_s"],
-                best_end_s=new_config["best_end_s"],
-            )
+            # ── Section-1 reconciliation (canonical best_section) ────────
+            # `auto_best_section()` above wrote a legacy 45s window into
+            # new_config. If song_sections returned a usable rank-1, promote
+            # its bounds — every downstream consumer (manual job, templated
+            # job, admin merge endpoints) reads track_config.best_start_s /
+            # best_end_s, so writing rank-1 here fixes them all at once.
+            # See app/services/music_sections.py for the gating logic.
+            best_section_source = "auto_best_section"
+            if sections_dict is not None:
+                new_config, best_section_source = reconcile_track_config_to_rank_one(
+                    track_config=new_config,
+                    beats=beats,
+                    sections=sections_dict.get("sections"),
+                    section_version=sections_dict.get("section_version"),
+                )
+                if best_section_source == "song_sections":
+                    # Refresh log fields so the structured log at end of
+                    # task reflects the canonical bounds, not the legacy
+                    # auto_best_section window we computed before.
+                    best_start = float(new_config["best_start_s"])
+                    best_end = float(new_config["best_end_s"])
+                    n_slots = max(1, int(new_config.get("required_clips_max", n_slots)))
+                    # Templated music jobs render `recipe_cached` verbatim
+                    # (see _run_templated_music_job). If we don't refresh
+                    # it against the new bounds, those jobs keep using the
+                    # legacy 45s slot timing forever. Manual jobs are safe
+                    # because they regenerate from track_config at job
+                    # time, but the cache must match for templated paths.
+                    if recipe_cached is not None:
+                        try:
+                            recipe_cached = refresh_recipe_cached_for_bounds(
+                                recipe_cached=recipe_cached,
+                                beats=beats,
+                                track_config=new_config,
+                                duration_s=float(duration_s or 0.0),
+                            )
+                        except Exception as exc:
+                            log.warning(
+                                "recipe_cached_refresh_failed",
+                                track_id=track_id,
+                                error=str(exc),
+                            )
 
         with _sync_session() as db:
             track = db.get(MusicTrack, track_id)
@@ -275,6 +373,12 @@ def analyze_music_track_task(self, track_id: str) -> None:
                     # re-runs. See app/agents/_schemas/song_sections.py.
                     track.best_sections = sections_dict.get("sections")
                     track.section_version = sections_dict.get("section_version") or None
+                elif sections_error is not None:
+                    # Silent-fail branch: persist the truncated reason so admin
+                    # can see WHY song_sections returned None for this track
+                    # (was already cleared above when analyze started, so a
+                    # success-path on a re-analyze cannot leave stale text).
+                    track.section_error_detail = sections_error[:MAX_ERROR_DETAIL_LEN]
                 track.analysis_status = "ready"
                 db.commit()
 
@@ -289,6 +393,7 @@ def analyze_music_track_task(self, track_id: str) -> None:
             lyrics_status=lyrics_result.get("status") if lyrics_result else "skipped",
             has_ai_labels=ai_labels_dict is not None,
             has_best_sections=sections_dict is not None,
+            best_section_source=best_section_source,
         )
 
     except OperationalError as db_exc:
@@ -361,6 +466,7 @@ def extract_track_lyrics_task(self, track_id: str) -> None:
             return
         audio_gcs = track.audio_gcs_path
         cfg = track.track_config or {}
+        track_duration_s = float(track.duration_s or 0.0)
         track.lyrics_status = "extracting"
         track.lyrics_error_detail = None
         db.commit()
@@ -374,6 +480,7 @@ def extract_track_lyrics_task(self, track_id: str) -> None:
                 track_id,
                 best_start_s=float(cfg.get("best_start_s", 0.0)),
                 best_end_s=float(cfg.get("best_end_s", 0.0)),
+                duration_s=track_duration_s,
             )
         with _sync_session() as db:
             track = db.get(MusicTrack, track_id)
@@ -532,6 +639,10 @@ def _run_music_job(job_id: str) -> None:
         # (best_start_s, slot_every_n_beats, etc) so admins can edit
         # everything in one place. See app.routes.admin_music.update_music_track.
         lyrics_config = effective_lyrics_config(track.track_config or {}, lyrics_config_override)
+        # Pick a lyric style set from the track's MusicLabels (best-effort).
+        lyrics_config = _maybe_select_lyric_style_set(
+            lyrics_config, track.ai_labels, track.title or ""
+        )
 
     # [3] Generate recipe from beats
     recipe_dict = generate_music_recipe(track_data)
@@ -664,6 +775,20 @@ def _run_music_job(job_id: str) -> None:
             user_subject="",
             interstitials=[],
             force_single_pass=False,
+            # Lyric overlays render via Skia (HarfBuzz shaping, paint shadows),
+            # matching the templated-music path + the renderer-split intent.
+            # Gated globally by settings.text_renderer_skia_enabled inside
+            # _burn_text_overlays.
+            use_skia=True,
+            # Anchor for the line-style lyric audible-window finalizer. The
+            # audio mix runs from `best_start_s` for the full rendered video
+            # duration; `_collect_absolute_overlays` derives the audible end
+            # from this start + the post-snap cumulative durations it already
+            # uses for abs timestamps. Same `best_start_s` MUST be passed to
+            # `_mix_template_audio` below — drift here equals lyric drift.
+            # `_coerce_best_start_s` handles None / NaN / non-numeric DB
+            # values without crashing the worker.
+            lyric_audio_mix_song_start_s=_coerce_best_start_s(cfg),
         )
 
         # [10] Mix in music track audio
@@ -722,20 +847,34 @@ def _run_lyrics_extraction(
     *,
     best_start_s: float,
     best_end_s: float,
+    duration_s: float = 0.0,
 ) -> dict:
     """Call LyricsExtractionAgent and return a status-tagged result.
 
     Returns one of:
-      {"status": "ready",       "output": <LyricsOutput.model_dump()>, "source": "..."}
-      {"status": "unavailable", "error": "<short str>"}   # no usable output (e.g. instrumental)
-      {"status": "failed",      "error": "<short str>"}   # whisper/network error
-      {"status": "skipped",     "reason": "..."}          # OPENAI_API_KEY missing, etc.
+      {"status": "ready",               "output": <dump>, "source": "lrclib_*",
+                                        "diagnostic": <dump>, "version_snapshot": int}
+      {"status": "needs_manual_lyrics", "whisper_draft": <dump>, "source": "whisper_only",
+                                        "diagnostic": <dump>, "version_snapshot": int}
+      {"status": "unavailable",         "error": "...", "diagnostic": <dump>?,
+                                        "version_snapshot": int}
+      {"status": "failed",              "error": "...", "version_snapshot": int}
+      {"status": "skipped",             "reason": "..."}        # no version_snapshot
+
+    `version_snapshot` is the `lyrics_extraction_version` read off the track
+    at the time the agent was kicked off. `_apply_lyrics_result` uses it for
+    conditional UPDATE — if another task has bumped the version in the
+    meantime, our mutation is discarded (stale-task protection).
 
     Never raises — caller is expected to slot whatever is returned into the
     DB via `_apply_lyrics_result`.
     """
     from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
-    from app.agents.lyrics import LyricsExtractionAgent, LyricsInput  # noqa: PLC0415
+    from app.agents.lyrics import (  # noqa: PLC0415
+        PUBLISHABLE_LYRICS_SOURCES,
+        LyricsExtractionAgent,
+        LyricsInput,
+    )
     from app.config import settings  # noqa: PLC0415
 
     # Whisper is required; without it we can't produce timing data. Bail fast.
@@ -744,7 +883,10 @@ def _run_lyrics_extraction(
         return {"status": "skipped", "reason": "openai_api_key_missing"}
 
     # Look up the most recent track metadata for the agent input (title/artist
-    # may have been edited since dispatch).
+    # may have been edited since dispatch) AND snapshot the extraction version
+    # so we can detect stale-task races at commit time.
+    forced_lrclib_id: int | None = None
+    version_snapshot: int = 0
     try:
         with _sync_session() as db:
             track = db.get(MusicTrack, track_id)
@@ -752,6 +894,25 @@ def _run_lyrics_extraction(
                 return {"status": "failed", "error": "track_not_found"}
             title = (track.title or "").strip()
             artist = (track.artist or "").strip()
+            version_snapshot = int(track.lyrics_extraction_version or 0)
+            # Forced override (admin paste-ID) lives on track_config.lyrics_config.
+            cfg = (track.track_config or {}) or {}
+            lyrics_cfg = (cfg.get("lyrics_config") or {}) if isinstance(cfg, dict) else {}
+            forced_raw = (
+                lyrics_cfg.get("forced_lrclib_id") if isinstance(lyrics_cfg, dict) else None
+            )
+            if forced_raw is not None:
+                try:
+                    forced_lrclib_id = int(forced_raw)
+                    if forced_lrclib_id <= 0:
+                        forced_lrclib_id = None
+                except (TypeError, ValueError):
+                    log.warning(
+                        "lyrics_forced_id_invalid_in_config",
+                        track_id=track_id,
+                        raw=forced_raw,
+                    )
+                    forced_lrclib_id = None
     except Exception as exc:
         return {"status": "failed", "error": f"db_lookup_failed: {exc}"}
 
@@ -767,6 +928,8 @@ def _run_lyrics_extraction(
                 artist=artist,
                 best_start_s=float(best_start_s or 0.0),
                 best_end_s=float(best_end_s or 0.0),
+                duration_s=float(duration_s or 0.0),
+                forced_lrclib_id=forced_lrclib_id,
             ),
             ctx=RunContext(job_id=f"track:{track_id}"),
         )
@@ -775,43 +938,105 @@ def _run_lyrics_extraction(
         # "whisper returned zero words" → instrumental; surface as unavailable
         # so the admin UI can show "no lyrics" instead of "extraction failed".
         if "zero words" in msg or "instrumental" in msg:
-            return {"status": "unavailable", "error": msg[:500]}
-        return {"status": "failed", "error": msg[:500]}
+            return {
+                "status": "unavailable",
+                "error": msg[:500],
+                "version_snapshot": version_snapshot,
+            }
+        return {"status": "failed", "error": msg[:500], "version_snapshot": version_snapshot}
     except Exception as exc:  # safety net — agent runtime should already wrap
-        return {"status": "failed", "error": str(exc)[:500]}
+        return {"status": "failed", "error": str(exc)[:500], "version_snapshot": version_snapshot}
 
     if output.is_empty:
-        return {"status": "unavailable", "error": "no_lines_after_alignment"}
+        return {
+            "status": "unavailable",
+            "error": "no_lines_after_alignment",
+            "diagnostic": output.lyrics_diagnostic,
+            "version_snapshot": version_snapshot,
+        }
 
+    output_dump = output.model_dump()
+
+    # Publishability decision: only LRCLIB-derived sources count as ready.
+    # Whisper-only goes to the draft column with status=needs_manual_lyrics.
+    if output.source in PUBLISHABLE_LYRICS_SOURCES:
+        return {
+            "status": "ready",
+            "source": output.source,
+            "output": output_dump,
+            "diagnostic": output.lyrics_diagnostic,
+            "version_snapshot": version_snapshot,
+        }
+    # Anything else (whisper_only, or any non-LRCLIB source) is non-publishable.
     return {
-        "status": "ready",
+        "status": "needs_manual_lyrics",
         "source": output.source,
-        "output": output.model_dump(),
+        "whisper_draft": output_dump,
+        "diagnostic": output.lyrics_diagnostic,
+        "version_snapshot": version_snapshot,
     }
 
 
 def _apply_lyrics_result(track: MusicTrack, result: dict | None) -> None:
-    """Persist the result of `_run_lyrics_extraction` onto the track row."""
+    """Persist the result of `_run_lyrics_extraction` onto the track row.
+
+    Stale-task protection: when the result carries a `version_snapshot`
+    that doesn't match the row's current `lyrics_extraction_version`, the
+    result is discarded — a newer extraction task has already raced ahead
+    and we'd otherwise overwrite its correct output with our stale one.
+    """
     if not result:
         return
     from datetime import UTC, datetime  # noqa: PLC0415
 
     status = result.get("status") or "failed"
+
+    # Stale-task discard. Skipped runs don't have a snapshot (never read a
+    # version), so they bypass the check.
+    if "version_snapshot" in result:
+        current_version = int(track.lyrics_extraction_version or 0)
+        snapshot = int(result.get("version_snapshot") or 0)
+        if snapshot != current_version:
+            log.warning(
+                "lyric_extraction_stale_task_discarded",
+                track_id=track.id,
+                version_snapshot=snapshot,
+                current_version=current_version,
+                status=status,
+            )
+            return
+
+    now = datetime.now(UTC)
     if status == "ready":
         track.lyrics_status = "ready"
         track.lyrics_cached = result.get("output")
-        track.lyrics_source = result.get("source") or "genius+whisper"
+        track.lyrics_whisper_draft = None  # publishable wins; clear any prior draft
+        track.lyrics_source = result.get("source") or "lrclib_synced+whisper"
         track.lyrics_error_detail = None
-        track.lyrics_extracted_at = datetime.now(UTC)
+        track.lyrics_diagnostic = result.get("diagnostic")
+        track.lyrics_extracted_at = now
+    elif status == "needs_manual_lyrics":
+        # Non-publishable extraction (whisper_only). Keep the draft for admin
+        # reference but do NOT populate lyrics_cached — production consumers
+        # only ever read that column and must not see Whisper hallucinations.
+        track.lyrics_status = "needs_manual_lyrics"
+        track.lyrics_cached = None
+        track.lyrics_whisper_draft = result.get("whisper_draft")
+        track.lyrics_source = result.get("source") or "whisper_only"
+        track.lyrics_error_detail = "LRCLIB lookup failed; paste a row ID to recover"
+        track.lyrics_diagnostic = result.get("diagnostic")
+        track.lyrics_extracted_at = now
     elif status == "unavailable":
         track.lyrics_status = "unavailable"
         track.lyrics_cached = None
+        track.lyrics_whisper_draft = None
         track.lyrics_error_detail = (result.get("error") or "")[:MAX_ERROR_DETAIL_LEN]
-        track.lyrics_extracted_at = datetime.now(UTC)
+        track.lyrics_diagnostic = result.get("diagnostic") or track.lyrics_diagnostic
+        track.lyrics_extracted_at = now
     elif status == "skipped":
         # Don't overwrite a previous successful extraction just because the
         # current run was skipped (e.g. OPENAI_API_KEY temporarily unset).
-        if track.lyrics_status not in ("ready", "unavailable"):
+        if track.lyrics_status not in ("ready", "unavailable", "needs_manual_lyrics"):
             track.lyrics_status = "pending"
     else:  # failed
         track.lyrics_status = "failed"
@@ -827,16 +1052,22 @@ def _run_gemini_audio_analysis(
     track_config: dict,
     duration_s: float,
     track_id: str,
-) -> tuple[dict | None, dict | None, dict | None]:
+) -> tuple[dict | None, dict | None, dict | None, str | None]:
     """Upload audio to Gemini, run structural analysis + song classifier + song sections.
 
-    Returns ``(recipe_cached, ai_labels, best_sections)``. Each side can
-    be ``None`` independently — a Gemini-recipe failure does not block
-    label generation, a classifier failure does not block recipe
-    caching. A song_sections refusal (all proposed sections invalid)
+    Returns ``(recipe_cached, ai_labels, best_sections, sections_error)``.
+    Each result side can be ``None`` independently — a Gemini-recipe failure
+    does not block label generation, a classifier failure does not block
+    recipe caching. A song_sections refusal (all proposed sections invalid)
     propagates so the track is visibly failed instead of carrying no
-    usable current-version section. Other Gemini failures still fall
-    back to a beat-only recipe where possible.
+    usable current-version section. Other Gemini failures still fall back
+    to a beat-only recipe where possible.
+
+    ``sections_error`` is the truthful reason ``_run_song_sections`` returned
+    ``None`` on its broad-Exception branch (or ``None`` when the agent
+    succeeded, was skipped for duration ≤ 0, or never ran because the
+    outer Gemini upload itself failed — those cases aren't actionable
+    "song_sections failed because X" signals).
     """
     try:
         log.info("gemini_audio_analysis_start", track_id=track_id)
@@ -867,7 +1098,9 @@ def _run_gemini_audio_analysis(
         # Phase 2 (auto-music, library side): pick top-3 edit-worthy
         # sections. Reuses the same file_ref — no second Gemini upload.
         # Best-effort: matcher's NULL-section filter handles failure.
-        sections = _run_song_sections(file_ref, gemini_recipe, beats, duration_s, track_id)
+        sections, sections_error = _run_song_sections(
+            file_ref, gemini_recipe, beats, duration_s, track_id
+        )
 
         log.info(
             "gemini_audio_analysis_done",
@@ -877,7 +1110,7 @@ def _run_gemini_audio_analysis(
             has_ai_labels=ai_labels is not None,
             has_best_sections=sections is not None,
         )
-        return merged, ai_labels, sections
+        return merged, ai_labels, sections, sections_error
 
     except RefusalError:
         log.warning(
@@ -894,15 +1127,19 @@ def _run_gemini_audio_analysis(
         )
         # Return beat-only recipe as fallback. Labels and sections
         # can't be produced without the file_ref, so they stay None.
+        # sections_error stays None here — the failure happened before
+        # song_sections could be attempted, so "song_sections failed"
+        # would be misleading; the outer log line above carries the
+        # actual upload/analyze error.
         try:
             track_data = {
                 "beat_timestamps_s": beats,
                 "track_config": track_config,
                 "duration_s": duration_s,
             }
-            return generate_music_recipe(track_data), None, None
+            return generate_music_recipe(track_data), None, None, None
         except Exception:
-            return None, None, None
+            return None, None, None, None
 
 
 def _run_song_sections(
@@ -911,19 +1148,26 @@ def _run_song_sections(
     beats: list[float],
     duration_s: float,
     track_id: str,
-) -> dict | None:
+) -> tuple[dict | None, str | None]:
     """Best-effort: pick top-3 edit-worthy sections.
 
-    Ordinary failures are logged and return ``None``; the matcher will
-    treat the track as unsectioned until backfill reruns. RefusalError
-    means every proposed section violated the hard constraints, so it
-    propagates and analyze_music_track_task marks the track failed.
+    Returns ``(sections_dict, error_message)``:
+      - ``(dict, None)`` on success — caller writes sections to the track.
+      - ``(None, str)`` on a non-Refusal Exception — caller persists the
+        message to ``MusicTrack.section_error_detail`` so admin can see
+        WHY this track ended up unsectioned without grepping worker logs.
+      - ``(None, None)`` when skipped because ``duration_s ≤ 0`` (a track
+        with no known duration isn't actionable, so "agent failed" would
+        be misleading text on the row).
+
+    ``RefusalError`` (every proposed section violated the hard constraints)
+    still propagates and ``analyze_music_track_task`` marks the track failed.
     """
     if duration_s <= 0.0:
         # SongSectionsInput requires duration_s > 0. A track with no
         # known duration cannot be sectioned — skip silently.
         log.debug("song_sections_skip_no_duration", track_id=track_id)
-        return None
+        return None, None
     try:
         from app.agents._model_client import default_client  # noqa: PLC0415
         from app.agents._runtime import RunContext  # noqa: PLC0415
@@ -948,7 +1192,7 @@ def _run_song_sections(
             section_count=len(out.sections),
             ranks=[s.rank for s in out.sections],
         )
-        return out.to_dict()
+        return out.to_dict(), None
     except RefusalError as exc:
         log.warning(
             "song_sections_refused",
@@ -962,7 +1206,7 @@ def _run_song_sections(
             track_id=track_id,
             error=str(exc),
         )
-        return None
+        return None, str(exc)
 
 
 def _run_song_classifier(
@@ -1007,6 +1251,46 @@ def _run_song_classifier(
             error=str(exc),
         )
         return None
+
+
+def _maybe_select_lyric_style_set(
+    lyrics_config: dict | None,
+    ai_labels: dict | None,
+    title: str = "",
+) -> dict | None:
+    """Best-effort: pick a lyric style set via LyricStyleSelectorAgent.
+
+    No-op when lyrics are disabled, a set is already pinned in lyrics_config,
+    or the track has no `ai_labels`. Never raises — on any failure the config
+    is returned unchanged so lyrics still render with their existing defaults.
+    """
+    if not lyrics_config or not lyrics_config.get("enabled"):
+        return lyrics_config
+    if lyrics_config.get("style_set_id"):
+        return lyrics_config
+    labels_dict = (ai_labels or {}).get("labels")
+    if not labels_dict:
+        return lyrics_config
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents._schemas.music_labels import MusicLabels  # noqa: PLC0415
+        from app.agents.lyric_style_selector import (  # noqa: PLC0415
+            LyricStyleSelectorAgent,
+            LyricStyleSelectorInput,
+        )
+
+        out = LyricStyleSelectorAgent(default_client()).run(
+            LyricStyleSelectorInput(labels=MusicLabels(**labels_dict), title=title or ""),
+            ctx=RunContext(job_id=None),
+        )
+        cfg = dict(lyrics_config)
+        cfg["style_set_id"] = out.style_set_id
+        log.info("lyric_style_set_selected", style_set_id=out.style_set_id)
+        return cfg
+    except Exception as exc:  # noqa: BLE001 — selection is best-effort
+        log.warning("lyric_style_set_select_failed", error=str(exc))
+        return lyrics_config
 
 
 # ── Templated music jobs (fixed-asset + user-upload slots) ────────────────────
@@ -1067,6 +1351,9 @@ def _run_templated_music_job(job_id: str) -> None:
         lyrics_cached_tmpl = track.lyrics_cached
         track_cfg_tmpl = track.track_config or {}
         lyrics_config_tmpl = effective_lyrics_config(track_cfg_tmpl, lyrics_config_override)
+        lyrics_config_tmpl = _maybe_select_lyric_style_set(
+            lyrics_config_tmpl, track.ai_labels, track.title or ""
+        )
 
     # Inject lyric overlays for templated tracks. `best_start_s` defaults to 0
     # for templated tracks (slot times already start at the beginning of the
@@ -1321,14 +1608,18 @@ def _run_templated_music_job(job_id: str) -> None:
             slot_durations,
             clip_metas=None,
             subject="",
+            # Anchor for the line-style lyric audible-window finalizer; see
+            # the matching call in `_run_music_job`. Templated path uses
+            # `audio_start_offset_s = best_start_s` (or 0.0 when admin
+            # leaves the section unset) for `_mix_template_audio` below.
+            # `_coerce_best_start_s` handles None / NaN safely.
+            lyric_audio_mix_song_start_s=_coerce_best_start_s(track_cfg_tmpl),
         )
         if abs_overlays:
             burned_path = os.path.join(tmpdir, "burned.mp4")
             # Music jobs use Skia for lyrics rendering (karaoke-line, per-word-pop).
             # Gated globally by settings.text_renderer_skia_enabled inside _burn_text_overlays.
-            _burn_text_overlays(
-                assembled_path, abs_overlays, burned_path, tmpdir, use_skia=True
-            )
+            _burn_text_overlays(assembled_path, abs_overlays, burned_path, tmpdir, use_skia=True)
             if os.path.exists(burned_path) and os.path.getsize(burned_path) > 0:
                 assembled_path = burned_path
             else:

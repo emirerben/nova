@@ -33,13 +33,15 @@ costs <50ms for typical 30-second sections.
 from __future__ import annotations
 
 import re
+import statistics
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 import structlog
 
+from app.config import settings
 from app.services.lrclib_client import SyncedLine
 from app.services.whisper_lyrics import WhisperWord
 
@@ -82,6 +84,18 @@ _MIN_SIMILARITY = 0.65
 # timing between the surrounding aligned words. This factor controls how
 # much of the gap each unaligned run gets.
 _INTERPOLATION_PADDING_S = 0.02
+
+# Small visual spacer reserved at the trailing-unmatched spread's tail end so
+# the last interpolated token doesn't land at the exact same timestamp as the
+# next line's first accepted Whisper word. Distinct from the renderer's
+# `_LINE_NEXT_LINE_GAP_S` (which gates audio-time gap, not interpolation room).
+_NEXT_LINE_SAFETY_S = 0.05
+
+# Default per-token budget multiplier when the caller cannot supply a
+# tail-end cap (e.g. the unanchored `align()` path). Each unmatched token
+# gets `_MAX_INTERP_SLICE_S * this factor` seconds, sized below normal
+# karaoke pace so a noisy tail never runs long against the next line.
+_TRAILING_SPREAD_CONSERVATIVE_FACTOR = 0.5
 
 
 def align(
@@ -216,6 +230,8 @@ def _find_match(
 def _build_line(
     canonical_line: str,
     slots: list[tuple[str, float | None, float | None]],
+    *,
+    tail_end_cap_s: float | None = None,
 ) -> AlignedLine | None:
     """Stitch a per-word slot list into an AlignedLine.
 
@@ -223,10 +239,56 @@ def _build_line(
     surrounding aligned neighbors. If a line has ZERO aligned anchors, the
     line is dropped from the output — it can't be timed without at least
     one Whisper match.
+
+    `tail_end_cap_s` is the upper bound for the trailing-unmatched spread —
+    typically the caller's `window_end` (or the next line's first reliable
+    Whisper start minus `_NEXT_LINE_SAFETY_S`). When supplied, several
+    trailing unaligned tokens are spread across `[prev_end, tail_end_cap_s]`
+    instead of being collapsed onto a single 0.25s window at `prev_end`.
+    When not supplied (the unanchored `align()` path has no per-line window),
+    a conservative half-budget formula is used. See plan §_build_line
+    fallback guardrail.
     """
     timed_indices = [i for i, (_, s, e) in enumerate(slots) if s is not None and e is not None]
     if not timed_indices:
         return None
+
+    # Pre-compute the trailing-unmatched-tail span so the spread formula
+    # below sees the same `tail_count` for every word in the tail. Without
+    # this, each iteration recomputes the index of the "next unmatched
+    # slot" and the spread becomes order-dependent on iteration state.
+    last_timed = max(timed_indices)
+    tail_unmatched = [j for j, (_, s, _) in enumerate(slots) if j > last_timed and s is None]
+    tail_count = len(tail_unmatched)
+
+    # Emit guardrail logs so the rate of trailing-unmatched fallbacks is
+    # visible in prod. The pre-fix code silently collapsed every such tail
+    # onto a 250ms window at `prev_end`, masking 1-3 seconds of canonical
+    # lyric. Two distinct events:
+    #   - `lyrics_alignment_trailing_collapse` (WARN): the original ≥2-token
+    #     collapse pattern — the bug class that motivated this fix.
+    #   - `lyrics_alignment_trailing_single_no_cap` (WARN): a single trailing
+    #     unmatched token with no caller-supplied tail_end_cap_s, falling
+    #     back to the conservative budget. Low-confidence by construction;
+    #     when AlignedLine gains a `line_alignment_status` field (follow-up
+    #     PR), this site should also stamp `"low_conf"`.
+    # Logging once per occurrence (not per token) keeps log volume reasonable.
+    if tail_count >= 2:
+        log.warning(
+            "lyrics_alignment_trailing_collapse",
+            line=canonical_line.strip()[:80],
+            prev_end=round(slots[last_timed][2] or 0.0, 3),
+            unmatched_count=tail_count,
+            canonical_tail=[slots[j][0] for j in tail_unmatched],
+            tail_end_cap_s=(round(tail_end_cap_s, 3) if tail_end_cap_s is not None else None),
+        )
+    elif tail_count == 1 and tail_end_cap_s is None:
+        log.warning(
+            "lyrics_alignment_trailing_single_no_cap",
+            line=canonical_line.strip()[:80],
+            prev_end=round(slots[last_timed][2] or 0.0, 3),
+            canonical_tail=[slots[j][0] for j in tail_unmatched],
+        )
 
     # Linear interpolation for runs of unaligned words.
     spans: list[tuple[float, float]] = []
@@ -250,10 +312,53 @@ def _build_line(
             start = prev_end + slice_dur * position_in_run + _INTERPOLATION_PADDING_S
             end = start + max(slice_dur - 2 * _INTERPOLATION_PADDING_S, 0.05)
         elif prev_idx is not None:
-            # Trailing unaligned word — sit it just after the last anchor.
+            # Trailing unaligned word — bounded spread across the available
+            # tail window. Pre-fix code collapsed every trailing token onto
+            # `prev_end + 0.02s` for 0.25s regardless of count, silently
+            # dropping the back half of a long line when LRCLIB's next-line
+            # anchor was earlier than the actual vocal. See plan §_build_line
+            # fallback guardrail + the f65b5762 / Hawai regression test.
             prev_end = slots[prev_idx][2] or 0.0
-            start = prev_end + _INTERPOLATION_PADDING_S
-            end = start + 0.25
+            position_in_tail = sum(1 for j in range(prev_idx + 1, i + 1) if slots[j][1] is None) - 1
+
+            # tail_end_cap_s = caller-supplied upper bound (window_end /
+            # next-line-safe boundary). When None — or when the supplied cap
+            # leaves no positive room past `prev_end` (the previous matched
+            # Whisper word ran past the hard window already) — we fall back
+            # to half of _MAX_INTERP_SLICE_S per token so a noisy tail never
+            # overruns the next line nor lingers past sane karaoke pace.
+            conservative_budget = (
+                _MAX_INTERP_SLICE_S * tail_count * _TRAILING_SPREAD_CONSERVATIVE_FACTOR
+            )
+            if tail_end_cap_s is not None:
+                effective_cap = tail_end_cap_s - _NEXT_LINE_SAFETY_S
+                cap_budget = effective_cap - prev_end
+                # If the cap leaves no usable budget, defer to the
+                # conservative formula. Tail tokens will extend past the
+                # cap, but the per-token cap (_MAX_INTERP_SLICE_S below)
+                # still keeps each word from running long.
+                budget = cap_budget if cap_budget > 0.05 else conservative_budget
+            else:
+                budget = conservative_budget
+
+            # Per-token slice size, capped at the standard interp slice so a
+            # very wide cap (e.g. the whole track tail) doesn't blow up
+            # individual word durations.
+            slice_dur = min(budget / max(1, tail_count), _MAX_INTERP_SLICE_S)
+            slice_dur = max(slice_dur, 0.05)
+
+            start = prev_end + _INTERPOLATION_PADDING_S + slice_dur * position_in_tail
+            end = start + max(slice_dur - _INTERPOLATION_PADDING_S, 0.05)
+
+            # Defense-in-depth clamp: when a usable cap was supplied AND
+            # `prev_end` actually sits before the cap, never let `end` cross
+            # the safety margin. When `prev_end` already overran the cap
+            # (matched word's end exceeded the LRCLIB window), the
+            # conservative formula above ran instead — no cap to clamp
+            # against, the per-token slice cap is the only bound.
+            if tail_end_cap_s is not None and prev_end < tail_end_cap_s - _NEXT_LINE_SAFETY_S:
+                hard_cap = tail_end_cap_s - _NEXT_LINE_SAFETY_S
+                end = min(end, hard_cap)
         else:
             # Leading unaligned word — sit it just before the next anchor.
             next_start = slots[next_idx][1] if next_idx is not None else 0.0  # type: ignore[index]
@@ -305,6 +410,110 @@ _LAST_WORD_TAIL_PAD_S = 0.5
 _MAX_INTERP_SLICE_S = 0.8
 
 
+# LRC-anchor re-anchor threshold. When the detected audio-vs-LRC shift on
+# the first matched line exceeds this value, we conclude the audio cut
+# does not match the LRC-indexed cut (e.g. the "official video" cut of
+# Instant Crush is +2.57s vs the album cut LRCLIB indexed), and Whisper's
+# per-line `start_s` / `end_s` cannot be trusted as line bounds — Whisper
+# stacks tokens on instrumental moments and produces line spans 2-3s too
+# short relative to the actual audio. In that case we re-anchor every
+# `AlignedLine.start_s` / `end_s` to `LRC_anchor[i] + shift`, leaving the
+# per-word Whisper timings untouched (karaoke `\kf` + per-word-pop still
+# get the original Whisper word stream — they consume words, not line
+# bounds, so they're unaffected).
+#
+# Threshold sized so well-aligned tracks (Whisper accuracy ~100-300ms on
+# clean studio recordings) are unaffected. Only fires when there's a real
+# systematic misalignment.
+_AUDIO_SHIFT_THRESHOLD_S = 1.0
+
+# Safety gap subtracted from the next anchor when computing a re-anchored
+# line's end. Mirrors the renderer's `_LINE_NEXT_LINE_GAP_S` but kept
+# separate so the alignment-layer value can be tuned independently of the
+# renderer's gap_cap.
+_REANCHOR_NEXT_LINE_SAFETY_S = 0.05
+
+# Last-line fallback duration when re-anchoring and there's no `next_anchor`
+# (the final LRC line). Used in conjunction with `track_end_s` — we cap the
+# re-anchored end at `track_end_s + shift` (in case the shift extends past
+# track end) and floor at `start + this`. Sized to comfortably cover a
+# sung last line (most songs end with a 2-4s sustain on the final word).
+_REANCHOR_LAST_LINE_MIN_DUR_S = 3.0
+
+
+# Multi-line median re-anchor — secondary path layered above the single-L0
+# `_AUDIO_SHIFT_THRESHOLD_S` check. The single-L0 path only fires for
+# `|shift| > 1.0s` because Whisper's L0 detection has ~100-300ms jitter on
+# clean tracks; a tighter L0-only threshold would re-anchor tracks that
+# are already correct. Multi-line median uses the consistency of the first
+# N aligned lines as evidence that a sub-second shift is real drift (not
+# noise), which catches the Overnight + The Bay class where the audio cut
+# differs from the LRC-indexed cut by ~0.4-0.7s — too small to trigger
+# single-L0 but consistent across every aligned line.
+#
+# When triggered: rewrite every line's `start_s` / `end_s` to
+# `LRC_anchor[i] + median_shift` via the same `_apply_uniform_shift` helper
+# the single-L0 path uses (DRY: identical bounded-extension guard for
+# trailing-interpolation overshoot applies to both).
+#
+# Eligibility: a line counts toward the median only if its alignment had
+# at least `_MULTILINE_MATCHED_COUNT_THRESHOLD` real Whisper word matches —
+# Strategy 3 (pure linear interpolation, matched_count = 0) emits
+# `start_s = window_start = anchor.start_s` by construction, so including
+# Strategy 3 lines would force `shift = 0` and pull the median toward
+# zero. The eligibility filter is the only thing keeping the multi-line
+# median from silently disabling itself on heavy-instrumental tracks
+# where most lines fall back to Strategy 3.
+_MULTILINE_MIN_ELIGIBLE_LINES = 3
+_MULTILINE_SAMPLE_SIZE = 5
+_MULTILINE_MATCHED_COUNT_THRESHOLD = 2
+_MULTILINE_MIN_APPLY_SHIFT_S = 0.2
+
+# Spread metric: median absolute deviation (MAD), not stdev. MAD is the
+# robust analogue of stdev — `median(|x - median(x)|)`. Less sensitive
+# than stdev to a single outlier in small samples (N=5), which matters
+# here because Whisper's per-line jitter routinely produces one ~2x
+# outlier line in an otherwise tight 5-line cluster.
+#
+# Empirically driven cap. Parcels - Overnight prod shifts:
+# [0.43, 0.85, 0.27, 0.71, 0.47] — stdev 0.232 (too wide for 0.15 guard)
+# but MAD 0.20. Metronomy - The Bay shifts:
+# [0.58, 0.51, 0.82, 0.67, 0.61] — MAD 0.06 (well under either threshold).
+# Clean tracks (well-aligned audio) have MAD ~0-0.05 because Whisper
+# jitter on matched lines is sub-100ms. Cap at 0.22 to admit Overnight
+# (MAD 0.20) with small headroom for cross-run Whisper non-determinism.
+_MULTILINE_MAX_MAD_S = 0.22
+
+# Inlier-consensus guard: after the MAD cap admits a sample, require N
+# of the 5 sample shifts to fall within `_MULTILINE_INLIER_K * MAD` of
+# the median. This rejects scenarios where the MAD is small only because
+# 2-3 shifts happen to cluster while others scatter widely (the
+# non-uniform-drift class). For Overnight (MAD 0.20, inlier band ±0.30):
+# 4 of 5 shifts are inliers (0.85 is the outlier), refined median = 0.45.
+# For Bay (MAD 0.06, inlier band ±0.09): 3 of 5 inliers, refined = 0.61.
+# Clean tracks (MAD ~0.03, tight band) usually have 4-5 inliers; their
+# refined median is near zero so the `_MIN_APPLY_SHIFT_S` gate skips.
+#
+# After filtering, the APPLIED shift is `median(inliers)` — using inlier
+# consensus means a single high-jitter line doesn't pull the applied
+# value away from the cluster.
+_MULTILINE_INLIER_K = 1.5
+_MULTILINE_MIN_INLIERS = 3
+
+# Linear re-anchor — first path, above the uniform multi-line median.
+# This catches tracks where the LRCLIB-indexed recording and the actual
+# audio cut diverge progressively rather than by one constant offset. The
+# model is deliberately small and robust: Theil-Sen slope + median
+# intercept, gated by sample count, track-span coverage, minimum slope,
+# residual MAD, and implausible endpoint shifts. Any failed gate falls back
+# to the existing uniform paths byte-for-byte.
+_LINEAR_MIN_ELIGIBLE_LINES = 6
+_LINEAR_MIN_SPAN_FRAC = 0.30
+_LINEAR_MIN_SLOPE = 0.01
+_LINEAR_MAX_RESID_MAD_S = 0.15
+_LINEAR_MIN_X_DELTA_S = 1e-6
+
+
 def align_with_line_anchors(
     anchor_lines: Sequence[SyncedLine],
     whisper_words: Sequence[WhisperWord] | tuple[WhisperWord, ...],
@@ -335,6 +544,12 @@ def align_with_line_anchors(
 
     whisper_list = list(whisper_words)
     aligned_lines: list[AlignedLine] = []
+    # Parallel-list invariant: `matched_counts[i]` is the count of real
+    # Whisper word matches that backed `aligned_lines[i]`. The linear and
+    # multi-line re-anchor paths use this to exclude Strategy 3 (pure
+    # interpolation, matched_count = 0) lines from shift estimates — see the
+    # constant block above for why.
+    matched_counts: list[int] = []
     total_words = 0
     matched_words = 0
 
@@ -366,9 +581,41 @@ def align_with_line_anchors(
         )
         if line is not None:
             aligned_lines.append(line)
+            matched_counts.append(matched_in_line)
             matched_words += matched_in_line
 
     confidence = (matched_words / total_words) if total_words else 0.0
+
+    # LRC-anchor re-anchor for cases where the audio cut does not match the
+    # LRC-indexed cut (e.g. official-video cut vs album cut).
+    #
+    # Detection signal: the shift between the first aligned line's
+    # `start_s` (Whisper's first reliable detection of the song's first
+    # sung word) and the first LRC anchor. When |shift| > the threshold,
+    # we conclude Whisper is detecting vocals at a different audio offset
+    # than LRC was indexed for, AND Whisper's per-line `start_s` / `end_s`
+    # in subsequent lines are unreliable — Whisper systematically stacks
+    # tokens on instrumental moments and assigns them wrong line windows
+    # (the Instant Crush #361/362 class). LRC anchors with a uniform shift
+    # applied are far more reliable for line bounds than Whisper's
+    # per-line detection in this case.
+    #
+    # When triggered: rewrite every line's `start_s` to
+    # `LRC_anchor[i] + shift` and `end_s` to the next anchor + shift
+    # (minus a small safety gap), so the line spans the full LRC-implied
+    # vocal window aligned to the actual audio. The last line gets a
+    # bounded extension from `track_end_s` since it has no "next anchor".
+    # Per-word Whisper timings (`AlignedWord.start_s` / `end_s`) are NOT
+    # rewritten — karaoke `\kf` and per-word-pop consume per-word values
+    # and stay byte-identical regardless of the line-bound rewrite.
+    aligned_lines = _maybe_reanchor_to_lrc(
+        aligned_lines=aligned_lines,
+        anchor_lines=anchor_lines,
+        track_end_s=track_end_s,
+        whisper_words=whisper_list,
+        matched_counts=matched_counts,
+    )
+
     log.info(
         "lyrics_alignment_anchored_done",
         anchor_lines=len(anchor_lines),
@@ -379,6 +626,494 @@ def align_with_line_anchors(
         confidence=round(confidence, 3),
     )
     return AlignmentResult(lines=tuple(aligned_lines), confidence=confidence)
+
+
+def _mad(values: list[float], median_value: float) -> float:
+    """Median absolute deviation — robust spread metric.
+
+    `mad = median(|x - median(x)|)`. Less sensitive than stdev to a single
+    outlier in small samples (N=5), which matters here because Whisper's
+    per-line jitter routinely produces one ~2x-outlier line in an
+    otherwise tight 5-line cluster (see `_MULTILINE_MAX_MAD_S` docstring
+    for the Parcels - Overnight empirical data driving this choice).
+    """
+    return statistics.median(abs(v - median_value) for v in values)
+
+
+def _maybe_reanchor_to_lrc(
+    *,
+    aligned_lines: list[AlignedLine],
+    anchor_lines: Sequence[SyncedLine],
+    track_end_s: float | None,
+    whisper_words: list[WhisperWord],
+    matched_counts: list[int],
+) -> list[AlignedLine]:
+    """Decide whether to rewrite line bounds to `LRC_anchor[i] + shift`.
+
+    Three paths, evaluated in order:
+
+      0. **Linear drift fit (progressive cut drift)**: when enough
+         matched lines are spread across the track and their shifts fit a
+         low-residual line, apply `intercept + slope * LRC_anchor_time`.
+         Catches official-video cuts whose audio slowly diverges from the
+         LRCLIB-indexed recording.
+
+      1. **Multi-line median (sub-second uniform drift)**: when at least
+         `_MULTILINE_MIN_ELIGIBLE_LINES` aligned lines have real Whisper
+         matches AND their per-line shifts agree (low spread) AND the
+         median shift is meaningfully non-zero, apply the median.
+         Catches the Overnight + The Bay class: small consistent drift
+         that single-L0 can't safely detect because L0 noise on clean
+         tracks (~100-300ms) sits in the same range.
+
+      2. **Single-L0 (large-cut drift)**: when the earlier paths don't
+         qualify, fall back to the original L0-shift logic. Catches the Instant
+         Crush class: large shift (>1s) where even noisy L0 detection
+         is unambiguous, or short tracks where only 1-2 lines aligned
+         cleanly.
+
+      3. **No shift**: both paths skip, return unchanged.
+
+    Per-word `AlignedWord` timings are NEVER modified — karaoke `\\kf` and
+    per-word-pop consume per-word values and stay byte-identical
+    regardless of which (if any) path fires.
+
+    Args:
+        matched_counts: parallel to `aligned_lines`; counts real Whisper
+            word matches per line. Used to filter Strategy 3 (pure
+            interpolation, shift=0 by construction) lines out of the
+            linear and multi-line eligible sets.
+    """
+    if not aligned_lines or not anchor_lines:
+        return aligned_lines
+
+    # Parallel-list invariant — `align_with_line_anchors` is the only caller
+    # and always builds these together. Hard assert so any future caller
+    # that forgets the list gets a clear error rather than a silent
+    # mis-alignment downstream.
+    assert len(aligned_lines) == len(matched_counts), (
+        f"matched_counts length ({len(matched_counts)}) must match "
+        f"aligned_lines length ({len(aligned_lines)})"
+    )
+
+    # Map each aligned line back to its source anchor by ordinal position.
+    # `align_with_line_anchors` iterates `anchor_lines` in order and appends
+    # one `AlignedLine` per anchor it successfully resolved. Some anchors
+    # may have been skipped (empty text, malformed window), so the i-th
+    # mapping only holds when the lengths match. Bail rather than
+    # mis-align.
+    if len(aligned_lines) != len(anchor_lines):
+        # Use the `_multiline_skipped` event-name prefix even though the
+        # length-mismatch bail blocks BOTH paths (multi-line + single-L0),
+        # so a telemetry filter on `*_multiline_*` catches all skip
+        # reasons consistently. The single-L0 path's own implausible-shift
+        # bail (line ~755) keeps the old `_reanchor_skipped` name for
+        # backward compat with #363 dashboards.
+        log.info(
+            "lyrics_alignment_reanchor_multiline_skipped",
+            reason="anchor_alignment_length_mismatch",
+            anchor_count=len(anchor_lines),
+            aligned_count=len(aligned_lines),
+        )
+        return aligned_lines
+
+    track_dur = (
+        track_end_s
+        if track_end_s is not None
+        else (whisper_words[-1].end_s if whisper_words else 0.0)
+    )
+
+    # ── Path 0: linear fit for progressively drifting cuts ─────────────
+    eligible_indices = [
+        i for i, mc in enumerate(matched_counts) if mc >= _MULTILINE_MATCHED_COUNT_THRESHOLD
+    ]
+    linear_diag: dict[str, object] = {
+        "aligned_count": len(aligned_lines),
+        "eligible_count": len(eligible_indices),
+        "eligible_threshold": _MULTILINE_MATCHED_COUNT_THRESHOLD,
+        "matched_counts": list(matched_counts),
+        "enabled": settings.lyric_linear_reanchor_enabled,
+    }
+    if settings.lyric_linear_reanchor_enabled:
+        linear_result = _fit_linear_reanchor(
+            aligned_lines=aligned_lines,
+            anchor_lines=anchor_lines,
+            eligible_indices=eligible_indices,
+            track_dur=track_dur,
+        )
+        linear_diag.update(linear_result.diag)
+        if linear_result.applied:
+            log.info(
+                "lyrics_alignment_reanchor_linear_applied",
+                path="linear",
+                **linear_diag,
+            )
+            return _apply_shift(
+                aligned_lines=aligned_lines,
+                anchor_lines=anchor_lines,
+                shift_at=linear_result.shift_at,
+                track_end_s=track_end_s,
+            )
+        log.info(
+            "lyrics_alignment_reanchor_linear_skipped",
+            reason=linear_result.reason,
+            **linear_diag,
+        )
+    else:
+        log.info(
+            "lyrics_alignment_reanchor_linear_skipped",
+            reason="disabled_by_flag",
+            **linear_diag,
+        )
+
+    # ── Path 1: multi-line median ──────────────────────────────────────
+    multiline_diag: dict[str, object] = {
+        "aligned_count": len(aligned_lines),
+        "eligible_count": len(eligible_indices),
+        "eligible_threshold": _MULTILINE_MATCHED_COUNT_THRESHOLD,
+        "matched_counts": list(matched_counts),
+    }
+
+    if len(eligible_indices) >= _MULTILINE_MIN_ELIGIBLE_LINES:
+        sample_indices = eligible_indices[:_MULTILINE_SAMPLE_SIZE]
+        shifts = [aligned_lines[i].start_s - anchor_lines[i].start_s for i in sample_indices]
+        median_shift = statistics.median(shifts)
+        spread_mad = _mad(shifts, median_shift)
+
+        # Inlier filter — keep shifts within `_MULTILINE_INLIER_K * MAD`
+        # of the median. Refined median is computed only over the
+        # inlier set so a high-Whisper-jitter line doesn't pull the
+        # applied shift away from the consensus cluster.
+        #
+        # Band-half floored at 1ms: when shifts are nominally identical
+        # (e.g., perfectly aligned synthetic data, or a track whose
+        # Whisper happens to produce bit-equal offsets), MAD computes
+        # to 0 and IEEE 754 imprecision can put two "equal" shifts
+        # ~1e-15 apart — without the floor, one falls outside the
+        # zero-width band and gets dropped. 1ms is below any real
+        # signal (Whisper word timings round to ms precision in the
+        # cache) and safely above float noise.
+        band_half = max(_MULTILINE_INLIER_K * spread_mad, 1e-3)
+        inlier_shifts = [s for s in shifts if abs(s - median_shift) <= band_half]
+        refined_median = statistics.median(inlier_shifts) if inlier_shifts else median_shift
+
+        multiline_diag.update(
+            {
+                "sample_indices": list(sample_indices),
+                "per_line_shifts": [round(s, 3) for s in shifts],
+                "median_shift_s": round(median_shift, 3),
+                "spread_mad_s": round(spread_mad, 3),
+                "inlier_count": len(inlier_shifts),
+                "inlier_shifts": [round(s, 3) for s in inlier_shifts],
+                "refined_median_s": round(refined_median, 3),
+                "min_apply_shift_s": _MULTILINE_MIN_APPLY_SHIFT_S,
+                "max_mad_s": _MULTILINE_MAX_MAD_S,
+                "inlier_k": _MULTILINE_INLIER_K,
+                "min_inliers": _MULTILINE_MIN_INLIERS,
+            }
+        )
+
+        # Implausible-shift guard: same defense as the single-L0 path so
+        # an outlier in the median can't drive a garbage shift to every
+        # line. Check against the refined median (post-inlier-filter) so
+        # a single Whisper hallucination on L0 doesn't trigger the bail
+        # when the cluster's true shift is small.
+        if track_dur > 0 and abs(refined_median) > track_dur / 3.0:
+            log.warning(
+                "lyrics_alignment_reanchor_multiline_skipped",
+                reason="implausible_shift",
+                track_dur_s=round(track_dur, 3),
+                **multiline_diag,
+            )
+            # Don't fall through to single-L0 — if the multi-line refined
+            # median is implausible, the L0 shift will be too (L0 is a
+            # subset of the multi-line sample).
+            return aligned_lines
+
+        # Three-gate qualification. ALL must pass to apply the refined
+        # median; failing any one falls through to single-L0.
+        #
+        # Gate 1: MAD cap — rejects scattered samples (non-uniform drift
+        #   class), where the spread itself disqualifies the "uniform
+        #   shift" hypothesis.
+        # Gate 2: inlier consensus — at least N of 5 sample shifts must
+        #   cluster within ±k*MAD of the median. Rejects samples that
+        #   pass MAD by accident (e.g., 2 tight pairs + 1 outlier sum
+        #   to a small MAD but lack consensus).
+        # Gate 3: refined median magnitude — only apply if the consensus
+        #   cluster's median is meaningfully non-zero. Clean tracks
+        #   produce small refined medians and skip here.
+        mad_ok = spread_mad < _MULTILINE_MAX_MAD_S
+        inliers_ok = len(inlier_shifts) >= _MULTILINE_MIN_INLIERS
+        magnitude_ok = abs(refined_median) > _MULTILINE_MIN_APPLY_SHIFT_S
+
+        if mad_ok and inliers_ok and magnitude_ok:
+            log.info(
+                "lyrics_alignment_reanchor_multiline_applied",
+                path="multi_line",
+                **multiline_diag,
+            )
+            return _apply_uniform_shift(
+                aligned_lines=aligned_lines,
+                anchor_lines=anchor_lines,
+                shift_s=refined_median,
+                track_end_s=track_end_s,
+            )
+
+        # Multi-line guard didn't qualify — record why and fall through to
+        # single-L0. Precedence (most-specific first): magnitude > MAD >
+        # inliers, so the reason field gives the operator the most
+        # actionable diagnostic.
+        if not magnitude_ok:
+            multiline_skip_reason = "median_too_small"
+        elif not mad_ok:
+            multiline_skip_reason = "spread_too_wide"
+        else:
+            multiline_skip_reason = "insufficient_inlier_consensus"
+        log.info(
+            "lyrics_alignment_reanchor_multiline_skipped",
+            reason=multiline_skip_reason,
+            **multiline_diag,
+        )
+    else:
+        log.info(
+            "lyrics_alignment_reanchor_multiline_skipped",
+            reason="insufficient_eligible_lines",
+            **multiline_diag,
+        )
+
+    # ── Path 2: single-L0 (unchanged from PR #363) ─────────────────────
+    first_aligned_start = aligned_lines[0].start_s
+    first_anchor_start = anchor_lines[0].start_s
+    audio_shift_s = first_aligned_start - first_anchor_start
+
+    if abs(audio_shift_s) <= _AUDIO_SHIFT_THRESHOLD_S:
+        log.info(
+            "lyrics_alignment_reanchor_no_shift",
+            path="none",
+            audio_shift_s=round(audio_shift_s, 3),
+            threshold_s=_AUDIO_SHIFT_THRESHOLD_S,
+        )
+        return aligned_lines
+
+    if track_dur > 0 and abs(audio_shift_s) > track_dur / 3.0:
+        log.warning(
+            "lyrics_alignment_reanchor_skipped",
+            reason="implausible_shift",
+            audio_shift_s=round(audio_shift_s, 3),
+            track_dur_s=round(track_dur, 3),
+        )
+        return aligned_lines
+
+    log.info(
+        "lyrics_alignment_reanchor_single_l0_applied",
+        path="single_l0",
+        audio_shift_s=round(audio_shift_s, 3),
+        anchor_count=len(anchor_lines),
+        first_anchor_s=round(first_anchor_start, 3),
+        first_aligned_s=round(first_aligned_start, 3),
+    )
+    return _apply_uniform_shift(
+        aligned_lines=aligned_lines,
+        anchor_lines=anchor_lines,
+        shift_s=audio_shift_s,
+        track_end_s=track_end_s,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _LinearReanchorResult:
+    applied: bool
+    reason: str
+    diag: dict[str, object]
+    shift_at: Callable[[float], float]
+
+
+def _fit_linear_reanchor(
+    *,
+    aligned_lines: list[AlignedLine],
+    anchor_lines: Sequence[SyncedLine],
+    eligible_indices: list[int],
+    track_dur: float,
+) -> _LinearReanchorResult:
+    """Fit a robust per-anchor shift curve and decide whether to apply it."""
+
+    def _constant_zero(_t: float) -> float:
+        return 0.0
+
+    diag: dict[str, object] = {
+        "min_eligible": _LINEAR_MIN_ELIGIBLE_LINES,
+        "min_span_frac": _LINEAR_MIN_SPAN_FRAC,
+        "min_slope": _LINEAR_MIN_SLOPE,
+        "max_resid_mad_s": _LINEAR_MAX_RESID_MAD_S,
+    }
+    if len(eligible_indices) < _LINEAR_MIN_ELIGIBLE_LINES:
+        return _LinearReanchorResult(False, "insufficient_eligible_lines", diag, _constant_zero)
+    if track_dur <= 0:
+        return _LinearReanchorResult(False, "missing_track_duration", diag, _constant_zero)
+
+    points = [
+        (anchor_lines[i].start_s, aligned_lines[i].start_s - anchor_lines[i].start_s)
+        for i in eligible_indices
+    ]
+    xs = [p[0] for p in points]
+    shifts = [p[1] for p in points]
+    x_min = min(xs)
+    x_max = max(xs)
+    x_span = x_max - x_min
+    x_span_frac = x_span / track_dur
+    diag.update(
+        {
+            "eligible_indices": list(eligible_indices),
+            "x_span_s": round(x_span, 3),
+            "x_span_frac": round(x_span_frac, 4),
+            "per_line_shifts": [round(s, 3) for s in shifts],
+        }
+    )
+    if x_span_frac < _LINEAR_MIN_SPAN_FRAC:
+        return _LinearReanchorResult(False, "span_too_small", diag, _constant_zero)
+
+    slopes: list[float] = []
+    for i, (x_i, shift_i) in enumerate(points):
+        for x_j, shift_j in points[i + 1 :]:
+            dx = x_j - x_i
+            if abs(dx) <= _LINEAR_MIN_X_DELTA_S:
+                continue
+            slopes.append((shift_j - shift_i) / dx)
+    if not slopes:
+        return _LinearReanchorResult(False, "no_valid_slope_pairs", diag, _constant_zero)
+
+    slope = statistics.median(slopes)
+    intercept = statistics.median(shift - slope * x for x, shift in points)
+    residuals = [shift - (intercept + slope * x) for x, shift in points]
+    residual_median = statistics.median(residuals)
+    resid_mad = _mad(residuals, residual_median)
+    pred_min = intercept + slope * x_min
+    pred_max = intercept + slope * x_max
+    diag.update(
+        {
+            "slope": round(slope, 6),
+            "intercept": round(intercept, 3),
+            "resid_mad_s": round(resid_mad, 3),
+            "pred_shift_min_s": round(pred_min, 3),
+            "pred_shift_max_s": round(pred_max, 3),
+        }
+    )
+
+    if abs(slope) <= _LINEAR_MIN_SLOPE:
+        return _LinearReanchorResult(False, "slope_too_small", diag, _constant_zero)
+    if resid_mad >= _LINEAR_MAX_RESID_MAD_S:
+        return _LinearReanchorResult(False, "residual_spread_too_wide", diag, _constant_zero)
+    if max(abs(pred_min), abs(pred_max)) > track_dur / 3.0:
+        return _LinearReanchorResult(False, "implausible_endpoint_shift", diag, _constant_zero)
+
+    def _shift_at(t: float) -> float:
+        return intercept + slope * t
+
+    return _LinearReanchorResult(True, "applied", diag, _shift_at)
+
+
+def _apply_uniform_shift(
+    *,
+    aligned_lines: list[AlignedLine],
+    anchor_lines: Sequence[SyncedLine],
+    shift_s: float,
+    track_end_s: float | None,
+) -> list[AlignedLine]:
+    """Rewrite every line's `start_s` / `end_s` to `LRC_anchor[i] + shift_s`.
+
+    Uniform wrapper around `_apply_shift`, used by the multi-line median and
+    single-L0 fallback paths.
+    """
+
+    return _apply_shift(
+        aligned_lines=aligned_lines,
+        anchor_lines=anchor_lines,
+        shift_at=lambda _t: shift_s,
+        track_end_s=track_end_s,
+    )
+
+
+def _apply_shift(
+    *,
+    aligned_lines: list[AlignedLine],
+    anchor_lines: Sequence[SyncedLine],
+    shift_at: Callable[[float], float],
+    track_end_s: float | None,
+) -> list[AlignedLine]:
+    """Rewrite line bounds to `LRC_anchor[i] + shift_at(anchor_time)`.
+
+    Per-word `AlignedWord` timings are NOT modified (the karaoke contract).
+    Caller is responsible for ensuring `len(aligned_lines) == len(anchor_lines)`.
+    """
+    from dataclasses import replace  # noqa: PLC0415
+
+    rebuilt: list[AlignedLine] = []
+    for i, line in enumerate(aligned_lines):
+        anchor = anchor_lines[i]
+        new_start = anchor.start_s + shift_at(anchor.start_s)
+        if i + 1 < len(anchor_lines):
+            next_anchor = anchor_lines[i + 1]
+            new_end = (
+                next_anchor.start_s
+                + shift_at(next_anchor.start_s)
+                - _REANCHOR_NEXT_LINE_SAFETY_S
+            )
+        else:
+            # Final line — no next anchor. Use whisper's last-word end (when
+            # available) which is the most reliable signal we have for the
+            # actual sung tail of the last line. Floor at
+            # `_REANCHOR_LAST_LINE_MIN_DUR_S` past `new_start` so we render
+            # the line for at least a readable minimum even when whisper
+            # missed the tail. Cap at `track_end_s` so we never extend past
+            # the audio file's actual duration.
+            if line.words:
+                whisper_last_end = max(w.end_s for w in line.words)
+            else:
+                whisper_last_end = new_start + _FALLBACK_TRAILING_WINDOW_S
+            new_end = max(
+                whisper_last_end + _LAST_WORD_TAIL_PAD_S,
+                new_start + _REANCHOR_LAST_LINE_MIN_DUR_S,
+            )
+            if track_end_s is not None:
+                new_end = min(new_end, track_end_s)
+
+        # Guard: re-anchor never shrinks the line below its own audible
+        # words — if Whisper found a real word past the new_end, extend to
+        # cover it (otherwise per-word karaoke highlights would render past
+        # the line's nominal end_s and the line-style window would clip).
+        #
+        # CAP the extension at `next_anchor + shift` (or track_end_s for
+        # the last line) so a TRAILING-COLLAPSE interpolated word doesn't
+        # push the line bound past the next line's actual vocal. The L2
+        # case on Instant Crush demonstrates this: `_build_line` trailing
+        # interpolation placed 6 unmatched canonical words past the LRC
+        # window end (prev_end 39.64 with no usable cap), producing word
+        # timings up to 42.04 that should NOT extend L2 past LRC's L3
+        # anchor + shift.
+        if line.words:
+            words_max_end = max(w.end_s for w in line.words)
+            if words_max_end > new_end:
+                if i + 1 < len(anchor_lines):
+                    hard_cap_end = (
+                        anchor_lines[i + 1].start_s
+                        + shift_at(anchor_lines[i + 1].start_s)
+                        - _REANCHOR_NEXT_LINE_SAFETY_S
+                    )
+                elif track_end_s is not None:
+                    hard_cap_end = track_end_s
+                else:
+                    hard_cap_end = words_max_end
+                new_end = max(new_end, min(words_max_end, hard_cap_end))
+
+        rebuilt.append(
+            replace(
+                line,
+                start_s=round(new_start, 3),
+                end_s=round(new_end, 3),
+            )
+        )
+    return rebuilt
 
 
 def _align_within_window(
@@ -447,7 +1182,10 @@ def _align_within_window(
                 slots.append((canonical_word, ww.start_s, ww.end_s))
                 matched_count += 1
                 cursor = match_idx + 1
-        line = _build_line(anchor_text, slots)
+        # Pass the anchored window's upper bound so the trailing-unmatched
+        # guardrail in `_build_line` can spread (not collapse) tokens up to
+        # `window_end - _NEXT_LINE_SAFETY_S`.
+        line = _build_line(anchor_text, slots, tail_end_cap_s=window_end)
         if line is not None:
             return line, matched_count
         # `_build_line` only returns None when zero words matched — fall

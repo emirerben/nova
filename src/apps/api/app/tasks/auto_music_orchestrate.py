@@ -95,11 +95,15 @@ from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION, MusicLabels
-from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION, MAX_SECTION_DURATION_S
+from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, JobClip, MusicTrack
 from app.pipeline.music_recipe import generate_music_recipe
+from app.services.music_sections import (
+    current_best_section_for_track,
+    track_config_with_rank_one,
+)
 
 # Shared render-path helpers live in template_orchestrate. We REUSE these
 # verbatim — no forks. If the shared helper changes, both orchestrators
@@ -424,14 +428,16 @@ def _run_auto_music_job(job_id: str) -> None:
 # ── Candidate loading + matcher invocation ────────────────────────────────────
 
 
-def _load_matcher_candidates(n_clips: int) -> list[MusicTrack]:
-    """Return published, current-label-version tracks the matcher may pick from.
+def _load_matcher_candidates(n_clips: int, *, require_published: bool = True) -> list[MusicTrack]:
+    """Return analyzed, current-version tracks the matcher may pick from.
 
     Two filters:
-      - DB-side: ``published_at IS NOT NULL`` AND ``ai_labels IS NOT NULL``
-        AND ``label_version = CURRENT_LABEL_VERSION`` AND
+      - DB-side: ``ai_labels IS NOT NULL`` AND
+        ``label_version = CURRENT_LABEL_VERSION`` AND
         ``best_sections IS NOT NULL`` AND
-        ``section_version = CURRENT_SECTION_VERSION``.
+        ``section_version = CURRENT_SECTION_VERSION`` AND
+        ``analysis_status = 'ready'``. ``published_at IS NOT NULL`` is added
+        only when ``require_published`` is set.
       - Python-side: drop tracks whose slot count is degenerate after
         ``consolidate_slots(slot_count, n_clips)`` — see Critical risk #4
         in the plan. We approximate this by checking that the track's
@@ -440,16 +446,24 @@ def _load_matcher_candidates(n_clips: int) -> list[MusicTrack]:
         and skip. The exact gate uses the matcher's slot_count hint, not
         the post-consolidation count, because consolidate_slots needs the
         clip_metas (which we have) but we want a cheap pre-filter here.
+
+    ``require_published=False`` is the generative path: generative edits
+    auto-pick a song (the user never browses the gallery), so the
+    public-gallery publish gate shouldn't constrain them — any analyzed,
+    current-version track is fair game. Auto-music keeps the default so its
+    candidate set stays published-only.
     """
     with _sync_session() as db:
-        stmt = select(MusicTrack).where(
-            MusicTrack.published_at.is_not(None),
+        where_clauses = [
             MusicTrack.ai_labels.is_not(None),
             MusicTrack.label_version == CURRENT_LABEL_VERSION,
             MusicTrack.best_sections.is_not(None),
             MusicTrack.section_version == CURRENT_SECTION_VERSION,
             MusicTrack.analysis_status == "ready",
-        )
+        ]
+        if require_published:
+            where_clauses.append(MusicTrack.published_at.is_not(None))
+        stmt = select(MusicTrack).where(*where_clauses)
         tracks: list[MusicTrack] = list(db.execute(stmt).scalars().all())
         # Detach: the session closes before the orchestrator finishes,
         # so we eagerly resolve the few attributes we'll need later.
@@ -475,7 +489,7 @@ def _load_matcher_candidates(n_clips: int) -> list[MusicTrack]:
         slot_count_cache: dict[str, int] = {}
         out: list[MusicTrack] = []
         for t in tracks:
-            if _current_best_section(t) is None:
+            if current_best_section_for_track(t) is None:
                 continue
             slot_count = _track_slot_count(t, slot_count_cache=slot_count_cache)
             if slot_count <= 0:
@@ -491,45 +505,8 @@ def _load_matcher_candidates(n_clips: int) -> list[MusicTrack]:
         return out
 
 
-def _current_best_section(track: MusicTrack) -> tuple[float, float] | None:
-    """Return the rank-1 current-version song section, or None if unusable."""
-    if getattr(track, "section_version", None) != CURRENT_SECTION_VERSION:
-        return None
-    sections = getattr(track, "best_sections", None) or []
-    if not isinstance(sections, list) or not sections:
-        return None
-    first = sections[0]
-    if isinstance(first, dict):
-        start_raw = first.get("start_s")
-        end_raw = first.get("end_s")
-    else:
-        start_raw = getattr(first, "start_s", None)
-        end_raw = getattr(first, "end_s", None)
-    try:
-        start_s = float(start_raw)
-        end_s = float(end_raw)
-    except (TypeError, ValueError):
-        return None
-    if end_s <= start_s:
-        return None
-    end_s = min(end_s, start_s + MAX_SECTION_DURATION_S)
-    return start_s, end_s
-
-
-def _track_config_for_best_section(track: MusicTrack) -> dict:
-    """Render auto-music variants against ``best_sections[0]``.
-
-    The admin/manual ``track_config`` window stays untouched. This returns
-    a copy for the auto-music recipe only.
-    """
-    cfg = dict(getattr(track, "track_config", None) or {})
-    section = _current_best_section(track)
-    if section is None:
-        return cfg
-    start_s, end_s = section
-    cfg["best_start_s"] = round(start_s, 3)
-    cfg["best_end_s"] = round(end_s, 3)
-    return cfg
+# _current_best_section / _track_config_for_best_section moved to
+# app/services/music_sections.py — see imports at the top of this file.
 
 
 def _track_slot_count(
@@ -556,12 +533,12 @@ def _track_slot_count(
 
 
 def _compute_track_slot_count(track: MusicTrack) -> int:
-    if _current_best_section(track) is not None:
+    if current_best_section_for_track(track) is not None:
         try:
             recipe = generate_music_recipe(
                 {
                     "beat_timestamps_s": getattr(track, "beat_timestamps_s", None) or [],
-                    "track_config": _track_config_for_best_section(track),
+                    "track_config": track_config_with_rank_one(track),
                     "duration_s": getattr(track, "duration_s", None),
                 }
             )
@@ -830,7 +807,7 @@ def _render_one_variant(
 
         track_data = {
             "beat_timestamps_s": track.beat_timestamps_s or [],
-            "track_config": _track_config_for_best_section(track),
+            "track_config": track_config_with_rank_one(track),
             "duration_s": track.duration_s,
         }
 

@@ -107,6 +107,11 @@ def _classify_overlay(overlay: dict) -> str | None:
     """
     if overlay.get("_layer2_uniform"):
         return None
+    # Style-set-styled overlays get their font/size/color/effect/position from
+    # the chosen set at render time (_collect_absolute_overlays); text_designer
+    # would only fight that, so skip it here too.
+    if overlay.get("_style_set_styled"):
+        return None
     role = overlay.get("role", "")
     # Layer-2 explicit roles take priority — check before subject/prefix heuristics.
     if role in {"hook", "reaction", "cta"}:

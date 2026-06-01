@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { signIn, signOut, useSession } from "next-auth/react";
+import { useEffect, useRef, useState } from "react";
 
 export default function Header() {
   const pathname = usePathname() ?? "";
   const isAdmin = pathname.startsWith("/admin");
+  const { status: authStatus } = useSession();
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
@@ -38,15 +40,120 @@ export default function Header() {
         WebkitBackdropFilter: `blur(${12 * progress}px)`,
       }}
     >
-      <div className="h-full max-w-6xl mx-auto px-4 flex items-center">
+      <div className="mx-auto flex h-full max-w-6xl items-center justify-between px-4">
         <Link
           href="/"
           aria-label="Nova — home"
-          className="text-white font-semibold tracking-tight"
+          className="font-semibold tracking-tight text-white"
         >
           Nova
         </Link>
+        <nav className="flex items-center gap-2 sm:gap-4">
+          <Link
+            href="/plan"
+            className={`text-sm transition-colors hover:text-white ${
+              pathname.startsWith("/plan") ? "text-white" : "text-zinc-400"
+            }`}
+          >
+            Plan
+          </Link>
+          {authStatus === "authenticated" && (
+            <Link
+              href="/library"
+              className={`text-sm transition-colors hover:text-white ${
+                pathname.startsWith("/library") ? "text-white" : "text-zinc-400"
+              }`}
+            >
+              Library
+            </Link>
+          )}
+          <AuthControl />
+        </nav>
       </div>
     </header>
+  );
+}
+
+function AuthControl() {
+  const { data: session, status } = useSession();
+  const [open, setOpen] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+
+  if (status === "loading") {
+    return <div className="h-8 w-8 animate-pulse rounded-full bg-zinc-800" />;
+  }
+
+  if (!session?.user) {
+    return (
+      <button
+        onClick={() => {
+          setSigningIn(true);
+          // signIn redirects away on success; if it returns (popup blocked,
+          // back button) the component is still mounted so re-enable the button.
+          void signIn("google", { callbackUrl: "/plan" }).finally(() =>
+            setSigningIn(false),
+          );
+        }}
+        disabled={signingIn}
+        className="rounded-full border border-zinc-700 px-4 py-1.5 text-sm font-medium text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {signingIn ? "Signing in…" : "Sign in"}
+      </button>
+    );
+  }
+
+  const name = session.user.name ?? session.user.email ?? "You";
+  const image = session.user.image ?? null;
+  const initial = name.trim().charAt(0).toUpperCase() || "Y";
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-label="Account menu"
+        className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-zinc-700 bg-zinc-800 text-sm font-medium text-zinc-200 transition-colors hover:border-zinc-400"
+      >
+        {image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={image} alt="" className="h-full w-full object-cover" />
+        ) : (
+          initial
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-2 w-44 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 py-1 shadow-xl">
+          <p className="truncate px-3 py-2 text-xs text-zinc-500">{name}</p>
+          <Link
+            href="/plan"
+            onClick={() => setOpen(false)}
+            className="block px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-900"
+          >
+            My plan
+          </Link>
+          <Link
+            href="/library"
+            onClick={() => setOpen(false)}
+            className="block px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-900"
+          >
+            My videos
+          </Link>
+          <button
+            onClick={() => signOut({ callbackUrl: "/" })}
+            className="block w-full px-3 py-2 text-left text-sm text-zinc-400 hover:bg-zinc-900 hover:text-white"
+          >
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

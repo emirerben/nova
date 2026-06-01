@@ -1,0 +1,42 @@
+{
+  "agent": "nova.plan.persona_generator",
+  "prompt_version": "2026-05-30.1",
+  "input": {
+    "work": "part-time barista",
+    "school": "junior at Michigan State, kinesiology major",
+    "social": "big friend group, always hosting game nights",
+    "location": "East Lansing, Michigan",
+    "hobbies": "powerlifting, cooking high-protein meals, thrifting",
+    "travels": "road trips to national parks every break",
+    "passions": "making gym culture feel welcoming to beginners",
+    "tiktok_handle": "liftandlentils"
+  },
+  "raw_text": "{\n  \"summary\": \"You're the kinesiology student and powerlifter who makes fitness feel welcoming and achievable. You blend your science-backed knowledge with a down-to-earth approach, sharing simple high-protein recipes and gym guides for beginners.\",\n  \"content_pillars\": [\n    \"Approachable powerlifting guides\",\n    \"High-protein meals for students\",\n    \"Thrifted gym outfits\",\n    \"Kinesiology insights in practice\",\n    \"Budget-friendly road trips\"\n  ],\n  \"tone\": \"Encouraging, knowledgeable, and like a helpful older friend\",\n  \"audience\": \"College students and gym beginners who want to build strength and healthy habits without the intimidating 'gym-bro' culture.\",\n  \"posting_cadence\": \"3-4 posts/week, balancing pre-filmed guides with in-the-moment student life\",\n  \"sample_topics\": [\n    \"My go-to high-protein grocery haul on a student budget\",\n    \"How to set up for hip thrusts without feeling awkward\",\n    \"Come thrifting with me for a week of gym clothes\",\n    \"A kinesiology myth I stopped believing\",\n    \"What I actually eat before a heavy lifting day\",\n    \"Hosting a healthy game night: what I cooked\",\n    \"Three things to do at a national park besides hike\"\n  ],\n  \"rationale\": \"This lane turns your passion into practical, save-worthy content that helps people feel confident at the gym. By being the friendly, knowledgeable guide, you create useful resources that viewers will save and return to, building a loyal community.\"\n}",
+  "output": {
+    "summary": "You're the kinesiology student and powerlifter who makes fitness feel welcoming and achievable. You blend your science-backed knowledge with a down-to-earth approach, sharing simple high-protein recipes and gym guides for beginners.",
+    "content_pillars": [
+      "Approachable powerlifting guides",
+      "High-protein meals for students",
+      "Thrifted gym outfits",
+      "Kinesiology insights in practice",
+      "Budget-friendly road trips"
+    ],
+    "tone": "Encouraging, knowledgeable, and like a helpful older friend",
+    "audience": "College students and gym beginners who want to build strength and healthy habits without the intimidating 'gym-bro' culture.",
+    "posting_cadence": "3-4 posts/week, balancing pre-filmed guides with in-the-moment student life",
+    "sample_topics": [
+      "My go-to high-protein grocery haul on a student budget",
+      "How to set up for hip thrusts without feeling awkward",
+      "Come thrifting with me for a week of gym clothes",
+      "A kinesiology myth I stopped believing",
+      "What I actually eat before a heavy lifting day",
+      "Hosting a healthy game night: what I cooked",
+      "Three things to do at a national park besides hike"
+    ],
+    "rationale": "This lane turns your passion into practical, save-worthy content that helps people feel confident at the gym. By being the friendly, knowledgeable guide, you create useful resources that viewers will save and return to, building a loyal community."
+  },
+  "meta": {
+    "source": "live_capture_2026-05-30b",
+    "case": "well-formed questionnaire -> grounded persona; pillars (4) and sample_topics (6) within bounds, all fields non-empty"
+  }
+}

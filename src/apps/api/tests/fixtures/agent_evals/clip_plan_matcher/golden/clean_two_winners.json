@@ -1,0 +1,61 @@
+{
+  "agent": "nova.plan.clip_plan_matcher",
+  "prompt_version": "2026-05-29",
+  "input": {
+    "clips": [
+      {
+        "clip_gcs_path": "users/u1/plan/p1/seed/aaa1-gym.mp4",
+        "hook_text": "5am and the gym is empty",
+        "hook_score": 7.5,
+        "detected_subject": "person doing a dumbbell workout in an empty gym at dawn",
+        "transcript_excerpt": "alright let's get this morning lift in before work",
+        "duration_s": 8.0
+      },
+      {
+        "clip_gcs_path": "users/u1/plan/p1/seed/bbb2-market.mp4",
+        "hook_text": "this street market is unreal",
+        "hook_score": 6.8,
+        "detected_subject": "walking through a crowded outdoor food market in a foreign city",
+        "transcript_excerpt": "everything here is like two dollars and it's incredible",
+        "duration_s": 11.0
+      },
+      {
+        "clip_gcs_path": "users/u1/plan/p1/seed/ccc3-coffee.mp4",
+        "hook_text": "",
+        "hook_score": 3.2,
+        "detected_subject": "a latte being set on a cafe table, no people",
+        "transcript_excerpt": "",
+        "duration_s": 4.0
+      },
+      {
+        "clip_gcs_path": "users/u1/plan/p1/seed/ddd4-blank.mp4",
+        "hook_text": "",
+        "hook_score": 2.0,
+        "detected_subject": "a wall, static shot",
+        "transcript_excerpt": "",
+        "duration_s": 3.0
+      }
+    ],
+    "items": [
+      {"item_id": "item_day1", "theme": "Morning routine", "idea": "Show your real 5am gym routine and how you stay consistent", "filming_suggestion": "Film your workout in one continuous shot"},
+      {"item_id": "item_day2", "theme": "Budget travel", "idea": "Walk a local market and show how far a small budget goes", "filming_suggestion": "Handheld walkthrough with prices"},
+      {"item_id": "item_day3", "theme": "Productivity", "idea": "Your top 3 focus tips for deep work", "filming_suggestion": "Talking head at your desk"},
+      {"item_id": "item_day4", "theme": "Book recommendations", "idea": "Three books that changed how you think", "filming_suggestion": "Hold each book up to camera"},
+      {"item_id": "item_day5", "theme": "Cooking", "idea": "A 15-minute high-protein lunch", "filming_suggestion": "Overhead kitchen shot"},
+      {"item_id": "item_day6", "theme": "Mindset", "idea": "How you handle a bad day", "filming_suggestion": "Voiceover over b-roll"},
+      {"item_id": "item_day7", "theme": "Q&A", "idea": "Answer your most-asked question", "filming_suggestion": "Talking head"}
+    ],
+    "max_assignments": 2
+  },
+  "raw_text": "{\"assignments\": [{\"item_id\": \"item_day1\", \"clip_gcs_path\": \"users/u1/plan/p1/seed/aaa1-gym.mp4\", \"score\": 9.0, \"rationale\": \"The empty-gym dawn workout is exactly the real 5am routine day 1 asks for, and its hook is strong enough to open on.\"}, {\"item_id\": \"item_day2\", \"clip_gcs_path\": \"users/u1/plan/p1/seed/bbb2-market.mp4\", \"score\": 8.5, \"rationale\": \"The crowded foreign-market walkthrough with prices in the transcript directly serves the budget-travel market idea.\"}]}",
+  "output": {
+    "assignments": [
+      {"item_id": "item_day1", "clip_gcs_path": "users/u1/plan/p1/seed/aaa1-gym.mp4", "score": 9.0, "rationale": "The empty-gym dawn workout is exactly the real 5am routine day 1 asks for, and its hook is strong enough to open on."},
+      {"item_id": "item_day2", "clip_gcs_path": "users/u1/plan/p1/seed/bbb2-market.mp4", "score": 8.5, "rationale": "The crowded foreign-market walkthrough with prices in the transcript directly serves the budget-travel market idea."}
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "clean match — two clips with obvious distinct item fits; the two weak clips (coffee, blank wall) are correctly omitted under max_assignments=2"
+  }
+}

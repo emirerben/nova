@@ -118,6 +118,51 @@ def _preload_typefaces() -> None:
 _preload_typefaces()
 
 
+class MissingGlyphsError(ValueError):
+    """Raised when a typeface lacks glyphs needed for the text it will render.
+
+    Skia draws `.notdef` (tofu box) for absent glyphs without raising — for
+    languages with diacritics (e.g. Turkish ç ş ğ ı İ ö ü) a font-bundle
+    regression would ship visually broken renders to users with NO log signal.
+    Callers verifying glyph coverage in advance (eval gates, CI, the language
+    rollout check) use this to fail loudly.
+    """
+
+
+def assert_glyphs_present(typeface: skia.Typeface, text: str) -> None:
+    """Verify every non-whitespace codepoint in `text` is present in `typeface`.
+
+    Whitespace is skipped because SkFont metrics for space/tab/newline are
+    layout-level concerns, not glyph-coverage concerns. Raises MissingGlyphsError
+    listing each missing codepoint as both U+HHHH and the literal character so
+    operators can grep the log for a known glyph.
+    """
+    missing = [
+        f"U+{ord(ch):04X} ({ch!r})"
+        for ch in dict.fromkeys(text)  # dedupe, preserve order
+        if not ch.isspace() and typeface.unicharToGlyph(ord(ch)) == 0
+    ]
+    if missing:
+        raise MissingGlyphsError(f"Typeface missing {len(missing)} glyph(s): {', '.join(missing)}")
+
+
+def _overlay_text(overlay: dict) -> str:
+    """Return the text the renderer should burn for this overlay.
+
+    Prefers `display_text` when set (Layer 2 line-style finalization in
+    `lyric_injector._finalize_lyric_audible_window` writes this when it
+    truncates a partial lyric line to its audible-word substring). Falls
+    back to `text` for every other case so non-music callers are byte-
+    identical to pre-PR behavior.
+
+    Plan: plans/geli-me-var-ama-hatalar-robust-reddy.md §2c, §2g.
+    """
+    dt = overlay.get("display_text")
+    if dt:
+        return dt
+    return overlay.get("text", "") or ""
+
+
 def _typeface_for_overlay(overlay: dict, font_name_override: str | None = None) -> skia.Typeface:
     """Resolve a typeface for an overlay following the same priority as
     text_overlay._draw_text_png: font_name_override → overlay.font_family →
@@ -338,6 +383,40 @@ def _measure_block(font: skia.Font, lines: list[str]) -> dict[str, Any]:
     }
 
 
+def fit_text_size_px(
+    text: str,
+    typeface: skia.Typeface,
+    box_w_px: float,
+    box_h_px: float,
+    *,
+    max_px: int,
+    min_px: int = _MIN_FONT_SIZE,
+) -> int:
+    """Largest px (<= max_px, >= min_px) at which `text` — word-wrapped to
+    `box_w_px` — fits inside a (box_w_px x box_h_px) box without clipping.
+
+    The inverse of `_shrink_to_fit`: that one only shrinks a known start size to
+    stop horizontal overflow; this searches DOWNWARD from `max_px` to FILL an
+    empty box (both width and stacked-line height), so a calm frame gets large
+    text and a tight one gets small text. Uses the same wrap + block-measure
+    primitives the renderer uses, so the size this returns is the size that
+    actually renders. `_shrink_to_fit` still runs at draw time as the final
+    clip-safety clamp.
+    """
+    min_px = max(_MIN_FONT_SIZE, int(min_px))
+    size = max(min_px, int(max_px))
+    while size > min_px:
+        font = skia.Font(typeface, size)
+        font.setSubpixel(True)
+        lines = _wrap_text_to_lines(text, font, box_w_px)
+        widest = max((font.measureText(ln) for ln in lines), default=0.0)
+        block_h = _measure_block(font, lines)["block_h"]
+        if widest <= box_w_px and block_h <= box_h_px:
+            return size
+        size = int(size * 0.92)
+    return min_px
+
+
 # -- Per-frame drawing -------------------------------------------------------
 
 
@@ -387,9 +466,7 @@ def _draw_centered_text(
     first_w = block["widths"][0] if block["widths"] else 0
     emoji_metrics = _resolve_emoji_metrics(overlay, first_w, font)
 
-    base_color = _skia_color_from_hex(
-        overlay.get("text_color", "#FFFFFF"), int(255 * alpha)
-    )
+    base_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"), int(255 * alpha))
     fill_color = color_override if color_override is not None else base_color
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
     shadow_alpha = int(160 * alpha)
@@ -591,7 +668,7 @@ def _draw_pop_in_with_suffix(
     scales = (30, 115, 100)). Without this, every new lyric word re-pops the
     full accumulated line — visible flicker.
     """
-    text = overlay.get("text", "") or ""
+    text = _overlay_text(overlay)
     suffix = overlay.get("pop_animated_suffix") or ""
     if not text:
         return
@@ -692,6 +769,10 @@ def _draw_karaoke_line(
     """karaoke-line: each word switches from primary color to highlight color
     when t_local crosses its end timestamp. word_timings is a list of
     {text, duration_cs} with cumulative timing from overlay start.
+
+    Karaoke does NOT consume `display_text` — its per-word highlight order
+    is keyed off the original `text`. Layer 2's finalizer never sets
+    `display_text` on karaoke overlays (it only fires for effect="lyric-line").
     """
     text = overlay.get("text", "") or ""
     word_timings = overlay.get("word_timings") or []
@@ -732,9 +813,7 @@ def _draw_karaoke_line(
     baseline_y = _vertical_block_top(anchor, cy, line_height_raw) + (-metrics.fAscent)
 
     primary_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
-    highlight_color = _skia_color_from_hex(
-        overlay.get("highlight_color") or "#FFD24A"
-    )
+    highlight_color = _skia_color_from_hex(overlay.get("highlight_color") or "#FFD24A")
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
 
     for i, word in enumerate(words):
@@ -744,6 +823,60 @@ def _draw_karaoke_line(
             canvas, word, x, baseline_y, font, color, stroke_px, shadow_alpha=160
         )
         x += word_widths[i] + space_w
+
+
+def _lyric_line_alpha(overlay: dict, t_local: float, duration_s: float) -> float:
+    """Per-frame alpha for `effect='lyric-line'`, mirroring the libass
+    `_emit_lyric_line_alpha_tags` semantics in text_overlay.py:
+
+      alpha rises 0 → 1 during [0, fade_in_ms]                          (fade-in)
+      alpha holds at 1 during [fade_in_ms, duration_ms - fade_out_ms]   (hold)
+      alpha falls 1 → 0 during [duration_ms - fade_out_ms, duration_ms] (fade-out)
+
+    Curve matches libass `\\t(t1, t2, accel, tag)` exactly:
+      fade-in  uses accel=0.5 → alpha = sqrt(progress)        (snaps in early)
+      fade-out uses accel=2.0 → alpha = 1 - progress**2       (lingers, then drops)
+
+    Clamp semantics also match libass: fade_out is shrunk if fade_in already
+    consumed the duration, so very short overlays never wrap around.
+    """
+    if duration_s <= 0:
+        return 1.0
+    duration_ms = max(0, int(round(duration_s * 1000.0)))
+    # Defaults match libass `_overlay_int(overlay, "fade_*_ms", 150/250)` in
+    # text_overlay.py:476-477. Renderer-parity: identical overlay dict must
+    # render identically across renderers, even when fade keys are absent.
+    raw_in = overlay.get("fade_in_ms")
+    raw_out = overlay.get("fade_out_ms")
+    fade_in_ms = max(0, int(raw_in if raw_in is not None else 150))
+    fade_out_ms = max(0, int(raw_out if raw_out is not None else 250))
+    fade_in = min(fade_in_ms, duration_ms)
+    fade_out = min(fade_out_ms, max(0, duration_ms - fade_in))
+    if fade_in == 0 and fade_out == 0:
+        return 1.0
+
+    t_ms = max(0.0, min(t_local, duration_s)) * 1000.0
+    if fade_in > 0 and t_ms < fade_in:
+        # libass \t(0, fade_in, 0.5, \alpha&H00&) → alpha = progress**0.5
+        progress = t_ms / float(fade_in)
+        return progress**0.5
+    fade_out_start_ms = duration_ms - fade_out
+    if fade_out > 0 and t_ms >= fade_out_start_ms:
+        progress = (t_ms - fade_out_start_ms) / float(fade_out)
+        if overlay.get("fade_out_curve") == "sqrt":
+            # Mirror of the sqrt fade-in: libass \t(start, end, 0.5, \alpha&HFF&)
+            # → alpha = 1 − progress**0.5. Set by the dynamic crossfade
+            # post-pass in lyric_injector.py for inter-line crossfades only;
+            # over a matched duration window paired with the sqrt fade-in on
+            # the incoming line, α_outgoing + α_incoming = 1 at every t — no
+            # readable stacked text. See plan §2 / Mirea fix.
+            return max(0.0, 1.0 - progress**0.5)
+        # Default lingering fade-out (solo lines, sparse pairs, hard-cut /
+        # solo-demoted / override / kill-switch-off — every non-crossfade
+        # case): libass \t(fade_out_start, duration_ms, 2.0, \alpha&HFF&) →
+        # alpha = 1 − progress².
+        return max(0.0, 1.0 - progress**2)
+    return 1.0
 
 
 def _draw_with_animation(
@@ -758,7 +891,7 @@ def _draw_with_animation(
     `effect` at time `t_local`, then draw the (possibly transformed) text.
     """
     effect = effect or overlay.get("effect", "none")
-    text = overlay.get("text", "") or ""
+    text = _overlay_text(overlay)
 
     scale = 1.0
     alpha = 1.0
@@ -781,6 +914,16 @@ def _draw_with_animation(
         chars_per_s = 12.0
         visible_chars = max(1, int(t_local * chars_per_s) + 1)
         visible_text = text[:visible_chars]
+    elif effect == "stream-in":
+        # "How an AI returns an answer" — reveal WORD by word (not char) with a
+        # blinking cursor while streaming. Pairs with text_anchor="left" so the
+        # answer grows rightward from a fixed margin like a chat response.
+        words = text.split()
+        words_per_s = 6.0
+        n = max(1, int(t_local * words_per_s) + 1)
+        visible_text = " ".join(words[:n])
+        if n < len(words) and int(t_local * 2) % 2 == 0:
+            visible_text = f"{visible_text} |"  # blink cursor at ~2 Hz
     elif effect in ("slide-up", "slide-down"):
         animate_for = min(0.35, duration_s * 0.5)
         progress = min(1.0, t_local / animate_for) if animate_for > 0 else 1.0
@@ -801,6 +944,8 @@ def _draw_with_animation(
                 scale = 0.90 + 0.10 * ((p - 0.72) / 0.28)
         else:
             scale = 1.0
+    elif effect == "lyric-line":
+        alpha = _lyric_line_alpha(overlay, t_local, duration_s)
     elif effect not in ("none", "static"):
         # Unknown effect → render as static. This is intentionally lenient:
         # in production we'd rather render the text at its base style than
@@ -826,11 +971,20 @@ _ANIMATED_EFFECTS_SKIA = {
     "scale-up",
     "fade-in",
     "typewriter",
+    "stream-in",
     "slide-up",
     "slide-down",
     "pop-in",
     "bounce",
     "karaoke-line",
+    # lyric-line must be animated to honor fade_in_ms / fade_out_ms. Without
+    # this, two consecutive lyric overlays whose [start_s, end_s] windows
+    # overlap (the designed crossfade window — see _inject_line's
+    # dynamic_max_overlap in lyric_injector.py) render as two stacked
+    # full-opacity PNGs at the same y_frac instead of crossfading. libass
+    # honors the same fade tags via _emit_lyric_line_alpha_tags in
+    # text_overlay.py — the renderer-parity invariant requires Skia match.
+    "lyric-line",
 }
 
 
@@ -862,17 +1016,20 @@ def _draw_frame(overlay: dict, t_local: float, duration_s: float) -> skia.Image:
         font = skia.Font(_typeface_for_overlay(overlay, font_name_override=font_name))
         font.setSize(_resolve_font_size_px(overlay))
         font.setSubpixel(True)
-        _draw_centered_text(
-            canvas, overlay.get("text", ""), overlay, font_override=font
-        )
+        _draw_centered_text(canvas, _overlay_text(overlay), overlay, font_override=font)
     elif effect == "karaoke-line":
         _draw_karaoke_line(canvas, overlay, t_local, duration_s)
     elif effect == "pop-in" and overlay.get("pop_animated_suffix"):
         _draw_pop_in_with_suffix(canvas, overlay, t_local, duration_s)
     elif _is_animated(overlay):
+        # `lyric-line` is in this branch because its fade_in_ms / fade_out_ms
+        # are honored per-frame in `_draw_with_animation`. `_overlay_text`
+        # still resolves `display_text` (the Layer 2 finalizer's truncated
+        # partial line) when present — the alpha multiplies on top of that.
         _draw_with_animation(canvas, overlay, t_local, duration_s)
     else:
-        _draw_centered_text(canvas, overlay.get("text", ""), overlay)
+        # Static effects render at full opacity throughout [start_s, end_s].
+        _draw_centered_text(canvas, _overlay_text(overlay), overlay)
 
     return surface.makeImageSnapshot()
 
@@ -915,9 +1072,7 @@ def _write_png_pillow(img: skia.Image, out_path: str) -> None:
 # -- Public API: render overlays to FFmpeg-ready PNG sequences ---------------
 
 
-def _generate_overlay_sequence(
-    overlay: dict, work_dir: str, idx: int
-) -> dict[str, Any] | None:
+def _generate_overlay_sequence(overlay: dict, work_dir: str, idx: int) -> dict[str, Any] | None:
     """Render every frame for one overlay, return a single config describing
     the sequence (or single PNG for static effects)."""
     start_s = float(overlay.get("start_s", 0.0))
@@ -942,7 +1097,30 @@ def _generate_overlay_sequence(
             "is_animated": False,
         }
 
-    n_frames = min(MAX_OVERLAY_FRAMES, max(1, int(round(duration_s * FPS))))
+    # MAX_OVERLAY_FRAMES protects font-cycle (rapid font swaps where every
+    # frame is unique) from runaway PNG counts. `lyric-line` is slow alpha
+    # ramps over a long-held middle and would lose its fade-out + tail to
+    # the cap for any line longer than MAX_OVERLAY_FRAMES / FPS (~4s) — the
+    # prod regression for the user-reported job's Line 2 (4.26s). lyric-line
+    # opts out of the font-cycle cap but uses a generous sanity ceiling so a
+    # malformed transcript with `end_s = 240.0` (last-line-of-section has no
+    # gap_cap in lyric_injector) cannot blow scratch disk on the encode
+    # worker: 30s × 30fps = 900 frames × ~1MB PNG ≈ 1GB worst case, vs
+    # 7200 frames × 1MB ≈ 7GB unbounded.
+    effect = overlay.get("effect", "none")
+    wanted = max(1, int(round(duration_s * FPS)))
+    if effect == "lyric-line":
+        ceiling = int(FPS * 30)
+        if wanted > ceiling:
+            log.warning(
+                "skia_lyric_line_duration_clamped",
+                duration_s=duration_s,
+                wanted_frames=wanted,
+                clamped_to=ceiling,
+            )
+        n_frames = min(ceiling, wanted)
+    else:
+        n_frames = min(MAX_OVERLAY_FRAMES, wanted)
     frame_dur = 1.0 / FPS
     # Render ONE extra "hold" frame past the logical end. FFmpeg's image2
     # secondary stream EOFs at its last frame's PTS (not PTS + frame_dur), so
@@ -953,7 +1131,11 @@ def _generate_overlay_sequence(
     # extra frame is the settled final state (animation progress clamps to 1.0
     # at t_local >= duration), so it just holds the line through the seam; the
     # `between(t, start, end)` enable still gates the overlay off at `end`.
-    n_render = min(MAX_OVERLAY_FRAMES, n_frames + 1)
+    n_render = (
+        min(int(FPS * 30), n_frames + 1)
+        if effect == "lyric-line"
+        else min(MAX_OVERLAY_FRAMES, n_frames + 1)
+    )
 
     def _render_one(i: int) -> None:
         t_local = i * frame_dur
@@ -981,9 +1163,7 @@ def _render_overlay_sequences(
     sequences. Returns list of overlay-sequence configs ready for FFmpeg."""
     out: list[dict[str, Any]] = []
     for i, overlay in enumerate(overlays):
-        validated_text, start_s, end_s, _position = _validate_overlay(
-            overlay, slot_duration_s
-        )
+        validated_text, start_s, end_s, _position = _validate_overlay(overlay, slot_duration_s)
         # `_validate_overlay` returns None when the text is empty AND spans
         # are absent. Spans-only overlays are not yet supported by the Skia
         # path — fall back to validating just timing.
@@ -1024,9 +1204,12 @@ def _ffmpeg_burn_pngs(
         if seq["is_animated"]:
             cmd.extend(
                 [
-                    "-framerate", str(seq["fps"]),
-                    "-start_number", "0",
-                    "-i", seq["pattern"],
+                    "-framerate",
+                    str(seq["fps"]),
+                    "-start_number",
+                    "0",
+                    "-i",
+                    seq["pattern"],
                 ]
             )
         else:
@@ -1057,8 +1240,10 @@ def _ffmpeg_burn_pngs(
         [
             "-filter_complex",
             ";".join(fc_parts),
-            "-map", f"[{prev}]",
-            "-map", "0:a?",
+            "-map",
+            f"[{prev}]",
+            "-map",
+            "0:a?",
             *_encoding_args(output_path, preset="fast"),
         ]
     )

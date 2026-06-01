@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "Nova Music Ingest",
+  "version": "0.1.0",
+  "description": "Pull YouTube audio in your browser (your IP, your cookies) and ingest it into Nova. Required for admin music-track creation since the Nova API server cannot reliably reach YouTube from a data-center IP.",
+  "permissions": [
+    "storage",
+    "offscreen",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "*://*.googlevideo.com/*",
+    "*://*.ytimg.com/*",
+    "https://storage.googleapis.com/*",
+    "https://nova-video.vercel.app/*",
+    "http://localhost:3000/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Nova Music Ingest"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://nova-video.vercel.app/*",
+        "http://localhost:3000/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "externally_connectable": {
+    "matches": [
+      "https://nova-video.vercel.app/*",
+      "http://localhost:3000/*"
+    ]
+  }
+}

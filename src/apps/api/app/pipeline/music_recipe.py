@@ -17,6 +17,20 @@ DEFAULT_WINDOW_S = 45.0
 DEFAULT_SLOT_EVERY_N_BEATS = 8
 
 
+def count_slots(beats: list[float], start_s: float, end_s: float, n: int) -> int:
+    """Count slots that generate_music_recipe() would produce for these inputs.
+
+    Single source of truth for the slot-loop arithmetic so PATCH validators
+    (admin track-config edits) can reject (window, n) combos the recipe
+    generator would reject at job time. Mirrors the loop bound in
+    generate_music_recipe(): `range(0, len(window_beats) - n, n)`.
+    """
+    window_beats = [b for b in beats if start_s <= b <= end_s]
+    if len(window_beats) <= n:
+        return 0
+    return len(range(0, len(window_beats) - n, n))
+
+
 def generate_music_recipe(track_data: dict) -> dict:
     """Build a recipe dict from a MusicTrack's stored config and beat timestamps.
 
@@ -53,16 +67,18 @@ def generate_music_recipe(track_data: dict) -> dict:
         duration = slot_end_s - slot_start_s
         if duration <= 0:
             continue
-        slots.append({
-            "position": len(slots) + 1,
-            "target_duration_s": round(duration, 3),
-            "slot_type": "broll",
-            "energy": 5.0,      # overridden by _enrich_slots_with_energy in orchestrator
-            "priority": 5,
-            "text_overlays": [],
-            "transition_in": "cut",
-            "speed_factor": 1.0,
-        })
+        slots.append(
+            {
+                "position": len(slots) + 1,
+                "target_duration_s": round(duration, 3),
+                "slot_type": "broll",
+                "energy": 5.0,  # overridden by _enrich_slots_with_energy in orchestrator
+                "priority": 5,
+                "text_overlays": [],
+                "transition_in": "cut",
+                "speed_factor": 1.0,
+            }
+        )
 
     if not slots:
         raise ValueError(
@@ -150,8 +166,12 @@ def merge_audio_recipe(beat_recipe: dict, gemini_recipe: dict) -> dict:
 
     # Copy top-level visual fields from Gemini
     for key in (
-        "copy_tone", "caption_style", "creative_direction",
-        "color_grade", "transition_style", "pacing_style",
+        "copy_tone",
+        "caption_style",
+        "creative_direction",
+        "color_grade",
+        "transition_style",
+        "pacing_style",
         "subject_niche",
     ):
         if key in gemini_recipe:
@@ -232,9 +252,7 @@ def merge_template_with_track(parent_recipe: dict, track_data: dict) -> dict:
                     scaled["end_s"] = round(min(end_frac * m_duration, m_duration), 3)
                     # Ensure end > start
                     if scaled["end_s"] <= scaled["start_s"]:
-                        scaled["end_s"] = round(
-                            min(scaled["start_s"] + 0.1, m_duration), 3
-                        )
+                        scaled["end_s"] = round(min(scaled["start_s"] + 0.1, m_duration), 3)
                 scaled_overlays.append(scaled)
             m_slot["text_overlays"] = scaled_overlays
 
@@ -245,9 +263,7 @@ def merge_template_with_track(parent_recipe: dict, track_data: dict) -> dict:
         for inter in parent_interstitials:
             old_after = inter.get("after_slot", 1)
             # Proportional mapping: parent slot index → music slot index
-            new_after = max(
-                1, min(round(old_after * n_music / n_parent), n_music)
-            )
+            new_after = max(1, min(round(old_after * n_music / n_parent), n_music))
             mapped = dict(inter)
             mapped["after_slot"] = new_after
             mapped_interstitials.append(mapped)
@@ -255,8 +271,11 @@ def merge_template_with_track(parent_recipe: dict, track_data: dict) -> dict:
 
     # Carry over top-level visual fields from parent
     for key in (
-        "copy_tone", "caption_style", "creative_direction",
-        "color_grade", "transition_style",
+        "copy_tone",
+        "caption_style",
+        "creative_direction",
+        "color_grade",
+        "transition_style",
     ):
         if key in parent_recipe:
             music_recipe[key] = parent_recipe[key]
@@ -267,23 +286,51 @@ def merge_template_with_track(parent_recipe: dict, track_data: dict) -> dict:
     return music_recipe
 
 
+# Layer 3 tuning knob: equivalent-beats value of a single overlapping lyric
+# line. 0.5 means "one lyric line ≈ half a beat" — strong enough to break
+# near-ties between beat-equal windows in favor of the one that actually has
+# vocals, but weak enough that a beat-dense instrumental peak with zero
+# vocals can still beat a sparse verse with two whispered lines.
+# Tuned by hand against dc33d047 (Billie Jean) where the picked 45s window
+# straddled the bridge and left only one backing-vocal line surviving.
+# Future: replace with eval-driven constant.
+_LYRIC_LINE_WEIGHT = 0.5
+
+
 def auto_best_section(
     beat_timestamps_s: list[float],
     window_s: float = DEFAULT_WINDOW_S,
     track_duration_s: float = 0.0,
+    *,
+    lyric_lines: list[dict] | None = None,
+    lyric_weight: float = _LYRIC_LINE_WEIGHT,
 ) -> tuple[float, float]:
-    """Find the window of *window_s* seconds with the highest beat density.
+    """Find the window of *window_s* seconds with the highest combined density.
 
-    Beat density is used as a proxy for the chorus/drop — the most energetic
-    part of the song. Uses a sliding-window sweep over detected beat positions,
-    so it only considers windows that start *at* a beat (not every 1s).
+    Score is ``beat_count + lyric_weight * lyric_line_count`` where
+    lyric_line_count counts lyric lines that overlap the candidate window
+    (any overlap, matching the clamping behavior in
+    ``app/pipeline/lyric_injector._select_section_lines``). Uses a sliding-window
+    sweep over detected beat positions, so it only considers windows that
+    start *at* a beat (not every 1s).
 
-    This avoids librosa as a dependency.
+    When ``lyric_lines`` is None or empty, the score collapses to beat density
+    only — identical to the pre-Layer-3 behavior (backward-compat for
+    instrumental tracks, OpenAI-key-missing skips, or analyze runs that
+    happen before lyrics extraction completes).
+
+    Avoids librosa as a dependency.
 
     Args:
         beat_timestamps_s: sorted or unsorted list of beat timestamps in seconds.
         window_s: desired window length in seconds.
         track_duration_s: full track duration (used as fallback end cap).
+        lyric_lines: optional list of lyric line dicts with ``start_s``/``end_s``
+            in song-time (full track). Passed straight from
+            ``MusicTrack.lyrics_cached["output"]["lines"]``. When provided,
+            the section pick favors windows that surface more lyric lines.
+        lyric_weight: equivalent-beats value of a single overlapping lyric
+            line. Defaults to ``_LYRIC_LINE_WEIGHT``.
 
     Returns:
         (best_start_s, best_end_s) — the best window boundaries.
@@ -294,13 +341,35 @@ def auto_best_section(
 
     candidates = sorted(set(beat_timestamps_s))
     best_start: float = candidates[0]
-    best_count: int = 0
+    # -1 so the first valid window always beats it, even when beats are sparse
+    # and the score is 0 (lyric_lines=None + zero beats in window).
+    best_score: float = -1.0
+
+    # Pre-extract lyric bounds once so the inner loop stays tight. Skip lines
+    # with missing/malformed timing as a defense against bad cache rows
+    # (the agent normally returns clean data, but `MusicTrack.lyrics_cached`
+    # is JSONB and can drift).
+    lyric_bounds: list[tuple[float, float]] = []
+    if lyric_lines:
+        for ln in lyric_lines:
+            try:
+                ls = float(ln.get("start_s", 0.0))
+                le = float(ln.get("end_s", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if le > ls:
+                lyric_bounds.append((ls, le))
 
     for start in candidates:
         end = start + window_s
-        count = bisect_right(candidates, end) - bisect_left(candidates, start)
-        if count > best_count:
-            best_count = count
+        beat_count = bisect_right(candidates, end) - bisect_left(candidates, start)
+        if lyric_bounds:
+            lyric_count = sum(1 for ls, le in lyric_bounds if ls < end and le > start)
+            score = float(beat_count) + lyric_weight * lyric_count
+        else:
+            score = float(beat_count)
+        if score > best_score:
+            best_score = score
             best_start = start
 
     best_end = best_start + window_s

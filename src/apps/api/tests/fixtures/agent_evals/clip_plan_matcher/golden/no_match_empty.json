@@ -1,0 +1,38 @@
+{
+  "agent": "nova.plan.clip_plan_matcher",
+  "prompt_version": "2026-05-29",
+  "input": {
+    "clips": [
+      {
+        "clip_gcs_path": "users/u2/plan/p2/seed/zzz1-ceiling.mp4",
+        "hook_text": "",
+        "hook_score": 2.0,
+        "detected_subject": "a static shot of a bedroom ceiling fan spinning",
+        "transcript_excerpt": "",
+        "duration_s": 5.0
+      },
+      {
+        "clip_gcs_path": "users/u2/plan/p2/seed/zzz2-parking.mp4",
+        "hook_text": "",
+        "hook_score": 2.5,
+        "detected_subject": "a half-empty parking lot filmed from a car window",
+        "transcript_excerpt": "",
+        "duration_s": 6.0
+      }
+    ],
+    "items": [
+      {"item_id": "item_a", "theme": "Skincare routine", "idea": "Your full nighttime skincare steps", "filming_suggestion": "Bathroom mirror close-ups"},
+      {"item_id": "item_b", "theme": "Workout split", "idea": "Explain your weekly push-pull-legs split", "filming_suggestion": "Gym b-roll with voiceover"},
+      {"item_id": "item_c", "theme": "Recipe", "idea": "A one-pan dinner under 500 calories", "filming_suggestion": "Overhead cooking shot"}
+    ],
+    "max_assignments": 2
+  },
+  "raw_text": "{\"assignments\": []}",
+  "output": {
+    "assignments": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "no good match — a ceiling fan and a parking lot serve none of the skincare/workout/recipe items; the honest answer is an empty list, not a forced match"
+  }
+}

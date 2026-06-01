@@ -9,6 +9,11 @@ Usage:
     python3 scripts/local-render.py --clip <path> --template <uuid> \\
         [--mode template|music] [--api-url URL] [--out-dir DIR]
 
+    # generative mode (no template; auto-matched song; downloads all 3 variants).
+    # Output length is derived from the footage — there is no target-length knob:
+    python3 scripts/local-render.py --mode generative \\
+        --clip a.mp4 --clip b.mp4 --clip c.mp4
+
 Env overrides:
     LOCAL_RENDER_API_URL=http://localhost:8001
     LOCAL_RENDER_OUT_DIR=./.local-render
@@ -32,6 +37,12 @@ DEFAULT_OUT_DIR = ".local-render"
 
 _TEMPLATE_TERMINAL = {"template_ready", "processing_failed", "done"}
 _MUSIC_TERMINAL = {"music_ready", "processing_failed"}
+_GENERATIVE_TERMINAL = {
+    "variants_ready",
+    "variants_ready_partial",
+    "variants_failed",
+    "processing_failed",
+}
 
 
 def _post_json(url: str, body: dict, timeout: float = 60) -> tuple[int, bytes]:
@@ -112,6 +123,12 @@ def _content_type_for(path: Path) -> str:
         ".png": "image/png",
         ".heic": "image/heic",
         ".webp": "image/webp",
+        ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4",
+        ".wav": "audio/wav",
+        ".aac": "audio/aac",
+        ".webm": "audio/webm",
+        ".ogg": "audio/ogg",
     }.get(path.suffix.lower(), "application/octet-stream")
 
 
@@ -183,10 +200,47 @@ def _submit_music_job(api_url: str, track_id: str, gcs_paths: list[str]) -> str:
     return json.loads(body)["job_id"]
 
 
+def _submit_generative_job(
+    api_url: str,
+    gcs_paths: list[str],
+    edit_format: str | None = None,
+    voiceover_gcs_path: str | None = None,
+) -> str:
+    # No target length: the API derives output length from the uploaded footage
+    # (and the matched song's beat structure). The edit can never run longer than
+    # the clips uploaded here — that's exactly what this render verifies.
+    payload: dict = {"clip_gcs_paths": gcs_paths}
+    # Exercise a format-aware archetype (talking_head). The API still gates on
+    # EDIT_FORMAT_TALKING_HEAD_ENABLED + footage speech, so set the flag for the
+    # worker container too. Omitted → montage (the public default).
+    if edit_format:
+        payload["edit_format"] = edit_format
+    # A user-supplied voiceover forces the "voiceover" archetype: footage montage
+    # with the recorded voice as the audio bed (replaces the variant set).
+    if voiceover_gcs_path:
+        payload["voiceover_gcs_path"] = voiceover_gcs_path
+    code, body = _post_json(
+        f"{api_url}/generative-jobs",
+        payload,
+    )
+    if not (200 <= code < 300):
+        print(f"ERROR: POST /generative-jobs failed: HTTP {code} {body[:500]!r}", file=sys.stderr)
+        sys.exit(1)
+    return json.loads(body)["job_id"]
+
+
+_MODE_ENDPOINT = {"template": "template-jobs", "music": "music-jobs", "generative": "generative-jobs"}
+_MODE_TERMINAL = {
+    "template": _TEMPLATE_TERMINAL,
+    "music": _MUSIC_TERMINAL,
+    "generative": _GENERATIVE_TERMINAL,
+}
+
+
 def _poll(api_url: str, job_id: str, mode: str, timeout_s: float = 1800) -> dict:
     """Block until job reaches a terminal status. Returns final status payload."""
-    terminal = _TEMPLATE_TERMINAL if mode == "template" else _MUSIC_TERMINAL
-    endpoint = f"{api_url}/{'template-jobs' if mode == 'template' else 'music-jobs'}/{job_id}/status"
+    terminal = _MODE_TERMINAL[mode]
+    endpoint = f"{api_url}/{_MODE_ENDPOINT[mode]}/{job_id}/status"
     deadline = time.time() + timeout_s
     last_status: str | None = None
     while time.time() < deadline:
@@ -285,15 +339,22 @@ def _print_settings_snapshot(api_url: str) -> None:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else "")
-    p.add_argument("--clip", required=True, help="Path to the input video/image file")
+    p.add_argument(
+        "--clip",
+        action="append",
+        dest="clips",
+        required=True,
+        help="Input video/image file. Repeat for multiple clips (generative mode takes 1-20).",
+    )
     p.add_argument(
         "--template",
-        required=True,
-        help="Template UUID (template mode) or music_track UUID (music mode)",
+        default=None,
+        help="Template UUID (template mode) or music_track UUID (music mode). "
+        "Not used in generative mode (the song is auto-matched).",
     )
     p.add_argument(
         "--mode",
-        choices=["template", "music"],
+        choices=["template", "music", "generative"],
         default="template",
         help="Pipeline path to exercise (default: template)",
     )
@@ -301,6 +362,23 @@ def main() -> int:
         "--inputs",
         default="{}",
         help='Template inputs as JSON, e.g. \'{"location":"Tokyo"}\'',
+    )
+    p.add_argument(
+        "--edit-format",
+        dest="edit_format",
+        default=None,
+        choices=["montage", "talking_head", "day_vlog", "single_hero"],
+        help="Generative mode only: declared edit_format. talking_head also needs "
+        "EDIT_FORMAT_TALKING_HEAD_ENABLED=true on the worker. Default: montage.",
+    )
+    p.add_argument(
+        "--voiceover",
+        dest="voiceover",
+        default=None,
+        help="Generative mode only: an audio file (mp3/m4a/wav/webm) to use as the "
+        "voiceover bed. Forces the 'voiceover' archetype: footage montage with the "
+        "recorded voice as audio. Renders voiceover_only (+ voiceover_music if a "
+        "track matches) instead of the default variant set.",
     )
     p.add_argument(
         "--api-url",
@@ -314,16 +392,27 @@ def main() -> int:
     )
     args = p.parse_args()
 
-    clip = Path(args.clip).expanduser().resolve()
-    if not clip.is_file():
-        print(f"ERROR: clip not found: {clip}", file=sys.stderr)
+    clips = [Path(c).expanduser().resolve() for c in args.clips]
+    for c in clips:
+        if not c.is_file():
+            print(f"ERROR: clip not found: {c}", file=sys.stderr)
+            return 2
+    if args.mode == "template" and len(clips) != 1:
+        print(f"ERROR: --mode {args.mode} takes exactly one --clip", file=sys.stderr)
         return 2
 
-    try:
-        uuid.UUID(args.template)
-    except ValueError:
-        print(f"ERROR: --template must be a UUID, got {args.template!r}", file=sys.stderr)
-        return 2
+    if args.mode == "generative":
+        if args.template is not None:
+            print("Note: --template is ignored in generative mode (song auto-matched).")
+    else:
+        if not args.template:
+            print(f"ERROR: --mode {args.mode} requires --template <uuid>", file=sys.stderr)
+            return 2
+        try:
+            uuid.UUID(args.template)
+        except ValueError:
+            print(f"ERROR: --template must be a UUID, got {args.template!r}", file=sys.stderr)
+            return 2
 
     try:
         inputs = json.loads(args.inputs)
@@ -333,9 +422,10 @@ def main() -> int:
         print(f"ERROR: --inputs is not valid JSON object: {exc}", file=sys.stderr)
         return 2
 
-    print(f"clip      : {clip}")
+    print(f"clips     : {', '.join(str(c) for c in clips)}")
     print(f"mode      : {args.mode}")
-    print(f"target    : {args.template}")
+    if args.mode != "generative":
+        print(f"target    : {args.template}")
     print(f"api       : {args.api_url}")
 
     print("\n[1/5] waiting for API…")
@@ -344,23 +434,80 @@ def main() -> int:
     print("\n[2/5] settings snapshot (read from running api container):")
     _print_settings_snapshot(args.api_url)
 
-    print("\n[3/5] uploading clip…")
-    if args.mode == "template":
-        gcs_path = _upload_via_presigned(args.api_url, clip)
-    else:
-        gcs_path = _upload_via_slot(args.api_url, clip)
-    print(f"  → {gcs_path}")
+    print(f"\n[3/5] uploading {len(clips)} clip(s)…")
+    gcs_paths: list[str] = []
+    for c in clips:
+        # generative + music both land under music-uploads/ via the slot endpoint
+        # (the allowlisted prefix). Template uses the presigned two-step flow.
+        gcs = _upload_via_presigned(args.api_url, c) if args.mode == "template" else _upload_via_slot(args.api_url, c)
+        print(f"  → {gcs}")
+        gcs_paths.append(gcs)
+
+    voiceover_gcs: str | None = None
+    if args.mode == "generative" and args.voiceover:
+        voice = Path(args.voiceover).expanduser().resolve()
+        if not voice.is_file():
+            print(f"ERROR: voiceover file not found: {voice}", file=sys.stderr)
+            return 2
+        print(f"\n[3b/5] uploading voiceover {voice.name}…")
+        voiceover_gcs = _upload_via_slot(args.api_url, voice)
+        print(f"  → {voiceover_gcs}")
 
     print(f"\n[4/5] creating {args.mode} job…")
     if args.mode == "template":
-        job_id = _submit_template_job(args.api_url, args.template, [gcs_path], inputs)
+        job_id = _submit_template_job(args.api_url, args.template, gcs_paths, inputs)
+    elif args.mode == "music":
+        job_id = _submit_music_job(args.api_url, args.template, gcs_paths)
     else:
-        job_id = _submit_music_job(args.api_url, args.template, [gcs_path])
+        job_id = _submit_generative_job(
+            args.api_url,
+            gcs_paths,
+            edit_format=args.edit_format,
+            voiceover_gcs_path=voiceover_gcs,
+        )
     print(f"  → job_id: {job_id}")
 
     print("\n[5/5] polling status…")
     final = _poll(args.api_url, job_id, args.mode)
     status = final.get("status")
+
+    if args.mode == "generative":
+        if status not in {"variants_ready", "variants_ready_partial"}:
+            print(f"\nFAILED: status={status}")
+            print(f"  error_detail   : {final.get('error_detail')}")
+            return 1
+        variants = final.get("variants") or []
+        ok = [v for v in variants if v.get("ok") and v.get("output_url")]
+        if not ok:
+            print("ERROR: job terminal but no successful variant with an output_url", file=sys.stderr)
+            for v in variants:
+                print(f"  {v.get('variant_id')}: {v.get('render_status')} — {v.get('error')}")
+            return 1
+        out_paths = []
+        failed = []
+        for v in variants:
+            label = v.get("variant_id", "variant")
+            if not (v.get("ok") and v.get("output_url")):
+                print(f"\n  [skip] {label}: {v.get('render_status')} — {v.get('error')}")
+                failed.append(label)
+                continue
+            out_path = Path(args.out_dir) / f"{job_id}-{label}.mp4"
+            song = v.get("track_title") or "original audio"
+            print(f"\ndownloading {label} ({v.get('text_mode')} / {song}) → {out_path}")
+            _download_output(v["output_url"], out_path)
+            print(f"  wrote {out_path.stat().st_size:,} bytes")
+            _ffprobe_summary(out_path)
+            out_paths.append(out_path)
+        print(f"\n✓ generative render complete: {len(out_paths)} variant(s) in {args.out_dir}/")
+        for pth in out_paths:
+            print(f"    {pth}")
+        # A verification run should not exit 0 when some variants failed — that
+        # would let a partial-render regression pass silently in CI/automation.
+        if failed:
+            print(f"\n⚠ {len(failed)} variant(s) failed: {', '.join(failed)}", file=sys.stderr)
+            return 1
+        return 0
+
     if status not in {"template_ready", "music_ready", "done"}:
         print(f"\nFAILED: status={status}")
         print(f"  error_detail   : {final.get('error_detail')}")

@@ -16,10 +16,13 @@ from app.services.lrclib_client import (
     LrclibError,
     LrclibLyrics,
     LrclibNotFound,
+    LrclibSearchCandidate,
     SyncedLine,
     _parse_plain_lyrics,
     _parse_synced_lyrics,
+    get_lrclib_by_id,
     search_lrclib,
+    search_lrclib_fuzzy,
 )
 
 
@@ -63,6 +66,71 @@ def test_happy_path_with_synced_lyrics(mock_client_cls: MagicMock) -> None:
     assert len(out.synced_lines) == 2
     assert out.synced_lines[0] == SyncedLine(start_s=1.0, text="Hello world")
     assert out.synced_lines[1] == SyncedLine(start_s=3.5, text="Second line")
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_search_lrclib_passes_duration_when_supplied(mock_client_cls: MagicMock) -> None:
+    """LRCLIB `/api/get` accepts a `duration` (integer seconds, ±2s tolerance)
+    that disambiguates between recordings of the same song (radio edit vs.
+    remix vs. extended). Without it, LRCLIB returns whatever row matches
+    title+artist first — its syncedLyrics line anchors then come from the
+    wrong recording and the line-anchored alignment writes wildly wrong
+    timestamps (the "Hawai" bug). When duration_s is supplied, it must
+    appear in the outgoing query as `duration=<int>` (no millis, no float).
+    """
+    body = {
+        "id": 1,
+        "trackName": "Hawai",
+        "artistName": "Maluma",
+        "instrumental": False,
+        "plainLyrics": "x",
+        "syncedLyrics": "[00:01.00]x",
+    }
+    client = MagicMock()
+    client.get.return_value = _resp(200, body)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    search_lrclib("Hawai", "Maluma", duration_s=211.6)
+
+    # Inspect what was actually sent to LRCLIB.
+    args, kwargs = client.get.call_args
+    sent_params = kwargs.get("params") if "params" in kwargs else args[1]
+    assert sent_params["duration"] == "212", (
+        f"duration must round to nearest int, got {sent_params.get('duration')!r}"
+    )
+    assert sent_params["track_name"] == "Hawai"
+    assert sent_params["artist_name"] == "Maluma"
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_search_lrclib_omits_duration_when_zero_or_none(mock_client_cls: MagicMock) -> None:
+    """`duration` param must NOT be sent when caller passes None or 0 —
+    that's the legacy "unknown duration" path. Sending `duration=0` would
+    cause LRCLIB to filter for ~instant tracks and 404 everything."""
+    body = {
+        "id": 1,
+        "trackName": "X",
+        "artistName": "Y",
+        "instrumental": False,
+        "plainLyrics": "x",
+        "syncedLyrics": None,
+    }
+    client = MagicMock()
+    client.get.return_value = _resp(200, body)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    # No duration arg → no duration param.
+    search_lrclib("X", "Y")
+    args, kwargs = client.get.call_args
+    sent_params = kwargs.get("params") if "params" in kwargs else args[1]
+    assert "duration" not in sent_params
+
+    # duration_s=0 → also no duration param (None and 0 are both "unknown").
+    client.get.reset_mock()
+    search_lrclib("X", "Y", duration_s=0.0)
+    args, kwargs = client.get.call_args
+    sent_params = kwargs.get("params") if "params" in kwargs else args[1]
+    assert "duration" not in sent_params
 
 
 @patch("app.services.lrclib_client.httpx.Client")
@@ -363,3 +431,283 @@ def test_parse_plain_strips_bom_and_drops_blanks() -> None:
 
 def test_parse_plain_empty_returns_empty_tuple() -> None:
     assert _parse_plain_lyrics("") == ()
+
+
+# ── get_lrclib_by_id ──────────────────────────────────────────────────────────
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_get_by_id_happy_path(mock_client_cls: MagicMock) -> None:
+    """Admin force-ID flow: paste numeric ID, agent re-fetches that exact row."""
+    body = {
+        "id": 12345,
+        "trackName": "Beauty And A Beat",
+        "artistName": "Justin Bieber",
+        "instrumental": False,
+        "plainLyrics": "Show me off, show me off",
+        "syncedLyrics": "[00:12.00]Show me off, show me off",
+    }
+    client = MagicMock()
+    client.get.return_value = _resp(200, body)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    out = get_lrclib_by_id(12345)
+    assert isinstance(out, LrclibLyrics)
+    assert out.lrclib_id == 12345
+    assert out.title == "Beauty And A Beat"
+    assert out.synced_lines is not None
+    assert len(out.synced_lines) == 1
+
+    # Verify the URL was the path-param form, not a query-param one.
+    args, _ = client.get.call_args
+    assert args[0] == "https://lrclib.net/api/get/12345"
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_get_by_id_404_raises_not_found(mock_client_cls: MagicMock) -> None:
+    client = MagicMock()
+    client.get.return_value = _resp(404)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    with pytest.raises(LrclibNotFound):
+        get_lrclib_by_id(99999999)
+
+
+def test_get_by_id_rejects_zero() -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        get_lrclib_by_id(0)
+
+
+def test_get_by_id_rejects_negative() -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        get_lrclib_by_id(-5)
+
+
+def test_get_by_id_rejects_non_int() -> None:
+    with pytest.raises(ValueError):
+        get_lrclib_by_id("12345")  # type: ignore[arg-type]
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_get_by_id_instrumental_returns_flag(mock_client_cls: MagicMock) -> None:
+    body = {
+        "id": 7,
+        "trackName": "Beat Only",
+        "artistName": "DJ",
+        "instrumental": True,
+        "plainLyrics": "",
+        "syncedLyrics": None,
+    }
+    client = MagicMock()
+    client.get.return_value = _resp(200, body)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    out = get_lrclib_by_id(7)
+    assert out.instrumental is True
+
+
+# ── search_lrclib_fuzzy ───────────────────────────────────────────────────────
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_fuzzy_search_strong_match_top_result(mock_client_cls: MagicMock) -> None:
+    """Common case after /api/get 404: /api/search returns the right row
+    as top result. Should score above the combined-score gate."""
+    body = [
+        {
+            "id": 50001,
+            "trackName": "Beauty And A Beat",
+            "artistName": "Justin Bieber",
+            "duration": 211,
+            "instrumental": False,
+        },
+        {
+            "id": 50002,
+            "trackName": "Beauty And A Beat (Karaoke)",
+            "artistName": "Karaoke Library",
+            "duration": 215,
+            "instrumental": False,
+        },
+    ]
+    client = MagicMock()
+    client.get.return_value = _resp(200, body)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    candidates = search_lrclib_fuzzy("Beauty And A Beat", "Justin Bieber", duration_s=212.0)
+    assert len(candidates) >= 1
+    top = candidates[0]
+    assert isinstance(top, LrclibSearchCandidate)
+    assert top.lrclib_id == 50001
+    assert top.title == "Beauty And A Beat"
+    assert top.combined_score >= 0.85, f"top score was {top.combined_score}"
+    # The karaoke row should be either rejected (wrong artist) or scored lower.
+    if len(candidates) > 1:
+        assert candidates[1].combined_score < top.combined_score
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_fuzzy_search_does_not_pass_duration_param(mock_client_cls: MagicMock) -> None:
+    """`/api/search` accepts a duration param with the SAME ±2s hard gate
+    as `/api/get`. Sending it would defeat the purpose of /search as a
+    relaxed fallback — music-video uploads with intro/outro padding
+    would 404 all over again. The function must NOT pass duration."""
+    body = [
+        {
+            "id": 1,
+            "trackName": "X",
+            "artistName": "Y",
+            "duration": 200,
+        }
+    ]
+    client = MagicMock()
+    client.get.return_value = _resp(200, body)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    search_lrclib_fuzzy("X", "Y", duration_s=215.0)
+
+    args, kwargs = client.get.call_args
+    sent_params = kwargs.get("params") if "params" in kwargs else args[1]
+    assert "duration" not in sent_params, (
+        "Duration param sent to /api/search; this would re-introduce the strict gate"
+    )
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_fuzzy_search_wrong_artist_filtered(mock_client_cls: MagicMock) -> None:
+    """Title can collide between unrelated artists ('Hello' by Adele vs
+    'Hello' by Lionel Richie). Artist mismatch must drop the candidate
+    entirely, not just penalize it."""
+    body = [
+        {"id": 1, "trackName": "Hello", "artistName": "Lionel Richie", "duration": 250},
+        {"id": 2, "trackName": "Hello", "artistName": "Adele", "duration": 295},
+    ]
+    client = MagicMock()
+    client.get.return_value = _resp(200, body)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    candidates = search_lrclib_fuzzy("Hello", "Adele", duration_s=295.0)
+    assert len(candidates) == 1
+    assert candidates[0].lrclib_id == 2
+    assert candidates[0].artist == "Adele"
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_fuzzy_search_weak_title_filtered(mock_client_cls: MagicMock) -> None:
+    """If the only word a candidate shares with the request is a stop-word
+    style token, title similarity stays below the hard gate."""
+    body = [
+        {
+            "id": 1,
+            "trackName": "The Day The World Ended",
+            "artistName": "Some Band",
+            "duration": 200,
+        },
+    ]
+    client = MagicMock()
+    client.get.return_value = _resp(200, body)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    candidates = search_lrclib_fuzzy("The Sound Of Silence", "Simon Garfunkel")
+    assert candidates == []
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_fuzzy_search_duration_soft_signal_tolerates_intro_padding(
+    mock_client_cls: MagicMock,
+) -> None:
+    """Music-video uploads commonly carry 5-15s of spoken intro that the
+    LRCLIB recording does not. A 12s delta must NOT reject the candidate;
+    the title+artist gates should still admit it (combined score above
+    threshold)."""
+    body = [
+        {
+            "id": 1,
+            "trackName": "Beauty And A Beat",
+            "artistName": "Justin Bieber",
+            "duration": 200,  # 12s less than the user's audio
+        }
+    ]
+    client = MagicMock()
+    client.get.return_value = _resp(200, body)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    candidates = search_lrclib_fuzzy("Beauty And A Beat", "Justin Bieber", duration_s=212.0)
+    assert len(candidates) == 1
+    assert candidates[0].duration_delta_s == 12.0
+    # Title match (1.0) + artist match (1.0) + duration_score ~0.2 → ~0.84-0.85.
+    # Should still cross the combined-score gate for a strong title+artist match.
+    assert candidates[0].combined_score >= 0.83
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_fuzzy_search_drops_extreme_duration_delta(mock_client_cls: MagicMock) -> None:
+    """A 90s duration delta means this isn't the same recording (extended
+    mix or different song entirely). Hard-drop, don't even score."""
+    body = [
+        {
+            "id": 1,
+            "trackName": "Beauty And A Beat",
+            "artistName": "Justin Bieber",
+            "duration": 120,  # 92s less than 212
+        }
+    ]
+    client = MagicMock()
+    client.get.return_value = _resp(200, body)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    candidates = search_lrclib_fuzzy("Beauty And A Beat", "Justin Bieber", duration_s=212.0)
+    assert candidates == []
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_fuzzy_search_empty_result_raises_not_found(mock_client_cls: MagicMock) -> None:
+    """Treating an empty JSON array as not-found makes the fallback path
+    consistent with /api/get (also raises LrclibNotFound on empty)."""
+    client = MagicMock()
+    client.get.return_value = _resp(200, [])
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    with pytest.raises(LrclibNotFound):
+        search_lrclib_fuzzy("Obscure Indie Track 12345", "Unknown Artist")
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_fuzzy_search_artist_with_feat_normalized(mock_client_cls: MagicMock) -> None:
+    """Admin uploads sometimes have the artist field already including
+    'ft. Other'. Match the canonical artist by stripping the tail on
+    both sides."""
+    body = [
+        {
+            "id": 1,
+            "trackName": "Some Song",
+            "artistName": "Main Artist",
+            "duration": 200,
+        }
+    ]
+    client = MagicMock()
+    client.get.return_value = _resp(200, body)
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    candidates = search_lrclib_fuzzy(
+        "Some Song", "Main Artist ft. Featured Artist", duration_s=200.0
+    )
+    assert len(candidates) == 1
+
+
+@patch("app.services.lrclib_client.httpx.Client")
+def test_fuzzy_search_reuses_429_retry(mock_client_cls: MagicMock) -> None:
+    """Same retry behavior as search_lrclib — keyless rate limit is shared."""
+    body = [{"id": 1, "trackName": "X", "artistName": "Y", "duration": 200}]
+    client = MagicMock()
+    client.get.side_effect = [_resp(429, headers={}), _resp(200, body)]
+    mock_client_cls.return_value.__enter__.return_value = client
+
+    with patch("app.services.lrclib_client.time.sleep"):
+        candidates = search_lrclib_fuzzy("X", "Y")
+    assert len(candidates) == 1
+    assert client.get.call_count == 2
+
+
+def test_fuzzy_search_empty_title_raises_not_found() -> None:
+    with pytest.raises(LrclibNotFound):
+        search_lrclib_fuzzy("", "Some Artist")

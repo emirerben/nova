@@ -9,12 +9,16 @@ _EXPECTED = {
     "nova.video.clip_metadata",
     "nova.compose.template_recipe",
     "nova.compose.template_text",
+    "nova.compose.agentic_style_selector",
     "nova.audio.transcript",
     "nova.audio.lyrics",
     "nova.audio.template_recipe",
     "nova.audio.song_classifier",
     "nova.audio.song_sections",
     "nova.audio.music_matcher",
+    "nova.audio.lyric_style_selector",
+    "nova.compose.overlay_format_matcher",
+    "nova.compose.intro_writer",
     "nova.compose.platform_copy",
     "nova.compose.creative_direction",
     "nova.layout.text_designer",
@@ -26,6 +30,10 @@ _EXPECTED = {
     # Layer-2 text-overlay pipeline agents
     "nova.compose.text_alignment",
     "nova.compose.text_classification",
+    # Content-plan agents
+    "nova.plan.persona_generator",
+    "nova.plan.content_plan_generator",
+    "nova.plan.clip_plan_matcher",
 }
 
 

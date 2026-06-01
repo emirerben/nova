@@ -3,47 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import fontRegistryJson from "@/data/font-registry.json";
 import {
   adminValidateToken,
   clearAdminToken,
   getAdminToken,
   setAdminToken,
 } from "@/lib/admin-api";
-
-// ── Font face declarations from the shared registry ──────────────────────────
-// Admin-only (2 users), so eager loading is fine. TTFs are served from /fonts/.
-// The CSS family deliberately collapses Inter Regular/Medium/Bold onto a single
-// `'Inter'` family with different `font-weight` values so the browser can pick
-// the right weight via standard CSS — matching how the registry resolves them.
-function buildFontFaces(
-  registry: { fonts: Record<string, { file: string; weight: number; css_family: string }> },
-): string {
-  // De-dup by (css-family, weight, file) so we don't emit the same @font-face
-  // multiple times when two registry keys share a CSS family (e.g. Inter).
-  const seen = new Set<string>();
-  const blocks: string[] = [];
-  for (const entry of Object.values(registry.fonts)) {
-    // Extract the first family from `'Family Name', fallback` so the @font-face
-    // family is the bare family token without the fallback list.
-    const match = entry.css_family.match(/^\s*['"]([^'"]+)['"]/);
-    const family = match ? match[1] : entry.css_family;
-    const key = `${family}|${entry.weight}|${entry.file}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    blocks.push(
-      `@font-face {\n` +
-      `  font-family: '${family}';\n` +
-      `  src: url('/fonts/${entry.file}') format('truetype');\n` +
-      `  font-weight: ${entry.weight};\n` +
-      `  font-display: swap;\n` +
-      `}`,
-    );
-  }
-  return blocks.join("\n");
-}
-
-const FONT_FACES = buildFontFaces(fontRegistryJson);
+// Shared registry-driven @font-face CSS (also used by the plan style-preview chips).
+import { FONT_FACES } from "@/lib/font-faces";
 
 /**
  * Admin layout: wraps all /admin pages with auth gate + nav.
@@ -53,6 +20,7 @@ const FONT_FACES = buildFontFaces(fontRegistryJson);
  */
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [authed, setAuthed] = useState<boolean | null>(null); // null = checking
+  const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
     const token = getAdminToken();
@@ -60,13 +28,38 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       setAuthed(false);
       return;
     }
-    adminValidateToken().then(setAuthed);
+    adminValidateToken().then((result) => {
+      if (result.ok) {
+        setAuthed(true);
+      } else if (result.reason === "server_error") {
+        // Server misconfigured (e.g. ADMIN_TOKEN unset) — not a bad token.
+        setUnavailable(true);
+        setAuthed(false);
+      } else {
+        setAuthed(false);
+      }
+    });
   }, []);
 
   if (authed === null) {
     return (
       <main className="min-h-screen bg-black text-white flex items-center justify-center">
         <div className="w-6 h-6 border-2 border-zinc-600 border-t-white rounded-full animate-spin" />
+      </main>
+    );
+  }
+
+  if (unavailable) {
+    return (
+      <main className="min-h-screen bg-black text-white flex items-center justify-center px-4">
+        <div className="max-w-sm text-center space-y-2">
+          <h1 className="text-xl font-semibold">Admin auth unavailable</h1>
+          <p className="text-sm text-zinc-500">
+            The admin authentication service isn&apos;t reachable (the server may be
+            misconfigured — check that <code className="text-zinc-400">ADMIN_TOKEN</code> is
+            set). This is not a problem with your token.
+          </p>
+        </div>
       </main>
     );
   }
@@ -100,13 +93,17 @@ function AuthGate({ onAuth }: { onAuth: () => void }) {
       setError(null);
 
       setAdminToken(token.trim());
-      const valid = await adminValidateToken();
+      const result = await adminValidateToken();
 
-      if (valid) {
+      if (result.ok) {
         onAuth();
       } else {
         clearAdminToken();
-        setError("Invalid admin token");
+        setError(
+          result.reason === "server_error"
+            ? "Admin auth service unavailable — the server may be misconfigured."
+            : "Invalid admin token",
+        );
       }
       setChecking(false);
     },
@@ -165,6 +162,14 @@ function AdminNav({ onLogout }: { onLogout: () => void }) {
             active={pathname === "/admin/jobs" || pathname.startsWith("/admin/jobs/")}
           >
             Jobs
+          </NavLink>
+          <NavLink
+            href="/admin/generative"
+            active={
+              pathname === "/admin/generative" || pathname.startsWith("/admin/generative/")
+            }
+          >
+            Generative
           </NavLink>
           <NavLink href="/admin/templates/new" active={pathname === "/admin/templates/new"}>
             New Template

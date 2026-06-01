@@ -11,11 +11,18 @@ from app.config import settings
 from app.limiter import limiter
 from app.routes import (
     admin,
+    admin_generative,
     admin_jobs,
     admin_music,
+    auth,
     clips,
+    content_plans,
+    generative_jobs,
+    me,
     music,
     music_jobs,
+    personas,
+    plan_items,
     presigned,
     template_jobs,
     templates,
@@ -78,13 +85,20 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
 
 
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(admin_jobs.router, prefix="/admin/jobs", tags=["admin-jobs"])
 app.include_router(admin_music.router, prefix="/admin/music-tracks", tags=["admin-music"])
+app.include_router(admin_generative.router, prefix="/admin/generative", tags=["admin-generative"])
 app.include_router(template_jobs.router, prefix="/template-jobs", tags=["template-jobs"])
 app.include_router(music.router, prefix="/music-tracks", tags=["music"])
 app.include_router(music_jobs.router, prefix="/music-jobs", tags=["music-jobs"])
+app.include_router(generative_jobs.router, prefix="/generative-jobs", tags=["generative-jobs"])
+app.include_router(personas.router, prefix="/personas", tags=["personas"])
+app.include_router(content_plans.router, prefix="/content-plans", tags=["content-plans"])
+app.include_router(plan_items.router, prefix="/plan-items", tags=["plan-items"])
+app.include_router(me.router, prefix="/me", tags=["me"])
 app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])
 app.include_router(clips.router, prefix="/clips", tags=["clips"])
 app.include_router(templates.router, prefix="/templates", tags=["templates"])

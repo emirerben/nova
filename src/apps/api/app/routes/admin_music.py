@@ -1,7 +1,8 @@
 """Admin endpoints for managing music tracks.
 
 POST   /admin/music-tracks                  — add track from YouTube/SoundCloud URL
-POST   /admin/music-tracks/upload           — add track from direct audio file upload
+POST   /admin/music-tracks/upload           — DEPRECATED: multipart upload (Vercel 4.5MB cap)
+POST   /admin/music-tracks/upload-init-file — signed-URL bypass for SPA direct-file upload
 POST   /admin/music-tracks/templated        — create templated track (typed-slot recipe)
 GET    /admin/music-tracks                  — list all tracks (including unpublished)
 GET    /admin/music-tracks/{id}             — full track detail + beat count
@@ -20,6 +21,7 @@ Auth: X-Admin-Token header (same as admin.py).
 import asyncio
 import hmac
 import json
+import os
 import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -43,13 +45,19 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
-from app.agents._schemas.song_sections import SongSection, cap_song_section_duration
+from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION
+from app.agents._schemas.song_sections import (
+    CURRENT_SECTION_VERSION,
+    SongSection,
+    cap_song_section_duration,
+)
+from app.auth import SYNTHETIC_USER_ID
 from app.config import settings
 from app.database import get_db
 from app.models import Job, MusicTrack
+from app.pipeline.music_recipe import count_slots
 from app.routes.music_jobs import (
     _SLOT_UPLOAD_MAX_BYTES,
-    SYNTHETIC_USER_ID,
     MusicJobResponse,
     MusicJobStatusResponse,
     classify_slot_kind,
@@ -60,6 +68,7 @@ from app.services.audio_download import (
     DownloadError,
     download_audio_and_upload,
     is_supported_audio_url,
+    probe_has_audio_stream,
 )
 from app.services.lyrics_config_effective import (
     deep_merge_dict,
@@ -67,7 +76,14 @@ from app.services.lyrics_config_effective import (
     non_null_model_dict,
     normalize_lyrics_config,
 )
-from app.services.lyrics_config_validation import validate_lyrics_config_dict
+from app.services.lyrics_config_validation import (
+    LINE_ONLY_KEYS as _LINE_ONLY_KEYS_RUNTIME,
+)
+from app.services.lyrics_config_validation import (
+    LYRICS_STYLES,
+    validate_lyrics_config_dict,
+)
+from app.services.music_sections import current_best_section_for_track
 
 log = structlog.get_logger()
 router = APIRouter()
@@ -152,16 +168,41 @@ class MusicTrackResponse(BaseModel):
     # Lyrics fields — see app.agents.lyrics + app.models.MusicTrack for shape.
     # `lyrics_cached` is full per-line + per-word JSON; in list responses we
     # still surface it so the frontend can preview without an extra fetch.
+    # `lyrics_whisper_draft` is the non-publishable Whisper-only draft that
+    # the admin UI shows below the diagnostic when status='needs_manual_lyrics',
+    # so the operator can cross-check timestamps when picking an LRCLIB row.
+    # `lyrics_diagnostic` is the structured trace of the last lookup attempt
+    # (cleaned title/artist sent, response statuses, top fuzzy score, duration
+    # delta) — rendered as the diagnostic block on the Lyrics tab.
+    # `lyrics_extraction_version` is the monotonic counter behind the stale-
+    # task discard gate in music_orchestrate; surfaced so the FE can pin its
+    # paste-ID action to the version it saw.
     lyrics_status: str
     lyrics_source: str | None
     lyrics_error_detail: str | None
     lyrics_cached: dict | None
+    lyrics_whisper_draft: dict | None
+    lyrics_diagnostic: dict | None
+    lyrics_extraction_version: int
     lyrics_extracted_at: datetime | None
     # Output of the song_sections agent — 1-3 ranked edit-worthy windows.
     # `section_version` mirrors CURRENT_SECTION_VERSION so the admin UI can
     # spot stale rows scored under an older prompt version at a glance.
+    # `section_error_detail` carries the last reason _run_song_sections
+    # returned None on the broad-Exception branch (best-effort fail-open).
+    # Cleared at the start of every analyze run; populated truncated to
+    # MAX_ERROR_DETAIL_LEN. NULL when sections are populated OR when the
+    # agent has not run yet.
     best_sections: list[SongSection] | None
     section_version: str | None
+    section_error_detail: str | None
+    # Song-classifier coverage. `label_version` mirrors CURRENT_LABEL_VERSION;
+    # `has_ai_labels` is true when the classifier blob is present at all.
+    # `generative_matchable` is the at-a-glance "can generative auto-pick this
+    # track?" signal — see _compute_generative_matchable.
+    label_version: str | None
+    has_ai_labels: bool
+    generative_matchable: bool
     created_at: datetime
 
 
@@ -176,6 +217,10 @@ class MusicTrackListItem(BaseModel):
     beat_count: int
     published_at: datetime | None
     archived_at: datetime | None
+    label_version: str | None
+    section_version: str | None
+    has_ai_labels: bool
+    generative_matchable: bool
     created_at: datetime
 
 
@@ -200,10 +245,20 @@ class LyricsConfigPatchResponse(BaseModel):
 
 class LyricsPreviewRequest(BaseModel):
     lyrics_config_override: LyricsConfigOverride | None = None
+    # Chosen lyric animation style for THIS preview. Defaults to "line" so
+    # callers that don't know about the multi-style dashboard get the same
+    # behavior as before. The route is the single source of truth for the
+    # style sent to the renderer; the override schema intentionally does NOT
+    # carry style because it's reused on track-update flows where style lives
+    # under `track_config.lyrics_config`.
+    style: Literal["line", "karaoke", "per-word-pop"] = "line"
 
 
 class LyricsPreviewResponse(BaseModel):
     job_id: str
+    # Echo the resolved style so the frontend can route the response back to
+    # the correct preview slot in its 3-slot dashboard (Line/Pop-up/Karaoke).
+    style: Literal["line", "karaoke", "per-word-pop"]
 
 
 class LyricsPreviewStatusResponse(BaseModel):
@@ -212,11 +267,44 @@ class LyricsPreviewStatusResponse(BaseModel):
     output_url: str | None = None
     error_detail: str | None = None
     lyrics_config_effective: dict | None = None
+    # The resolved audio window the preview rendered. Anchored at the first
+    # lyric line minus a small lead-in (see `lyrics_preview.LEAD_IN_S`). The
+    # frontend surfaces these in a "Previewing m:ss – m:ss" caption so admins
+    # know which audio segment they're hearing — without it, the auto-anchor
+    # change is silent and an admin watching the preview of a song with a
+    # 30s instrumental intro would think the wrong song was loaded.
+    preview_start_s: float | None = None
+    preview_duration_s: float | None = None
+    # The style this preview was rendered in. Null on legacy rows that
+    # predate the multi-style dashboard (those always rendered as "line").
+    style: str | None = None
     created_at: datetime
     updated_at: datetime
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+
+def _compute_generative_matchable(t: MusicTrack) -> bool:
+    """Mirror the generative candidate gate (minus the per-job slot-count fit).
+
+    Replicates the DB filter in
+    ``auto_music_orchestrate._load_matcher_candidates(require_published=False)``
+    plus its rank-1-section check, so an admin can see at a glance whether a
+    track is eligible for generative auto-match. The ``published_at`` clause is
+    intentionally omitted (generative ignores it), as is the ``n_clips``
+    slot-count heuristic — that depends on the user's clip count, which an admin
+    row has no notion of. So this means "eligible before clip-count fit," which
+    is the right observability signal.
+    """
+    return (
+        t.analysis_status == "ready"
+        and t.ai_labels is not None
+        and t.label_version == CURRENT_LABEL_VERSION
+        and t.best_sections is not None
+        and t.section_version == CURRENT_SECTION_VERSION
+        and current_best_section_for_track(t) is not None
+    )
 
 
 def _to_response(t: MusicTrack) -> MusicTrackResponse:
@@ -264,14 +352,41 @@ def _to_response(t: MusicTrack) -> MusicTrackResponse:
         lyrics_source=t.lyrics_source,
         lyrics_error_detail=t.lyrics_error_detail,
         lyrics_cached=t.lyrics_cached,
+        lyrics_whisper_draft=t.lyrics_whisper_draft,
+        lyrics_diagnostic=t.lyrics_diagnostic,
+        lyrics_extraction_version=int(t.lyrics_extraction_version or 0),
         lyrics_extracted_at=t.lyrics_extracted_at,
         best_sections=coerced_sections,
         section_version=t.section_version,
+        section_error_detail=t.section_error_detail,
+        label_version=t.label_version,
+        has_ai_labels=t.ai_labels is not None,
+        generative_matchable=_compute_generative_matchable(t),
         created_at=t.created_at,
     )
 
 
-def _to_list_item(t: MusicTrack, beat_count: int) -> MusicTrackListItem:
+def _to_list_item(
+    t: MusicTrack,
+    beat_count: int,
+    *,
+    has_ai_labels: bool,
+    has_best_sections: bool,
+) -> MusicTrackListItem:
+    # `has_ai_labels` / `has_best_sections` come from SQL `IS NOT NULL`
+    # expressions, NOT from touching the JSONB columns — the list query keeps
+    # ai_labels/best_sections deferred (perf invariant, locked by
+    # tests/routes/test_admin_list_defer_jsonb.py). label_version/section_version
+    # are cheap scalar strings and ARE loaded. The list-level matchability check
+    # therefore omits the rank-1-section deep validity that _to_response does;
+    # it means "eligible by version + presence," which is the right list signal.
+    matchable = (
+        t.analysis_status == "ready"
+        and has_ai_labels
+        and t.label_version == CURRENT_LABEL_VERSION
+        and has_best_sections
+        and t.section_version == CURRENT_SECTION_VERSION
+    )
     return MusicTrackListItem(
         id=t.id,
         title=t.title,
@@ -281,6 +396,10 @@ def _to_list_item(t: MusicTrack, beat_count: int) -> MusicTrackListItem:
         beat_count=beat_count,
         published_at=t.published_at,
         archived_at=t.archived_at,
+        label_version=t.label_version,
+        section_version=t.section_version,
+        has_ai_labels=has_ai_labels,
+        generative_matchable=matchable,
         created_at=t.created_at,
     )
 
@@ -378,30 +497,60 @@ async def upload_music_track(
         )
 
     track_id = str(uuid.uuid4())
-    gcs_path = f"music/{track_id}/audio{ext or '.m4a'}"
 
-    # Save upload to temp file, probe duration, upload to GCS
-    with tempfile.NamedTemporaryFile(suffix=ext or ".m4a", delete=True) as tmp:
+    # Save upload to temp file. Admins routinely upload a YouTube .mp4
+    # (video+audio) into this audio-only endpoint, so after we save the
+    # bytes we ffprobe and strip the video stream losslessly before the
+    # GCS write. Both temp files live in the same TemporaryDirectory so
+    # cleanup is automatic regardless of which path we take.
+    with tempfile.TemporaryDirectory(prefix="nova_music_upload_") as upload_dir:
+        source_path = os.path.join(upload_dir, f"source{ext or '.m4a'}")
         content = await file.read()
         if len(content) > 50 * 1024 * 1024:  # 50 MB limit
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="Audio file too large. Maximum 50 MB.",
             )
-        tmp.write(content)
-        tmp.flush()
+        with open(source_path, "wb") as f:
+            f.write(content)
 
-        # Probe duration via ffprobe
-        from app.services.audio_download import _probe_duration  # noqa: PLC0415
-
-        duration_s = _probe_duration(tmp.name)
-
-        # Upload to GCS
+        from app.services.audio_download import probe_duration  # noqa: PLC0415
+        from app.services.audio_preprocess import (  # noqa: PLC0415
+            AudioPreprocessError,
+            has_video_stream,
+            strip_video,
+        )
         from app.storage import _get_client  # noqa: PLC0415
+
+        upload_source = source_path
+        upload_content_type = ct or "audio/mp4"
+        gcs_extension = ext or ".m4a"
+        if has_video_stream(source_path):
+            stripped_path = os.path.join(upload_dir, "audio_only.m4a")
+            try:
+                strip_video(source_path, stripped_path)
+            except AudioPreprocessError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Failed to extract audio from upload: {exc}",
+                ) from exc
+            upload_source = stripped_path
+            upload_content_type = "audio/mp4"
+            gcs_extension = ".m4a"
+            log.info(
+                "music_upload_video_stripped",
+                track_id=track_id,
+                filename=file.filename,
+                original_bytes=len(content),
+                stripped_bytes=os.path.getsize(upload_source),
+            )
+
+        gcs_path = f"music/{track_id}/audio{gcs_extension}"
+        duration_s = probe_duration(upload_source)
 
         bucket = _get_client().bucket(settings.storage_bucket)
         blob = bucket.blob(gcs_path)
-        blob.upload_from_filename(tmp.name, content_type=ct or "audio/mp4")
+        blob.upload_from_filename(upload_source, content_type=upload_content_type)
 
     track = MusicTrack(
         id=track_id,
@@ -422,6 +571,483 @@ async def upload_music_track(
 
     log.info("music_track_uploaded", track_id=track_id, filename=file.filename)
     return CreateMusicTrackResponse(id=track_id, analysis_status="queued")
+
+
+# ── Browser-side ingest (signed-URL flow) ─────────────────────────────────────
+#
+# Two-phase upload that lets the Nova admin Chrome extension extract YouTube
+# audio in the admin's browser (residential IP, real cookies — see eng-review
+# plan "Hybrid Route iii + Signed URL") and PUT the resulting blob straight to
+# GCS. Vercel and FastAPI never see the bytes, sidestepping Vercel's function
+# body cap (4.5 MB on Hobby, bounded on Pro) and Fly's data-center IP being
+# flagged by YouTube as automated traffic.
+#
+#   1. POST /admin/music-tracks/upload-init     → mint signed PUT URL
+#   2. browser PUTs blob direct to GCS          (no FastAPI hop)
+#   3. POST /admin/music-tracks/{id}/upload-confirm → verify + dispatch Celery
+
+
+_BROWSER_AUDIO_EXT_ALLOWLIST = {
+    ".m4a",
+    ".mp3",
+    ".wav",
+    ".ogg",
+    ".aac",
+    ".mp4",
+    ".webm",
+    ".opus",
+}
+_BROWSER_AUDIO_MAX_BYTES = 100 * 1024 * 1024  # 100 MB
+_BROWSER_AUDIO_MIN_BYTES = 1024  # 1 KB — anything smaller is junk
+_BROWSER_AUDIO_PUT_TTL = timedelta(minutes=15)
+_BROWSER_INGEST_DEDUP_WINDOW = timedelta(hours=24)
+
+
+# ext → Content-Type the signed URL must lock the PUT to. The browser MUST send
+# exactly this Content-Type or GCS will reject the PUT (this is part of the V4
+# signed-URL contract).
+_BROWSER_AUDIO_EXT_TO_CONTENT_TYPE = {
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",  # YouTube AAC-in-MP4 sometimes reports application/mp4
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".aac": "audio/aac",
+    ".webm": "audio/webm",
+    ".opus": "audio/ogg",  # Opus-in-Ogg; GCS doesn't care, ffprobe handles either
+}
+
+
+class BrowserUploadInitRequest(BaseModel):
+    """Mint a signed PUT URL for the browser extension to upload audio bytes.
+
+    Fields:
+        source_url: original YouTube/SoundCloud URL (preserved as MusicTrack.source_url
+                    so we don't lose provenance and can dedup re-uploads)
+        title, artist: optional metadata extracted by the extension
+        ext: file extension including leading dot, lowercase
+        byte_count: declared blob size (enforced via the signed URL Content-Length
+                    isn't directly settable in V4 signed URLs but we reject upfront
+                    if the admin's extension is announcing > 100 MB)
+    """
+
+    source_url: str
+    title: str | None = None
+    artist: str | None = None
+    ext: str
+    byte_count: int
+
+    @field_validator("source_url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        if not is_supported_audio_url(v.strip()):
+            raise ValueError(
+                "Only YouTube (youtube.com, youtu.be) and "
+                "SoundCloud (soundcloud.com) URLs are supported."
+            )
+        return v.strip()
+
+    @field_validator("ext")
+    @classmethod
+    def validate_ext(cls, v: str) -> str:
+        v = v.lower().strip()
+        if not v.startswith("."):
+            v = "." + v
+        if v not in _BROWSER_AUDIO_EXT_ALLOWLIST:
+            allowed = ", ".join(sorted(_BROWSER_AUDIO_EXT_ALLOWLIST))
+            raise ValueError(f"Unsupported audio extension: {v}. Allowed: {allowed}")
+        return v
+
+    @field_validator("byte_count")
+    @classmethod
+    def validate_byte_count(cls, v: int) -> int:
+        if v < _BROWSER_AUDIO_MIN_BYTES:
+            raise ValueError(
+                f"byte_count too small ({v}). Audio blob must be at least "
+                f"{_BROWSER_AUDIO_MIN_BYTES} bytes."
+            )
+        if v > _BROWSER_AUDIO_MAX_BYTES:
+            raise ValueError(
+                f"byte_count exceeds limit ({v} > {_BROWSER_AUDIO_MAX_BYTES} bytes / 100 MB)."
+            )
+        return v
+
+
+class BrowserUploadInitResponse(BaseModel):
+    track_id: str
+    upload_url: str
+    gcs_path: str
+    content_type: str
+    expires_in_s: int
+
+
+class BrowserUploadConfirmResponse(BaseModel):
+    track_id: str
+    analysis_status: str
+    duration_s: float | None
+
+
+def _sign_track_audio_put(gcs_path: str, content_type: str) -> str:
+    """Mint a 15-minute signed PUT URL scoped to *gcs_path* + *content_type*.
+
+    Locking Content-Type at the URL signing layer means a leaked URL can only
+    upload bytes with that exact MIME type — defense-in-depth against signed-URL
+    misuse. See plan §"Güvenlik ve Auth Detayları" item 10.
+    """
+    from app.storage import _get_client  # noqa: PLC0415
+
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(gcs_path)
+    return blob.generate_signed_url(
+        version="v4",
+        method="PUT",
+        content_type=content_type,
+        expiration=_BROWSER_AUDIO_PUT_TTL,
+    )
+
+
+@router.post(
+    "/upload-init",
+    response_model=BrowserUploadInitResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_admin)],
+)
+async def browser_upload_init(
+    req: BrowserUploadInitRequest,
+    db: AsyncSession = Depends(get_db),
+) -> BrowserUploadInitResponse:
+    """Phase 1 of browser-side ingest: create pending MusicTrack + mint signed PUT URL.
+
+    Dedup: if the same source_url already produced a track in the last 24h that
+    is still progressing or completed, return 409 with the existing track_id so
+    the extension can recover instead of creating phantom duplicate rows.
+    """
+    # Dedup window: 24h for completed/in-flight tracks. Stale `pending` rows
+    # (older than the 15-min PUT TTL) are NOT considered duplicates — those
+    # represent abandoned uploads (admin closed the tab, signed URL expired),
+    # and blocking re-ingest for 24h on a never-completed upload is hostile UX.
+    now = datetime.now(UTC)
+    dedup_cutoff = now - _BROWSER_INGEST_DEDUP_WINDOW
+    stale_pending_cutoff = now - _BROWSER_AUDIO_PUT_TTL
+    existing_q = await db.execute(
+        select(MusicTrack)
+        .where(
+            MusicTrack.source_url == req.source_url,
+            MusicTrack.created_at >= dedup_cutoff,
+            MusicTrack.archived_at.is_(None),
+            MusicTrack.analysis_status.in_(["pending", "queued", "analyzing", "ready"]),
+            # If status is still "pending" past the signed-URL TTL, the upload
+            # was abandoned — let the new init replace it.
+            ~(
+                (MusicTrack.analysis_status == "pending")
+                & (MusicTrack.created_at < stale_pending_cutoff)
+            ),
+        )
+        .order_by(MusicTrack.created_at.desc())
+        .limit(1)
+    )
+    existing = existing_q.scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "duplicate_source_url",
+                "message": (
+                    "A track with this source URL was already ingested in the last "
+                    "24 hours. Use the existing track_id."
+                ),
+                "existing_track_id": existing.id,
+                "existing_status": existing.analysis_status,
+            },
+        )
+
+    track_id = str(uuid.uuid4())
+    gcs_path = f"music/{track_id}/audio{req.ext}"
+    content_type = _BROWSER_AUDIO_EXT_TO_CONTENT_TYPE[req.ext]
+    upload_url = _sign_track_audio_put(gcs_path, content_type)
+
+    track = MusicTrack(
+        id=track_id,
+        title=(req.title or "").strip() or f"Track {track_id[:8]}",
+        artist=(req.artist or "").strip(),
+        source_url=req.source_url,
+        # Stash the gcs_path at init so upload-confirm doesn't have to probe
+        # all 8 allowed extensions. Status="pending" gates downstream usage
+        # (gallery + admin job dispatch both require status=="ready"), so
+        # populating audio_gcs_path early is safe.
+        audio_gcs_path=gcs_path,
+        analysis_status="pending",
+    )
+    db.add(track)
+    await db.commit()
+
+    log.info(
+        "music_track_browser_init",
+        track_id=track_id,
+        source_url=req.source_url,
+        ext=req.ext,
+        byte_count=req.byte_count,
+    )
+    return BrowserUploadInitResponse(
+        track_id=track_id,
+        upload_url=upload_url,
+        gcs_path=gcs_path,
+        content_type=content_type,
+        expires_in_s=int(_BROWSER_AUDIO_PUT_TTL.total_seconds()),
+    )
+
+
+class FileUploadInitRequest(BaseModel):
+    """Mint a signed PUT URL for the admin SPA's "Upload file" form.
+
+    The legacy multipart POST /admin/music-tracks/upload routes the entire blob
+    through the Next.js admin proxy on Vercel, which caps function bodies at
+    4.5 MB and silently 413s above that. This endpoint mirrors the extension's
+    /upload-init flow but skips the YouTube/SoundCloud URL validation and the
+    24h source_url dedup — the SPA flow has no canonical "source URL" to dedup
+    on and direct uploads have always produced fresh rows.
+    """
+
+    filename: str
+    title: str | None = None
+    artist: str | None = None
+    ext: str
+    byte_count: int
+
+    @field_validator("filename")
+    @classmethod
+    def validate_filename(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("filename cannot be empty")
+        # The value is persisted as `source_url = upload://{filename}` AND surfaced
+        # as the track's default title in the admin UI. Reject:
+        #  • slashes/backslashes — path-traversal in provenance
+        #  • C0 controls (incl. \0, \n, \r, \t) — break log + UI rendering and
+        #    enable log-line injection in any consumer that doesn't structure-log
+        if "/" in v or "\\" in v:
+            raise ValueError("filename must not contain slashes")
+        if any(ord(c) < 0x20 or ord(c) == 0x7F for c in v):
+            raise ValueError("filename must not contain control characters")
+        return v
+
+    @field_validator("ext")
+    @classmethod
+    def validate_ext(cls, v: str) -> str:
+        v = v.lower().strip()
+        if not v.startswith("."):
+            v = "." + v
+        if v not in _BROWSER_AUDIO_EXT_ALLOWLIST:
+            allowed = ", ".join(sorted(_BROWSER_AUDIO_EXT_ALLOWLIST))
+            raise ValueError(f"Unsupported audio extension: {v}. Allowed: {allowed}")
+        return v
+
+    @field_validator("byte_count")
+    @classmethod
+    def validate_byte_count(cls, v: int) -> int:
+        if v < _BROWSER_AUDIO_MIN_BYTES:
+            raise ValueError(
+                f"byte_count too small ({v}). Audio blob must be at least "
+                f"{_BROWSER_AUDIO_MIN_BYTES} bytes."
+            )
+        if v > _BROWSER_AUDIO_MAX_BYTES:
+            raise ValueError(
+                f"byte_count exceeds limit ({v} > {_BROWSER_AUDIO_MAX_BYTES} bytes / 100 MB)."
+            )
+        return v
+
+
+@router.post(
+    "/upload-init-file",
+    response_model=BrowserUploadInitResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_admin)],
+)
+async def file_upload_init(
+    req: FileUploadInitRequest,
+    db: AsyncSession = Depends(get_db),
+) -> BrowserUploadInitResponse:
+    """Phase 1 of admin-SPA direct-file upload: pending row + signed PUT URL.
+
+    The SPA PUTs the blob straight to GCS using the returned signed URL, then
+    calls /admin/music-tracks/{id}/upload-confirm to verify + dispatch Celery
+    (reusing the existing extension confirm handler).
+    """
+    track_id = str(uuid.uuid4())
+    gcs_path = f"music/{track_id}/audio{req.ext}"
+    content_type = _BROWSER_AUDIO_EXT_TO_CONTENT_TYPE[req.ext]
+    upload_url = _sign_track_audio_put(gcs_path, content_type)
+
+    track = MusicTrack(
+        id=track_id,
+        title=(req.title or "").strip() or req.filename or f"Track {track_id[:8]}",
+        artist=(req.artist or "").strip(),
+        source_url=f"upload://{req.filename}",
+        audio_gcs_path=gcs_path,
+        analysis_status="pending",
+    )
+    db.add(track)
+    await db.commit()
+
+    log.info(
+        "music_track_file_init",
+        track_id=track_id,
+        filename=req.filename,
+        ext=req.ext,
+        byte_count=req.byte_count,
+    )
+    return BrowserUploadInitResponse(
+        track_id=track_id,
+        upload_url=upload_url,
+        gcs_path=gcs_path,
+        content_type=content_type,
+        expires_in_s=int(_BROWSER_AUDIO_PUT_TTL.total_seconds()),
+    )
+
+
+@router.post(
+    "/{track_id}/upload-confirm",
+    response_model=BrowserUploadConfirmResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def browser_upload_confirm(
+    track_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> BrowserUploadConfirmResponse:
+    """Phase 3 of browser-side ingest: verify GCS blob + ffprobe + dispatch Celery.
+
+    The extension calls this AFTER its PUT to the signed URL succeeds. We:
+      1. HEAD the GCS object to confirm bytes landed.
+      2. Download to a temp file and ffprobe it (audio stream present? duration?).
+         If the payload is not decodable audio, mark the track failed.
+      3. Update audio_gcs_path + duration + status='queued'.
+      4. Dispatch analyze_music_track_task — same downstream as the URL path.
+    """
+    track = await _get_track_or_404(track_id, db)
+
+    # Idempotency. If the track is already past pending AND has an audio_gcs_path
+    # set, a prior confirm finished — re-confirms should just echo current state
+    # rather than re-dispatching Celery. If audio_gcs_path is None but status
+    # somehow advanced (partial-failure orphan), fall through to recover.
+    if track.analysis_status not in ("pending", "failed") and track.audio_gcs_path:
+        return BrowserUploadConfirmResponse(
+            track_id=track.id,
+            analysis_status=track.analysis_status,
+            duration_s=track.duration_s,
+        )
+
+    # upload-init persisted the exact gcs_path. Verify the blob landed there.
+    # Falling back to extension-probing is unnecessary now — and was a 7-extra-
+    # round-trip + non-deterministic-set-iteration smell besides.
+    expected_path = track.audio_gcs_path
+    if not expected_path:
+        # Older pending rows from before the init-persists-path change. Fall back
+        # to the probe loop so we don't strand them.
+        from app.storage import _get_client  # noqa: PLC0415
+
+        bucket = _get_client().bucket(settings.storage_bucket)
+        for ext in (".m4a", ".mp4", ".webm", ".opus", ".mp3", ".wav", ".ogg", ".aac"):
+            candidate = f"music/{track_id}/audio{ext}"
+            blob = bucket.blob(candidate)
+            if blob.exists():
+                expected_path = candidate
+                break
+        if not expected_path:
+            track.analysis_status = "failed"
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No audio blob found at the expected GCS path. Did the PUT succeed?",
+            )
+
+    from app.storage import _get_client  # noqa: PLC0415
+
+    bucket = _get_client().bucket(settings.storage_bucket)
+    found_blob = bucket.blob(expected_path)
+    if not found_blob.exists():
+        # The PUT never landed (or landed at an unexpected path). Mark the
+        # pending row failed so dedup doesn't keep blocking the source_url.
+        track.analysis_status = "failed"
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No audio blob found at the expected GCS path. Did the PUT succeed?",
+        )
+    found_path = expected_path
+
+    found_blob.reload()  # populate .size, .content_type, etc
+
+    if found_blob.size and found_blob.size > _BROWSER_AUDIO_MAX_BYTES:
+        # Delete the oversize blob — the `music/` prefix is excluded from the
+        # 24h GCS lifecycle rule (per CLAUDE.md storage-retention), so leaving
+        # the bytes would leak storage cost forever.
+        try:
+            await asyncio.to_thread(found_blob.delete)
+        except Exception:
+            log.warning(
+                "browser_upload_confirm_oversize_delete_failed",
+                track_id=track_id,
+                gcs_path=found_path,
+            )
+        track.analysis_status = "failed"
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Uploaded blob exceeds 100 MB cap ({found_blob.size} bytes).",
+        )
+
+    # ffprobe defense-in-depth: download to temp, verify it's actually audio.
+    ext = Path(found_path).suffix
+    duration_s: float | None = None
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=True) as tmp:
+        await asyncio.to_thread(found_blob.download_to_filename, tmp.name)
+        from app.services.audio_download import probe_duration as _probe_dur  # noqa: PLC0415
+
+        is_audio = await asyncio.to_thread(probe_has_audio_stream, tmp.name)
+        if not is_audio:
+            track.analysis_status = "failed"
+            await db.commit()
+            # Best-effort: nuke the bogus blob so we don't pay for storage on junk.
+            try:
+                await asyncio.to_thread(found_blob.delete)
+            except Exception:
+                log.warning(
+                    "browser_upload_confirm_blob_delete_failed",
+                    track_id=track_id,
+                    gcs_path=found_path,
+                )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Uploaded blob is not decodable audio (ffprobe found no audio stream). "
+                    "If this is from a YouTube extraction, check that the extension picked "
+                    "an audio-only itag."
+                ),
+            )
+        duration_s = await asyncio.to_thread(_probe_dur, tmp.name)
+
+    track.audio_gcs_path = found_path
+    track.duration_s = duration_s
+    track.analysis_status = "queued"
+    await db.commit()
+    await db.refresh(track)
+
+    from app.tasks.music_orchestrate import analyze_music_track_task  # noqa: PLC0415
+
+    analyze_music_track_task.delay(track_id)
+
+    log.info(
+        "music_track_browser_confirmed",
+        track_id=track_id,
+        gcs_path=found_path,
+        bytes=found_blob.size,
+        duration_s=duration_s,
+    )
+    return BrowserUploadConfirmResponse(
+        track_id=track_id,
+        analysis_status="queued",
+        duration_s=duration_s,
+    )
 
 
 # ── Templated track create ────────────────────────────────────────────────────
@@ -567,9 +1193,9 @@ async def create_templated_music_track(
         tmp.write(content)
         tmp.flush()
 
-        from app.services.audio_download import _probe_duration  # noqa: PLC0415
+        from app.services.audio_download import probe_duration  # noqa: PLC0415
 
-        duration_s = _probe_duration(tmp.name)
+        duration_s = probe_duration(tmp.name)
 
         from app.storage import _get_client  # noqa: PLC0415
 
@@ -654,7 +1280,15 @@ async def list_music_tracks(
         func.jsonb_array_length(MusicTrack.beat_timestamps_s),
         0,
     ).label("beat_count")
-    base_query = select(MusicTrack, beat_count_expr).options(
+    # has_ai_labels / has_best_sections are computed server-side as IS NOT NULL
+    # so the heavy JSONB columns stay deferred (perf invariant locked by
+    # test_admin_list_defer_jsonb.py). label_version/section_version are cheap
+    # scalar strings and are loaded so the matchability badge can check versions.
+    has_ai_labels_expr = MusicTrack.ai_labels.isnot(None).label("has_ai_labels")
+    has_best_sections_expr = MusicTrack.best_sections.isnot(None).label("has_best_sections")
+    base_query = select(
+        MusicTrack, beat_count_expr, has_ai_labels_expr, has_best_sections_expr
+    ).options(
         load_only(
             MusicTrack.id,
             MusicTrack.title,
@@ -664,6 +1298,8 @@ async def list_music_tracks(
             MusicTrack.published_at,
             MusicTrack.archived_at,
             MusicTrack.created_at,
+            MusicTrack.label_version,
+            MusicTrack.section_version,
         )
     )
 
@@ -678,7 +1314,15 @@ async def list_music_tracks(
     rows = result.all()
 
     return MusicTrackListResponse(
-        tracks=[_to_list_item(t, beat_count) for (t, beat_count) in rows],
+        tracks=[
+            _to_list_item(
+                t,
+                beat_count,
+                has_ai_labels=has_ai_labels,
+                has_best_sections=has_best_sections,
+            )
+            for (t, beat_count, has_ai_labels, has_best_sections) in rows
+        ],
         total=total,
     )
 
@@ -716,12 +1360,56 @@ async def update_music_track(
     if req.thumbnail_url is not None:
         track.thumbnail_url = req.thumbnail_url
     if req.track_config is not None:
+        # Defense in depth (2026-05-27 Beauty And A Beat PR): refuse a REQUEST
+        # that flips `lyrics_config.enabled=true` on a non-ready track. The FE
+        # disables the checkbox visually; this is the backend wall against a
+        # hand-crafted PATCH that would otherwise enable lyric burn-in on a
+        # whisper-only or needs_manual_lyrics track. We inspect ONLY the
+        # incoming request (not the merged config), so legitimate edits to
+        # other lyrics_config keys on an already-enabled track still work.
+        req_lyrics_cfg = req.track_config.get("lyrics_config") or {}
+        if (
+            isinstance(req_lyrics_cfg, dict)
+            and req_lyrics_cfg.get("enabled") is True
+            and track.lyrics_status != "ready"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Cannot enable lyrics on this track: lyrics_status is "
+                    f"{track.lyrics_status!r}, must be 'ready'. Resolve the "
+                    "extraction first (paste an LRCLIB ID or re-extract)."
+                ),
+            )
         merged_config = {**(track.track_config or {}), **req.track_config}
         if merged_config.get("best_end_s", 0) <= merged_config.get("best_start_s", 0):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="best_end_s must be greater than best_start_s",
             )
+        # Slot-count invariant: (window, slot_every_n_beats) must produce >=1
+        # slot or every job submission will fail inside the worker with
+        # ValueError. The analyzer enforces this at analysis time
+        # (music_orchestrate._analyze_music_track_task n_slots == 0 → _fail_track);
+        # PATCH was the asymmetric gap. Skip the check while the track is
+        # still queued/analyzing (no beats yet) and when no slot-relevant
+        # field is in this patch.
+        _slot_fields = {"best_start_s", "best_end_s", "slot_every_n_beats"}
+        if (track.beat_timestamps_s or []) and (set(req.track_config) & _slot_fields):
+            start = float(merged_config.get("best_start_s", 0.0))
+            end = float(merged_config.get("best_end_s", 0.0))
+            n = int(merged_config.get("slot_every_n_beats", 8))
+            if count_slots(track.beat_timestamps_s, start, end, n) == 0:
+                beats_in_window = sum(1 for b in track.beat_timestamps_s if start <= b <= end)
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"This (window, slot_every_n_beats) combination produces "
+                        f"0 slots: {beats_in_window} beats in "
+                        f"[{start:.1f}s–{end:.1f}s] with slot_every_n_beats={n}. "
+                        f"Widen the window or lower slot_every_n_beats."
+                    ),
+                )
         track.track_config = merged_config
 
     now = datetime.now(UTC)
@@ -764,6 +1452,10 @@ async def update_music_track_lyrics_config(
             detail=str(exc),
         ) from exc
     normalized = normalize_lyrics_config(merged)
+    # NOTE: The PATCH `/lyrics-config` route's `LyricsConfigOverride` schema
+    # does NOT accept `enabled` (extra="forbid"). The enabled flag is flipped
+    # via the general `PATCH /{track_id}` body's `track_config` field, where
+    # the Beauty-And-A-Beat (2026-05-27) `enabled=true` gate lives.
     track_config["lyrics_config"] = normalized
     track.track_config = track_config
     await db.commit()
@@ -798,14 +1490,38 @@ async def create_admin_lyrics_preview(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Music track has no cached lyrics to preview.",
         )
+    # Defense in depth: `lyrics_cached` can be a truthy dict that carries
+    # metadata (source, language, lrclib_id) but an empty `lines` list — that
+    # passed the previous guard and burned a worker on a job that always failed
+    # with "no renderable lyric overlays". Reject upfront so the dashboard
+    # shows a clear, actionable error instead.
+    cached_lines = (
+        track.lyrics_cached.get("lines") if isinstance(track.lyrics_cached, dict) else None
+    )
+    if not cached_lines:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Music track has cached lyrics metadata but no lyric lines — "
+                "re-run extraction from the Config tab."
+            ),
+        )
 
     override = non_null_model_dict(req.lyrics_config_override)
+    # NOTE: `req.style` is validated by Pydantic's Literal[...] on the
+    # request model — an unknown value is rejected with 422 BEFORE this
+    # handler runs. No runtime re-check needed here.
     try:
-        effective = {
-            **effective_lyrics_config(track.track_config, override),
-            "enabled": True,
-            "style": "line",
-        }
+        merged = effective_lyrics_config(track.track_config, override)
+        # When the admin picks a non-Line style for preview, the merged
+        # config may still carry line-only knobs (pre_roll_s, fade_in_ms, …)
+        # inherited from track_config.lyrics_config. The validator rejects
+        # those for non-Line styles by design — so strip them here before
+        # re-validating. The track's saved config is untouched; this is a
+        # one-shot, request-scoped projection for previewing only.
+        if req.style != "line":
+            merged = {k: v for k, v in merged.items() if k not in _LINE_ONLY_KEYS_RUNTIME}
+        effective = {**merged, "enabled": True, "style": req.style}
         validate_lyrics_config_dict(effective)
     except ValueError as exc:
         raise HTTPException(
@@ -820,7 +1536,7 @@ async def create_admin_lyrics_preview(
         raw_storage_path=track.audio_gcs_path or "",
         selected_platforms=["admin"],
         all_candidates={"lyrics_config_effective": effective},
-        assembly_plan={"lyrics_config_effective": effective},
+        assembly_plan={"lyrics_config_effective": effective, "lyric_style": req.style},
         status="queued",
     )
     db.add(job)
@@ -831,7 +1547,7 @@ async def create_admin_lyrics_preview(
     from app.tasks.lyrics_preview_task import render_lyrics_preview_task  # noqa: PLC0415
 
     await enqueue_orchestrator(render_lyrics_preview_task, job.id, db)
-    return LyricsPreviewResponse(job_id=str(job.id))
+    return LyricsPreviewResponse(job_id=str(job.id), style=req.style)
 
 
 @router.get(
@@ -861,14 +1577,27 @@ async def get_admin_lyrics_preview_status(
         if isinstance(raw_url, str) and raw_url.startswith(("http://", "https://"))
         else None
     )
+    raw_start = plan.get("preview_start_s")
+    raw_dur = plan.get("preview_duration_s")
+    # Resolve the rendered style. Prefer the explicit `lyric_style` field
+    # written by the route at submit time (canonical for new previews); fall
+    # back to the effective config's style for jobs created before the
+    # multi-style dashboard shipped; default to None so the frontend treats
+    # those as legacy Line previews without breaking the type contract.
+    raw_cfg = plan.get("lyrics_config_effective")
+    cfg = raw_cfg if isinstance(raw_cfg, dict) else None
+    plan_style = plan.get("lyric_style")
+    if not isinstance(plan_style, str) or plan_style not in LYRICS_STYLES:
+        plan_style = cfg.get("style") if cfg and isinstance(cfg.get("style"), str) else None
     return LyricsPreviewStatusResponse(
         job_id=str(job.id),
         status=job.status,
         output_url=output_url,
         error_detail=job.error_detail,
-        lyrics_config_effective=plan.get("lyrics_config_effective")
-        if isinstance(plan.get("lyrics_config_effective"), dict)
-        else None,
+        lyrics_config_effective=cfg,
+        preview_start_s=float(raw_start) if isinstance(raw_start, int | float) else None,
+        preview_duration_s=float(raw_dur) if isinstance(raw_dur, int | float) else None,
+        style=plan_style,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -904,6 +1633,7 @@ async def extract_track_lyrics(
 
     track.lyrics_status = "extracting"
     track.lyrics_error_detail = None
+    track.lyrics_extraction_version = int(track.lyrics_extraction_version or 0) + 1
     await db.commit()
 
     from app.tasks.music_orchestrate import extract_track_lyrics_task  # noqa: PLC0415
@@ -911,6 +1641,101 @@ async def extract_track_lyrics(
     extract_track_lyrics_task.delay(track_id)
 
     log.info("music_track_lyrics_dispatched", track_id=track_id)
+    return ReanalyzeResponse(track_id=track_id, analysis_status="extracting")
+
+
+class ForceLrclibIdRequest(BaseModel):
+    """Admin manual override for the LRCLIB lookup.
+
+    Accepts either a naked numeric ID (`"12345"`) or an lrclib.net row URL
+    (`https://lrclib.net/lyrics/12345`). Parsing is delegated to
+    `app.services.lrclib_id_parse.parse_lrclib_id` which enforces a strict
+    host allowlist (no arbitrary URLs allowed). See PR Beauty-And-A-Beat.
+    """
+
+    id_or_url: str
+
+
+@router.post(
+    "/{track_id}/lyrics-force-lrclib-id",
+    response_model=ReanalyzeResponse,
+    dependencies=[Depends(_require_admin)],
+)
+async def force_lyrics_lrclib_id(
+    track_id: str,
+    req: ForceLrclibIdRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ReanalyzeResponse:
+    """Pin a track to a specific LRCLIB row and re-extract.
+
+    Recovery path for the `needs_manual_lyrics` state: when title+artist
+    search fails (dirty metadata, regional title variants), the admin can
+    paste the correct LRCLIB row URL or ID. The agent bypasses /api/get +
+    /api/search entirely and fetches the named row via /api/get/{id}.
+
+    Persists `forced_lrclib_id` into `track_config.lyrics_config` so that
+    subsequent re-extracts (e.g. if the audio file is re-encoded) keep
+    using the same row without re-asking the admin.
+
+    Bumps `lyrics_extraction_version` so any in-flight extraction task from
+    a prior force-id (or a normal re-extract that's still running) gets
+    discarded at commit time rather than racing this one — see
+    `_apply_lyrics_result` in app/tasks/music_orchestrate.py.
+    """
+    from app.services.lrclib_id_parse import (  # noqa: PLC0415
+        LrclibIdParseError,
+        parse_lrclib_id,
+    )
+
+    try:
+        forced_id = parse_lrclib_id(req.id_or_url)
+    except LrclibIdParseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    track = await _get_track_or_404(track_id, db)
+
+    if not track.audio_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Track has no audio file — re-upload the track first.",
+        )
+    if track.lyrics_status == "extracting":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Lyric extraction is already in progress for this track. "
+                "Wait for it to finish, then try again."
+            ),
+        )
+
+    # Persist forced_lrclib_id into track_config.lyrics_config so it's read
+    # by music_orchestrate._run_lyrics_extraction at task start. JSONB column
+    # is a dict | None at the model level, but we may be appending to an
+    # existing config — preserve other keys.
+    existing_track_config = dict(track.track_config or {})
+    existing_lyrics_cfg = dict(existing_track_config.get("lyrics_config") or {})
+    existing_lyrics_cfg["forced_lrclib_id"] = forced_id
+    existing_track_config["lyrics_config"] = existing_lyrics_cfg
+    track.track_config = existing_track_config
+
+    track.lyrics_status = "extracting"
+    track.lyrics_error_detail = None
+    track.lyrics_diagnostic = None  # stale; the new run will repopulate
+    track.lyrics_extraction_version = int(track.lyrics_extraction_version or 0) + 1
+    await db.commit()
+
+    from app.tasks.music_orchestrate import extract_track_lyrics_task  # noqa: PLC0415
+
+    extract_track_lyrics_task.delay(track_id)
+
+    log.info(
+        "music_track_lyrics_forced_id_dispatched",
+        track_id=track_id,
+        forced_lrclib_id=forced_id,
+    )
     return ReanalyzeResponse(track_id=track_id, analysis_status="extracting")
 
 
@@ -934,6 +1759,12 @@ async def reanalyze_music_track(
 
     track.analysis_status = "queued"
     track.error_detail = None
+    # Clear per-agent error blobs at dispatch time so the admin UI does NOT
+    # display a stale reason while the worker is mid-flight. The analyze task
+    # also clears section_error_detail when it begins, but doing it here too
+    # is the user-visible signal: clicking "Re-analyze beats" should hide
+    # the failure text immediately, not wait for the worker to wake up.
+    track.section_error_detail = None
     await db.commit()
 
     from app.tasks.music_orchestrate import analyze_music_track_task  # noqa: PLC0415
@@ -1001,7 +1832,9 @@ async def archive_music_track(
 # /clips/, processed outputs, internal artifacts) is rejected so an attacker
 # can't smuggle an arbitrary object key into the render pipeline and exfiltrate
 # it through the signed assembly_plan.output_url.
-_ALLOWED_CLIP_PREFIXES = ("music-uploads/", "slot-uploads/")
+# `users/` is the authenticated content-plan prefix (users/{user_id}/plan/...).
+# It is NOT matched by the 24h GCS delete rule, so plan content persists.
+_ALLOWED_CLIP_PREFIXES = ("music-uploads/", "slot-uploads/", "users/")
 
 
 def _validate_clip_path_prefixes(paths: list[str]) -> list[str]:
@@ -1012,6 +1845,21 @@ def _validate_clip_path_prefixes(paths: list[str]) -> list[str]:
             allowed = ", ".join(_ALLOWED_CLIP_PREFIXES)
             raise ValueError(f"Clip path must start with one of: {allowed}. Got: {p!r}")
     return paths
+
+
+# Voiceover uploads get their OWN single-prefix allowlist, deliberately NOT folded
+# into _ALLOWED_CLIP_PREFIXES: a voiceover path must never be acceptable as a footage
+# clip (and vice-versa), so the two validators can't cross-contaminate. PII retention
+# also keys on this prefix — see infra/gcs-lifecycle.json.
+_VOICEOVER_PREFIX = "voiceover-uploads/"
+
+
+def _validate_voiceover_path(path: str) -> str:
+    if not isinstance(path, str) or ".." in path or path.startswith("/"):
+        raise ValueError(f"Invalid voiceover path: {path!r}")
+    if not path.startswith(_VOICEOVER_PREFIX):
+        raise ValueError(f"Voiceover path must start with {_VOICEOVER_PREFIX!r}. Got: {path!r}")
+    return path
 
 
 class SlotPresignItem(BaseModel):

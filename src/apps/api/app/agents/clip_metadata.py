@@ -15,9 +15,10 @@ when `filter_hint` mentions ball/football/soccer.
 from __future__ import annotations
 
 import json
-from typing import Any, ClassVar
+import math
+from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.agents._runtime import (
     Agent,
@@ -48,6 +49,17 @@ class ClipMetadataInput(BaseModel):
     filter_hint: str = ""
 
 
+# Clip-understanding labels for the format-aware edit engine (Lane A / D1).
+# content_type feeds archetype dispatch (talking_head spine vs B-roll cutaway);
+# audio_type guides which variants make sense (e.g. a dialogue clip shouldn't get
+# a lyrics overlay). Safe defaults ('broll' / 'ambient') never falsely promote a
+# clip to the talking-head spine when the model omits or drifts the label.
+ClipContentType = Literal["talking_head", "broll", "action", "ambience"]
+ClipAudioType = Literal["dialogue", "voiceover", "ambient", "music", "mixed"]
+_CONTENT_TYPES = ("talking_head", "broll", "action", "ambience")
+_AUDIO_TYPES = ("dialogue", "voiceover", "ambient", "music", "mixed")
+
+
 class ClipMetadataOutput(BaseModel):
     clip_id: str = ""
     transcript: str = ""
@@ -55,6 +67,35 @@ class ClipMetadataOutput(BaseModel):
     hook_score: float = Field(..., ge=0, le=10)
     best_moments: list[Moment] = Field(default_factory=list)
     detected_subject: str = ""
+    # Composition signal for agent-decided overlay sizing (see overlay_sizing.py).
+    # Deliberately loose-typed: generative is best-effort and must never hard-fail
+    # parsing on a drifted value, so a bad safe_zone/density is tolerated here and
+    # validated/clamped downstream rather than rejected at the schema.
+    text_safe_zone: dict | None = None  # {"x","y","w","h"} normalized to the 9:16 frame
+    visual_density: float = 5.0  # 0 (empty) .. 10 (cluttered); clamped at use
+    composition_note: str = ""
+    # Format-aware labels. Defaulted + coerced so the existing hook/transcript
+    # fields stay authoritative and a missing/drifted label can't break parsing.
+    content_type: ClipContentType = "broll"
+    audio_type: ClipAudioType = "ambient"
+
+    @field_validator("content_type", mode="before")
+    @classmethod
+    def _coerce_content_type(cls, v: object) -> str:
+        if isinstance(v, str):
+            n = v.strip().lower().replace("-", "_").replace(" ", "_")
+            if n in _CONTENT_TYPES:
+                return n
+        return "broll"
+
+    @field_validator("audio_type", mode="before")
+    @classmethod
+    def _coerce_audio_type(cls, v: object) -> str:
+        if isinstance(v, str):
+            n = v.strip().lower().replace("-", "_").replace(" ", "_")
+            if n in _AUDIO_TYPES:
+                return n
+        return "ambient"
 
 
 # ── Domain-specific post-filter (lifted verbatim from gemini_analyzer.py) ────
@@ -140,6 +181,64 @@ _BALL_BLACKLIST = (
 )
 
 
+# Minimum gap (seconds) between consecutive accepted moments. Mirrors HARD RULE 2
+# in prompts/analyze_clip.txt. Gemini-2.5-flash sometimes ignores the prompt rule
+# and emits 3 moments inside 0.5s; this post-filter is the deterministic safety net.
+# Bumping this past ~3s starts dropping legitimately tight moments on short clips,
+# so 2.0 matches the prompt's stated contract.
+_MIN_MOMENT_SPACING_S = 2.0
+
+# Minimum moment duration. Anything shorter is a frame index, not a moment
+# (HARD RULE 3 in the prompt).
+_MIN_MOMENT_DURATION_S = 1.0
+
+
+def _enforce_moment_spread(moments: list[Moment]) -> list[Moment]:
+    """Deterministic post-filter on the Gemini-returned best_moments list.
+
+    The prompt has explicit HARD RULES for spread + duration but Gemini still
+    occasionally returns 3 moments clustered inside 0.5s (TODOS.md 2026-05-13 —
+    affected 3/5 prod fixtures, judge avg 2.5/5). This filter applies the same
+    rules in code so the downstream matcher always sees distinct candidates:
+
+      1. Drop any moment whose duration < _MIN_MOMENT_DURATION_S (rule 3).
+      2. Sort the remainder by start_s.
+      3. Greedy-accept: keep a moment if its start_s is at least
+         _MIN_MOMENT_SPACING_S after the last accepted moment's start_s.
+
+    A clip with one legitimate moment correctly returns one moment — the prompt
+    explicitly says "fewer strong moments > padding the list" so we never invent.
+    """
+    valid = [
+        m
+        for m in moments
+        if isinstance(m.end_s, (int, float))
+        and isinstance(m.start_s, (int, float))
+        and (m.end_s - m.start_s) >= _MIN_MOMENT_DURATION_S
+    ]
+    valid.sort(key=lambda m: m.start_s)
+
+    kept: list[Moment] = []
+    for m in valid:
+        if not kept or (m.start_s - kept[-1].start_s) >= _MIN_MOMENT_SPACING_S:
+            kept.append(m)
+    return kept
+
+
+def _coerce_density(value: object) -> float:
+    """Clamp a model-supplied visual_density into [0, 10]; default 5.0 on junk.
+    Loose by design — a drifted value must never fail the best-effort clip parse.
+    Non-finite (NaN/inf, which `float("NaN")` produces) is treated as junk so it
+    can't poison the sizer's clamp math downstream."""
+    try:
+        d = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 5.0
+    if not math.isfinite(d):
+        return 5.0
+    return max(0.0, min(10.0, d))
+
+
 def _filter_moments_by_action(moments: list[dict[str, Any]], hint: str) -> list[dict[str, Any]]:
     """Football-only post-filter. Pass-through for other hints / no hint."""
     hint_lower = hint.lower()
@@ -178,11 +277,27 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.video.clip_metadata",
         prompt_id="analyze_clip",
-        prompt_version="2026-05-14",
+        # 2026-05-28 — _enforce_moment_spread() post-filter added in parse().
+        # 2026-05-31 — prompt emits composition fields (text_safe_zone /
+        # visual_density / composition_note) consumed by overlay_sizing for the
+        # agent-decided generative intro size.
+        # 2026-05-31.1 — added content_type + audio_type labels (format-aware edit
+        # engine), layered on the composition fields above. New fields default +
+        # coerce, so a hook_score regression here is attributable; D4 eval gate
+        # compares hook_score against the prior baseline before merge.
+        prompt_version="2026-05-31.1",
         model="gemini-2.5-flash",
         # Gemini pricing as of 2026 — input ~$0.075/M, output ~$0.30/M (2.5 Flash).
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
+        # Cap internal reasoning. Default dynamic thinking burned ~4k thought-
+        # tokens / 13-18s on real clips (A/B measured) vs ~5s at 512 — with NO
+        # quality loss: subject/hook_text/best_moments held or improved across
+        # 3 real clips + repeats (default occasionally returned an empty
+        # transcript / degenerate moment that the capped run did not). 512 keeps
+        # ample reasoning headroom for the vision extraction. Validated on real
+        # clips because the eval fixtures' source videos were GC'd from GCS.
+        thinking_budget=512,
         # Skip the clarification retry: prod logs showed `attempts=2
         # latency_ms=233209` (3m 53s) on schema/refusal retries that almost
         # always failed the same way. Caller (template_orchestrate) has a
@@ -310,6 +425,11 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
                 "non-numeric start_s/end_s)"
             )
 
+        # Deterministic post-filter for the clustering bug (TODOS.md 2026-05-13):
+        # Gemini periodically returns 3 moments inside 0.5s despite the prompt's
+        # HARD RULES, defeating downstream matcher variety. Enforce spread in code.
+        moments = _enforce_moment_spread(moments)
+
         try:
             return ClipMetadataOutput(
                 transcript=str(data.get("transcript", "") or ""),
@@ -317,6 +437,24 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
                 hook_score=hook_score,
                 best_moments=moments,
                 detected_subject=str(data.get("detected_subject", "") or ""),
+                # Composition fields drive overlay_sizing. parse() reconstructs the
+                # output field-by-field, so these MUST be threaded explicitly or the
+                # model's values are silently dropped (the inert-feature bug caught by
+                # local-render: Gemini returned them but the sizer never saw them).
+                # Loose/defensive to match the schema's best-effort contract.
+                text_safe_zone=(
+                    safe_zone
+                    if isinstance((safe_zone := data.get("text_safe_zone")), dict)
+                    else None
+                ),
+                visual_density=_coerce_density(data.get("visual_density")),
+                composition_note=str(data.get("composition_note", "") or ""),
+                # Format-aware labels — same field-by-field threading rule: pass the
+                # raw values; the schema's before-validators coerce None/unknown to
+                # the safe defaults (broll/ambient), so a missing label never breaks
+                # parse and never falsely promotes a clip to the talking-head spine.
+                content_type=data.get("content_type"),
+                audio_type=data.get("audio_type"),
             )
         except ValidationError as exc:
             raise SchemaError(f"clip_metadata: output validation — {exc}") from exc

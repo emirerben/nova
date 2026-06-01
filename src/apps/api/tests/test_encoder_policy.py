@@ -71,6 +71,22 @@ FINAL_OUTPUT_REQUIRED: set[tuple[str, str]] = {
     # as the Pillow path's `_burn_text_overlays` — these are the final bytes
     # that ship to users when `settings.text_renderer_skia_enabled` is on.
     ("app/pipeline/text_overlay_skia.py", "_ffmpeg_burn_pngs"),
+    # Lyric-only preview (Line Templates dashboard). Bytes the admin watches
+    # in the browser, so same banding policy as production renders. Was on
+    # ultrafast/CRF 28 before 2026-05-25 — flipped to fast/CRF 20 when the
+    # dashboard surfaced.
+    ("app/pipeline/lyrics_preview.py", "_build_preview_ffmpeg_cmd"),
+    # xfade transition join. Re-encoded downstream by the overlay burn, but the
+    # blend itself is gradient-sensitive, so it uses fast (not ultrafast). Was
+    # hardcoded with no maxrate ceiling + no color tags until 2026-05-26 —
+    # routed through _encoding_args (include_audio=False) so it picks up the 16M
+    # capped-CRF ceiling and bt709 tagging like every other final-class encode.
+    ("app/pipeline/transitions.py", "join_with_transitions"),
+    # Talking-head archetype (format-aware edit engine, Lane C). The ONE final
+    # composite that lays B-roll over the spine video + muxes the spine audio —
+    # the bytes that ship for a talking_head job. include_audio=False because the
+    # audio is built by the filtergraph (loudnorm + 48k), not the slot-layout args.
+    ("app/pipeline/talking_head_assembler.py", "build_talking_head_command"),
 }
 
 # libx264 presets ordered from fastest to slowest. Anything at or stricter
@@ -93,6 +109,9 @@ FILES_TO_AUDIT: list[str] = [
     "app/tasks/template_orchestrate.py",
     "app/pipeline/single_pass.py",
     "app/pipeline/text_overlay_skia.py",
+    "app/pipeline/lyrics_preview.py",
+    "app/pipeline/transitions.py",
+    "app/pipeline/talking_head_assembler.py",
 ]
 
 
@@ -286,4 +305,49 @@ def test_each_final_output_site_individually(
     assert not bad, (
         f"{callsite[0]}::{callsite[1]} uses preset(s) "
         f"{[m[3] for m in bad]} — must be in {sorted(PRESETS_FAST_OR_STRICTER)}"
+    )
+
+
+def test_encoding_args_is_capped_crf_not_abr() -> None:
+    """Final-output encodes must be capped CRF, never ABR.
+
+    Passing `-b:v` puts x264 in ABR mode, which ignores `-crf` and holds a flat
+    average bitrate — that starves smooth dark gradients (twilight sky) and
+    macroblocks them. We want `-crf` (quality driver) + `-maxrate`/`-bufsize`
+    (ceiling) with NO `-b:v`. History: lisbon1.MOV HLG sunset, 2026-05-25.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.pipeline.reframe import _double_rate, _encoding_args  # noqa: PLC0415
+
+    args = _encoding_args("/tmp/out.mp4", preset="fast")
+
+    assert "-b:v" not in args, (
+        "_encoding_args emitted -b:v — that forces x264 into ABR and disables "
+        "capped CRF. Use -crf + -maxrate + -bufsize only."
+    )
+    assert "-crf" in args, "_encoding_args must keep -crf as the quality driver."
+    assert "-maxrate" in args, "_encoding_args must keep -maxrate as the ceiling."
+
+    # bufsize must be 2× maxrate, both derived from the configured ceiling.
+    maxrate = args[args.index("-maxrate") + 1]
+    bufsize = args[args.index("-bufsize") + 1]
+    assert maxrate == settings.output_video_bitrate
+    assert bufsize == _double_rate(settings.output_video_bitrate), (
+        f"bufsize {bufsize!r} must be 2× maxrate {maxrate!r} — a fixed bufsize "
+        "breaks the moment the bitrate ceiling moves."
+    )
+
+
+def test_hdr_downconvert_uses_error_diffusion_dither() -> None:
+    """The 10-bit HLG/HDR10 → 8-bit SDR collapse must dither.
+
+    Without error-diffusion dither the gradient stair-steps into visible contour
+    bands on smooth skies (zscale defaults to dither=none). This is the only
+    place in the pipeline a 10-bit gradient is quantized to 8-bit.
+    """
+    from app.pipeline.reframe import _ZSCALE_SDR_PIPELINE  # noqa: PLC0415
+
+    assert "dither=error_diffusion" in _ZSCALE_SDR_PIPELINE, (
+        "_ZSCALE_SDR_PIPELINE dropped error-diffusion dither — HDR skies will "
+        "band. See reframe.py history (lisbon1.MOV, 2026-05-25)."
     )

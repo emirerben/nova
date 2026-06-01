@@ -19,15 +19,23 @@ import {
 } from "@/lib/music-api";
 import { JobIdChip } from "@/app/admin/_shared/JobIdChip";
 import { useJobPoller } from "@/hooks/useJobPoller";
+import { formatMSS } from "@/lib/format-time";
 import { LyricsTimingPanel } from "./LyricsTimingPanel";
+import { StatusPill, TERMINAL_STATUSES, resolveMusicJobOutputUrl } from "./musicJobStatus";
 
-const TERMINAL_STATUSES = new Set(["music_ready", "processing_failed"]);
 type ActiveJobKind = "full" | "lyrics_preview";
 type ActiveJobStatus = MusicJobStatus | LyricsPreviewStatus;
 
 interface TestTabProps {
   trackId: string;
   track: MusicTrackDetail;
+  // Set by the page-top component when the Config tab's best_start_s /
+  // best_end_s form state differs from the persisted track_config. Gates
+  // the embedded LyricsTimingPanel's "Preview lyrics only" button so a
+  // user who clicked a section band on the Config tab without clicking
+  // Save can't fire a preview against stale section bounds (the Beat It
+  // bug, job 616d3e53). Defaults to false for callers that never set it.
+  sectionBoundsDirty?: boolean;
 }
 
 interface UploadedClip {
@@ -57,7 +65,7 @@ function describeExpectedClipCount(track: MusicTrackDetail): {
   return { message: `Expects ${min}–${max} clips`, min, max };
 }
 
-export function TestTab({ trackId, track }: TestTabProps) {
+export function TestTab({ trackId, track, sectionBoundsDirty = false }: TestTabProps) {
   const [uploads, setUploads] = useState<UploadedClip[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -195,30 +203,38 @@ export function TestTab({ trackId, track }: TestTabProps) {
   }
 
   const clipCount = uploads.length;
+  // Gate the full test render against stale section bounds in addition to
+  // the upload-count guards. music_orchestrate.py reads
+  // `track_config.best_start_s` / `best_end_s` from the DB at job submit
+  // time (see _run_templated_music_job, ~line 463). If the Config tab's
+  // form state diverges from the persisted track, the orchestrator would
+  // render against the OLD section the admin thought they had replaced —
+  // the same trap the lyric-preview button gates against, just with a
+  // longer/heavier blast radius (full clip render + audio mix).
   const submitDisabled =
-    !trackReady || uploading || clipCount < expected.min || clipCount > expected.max;
+    !trackReady ||
+    uploading ||
+    clipCount < expected.min ||
+    clipCount > expected.max ||
+    sectionBoundsDirty;
+  // The upload-state hints take priority because they tell the admin what to
+  // do RIGHT NOW about clips. Section-dirty appears only when the upload
+  // state is otherwise valid, so the admin always sees the most actionable
+  // blocker first.
   const fullTestHint =
     clipCount > 0 && clipCount < expected.min
       ? `Need ${expected.min - clipCount} more clip${expected.min - clipCount === 1 ? "" : "s"}`
       : clipCount > expected.max
         ? `Too many clips (${clipCount} > ${expected.max})`
-        : null;
+        : sectionBoundsDirty
+          ? "Save section bounds on the Config tab first — full render reads the persisted window."
+          : null;
 
   const currentJob = poller.data;
   const isPolling = poller.polling;
   const pollError = poller.error;
-  // Legacy assembly_plan.output_url rows stored a relative GCS path before the
-  // orchestrator was fixed to capture the signed URL. Filter to http(s) so the
-  // <video src> never falls back to a same-origin path lookup.
-  const rawOutput =
-    currentJob?.status === "music_ready" && "output_url" in currentJob
-      ? (currentJob.output_url ?? undefined)
-      : currentJob?.status === "music_ready" && "assembly_plan" in currentJob && currentJob.assembly_plan
-        ? ((currentJob.assembly_plan as Record<string, unknown>).output_url as string | undefined)
-      : undefined;
-  const outputUrl =
-    typeof rawOutput === "string" && /^https?:\/\//.test(rawOutput) ? rawOutput : undefined;
-  const outputLegacy = rawOutput !== undefined && outputUrl === undefined;
+  // Shared resolver — see musicJobStatus.ts for the legacy-row defense.
+  const { outputUrl, outputLegacy } = resolveMusicJobOutputUrl(currentJob);
 
   if (track.analysis_status !== "ready") {
     return (
@@ -319,6 +335,12 @@ export function TestTab({ trackId, track }: TestTabProps) {
         savedConfig={savedLyricsConfig}
         fullTestDisabled={submitDisabled}
         fullTestHint={fullTestHint}
+        previewDisabled={sectionBoundsDirty}
+        previewHint={
+          sectionBoundsDirty
+            ? "Save section bounds on the Config tab first — preview reads the persisted window."
+            : undefined
+        }
         onSaved={setSavedLyricsConfig}
         onWorkingChange={setCurrentLyricsOverride}
         onSubmit={(action, override) => {
@@ -358,6 +380,23 @@ export function TestTab({ trackId, track }: TestTabProps) {
 
               {outputUrl && (
                 <div className="mt-4 space-y-3">
+                  {/* Resolved window the lyric preview rendered. Only present
+                      on lyrics_preview jobs — full music jobs assemble clips
+                      from t=0 and don't carry preview_start_s / _duration_s.
+                      Narrow on activeJobKind so TypeScript permits the field
+                      access (MusicJobStatus has no such fields). Without this
+                      caption, the auto-anchor change is silent: an admin
+                      previewing a song with a 30s instrumental intro would
+                      hear the body and assume the wrong track was loaded. */}
+                  {activeJobKind === "lyrics_preview" &&
+                    "preview_start_s" in currentJob &&
+                    currentJob.preview_start_s !== null &&
+                    currentJob.preview_duration_s !== null && (
+                      <p className="text-xs text-zinc-400 font-mono">
+                        Previewing {formatMSS(currentJob.preview_start_s)} –{" "}
+                        {formatMSS(currentJob.preview_start_s + currentJob.preview_duration_s)}
+                      </p>
+                    )}
                   <video
                     src={outputUrl}
                     controls
@@ -453,19 +492,3 @@ export function TestTab({ trackId, track }: TestTabProps) {
   );
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  queued: "bg-zinc-700 text-zinc-200",
-  processing: "bg-blue-900 text-blue-300",
-  music_ready: "bg-green-900 text-green-300",
-  processing_failed: "bg-red-900 text-red-300",
-  failed: "bg-red-900 text-red-300",
-};
-
-function StatusPill({ status }: { status: string }) {
-  const cls = STATUS_COLOR[status] ?? "bg-zinc-700 text-zinc-200";
-  return (
-    <span className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full ${cls}`}>
-      {status}
-    </span>
-  );
-}

@@ -27,10 +27,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
+from app.services.music_sections import (
+    track_config_with_rank_one as _track_config_for_best_section,
+)
 from app.tasks.auto_music_orchestrate import (
     _load_matcher_candidates,
     _run_auto_music_job,
-    _track_config_for_best_section,
     _track_slot_count,
     orchestrate_auto_music_job,
 )
@@ -101,17 +103,21 @@ def _make_track(
     t.archived_at = None
     t.analysis_status = "ready"
     t.recipe_cached = {"slots": [{"position": i + 1} for i in range(slot_count_hint)]}
-    t.best_sections = best_sections if best_sections is not None else [
-        {
-            "rank": 1,
-            "start_s": 8.0,
-            "end_s": 22.0,
-            "label": "chorus",
-            "energy": "high",
-            "suggested_use": "hook",
-            "rationale": "short-form hook",
-        }
-    ]
+    t.best_sections = (
+        best_sections
+        if best_sections is not None
+        else [
+            {
+                "rank": 1,
+                "start_s": 8.0,
+                "end_s": 22.0,
+                "label": "chorus",
+                "energy": "high",
+                "suggested_use": "hook",
+                "rationale": "short-form hook",
+            }
+        ]
+    )
     t.section_version = section_version
     return t
 
@@ -347,9 +353,7 @@ def test_no_labeled_tracks_fails_with_useful_error() -> None:
     assert job.status == "no_labeled_tracks"
     assert job.failure_reason == "no_labeled_tracks"
     msg = (job.error_detail or "").lower()
-    assert "label" in msg, (
-        f"no_labeled_tracks error message is not informative: {msg!r}"
-    )
+    assert "label" in msg, f"no_labeled_tracks error message is not informative: {msg!r}"
 
 
 # ── hallucinated track_id falls through to next pick ─────────────────────────
@@ -637,6 +641,45 @@ def test_load_matcher_candidates_requires_current_best_sections_window() -> None
     assert cfg["best_start_s"] == 20.0
     assert cfg["best_end_s"] == 36.0
     assert 0 < _track_slot_count(out[0]) <= 8
+
+
+def _captured_where_sql(n_clips: int, **kwargs) -> str:
+    """Run _load_matcher_candidates and return the SELECT's compiled SQL.
+
+    The session is mocked, so the DB never applies the WHERE clause — we
+    assert on the statement the loader *builds* instead.
+    """
+    mock_session = MagicMock()
+    mock_session.__enter__ = lambda s: s
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalars.return_value.all.return_value = []
+    mock_session.execute.return_value = mock_execute_result
+
+    with patch("app.tasks.auto_music_orchestrate._sync_session", return_value=mock_session):
+        _load_matcher_candidates(n_clips=n_clips, **kwargs)
+
+    stmt = mock_session.execute.call_args.args[0]
+    return str(stmt)
+
+
+def test_load_matcher_candidates_requires_published_by_default() -> None:
+    """Auto-music (the default path) must keep the published-only gate."""
+    sql = _captured_where_sql(n_clips=4)
+    assert "published_at IS NOT NULL" in sql
+
+
+def test_load_matcher_candidates_drops_publish_gate_for_generative() -> None:
+    """require_published=False (generative path) matches the whole analyzed
+    library regardless of publish state, but still requires current labels +
+    sections + ready status."""
+    sql = _captured_where_sql(n_clips=4, require_published=False)
+    assert "published_at IS NOT NULL" not in sql
+    # The other eligibility predicates must survive.
+    assert "ai_labels IS NOT NULL" in sql
+    assert "best_sections IS NOT NULL" in sql
+    assert "label_version" in sql
+    assert "section_version" in sql
 
 
 def test_track_config_for_best_section_caps_overlong_current_rows() -> None:

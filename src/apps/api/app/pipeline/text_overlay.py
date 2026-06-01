@@ -475,6 +475,12 @@ def generate_animated_overlay_ass(
                 # back to the function defaults for any other call site.
                 fade_in_ms=_overlay_int(overlay, "fade_in_ms", 150),
                 fade_out_ms=_overlay_int(overlay, "fade_out_ms", 250),
+                # `lyric-line` effect only — optional fade-out curve override.
+                # Set by the dynamic-crossfade scheduler in lyric_injector to
+                # "sqrt" for inter-line crossfades (mirror-symmetric with the
+                # sqrt fade-in → unit-partition crossfade, no readable stacking).
+                # None means default lingering `1−p²`.
+                fade_out_curve=overlay.get("fade_out_curve"),
                 # `lyric-line` effect only — px font-size override that the
                 # wrap+shrink helper uses as its starting base. Without this
                 # the helper starts from the Style's Fontsize=90 and never
@@ -817,8 +823,18 @@ def _emit_lyric_line_alpha_tags(
     section_end_s: float,
     fade_in_ms: int,
     fade_out_ms: int,
+    *,
+    fade_out_curve: str | None = None,
 ) -> str:
-    """Emit clamped eased opacity tags for lyric-line ASS events."""
+    """Emit clamped eased opacity tags for lyric-line ASS events.
+
+    `fade_out_curve="sqrt"` switches the fade-out accel from 2.0 (default
+    lingering `1−p²`) to 0.5 (mirror-symmetric `1−√p`). Set by the dynamic
+    crossfade scheduler in `lyric_injector.py` for inter-line crossfades
+    only; over a matched-duration window paired with the sqrt fade-in on
+    the incoming line, α_outgoing + α_incoming = 1 at every t — no
+    readable stacked text. See plan §2 / Mirea fix.
+    """
     duration_ms = max(0, int(round((section_end_s - section_start_s) * 1000)))
     fade_in = max(0, min(fade_in_ms, duration_ms))
     fade_out = max(0, min(fade_out_ms, max(0, duration_ms - fade_in)))
@@ -832,7 +848,8 @@ def _emit_lyric_line_alpha_tags(
 
     if fade_out > 0:
         fade_out_start = max(fade_in, duration_ms - fade_out)
-        tags.append(rf"\t({fade_out_start},{duration_ms},2.0,\alpha&HFF&)")
+        fade_out_accel = "0.5" if fade_out_curve == "sqrt" else "2.0"
+        tags.append(rf"\t({fade_out_start},{duration_ms},{fade_out_accel},\alpha&HFF&)")
 
     return "{" + "".join(tags) + "}"
 
@@ -866,6 +883,13 @@ def _write_animated_ass(
     # for effect-specific parameters in this function.
     fade_in_ms: int = 150,
     fade_out_ms: int = 250,
+    # Lyric-line only: optional fade-out curve override. When set to "sqrt",
+    # the libass fade-out accel switches from 2.0 (default `1−p²` lingering)
+    # to 0.5 (mirror-symmetric `1−√p`). Set by the dynamic crossfade
+    # scheduler in `lyric_injector.py` for inter-line crossfades only — see
+    # _emit_lyric_line_alpha_tags and plan §2. None for every non-crossfade
+    # case (solo last line, sparse pair, hard-cut, override, kill-switch off).
+    fade_out_curve: str | None = None,
     # Lyric-line only: pixel font size override. When set, the dialogue emits
     # `\fs<px>` to override the LyricLine Style's hardcoded Fontsize=90. The
     # wrap+shrink helper then further reduces this size if even the wrapped
@@ -1048,7 +1072,9 @@ def _write_animated_ass(
         if text_color:
             bgr = _hex_to_ass_bgr(text_color)
             color_tag = f"\\1c&H{bgr}&"
-        alpha_tags = _emit_lyric_line_alpha_tags(start_s, end_s, fade_in_ms, fade_out_ms)
+        alpha_tags = _emit_lyric_line_alpha_tags(
+            start_s, end_s, fade_in_ms, fade_out_ms, fade_out_curve=fade_out_curve
+        )
 
         # Wrap + shrink to keep lyrics inside the 90%-canvas safe width.
         # libass uses \q2 below (explicit \N breaks only), so we MUST insert
@@ -1613,8 +1639,13 @@ def _validate_overlay(
 
     Returns (None, 0, 0, "") if the overlay should be skipped.
     When spans are present, skip text truncation (validate per-span instead).
+
+    Prefers `display_text` when set (Layer 2 line-style finalization writes
+    this for partial lyric lines it truncated to the audible-word substring).
+    Falls back to `text` for every other case — byte-identical to pre-PR for
+    non-music callers. See plans/geli-me-var-ama-hatalar-robust-reddy.md §2c.
     """
-    text = overlay.get("text", "")
+    text = overlay.get("display_text") or overlay.get("text", "")
     start_s = float(overlay.get("start_s", 0.0))
     end_s = float(overlay.get("end_s", 0.0))
     position = overlay.get("position", "center")
@@ -1779,6 +1810,58 @@ def measure_text_width(
     draw = ImageDraw.Draw(img)
     bbox = draw.textbbox((0, 0), text, font=font)
     return bbox[2] - bbox[0]
+
+
+def wrap_and_measure(
+    text: str,
+    *,
+    font_family: str | None = None,
+    font_style: str = "display",
+    text_size: str = "medium",
+    text_size_px: int | None = None,
+    max_width_px: int | None = None,
+) -> tuple[list[str], int]:
+    """Wrap `text` and return (lines, widest_line_px) for the resolved font.
+
+    Single source of truth for "does this text fit?" used by the universal
+    constraint pass (`app.pipeline.overlay_constraints`). It resolves the same
+    font `_draw_text_png` would, wraps with the same greedy `_wrap_text_to_lines`
+    both renderers mirror (Pillow `_wrap_text_to_lines` / Skia
+    `_wrap_text_to_lines`), and measures with Pillow. Pillow metrics are the
+    conservative reference: the constraint pass adds a small safety margin on top
+    so a fit it approves is also safe under Skia's HarfBuzz shaping.
+
+    `max_width_px` defaults to `_TEXT_MAX_LINE_W * CANVAS_W` (the wrap budget both
+    renderers use). Returns ([text], 0) when the font can't be resolved — the
+    caller treats width 0 as "don't shrink" (the renderer keeps its own
+    shrink-to-fit safety net).
+    """
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    if not text:
+        return ([text], 0)
+    size = text_size_px or _FONT_SIZE_MAP.get(text_size, 72)
+    font = None
+    if font_family:
+        font = _resolve_font_family(font_family, size)
+    if font is None:
+        font = _load_styled_font(font_style, text_size, text_size_px=size)
+    if font is None:
+        return ([text], 0)
+
+    width_budget = int(max_width_px if max_width_px is not None else _TEXT_MAX_LINE_W * CANVAS_W)
+    img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    lines: list[str] = []
+    for raw_line in text.split("\n"):
+        lines.extend(_wrap_text_to_lines(raw_line, font, width_budget, draw) if raw_line else [""])
+    widest = 0
+    for line in lines:
+        if not line:
+            continue
+        bbox = draw.textbbox((0, 0), line, font=font)
+        widest = max(widest, bbox[2] - bbox[0])
+    return (lines, widest)
 
 
 def _draw_text_png(

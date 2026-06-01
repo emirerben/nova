@@ -79,6 +79,13 @@
 **What:** The `/music` frontend route is deleted but the backend (`routes/music.py`, `music_jobs.py`, beat-sync orchestrate) is preserved. Revisit when product direction on multi-mode (templates vs music sync) is settled.
 **Priority:** P3
 
+### Keyboard accessibility for admin music section bands
+**What:** Ranked section bands in `AudioPlayer.tsx` (`/admin/music/[id]`) are SVG `<g>` elements with `onClick` but no `tabIndex` or `onKeyDown` — keyboard-only users can't trigger the new click-to-select feature (or the pre-existing click-to-preview). Add `tabIndex={0}` + Enter/Space handler that runs the same path as `onClick`.
+**Why:** Admin users today are mouse-driven, so this isn't a current blocker. But the click-to-select feature shipped in feat/music-section-click-select-2026-05-26 is fundamentally a "skip the typing" affordance — a keyboard user needs it more than a mouse user does. Worth fixing the next time the file is opened, not a separate PR alone.
+**How:** Add `tabIndex={0}` and `onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); /* same body as onClick */ } }}` to the section band `<g>` in `AudioPlayer.tsx:260`. Extract the shared body into a local function to avoid duplication. Add one test asserting Enter on a focused band fires onStartChange/onEndChange.
+**Effort:** XS (human: ~30 min / CC: ~5 min)
+**Priority:** P3
+
 ## Visual Overlay Editor (shipped v0.2.0.0, 2026-04-11)
 
 ### Overlay Editor Component Tests (Tier 2)
@@ -285,6 +292,7 @@
 **Effort:** S (human: ~3hr / CC: ~30 min — prompt iteration + re-run live eval against the same 5 fixtures)
 **Priority:** P1 — affects every job
 **Depends on:** none
+**Completed:** v0.4.47.11 (2026-05-28) — `_enforce_moment_spread()` deterministic post-filter added in `clip_metadata.py::parse()` enforcing HARD RULE 2 (≥2s spacing) + HARD RULE 3 (≥1s duration). Eval structural rule relaxed to allow 0-5 entries (prompt explicitly permits empty).
 
 ---
 
@@ -555,3 +563,45 @@ All items completed 2026-04-06:
 **Effort:** S (human: ~1h / CC: ~20 min)
 **Priority:** P2
 **Depends on:** none (the cache change itself is already merged; this just closes the known gap)
+
+## Lyric pipeline — architectural debt (from PR plans/geli-me-var-ama-hatalar-robust-reddy.md)
+
+### Lyric injection runs on stale pre-snap slot durations
+**What:** `inject_lyric_overlays` ([app/tasks/music_orchestrate.py](src/apps/api/app/tasks/music_orchestrate.py): _run_music_job:543, _run_templated_music_job:1074) runs BEFORE `_assemble_clips → _apply_beat_snap`. The splitter (`_inject_line` in [app/pipeline/lyric_injector.py](src/apps/api/app/pipeline/lyric_injector.py)) clamps segments to PRE-snap slot durations. Beat-snap then re-times slot boundaries by up to ±beat-interval/2 (~221 ms on the empirical Bug A job 14ded08a, can hit ~500 ms on slower tracks). The merged-overlay end stays stale and would not touch the next segment's snapped start — handled today by the Layer 1 identity-driven merge band-aid in `_collect_absolute_overlays._consolidate_lyric_segments`.
+**Why:** Layer 1 merge is correct but it COMPENSATES for a structural defect (stale data). Layer 2 audible-window finalization also has to derive the post-snap audio window from `_collect_absolute_overlays`'s context for the same reason. Moving injection to AFTER beat-snap eliminates the gap entirely (segments touch with zero drift) and lets Layer 2 receive an exact `AudioWindow` at injection time instead of deriving it post-hoc.
+**How:** Extract the post-snap slot-duration computation from `_assemble_clips → _apply_beat_snap` so the orchestrator can call it BEFORE `inject_lyric_overlays`. Either (a) split `_assemble_clips` into prepare + render phases with the snapped durations as a hand-off, or (b) move `inject_lyric_overlays` calls INTO `_assemble_clips` after the snap. **Do NOT delete Layer 1's identity-based merge** — it is semantically correct (same `lyric_line_id` ⇒ one line ⇒ one overlay) and remains the regression detector. Tighten `_LARGE_CONTINUATION_GAP_WARNING_S` from 0.5 → ~0.05 once drift is engineered out.
+**Effort:** M (human: ~1 day / CC: ~2-3 hours)
+**Priority:** P1
+
+### Karaoke variant beat-snap drift desynchronizes word highlight
+**What:** `_inject_karaoke` ([app/pipeline/lyric_injector.py:_inject_karaoke]) does NOT split across slots — one overlay per line, clamped to one slot via `_slot_for_time(line.start_s, windows)`. So the Layer 1 `lyric_line_id` merge does NOTHING for karaoke. BUT beat-snap drift up to one beat-interval shifts the overlay's `abs_start` by the slot drift, while `word_timings` inside the overlay are pinned relative to the overlay's own start. Result: per-word highlight runs N ms early or late against the actual vocal. On a 2.4 BPS track (~250 ms beat interval), 200+ ms drift is a full beat off-sync.
+**Why:** Karaoke is shipped today and silently misaligned. The user has been training their visual expectations against the wrong sync. The longer this sits, the more recordings drift before someone notices something feels "off."
+**How:** Either (a) re-anchor word timings against post-snap audio positions inside `_collect_absolute_overlays` (small surface, doesn't touch injection), or (b) inject karaoke post-snap as part of TODO 1 (subsumes this). Add a regression test that loads a known karaoke track with intentional ≥200 ms beat-snap drift on the line's containing slot and asserts per-word highlight crossings land within ±50 ms of song-time word boundaries. The test should FAIL today and pass after the fix.
+**Effort:** S (human: ~half day / CC: ~1 hour)
+**Priority:** P1 — STRICT
+
+### Skia lyric-line lacks fade animation (renderer parity violation)
+**What:** `text_overlay_skia.py:_ANIMATED_EFFECTS_SKIA` does NOT include `"lyric-line"`, so the music path (which uses Skia per PR #319) renders lyric-line as a static PNG that hard-cuts in and out. `fade_in_ms` / `fade_out_ms` on the overlay dict are IGNORED. The Pillow path (`_emit_lyric_line_alpha_tags` in `text_overlay.py:807`) honors them via ASS `\alpha` keyframes. Two renderers, two looks for the same overlay dict. Violates the CLAUDE.md renderer-parity invariant. The user's prod render and the lyrics-preview job they liked render visibly differently because of this.
+**Why:** Lyric-line fade IS user-visible (250 ms fade-out at the end of every line is part of the YouTube-lyric-video feel PR #287 tuned in). Cutting it on Skia makes lyrics feel abrupt where on Pillow they feel polished. Eventually all rendering goes through Skia; this gap will compound.
+**How:** Add `"lyric-line"` to `_ANIMATED_EFFECTS_SKIA`. Implement an alpha animation in `_draw_with_animation` consuming `fade_in_ms` / `fade_out_ms` from the overlay dict (linear or ease-out cubic, match libass's `\alpha` behavior). Lock by a renderer-parity test that runs the same lyric overlay through BOTH renderers and compares per-frame alpha at start, start+fade_in, end-fade_out, end.
+**Effort:** S (human: ~half day / CC: ~1 hour)
+**Priority:** P2
+
+### Admin UI: snap `best_start_s` / `best_end_s` to lyric-line boundaries
+**What:** Layer 2's runtime audible-window guard ([app/pipeline/lyric_injector.py:_finalize_lyric_audible_window]) silently corrects admin-set bounds that don't align with lyric line edges. The runtime fix is correct but suboptimal UX. A "snap to nearest lyric boundary" affordance on the music-track admin (`src/apps/web/src/app/admin/music/[id]/`) would show admins at config time which lines get included.
+**Why:** Defense in depth is correct; making misconfiguration unlikely at the source is better. Today admins set bounds blind and runtime decides what survives — surface this earlier.
+**How:** In the LyricsTimingPanel (or wherever `best_start_s`/`best_end_s` are edited), add buttons "Snap start to previous line / next line" and "Snap end to previous line / next line." Compute snap targets from `MusicTrack.lyrics_cached.lines` (the same source the runtime guard uses). Show a preview list of which lyric lines will be included with the proposed bounds.
+**Effort:** S (human: ~half day / CC: ~1 hour)
+**Priority:** P3
+
+### LyricsTimingPanel: per-field dirty tracking + "auto" placeholders for untouched fade fields
+**What:** After PR #344 (§F of plans/mirea-we-ve-lost-memoized-shannon.md), the admin Test tab's `LyricsTimingPanel.tsx` fade_in_ms / fade_out_ms sliders only affect solo / last-line fades and the kill-switch-off legacy path. The sliders are now labeled "Fade in (solo / legacy only)" and a small inline note explains the contract, but the form still submits every field on every render (form defaults included). That's how PR #343 was empirically tricked into thinking the operator pinned form defaults as overrides. Today the post-pass ignores these for inter-line transitions, so the bug is dormant — but the UX is still misleading.
+**Why:** Per-field dirty tracking removes a whole class of "the operator didn't pin this, the UI did" misunderstandings — both for humans reading the `lyrics_config_effective` on a Job row and for future scheduler code that might re-add cfg-key-based logic. Also shrinks the saved Job blob.
+**How:** In `LyricsTimingPanel.tsx`:
+  1. Track per-field `dirty` state (initially false, flips true on first user change).
+  2. In `onSubmit` and `saveDefaults`, only include fields where `dirty[key] === true`.
+  3. Display "auto" placeholder text on untouched fields (faded zinc) instead of the slider's numeric default.
+  4. Add a "Reset to auto" affordance that clears dirty state for a field (round-trip back to "auto").
+  5. Backend `LyricsConfigOverride` schema in `src/apps/api/app/schemas/lyrics_config_override.py` already accepts Optional fields, so no API change is required.
+**Effort:** S (human: ~2-3h / CC: ~30 min)
+**Priority:** P3

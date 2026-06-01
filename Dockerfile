@@ -16,7 +16,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libheif1 \
     curl \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# yt-dlp's YouTube extractor now needs an external JS runtime for signature
+# challenges. Deno is the runtime yt-dlp enables by default for EJS.
+ARG DENO_VERSION=2.7.13
+# Arch-aware: prod (Fly) builds amd64, but the dev-machine local-render parity
+# stack (Apple Silicon) builds arm64. A hardcoded x86_64 URL fails on arm64 with
+# "qemu-x86_64: Could not open '/lib64/ld-linux-x86-64.so.2'". Pick the matching
+# Deno asset from the Debian arch.
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) deno_arch="x86_64-unknown-linux-gnu" ;; \
+      arm64) deno_arch="aarch64-unknown-linux-gnu" ;; \
+      *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/deno.zip \
+      "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-${deno_arch}.zip"; \
+    unzip /tmp/deno.zip -d /usr/local/bin; \
+    chmod +x /usr/local/bin/deno; \
+    rm /tmp/deno.zip; \
+    deno --version
 
 # Non-root user
 RUN groupadd --gid 1000 nova && \

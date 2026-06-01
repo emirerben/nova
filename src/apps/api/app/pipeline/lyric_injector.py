@@ -22,6 +22,7 @@ INPUT
                     "font_style": "display" | "sans" | "serif",
                     "text_size": "medium" | "large" | ...,
                     "outline_px": 2,
+                    "sync_offset_s": -1.0,        # shift cached lyric timing
                     "lines_per_screen": 1,           # karaoke only (v1: always 1)
                   }
 
@@ -38,6 +39,9 @@ should treat this as "lyrics opt-in but unavailable for this track".
 from __future__ import annotations
 
 import copy
+import math
+import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -57,6 +61,23 @@ from app.pipeline.text_reveal import (
 )
 
 log = structlog.get_logger()
+
+
+# Sources that the injector will burn into output. The agent's
+# `PUBLISHABLE_LYRICS_SOURCES` set covers the forward path; this set adds
+# the legacy `genius+whisper` rows that pre-date the LRCLIB cutover (still
+# in prod DB until they're re-extracted) and the future `manual` admin
+# override. `whisper_only` is INTENTIONALLY excluded — defense in depth
+# against a stale or drift-state row sneaking through, even though the
+# orchestrator never writes whisper_only to lyrics_cached now.
+_INJECTOR_ALLOWED_SOURCES: frozenset[str] = frozenset(
+    {
+        "lrclib_synced+whisper",
+        "lrclib_plain+whisper",
+        "genius+whisper",  # legacy, pre-LRCLIB cutover
+        "manual",  # admin override (future)
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +118,16 @@ _WORD_POP_LINE_CLEAR_GAP_S = 1.0 / 30.0
 # exact frame the last word's vocal stops). Dense lines are capped by a
 # small fade-bound overlap budget so lyrics can cross-dissolve without
 # ghosting through an entire section.
+# These are SOLO-LINE DEFAULTS — used when a line has no successor (last line
+# in a section), when consecutive lines are far enough apart that no overlap
+# fires, when the user explicitly pinned fade values via cfg, or when the
+# kill switch (`settings.lyric_dynamic_crossfade_enabled`) is off. For
+# inter-line crossfades with the kill switch on, the §1c post-pass in
+# `_inject_line` overrides BOTH sides' fade_in_ms / fade_out_ms with a
+# matched per-pair window and tags the outgoing overlay with
+# `fade_out_curve="sqrt"` (mirror-symmetric curves → unit-partition crossfade,
+# no readable stacked text). See plans/mirea-we-ve-lost-memoized-shannon.md
+# §1 for the geometry, §5 for the invariant tests.
 _LINE_PRE_ROLL_S = 0.40
 _LINE_POST_DWELL_S = 1.0
 _LINE_NEXT_LINE_GAP_S = 0.10
@@ -105,11 +136,51 @@ _LINE_FADE_OUT_MS = 250
 _LINE_HOLD_TO_NEXT_THRESHOLD_MS = 500
 # Upper bound on cross-dissolve overlap with the next lyric line. The
 # actual cap applied per-line is the minimum of this value and
-# (fade_in_s + fade_out_s); see _inject_line. Bounding by fade duration
-# prevents ghosting when a long post_dwell is combined with short fades.
+# (fade_in_s + fade_out_s) when the kill switch is OFF; the kill-switch-on
+# path uses just `max_overlap_s` since the §1c post-pass bounds the actual
+# emitted window. Bounding by fade duration prevents ghosting when a long
+# post_dwell is combined with short fades (in the legacy path).
 _LINE_MAX_OVERLAP_S = 0.4
 _LINE_DEFAULT_FONT_FAMILY = "Inter Tight"
 _MIN_LINE_VISIBLE_S = 0.20
+
+# Trailing-line drop threshold for `_select_section_lines`. A line whose
+# clamped start lands in the last `_TRAILING_LINE_DROP_TAIL_S` of the
+# section AND whose clamped duration is below `_TRAILING_LINE_DROP_MIN_DUR_S`
+# is dropped rather than rendered as a sub-second flash that confuses the
+# viewer. Classic case: Instant Crush preview window ends at section 20.0;
+# L4 vocal starts at section 19.45 (after the LRC-anchor re-anchor), giving
+# only ~0.55s of L4 vocal before the preview ends — better to not show
+# any L4 text than to flash it. Distinct from `_MIN_LINE_VISIBLE_S` (which
+# only fires on partially-clamped lines and at 0.20s); this rule
+# additionally requires the line to be at the TAIL of the section, so a
+# legitimately short fully-contained ad-lib mid-section still renders.
+_TRAILING_LINE_DROP_TAIL_S = 1.0
+_TRAILING_LINE_DROP_MIN_DUR_S = 1.0
+
+# Crossfade duration clamps for the dynamic-scaling post-pass. Below the
+# floor, the fade reads as a hard cut and the user perceives a flash rather
+# than a transition. Above the ceiling, the fade visibly drags into L_N's
+# own audible span — L_N goes translucent while the listener still hears
+# its vocal. 30 / 400 ms come from observed thresholds on dense pop tracks.
+_LINE_CROSSFADE_MIN_MS = 30
+_LINE_CROSSFADE_MAX_MS = 400
+
+# Short-line audible-hold guarantee for the OUTGOING line of a crossfade.
+# L_N must hold full opacity for at least this many seconds of its own
+# audible window BEFORE its fade-out begins; protects very short lines
+# (≤300 ms vocal hits) from being almost-entirely a fade. When the audible
+# window can't host MIN_FADE + this hold, §1g policy is hard cut (re-anchor
+# nxt.section_start so no visual overlap remains).
+_LINE_MIN_AUDIBLE_HOLD_S = 0.10
+
+# Middle-line full-opacity hold for the §1c three-line reconciliation pass.
+# If B.fade_in + B.fade_out would consume more than (B_visible − this),
+# both adjacent crossfade windows are shrunk proportionally so B still
+# reaches its peak alpha for at least this many milliseconds.
+_LINE_MIN_MIDDLE_PEAK_HOLD_MS = 80
+
+_FADE_OUT_CURVE_SQRT = "sqrt"
 
 
 def _resolve_fade_ms(cfg: dict, *, s_key: str, ms_key: str, default_ms: int) -> int:
@@ -129,6 +200,22 @@ class _LineOverlayWindow:
     section_end_s: float
     fade_in_ms: int
     fade_out_ms: int
+    # Song-time originals for downstream finalization. The line-style
+    # finalization in template_orchestrate's `_collect_absolute_overlays`
+    # recomputes audible_words from `original_words` against the post-snap
+    # audio window. These are captured BEFORE any rebase or clamp — never
+    # add `best_start_s` to them.
+    original_text: str
+    original_start_s_song: float
+    original_end_s_song: float
+    original_words: list[dict]
+    # Set by the dynamic-crossfade post-pass to "sqrt" when this line is the
+    # OUTGOING side of a `"crossfade"` pair decision. The renderer reads it
+    # via overlay.get("fade_out_curve") and switches accel from 2.0 (default
+    # lingering `1−p²`) to 0.5 (mirror-symmetric `1−√p`). None for the last
+    # line of any section, sparse pairs, hard-cut / solo-demoted pairs,
+    # user-override pairs, and the kill-switch-disabled path.
+    fade_out_curve: str | None = None
 
 
 def inject_lyric_overlays(
@@ -140,17 +227,63 @@ def inject_lyric_overlays(
 ) -> dict:
     """Inject lyric overlays into recipe slots. Returns the modified recipe."""
 
-    cfg = lyrics_config or {}
+    cfg = dict(lyrics_config or {})
     if not cfg.get("enabled"):
         return recipe_dict
+    # Layer-1 gate (primary, silent): no publishable extraction → nothing to burn.
+    # After 2026-05-27 migration, non-publishable Whisper-only outputs live on
+    # `lyrics_whisper_draft` instead and never reach this function.
     if not lyrics_cached:
         log.info("lyric_inject_skipped_no_cache", reason="lyrics_cached missing")
         return recipe_dict
+
+    # Layer-2 gate (defense in depth, loud): even if `lyrics_cached` is populated,
+    # the embedded `source` must be in the injector's allowlist. Catches drift
+    # cases — a stale `whisper_only` blob sneaking through a half-applied
+    # migration, or a future source added to the agent without a paired
+    # injector update.
+    source = (lyrics_cached.get("source") or "") if isinstance(lyrics_cached, dict) else ""
+    if source not in _INJECTOR_ALLOWED_SOURCES:
+        log.warning(
+            "lyric_injection_skipped_invariant_violated",
+            reason="lyrics_cached.source not in injector allowlist",
+            source=source or "<empty>",
+            config_enabled=bool(cfg.get("enabled")),
+        )
+        return recipe_dict
+
+    # NOTE: PR #343 introduced a `_caller_key_set` snapshot here to distinguish
+    # "operator pinned fade_in_ms via the admin Test tab" from "style-set
+    # baseline timings written by _apply_style_set_defaults". Empirically that
+    # distinction did not exist in production: the admin Test tab UI submits
+    # every form field on every render, including the prefilled defaults
+    # `fade_in_ms=150` / `fade_out_ms=250`. `create_admin_lyrics_preview` in
+    # routes/admin_music.py merges them into the Job's lyrics_config_effective
+    # via effective_lyrics_config(), and the lyrics_preview_task passes that
+    # dict to inject_lyric_overlays. The snapshot then saw "user overrides"
+    # for every preview/render and silently disabled the dynamic crossfade
+    # post-pass — restoring the exact stacking PR #343 was supposed to fix.
+    # See plans/mirea-we-ve-lost-memoized-shannon.md §F. The gate is removed:
+    # when `LYRIC_DYNAMIC_CROSSFADE_ENABLED` is on, the dynamic post-pass
+    # fires for every consecutive pair regardless of what cfg contains.
+    # Operators who genuinely want legacy behavior flip the kill switch.
+
+    # Style set: when one is chosen (by the LyricStyleSelectorAgent at job time
+    # or pinned in lyrics_config), it supplies the lyric style + styling
+    # DEFAULTS. Explicit lyrics_config fields still win, so admin per-track
+    # tuning is preserved. The set's lyric role implies which injector runs
+    # unless lyrics_config pins `style`.
+    if cfg.get("style_set_id"):
+        cfg = _apply_style_set_defaults(cfg, cfg["style_set_id"])
 
     style = cfg.get("style") or "karaoke"
     if style not in ("karaoke", "per-word-pop", "line"):
         log.warning("lyric_inject_unknown_style", style=style)
         return recipe_dict
+
+    sync_offset_s = _lyrics_sync_offset_s(cfg)
+    if sync_offset_s:
+        lyrics_cached = _shift_lyrics_cached(lyrics_cached, sync_offset_s)
 
     lines = lyrics_cached.get("lines") or []
     if not lines:
@@ -194,6 +327,7 @@ def inject_lyric_overlays(
     log.info(
         "lyric_inject_done",
         style=style,
+        sync_offset_s=sync_offset_s,
         section_lines=len(section_lines),
         overlays_injected=injected,
     )
@@ -201,6 +335,93 @@ def inject_lyric_overlays(
 
 
 # ── Internals ─────────────────────────────────────────────────────────────────
+
+
+def _lyrics_sync_offset_s(cfg: dict) -> float:
+    """Return a bounded whole-track lyrics timing correction.
+
+    Positive values make lyrics render later; negative values make them render
+    earlier. Validation normally bounds this at the route/schema layer, but the
+    injector is deliberately fail-soft because it runs inside render jobs.
+    """
+    raw = cfg.get("sync_offset_s")
+    if raw is None:
+        return 0.0
+    try:
+        offset_s = float(raw)
+    except (TypeError, ValueError):
+        log.warning("lyric_sync_offset_ignored_invalid", value=raw)
+        return 0.0
+    if not math.isfinite(offset_s):
+        log.warning("lyric_sync_offset_ignored_non_finite", value=raw)
+        return 0.0
+    return max(-5.0, min(5.0, offset_s))
+
+
+def _shift_lyrics_cached(lyrics_cached: dict, offset_s: float) -> dict:
+    """Return a shifted lyrics cache without mutating the persisted cache."""
+    shifted = copy.deepcopy(lyrics_cached)
+    lines = shifted.get("lines")
+    if not isinstance(lines, list):
+        return shifted
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        _shift_timing_pair(line, offset_s)
+        words = line.get("words")
+        if isinstance(words, list):
+            for word in words:
+                if isinstance(word, dict):
+                    _shift_timing_pair(word, offset_s)
+    return shifted
+
+
+def _shift_timing_pair(item: dict, offset_s: float) -> None:
+    for key in ("start_s", "end_s"):
+        if key not in item:
+            continue
+        try:
+            shifted = float(item[key]) + offset_s
+        except (TypeError, ValueError):
+            continue
+        item[key] = round(max(0.0, shifted), 6)
+
+
+def _apply_style_set_defaults(cfg: dict, set_id: str) -> dict:
+    """Layer a style set's lyric styling onto cfg as DEFAULTS.
+
+    Returns a new cfg where the set supplies `style` + styling/timing for keys
+    lyrics_config left unset. Existing (non-None) lyrics_config keys are never
+    overwritten — the set is a default source, lyrics_config is the override.
+    """
+    from app.pipeline.style_sets import (  # noqa: PLC0415
+        lyric_role_for_style,
+        lyric_style_for_set,
+        resolve_overlay_style,
+    )
+
+    out = dict(cfg)
+    out["style"] = out.get("style") or lyric_style_for_set(set_id)
+    resolved = resolve_overlay_style(set_id, lyric_role_for_style(out["style"]))
+
+    def _default(key: str, value: Any) -> None:
+        if value is not None and out.get(key) is None:
+            out[key] = value
+
+    _default("position", resolved.get("position"))
+    _default("text_color", resolved.get("text_color"))
+    _default("highlight_color", resolved.get("highlight_color"))
+    _default("text_size", resolved.get("text_size"))
+    _default("text_size_px", resolved.get("text_size_px"))
+    _default("font_family", resolved.get("font_family"))
+    _default("position_y_frac", resolved.get("position_y_frac"))
+    # The renderers/injectors call the stroke field `outline_px`; sets use the
+    # canonical `stroke_width`.
+    _default("outline_px", resolved.get("stroke_width"))
+    timing = resolved.get("timing", {})
+    for k in ("pre_roll_s", "post_dwell_s", "next_line_gap_s", "fade_in_ms", "fade_out_ms"):
+        _default(k, timing.get(k))
+    return out
 
 
 def _build_slot_windows(slots: list[dict]) -> list[_SlotWindow]:
@@ -220,12 +441,20 @@ def _select_section_lines(
     best_start_s: float,
     best_end_s: float,
 ) -> list[dict]:
-    """Return only lines that fit fully inside [best_start_s, best_end_s].
+    """Return lines that overlap [best_start_s, best_end_s], clamped to the section.
 
     Returned lines have their `start_s`, `end_s`, and per-word `start_s`/`end_s`
     rebased so they're in **section-relative** coordinates (0 = best_start_s).
-    Partial lines (start before section / end after) are dropped — splitting
-    a karaoke line mid-word would look broken.
+    Lines that straddle a section boundary are clamped to the section bounds.
+    Used to be dropped — job dc33d047 surfaced the consequence: an 11.3s music
+    job got exactly one survivor (`(Do think twice, do think twice)`) because
+    every other lyric line in the song straddled best_start_s/best_end_s and
+    silently dropped.
+    Clamped lines whose remaining duration falls below `_MIN_LINE_VISIBLE_S`
+    are still dropped to avoid one-word flashes — structured-logged so a
+    coverage drift is debuggable from agent_run traces.
+    Words that fall entirely outside the clamped window are dropped; words
+    that straddle a clamp edge are clamped to the line bounds.
     """
     out: list[dict] = []
     for line in lines:
@@ -236,28 +465,112 @@ def _select_section_lines(
             continue
         if le <= ls or le <= best_start_s or ls >= best_end_s:
             continue
-        # v1: require full containment. Partial lyrics splits are tracked as
-        # a NOT in scope item in the plan.
-        if ls < best_start_s or le > best_end_s:
-            continue
 
+        clamped_ls = max(ls, best_start_s)
+        clamped_le = min(le, best_end_s)
+        partial = ls < best_start_s or le > best_end_s
+        # The min-visible guard only applies to CLAMPED lines. A naturally
+        # short fully-contained line (e.g. a 0.2s ad-lib like "yeah!") should
+        # pass through unchanged — dropping it here would silently strip
+        # legitimate one-word lyrics. Float-imprecision near the threshold
+        # would also bite fully-contained lines if the guard ran unconditionally
+        # (1.2 - 1.0 == 0.19999... < 0.20).
+        if partial and clamped_le - clamped_ls < _MIN_LINE_VISIBLE_S:
+            log.info(
+                "lyric_inject_clamped_below_min_visible",
+                line_start_s=ls,
+                line_end_s=le,
+                clamped_duration_s=round(clamped_le - clamped_ls, 3),
+                min_visible_s=_MIN_LINE_VISIBLE_S,
+            )
+            continue
+        if partial:
+            log.info(
+                "lyric_inject_clamped_partial",
+                line_text=str(line.get("text", ""))[:80],
+                line_start_s=ls,
+                line_end_s=le,
+                clamped_start_s=clamped_ls,
+                clamped_end_s=clamped_le,
+            )
+
+        # Section-clamped rebased words (existing behavior, retained for the
+        # karaoke / per-word-pop injectors and for debug only). The line-style
+        # finalization pass recomputes audible_words from `original_words`
+        # against the post-snap audio window, so it does NOT consume this list.
         rebased_words: list[dict] = []
         for w in line.get("words") or []:
             try:
-                ws = float(w.get("start_s", 0.0)) - best_start_s
-                we = float(w.get("end_s", 0.0)) - best_start_s
+                ws_abs = float(w.get("start_s", 0.0))
+                we_abs = float(w.get("end_s", 0.0))
             except (TypeError, ValueError):
                 continue
+            if we_abs <= clamped_ls or ws_abs >= clamped_le:
+                continue
+            ws = max(ws_abs, clamped_ls) - best_start_s
+            we = min(we_abs, clamped_le) - best_start_s
             rebased_words.append({"text": str(w.get("text", "")), "start_s": ws, "end_s": we})
+
+        # `original_words` = full pre-rebase word list IN SONG TIME. Carries
+        # words that fall outside the clamped section too — the line-style
+        # finalization needs the full denominator for coverage_words and the
+        # full input for the post-snap audible-word filter. NEVER add
+        # best_start_s back to these (they're already song time).
+        original_words: list[dict] = []
+        for w in line.get("words") or []:
+            try:
+                ws_abs = float(w.get("start_s", 0.0))
+                we_abs = float(w.get("end_s", 0.0))
+            except (TypeError, ValueError):
+                continue
+            original_words.append(
+                {"text": str(w.get("text", "")), "start_s_song": ws_abs, "end_s_song": we_abs}
+            )
 
         out.append(
             {
                 "text": str(line.get("text", "")),
-                "start_s": ls - best_start_s,
-                "end_s": le - best_start_s,
+                "start_s": clamped_ls - best_start_s,
+                "end_s": clamped_le - best_start_s,
                 "words": rebased_words,
+                # Song-time originals for downstream finalization. The line
+                # bounds are the values from lyrics_cached as-is (no rebase,
+                # no clamp). Pair with `original_words` above. Captured before
+                # any clamp so finalization can recompute the audible set
+                # against the post-snap audio window.
+                "original_text": str(line.get("text", "")),
+                "original_start_s_song": ls,
+                "original_end_s_song": le,
+                "original_words": original_words,
             }
         )
+
+    # Trailing-line drop: a line whose clamped start lands in the last
+    # `_TRAILING_LINE_DROP_TAIL_S` of the section AND whose clamped duration
+    # is below `_TRAILING_LINE_DROP_MIN_DUR_S` is dropped rather than
+    # rendered as a sub-second flash. The Instant Crush 20s preview lands
+    # L4 at clamped duration 0.55s — that's visually meaningless and the
+    # user sees text without ever hearing the matching vocal. Mid-section
+    # short lines are untouched: this rule fires only on the LAST emitted
+    # line, by tail-position, so legitimately short fully-contained ad-libs
+    # mid-section (e.g. "yeah!") still render.
+    if out:
+        last = out[-1]
+        section_dur_s = best_end_s - best_start_s
+        last_dur_s = last["end_s"] - last["start_s"]
+        starts_in_tail = last["start_s"] >= section_dur_s - _TRAILING_LINE_DROP_TAIL_S
+        if starts_in_tail and last_dur_s < _TRAILING_LINE_DROP_MIN_DUR_S:
+            log.info(
+                "lyric_inject_dropped_trailing_flash",
+                line_text=str(last.get("text", ""))[:80],
+                clamped_start_s=round(last["start_s"], 3),
+                clamped_end_s=round(last["end_s"], 3),
+                clamped_duration_s=round(last_dur_s, 3),
+                section_dur_s=round(section_dur_s, 3),
+                tail_threshold_s=_TRAILING_LINE_DROP_TAIL_S,
+                min_dur_threshold_s=_TRAILING_LINE_DROP_MIN_DUR_S,
+            )
+            out.pop()
     return out
 
 
@@ -359,6 +672,15 @@ def _inject_karaoke(
                 "end_s": round(rel_end, 3),
                 "highlight_color": highlight,
                 "word_timings": word_timings,
+                # Section-relative anchors capture the line's intended audio
+                # position INDEPENDENT of slot windowing. The post-snap
+                # re-anchor pass in `_collect_absolute_overlays` reads these
+                # to keep the karaoke sweep glued to the vocal even after
+                # beat-snap shifts the slot's cumulative offset. Line-style
+                # overlays do NOT carry these fields, so the re-anchor pass
+                # is a no-op for them — Line's behavior is byte-identical.
+                "section_anchor_s": round(line["start_s"], 3),
+                "section_end_anchor_s": round(line["end_s"], 3),
             }
         )
         _ensure_overlay_list(slots[slot_win.index]).append(overlay)
@@ -456,6 +778,14 @@ def _inject_per_word_pop(
                     # static so the viewer doesn't see the whole line re-pop
                     # on every new word.
                     "pop_animated_suffix": stage.pop_animated_suffix,
+                    # Section-relative anchors — see karaoke injector for the
+                    # full rationale. The post-snap re-anchor pass in
+                    # `_collect_absolute_overlays` glues each per-word stage
+                    # to its vocal onset even when beat-snap shifts the slot.
+                    # Line-style overlays do NOT carry these fields, so the
+                    # pass is a no-op for them.
+                    "section_anchor_s": round(stage.start_s, 3),
+                    "section_end_anchor_s": round(stage.end_s, 3),
                 }
             )
             _ensure_overlay_list(slots[slot_win.index]).append(overlay)
@@ -530,12 +860,36 @@ def _inject_line(
 
     max_overlap_s = max(0.0, float(cfg.get("max_overlap_s", _LINE_MAX_OVERLAP_S)))
 
-    # Bound visual overlap with the next line by the available cross-fade
-    # duration. When a caller explicitly passes fade_in_ms=0 / fade_out_ms=0,
-    # this collapses to 0 → no overlap (intended kill switch). Missing fade
-    # keys fall back to _LINE_FADE_*_MS defaults; missing keys must NOT
-    # silently disable the overlap behavior.
-    dynamic_max_overlap = min(max_overlap_s, fade_in_s + fade_out_s)
+    # Kill-switch gate. ONE switch, ONE meaning: when
+    # `LYRIC_DYNAMIC_CROSSFADE_ENABLED` is True (default), the dynamic
+    # post-pass below ALWAYS fires for every consecutive line pair —
+    # regardless of what cfg contains for fade_in_ms / fade_out_ms / etc.
+    # When False, the scheduler reproduces pre-fix behavior byte-identically:
+    # legacy additive `min(max_overlap_s, fade_in_s + fade_out_s)` overlap
+    # cap, solo-default fade durations, no `fade_out_curve` key.
+    #
+    # PR #343 had a second condition here (`and not _any_user_override`)
+    # that tried to honor "operator pinned fade values via admin Test tab".
+    # That distinction did not exist in production — the admin UI submits
+    # every form field with default values on every render, which
+    # effective_lyrics_config() merged into the Job row's
+    # lyrics_config_effective. The override gate read those defaults as
+    # operator intent and silently disabled the dynamic post-pass, exactly
+    # restoring the stacking bug PR #343 was supposed to fix. See plan §F.
+    from app.config import settings as _app_settings  # noqa: PLC0415
+
+    _dynamic_crossfade_enabled = bool(
+        getattr(_app_settings, "lyric_dynamic_crossfade_enabled", True)
+    )
+
+    if _dynamic_crossfade_enabled:
+        dynamic_max_overlap = max_overlap_s
+    else:
+        # Legacy additive cap. When a caller explicitly passes
+        # fade_in_ms=0 / fade_out_ms=0 this collapses to 0 → no overlap
+        # (intended pre-fix kill switch). Preserved exactly so the
+        # kill-switch-off path is a true byte-identical rollback.
+        dynamic_max_overlap = min(max_overlap_s, fade_in_s + fade_out_s)
 
     n = len(section_lines)
     line_windows: list[_LineOverlayWindow] = []
@@ -562,6 +916,15 @@ def _inject_line(
         if section_end <= section_start:
             continue
 
+        # Song-time originals from `_select_section_lines`. Required for the
+        # finalization pass; the metadata validator in
+        # `_finalize_lyric_audible_window` falls back safely if any are
+        # missing (logs `lyric_segments_missing_finalization_metadata` and
+        # passes the overlay through unchanged).
+        original_text = line.get("original_text")
+        original_start_s_song = line.get("original_start_s_song")
+        original_end_s_song = line.get("original_end_s_song")
+        original_words = line.get("original_words")
         line_windows.append(
             _LineOverlayWindow(
                 lyric_line_id=f"line:{i}:{line_start:.3f}:{line_end:.3f}",
@@ -572,8 +935,263 @@ def _inject_line(
                 section_end_s=section_end,
                 fade_in_ms=int(fade_in_ms),
                 fade_out_ms=int(fade_out_ms),
+                original_text=(str(original_text) if original_text is not None else line["text"]),
+                original_start_s_song=(
+                    float(original_start_s_song)
+                    if original_start_s_song is not None
+                    else float("nan")
+                ),
+                original_end_s_song=(
+                    float(original_end_s_song) if original_end_s_song is not None else float("nan")
+                ),
+                original_words=list(original_words) if original_words else [],
             )
         )
+
+    # ── Dynamic crossfade post-pass (§1b–§1d in the plan) ─────────────────
+    # Gated entirely by `settings.lyric_dynamic_crossfade_enabled`. When off,
+    # this block is skipped and the loop below emits line_windows with their
+    # solo-default fade durations and no fade_out_curve key — byte-identical
+    # to pre-fix output.
+    if _dynamic_crossfade_enabled and len(line_windows) >= 2:
+        from app.services.pipeline_trace import (  # noqa: PLC0415
+            record_pipeline_event,
+        )
+
+        # ── Pair candidate assembly (§1b) ─────────────────────────────────
+        pair_candidates: list[dict[str, Any]] = []
+        for i in range(len(line_windows) - 1):
+            cur = line_windows[i]
+            nxt = line_windows[i + 1]
+
+            # Defensive: skip if `nxt` isn't temporally after `cur`. Production
+            # lyrics arrive in time order from Gemini/Whisper, but a scrambled
+            # cache (or a future caller passing lines out of order) would make
+            # natural_overlap_s meaningless — it could read as a huge "overlap"
+            # that's actually a temporal gap in the wrong direction. The
+            # legacy formula is implicitly robust via gap_cap; the dynamic
+            # post-pass needs explicit protection.
+            if nxt.line_start_s <= cur.line_start_s:
+                # Trace the skip so non-monotonic input from a future caller
+                # surfaces in the admin job-debug view instead of vanishing
+                # silently into a "post-pass didn't run, why is it stacking?"
+                # mystery. Cheap, zero-cost when never hit.
+                record_pipeline_event(
+                    "overlay",
+                    "lyric_crossfade_skipped",
+                    {
+                        "line_idx": i,
+                        "reason": "non_monotonic_line_start_s",
+                        "cur_line_start_s": cur.line_start_s,
+                        "nxt_line_start_s": nxt.line_start_s,
+                    },
+                )
+                continue
+
+            natural_overlap_s = max(0.0, cur.section_end_s - nxt.section_start_s)
+            if natural_overlap_s <= 0:
+                # Sparse pair — gap exceeded pre_roll + post_dwell. Solo defaults.
+                continue
+
+            raw_crossfade_ms = int(round(min(max_overlap_s, natural_overlap_s) * 1000))
+
+            # Below-MIN: refuse to inflate fade metadata above the actual
+            # emitted overlap window. A 10 ms emitted window with metadata
+            # claiming 30 ms of fade silently breaks the unit-partition
+            # invariant — the renderer's curve runs for 30 ms inside a 10 ms
+            # frame budget. Fall through to solo for this pair.
+            if raw_crossfade_ms < _LINE_CROSSFADE_MIN_MS:
+                record_pipeline_event(
+                    "overlay",
+                    "lyric_crossfade_skipped",
+                    {
+                        "line_idx": i,
+                        "reason": "below_min_overlap",
+                        "natural_overlap_ms": int(natural_overlap_s * 1000),
+                        "raw_crossfade_ms": raw_crossfade_ms,
+                    },
+                )
+                continue
+
+            crossfade_ms = min(_LINE_CROSSFADE_MAX_MS, raw_crossfade_ms)
+
+            # Short-line safety on the OUTGOING side (cur). Cur's fade-out
+            # region runs from section_end backward by crossfade_ms; it must
+            # not extend into the first _LINE_MIN_AUDIBLE_HOLD_S of cur's
+            # own vocal. If cur's audible window can't host MIN_FADE + this
+            # hold, the §1g hard-cut policy applies.
+            cur_audible_dur_ms = int((cur.section_end_s - cur.line_start_s) * 1000)
+            max_safe_fade_out_ms = cur_audible_dur_ms - int(_LINE_MIN_AUDIBLE_HOLD_S * 1000)
+            if max_safe_fade_out_ms < _LINE_CROSSFADE_MIN_MS:
+                # Hard cut. Decision is committed in §1d apply; cur keeps
+                # solo defaults, nxt.section_start re-anchored to cur.section_end
+                # so the two overlays do not visually overlap.
+                pair_candidates.append(
+                    {
+                        "i": i,
+                        "cur": cur,
+                        "nxt": nxt,
+                        "decision": "hard_cut",
+                        "natural_overlap_ms": int(natural_overlap_s * 1000),
+                    }
+                )
+                continue
+
+            crossfade_ms = min(crossfade_ms, max_safe_fade_out_ms)
+
+            pair_candidates.append(
+                {
+                    "i": i,
+                    "cur": cur,
+                    "nxt": nxt,
+                    "decision": "crossfade",
+                    "natural_overlap_ms": int(natural_overlap_s * 1000),
+                    "raw_crossfade_ms": raw_crossfade_ms,
+                    "crossfade_ms": crossfade_ms,
+                }
+            )
+
+        # ── Three-line conflict reconciliation (§1c) ──────────────────────
+        # If middle line B's fade_in (from A→B crossfade) + fade_out (from
+        # B→C crossfade) consumes more than (B_visible − MIN_PEAK_HOLD),
+        # shrink the adjacent crossfade windows so B still reaches peak
+        # alpha for at least MIN_PEAK_HOLD ms. Only operate on pairs whose
+        # decision is "crossfade" — a sparse / hard_cut / solo_demoted
+        # neighbor isn't a lever the post-pass can pull (its solo fade
+        # contributes to budget but can't be shrunk by us).
+        def _crossfade_candidate(target_i: int) -> dict | None:
+            for _c in pair_candidates:
+                if _c["i"] == target_i and _c["decision"] == "crossfade":
+                    return _c
+            return None
+
+        def _demote_pair_to_solo(prev_index: int) -> None:
+            for _c in pair_candidates:
+                if _c["i"] == prev_index and _c["decision"] == "crossfade":
+                    _c["decision"] = "solo_demoted"
+                    return
+
+        for _attempt in range(4):
+            conflict_resolved_this_pass = False
+            for j in range(1, len(line_windows) - 1):
+                B = line_windows[j]
+                prev_pair = _crossfade_candidate(j - 1)
+                next_pair = _crossfade_candidate(j)
+                if prev_pair is None and next_pair is None:
+                    # No crossfade lever on either side. Sparse / hard_cut /
+                    # solo_demoted neighbors mean B's fades are solo defaults
+                    # whose geometry is the legacy behavior. Don't touch.
+                    continue
+
+                fi = int(prev_pair["crossfade_ms"]) if prev_pair is not None else int(B.fade_in_ms)
+                fo = int(next_pair["crossfade_ms"]) if next_pair is not None else int(B.fade_out_ms)
+                B_visible_ms = int((B.section_end_s - B.section_start_s) * 1000)
+                budget = B_visible_ms - _LINE_MIN_MIDDLE_PEAK_HOLD_MS
+                if fi + fo <= budget:
+                    continue
+
+                new_fi, new_fo = fi, fo
+                if prev_pair is not None and next_pair is not None:
+                    # Both sides shrinkable. Proportional reduction.
+                    scale = budget / max(1, fi + fo)
+                    new_fi = max(_LINE_CROSSFADE_MIN_MS, int(round(fi * scale)))
+                    new_fo = max(_LINE_CROSSFADE_MIN_MS, int(round(fo * scale)))
+                    if new_fi + new_fo > budget:
+                        # Even with both at MIN_MS, sum exceeds budget.
+                        # Demote whichever side has the LARGER crossfade.
+                        if fi >= fo:
+                            _demote_pair_to_solo(prev_index=j - 1)
+                        else:
+                            _demote_pair_to_solo(prev_index=j)
+                        conflict_resolved_this_pass = True
+                        continue
+                    prev_pair["crossfade_ms"] = new_fi
+                    next_pair["crossfade_ms"] = new_fo
+                elif prev_pair is not None:
+                    # Only A→B shrinkable; B's outgoing fade is solo.
+                    new_fi = budget - fo
+                    if new_fi < _LINE_CROSSFADE_MIN_MS:
+                        _demote_pair_to_solo(prev_index=j - 1)
+                        conflict_resolved_this_pass = True
+                        continue
+                    prev_pair["crossfade_ms"] = new_fi
+                else:
+                    # Only B→C shrinkable; B's incoming fade is solo.
+                    new_fo = budget - fi
+                    if new_fo < _LINE_CROSSFADE_MIN_MS:
+                        _demote_pair_to_solo(prev_index=j)
+                        conflict_resolved_this_pass = True
+                        continue
+                    next_pair["crossfade_ms"] = new_fo
+
+                conflict_resolved_this_pass = True
+                record_pipeline_event(
+                    "overlay",
+                    "lyric_crossfade_three_line_reconciled",
+                    {
+                        "middle_line_idx": j,
+                        "B_visible_ms": B_visible_ms,
+                        "budget_ms": budget,
+                        "fi_before_ms": fi,
+                        "fi_after_ms": new_fi,
+                        "fo_before_ms": fo,
+                        "fo_after_ms": new_fo,
+                        "prev_is_crossfade": prev_pair is not None,
+                        "next_is_crossfade": next_pair is not None,
+                    },
+                )
+
+            if not conflict_resolved_this_pass:
+                break
+
+        # ── Apply pair_candidates to line_windows (§1d) ───────────────────
+        for c in pair_candidates:
+            cur = c["cur"]
+            nxt = c["nxt"]
+            if c["decision"] == "crossfade":
+                crossfade_ms = int(c["crossfade_ms"])
+                cur.fade_out_ms = crossfade_ms
+                cur.fade_out_curve = _FADE_OUT_CURVE_SQRT
+                nxt.fade_in_ms = crossfade_ms
+                # Re-anchor so the ACTUAL emitted overlap equals
+                # crossfade_ms exactly. The unit-partition identity in §2
+                # holds geometrically because of this, not just algebraically.
+                nxt.section_start_s = max(
+                    nxt.section_start_s,
+                    cur.section_end_s - crossfade_ms / 1000.0,
+                )
+                record_pipeline_event(
+                    "overlay",
+                    "lyric_crossfade_applied",
+                    {
+                        "line_idx": c["i"],
+                        "natural_overlap_ms": c["natural_overlap_ms"],
+                        "raw_crossfade_ms": c.get("raw_crossfade_ms"),
+                        "applied_crossfade_ms": crossfade_ms,
+                        "fade_out_curve": _FADE_OUT_CURVE_SQRT,
+                    },
+                )
+            elif c["decision"] == "hard_cut":
+                # No curve tag, no dynamic durations. Anchor nxt at
+                # cur.section_end so no visual overlap remains.
+                nxt.section_start_s = max(nxt.section_start_s, cur.section_end_s)
+                record_pipeline_event(
+                    "overlay",
+                    "lyric_crossfade_hard_cut",
+                    {
+                        "line_idx": c["i"],
+                        "cur_audible_ms": int((cur.section_end_s - cur.line_start_s) * 1000),
+                        "natural_overlap_ms": c["natural_overlap_ms"],
+                    },
+                )
+            elif c["decision"] == "solo_demoted":
+                # Same anchor policy as hard_cut — for a different reason.
+                nxt.section_start_s = max(nxt.section_start_s, cur.section_end_s)
+                record_pipeline_event(
+                    "overlay",
+                    "lyric_crossfade_solo_demoted",
+                    {"line_idx": c["i"]},
+                )
 
     injected = 0
     for line in line_windows:
@@ -613,9 +1231,540 @@ def _inject_line(
                     "lyric_line_id": line.lyric_line_id,
                     "lyric_segment_index": segment_idx,
                     "lyric_segment_count": len(segments),
+                    # Song-time originals required by the line-style
+                    # finalization pass in `_collect_absolute_overlays`.
+                    # Written to EVERY segment so any survivor of merge
+                    # carries them. Finalizer recomputes `audible_words`
+                    # from `original_words` against the post-snap audio
+                    # window; it does NOT consume the section-clamped
+                    # `words` list.
+                    "original_text": line.original_text,
+                    "original_start_s_song": line.original_start_s_song,
+                    "original_end_s_song": line.original_end_s_song,
+                    "original_words": line.original_words,
                 }
             )
+            # Emit fade_out_curve ONLY when set and ONLY on the final segment
+            # (mid-segments emit fade_out_ms=0 already, so the curve has
+            # nothing to act on). Omitting the key when value would be None
+            # preserves kill-switch byte-identity with pre-fix output.
+            if segment_idx == len(segments) - 1 and line.fade_out_curve is not None:
+                overlay["fade_out_curve"] = line.fade_out_curve
             _ensure_overlay_list(slots[slot_win.index]).append(overlay)
             injected += 1
 
     return injected
+
+
+# ── Line-style finalization (audible-window text fidelity) ────────────────────
+#
+# Called by `_collect_absolute_overlays` AFTER Layer 1's
+# `_consolidate_lyric_segments` merge. At that point each lyric-line is
+# represented by ONE merged overlay carrying:
+#
+#   - `text`              — current displayed text (may equal original)
+#   - `start_s`, `end_s`  — absolute video time
+#   - `lyric_line_id`
+#   - `original_text`, `original_start_s_song`, `original_end_s_song`,
+#     `original_words`   — set by `_inject_line` (song time)
+#   - `fade_in_ms`, `fade_out_ms`
+#
+# Finalization recomputes `audible_words` fresh from `original_words` against
+# the post-snap audio window `[audio_mix_song_start_s, audio_mix_song_end_s)`
+# using the per-word midpoint rule. It produces `display_text` (renderer-read
+# field) and may shrink the overlay's abs window to fit the audible region.
+# Dropped lyrics are removed from the output list.
+#
+# Plan: plans/geli-me-var-ama-hatalar-robust-reddy.md §2.
+
+# Per-word survival: a word is "audible" iff its midpoint lies inside
+# [audio_mix_song_start_s, audio_mix_song_end_s). Chosen for determinism,
+# perceptual match, and resilience to Whisper edge-jitter (±20 ms typical).
+# Document so it's not a magic heuristic.
+_AUDIBLE_WORD_MIDPOINT_RULE = (
+    "word_audible iff (word.start_s_song + word.end_s_song) / 2 "
+    "is in [audio_mix_song_start_s, audio_mix_song_end_s)"
+)
+
+# Quality thresholds (one input among several; not the sole input).
+_NEAR_COMPLETE_DURATION = 0.9
+_NEAR_COMPLETE_WORDS = 0.9
+_INTERIOR_COVERAGE_FLOOR = 0.65
+_BASIC_WORD_COUNT_FLOOR = 2
+_BASIC_AUDIBLE_SPEECH_S_FLOOR = 0.75
+_FINAL_LINE_TAIL_TOLERANCE_S = 0.25  # "final" iff abs_end within this of mix end
+_LINE_VS_WORD_BOUNDS_MISMATCH_S = 0.1  # log if line-end differs from last-word-end by more
+_EPS = 1e-6
+
+
+def _finalize_lyric_audible_window(
+    overlays: list[dict],
+    audio_mix_song_start_s: float,
+    audio_mix_song_end_s: float,
+) -> list[dict]:
+    """Audible-window-aware finalization for line-lyric overlays.
+
+    Contract (see plan §2i):
+      - non-lyric overlays pass through unchanged in their original positions;
+      - lyric overlays dropped by the decision procedure are removed;
+      - lyric overlays kept have `display_text` set and `start_s`/`end_s`
+        conservatively bounded to the audible region; `text` /
+        `original_text` / fade timings preserved.
+      - The returned list IS what renderers consume.
+
+    Args:
+      overlays: full overlay list AFTER Layer 1 consolidation. May contain
+        non-lyric overlays; they pass through unchanged.
+      audio_mix_song_start_s: song-time start of the rendered audio mix
+        (typically `best_start_s`).
+      audio_mix_song_end_s: song-time end of the rendered audio mix
+        (typically `best_start_s + total_audio_bearing_duration_s`).
+
+    Returns:
+      New list with the contract above. Original list is not mutated.
+    """
+    if audio_mix_song_end_s <= audio_mix_song_start_s:
+        return list(overlays)
+
+    audible_end_abs = audio_mix_song_end_s - audio_mix_song_start_s
+
+    # ── final-line detection ─────────────────────────────────────────────
+    # The naive picker (max raw `end_s` among all lyric overlays) misclassifies
+    # the real audible tail when a LATER lyric line was admitted at config
+    # time but sits entirely OUTSIDE the post-snap audible window (e.g. a
+    # `best_end_s` that overshoots the rendered audio end, or a lyric line
+    # whose audio is fully past `audio_mix_song_end_s`). The naive picker
+    # would tag the inaudible config'd line as final and starve the actual
+    # last-audible line of the permissive final-line quality floor — silently
+    # dropping the tail the user can hear.
+    #
+    # Correct contract: a line is "final" iff its CLIPPED audible window
+    # reaches within _FINAL_LINE_TAIL_TOLERANCE_S of the audible end. Ties
+    # are allowed (multiple lines may share the same clipped_end after
+    # compression). Fallback: if no line reaches the tolerance band, the
+    # latest audible clipped_end wins (covers tracks where the rendered
+    # window cuts well before any line tail).
+    final_idxs: set[int] = set()
+    audible_clipped_ends: list[tuple[int, float]] = []
+    for idx, ov in enumerate(overlays):
+        if ov.get("effect") != "lyric-line":
+            continue
+        orig_start = ov.get("original_start_s_song")
+        orig_end = ov.get("original_end_s_song")
+        if orig_start is None or orig_end is None:
+            # Missing metadata — `_finalize_one_lyric_line` will pass it
+            # through unchanged; finality doesn't matter for that branch.
+            continue
+        try:
+            orig_start_f = float(orig_start)
+            orig_end_f = float(orig_end)
+        except (TypeError, ValueError):
+            continue
+        clipped_start = max(orig_start_f, audio_mix_song_start_s)
+        clipped_end = min(orig_end_f, audio_mix_song_end_s)
+        if clipped_end <= clipped_start:
+            # No audible overlap — cannot be final.
+            continue
+        audible_clipped_ends.append((idx, clipped_end))
+        if clipped_end >= audio_mix_song_end_s - _FINAL_LINE_TAIL_TOLERANCE_S:
+            final_idxs.add(idx)
+
+    if not final_idxs and audible_clipped_ends:
+        # No line reaches the tolerance band — promote the latest audible
+        # clipped_end so we never strand the actual last-audible line.
+        latest = max(audible_clipped_ends, key=lambda item: item[1])[0]
+        final_idxs.add(latest)
+
+    out: list[dict] = []
+    for idx, ov in enumerate(overlays):
+        if ov.get("effect") != "lyric-line":
+            out.append(ov)
+            continue
+        is_final = idx in final_idxs
+        finalized = _finalize_one_lyric_line(
+            ov,
+            audio_mix_song_start_s=audio_mix_song_start_s,
+            audio_mix_song_end_s=audio_mix_song_end_s,
+            audible_end_abs=audible_end_abs,
+            is_final=is_final,
+        )
+        if finalized is not None:
+            out.append(finalized)
+    return out
+
+
+def _finalize_one_lyric_line(
+    overlay: dict,
+    *,
+    audio_mix_song_start_s: float,
+    audio_mix_song_end_s: float,
+    audible_end_abs: float,
+    is_final: bool,
+) -> dict | None:
+    """Apply the decision procedure to one lyric-line overlay.
+
+    Returns the (possibly-modified) overlay dict, or None if dropped.
+    """
+    line_id = overlay.get("lyric_line_id")
+    required = (
+        "original_text",
+        "original_start_s_song",
+        "original_end_s_song",
+        "original_words",
+    )
+    missing = [k for k in required if overlay.get(k) is None]
+    # NaN guards on the song-time fields (splitter writes NaN if upstream
+    # `_select_section_lines` didn't set them — defense in depth).
+    for k in ("original_start_s_song", "original_end_s_song"):
+        if k not in missing:
+            try:
+                v = float(overlay[k])
+                if v != v:  # NaN
+                    missing.append(k)
+            except (TypeError, ValueError):
+                missing.append(k)
+    if missing:
+        log.warning(
+            "lyric_segments_missing_finalization_metadata",
+            line_id=line_id,
+            missing_fields=missing,
+        )
+        # Safe passthrough: no shrink, no rewrite.
+        return overlay
+
+    original_text = str(overlay["original_text"])
+    original_start_s_song = float(overlay["original_start_s_song"])
+    original_end_s_song = float(overlay["original_end_s_song"])
+    original_words = list(overlay.get("original_words") or [])
+
+    # Empty-words short-circuit: tracks sourced from LRCLIB-plain (no Whisper
+    # alignment), or lines where the per-word list was dropped upstream, have
+    # NO surviving words by construction. Without this guard the decision
+    # procedure would compute surviving_word_count=0, fail Step 1 (coverage_words
+    # collapses), skip Step 2 (`surviving_word_count >= 2` is False), produce
+    # no candidate_text, and DROP the line at Step 3 — silently regressing
+    # every plain-lyric track that rendered fine pre-PR. Render the original
+    # text when the line is mostly inside the audible window; drop otherwise
+    # (line audio entirely outside the rendered window is the only legitimate
+    # drop case for plain-lyric lines).
+    if not original_words:
+        clipped_start = max(original_start_s_song, audio_mix_song_start_s)
+        clipped_end = min(original_end_s_song, audio_mix_song_end_s)
+        overlap_s = max(0.0, clipped_end - clipped_start)
+        original_dur = max(_EPS, original_end_s_song - original_start_s_song)
+        cov = overlap_s / original_dur
+        if cov < 0.5:
+            log.info(
+                "lyric_finalize_dropped_empty_words_outside_window",
+                line_id=line_id,
+                coverage_duration=round(cov, 4),
+            )
+            return None
+        # Mostly audible — keep the original text (no word data to align
+        # against), but still clamp the abs window to the audible video
+        # window so post_dwell or splitter overhang past the audio mix end
+        # doesn't render text after silence falls. Conservative clamp:
+        # `min(current_end_s, audible_end_abs)` + `max(0, current_start_s)`,
+        # same shape as `_apply_finalized`.
+        out = dict(overlay)
+        new_end_s = min(float(out.get("end_s", 0.0)), audible_end_abs)
+        new_start_s = max(0.0, float(out.get("start_s", 0.0)))
+        if new_end_s > new_start_s:
+            out["end_s"] = new_end_s
+            out["start_s"] = new_start_s
+        log.info("lyric_finalize_empty_words_kept_with_clamp", line_id=line_id)
+        return out
+
+    # If the line-level bounds disagree materially with word-derived bounds,
+    # log and prefer word-derived (user cleanup #5 / plan §2j).
+    if original_words:
+        first_w = original_words[0]
+        last_w = original_words[-1]
+        try:
+            first_w_start = float(first_w.get("start_s_song", original_start_s_song))
+            last_w_end = float(last_w.get("end_s_song", original_end_s_song))
+        except (TypeError, ValueError):
+            first_w_start = original_start_s_song
+            last_w_end = original_end_s_song
+        start_mismatch = abs(original_start_s_song - first_w_start)
+        end_mismatch = abs(original_end_s_song - last_w_end)
+        if (
+            start_mismatch > _LINE_VS_WORD_BOUNDS_MISMATCH_S
+            or end_mismatch > _LINE_VS_WORD_BOUNDS_MISMATCH_S
+        ):
+            log.warning(
+                "lyric_finalize_line_bounds_word_mismatch",
+                line_id=line_id,
+                line_start_s_song=original_start_s_song,
+                line_end_s_song=original_end_s_song,
+                first_word_start_s_song=first_w_start,
+                last_word_end_s_song=last_w_end,
+                start_mismatch_s=round(start_mismatch, 4),
+                end_mismatch_s=round(end_mismatch, 4),
+            )
+            original_start_s_song = first_w_start
+            original_end_s_song = last_w_end
+
+    # Compute audible_words fresh from original_words via midpoint rule.
+    audible_words = [
+        w for w in original_words if _word_audible(w, audio_mix_song_start_s, audio_mix_song_end_s)
+    ]
+    surviving_word_count = len(audible_words)
+    original_word_count = len(original_words)
+
+    # Per-line overlap (NOT audible section duration).
+    clipped_start = max(original_start_s_song, audio_mix_song_start_s)
+    clipped_end = min(original_end_s_song, audio_mix_song_end_s)
+    overlap_s = max(0.0, clipped_end - clipped_start)
+    original_dur = max(_EPS, original_end_s_song - original_start_s_song)
+    coverage_duration = overlap_s / original_dur
+    coverage_words = surviving_word_count / max(1, original_word_count)
+
+    # Audible speech = sum of per-word audible durations clamped to window.
+    audible_speech_s = 0.0
+    for w in audible_words:
+        try:
+            ws = float(w.get("start_s_song", 0.0))
+            we = float(w.get("end_s_song", 0.0))
+        except (TypeError, ValueError):
+            continue
+        audible_speech_s += max(
+            0.0, min(we, audio_mix_song_end_s) - max(ws, audio_mix_song_start_s)
+        )
+
+    # Step 1 — Near-complete: render original text unchanged. No log.
+    if coverage_duration >= _NEAR_COMPLETE_DURATION and coverage_words >= _NEAR_COMPLETE_WORDS:
+        return overlay
+
+    # Step 2 — Compute candidate_text via alignment, fall back to conservative join.
+    candidate_text: str | None = None
+    candidate_source: str | None = None
+    if surviving_word_count >= 2:
+        rebuilt = _align_audible_words_to_original_text(
+            original_text=original_text, audible_words=audible_words
+        )
+        if rebuilt is not None:
+            candidate_text = rebuilt
+            candidate_source = "alignment"
+        else:
+            candidate_text = " ".join(str(w.get("text", "")) for w in audible_words).strip()
+            candidate_source = "conservative_join"
+
+    # Step 3 — No candidate text: drop unconditionally.
+    if not candidate_text or not candidate_text.strip():
+        log.info(
+            "lyric_finalize_dropped_no_candidate_text",
+            line_id=line_id,
+            surviving_word_count=surviving_word_count,
+        )
+        return None
+
+    # Step 4 — Final-partial-line quality floor (basic only, more permissive).
+    if is_final:
+        if (
+            audible_speech_s < _BASIC_AUDIBLE_SPEECH_S_FLOOR
+            or surviving_word_count < _BASIC_WORD_COUNT_FLOOR
+        ):
+            log.info(
+                "lyric_finalize_final_line_dropped_fragment_too_short",
+                line_id=line_id,
+                audible_speech_s=round(audible_speech_s, 4),
+                surviving_word_count=surviving_word_count,
+            )
+            return None
+        return _apply_finalized(
+            overlay,
+            display_text=candidate_text,
+            audible_end_abs=audible_end_abs,
+            log_event="lyric_finalize_final_line_kept_truncated",
+            source=candidate_source,
+            line_id=line_id,
+        )
+
+    # Step 5 — Interior-partial-line quality floor (basic AND coverage; stricter).
+    interior_basic_ok = (
+        audible_speech_s >= _BASIC_AUDIBLE_SPEECH_S_FLOOR
+        and surviving_word_count >= _BASIC_WORD_COUNT_FLOOR
+    )
+    interior_coverage_ok = (
+        coverage_duration >= _INTERIOR_COVERAGE_FLOOR or coverage_words >= _INTERIOR_COVERAGE_FLOOR
+    )
+    if not (interior_basic_ok and interior_coverage_ok):
+        log.info(
+            "lyric_finalize_dropped_interior_partial",
+            line_id=line_id,
+            audible_speech_s=round(audible_speech_s, 4),
+            surviving_word_count=surviving_word_count,
+            coverage_duration=round(coverage_duration, 4),
+            coverage_words=round(coverage_words, 4),
+        )
+        return None
+
+    # Step 6 — Interior partial meeting BOTH floors: render candidate.
+    return _apply_finalized(
+        overlay,
+        display_text=candidate_text,
+        audible_end_abs=audible_end_abs,
+        log_event="lyric_finalize_interior_partial_kept_truncated",
+        source=candidate_source,
+        line_id=line_id,
+    )
+
+
+def _word_audible(
+    word: dict,
+    audio_mix_song_start_s: float,
+    audio_mix_song_end_s: float,
+) -> bool:
+    """Midpoint-in-window rule. See `_AUDIBLE_WORD_MIDPOINT_RULE`."""
+    try:
+        ws = float(word.get("start_s_song", 0.0))
+        we = float(word.get("end_s_song", 0.0))
+    except (TypeError, ValueError):
+        return False
+    midpoint = (ws + we) / 2.0
+    return audio_mix_song_start_s <= midpoint < audio_mix_song_end_s
+
+
+def _apply_finalized(
+    overlay: dict,
+    *,
+    display_text: str,
+    audible_end_abs: float,
+    log_event: str,
+    source: str | None,
+    line_id: str | None,
+) -> dict:
+    """Write `display_text` + conservative abs window onto a copy of `overlay`.
+
+    Conservative end clamp: `min(current_end_s, audible_end_abs)`. We do NOT
+    shrink to `clipped_end - audio_mix_song_start_s` because the splitter's
+    `post_dwell` intentionally extends the visual window past the line's
+    audio end for the YouTube-lyric-video "settle time" UX (PR #287). We
+    only protect against overhang past the audible mix end. Start side: only
+    bound to `>= 0` (the splitter never schedules a negative start).
+    """
+    out = dict(overlay)
+    out["display_text"] = display_text
+    new_end_s = min(float(out.get("end_s", 0.0)), audible_end_abs)
+    new_start_s = max(0.0, float(out.get("start_s", 0.0)))
+    if new_end_s > new_start_s:
+        out["end_s"] = new_end_s
+        out["start_s"] = new_start_s
+    log.info(log_event, line_id=line_id, source=source)
+    return out
+
+
+# ── Punctuation-preserving alignment ──────────────────────────────────────────
+
+
+# Token regex: Unicode-aware word characters, with apostrophe-containing
+# contractions (don't, we'd) and hyphenated compounds (hard-headed) treated
+# as single tokens. Leading-apostrophe words ('cause, 'til) are captured by
+# the leading `['’]?` alternative (U+2019 = curly apostrophe).
+# Parentheses and other punctuation are NOT tokens — they live in the
+# original string and survive the substring slice intact.
+_LYRIC_TOKEN_RE = re.compile(
+    r"['’]?\w+(?:[-'’]\w+)*",
+    flags=re.UNICODE,
+)
+
+
+def _normalize_token(text: str) -> str:
+    """NFKC normalize, casefold, and collapse curly apostrophe U+2019 → straight."""
+    return unicodedata.normalize("NFKC", text).replace("’", "'").casefold()
+
+
+def _tokenize_lyric_text(text: str) -> list[tuple[int, int, str]]:
+    """Return list of (start_char, end_char, normalized_text) tuples.
+
+    Preserves original character positions for substring slicing; normalization
+    is used for alignment matching only.
+    """
+    return [
+        (m.start(), m.end(), _normalize_token(m.group(0))) for m in _LYRIC_TOKEN_RE.finditer(text)
+    ]
+
+
+def _align_audible_words_to_original_text(
+    *, original_text: str, audible_words: list[dict]
+) -> str | None:
+    """Find a contiguous subsequence of tokens in `original_text` that matches
+    the normalized `audible_words` text list, and return the original-string
+    slice from the first matched token's start to the last matched token's end.
+
+    Contract (tightened per review feedback #6): prefers EXACT full contiguous
+    alignment. When the best contiguous run matches every audible word in
+    order, return the original-string slice. When it matches only some
+    audible words, return None AND log
+    `lyric_align_partial_match_omits_word` with the omitted words — the
+    caller will fall back to conservative join (`" ".join(audible_words)`),
+    which is safer than silently dropping a real audible word into the
+    substring slice.
+
+    Returns None on:
+      - audible_words count < 2
+      - no contiguous match found at all
+      - best contiguous match covers fewer than every audible word
+
+    Plan §2d. Curly apostrophes, leading apostrophes, hyphenated compounds,
+    and parenthetical content are all preserved through original-string slicing.
+    """
+    if len(audible_words) < 2:
+        return None
+
+    tokens = _tokenize_lyric_text(original_text)
+    if not tokens:
+        return None
+
+    audible_norm = [_normalize_token(str(w.get("text", ""))) for w in audible_words]
+    audible_norm = [t for t in audible_norm if t]
+    if len(audible_norm) < 2:
+        return None
+
+    n_aud = len(audible_norm)
+    n_tok = len(tokens)
+    # Find leftmost contiguous span in `tokens` matching `audible_norm`.
+    # Two-pointer scan: anchor on tokens, advance audible-pointer on each
+    # successive match; bail on first mismatch and slide anchor forward.
+    best_start: int | None = None
+    best_end: int | None = None
+    best_matched_count = 0
+    for anchor in range(n_tok - n_aud + 1):
+        ti = anchor
+        ai = 0
+        while ti < n_tok and ai < n_aud:
+            if tokens[ti][2] == audible_norm[ai]:
+                ai += 1
+                ti += 1
+            else:
+                break
+        matched = ai
+        if matched > best_matched_count:
+            best_matched_count = matched
+            best_start = anchor
+            best_end = ti  # exclusive index of last matched token + 1
+            if matched == n_aud:
+                break  # full match; leftmost wins
+
+    if best_start is None or best_end is None or best_end <= best_start:
+        return None
+
+    if best_matched_count < n_aud:
+        # Partial contiguous match — would silently drop one or more
+        # audible words from the displayed substring. Log the omitted
+        # words so coverage drift is debuggable, then return None so
+        # the caller uses the conservative join path (every audible word
+        # rendered, even if punctuation is lost).
+        omitted = audible_norm[best_matched_count:]
+        log.info(
+            "lyric_align_partial_match_omits_word",
+            matched_count=best_matched_count,
+            audible_count=n_aud,
+            omitted_words=omitted[:10],  # cap to avoid log spam on long lines
+        )
+        return None
+
+    first_start_char = tokens[best_start][0]
+    last_end_char = tokens[best_end - 1][1]
+    return original_text[first_start_char:last_end_char]

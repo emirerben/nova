@@ -13,7 +13,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.agents._schemas.content_plan import ContentPlanInput, ContentPlanOutput
 from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION
+from app.agents._schemas.persona import _MAX_PILLARS as PERSONA_MAX_PILLARS
+from app.agents._schemas.persona import _MAX_TOPICS as PERSONA_MAX_TOPICS
+from app.agents._schemas.persona import Persona
 from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
 from app.agents.audio_template import AudioTemplateOutput
 from app.agents.clip_metadata import (
@@ -22,9 +26,25 @@ from app.agents.clip_metadata import (
     ClipMetadataInput,
     ClipMetadataOutput,
 )
+from app.agents.clip_plan_matcher import ClipPlanMatcherInput, ClipPlanMatcherOutput
 from app.agents.clip_router import ClipRouterInput, ClipRouterOutput
 from app.agents.creative_direction import CreativeDirectionOutput
+from app.agents.intro_writer import (
+    _MAX_WORDS as INTRO_MAX_WORDS,
+)
+from app.agents.intro_writer import (
+    IntroWriterInput,
+    IntroWriterOutput,
+)
 from app.agents.music_matcher import MusicMatcherInput, MusicMatcherOutput
+from app.agents.overlay_examples import load_overlay_examples
+from app.agents.overlay_format_matcher import (
+    _ANCHORS,
+    _POSITIONS,
+    _SIZE_CLASSES,
+    _SKIA_EFFECTS,
+    OverlayFormatMatcherOutput,
+)
 from app.agents.platform_copy import PlatformCopyOutput
 from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
 from app.agents.song_classifier import SongClassifierOutput
@@ -244,9 +264,20 @@ def check_clip_metadata(
     if output.hook_score < 0 or output.hook_score > 10:
         failures.append(f"hook_score={output.hook_score} outside [0, 10]")
 
+    # Prompt contract (analyze_clip.txt):
+    #   - "list of 2-5 objects" in the schema description, AND
+    #   - "An empty best_moments list is a valid output when the segment has no
+    #     meaningful action — don't invent moments to satisfy the 2-5 range."
+    #
+    # Empty is therefore a legitimate output, NOT a structural failure. Additionally,
+    # `_enforce_moment_spread` (the 2026-05-28 post-filter for the TODOS.md
+    # 2026-05-13 clustering bug) can legitimately reduce a 3-moment cluster to
+    # 1 moment when all returned moments collapse into a sub-2s window. The
+    # structural rule must allow that path; the LLM judge scores the actual
+    # quality of the returned moment(s).
     n = len(output.best_moments)
-    if n < 2 or n > 5:
-        failures.append(f"best_moments has {n} entries; prompt requires 2-5")
+    if n > 5:
+        failures.append(f"best_moments has {n} entries; prompt caps at 5")
 
     for i, m in enumerate(output.best_moments):
         if m.start_s >= m.end_s:
@@ -1031,6 +1062,61 @@ def check_music_matcher(output: MusicMatcherOutput, input: MusicMatcherInput) ->
     return failures
 
 
+def check_clip_plan_matcher(
+    output: ClipPlanMatcherOutput,
+    input: ClipPlanMatcherInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.plan.clip_plan_matcher.
+
+    Pydantic enforces score bounds [0, 10] and per-entry required fields. This
+    layer asserts the cross-field invariants ``parse()`` upholds: every
+    ``clip_gcs_path`` and ``item_id`` resolves against the input set, no duplicate
+    ``(item, clip)`` pairs, rationale non-empty, scores monotonically
+    non-increasing (sorted highest-first), and the list capped at
+    ``max_assignments``. An EMPTY list is valid (best-effort no-match) and never
+    a failure.
+    """
+    failures: list[str] = []
+    valid_paths = {c.clip_gcs_path for c in input.clips}
+    valid_items = {it.item_id for it in input.items}
+
+    if len(output.assignments) > input.max_assignments:
+        failures.append(
+            f"{len(output.assignments)} assignments > max_assignments={input.max_assignments}"
+        )
+
+    seen: set[tuple[str, str]] = set()
+    last_score: float | None = None
+    for i, a in enumerate(output.assignments):
+        if a.clip_gcs_path not in valid_paths:
+            failures.append(
+                f"assignments[{i}].clip_gcs_path not in input clips "
+                "(parse() should have dropped this)"
+            )
+        if a.item_id not in valid_items:
+            failures.append(
+                f"assignments[{i}].item_id={a.item_id!r}: not in input items "
+                "(parse() should have dropped this)"
+            )
+        key = (a.item_id, a.clip_gcs_path)
+        if key in seen:
+            failures.append(f"assignments[{i}]: duplicate (item_id, clip_gcs_path) pair")
+        seen.add(key)
+
+        if not a.rationale.strip():
+            failures.append(f"assignments[{i}]: rationale empty after strip")
+        if a.score < 0.0 or a.score > 10.0:
+            failures.append(f"assignments[{i}]: score={a.score} outside [0, 10]")
+        if last_score is not None and a.score - last_score > 0.01:
+            failures.append(
+                f"assignments[{i}]: score={a.score:.2f} > assignments[{i - 1}].score="
+                f"{last_score:.2f} — assignments should be sorted highest-first"
+            )
+        last_score = a.score
+
+    return failures
+
+
 def check_template_text(
     output: TemplateTextOutput,
     input: TemplateTextInput,  # noqa: A002
@@ -1059,9 +1145,7 @@ def check_template_text(
     seen_keys: set[tuple[str, int, int, int]] = set()
     for i, ov in enumerate(output.overlays):
         if ov.slot_index < 1 or ov.slot_index > max_slot:
-            failures.append(
-                f"overlay {i}: slot_index={ov.slot_index} outside [1, {max_slot}]"
-            )
+            failures.append(f"overlay {i}: slot_index={ov.slot_index} outside [1, {max_slot}]")
         if ov.bbox.sample_frame_t < ov.start_s or ov.bbox.sample_frame_t > ov.end_s:
             failures.append(
                 f"overlay {i}: bbox.sample_frame_t={ov.bbox.sample_frame_t} "
@@ -1087,8 +1171,135 @@ def check_template_text(
     return failures
 
 
+_HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+_URL_HANDLE_RE = re.compile(
+    r"https?://|www\.|[@#]\w|\b[\w-]+\.(?:com|net|org|io|co|gg|xyz|app|link)\b",
+    re.IGNORECASE,
+)
+
+
+def check_overlay_format_matcher(output: OverlayFormatMatcherOutput) -> list[str]:
+    """Structural floor for nova.compose.overlay_format_matcher.
+
+    The overlay is injected directly into the recipe (bypassing the template_text
+    VALID_EFFECTS gate), so the renderer trusts these values verbatim — they MUST
+    be in the Skia-known vocab and the colors must be real hex, or the burn breaks.
+    """
+    failures: list[str] = []
+    if output.effect not in _SKIA_EFFECTS:
+        failures.append(f"effect={output.effect!r} not in Skia-known set {_SKIA_EFFECTS}")
+    if output.position not in _POSITIONS:
+        failures.append(f"position={output.position!r} not in {_POSITIONS}")
+    if output.size_class not in _SIZE_CLASSES:
+        failures.append(f"size_class={output.size_class!r} not in {_SIZE_CLASSES}")
+    if output.text_anchor not in _ANCHORS:
+        failures.append(f"text_anchor={output.text_anchor!r} not in {_ANCHORS}")
+    for field_name in ("text_color", "highlight_color"):
+        val = getattr(output, field_name)
+        if not _HEX_RE.match(val):
+            failures.append(f"{field_name}={val!r} is not a valid #RGB/#RRGGBB hex")
+    valid_ids = {e.id for e in load_overlay_examples()}
+    for mid in output.matched_example_ids:
+        if mid not in valid_ids:
+            failures.append(f"matched_example_id={mid!r} not in the example library")
+    return failures
+
+
+def check_intro_writer(output: IntroWriterOutput, input: IntroWriterInput) -> list[str]:  # noqa: A002
+    """Structural floor for nova.compose.intro_writer.
+
+    The text is burned on-screen from untrusted clip-derived input, so parse()'s
+    guarantees must hold: non-empty, length-clamped, no URLs/handles/tags leaked,
+    and highlight_word (if present) is a real token of the text.
+    """
+    failures: list[str] = []
+    text = output.text.strip()
+    if not text:
+        failures.append("text is empty after strip")
+    if len(text.split()) > INTRO_MAX_WORDS:
+        failures.append(f"text has {len(text.split())} words > MAX_WORDS={INTRO_MAX_WORDS}")
+    if _URL_HANDLE_RE.search(text):
+        failures.append(f"text leaks a URL/handle/domain: {text!r}")
+    if "{" in text or "}" in text or "\\" in text:
+        failures.append(f"text leaks ASS-tag/escape characters: {text!r}")
+    if output.highlight_word is not None:
+        tokens = {w.lower().strip(".,!?;:\"'") for w in text.split()}
+        if output.highlight_word.lower().strip(".,!?;:\"'") not in tokens:
+            failures.append(
+                f"highlight_word={output.highlight_word!r} is not a token of text {text!r}"
+            )
+    return failures
+
+
+def check_persona_generator(output: Persona) -> list[str]:
+    """Structural floor for nova.plan.persona_generator.
+
+    The persona is editable user-facing text that later threads into other
+    agents' prompts, so parse()'s guarantees must hold: required fields
+    non-empty and pillar/topic list sizes within bounds. (Prompt-injection
+    resistance is covered by a dedicated unit test, not this structural floor —
+    the sanitizer intentionally leaves a `[role-marker-stripped]` breadcrumb,
+    so its presence is success, not failure.)
+    """
+    failures: list[str] = []
+    for field_name in ("summary", "tone", "audience", "posting_cadence"):
+        if not str(getattr(output, field_name, "")).strip():
+            failures.append(f"{field_name} is empty")
+    if not (1 <= len(output.content_pillars) <= PERSONA_MAX_PILLARS):
+        failures.append(
+            f"content_pillars has {len(output.content_pillars)} items "
+            f"(want 1..{PERSONA_MAX_PILLARS})"
+        )
+    if any(not p.strip() for p in output.content_pillars):
+        failures.append("content_pillars contains an empty item")
+    if len(output.sample_topics) > PERSONA_MAX_TOPICS:
+        failures.append(
+            f"sample_topics has {len(output.sample_topics)} items > {PERSONA_MAX_TOPICS}"
+        )
+    # The dashboard "why this lane" — the prompt reliably fills it; an empty or
+    # boilerplate-length rationale means the reasoning surface is broken.
+    rationale = (output.rationale or "").strip()
+    if not rationale:
+        failures.append("rationale is empty")
+    elif len(rationale) < 10:
+        failures.append(f"rationale {rationale!r} is too short (<10 chars — likely boilerplate)")
+    return failures
+
+
+def check_content_plan_generator(
+    output: ContentPlanOutput,
+    input: ContentPlanInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.plan.content_plan_generator.
+
+    parse() already clamps/dedupes, so this asserts those invariants held:
+    non-empty plan, every day_index unique and within 1..horizon, non-empty
+    theme/idea, and items sorted by day.
+    """
+    failures: list[str] = []
+    items = output.items
+    if not items:
+        failures.append("plan has no items")
+    horizon = max(1, min(input.horizon_days, 60))
+    days = [it.day_index for it in items]
+    if len(set(days)) != len(days):
+        failures.append(f"duplicate day_index values: {days}")
+    if days != sorted(days):
+        failures.append("items are not sorted by day_index")
+    for it in items:
+        if not (1 <= it.day_index <= horizon):
+            failures.append(f"day_index {it.day_index} outside 1..{horizon}")
+        if not it.theme.strip() or not it.idea.strip():
+            failures.append(f"day {it.day_index}: empty theme or idea")
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
+    if agent_name == "nova.compose.overlay_format_matcher":
+        return check_overlay_format_matcher(output)
+    if agent_name == "nova.compose.intro_writer":
+        return check_intro_writer(output, input)
     if agent_name == "nova.compose.template_recipe":
         return check_template_recipe(output)
     if agent_name == "nova.compose.template_text":
@@ -1109,6 +1320,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_song_sections(output, input)
     if agent_name == "nova.audio.music_matcher":
         return check_music_matcher(output, input)
+    if agent_name == "nova.plan.clip_plan_matcher":
+        return check_clip_plan_matcher(output, input)
     if agent_name == "nova.video.clip_router":
         return check_clip_router(output, input)
     if agent_name == "nova.video.shot_ranker":
@@ -1117,4 +1330,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_text_designer(output, input)
     if agent_name == "nova.layout.transition_picker":
         return check_transition_picker(output, input)
+    if agent_name == "nova.plan.persona_generator":
+        return check_persona_generator(output)
+    if agent_name == "nova.plan.content_plan_generator":
+        return check_content_plan_generator(output, input)
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

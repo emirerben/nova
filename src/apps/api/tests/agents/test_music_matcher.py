@@ -283,6 +283,31 @@ class TestAgentSpec:
         spec = MusicMatcherAgent.spec
         assert spec.name == "nova.audio.music_matcher"
         assert spec.prompt_id == "match_music"
-        assert spec.prompt_version == "2026-05-15"
+        assert spec.prompt_version == "2026-05-27"
         # Sanity: matcher is text-only — no media_uri override.
         assert MusicMatcherAgent(model_client=None).media_uri(_input()) is None  # type: ignore[arg-type]
+
+
+class TestOutputCap:
+    """The matcher emits only top-K (n_variants + spare), not the whole library —
+    the latency lever. Locks the cap into the rendered prompt.
+    """
+
+    def test_no_hard_max_output_tokens_cap(self):
+        # A hard token cap is unsafe: gemini-2.5 spends budget on internal
+        # "thinking" and a low cap truncates to an empty response. The trim is
+        # done via the prompt instead. Guard against re-introducing a cap.
+        assert MusicMatcherAgent.max_output_tokens is None
+
+    def test_prompt_caps_returned_entries_to_n_variants_plus_spare(self):
+        tracks = [_track(f"track_{i}") for i in range(30)]
+        prompt = _agent().render_prompt(_input(tracks=tracks, n_variants=3))
+        # max_return = n_variants(3) + _RETURN_SPARE(3) = 6, well under the 30 available.
+        expected = 3 + MusicMatcherAgent._RETURN_SPARE
+        assert f"top {expected} picks" in prompt
+
+    def test_max_return_never_exceeds_available_tracks(self):
+        tracks = [_track("track_a"), _track("track_b")]
+        prompt = _agent().render_prompt(_input(tracks=tracks, n_variants=3))
+        # Only 2 tracks exist, so the cap clamps to 2 (not n_variants + spare = 6).
+        assert "top 2 picks" in prompt

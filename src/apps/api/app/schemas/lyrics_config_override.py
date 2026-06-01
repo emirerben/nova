@@ -13,4 +13,10 @@ class LyricsConfigOverride(BaseModel):
     fade_in_ms: int | None = Field(default=None, ge=0, le=2000)
     fade_out_ms: int | None = Field(default=None, ge=0, le=2000)
     hold_to_next_threshold_ms: int | None = Field(default=None, ge=0, le=5000)
+    sync_offset_s: float | None = Field(default=None, ge=-5.0, le=5.0)
     font_family: str | None = None
+    # Pin a curated style set for this track's lyrics. When set, the set
+    # supplies the lyric style + styling defaults (see app.pipeline.style_sets);
+    # the explicit fields above still override it. When None, the
+    # LyricStyleSelectorAgent picks a set at job time.
+    style_set_id: str | None = None

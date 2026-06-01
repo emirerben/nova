@@ -15,3 +15,7 @@ os.environ.setdefault("TOKEN_ENCRYPTION_KEY", "test-key-not-used-in-unit-tests")
 os.environ.setdefault("WHISPER_BACKEND", "local")
 os.environ.setdefault("WAITLIST_ADMIN_SECRET", "test-admin-secret")
 os.environ.setdefault("ALLOWED_ORIGINS", '["http://localhost:3000"]')
+# Strict plan-route auth fails closed when INTERNAL_API_KEY is unset, so the
+# test env sets it explicitly — strict-path tests must pass the matching bearer
+# to exercise the real check (rather than relying on a fail-open bypass).
+os.environ.setdefault("INTERNAL_API_KEY", "test-internal-key")

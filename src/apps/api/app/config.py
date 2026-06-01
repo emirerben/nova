@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     # Admin
     admin_api_key: str = ""
 
+    # Internal server-to-server auth (Next.js plan proxy → API).
+    # Must match INTERNAL_API_KEY in the Next.js environment.
+    internal_api_key: str = ""
+
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or
     # YTDLP_COOKIES_PATH for local development / mounted secret files.
@@ -98,6 +102,16 @@ class Settings(BaseSettings):
     # orchestrate_template_job.
     single_pass_encode_enabled: bool = False
 
+    # Kill switch for the format-aware talking-head archetype (Lane C/D). When
+    # False, a job whose plan declares edit_format="talking_head" renders as the
+    # default montage — the assembler module exists but the dispatch never routes
+    # to it. Lane D (generative_build dispatch) is the consumer; Lane C only
+    # defines the flag so the kill switch ships alongside the feature. Mirrors the
+    # LYRIC_DYNAMIC_CROSSFADE_ENABLED rollback pattern: flip the Fly secret +
+    # restart workers, no redeploy. Default OFF until the assembler is wired +
+    # verified end-to-end.
+    edit_format_talking_head_enabled: bool = False
+
     # Layer-2 text-overlay extraction pipeline. When False, the existing
     # single-call `nova.compose.template_text` Gemini agent runs unchanged.
     # When True, the OCR + grouping + transcript-alignment pipeline replaces
@@ -125,6 +139,77 @@ class Settings(BaseSettings):
     # libass path instantly. The kill switch is read per render call —
     # no in-flight job is mid-rendered with a switched-on flag.
     text_renderer_skia_enabled: bool = True
+
+    # Dynamic crossfade scheduling for the line-style lyric overlay path
+    # (`app.pipeline.lyric_injector._inject_line`). When True (default), the
+    # scheduler matches per-pair crossfade durations, anchors actual emitted
+    # overlap to the matched window, and tags the outgoing overlay with
+    # `fade_out_curve="sqrt"` so both renderers use mirror-symmetric fade
+    # curves during inter-line crossfades — α_L_N + α_L_N+1 = 1 at every t,
+    # so no two consecutive lyric overlays render readably simultaneously.
+    # When False, the scheduler reproduces pre-fix behavior byte-identically:
+    # legacy `dynamic_max_overlap = min(max_overlap_s, fade_in_s + fade_out_s)`
+    # cap, no `fade_out_curve` key, no dynamic duration matching. Flip to
+    # False on Fly (`fly secrets set LYRIC_DYNAMIC_CROSSFADE_ENABLED=false
+    # --app nova-video` then restart workers) to roll back music + agentic
+    # lyric scheduling instantly. The kill switch is read inside
+    # `inject_lyric_overlays`, so every job picks up the current value at
+    # scheduling time.
+    lyric_dynamic_crossfade_enabled: bool = True
+
+    # Linear LRCLIB re-anchor for synced lyrics. When True (default), the
+    # alignment layer can fit a small per-time drift curve before falling
+    # back to the existing uniform median / single-L0 paths. This catches
+    # official-video cuts whose vocals diverge progressively from the album
+    # recording indexed by LRCLIB. When False, the linear path is skipped and
+    # the old uniform-only behavior is preserved.
+    lyric_linear_reanchor_enabled: bool = True
+
+    # Post-snap re-anchor for karaoke + per-word-pop lyric overlays
+    # (`app.pipeline.lyric_word_resync`). When True (default), each music-job
+    # render rewrites karaoke/popup overlay `start_s`/`end_s` so the per-word
+    # highlight (karaoke) and per-stage arrival (pop-in) stay glued to the
+    # vocal even after beat-snap shifts the slot's cumulative position. When
+    # False, falls back to pre-fix behavior byte-identically: overlays render
+    # at their pre-snap slot-relative positions and may drift up to one
+    # beat-interval (~250 ms on a 2.4 BPS track) against the audio.
+    # Flip to False on Fly
+    # (`fly secrets set LYRIC_WORD_RESYNC_ENABLED=false --app nova-video`
+    # then restart workers) to roll back instantly if the re-anchor pass
+    # itself ships a regression. The flag is read inside
+    # `_collect_absolute_overlays` so every job picks up the current value
+    # at render-collect time. Line-style overlays NEVER participate in this
+    # pass — they don't carry the `section_anchor_s` stamp.
+    lyric_word_resync_enabled: bool = True
+
+    # Synced-anchor health check for the lyrics agent
+    # (`app.agents.lyrics.LyricsExtractionAgent.compute`). When True (default),
+    # if `align_with_line_anchors` returns confidence < 0.20, the agent
+    # treats the LRCLIB syncedLyrics as being from a different recording of
+    # the same song and falls back to plain_lyrics+whisper (or whisper_only)
+    # so Whisper's timestamps drive the line bounds. Pairs with the
+    # `duration` query param on `search_lrclib` as a two-layer defense
+    # against the "Hawai" version-mismatch bug (synced anchors at 4.59s,
+    # actual audio at 22s). Flip to False on Fly
+    # (`fly secrets set LYRIC_SYNCED_ANCHOR_FALLBACK_ENABLED=false
+    # --app nova-video` then restart workers) for emergency rollback if the
+    # threshold turns out to be too aggressive in prod and starts demoting
+    # legitimate synced extractions to plain+whisper. Read once per
+    # extraction inside `compute()`. Existing cached extractions are not
+    # touched by either value.
+    lyric_synced_anchor_fallback_enabled: bool = True
+
+    # Universal text-overlay constraint pass. When True (default), every
+    # overlay collected by `_collect_absolute_overlays` (agentic templates +
+    # music lyrics + generative edits — NOT classic templates, which never
+    # carry the canonical overlay dict through this path) is run through
+    # `app.pipeline.overlay_constraints.apply_overlay_constraints`: text is
+    # shrunk/wrapped to fit a max line count and repositioned into the 9:16
+    # safe zone. The pass only rewrites `text_size_px` / `position_*_frac`
+    # (fields both renderers already honor), so it is renderer-parity-safe and
+    # can only improve overflowing text. Flip to False to disable the guarantee
+    # (e.g. to isolate a layout regression) without redeploying.
+    style_constraints_enabled: bool = True
 
     # agent_run retention (days). Rows with job_id IS NOT NULL and
     # created_at older than this are deleted by the daily
@@ -165,7 +250,15 @@ class Settings(BaseSettings):
     output_width: int = 1080
     output_height: int = 1920
     output_fps: int = 30
-    output_video_bitrate: str = "4M"
+    # Capped-CRF ceiling, NOT an ABR target — see reframe._encoding_args. CRF 18
+    # is the quality driver; this bounds peak bitrate (bufsize = 2× this). Raised
+    # 4M→8M after the 4M ceiling macroblocked the dark sky on a 10-bit HLG iPhone
+    # sunset (lisbon1.MOV, 2026-05-25). Raised 8M→16M (2026-05-26) after a dark
+    # HLG night clip (job 792f2d52) still pinned to the 8M ceiling and macroblocked:
+    # at 16M the same footage uses ~16 Mbps, i.e. CRF 18 genuinely wanted ~2× what
+    # 8M allowed. Local A/B (SSIM vs clean master) showed the ceiling bump alone cut
+    # dark-region distortion ~31%. CRF still governs, so easy/bright clips stay small.
+    output_video_bitrate: str = "16M"
     output_audio_bitrate: str = "192k"
     output_min_duration_s: float = 45.0
     output_max_duration_s: float = 59.0

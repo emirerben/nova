@@ -24,6 +24,11 @@ const savedConfig = {
   hold_to_next_threshold_ms: 500,
 };
 
+const karaokeConfig = {
+  enabled: true,
+  style: "karaoke" as const,
+};
+
 describe("LyricsTimingPanel", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -48,10 +53,21 @@ describe("LyricsTimingPanel", () => {
     expect(screen.getByLabelText("Pre-roll")).toHaveValue(0.1);
     expect(screen.getByLabelText("Post-dwell")).toHaveValue(1);
     expect(screen.getByLabelText("Next-line gap")).toHaveValue(0.1);
-    expect(screen.getByLabelText("Fade in")).toHaveValue(150);
-    expect(screen.getByLabelText("Fade out")).toHaveValue(250);
+    expect(screen.getByLabelText("Fade in (solo / legacy only)")).toHaveValue(150);
+    expect(screen.getByLabelText("Fade out (solo / legacy only)")).toHaveValue(250);
     expect(screen.getByLabelText("Hold-to-next")).toHaveValue(500);
     expect(screen.getByText("Save as track defaults")).toBeDisabled();
+    // The fade sliders now apply ONLY to solo/last-line fades + the
+    // kill-switch-off legacy path. Inter-line crossfades use the
+    // matched-window math from `_inject_line` (plan §F). Pin the
+    // explanatory copy so a future label drift can't silently mislead
+    // operators into thinking those sliders control normal transitions.
+    expect(
+      screen.getByTestId("lyrics-timing-crossfade-note"),
+    ).toHaveTextContent(/automatic crossfade timing/i);
+    expect(
+      screen.getByTestId("lyrics-timing-crossfade-note"),
+    ).toHaveTextContent(/solo \/ last-line fades/i);
   });
 
   it("enables save and shows the unsaved banner after a genuine change", () => {
@@ -99,7 +115,7 @@ describe("LyricsTimingPanel", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Fade in"), {
+    fireEvent.change(screen.getByLabelText("Fade in (solo / legacy only)"), {
       target: { value: "50" },
     });
     fireEvent.change(screen.getByLabelText("Post-dwell"), {
@@ -129,6 +145,50 @@ describe("LyricsTimingPanel", () => {
       "full_test",
       expectedSnapshot,
     );
+  });
+
+  it("keeps lyrics preview disabled when parent section bounds are dirty", () => {
+    render(
+      <LyricsTimingPanel
+        trackId="track-1"
+        savedConfig={savedConfig}
+        onSubmit={jest.fn()}
+        previewDisabled
+        previewHint="Save section bounds first."
+      />,
+    );
+
+    expect(screen.getByTestId("lyrics-timing-preview-button")).toBeDisabled();
+    expect(screen.getByTestId("lyrics-timing-preview-hint")).toHaveTextContent(
+      "Save section bounds first.",
+    );
+  });
+
+  it("does not send line timing overrides for karaoke configs", async () => {
+    const onSubmit = jest.fn();
+    const onWorkingChange = jest.fn();
+    render(
+      <LyricsTimingPanel
+        trackId="track-1"
+        savedConfig={karaokeConfig}
+        onSubmit={onSubmit}
+        onWorkingChange={onWorkingChange}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Pre-roll")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Post-dwell")).not.toBeInTheDocument();
+    expect(screen.queryByText("Save as track defaults")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(onWorkingChange).toHaveBeenLastCalledWith(null);
+    });
+
+    fireEvent.click(screen.getByText("Preview lyrics only"));
+    fireEvent.click(screen.getByText("Render full test job"));
+
+    expect(onSubmit).toHaveBeenNthCalledWith(1, "preview", undefined);
+    expect(onSubmit).toHaveBeenNthCalledWith(2, "full_test", undefined);
   });
 
   it("reports the current timing snapshot to the parent for re-render actions", async () => {

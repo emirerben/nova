@@ -11,9 +11,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import MusicTrack
+from app.storage import signed_get_url
 
 log = structlog.get_logger()
 router = APIRouter()
+
+# Audio-preview signed-URL TTL. Short on purpose: this exposes full-track audio
+# behind a public URL, so we trade a little convenience (a long edit session may
+# need a gallery re-fetch) for a tight exposure window. If rights/abuse ever
+# bite, swap to a pre-rendered ~6s hook clip stored under the non-expiring
+# `music/` prefix (see plan failure-modes table).
+_PREVIEW_AUDIO_TTL_MIN = 60
+
+
+def _preview_audio_url(audio_gcs_path: str | None) -> str | None:
+    """Signed GET URL for a track's audio, or None. Never raises — a signing
+    failure (missing creds locally, transient GCS error) must not 500 the
+    public gallery, so the picker just hides the play button for that track."""
+    if not audio_gcs_path:
+        return None
+    try:
+        return signed_get_url(audio_gcs_path, expiration_minutes=_PREVIEW_AUDIO_TTL_MIN)
+    except Exception:  # noqa: BLE001 — best-effort; gallery must still render
+        log.warning("preview_audio_sign_failed", audio_gcs_path=audio_gcs_path)
+        return None
 
 
 class MusicTrackSummary(BaseModel):
@@ -30,6 +51,13 @@ class MusicTrackSummary(BaseModel):
     template_kind: str = "beat_sync"  # "beat_sync" | "templated"
     user_slot_count: int = 0
     user_slot_accepts: list[str] = []  # ["video","image"] per templated slot
+    # Audio preview for the song picker: a short-lived signed URL to the track
+    # audio, plus the second to seek to (the matched hook). Lets a user HEAR a
+    # song before committing a re-render. TTL is deliberately short (60 min) —
+    # this is full-track audio behind a public URL, so we cap exposure. None when
+    # the track has no stored audio or signing fails (picker hides the play btn).
+    preview_audio_url: str | None = None
+    preview_start_s: float = 0.0
 
 
 class MusicTrackListResponse(BaseModel):
@@ -54,10 +82,7 @@ async def list_music_tracks(
     for t in tracks:
         cfg = t.track_config or {}
         recipe = t.recipe_cached or {}
-        user_slots = [
-            s for s in recipe.get("slots", [])
-            if s.get("slot_type") == "user_upload"
-        ]
+        user_slots = [s for s in recipe.get("slots", []) if s.get("slot_type") == "user_upload"]
         is_templated = bool(user_slots)
 
         if is_templated:
@@ -92,6 +117,8 @@ async def list_music_tracks(
                 template_kind=template_kind,
                 user_slot_count=len(user_slots),
                 user_slot_accepts=accepts,
+                preview_audio_url=_preview_audio_url(t.audio_gcs_path),
+                preview_start_s=round(float(cfg.get("best_start_s", 0.0)), 2),
             )
         )
 

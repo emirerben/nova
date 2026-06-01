@@ -15,12 +15,31 @@ interface LyricsTimingPanelProps {
   savedConfig: Partial<LyricsConfig>;
   fullTestDisabled?: boolean;
   fullTestHint?: string | null;
-  onSubmit: (action: TimingAction, override: LyricsConfigOverride) => void;
-  onWorkingChange?: (override: LyricsConfigOverride) => void;
+  // Gates the "Preview lyrics only" button. Set by the parent when the
+  // Config tab has unsaved best_start_s / best_end_s edits — the preview
+  // endpoint reads persisted bounds from the DB, so firing it with form
+  // state ahead of the DB renders against the wrong section (the Beat
+  // It bug, job 616d3e53). Defaults to enabled.
+  previewDisabled?: boolean;
+  previewHint?: string | null;
+  onSubmit: (action: TimingAction, override?: LyricsConfigOverride) => void;
+  onWorkingChange?: (override: LyricsConfigOverride | null) => void;
   onSaved?: (savedConfig: Partial<LyricsConfig>) => void;
 }
 
-const DEFAULTS: Required<Omit<LyricsConfigOverride, "font_family">> = {
+type LineTimingDefaults = Required<
+  Pick<
+    LyricsConfigOverride,
+    | "pre_roll_s"
+    | "post_dwell_s"
+    | "next_line_gap_s"
+    | "fade_in_ms"
+    | "fade_out_ms"
+    | "hold_to_next_threshold_ms"
+  >
+>;
+
+const DEFAULTS: LineTimingDefaults = {
   pre_roll_s: 0.1,
   post_dwell_s: 1.0,
   next_line_gap_s: 0.1,
@@ -39,8 +58,8 @@ const FIELDS: Array<{
   { key: "pre_roll_s", label: "Pre-roll", min: 0, max: 0.5, step: 0.01 },
   { key: "post_dwell_s", label: "Post-dwell", min: 0, max: 2, step: 0.01 },
   { key: "next_line_gap_s", label: "Next-line gap", min: 0, max: 0.5, step: 0.01 },
-  { key: "fade_in_ms", label: "Fade in", min: 0, max: 500, step: 10 },
-  { key: "fade_out_ms", label: "Fade out", min: 0, max: 800, step: 10 },
+  { key: "fade_in_ms", label: "Fade in (solo / legacy only)", min: 0, max: 500, step: 10 },
+  { key: "fade_out_ms", label: "Fade out (solo / legacy only)", min: 0, max: 800, step: 10 },
   {
     key: "hold_to_next_threshold_ms",
     label: "Hold-to-next",
@@ -93,6 +112,8 @@ export function LyricsTimingPanel({
   savedConfig,
   fullTestDisabled = false,
   fullTestHint = null,
+  previewDisabled = false,
+  previewHint = null,
   onSubmit,
   onWorkingChange,
   onSaved,
@@ -103,6 +124,7 @@ export function LyricsTimingPanel({
   );
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const lineTimingEnabled = savedConfig.style === "line";
 
   useEffect(() => {
     setSaved(savedConfig);
@@ -111,14 +133,15 @@ export function LyricsTimingPanel({
 
   const dirty = useMemo(
     () =>
+      lineTimingEnabled &&
       JSON.stringify(normalizeLyricsConfig(working)) !==
-      JSON.stringify(normalizeLyricsConfig(saved)),
-    [working, saved],
+        JSON.stringify(normalizeLyricsConfig(saved)),
+    [lineTimingEnabled, working, saved],
   );
 
   useEffect(() => {
-    onWorkingChange?.({ ...working });
-  }, [working, onWorkingChange]);
+    onWorkingChange?.(lineTimingEnabled ? { ...working } : null);
+  }, [lineTimingEnabled, working, onWorkingChange]);
 
   function setField(key: keyof typeof DEFAULTS, value: string) {
     const numeric = value === "" ? DEFAULTS[key] : Number(value);
@@ -129,6 +152,7 @@ export function LyricsTimingPanel({
   }
 
   async function saveDefaults() {
+    if (!lineTimingEnabled) return;
     setSaving(true);
     setMessage(null);
     try {
@@ -159,48 +183,77 @@ export function LyricsTimingPanel({
         )}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        {FIELDS.map((field) => (
-          <label key={field.key} className="block">
-            <span className="mb-1 block text-xs text-zinc-500">{field.label}</span>
-            <input
-              type="number"
-              min={field.min}
-              max={field.max}
-              step={field.step}
-              value={working[field.key] ?? DEFAULTS[field.key]}
-              onChange={(e) => setField(field.key, e.target.value)}
-              className="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
-            />
-          </label>
-        ))}
-      </div>
+      {lineTimingEnabled && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {FIELDS.map((field) => (
+              <label key={field.key} className="block">
+                <span className="mb-1 block text-xs text-zinc-500">{field.label}</span>
+                <input
+                  type="number"
+                  min={field.min}
+                  max={field.max}
+                  step={field.step}
+                  value={working[field.key] ?? DEFAULTS[field.key]}
+                  onChange={(e) => setField(field.key, e.target.value)}
+                  className="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
+                />
+              </label>
+            ))}
+          </div>
+
+          <p
+            data-testid="lyrics-timing-crossfade-note"
+            className="mt-3 text-xs text-zinc-500"
+          >
+            Inter-line lyric transitions use automatic crossfade timing to prevent
+            stacked text. The fade sliders above apply only to solo / last-line
+            fades and to the kill-switch-off legacy path.
+          </p>
+        </>
+      )}
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button
           type="button"
-          onClick={() => onSubmit("preview", { ...working })}
-          className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-600"
+          data-testid="lyrics-timing-preview-button"
+          disabled={previewDisabled}
+          onClick={() =>
+            onSubmit("preview", lineTimingEnabled ? { ...working } : undefined)
+          }
+          className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Preview lyrics only
         </button>
+        {previewDisabled && previewHint && (
+          <span
+            data-testid="lyrics-timing-preview-hint"
+            className="text-xs text-amber-400"
+          >
+            ⚠ {previewHint}
+          </span>
+        )}
         <button
           type="button"
           disabled={fullTestDisabled}
-          onClick={() => onSubmit("full_test", { ...working })}
+          onClick={() =>
+            onSubmit("full_test", lineTimingEnabled ? { ...working } : undefined)
+          }
           className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Render full test job
         </button>
-        <button
-          type="button"
-          disabled={!dirty || saving}
-          onClick={saveDefaults}
-          className="rounded-lg bg-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-100 transition-colors hover:bg-zinc-600 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {saving ? "Saving…" : "Save as track defaults"}
-        </button>
-        {dirty && (
+        {lineTimingEnabled && (
+          <button
+            type="button"
+            disabled={!dirty || saving}
+            onClick={saveDefaults}
+            className="rounded-lg bg-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-100 transition-colors hover:bg-zinc-600 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {saving ? "Saving…" : "Save as track defaults"}
+          </button>
+        )}
+        {lineTimingEnabled && dirty && (
           <button
             type="button"
             onClick={() => setWorking(coerceTimingConfig(saved))}

@@ -24,6 +24,10 @@ dev-api:
 # Usage:
 #   make local-render CLIP=/path/to/video.mp4 TEMPLATE=<uuid> \
 #       [MODE=template|music] [INPUTS='{"location":"Tokyo"}']
+#
+#   # generative mode (no template; song auto-matched; renders all 3 variants):
+#   make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
+#   # output length is DERIVED from the footage — there is no target-length knob.
 # See docker-compose.local-render.yml and CLAUDE.md → "Local-render parity".
 
 LOCAL_RENDER_COMPOSE := docker-compose -f docker-compose.local-render.yml
@@ -53,15 +57,27 @@ local-render-logs:
 	$(LOCAL_RENDER_COMPOSE) logs -f --tail=200 api worker
 
 local-render: local-render-migrate
-	@if [ -z "$(CLIP)" ] || [ -z "$(TEMPLATE)" ]; then \
-		echo "Usage: make local-render CLIP=/path/to/video.mp4 TEMPLATE=<uuid> [MODE=template|music] [INPUTS='{\"location\":\"Tokyo\"}']"; \
-		exit 2; \
+	@if [ "$(MODE)" = "generative" ]; then \
+		if [ -z "$(CLIPS)" ]; then \
+			echo "Usage: make local-render MODE=generative CLIPS=\"a.mp4 b.mp4 c.mp4\""; \
+			exit 2; \
+		fi; \
+		python3 scripts/local-render.py --mode generative \
+			$(foreach c,$(CLIPS),--clip "$(c)") \
+			$(if $(EDIT_FORMAT),--edit-format $(EDIT_FORMAT)) \
+			$(if $(VOICEOVER),--voiceover "$(VOICEOVER)"); \
+	else \
+		if [ -z "$(CLIP)" ] || [ -z "$(TEMPLATE)" ]; then \
+			echo "Usage: make local-render CLIP=/path/to/video.mp4 TEMPLATE=<uuid> [MODE=template|music] [INPUTS='{\"location\":\"Tokyo\"}']"; \
+			echo "   or: make local-render MODE=generative CLIPS=\"a.mp4 b.mp4 c.mp4\""; \
+			exit 2; \
+		fi; \
+		python3 scripts/local-render.py \
+			--clip "$(CLIP)" \
+			--template "$(TEMPLATE)" \
+			--mode "$(MODE)" \
+			--inputs '$(INPUTS)'; \
 	fi
-	python3 scripts/local-render.py \
-		--clip "$(CLIP)" \
-		--template "$(TEMPLATE)" \
-		--mode "$(MODE)" \
-		--inputs '$(INPUTS)'
 
 # ── Pre-PR text-overlay verify (renders in the prod image, checks clipping) ──
 # Renders a recipe's text overlays through the REAL Skia path inside the prod

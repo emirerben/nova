@@ -1,0 +1,43 @@
+{
+  "agent": "nova.compose.intro_writer",
+  "prompt_version": "2026-05-28",
+  "input": {
+    "hero_clip": {
+      "clip_id": "clip_tr_003",
+      "media_type": "video",
+      "duration_s": 4.0,
+      "subject": "el yapımı kek tabağa diziliyor, üstüne çikolata akıtılıyor",
+      "hook_text": "",
+      "hook_score": 7.0,
+      "energy": 5.5,
+      "description": "yakın plan, mutfak tezgahı, çikolata sosu yavaşça akıyor, akşam aydınlatması"
+    },
+    "hero_transcript": "bunu evde 10 dakikada yapıyorum",
+    "tone": "punchy",
+    "form": {"effect": "static", "size_class": "jumbo", "position": "center"},
+    "exemplars": [
+      {
+        "id": "lifestyle-freedom-static-01",
+        "content_profile": "slow-living, freedom, working-from-anywhere, beach or remote scenery, quietly aspirational",
+        "effect": "static",
+        "text": "this and no job",
+        "highlight_word": "no",
+        "position": "center",
+        "size_class": "jumbo",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A"
+      }
+    ],
+    "language": "tr"
+  },
+  "raw_text": "{\"text\": \"bunu yapmadan ölme\", \"highlight_word\": \"ölme\"}",
+  "output": {
+    "text": "bunu yapmadan ölme",
+    "highlight_word": "ölme"
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "TR food/reveal → punchy imperative in lowercase sen-form (ölme = informal 'don't die'). Three-word punch matches the static form; energy enough to hold the swipe.",
+    "language": "tr"
+  }
+}

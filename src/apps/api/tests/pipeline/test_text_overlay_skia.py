@@ -56,6 +56,116 @@ def test_typeface_for_overlay_falls_back_when_font_unknown():
     assert isinstance(tf, skia.Typeface)
 
 
+# -- Turkish-diacritic glyph coverage (TR regression) -------------------------
+#
+# Adding Turkish-language support to intro_writer/overlay_format_matcher is
+# necessary but not sufficient: the model can produce ç ş ğ ı İ ö ü perfectly,
+# but if the bundled typeface lacks those glyphs Skia draws .notdef (tofu box)
+# with no error log. These tests lock the contract: every codepoint Turkish
+# creators actually use MUST be present in EVERY bundled typeface that can
+# ever be selected to render a TR overlay.
+
+# Codepoints the TR_DIACRITICS_REQUIRED set is built from. Sourced from the
+# canonical Turkish alphabet — lower + upper case — plus the dotless/dotted i
+# pair which is the most common font-fallback failure on Turkish text.
+_TR_DIACRITICS = "çÇşŞğĞıİöÖüÜ"
+
+
+def test_assert_glyphs_present_raises_on_missing():
+    # A null-font reference would be the simplest test, but Skia rejects it;
+    # use a real typeface and pick a codepoint nothing in our bundle covers
+    # (a CJK ideograph — Playfair Display is a Latin serif).
+    from app.pipeline.text_overlay import FONTS_DIR
+
+    tf = skia.Typeface.MakeFromFile(os.path.join(FONTS_DIR, "PlayfairDisplay-Bold.ttf"))
+    with pytest.raises(tos.MissingGlyphsError) as exc:
+        tos.assert_glyphs_present(tf, "hello 漢字")
+    # Error must name the missing codepoints so an operator can grep.
+    assert "U+6F22" in str(exc.value)
+    assert "U+5B57" in str(exc.value)
+
+
+def test_assert_glyphs_present_passes_for_ascii():
+    from app.pipeline.text_overlay import FONTS_DIR
+
+    tf = skia.Typeface.MakeFromFile(os.path.join(FONTS_DIR, "PlayfairDisplay-Bold.ttf"))
+    tos.assert_glyphs_present(tf, "hello world 12345")  # no raise
+
+
+def test_playfair_display_bold_covers_all_turkish_diacritics():
+    # THE regression test. If this fails after a font-bundle change, Turkish
+    # creators see tofu boxes on their hero overlay and the renderer logs nothing.
+    from app.pipeline.text_overlay import FONTS_DIR
+
+    tf = skia.Typeface.MakeFromFile(os.path.join(FONTS_DIR, "PlayfairDisplay-Bold.ttf"))
+    tos.assert_glyphs_present(tf, _TR_DIACRITICS)
+
+
+# Bundled fonts that knowingly LACK Turkish glyph coverage. Each entry should
+# point to the file name in font-registry.json. These fonts MUST NOT be selected
+# to render a TR overlay — see TODO below. Adding a font here is a deliberate
+# scope decision: it means "we ship this font for EN-only contexts and accept it
+# never renders TR jobs". The test below uses this set to allow exceptions without
+# silently regressing the rest of the bundle.
+_TR_UNSAFE_FONTS: set[str] = {
+    # Permanent Marker is a stylized handwriting font that lacks ş Ş ğ Ğ İ. It's
+    # registered as a font-cycle contrast font; if a TR generative overlay hits
+    # the font-cycle effect the cycle could land on this font mid-animation.
+    # TODO(tr-cycle-filter): the cycle-font selector in text_overlay_skia.py /
+    # text_overlay.py should consult a `tr_safe` flag in the registry and skip
+    # non-TR-safe fonts when the job's language is "tr". Until that ships, the
+    # only reachable path for PermanentMarker on a TR job is the font-cycle
+    # effect AND a glyph-bearing letter landing on a PermanentMarker frame;
+    # the form matcher's TR hint biases toward simpler effects which sharply
+    # narrows this exposure.
+    "PermanentMarker-Regular.ttf",
+}
+
+
+def test_tr_safe_bundled_typefaces_cover_turkish_diacritics():
+    # Bundle-wide invariant minus the documented exceptions: every TR-safe font
+    # MUST cover the Turkish diacritic alphabet. Adding a font that fails this
+    # test forces a deliberate choice: fix the glyph coverage, or add the font
+    # name to _TR_UNSAFE_FONTS and accept the EN-only scope.
+    failures: list[tuple[str, str]] = []
+    for path, tf in tos._TYPEFACE_BY_PATH.items():
+        if os.path.basename(path) in _TR_UNSAFE_FONTS:
+            continue
+        try:
+            tos.assert_glyphs_present(tf, _TR_DIACRITICS)
+        except tos.MissingGlyphsError as exc:
+            failures.append((os.path.basename(path), str(exc)))
+    assert not failures, (
+        "TR-safe bundled fonts missing Turkish glyph coverage — TR renders would tofu-box:\n"
+        + "\n".join(f"  {f}: {msg}" for f, msg in failures)
+        + "\n\nFix the font, or add the file to _TR_UNSAFE_FONTS with a TODO."
+    )
+
+
+def test_tr_unsafe_set_only_lists_fonts_that_actually_lack_glyphs():
+    # Sentinel for the exception list: if a "TR-unsafe" font is upgraded (e.g.
+    # we replace PermanentMarker with a variant covering Turkish), drop it from
+    # the set. This test fails when an entry is no longer needed so the exception
+    # list doesn't ossify into bit-rot.
+    from app.pipeline.text_overlay import FONTS_DIR
+
+    falsely_unsafe: list[str] = []
+    for name in _TR_UNSAFE_FONTS:
+        path = os.path.join(FONTS_DIR, name)
+        if not os.path.exists(path):
+            continue
+        tf = skia.Typeface.MakeFromFile(path)
+        try:
+            tos.assert_glyphs_present(tf, _TR_DIACRITICS)
+            falsely_unsafe.append(name)
+        except tos.MissingGlyphsError:
+            pass
+    assert not falsely_unsafe, (
+        f"{falsely_unsafe} are listed as TR-unsafe but DO cover Turkish glyphs — "
+        "remove them from _TR_UNSAFE_FONTS."
+    )
+
+
 # -- Static effect (effect=none) ---------------------------------------------
 
 
@@ -238,9 +348,7 @@ def test_karaoke_line_highlights_after_word_end_time(tmp_workdir):
     seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
     assert seq is not None
     # Frame at t=0.6s ≈ frame index 18 at 30fps
-    frame_18 = os.path.join(
-        tmp_workdir, f"skia_overlay_000_f{18:04d}.png"
-    )
+    frame_18 = os.path.join(tmp_workdir, f"skia_overlay_000_f{18:04d}.png")
     assert os.path.exists(frame_18)
     img = Image.open(frame_18)
     # Look for a gold-ish pixel anywhere in the middle band of the image
@@ -359,12 +467,13 @@ def test_kill_switch_routes_to_pillow_when_disabled(tmp_workdir):
 
     # A trivially-formatted overlay; the test doesn't actually need ffmpeg to
     # succeed — we only assert routing.
-    with mock.patch("app.pipeline.text_overlay_skia.burn_text_overlays_skia") as skia_fn, \
-         mock.patch("app.pipeline.text_overlay.generate_text_overlay_png") as pil_png, \
-         mock.patch("app.pipeline.text_overlay.generate_animated_overlay_ass") as pil_ass, \
-         mock.patch("subprocess.run") as run_, \
-         mock.patch("app.config.settings") as fake_settings:
-
+    with (
+        mock.patch("app.pipeline.text_overlay_skia.burn_text_overlays_skia") as skia_fn,
+        mock.patch("app.pipeline.text_overlay.generate_text_overlay_png") as pil_png,
+        mock.patch("app.pipeline.text_overlay.generate_animated_overlay_ass") as pil_ass,
+        mock.patch("subprocess.run") as run_,
+        mock.patch("app.config.settings") as fake_settings,
+    ):
         fake_settings.text_renderer_skia_enabled = False
         # Make the Pillow generators return empty so the orchestrator short-
         # circuits to a copy without actually invoking ffmpeg.
@@ -393,9 +502,10 @@ def test_dispatch_routes_to_skia_when_use_skia_true(tmp_workdir):
     """use_skia=True + settings.text_renderer_skia_enabled=True → Skia."""
     from app.tasks.template_orchestrate import _burn_text_overlays
 
-    with mock.patch(
-        "app.pipeline.text_overlay_skia.burn_text_overlays_skia"
-    ) as skia_fn, mock.patch("app.config.settings") as fake_settings:
+    with (
+        mock.patch("app.pipeline.text_overlay_skia.burn_text_overlays_skia") as skia_fn,
+        mock.patch("app.config.settings") as fake_settings,
+    ):
         fake_settings.text_renderer_skia_enabled = True
         in_path = os.path.join(tmp_workdir, "in.mp4")
         out_path = os.path.join(tmp_workdir, "out.mp4")
@@ -440,9 +550,10 @@ def test_pre_burn_curtain_routes_to_skia_when_agentic(tmp_workdir):
     with open(in_path, "wb") as f:
         f.write(b"\x00")
 
-    with mock.patch(
-        "app.pipeline.text_overlay_skia.pre_burn_curtain_slot_text_skia"
-    ) as skia_pre, mock.patch("app.config.settings") as fake_settings:
+    with (
+        mock.patch("app.pipeline.text_overlay_skia.pre_burn_curtain_slot_text_skia") as skia_pre,
+        mock.patch("app.config.settings") as fake_settings,
+    ):
         fake_settings.text_renderer_skia_enabled = True
         _pre_burn_curtain_slot_text(
             in_path,
@@ -463,15 +574,13 @@ def test_dispatch_keeps_classic_on_pillow(tmp_workdir):
     regardless of the kill-switch state."""
     from app.tasks.template_orchestrate import _burn_text_overlays
 
-    with mock.patch(
-        "app.pipeline.text_overlay_skia.burn_text_overlays_skia"
-    ) as skia_fn, mock.patch(
-        "app.pipeline.text_overlay.generate_text_overlay_png"
-    ) as pil_png, mock.patch(
-        "app.pipeline.text_overlay.generate_animated_overlay_ass"
-    ) as pil_ass, mock.patch("subprocess.run") as run_, mock.patch(
-        "app.config.settings"
-    ) as fake_settings:
+    with (
+        mock.patch("app.pipeline.text_overlay_skia.burn_text_overlays_skia") as skia_fn,
+        mock.patch("app.pipeline.text_overlay.generate_text_overlay_png") as pil_png,
+        mock.patch("app.pipeline.text_overlay.generate_animated_overlay_ass") as pil_ass,
+        mock.patch("subprocess.run") as run_,
+        mock.patch("app.config.settings") as fake_settings,
+    ):
         fake_settings.text_renderer_skia_enabled = True  # ON globally
         pil_png.return_value = None
         pil_ass.return_value = None
@@ -521,8 +630,7 @@ def test_left_anchor_does_not_clip_off_left_edge():
     # Center-anchor (old behavior) clips: content starts at x=0.
     center_bbox, _ = _frame_bbox({**base, "text_anchor": "center"})
     assert center_bbox is not None and center_bbox[0] <= 1, (
-        "expected center-anchor to clip at the left edge (the bug); "
-        f"got bbox {center_bbox}"
+        f"expected center-anchor to clip at the left edge (the bug); got bbox {center_bbox}"
     )
     # Left-anchor (fixed) fits: content starts well inside the frame and ends
     # before the right edge.
@@ -830,7 +938,7 @@ def test_both_renderers_honor_text_anchor(renderer):
         assert b[0] > 0 and b[2] < width, f"{renderer}: {name} bbox {b} clips the frame"
 
     line_w = center_bbox[2] - center_bbox[0]
-    left_delta = left_bbox[0] - center_bbox[0]   # left anchor sits RIGHT of center
+    left_delta = left_bbox[0] - center_bbox[0]  # left anchor sits RIGHT of center
     right_delta = right_bbox[0] - center_bbox[0]  # right anchor sits LEFT of center
     assert left_delta > 100, (
         f"{renderer} ignores text_anchor='left': center→left shifted the left "
@@ -842,3 +950,595 @@ def test_both_renderers_honor_text_anchor(renderer):
         f"edge by only {right_delta}px (line {line_w}px wide, expected ~-half). "
         f"This is the #296 class — a field honored by one renderer, dropped by the other."
     )
+
+
+# ── Renderer parity: display_text honored by both Skia and Pillow ────────────
+# Lock the CLAUDE.md renderer-parity invariant for the new `display_text`
+# field. Layer 2's `_finalize_lyric_audible_window` writes `display_text` on
+# partial lyric lines. Both renderers MUST prefer it over `text`. A regression
+# on either side silently degrades to rendering the full original (Bug B
+# returns).
+#
+# History: this is the #296-class invariant (see CLAUDE.md "Renderer-parity
+# invariant"). The admin preview uses Pillow; prod music renders use Skia. A
+# Skia-only break would pass the admin preview and only surface as misleading
+# text in the actual rendered video.
+
+
+def test_both_renderers_honor_display_text_skia():
+    """Skia: with display_text set, the burned frame must match what would be
+    burned if `text` itself were the display_text value."""
+    short_only = {
+        "text": "HI",
+        "effect": "none",
+        "text_size_px": 100,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFFFFF",
+        "text_anchor": "center",
+    }
+    long_with_short_display = {
+        **short_only,
+        "text": "THIS IS A VERY LONG ORIGINAL LINE",
+        "display_text": "HI",
+    }
+    bbox_short, _ = _frame_bbox(short_only)
+    bbox_long_short, _ = _frame_bbox(long_with_short_display)
+    assert bbox_short is not None and bbox_long_short is not None
+    short_w = bbox_short[2] - bbox_short[0]
+    long_short_w = bbox_long_short[2] - bbox_long_short[0]
+    # If display_text is honored, the two widths match within AA / kerning slack.
+    # If display_text is IGNORED, the second renders the LONG text and width
+    # explodes (long_short_w would be ~10× short_w).
+    assert abs(long_short_w - short_w) < 50, (
+        f"Skia did not honor display_text — expected ~{short_w}px (short text), "
+        f"got {long_short_w}px (likely rendered the long original). The fix in "
+        f"text_overlay_skia._overlay_text dropped or _draw_frame didn't route "
+        f"the static-effect path through it."
+    )
+
+
+def test_both_renderers_honor_display_text_pillow():
+    """Pillow: same parity assertion via render_overlays_at_time path used by
+    export + admin preview. _validate_overlay must read `display_text or
+    text` for the static path."""
+    short_only = {
+        "text": "HI",
+        "effect": "none",
+        "text_size_px": 100,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFFFFF",
+        "text_anchor": "center",
+        "start_s": 0.0,
+        "end_s": 5.0,
+    }
+    long_with_short_display = {
+        **short_only,
+        "text": "THIS IS A VERY LONG ORIGINAL LINE",
+        "display_text": "HI",
+    }
+    bbox_short, _ = _pillow_bbox(short_only)
+    bbox_long_short, _ = _pillow_bbox(long_with_short_display)
+    assert bbox_short is not None and bbox_long_short is not None
+    short_w = bbox_short[2] - bbox_short[0]
+    long_short_w = bbox_long_short[2] - bbox_long_short[0]
+    assert abs(long_short_w - short_w) < 50, (
+        f"Pillow did not honor display_text — expected ~{short_w}px, got "
+        f"{long_short_w}px. _validate_overlay reverted to `overlay.get('text')`?"
+    )
+
+
+def test_both_renderers_fall_back_to_text_when_display_text_absent():
+    """No display_text → renderers use overlay['text'] exactly as pre-PR.
+    Locks the byte-identical-fallback guarantee for non-music callers."""
+    base = {
+        "text": "FALLBACK",
+        "effect": "none",
+        "text_size_px": 100,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFFFFF",
+        "text_anchor": "center",
+        "start_s": 0.0,
+        "end_s": 5.0,
+    }
+    skia_bbox, _ = _frame_bbox(base)
+    pillow_bbox, _ = _pillow_bbox(base)
+    # Both render the "FALLBACK" text — non-empty bbox, comparable width.
+    assert skia_bbox is not None and pillow_bbox is not None
+    skia_w = skia_bbox[2] - skia_bbox[0]
+    pillow_w = pillow_bbox[2] - pillow_bbox[0]
+    # Cross-renderer width slack (different shapers): within 20%.
+    assert abs(skia_w - pillow_w) / max(skia_w, pillow_w) < 0.2, (
+        f"Renderers disagree on FALLBACK width: skia {skia_w}, pillow {pillow_w}"
+    )
+
+
+def test_display_text_empty_string_falls_back_to_text():
+    """`display_text=''` is falsy in Python; `_overlay_text(overlay)` should
+    treat it the same as missing and fall back to `text`. Prevents a render-
+    time blank when finalizer (or a future caller) sets display_text to an
+    empty string in error."""
+    overlay = {
+        "text": "VISIBLE",
+        "display_text": "",  # empty falsy string
+        "effect": "none",
+        "text_size_px": 100,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFFFFF",
+        "text_anchor": "center",
+        "start_s": 0.0,
+        "end_s": 5.0,
+    }
+    skia_bbox, _ = _frame_bbox(overlay)
+    # Should render "VISIBLE", not empty.
+    assert skia_bbox is not None, "Skia rendered nothing — empty display_text wasn't ignored"
+    assert (skia_bbox[2] - skia_bbox[0]) > 100, "rendered text too narrow for VISIBLE"
+
+
+# ── Renderer parity: lyric-line fade honored by both Skia and libass ─────────
+# Lock the renderer-parity invariant for `effect='lyric-line'`'s fade_in_ms /
+# fade_out_ms. libass honors them via _emit_lyric_line_alpha_tags
+# (text_overlay.py); Skia honors them via _lyric_line_alpha
+# (text_overlay_skia.py). Without parity, the orchestrator's intentional
+# crossfade window (lyric_injector.py's dynamic_max_overlap) renders as two
+# stacked full-opacity PNGs in the Skia path — the prod regression that
+# shipped with PR #319 and was visible in job f191e328-4a18-420b-8c68-
+# f9539071334b ("If I can live through this" + "What comes next" stacked
+# at t≈5.85s).
+
+
+def _frame_max_alpha(overlay: dict, t_local: float, duration_s: float) -> int:
+    """Render one frame via _draw_frame and return the max alpha across all
+    pixels — captures the brightest text pixel after fade is applied."""
+    import io
+
+    img = tos._draw_frame(overlay, t_local, duration_s)
+    im = Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA")
+    alpha = im.split()[-1]
+    return alpha.getextrema()[1]
+
+
+def test_lyric_line_is_animated_under_skia():
+    """`lyric-line` MUST be in _ANIMATED_EFFECTS_SKIA. The static path emits a
+    single full-opacity PNG that FFmpeg gates on/off with
+    `enable='between(t,start,end)'` — when two lyric overlays' enable windows
+    overlap (the designed crossfade window), they BOTH render at 100% alpha,
+    stacked at the same y_frac. The animated path emits one PNG per frame
+    with per-frame alpha so the same overlap crossfades correctly."""
+    assert "lyric-line" in tos._ANIMATED_EFFECTS_SKIA, (
+        "lyric-line must be in _ANIMATED_EFFECTS_SKIA so fade_in_ms / "
+        "fade_out_ms are honored per-frame. Without this, the renderer-"
+        "parity invariant breaks vs the libass path."
+    )
+    overlay = {
+        "text": "test",
+        "effect": "lyric-line",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "text_size_px": 64,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.8,
+        "text_color": "#FFFFFF",
+    }
+    with tempfile.TemporaryDirectory(prefix="lyric_seq_") as d:
+        seq = tos._generate_overlay_sequence(overlay, d, 0)
+    assert seq is not None
+    assert seq["is_animated"] is True, (
+        "lyric-line must produce an animated PNG sequence so fade ramps "
+        f"render per-frame; got is_animated={seq['is_animated']}"
+    )
+    assert seq["n_frames"] > 1, (
+        f"animated lyric-line must have >1 frame; got n_frames={seq['n_frames']}"
+    )
+
+
+def test_lyric_line_alpha_ramps_in_skia():
+    """At three sample t_local values, the rendered alpha must form a
+    fade-in → hold → fade-out ramp. Sample max alpha (brightest text pixel)
+    to compare. With fade_in_ms=150, fade_out_ms=250, duration=1.0s and
+    libass ease curves (accel=0.5 in, accel=2.0 out):
+
+      t=0.075 (mid fade-in):  alpha = sqrt(0.5)   ≈ 0.71 → max α ≈ 180
+      t=0.500 (hold):         alpha = 1.00              → max α = 255
+      t=0.875 (mid fade-out): alpha = 1 - 0.5**2  = 0.75 → max α ≈ 191
+
+    Slack: shadow has its own alpha curve, so we assert ordering + that the
+    hold sample is fully opaque and the fade samples are at least
+    moderately dimmer (well below 255).
+    """
+    overlay = {
+        "text": "FADE LYRIC",
+        "effect": "lyric-line",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "text_size_px": 80,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.8,
+        "text_color": "#FFFFFF",
+    }
+    a_in = _frame_max_alpha(overlay, t_local=0.075, duration_s=1.0)
+    a_hold = _frame_max_alpha(overlay, t_local=0.500, duration_s=1.0)
+    a_out = _frame_max_alpha(overlay, t_local=0.875, duration_s=1.0)
+
+    assert a_hold == 255, f"hold sample must be fully opaque; got {a_hold}"
+    # Fade samples should be reduced. Ease(0.5) at 50% in = 0.71; ease(2.0)
+    # at 50% out = 0.75. Threshold 240 still catches "no ramp applied"
+    # (which would render at exactly 255) without being brittle to AA +
+    # shadow contribution.
+    assert a_in < 240, (
+        f"fade-in sample at t=0.075 must be dimmer than hold; got {a_in}. "
+        "Skia is rendering at full opacity — alpha ramp not applied."
+    )
+    assert a_out < 240, (
+        f"fade-out sample at t=0.875 must be dimmer than hold; got {a_out}. "
+        "Skia is rendering at full opacity — alpha ramp not applied."
+    )
+
+
+def test_lyric_line_alpha_zero_fade_holds_full_opacity():
+    """fade_in_ms=0 + fade_out_ms=0 (the kill-switch case) must render solid
+    full alpha at every t_local. Guards against the helper accidentally
+    dividing by zero or producing NaN."""
+    overlay = {
+        "text": "SOLID",
+        "effect": "lyric-line",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "fade_in_ms": 0,
+        "fade_out_ms": 0,
+        "text_size_px": 80,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.8,
+        "text_color": "#FFFFFF",
+    }
+    for t_local in (0.0, 0.25, 0.5, 0.75, 1.0):
+        assert _frame_max_alpha(overlay, t_local=t_local, duration_s=1.0) == 255, (
+            f"zero-fade lyric-line at t={t_local} should be fully opaque"
+        )
+
+
+def test_lyric_line_alpha_helper_matches_libass_clamp_semantics():
+    """The Skia alpha helper must mirror libass `_emit_lyric_line_alpha_tags`
+    clamp semantics exactly (fade_out shrinks to fit any time fade_in did
+    not consume). Documenting + locking the cross-renderer contract here so
+    a future change to one helper forces a deliberate change to the other."""
+    # Normal case: both fades fit. Curves match libass:
+    #   fade-in:  alpha = sqrt(progress)        (accel=0.5)
+    #   fade-out: alpha = 1 - progress**2       (accel=2.0)
+    base = {"effect": "lyric-line", "fade_in_ms": 150, "fade_out_ms": 250}
+    assert tos._lyric_line_alpha(base, 0.0, 1.0) == 0.0
+    # Mid fade-in (50% through 150ms): sqrt(0.5) ≈ 0.707
+    assert abs(tos._lyric_line_alpha(base, 0.075, 1.0) - 0.5**0.5) < 0.01
+    assert tos._lyric_line_alpha(base, 0.5, 1.0) == 1.0  # hold
+    # Mid fade-out (50% through 250ms starting at 750ms): 1 - 0.5**2 = 0.75
+    assert abs(tos._lyric_line_alpha(base, 0.875, 1.0) - (1.0 - 0.5**2)) < 0.01
+    # Short overlay: fade_in_ms > duration → fade_in clamps; fade_out clamps to 0.
+    short = {"effect": "lyric-line", "fade_in_ms": 200, "fade_out_ms": 200}
+    a = tos._lyric_line_alpha(short, 0.05, 0.1)
+    assert 0.0 < a < 1.0  # mid-of-clamped-fade-in, no NaN, no overshoot
+    # Missing keys → defaults match libass (fade_in_ms=150, fade_out_ms=250).
+    # At t=0 we're at the start of fade-in → alpha=0; mid-hold → alpha=1.
+    none = {"effect": "lyric-line"}
+    assert tos._lyric_line_alpha(none, 0.0, 1.0) == 0.0
+    assert tos._lyric_line_alpha(none, 0.5, 1.0) == 1.0
+    # Explicit 0 still means "no fade" (kill switch).
+    zero = {"effect": "lyric-line", "fade_in_ms": 0, "fade_out_ms": 0}
+    assert tos._lyric_line_alpha(zero, 0.0, 1.0) == 1.0
+
+
+def test_lyric_line_longer_than_frame_cap_renders_full_duration():
+    """REGRESSION: making lyric-line animated naively inherits
+    MAX_OVERLAY_FRAMES (120 frames @ 30fps = 4s). The user-reported job's
+    Line 2 was 4.26s — capping would chop the last 0.26s (fade-out + tail),
+    re-introducing the stack-without-crossfade visible symptom right at
+    the next line's hand-off. lyric-line must opt out of the font-cycle
+    cap and render frames for its full duration."""
+    overlay = {
+        "text": "long lyric line that goes well past 4 seconds",
+        "effect": "lyric-line",
+        "start_s": 0.0,
+        "end_s": 6.0,  # 6s > 4s cap
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "text_size_px": 64,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.8,
+        "text_color": "#FFFFFF",
+    }
+    with tempfile.TemporaryDirectory(prefix="lyric_long_") as d:
+        seq = tos._generate_overlay_sequence(overlay, d, 0)
+    assert seq is not None
+    # 6.0s * 30 fps = 180 frames + 1 hold = 181. Must exceed MAX_OVERLAY_FRAMES.
+    expected_min = int(round(6.0 * tos.FPS))
+    assert seq["n_frames"] >= expected_min, (
+        f"lyric-line longer than {tos.MAX_OVERLAY_FRAMES / tos.FPS:.1f}s is "
+        f"silently truncated to {seq['n_frames']} frames; expected "
+        f">={expected_min} for a 6s line. The font-cycle frame cap must "
+        "not apply to lyric-line."
+    )
+
+
+def test_overlapping_lyric_lines_crossfade_through_burn_pipeline(tmp_workdir):
+    """END-TO-END REGRESSION: render two consecutive lyric-line overlays
+    that overlap by 100ms (the prod job f191e328 shape) through the actual
+    Skia + FFmpeg burn pipeline, sample a mid-overlap frame, and assert
+    NEITHER overlay saturates to full opacity.
+
+    Before this fix, both overlays burned at full alpha throughout the
+    overlap window — the "two stacked texts" visible symptom. The earlier
+    tests assert the renderer produces a ramp; this test asserts the ramp
+    produces a real crossfade through the full pipeline (which is what the
+    user actually sees in the rendered MP4)."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg not available")
+
+    line_a = {
+        "text": "FADE OUT LINE",
+        "effect": "lyric-line",
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "text_size_px": 80,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFFFFF",
+    }
+    line_b = {
+        "text": "FADE IN LINE",
+        "effect": "lyric-line",
+        "start_s": 0.9,  # 100ms overlap with line_a's fade-out tail
+        "end_s": 2.0,
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "text_size_px": 80,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.7,  # different Y so we can tell them apart
+        "text_color": "#FFFFFF",
+    }
+
+    sequences = tos._render_overlay_sequences([line_a, line_b], 2.5, tmp_workdir)
+    assert len(sequences) == 2
+    assert all(s["is_animated"] for s in sequences), "both lyric-line overlays must be animated"
+
+    bg = os.path.join(tmp_workdir, "bg.mp4")
+    burned = os.path.join(tmp_workdir, "burned.mp4")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=1080x1920:r=30:d=2.5",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            bg,
+        ],
+        check=True,
+        capture_output=True,
+    )
+    tos._ffmpeg_burn_pngs(bg, sequences, burned)
+
+    # Sample mid-overlap frame at t=0.95s (line_a's fade-out is ~80%
+    # remaining toward 1.0; line_b's fade-in is ~33% into the 150ms ramp).
+    frame_path = os.path.join(tmp_workdir, "mid.png")
+    subprocess.run(
+        ["ffmpeg", "-y", "-ss", "0.95", "-i", burned, "-frames:v", "1", frame_path],
+        check=True,
+        capture_output=True,
+    )
+    im = Image.open(frame_path).convert("RGBA")
+    # line_a band centered at y_frac=0.5 → y≈960. line_b band at y_frac=0.7 → y≈1344.
+    # Both should be in fade — neither pixel band hits full white.
+    band_a_max = im.crop((0, 920, im.width, 1000)).split()[0].getextrema()[1]
+    band_b_max = im.crop((0, 1300, im.width, 1380)).split()[0].getextrema()[1]
+    assert band_a_max < 240, (
+        f"line_a at t=0.95 (mid fade-out) burned at near-full opacity (max R={band_a_max}); "
+        "alpha ramp not applied through the burn pipeline — the visible 'stacked text' bug."
+    )
+    assert band_b_max < 240, (
+        f"line_b at t=0.95 (early fade-in) burned at near-full opacity (max R={band_b_max}); "
+        "alpha ramp not applied through the burn pipeline — the visible 'stacked text' bug."
+    )
+
+
+def test_real_milky_overlapping_lines_crossfade_through_burn_pipeline(tmp_workdir):
+    """END-TO-END on REAL prod data: take a consecutive overlapping lyric pair
+    straight out of the production scheduler + consolidation
+    (`inject_lyric_overlays` → `_collect_absolute_overlays`) for the Milky track
+    that stacked in prod job 901fe271, then burn it through the actual Skia +
+    FFmpeg pipeline and assert the overlap frame shows a real crossfade — NEITHER
+    line at full opacity.
+
+    The sibling test above uses synthetic timings; this one proves the EXACT
+    windows/fades/curves the live generative path emits survive to real pixels.
+    Distinct probe-Y per line (the real overlays share y=0.80) so each band is
+    independently measurable — the crossfade property depends on timing+curve,
+    not Y."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg not available")
+
+    from app.pipeline.lyric_injector import inject_lyric_overlays
+    from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+    # Real synced lyrics from prod track 29da2cbf, best section 60-75s. The
+    # sustained "Do do" lines overlap in source time — the prod stacking shape.
+    prod_lines = [
+        ("Just the way you are", 58.22, 60.12),
+        ("Do do do do do do do do", 60.12, 63.19),
+        ("Do do do do do do do do", 62.92, 66.54),
+        ("And it goes", 66.74, 67.15),
+        ("Do do do do do do do do", 67.32, 70.24),
+    ]
+    cache = {
+        # Injector requires a publishable source after 2026-05-27 — see
+        # `_INJECTOR_ALLOWED_SOURCES` in app/pipeline/lyric_injector.py.
+        "source": "lrclib_synced+whisper",
+        "lines": [
+            {
+                "text": t,
+                "start_s": s,
+                "end_s": e,
+                "words": [{"text": t, "start_s": s, "end_s": e}],
+            }
+            for t, s, e in prod_lines
+        ],
+    }
+    slot_durations = [7.5, 7.5]
+    recipe = {
+        "slots": [
+            {"position": i + 1, "target_duration_s": d, "text_overlays": []}
+            for i, d in enumerate(slot_durations)
+        ]
+    }
+    # Realistic `effective_lyrics_config` shape (admin Test tab / generative
+    # path): form-default fade_in_ms=150 + fade_out_ms=250 that PR #343 misread
+    # as user overrides and used to disable its own crossfade (the #344 bug).
+    # The bare {"enabled","style"} config bypasses that path, so use the shape
+    # that actually broke — this asserts the crossfade reaches real pixels even
+    # under the gate-tripping config.
+    effective_cfg = {
+        "style": "line",
+        "enabled": True,
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "pre_roll_s": 0.1,
+        "post_dwell_s": 1.0,
+        "next_line_gap_s": 0.1,
+    }
+    out = inject_lyric_overlays(recipe, cache, 60.0, 75.0, effective_cfg)
+    steps = [{"clip_id": f"c{i}", "slot": slot} for i, slot in enumerate(out["slots"])]
+    overlays = [
+        o
+        for o in _collect_absolute_overlays(steps, slot_durations, None, "", is_agentic=True)
+        if o.get("effect") == "lyric-line"
+    ]
+    overlays.sort(key=lambda o: o["start_s"])
+
+    # Find the first consecutive pair that overlaps in time (the transition the
+    # viewer sees as one line handing off to the next).
+    pair = next(
+        ((a, b) for a, b in zip(overlays, overlays[1:]) if a["end_s"] > b["start_s"]),
+        None,
+    )
+    assert pair is not None, "expected at least one overlapping lyric transition"
+    a_src, b_src = pair
+    overlap_mid = (b_src["start_s"] + a_src["end_s"]) / 2.0
+
+    # Clone with distinct probe-Y so each band is independently measurable.
+    # Everything else (start/end/fade_in/fade_out/fade_out_curve) is the REAL
+    # scheduler output — that is what governs the crossfade.
+    line_a = {**a_src, "position_x_frac": 0.5, "position_y_frac": 0.5, "text_color": "#FFFFFF"}
+    line_b = {**b_src, "position_x_frac": 0.5, "position_y_frac": 0.7, "text_color": "#FFFFFF"}
+
+    duration = b_src["end_s"] + 0.5
+    sequences = tos._render_overlay_sequences([line_a, line_b], duration, tmp_workdir)
+    assert len(sequences) == 2
+    assert all(s["is_animated"] for s in sequences), "both lyric-line overlays must be animated"
+
+    bg = os.path.join(tmp_workdir, "bg.mp4")
+    burned = os.path.join(tmp_workdir, "burned.mp4")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=black:s=1080x1920:r=30:d={duration:.2f}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            bg,
+        ],
+        check=True,
+        capture_output=True,
+    )
+    tos._ffmpeg_burn_pngs(bg, sequences, burned)
+
+    frame_path = os.path.join(tmp_workdir, "mid.png")
+    subprocess.run(
+        ["ffmpeg", "-y", "-ss", f"{overlap_mid:.3f}", "-i", burned, "-frames:v", "1", frame_path],
+        check=True,
+        capture_output=True,
+    )
+    im = Image.open(frame_path).convert("RGBA")
+    # line_a band at y_frac=0.5 → y≈960; line_b band at y_frac=0.7 → y≈1344.
+    band_a_max = im.crop((0, 900, im.width, 1020)).split()[0].getextrema()[1]
+    band_b_max = im.crop((0, 1284, im.width, 1404)).split()[0].getextrema()[1]
+    # At the overlap midpoint a true crossfade keeps BOTH lines below full
+    # opacity. The pre-#343 bug burned both at 255 (the stacked-text symptom).
+    assert band_a_max < 240, (
+        f"outgoing line {a_src['text'][:16]!r} at overlap midpoint t={overlap_mid:.2f}s "
+        f"burned near-full (max R={band_a_max}) — stacked-text regression in the burned video."
+    )
+    assert band_b_max < 240, (
+        f"incoming line {b_src['text'][:16]!r} at overlap midpoint t={overlap_mid:.2f}s "
+        f"burned near-full (max R={band_b_max}) — stacked-text regression in the burned video."
+    )
+
+
+def test_lyric_line_sanity_ceiling_caps_runaway_duration():
+    """Defense in depth: a malformed transcript could (in theory) produce a
+    lyric-line overlay with `end_s = 240.0`. Without a sanity cap, the
+    encode worker would write 7200 PNGs (~7GB scratch) before FFmpeg
+    consumes any. The ceiling caps n_frames at 30s × FPS regardless of
+    `wanted` so the worker survives bad upstream data."""
+    overlay = {
+        "text": "runaway",
+        "effect": "lyric-line",
+        "start_s": 0.0,
+        "end_s": 120.0,  # 2 minutes — well past any real lyric line
+        "fade_in_ms": 150,
+        "fade_out_ms": 250,
+        "text_size_px": 64,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.8,
+        "text_color": "#FFFFFF",
+    }
+    with tempfile.TemporaryDirectory(prefix="lyric_runaway_") as d:
+        seq = tos._generate_overlay_sequence(overlay, d, 0)
+    assert seq is not None
+    ceiling = int(tos.FPS * 30)
+    assert seq["n_frames"] <= ceiling + 1, (
+        f"lyric-line n_frames={seq['n_frames']} exceeded sanity ceiling "
+        f"{ceiling}+1 — encode worker is exposed to runaway upstream data."
+    )
+
+
+def test_libass_lyric_line_emits_fade_tags():
+    """Parity reference: confirm the libass path emits `\\alpha` fade-in +
+    fade-out tags. If libass ever stops emitting these, the Skia
+    implementation needs to be reconciled with whatever replaced them."""
+    from app.pipeline.text_overlay import _emit_lyric_line_alpha_tags
+
+    tags = _emit_lyric_line_alpha_tags(
+        section_start_s=0.0, section_end_s=1.0, fade_in_ms=150, fade_out_ms=250
+    )
+    # Fade-in ramp: starts opaque-tag-0 (\alpha&HFF&) and animates to opaque
+    # (&H00&) over [0, 150ms].
+    assert r"\alpha&HFF&" in tags
+    assert r"\t(0,150" in tags and r"\alpha&H00&" in tags
+    # Fade-out ramp: animates back to fully transparent over [750, 1000ms].
+    assert r"\t(750,1000" in tags and tags.count(r"\alpha&HFF&") >= 2

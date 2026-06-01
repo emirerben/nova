@@ -1,0 +1,84 @@
+"""Schemas for nova.plan.content_plan_generator.
+
+Input is the editable Persona (already sanitized at generation time, re-sanitized
+into the prompt here) plus optional user free-text events and a horizon. Output
+is a list of per-day PlanItemSpec the user can edit before generating videos.
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field, field_validator
+
+from app.agents._schemas.edit_format import DEFAULT_EDIT_FORMAT, EditFormat, coerce_edit_format
+from app.agents._schemas.persona import Persona
+
+# Bump when prompts/generate_content_plan.txt OR prompts/content_ideas.json OR
+# prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
+# idea bank + success-factor bank are part of the prompt).
+# 2026-05-31 — anti-cringe guardrails: ideas must be filmable real-life moments;
+#              banned thought-leadership / forced-insight framing (the "what the
+#              Champions League final taught me about business" class).
+# 2026-05-30.2 — added $preferences block (feedback-loop preference_summary) so a
+#                user-triggered regenerate biases new ideas toward what they liked.
+# 2026-05-30.1 — added per-item `rationale` (the AI's "why this video works",
+#                shown in the dashboard).
+# 2026-05-30 — added $success_factors block + performance-weighted idea ranking.
+# 2026-05-31.1 — emit per-item edit_format (montage|talking_head|day_vlog|
+#                single_hero) so the plan's intended shape reaches the render
+#                archetype dispatch instead of being inferred from clips alone.
+# 2026-06-01 — added $variety_constraint block: code detects near-duplicate ideas
+#              post-generation and re-invokes the generator once with the kept
+#              ideas as an explicit "avoid these" list (the model won't self-impose
+#              variety in one pass). Block is empty on the first pass, so that
+#              render stays the proven baseline.
+# 2026-06-01.1 — weekly research refresh: content_ideas.json bumped to 2026-05-31
+#                (new market-research ideas). Bump invalidates the planner cache so
+#                the new ideas take effect on top of the dedup block.
+CONTENT_PLAN_PROMPT_VERSION = "2026-06-01.1"
+
+DEFAULT_HORIZON_DAYS = 30
+MAX_HORIZON_DAYS = 60
+
+
+class ContentPlanInput(BaseModel):
+    persona: Persona
+    # Optional free-text: trips, launches, exams the plan should lean into. UNTRUSTED.
+    events: str = ""
+    horizon_days: int = DEFAULT_HORIZON_DAYS
+    # Feedback-loop rollup (Phase 2): a bounded, already-sanitized summary of the
+    # creator's reactions + steer notes (services/feedback_summary). Empty for a
+    # first generation; set on a user-triggered regenerate. Biases NEW ideas only —
+    # the regenerate task preserves hand-edited days verbatim (the "their say" rule).
+    preference_summary: str = ""
+    # Internal-only (never user-set): on the constrained-regeneration pass, the
+    # ideas already kept in the plan. The generator renders them as an explicit
+    # "generate ideas DISTINCT from these" block so the second pass refills the
+    # near-duplicate day slots with genuinely new ideas. Empty on the first pass.
+    exclude_ideas: list[str] = Field(default_factory=list)
+
+
+class PlanItemSpec(BaseModel):
+    day_index: int = Field(ge=1, le=MAX_HORIZON_DAYS)
+    theme: str = Field(min_length=1)
+    idea: str = Field(min_length=1)
+    filming_suggestion: str = ""
+    # The AI's short "why this video works for you + which proven lever it pulls",
+    # surfaced in the dashboard. Optional so a missing rationale never drops an
+    # otherwise-good item (best-effort, like filming_suggestion).
+    rationale: str = ""
+    # The edit shape this idea is meant to become. Drives the render archetype
+    # dispatch. Defaults to (and coerces unknowns to) montage so a missing or
+    # drifted LLM value never drops the item.
+    edit_format: EditFormat = DEFAULT_EDIT_FORMAT
+
+    @field_validator("edit_format", mode="before")
+    @classmethod
+    def _coerce_edit_format(cls, v: object) -> EditFormat:
+        return coerce_edit_format(v)
+
+
+class ContentPlanOutput(BaseModel):
+    items: list[PlanItemSpec] = Field(min_length=1)
+
+    def to_dict(self) -> dict:
+        return self.model_dump()

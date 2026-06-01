@@ -25,12 +25,29 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     ("nova.video.clip_metadata", "app.agents.clip_metadata", "ClipMetadataAgent"),
     ("nova.compose.template_recipe", "app.agents.template_recipe", "TemplateRecipeAgent"),
     ("nova.compose.template_text", "app.agents.template_text", "TemplateTextAgent"),
+    (
+        "nova.compose.agentic_style_selector",
+        "app.agents.agentic_style_selector",
+        "AgenticStyleSelectorAgent",
+    ),
     ("nova.audio.transcript", "app.agents.transcript", "TranscriptAgent"),
     ("nova.audio.lyrics", "app.agents.lyrics", "LyricsExtractionAgent"),
     ("nova.audio.template_recipe", "app.agents.audio_template", "AudioTemplateAgent"),
     ("nova.audio.song_classifier", "app.agents.song_classifier", "SongClassifierAgent"),
     ("nova.audio.song_sections", "app.agents.song_sections", "SongSectionsAgent"),
     ("nova.audio.music_matcher", "app.agents.music_matcher", "MusicMatcherAgent"),
+    (
+        "nova.audio.lyric_style_selector",
+        "app.agents.lyric_style_selector",
+        "LyricStyleSelectorAgent",
+    ),
+    # Generative-edit text agents (no reference template; AI-authored overlay text)
+    (
+        "nova.compose.overlay_format_matcher",
+        "app.agents.overlay_format_matcher",
+        "OverlayFormatMatcherAgent",
+    ),
+    ("nova.compose.intro_writer", "app.agents.intro_writer", "IntroTextWriterAgent"),
     ("nova.compose.platform_copy", "app.agents.platform_copy", "PlatformCopyAgent"),
     ("nova.compose.creative_direction", "app.agents.creative_direction", "CreativeDirectionAgent"),
     # New agents (built on the runtime; no platform plumbing)
@@ -47,6 +64,14 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "app.agents.text_classification",
         "TextClassificationAgent",
     ),
+    # Content-plan agents (no Job; off-job AgentRun path with job_id=None)
+    ("nova.plan.persona_generator", "app.agents.persona_generator", "PersonaGeneratorAgent"),
+    (
+        "nova.plan.content_plan_generator",
+        "app.agents.content_plan_generator",
+        "ContentPlanGeneratorAgent",
+    ),
+    ("nova.plan.clip_plan_matcher", "app.agents.clip_plan_matcher", "ClipPlanMatcherAgent"),
 )
 
 

@@ -633,18 +633,29 @@ export async function adminUpdateTemplateLyricsConfig(
  * uses its own env var — so any proxy call would succeed regardless of what
  * the user typed, defeating the gate.
  */
-export async function adminValidateToken(): Promise<boolean> {
+export type AdminTokenResult =
+  | { ok: true }
+  | { ok: false; reason: "invalid_token" | "server_error" };
+
+export async function adminValidateToken(): Promise<AdminTokenResult> {
   const token = getAdminToken();
-  if (!token) return false;
+  if (!token) return { ok: false, reason: "invalid_token" };
   try {
     const res = await fetch("/api/admin-auth", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token }),
     });
-    return res.ok;
+    if (res.ok) return { ok: true };
+    // A 5xx means the web server itself is misconfigured (e.g. ADMIN_TOKEN
+    // unset) — not that the operator typed the wrong token. Surface that
+    // distinctly so the gate shows "service unavailable" instead of the
+    // misleading "Invalid admin token".
+    if (res.status >= 500) return { ok: false, reason: "server_error" };
+    return { ok: false, reason: "invalid_token" };
   } catch {
-    return false;
+    // Network failure reaching our own /api route — treat as a server problem.
+    return { ok: false, reason: "server_error" };
   }
 }
 

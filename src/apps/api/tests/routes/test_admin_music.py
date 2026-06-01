@@ -192,6 +192,8 @@ def test_to_response_round_trips_best_sections() -> None:
     ]
     track = MagicMock()
     track.id = "track-xyz"
+    track.ai_labels = None
+    track.label_version = None
     track.title = "Test"
     track.artist = ""
     track.source_url = "https://youtube.com/watch?v=xyz"
@@ -206,10 +208,14 @@ def test_to_response_round_trips_best_sections() -> None:
     track.track_config = {"best_start_s": 30.0, "best_end_s": 48.0}
     track.best_sections = sections_jsonb
     track.section_version = CURRENT_SECTION_VERSION
+    track.section_error_detail = None
     track.lyrics_status = "pending"
     track.lyrics_source = None
     track.lyrics_error_detail = None
     track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
     track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 
@@ -220,6 +226,86 @@ def test_to_response_round_trips_best_sections() -> None:
     assert resp.best_sections[0].rank == 1
     assert resp.best_sections[0].label == "chorus"
     assert resp.best_sections[1].suggested_use == "build"
+
+
+def _matchable_track() -> MagicMock:
+    """A track that passes every generative-eligibility predicate."""
+    from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION
+    from app.agents._schemas.song_sections import CURRENT_SECTION_VERSION
+
+    track = MagicMock()
+    track.id = "track-ok"
+    track.title = "OK"
+    track.artist = ""
+    track.source_url = "https://youtube.com/watch?v=ok"
+    track.audio_gcs_path = "music/track-ok/audio.m4a"
+    track.duration_s = 180.0
+    track.beat_timestamps_s = [1.0, 2.0, 3.0]
+    track.analysis_status = "ready"
+    track.error_detail = None
+    track.thumbnail_url = None
+    track.published_at = None  # intentionally unpublished — must NOT block matchability
+    track.archived_at = None
+    track.track_config = {"best_start_s": 30.0, "best_end_s": 48.0}
+    track.best_sections = [
+        {
+            "rank": 1,
+            "start_s": 30.0,
+            "end_s": 48.0,
+            "label": "chorus",
+            "energy": "high",
+            "suggested_use": "hook",
+            "rationale": "hook",
+        }
+    ]
+    track.section_version = CURRENT_SECTION_VERSION
+    track.section_error_detail = None
+    track.ai_labels = {"labels": {"label_version": CURRENT_LABEL_VERSION}}
+    track.label_version = CURRENT_LABEL_VERSION
+    track.lyrics_status = "pending"
+    track.lyrics_source = None
+    track.lyrics_error_detail = None
+    track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
+    track.lyrics_extracted_at = None
+    track.created_at = datetime.now(UTC)
+    return track
+
+
+def test_to_response_surfaces_label_fields_and_matchable() -> None:
+    """Generative-matchability + label coverage must be observable from the
+    admin detail response — including for unpublished tracks (generative
+    ignores the publish gate)."""
+    from app.agents._schemas.music_labels import CURRENT_LABEL_VERSION
+    from app.routes.admin_music import _to_response
+
+    resp = _to_response(_matchable_track())
+    assert resp.has_ai_labels is True
+    assert resp.label_version == CURRENT_LABEL_VERSION
+    assert resp.generative_matchable is True
+
+
+def test_to_response_not_matchable_without_labels() -> None:
+    from app.routes.admin_music import _to_response
+
+    track = _matchable_track()
+    track.ai_labels = None
+    track.label_version = None
+    resp = _to_response(track)
+    assert resp.has_ai_labels is False
+    assert resp.generative_matchable is False
+
+
+def test_to_response_not_matchable_on_stale_label_version() -> None:
+    from app.routes.admin_music import _to_response
+
+    track = _matchable_track()
+    track.label_version = "2020-01-01"  # stale ≠ CURRENT_LABEL_VERSION
+    resp = _to_response(track)
+    assert resp.has_ai_labels is True
+    assert resp.generative_matchable is False
 
 
 def test_to_response_drops_invalid_section_rows() -> None:
@@ -251,6 +337,8 @@ def test_to_response_drops_invalid_section_rows() -> None:
     ]
     track = MagicMock()
     track.id = "track-mixed"
+    track.ai_labels = None
+    track.label_version = None
     track.title = "Mixed"
     track.artist = ""
     track.source_url = "https://youtube.com/watch?v=mixed"
@@ -265,10 +353,14 @@ def test_to_response_drops_invalid_section_rows() -> None:
     track.track_config = None
     track.best_sections = sections_jsonb
     track.section_version = "2026-05-15"
+    track.section_error_detail = None
     track.lyrics_status = "pending"
     track.lyrics_source = None
     track.lyrics_error_detail = None
     track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
     track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 
@@ -287,6 +379,8 @@ def test_to_response_caps_overlong_best_sections() -> None:
 
     track = MagicMock()
     track.id = "track-overlong"
+    track.ai_labels = None
+    track.label_version = None
     track.title = "Overlong"
     track.artist = ""
     track.source_url = "https://youtube.com/watch?v=overlong"
@@ -311,10 +405,14 @@ def test_to_response_caps_overlong_best_sections() -> None:
         }
     ]
     track.section_version = "2026-05-15"
+    track.section_error_detail = None
     track.lyrics_status = "pending"
     track.lyrics_source = None
     track.lyrics_error_detail = None
     track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
     track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 
@@ -333,6 +431,8 @@ def test_to_response_drops_all_when_every_section_invalid() -> None:
 
     track = MagicMock()
     track.id = "track-all-bad"
+    track.ai_labels = None
+    track.label_version = None
     track.title = "All bad"
     track.artist = ""
     track.source_url = "https://youtube.com/watch?v=allbad"
@@ -347,10 +447,14 @@ def test_to_response_drops_all_when_every_section_invalid() -> None:
     track.track_config = None
     track.best_sections = [{"rank": "definitely_not_an_int"}]
     track.section_version = "2026-05-15"
+    track.section_error_detail = None
     track.lyrics_status = "pending"
     track.lyrics_source = None
     track.lyrics_error_detail = None
     track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
     track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 
@@ -366,6 +470,8 @@ def test_to_response_handles_null_best_sections() -> None:
 
     track = MagicMock()
     track.id = "track-old"
+    track.ai_labels = None
+    track.label_version = None
     track.title = "Old"
     track.artist = ""
     track.source_url = "https://youtube.com/watch?v=old"
@@ -380,13 +486,74 @@ def test_to_response_handles_null_best_sections() -> None:
     track.track_config = None
     track.best_sections = None
     track.section_version = None
+    track.section_error_detail = None
     track.lyrics_status = "pending"
     track.lyrics_source = None
     track.lyrics_error_detail = None
     track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
     track.lyrics_extracted_at = None
     track.created_at = datetime.now(UTC)
 
     resp = _to_response(track)
     assert resp.best_sections is None
     assert resp.section_version is None
+    # Unsectioned-and-never-tried rows have NULL section_error_detail. The
+    # admin UI shows the "agent has not run" placeholder; the "Last attempt
+    # failed: …" block stays hidden. Locked by the FE Jest test.
+    assert resp.section_error_detail is None
+
+
+def test_to_response_surfaces_section_error_detail() -> None:
+    """When the song_sections agent ran but silently failed
+    (broad-Exception branch of _run_song_sections), the truncated reason
+    rides on MusicTrack.section_error_detail. The admin response must
+    expose it so the frontend can render "Last attempt failed: …" under
+    the existing amber "no agent sections" tag without an extra fetch.
+    """
+    from app.routes.admin_music import _to_response
+
+    track = MagicMock()
+    track.id = "track-failed-sections"
+    track.ai_labels = None
+    track.label_version = None
+    track.title = "Sections fell over"
+    track.artist = ""
+    track.source_url = "https://youtube.com/watch?v=ssfail"
+    track.audio_gcs_path = "music/track-failed-sections/audio.m4a"
+    track.duration_s = 200.0
+    track.beat_timestamps_s = []
+    track.analysis_status = "ready"
+    track.error_detail = None
+    track.thumbnail_url = None
+    track.published_at = None
+    track.archived_at = None
+    track.track_config = {"best_start_s": 30.0, "best_end_s": 75.0}
+    # Silent-fail row: best_sections + section_version NULL, error populated.
+    track.best_sections = None
+    track.section_version = None
+    track.section_error_detail = (
+        "song_sections: invalid JSON — Expecting value: line 1 column 1 (char 0)"
+    )
+    track.lyrics_status = "pending"
+    track.lyrics_source = None
+    track.lyrics_error_detail = None
+    track.lyrics_cached = None
+    track.lyrics_whisper_draft = None
+    track.lyrics_diagnostic = None
+    track.lyrics_extraction_version = 0
+    track.lyrics_extracted_at = None
+    track.created_at = datetime.now(UTC)
+
+    resp = _to_response(track)
+    assert resp.best_sections is None
+    assert resp.section_version is None
+    assert resp.section_error_detail is not None
+    assert "invalid JSON" in resp.section_error_detail
+    # Verbatim pass-through — truncation happens at write time in
+    # music_orchestrate.analyze_music_track_task, not in _to_response.
+    assert resp.section_error_detail == (
+        "song_sections: invalid JSON — Expecting value: line 1 column 1 (char 0)"
+    )

@@ -14,6 +14,20 @@
           "age": 1,
           "matchesPrefix": ["music-jobs/"]
         }
+      },
+      {
+        "action": { "type": "Delete" },
+        "condition": {
+          "age": 1,
+          "matchesPrefix": ["music-lyrics-previews/"]
+        }
+      },
+      {
+        "action": { "type": "Delete" },
+        "condition": {
+          "age": 1,
+          "matchesPrefix": ["voiceover-uploads/"]
+        }
       }
     ]
   }

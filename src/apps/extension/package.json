@@ -1,0 +1,20 @@
+{
+  "name": "nova-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nova admin Chrome extension — extracts YouTube audio in the admin's browser (residential IP + their cookies) and uploads it directly to GCS via a signed PUT URL. Bypasses Fly.io's data-center IP being flagged by YouTube as automated traffic.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "package": "bash ../../../scripts/package-extension.sh"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "esbuild-plugins-node-modules-polyfill": "^1.6.4"
+  },
+  "dependencies": {
+    "@distube/ytdl-core": "^4.15.0",
+    "youtubei.js": "^17.0.1"
+  }
+}
