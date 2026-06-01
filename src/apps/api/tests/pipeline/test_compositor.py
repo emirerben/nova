@@ -431,6 +431,17 @@ class TestEncodingArgs:
         assert "scenecut=40" in args[x264_idx + 1]
         assert "keyint=90" in args[x264_idx + 1]
 
+    def test_final_output_is_quicktime_safe_h264_sdr(self):
+        """Final MP4s must stay compatible with QuickTime/browser playback."""
+        args = _encoding_args("/tmp/out.mp4", preset="fast")
+
+        assert args[args.index("-profile:v") + 1] == "high"
+        assert args[args.index("-pix_fmt") + 1] == "yuv420p"
+        assert args[args.index("-color_primaries") + 1] == "bt709"
+        assert args[args.index("-color_trc") + 1] == "bt709"
+        assert args[args.index("-colorspace") + 1] == "bt709"
+        assert args[args.index("-movflags") + 1] == "+faststart"
+
     def test_ultrafast_enforces_closed_gop_no_bframes(self):
         """Intermediate encodes (preset=ultrafast) must explicitly disable
         B-frames and open-GOP so the downstream stream-copy concat doesn't

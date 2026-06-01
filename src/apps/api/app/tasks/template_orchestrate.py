@@ -3948,6 +3948,8 @@ def _collect_absolute_overlays(
             # video timeline), so cumulative_s offset does not apply here.
             if ov.get("word_timings"):
                 entry["word_timings"] = ov["word_timings"]
+            if ov.get("pop_animated_suffix"):
+                entry["pop_animated_suffix"] = ov["pop_animated_suffix"]
             if ov.get("highlight_color"):
                 entry["highlight_color"] = ov["highlight_color"]
             # `lyric-line` effect fade durations. Threaded through the same
