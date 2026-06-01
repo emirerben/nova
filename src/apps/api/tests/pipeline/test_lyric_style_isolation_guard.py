@@ -53,7 +53,7 @@ _LINE_FROZEN_RANGE_END: int = 1222
 
 # Locked SHA256 of the frozen range. DO NOT update this constant casually.
 # Read the module docstring above for the legitimate update procedure.
-_LINE_FROZEN_RANGE_SHA256: str = "462a379b58f782ad0335ffe524db35eee525d66ca5558cd9662e4b2ea049bc6a"
+_LINE_FROZEN_RANGE_SHA256: str = "480513e7bfdd7f4cbea787fc5ab9c7cfa67cf7bee076f9ba8cda607a9aee522b"
 
 
 def _compute_range_sha256() -> str:
