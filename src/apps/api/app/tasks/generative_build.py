@@ -67,6 +67,30 @@ _VOICEOVER_ONLY_DEFAULT_MIX = 1.0
 _VOICEOVER_MUSIC_DEFAULT_MIX = 0.7
 _VOICEOVER_MAX_DURATION_S = 60.0
 
+# Bounded concurrency for the HDR→SDR pre-tonemap. Each conversion is a CPU-bound
+# zscale linear-light tonemap + crf16 x264 encode; the prod worker is
+# shared-cpu-4x / 6144MB, so 2 concurrent tonemaps is the safe ceiling — more
+# risks CPU thrash and the OOM class noted in fly.toml (2026-05-17). Running the
+# clips strictly serially was the cause of the >30min "analyzing your clips"
+# freeze on heavy 4K/HDR uploads (prod job d30c61fe): 7 clips × 4-8min each blew
+# past the task soft_time_limit before any variant rendered.
+_PRETONEMAP_MAX_WORKERS = 2
+
+# Terminal statuses a redelivered task (Celery acks_late) must NOT re-run. A job
+# killed mid-render is left at "rendering" (not terminal) so the resume path can
+# reuse persisted variants; but a job that already failed/finished/cancelled must
+# no-op on redelivery rather than repeat the full (expensive) pre-tonemap and
+# overwrite a finished result.
+_NO_RERUN_STATUSES = frozenset(
+    {
+        "processing_failed",
+        "variants_ready",
+        "variants_ready_partial",
+        "variants_failed",
+        "cancelled",
+    }
+)
+
 
 @celery_app.task(
     name="orchestrate_generative_job",
@@ -83,6 +107,8 @@ def orchestrate_generative_job(self, job_id: str) -> None:
     """Entry point. Never raises — any exception becomes processing_failed."""
     log.info("generative_job_start", job_id=job_id)
 
+    from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
+
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     with pipeline_trace_for(job_id):
@@ -90,6 +116,18 @@ def orchestrate_generative_job(self, job_id: str) -> None:
             _run_generative_job(job_id)
         except OperationalError:
             raise  # transient DB → Celery autoretry
+        except SoftTimeLimitExceeded:
+            # The 30-min soft limit fired (heavy 4K/HDR footage). Fail VISIBLY with a
+            # user-actionable message instead of letting the hard time_limit SIGKILL
+            # freeze the row at status="processing" forever. Not in autoretry_for, so
+            # this does not loop back into the same wall.
+            log.warning("generative_job_timeout", job_id=job_id)
+            _fail_job(
+                job_id,
+                "Processing timed out — your clips are heavy (likely 4K/HDR). "
+                "Try fewer or shorter clips.",
+                failure_reason="processing_timeout",
+            )
         except Exception as exc:
             log.error("generative_job_failed", job_id=job_id, error=str(exc), exc_info=True)
             _fail_job(job_id, str(exc))
@@ -119,6 +157,13 @@ def _run_generative_job(job_id: str) -> None:
         if job is None:
             log.error("generative_job_not_found", job_id=job_id)
             return
+        # Redelivery guard (acks_late). If this job already reached a terminal state,
+        # a redelivered message must not re-run the whole pipeline (it would repeat
+        # the expensive pre-tonemap and clobber a finished result). Mid-render jobs
+        # are left at "rendering" — not terminal — so the resume path still works.
+        if job.status in _NO_RERUN_STATUSES:
+            log.info("generative_job_skip_terminal", job_id=job_id, status=job.status)
+            return
         job.status = "processing"
         if job.mode is None:
             job.mode = "generative"
@@ -142,7 +187,15 @@ def _run_generative_job(job_id: str) -> None:
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
 
-    with tempfile.TemporaryDirectory(prefix="nova_generative_") as tmpdir:
+    # ignore_cleanup_errors: on a soft-time-limit abort, an orphaned pre-tonemap
+    # ffmpeg thread (outer pool shutdown wait=False) may still be writing sdr_*
+    # files into tmpdir as this block unwinds. Without this flag a racing rmtree
+    # could raise and MASK the SoftTimeLimitExceeded, routing to the generic
+    # handler and losing the actionable "timed out" failure_reason. A temp-dir
+    # cleanup error must never shadow the real exception.
+    with tempfile.TemporaryDirectory(
+        prefix="nova_generative_", ignore_cleanup_errors=True
+    ) as tmpdir:
         ingest = _ingest_clips(clip_paths_gcs, tmpdir, job_id=job_id)
         clip_metas = ingest["clip_metas"]
         clip_id_to_gcs = ingest["clip_id_to_gcs"]
@@ -192,13 +245,29 @@ def _run_generative_job(job_id: str) -> None:
             style = _select_generative_style_set(clip_metas, text, job_id=job_id)
             return text, form, style
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            fut_tonemap = pool.submit(_pretonemap_hdr_clips, clip_id_to_local, probe_map, tmpdir)
+        # NOT a `with` block: ThreadPoolExecutor.__exit__ calls shutdown(wait=True),
+        # which would BLOCK on the in-flight tonemap thread if the soft time limit
+        # fires mid-join — so SoftTimeLimitExceeded can't reach the orchestrator's
+        # handler before the hard time_limit SIGKILL freezes the job at
+        # status="processing". On the error path we instead shutdown(wait=False,
+        # cancel_futures=True) so the exception propagates immediately. Python can't
+        # kill a running ffmpeg thread, but each tonemap holds its own 600s timeout
+        # and the failing task's worker is recycled, so the orphan is bounded.
+        pool = ThreadPoolExecutor(max_workers=3)
+        try:
+            fut_tonemap = pool.submit(
+                _pretonemap_hdr_clips, clip_id_to_local, probe_map, tmpdir, job_id=job_id
+            )
             fut_text = pool.submit(_text_then_style)
             fut_match = pool.submit(_match_best_track, clip_metas, job_id=job_id)
             n_tonemapped = fut_tonemap.result()
             agent_text, agent_form, style_set_id = fut_text.result()
             best_track = fut_match.result()
+        except BaseException:
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        else:
+            pool.shutdown(wait=True)
 
         record_pipeline_event("reframe", "hdr_pretonemap_done", {"clips_converted": n_tonemapped})
         record_pipeline_event("overlay", "agent_text_done", {"has_text": bool(agent_text)})
@@ -364,6 +433,8 @@ def _pretonemap_hdr_clips(
     clip_id_to_local: dict[str, str],
     probe_map: dict,
     tmpdir: str,
+    *,
+    job_id: str | None = None,
 ) -> int:
     """Convert each HLG/HDR10 source to an SDR intermediate ONCE, in place.
 
@@ -377,6 +448,14 @@ def _pretonemap_hdr_clips(
     frames are tonemapped up to 3×. Running the tonemap once per clip and feeding
     every variant the resulting bt709 file collapses that to a single pass.
 
+    Concurrency: the per-clip conversions run on a bounded pool
+    (`_PRETONEMAP_MAX_WORKERS`) rather than strictly serially — on heavy 4K/HDR
+    footage each clip costs 4-8min, and a serial 7-clip loop blew past the task
+    soft_time_limit before any variant rendered (prod job d30c61fe). Each ffmpeg
+    is CPU-bound and releases the GIL, so threads genuinely overlap. The maps are
+    mutated on the calling thread AFTER join (dict mutation isn't thread-safe, and
+    the per-slot reframe must see fully-populated maps).
+
     Parity: reuses `reframe._ZSCALE_SDR_PIPELINE` verbatim (the v0.4.45.7 sky-
     banding fix: linear-light lanczos downscale + mobius tonemap + error-diffusion
     dither). The intermediate is already ~`output_height` tall and tagged bt709,
@@ -387,6 +466,8 @@ def _pretonemap_hdr_clips(
     original-audio variant keeps faithful source audio.
     """
     import subprocess  # noqa: PLC0415
+    from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
+    from contextlib import nullcontext  # noqa: PLC0415
 
     from app.pipeline.reframe import (  # noqa: PLC0415
         _HDR10_TRANSFER,
@@ -394,6 +475,10 @@ def _pretonemap_hdr_clips(
         _HLG_TRANSFER,
         _ZSCALE_SDR_PIPELINE,
         _zscale_available,
+    )
+    from app.services.pipeline_trace import (  # noqa: PLC0415
+        pipeline_trace_for,
+        record_pipeline_event,
     )
     from app.tasks.template_orchestrate import _probe_clips  # noqa: PLC0415
 
@@ -405,13 +490,20 @@ def _pretonemap_hdr_clips(
     # on pathological aspect ratios.
     vf = f"{vf},crop=trunc(iw/2)*2:trunc(ih/2)*2"
 
-    converted = 0
-    for clip_id, local_path in list(clip_id_to_local.items()):
-        probe = probe_map.get(local_path)
-        if probe is None or getattr(probe, "color_trc", "bt709") not in hdr_transfers:
-            continue
+    # Snapshot the HDR clips up front: stable enumeration → stable `sdr_{idx}`
+    # naming (no shared mutable counter across threads) and no mutating
+    # clip_id_to_local mid-iteration from worker threads.
+    hdr_clips = [
+        (idx, clip_id, local_path)
+        for idx, (clip_id, local_path) in enumerate(clip_id_to_local.items())
+        if probe_map.get(local_path) is not None
+        and getattr(probe_map.get(local_path), "color_trc", "bt709") in hdr_transfers
+    ]
+    if not hdr_clips:
+        return 0
 
-        sdr_path = os.path.join(tmpdir, f"sdr_{converted}_{os.path.basename(local_path)}")
+    def _convert_one(idx: int, clip_id: str, local_path: str):
+        sdr_path = os.path.join(tmpdir, f"sdr_{idx}_{os.path.basename(local_path)}")
         cmd = [
             "ffmpeg",
             "-y",
@@ -456,16 +548,40 @@ def _pretonemap_hdr_clips(
                 error=str(exc),
                 stderr=(stderr[-500:].decode("utf-8", "replace") if stderr else ""),
             )
-            continue
-
+            return None
         try:
-            probe_map[sdr_path] = _probe_clips([sdr_path])[sdr_path]
+            probe = _probe_clips([sdr_path])[sdr_path]
         except Exception as exc:  # noqa: BLE001
             log.warning("generative_pretonemap_reprobe_failed", clip_id=clip_id, error=str(exc))
-            continue
-        clip_id_to_local[clip_id] = sdr_path
-        converted += 1
+            return None
+        return (clip_id, sdr_path, probe)
 
+    # `record_pipeline_event` reads a contextvar set by `pipeline_trace_for`, which
+    # this thread (Stream A) does NOT inherit from the orchestrator — so we
+    # re-establish it here. Forward-progress events keep a slow-but-alive job from
+    # looking identical to a hang in the admin job-debug view.
+    results: list[tuple[str, str, Any]] = []
+    total = len(hdr_clips)
+    trace_ctx = pipeline_trace_for(job_id) if job_id is not None else nullcontext()
+    with trace_ctx:
+        with ThreadPoolExecutor(max_workers=min(_PRETONEMAP_MAX_WORKERS, total)) as pool:
+            futs = [pool.submit(_convert_one, *hc) for hc in hdr_clips]
+            done = 0
+            for fut in as_completed(futs):
+                res = fut.result()
+                done += 1
+                if res is not None:
+                    results.append(res)
+                record_pipeline_event(
+                    "reframe", "pretonemap_progress", {"done": done, "total": total}
+                )
+
+    # Mutate the shared maps on the calling thread, after all conversions joined.
+    for clip_id, sdr_path, probe in results:
+        probe_map[sdr_path] = probe
+        clip_id_to_local[clip_id] = sdr_path
+
+    converted = len(results)
     if converted:
         log.info("generative_pretonemap_done", clips_converted=converted)
     return converted
