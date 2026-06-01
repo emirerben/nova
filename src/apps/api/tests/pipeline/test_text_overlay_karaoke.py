@@ -18,7 +18,7 @@ def test_karaoke_line_is_registered_as_animated_effect() -> None:
 
 def test_hex_to_ass_bgr_swaps_bytes() -> None:
     assert _hex_to_ass_bgr("#FFFFFF") == "FFFFFF"
-    assert _hex_to_ass_bgr("#FF0000") == "0000FF"  # red → BGR
+    assert _hex_to_ass_bgr("#FF0000") == "0000FF"  # red -> BGR
     assert _hex_to_ass_bgr("#00FF00") == "00FF00"
     assert _hex_to_ass_bgr("#0000FF") == "FF0000"
     assert _hex_to_ass_bgr("invalid") == "FFFFFF"
@@ -49,13 +49,42 @@ def test_karaoke_line_renders_ass_file_with_k_tags() -> None:
 
         content = open(ass_paths[0]).read()  # noqa: PTH123, SIM115
         # Has karaoke tags
-        assert r"\kf40" in content
-        assert r"\kf60" in content
+        assert r"\kt0\kf40" in content
+        assert r"\kt40\kf60" in content
         assert "Hello" in content
         assert "world" in content
-        # Primary / secondary colors emitted as BGR
-        assert r"\1c&HFFFFFF&" in content  # white text_color
-        assert r"\2c&H00FFFF&" in content  # yellow highlight (#FFFF00 → 00FFFF)
+        # Primary / secondary colors emitted as BGR. In libass karaoke \kf,
+        # PrimaryColour is the active/sung highlight.
+        assert r"\1c&H00FFFF&" in content  # yellow highlight (#FFFF00 -> 00FFFF)
+        assert r"\2c&HFFFFFF&" in content  # white text_color
+
+
+def test_karaoke_line_anchors_word_starts_and_preserves_gaps() -> None:
+    """Explicit start_s/end_s must survive into ASS so audio gaps do not drift."""
+    overlays = [
+        {
+            "effect": "karaoke-line",
+            "text": "wait now",
+            "start_s": 0.0,
+            "end_s": 1.5,
+            "position": "bottom",
+            "text_color": "#FFFFFF",
+            "highlight_color": "#FFFF00",
+            "word_timings": [
+                {"text": "wait", "start_s": 0.0, "end_s": 0.3, "duration_cs": 30},
+                {"text": "now", "start_s": 1.0, "end_s": 1.3, "duration_cs": 100},
+            ],
+        }
+    ]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ass_paths = generate_animated_overlay_ass(
+            overlays, slot_duration_s=2.0, output_dir=tmpdir, slot_index=0
+        )
+        assert ass_paths is not None
+        content = open(ass_paths[0]).read()  # noqa: PTH123, SIM115
+        assert r"\kt0\kf30" in content
+        assert r"\kt100\kf30" in content
+        assert r"\kf100" not in content
 
 
 def test_karaoke_line_without_word_timings_falls_back_gracefully() -> None:
@@ -79,6 +108,7 @@ def test_karaoke_line_without_word_timings_falls_back_gracefully() -> None:
         content = open(ass_paths[0]).read()  # noqa: PTH123, SIM115
         assert "Hello" in content
         assert r"\kf" not in content
+        assert r"\kt" not in content
 
 
 def test_karaoke_overlay_path_exists_and_nonempty() -> None:

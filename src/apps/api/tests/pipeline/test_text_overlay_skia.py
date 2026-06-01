@@ -24,6 +24,26 @@ def tmp_workdir():
         yield d
 
 
+def _has_gold_pixel(
+    img: Image.Image,
+    *,
+    x_start: int = 0,
+    x_end: int | None = None,
+    y_start: int | None = None,
+    y_end: int | None = None,
+) -> bool:
+    x_end = img.width if x_end is None else x_end
+    y_start = img.height // 2 - 80 if y_start is None else y_start
+    y_end = img.height // 2 + 80 if y_end is None else y_end
+    for y in range(max(0, y_start), min(img.height, y_end), 8):
+        for x in range(max(0, x_start), min(img.width, x_end), 8):
+            r, g, b, a = img.getpixel((x, y))
+            # Gold #FFD24A = (255, 210, 74), with antialiasing tolerance.
+            if a > 160 and r > 220 and 165 < g < 235 and 20 < b < 140:
+                return True
+    return False
+
+
 # -- Typeface preload --------------------------------------------------------
 
 
@@ -326,9 +346,44 @@ def test_pop_in_without_suffix_falls_back_to_plain_pop_in(tmp_workdir):
     assert seq["is_animated"] is True
 
 
-def test_karaoke_line_highlights_after_word_end_time(tmp_workdir):
-    """First word's end_cs = 50 → 0.5s. At t=0.6s the first word is sung
-    (highlight color), the rest are still primary."""
+def test_plain_pop_in_still_uses_short_animation_cap(tmp_workdir):
+    overlay = {
+        "text": "OOPS",
+        "start_s": 0.0,
+        "end_s": 5.0,
+        "position": "center",
+        "effect": "pop-in",
+        "font_family": "Inter",
+        "text_size_px": 100,
+        "text_color": "#FFFFFF",
+    }
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
+    assert seq is not None
+    assert seq["is_animated"] is True
+    assert seq["n_frames"] == tos.MAX_OVERLAY_FRAMES
+
+
+def test_long_lyric_pop_in_stage_uses_long_running_frame_ceiling(tmp_workdir):
+    overlay = {
+        "text": "make this happen",
+        "start_s": 0.0,
+        "end_s": 5.0,
+        "position": "center",
+        "effect": "pop-in",
+        "pop_animated_suffix": "happen",
+        "font_family": "Inter",
+        "text_size_px": 100,
+        "text_color": "#FFFFFF",
+    }
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
+    assert seq is not None
+    assert seq["is_animated"] is True
+    assert seq["n_frames"] == int(round(5.0 * tos.FPS)) + 1
+    assert seq["n_frames"] > tos.MAX_OVERLAY_FRAMES
+
+
+def test_karaoke_line_highlights_at_word_start_time(tmp_workdir):
+    """First word starts at t=0, so it is already highlighted at t=0.2s."""
     overlay = {
         "text": "uno dos tres",
         "start_s": 0.0,
@@ -336,9 +391,9 @@ def test_karaoke_line_highlights_after_word_end_time(tmp_workdir):
         "position": "center",
         "effect": "karaoke-line",
         "word_timings": [
-            {"text": "uno", "duration_cs": 50},
-            {"text": "dos", "duration_cs": 50},
-            {"text": "tres", "duration_cs": 50},
+            {"text": "uno", "start_s": 0.0, "end_s": 0.5, "duration_cs": 50},
+            {"text": "dos", "start_s": 0.5, "end_s": 1.0, "duration_cs": 50},
+            {"text": "tres", "start_s": 1.0, "end_s": 1.5, "duration_cs": 50},
         ],
         "font_family": "Inter",
         "text_size_px": 100,
@@ -347,23 +402,66 @@ def test_karaoke_line_highlights_after_word_end_time(tmp_workdir):
     }
     seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
     assert seq is not None
-    # Frame at t=0.6s ≈ frame index 18 at 30fps
-    frame_18 = os.path.join(tmp_workdir, f"skia_overlay_000_f{18:04d}.png")
-    assert os.path.exists(frame_18)
-    img = Image.open(frame_18)
-    # Look for a gold-ish pixel anywhere in the middle band of the image
-    # (the first "sung" word should be gold)
-    found_gold = False
-    for y in range(img.height // 2 - 80, img.height // 2 + 80, 8):
-        for x in range(0, img.width, 8):
-            r, g, b, a = img.getpixel((x, y))
-            # Gold #FFD24A = (255, 210, 74)
-            if a > 200 and r > 220 and 180 < g < 230 and b < 120:
-                found_gold = True
-                break
-        if found_gold:
-            break
-    assert found_gold, "expected at least one gold pixel for the sung first word"
+    # Frame at t=0.2s is before the old end-based renderer would highlight "uno".
+    frame_06 = os.path.join(tmp_workdir, f"skia_overlay_000_f{6:04d}.png")
+    assert os.path.exists(frame_06)
+    img = Image.open(frame_06)
+    assert _has_gold_pixel(img), "expected the first word to be gold from its start"
+
+
+def test_karaoke_line_honors_explicit_word_start_after_gap(tmp_workdir):
+    """The second word starts at 1.0s even though the first word ended at 0.3s."""
+    overlay = {
+        "text": "wait now",
+        "start_s": 0.0,
+        "end_s": 1.5,
+        "position": "center",
+        "effect": "karaoke-line",
+        "word_timings": [
+            {"text": "wait", "start_s": 0.0, "end_s": 0.3, "duration_cs": 30},
+            {"text": "now", "start_s": 1.0, "end_s": 1.3, "duration_cs": 100},
+        ],
+        "font_family": "Inter",
+        "text_size_px": 110,
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A",
+    }
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
+    assert seq is not None
+    # Frame at t~1.07s is after "now" starts but before the old end-based
+    # renderer would highlight it at t=1.3s.
+    frame_32 = os.path.join(tmp_workdir, f"skia_overlay_000_f{32:04d}.png")
+    assert os.path.exists(frame_32)
+    img = Image.open(frame_32)
+    assert _has_gold_pixel(img, x_start=img.width // 2), (
+        "expected the second word to highlight at its explicit start_s"
+    )
+
+
+def test_long_karaoke_line_uses_long_running_frame_ceiling(tmp_workdir):
+    overlay = {
+        "text": "one two three four five",
+        "start_s": 0.0,
+        "end_s": 5.0,
+        "position": "center",
+        "effect": "karaoke-line",
+        "word_timings": [
+            {"text": "one", "start_s": 0.0, "end_s": 0.8, "duration_cs": 80},
+            {"text": "two", "start_s": 1.0, "end_s": 1.8, "duration_cs": 80},
+            {"text": "three", "start_s": 2.0, "end_s": 2.8, "duration_cs": 80},
+            {"text": "four", "start_s": 3.0, "end_s": 3.8, "duration_cs": 80},
+            {"text": "five", "start_s": 4.0, "end_s": 4.8, "duration_cs": 80},
+        ],
+        "font_family": "Inter",
+        "text_size_px": 90,
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A",
+    }
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
+    assert seq is not None
+    assert seq["is_animated"] is True
+    assert seq["n_frames"] == int(round(5.0 * tos.FPS)) + 1
+    assert seq["n_frames"] > tos.MAX_OVERLAY_FRAMES
 
 
 def test_animated_effects_all_produce_sequences(tmp_workdir):

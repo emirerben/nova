@@ -16,6 +16,7 @@ Fallback: Pillow default if all resolution fails.
 """
 
 import json
+import math
 import os
 from concurrent.futures import ThreadPoolExecutor
 
@@ -246,6 +247,14 @@ def _hex_to_ass_bgr(hex_color: str) -> str:
     return f"{b}{g}{r}".upper()
 
 
+def _finite_float(value: object, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if math.isfinite(parsed) else default
+
+
 # Position -> ASS alignment + MarginV
 # ASS alignment: 2=bottom-center, 5=center, 8=top-center
 _ASS_POSITION = {
@@ -460,8 +469,7 @@ def generate_animated_overlay_ass(
                 position_y_frac=overlay.get("position_y_frac"),
                 outline_px=overlay.get("outline_px"),
                 # Karaoke needs per-word timings (relative to overlay start)
-                # plus the highlight color used for "already sung" words. The
-                # primary color stays the overlay's text_color.
+                # plus the highlight color used for "already sung" words.
                 word_timings=overlay.get("word_timings"),
                 highlight_color=overlay.get("highlight_color"),
                 text_color=overlay.get("text_color"),
@@ -1010,10 +1018,12 @@ def _write_animated_ass(
 
     elif effect == "karaoke-line":
         # Sing-along: the full line is visible for the overlay duration. Each
-        # word is wrapped in ASS karaoke timing tags `{\kf<centiseconds>}`,
+        # word is wrapped in ASS karaoke timing tags `{\kt<start>\kf<duration>}`,
         # which fade the word's fill from SecondaryColour to PrimaryColour
-        # over the word's duration. The result is a smooth left-to-right
-        # color sweep that follows the vocal — the canonical karaoke effect.
+        # over the word's duration. `\kt` anchors the word to the real
+        # overlay-relative vocal onset; without it, lyric alignment gaps get
+        # flattened into the following word and the highlight drifts. The
+        # result is a smooth left-to-right color sweep that follows the vocal.
         # `\kf` (fill) is preferred over `\k` (sharp swap) because it looks
         # less jarring at typical sub-second word durations.
         timings = word_timings or []
@@ -1024,24 +1034,35 @@ def _write_animated_ass(
             pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
             dialogue_text = f"{{{pos_or_align}{outline_tag}}}{text}"
         else:
-            # ASS color encoding is &HBBGGRR& (note byte order). The
-            # PrimaryColour (sung) is `text_color`; SecondaryColour
-            # (unsung baseline) is `highlight_color` if supplied, otherwise
-            # a dim version of the primary so unsung text stays readable
-            # without dominating the highlight contrast.
-            primary_bgr = _hex_to_ass_bgr(text_color or "#FFFFFF")
-            secondary_bgr = _hex_to_ass_bgr(highlight_color or "#888888")
+            # ASS color encoding is &HBBGGRR& (note byte order). With \kf,
+            # SecondaryColour is the unsung baseline and PrimaryColour is the
+            # active/sung highlight after the fill completes.
+            primary_bgr = _hex_to_ass_bgr(highlight_color or "#FFFF00")
+            secondary_bgr = _hex_to_ass_bgr(text_color or "#FFFFFF")
             pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
             parts = [f"{{{pos_or_align}{outline_tag}\\1c&H{primary_bgr}&\\2c&H{secondary_bgr}&}}"]
-            # `\kf` durations are in centiseconds. We clamp each word to at
-            # least 5cs (50ms) so karaoke never emits a zero-length token
-            # which libass renders as an immediate primary-color flash.
+            # `\kt` / `\kf` payloads are in centiseconds. We clamp each word
+            # to at least 5cs (50ms) so karaoke never emits a zero-length
+            # token which libass renders as an immediate primary-color flash.
+            cursor_s = 0.0
             for w in timings:
                 word_text = str(w.get("text", "")).strip()
                 if not word_text:
                     continue
-                dur_cs = max(5, int(round(float(w.get("duration_cs", 30)))))
-                parts.append(f"{{\\kf{dur_cs}}}{word_text} ")
+                start_word_s = max(0.0, _finite_float(w.get("start_s"), cursor_s))
+                fallback_dur_s = max(
+                    0.05, _finite_float(w.get("duration_cs"), 30.0) / 100.0
+                )
+                end_word_s = _finite_float(w.get("end_s"), start_word_s + fallback_dur_s)
+                dur_s = (
+                    end_word_s - start_word_s
+                    if end_word_s > start_word_s
+                    else fallback_dur_s
+                )
+                dur_cs = max(5, int(round(dur_s * 100.0)))
+                start_cs = max(0, int(round(start_word_s * 100.0)))
+                parts.append(f"{{\\kt{start_cs}\\kf{dur_cs}}}{word_text} ")
+                cursor_s = max(cursor_s, start_word_s + dur_cs / 100.0)
             dialogue_text = "".join(parts).rstrip()
 
     elif effect == "lyric-line":

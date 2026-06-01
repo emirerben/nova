@@ -136,10 +136,10 @@ def test_resync_returns_false_when_overlay_falls_entirely_outside_slot() -> None
     assert rewritten is False, "rewrite must not happen when window doesn't overlap"
 
 
-def test_resync_clamps_to_slot_when_overlay_partially_outside() -> None:
+def test_resync_preserves_tail_past_slot_end_for_post_join_burn() -> None:
     """Overlay's section window extends past the slot's post-snap end.
-    The pass clamps end_s to the slot duration so the overlay still
-    renders for its in-bounds portion.
+    Karaoke is burned after the slots are joined, so the line must be allowed
+    to continue across the visual cut until the next lyric starts.
     """
     overlay = _make_karaoke_overlay(
         section_anchor_s=4.0,
@@ -153,7 +153,31 @@ def test_resync_clamps_to_slot_when_overlay_partially_outside() -> None:
     )
     assert rewritten is True
     assert overlay["start_s"] == pytest.approx(0.0)
-    assert overlay["end_s"] == pytest.approx(5.0)
+    assert overlay["end_s"] == pytest.approx(6.0)
+
+
+def test_resync_preserves_popup_tail_past_slot_end_for_post_join_burn() -> None:
+    """Per-word-pop stages are vocal-timed too. A cumulative stage can start
+    before a visual cut and naturally end at the next word after that cut; the
+    post-join burn should keep the stage visible until that next word starts.
+    """
+    overlay = {
+        "text": "I love",
+        "effect": "pop-in",
+        "start_s": 0.8,
+        "end_s": 1.0,  # pre-resync value was clipped to the visual slot end
+        "pop_animated_suffix": "love",
+        "section_anchor_s": 4.8,
+        "section_end_anchor_s": 5.5,
+    }
+    rewritten = resync_overlay_against_snapped_slot(
+        overlay,
+        slot_post_snap_section_start_s=4.0,
+        slot_post_snap_duration_s=1.0,
+    )
+    assert rewritten is True
+    assert overlay["start_s"] == pytest.approx(0.8)
+    assert overlay["end_s"] == pytest.approx(1.5)
 
 
 def test_resync_slot_walks_all_eligible_overlays() -> None:
