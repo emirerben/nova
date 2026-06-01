@@ -62,6 +62,7 @@ from app.pipeline.text_overlay import (
     MAX_FONT_CYCLE_FRAMES,
     _emoji_codepoint,
     _emoji_png_path,
+    _finite_float,
     _hex_to_rgba,
     _validate_overlay,
 )
@@ -71,10 +72,13 @@ log = structlog.get_logger()
 # Output framerate for animated overlay sequences. 30 fps is enough for the
 # fastest production animation (font-cycle FAST_INTERVAL = 70ms = 14fps native
 # cycle rate) while keeping file count bounded. Frame budget per overlay:
-# MAX_OVERLAY_FRAMES caps long-running effects (font-cycle) the same way
-# Pillow's MAX_FONT_CYCLE_FRAMES does.
+# MAX_OVERLAY_FRAMES caps effects whose animation can be visually unique on
+# every frame (font-cycle, plain pop-in) the same way Pillow's
+# MAX_FONT_CYCLE_FRAMES does. Lyric-timed text has a separate sanity ceiling
+# because the settled text must remain visible through its full audio window.
 FPS = 30
 MAX_OVERLAY_FRAMES = max(120, MAX_FONT_CYCLE_FRAMES)
+LONG_RUNNING_TEXT_FRAME_CEILING = int(FPS * 30)
 
 # Encoder thread pool: Pillow PNG encode releases the GIL during compression,
 # so threading actually helps. 4 workers matches the production Celery worker
@@ -100,6 +104,20 @@ _POP_IN_MAX_SCALE = max(_POP_IN_SCALES)
 # a job with the wrong font silently.
 
 _TYPEFACE_BY_PATH: dict[str, skia.Typeface] = {}
+
+
+def _uses_long_running_frame_ceiling(overlay: dict) -> bool:
+    """True for text effects that must hold through their full lyric window.
+
+    Font-cycle-like effects need a short cap because every frame can be unique.
+    Lyric-timed effects settle visually but remain semantically visible until
+    the next lyric boundary, so capping them at ~4s makes the text disappear
+    before late words can highlight or before the next cumulative stage starts.
+    """
+    effect = overlay.get("effect", "none")
+    return effect in {"lyric-line", "karaoke-line"} or (
+        effect == "pop-in" and bool(overlay.get("pop_animated_suffix"))
+    )
 
 
 def _preload_typefaces() -> None:
@@ -767,8 +785,8 @@ def _draw_karaoke_line(
     canvas: skia.Canvas, overlay: dict, t_local: float, duration_s: float
 ) -> None:
     """karaoke-line: each word switches from primary color to highlight color
-    when t_local crosses its end timestamp. word_timings is a list of
-    {text, duration_cs} with cumulative timing from overlay start.
+    when t_local crosses its start timestamp. word_timings is a list of
+    {text, start_s, end_s, duration_cs} relative to the overlay start.
 
     Karaoke does NOT consume `display_text` — its per-word highlight order
     is keyed off the original `text`. Layer 2's finalizer never sets
@@ -781,12 +799,16 @@ def _draw_karaoke_line(
         return
 
     words: list[str] = []
-    ends: list[float] = []
+    starts: list[float] = []
     acc = 0.0
     for w in word_timings:
         words.append(w.get("text", ""))
-        acc += float(w.get("duration_cs", 0)) / 100.0
-        ends.append(acc)
+        start = _finite_float(w.get("start_s"), acc)
+        fallback_dur_s = max(0.05, _finite_float(w.get("duration_cs"), 5.0) / 100.0)
+        end = _finite_float(w.get("end_s"), start + fallback_dur_s)
+        dur_s = end - start if end > start else fallback_dur_s
+        starts.append(max(0.0, start))
+        acc = max(acc, start + dur_s)
 
     typeface = _typeface_for_overlay(overlay)
     initial_size = _resolve_font_size_px(overlay)
@@ -817,7 +839,7 @@ def _draw_karaoke_line(
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
 
     for i, word in enumerate(words):
-        sung = t_local >= ends[i]
+        sung = t_local >= starts[i]
         color = highlight_color if sung else primary_color
         _draw_line_with_layers(
             canvas, word, x, baseline_y, font, color, stroke_px, shadow_alpha=160
@@ -1097,23 +1119,24 @@ def _generate_overlay_sequence(overlay: dict, work_dir: str, idx: int) -> dict[s
             "is_animated": False,
         }
 
-    # MAX_OVERLAY_FRAMES protects font-cycle (rapid font swaps where every
-    # frame is unique) from runaway PNG counts. `lyric-line` is slow alpha
-    # ramps over a long-held middle and would lose its fade-out + tail to
-    # the cap for any line longer than MAX_OVERLAY_FRAMES / FPS (~4s) — the
-    # prod regression for the user-reported job's Line 2 (4.26s). lyric-line
-    # opts out of the font-cycle cap but uses a generous sanity ceiling so a
-    # malformed transcript with `end_s = 240.0` (last-line-of-section has no
-    # gap_cap in lyric_injector) cannot blow scratch disk on the encode
-    # worker: 30s × 30fps = 900 frames × ~1MB PNG ≈ 1GB worst case, vs
-    # 7200 frames × 1MB ≈ 7GB unbounded.
+    # MAX_OVERLAY_FRAMES protects effects whose animation can be visually
+    # unique on every frame (font-cycle, plain pop-in) from runaway PNG counts.
+    # Lyric-timed effects (`lyric-line`, `karaoke-line`, suffix pop-in reveal
+    # stages) settle visually but must stay present until their audio boundary;
+    # applying the ~4s cap there chops late words/tails before the next stage.
+    # They instead use a generous sanity ceiling so a malformed transcript with
+    # `end_s = 240.0` cannot blow scratch disk on the encode worker:
+    # 30s × 30fps = 900 frames × ~1MB PNG ≈ 1GB worst case, vs 7200 frames ×
+    # 1MB ≈ 7GB unbounded.
     effect = overlay.get("effect", "none")
     wanted = max(1, int(round(duration_s * FPS)))
-    if effect == "lyric-line":
-        ceiling = int(FPS * 30)
+    uses_long_ceiling = _uses_long_running_frame_ceiling(overlay)
+    if uses_long_ceiling:
+        ceiling = LONG_RUNNING_TEXT_FRAME_CEILING
         if wanted > ceiling:
             log.warning(
-                "skia_lyric_line_duration_clamped",
+                "skia_long_running_text_duration_clamped",
+                effect=effect,
                 duration_s=duration_s,
                 wanted_frames=wanted,
                 clamped_to=ceiling,
@@ -1132,8 +1155,8 @@ def _generate_overlay_sequence(overlay: dict, work_dir: str, idx: int) -> dict[s
     # at t_local >= duration), so it just holds the line through the seam; the
     # `between(t, start, end)` enable still gates the overlay off at `end`.
     n_render = (
-        min(int(FPS * 30), n_frames + 1)
-        if effect == "lyric-line"
+        min(LONG_RUNNING_TEXT_FRAME_CEILING, n_frames + 1)
+        if uses_long_ceiling
         else min(MAX_OVERLAY_FRAMES, n_frames + 1)
     )
 

@@ -21,7 +21,9 @@ line's SECTION-relative anchor (`section_anchor_s`, `section_end_anchor_s`)
 onto every overlay they produce. Section coordinates are independent of slot
 windowing — they're just "seconds after `best_start_s` in the song." This
 module reads those stamps and rewrites the slot-relative `start_s` /
-`end_s` so the overlay renders at the correct post-snap audio position.
+`end_s` so the overlay renders at the correct post-snap audio position. Since
+the burn happens after slot join, a karaoke line can continue past the visual
+slot boundary instead of being truncated before its final words highlight.
 
 Strict isolation contract
 -------------------------
@@ -96,12 +98,11 @@ def resync_overlay_against_snapped_slot(
     new_start = float(anchor) - slot_post_snap_section_start_s
     new_end = float(end_anchor) - slot_post_snap_section_start_s
 
-    # Clamp to slot. If the new window falls entirely outside the post-snap
-    # slot — beat-snap shifted it past the slot boundary — drop the rewrite
-    # and log so the failure is visible in the pipeline trace. The original
-    # pre-snap window stays in place; downstream finalization (Dedup 1 / 2
-    # in `_collect_absolute_overlays`) handles the inevitable overlap on its
-    # own terms.
+    # Keep the start anchored to this slot's visible range, but do NOT clamp
+    # the end to the slot duration. Karaoke overlays are burned after the
+    # slots have been joined, so a lyric line may legitimately continue across
+    # a visual cut until the next line starts. Clamping here cuts the tail off
+    # before late words can ever highlight.
     if new_end <= 0 or new_start >= slot_post_snap_duration_s:
         log.warning(
             "lyric_word_resync_out_of_slot",
@@ -114,7 +115,6 @@ def resync_overlay_against_snapped_slot(
         return False
 
     new_start = max(0.0, new_start)
-    new_end = min(slot_post_snap_duration_s, new_end)
     if new_end - new_start < _MIN_OVERLAY_DURATION_S:
         # Re-anchor would shrink window below render floor. Skip rewrite;
         # the original window may render at a slightly drifted position but

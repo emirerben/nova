@@ -1,24 +1,23 @@
 """Synthesize word-reveal timings for *generated* overlay text.
 
 Lyric overlays (`lyric_injector._inject_karaoke`) have real per-word timings from
-Whisper alignment, so they convert aligned `start_s`/`end_s` into the cumulative
-`duration_cs` the Skia karaoke renderer consumes. Generated text (the generative-edit
+Whisper alignment, so they emit aligned `start_s`/`end_s` plus a centisecond
+`duration_cs` fallback. Generated text (the generative-edit
 intro overlay) has NO spoken timing — the words were written by an agent, not sung —
 so we synthesize an even split across the overlay window, optionally snapping word
 boundaries to musical beats when a song is present.
 
 Both paths emit the SAME contract the renderer reads
-(`text_overlay_skia._draw_karaoke_line`): a list of `{text, duration_cs}` where
-`duration_cs` is the gap (in centiseconds) from the previous word's end. The renderer
-accumulates these (`acc += duration_cs / 100`) to decide when each word switches to the
-highlight color. We also emit `start_s`/`end_s` (overlay-relative) for parity with the
-lyric format and for debugging; the renderer ignores them.
+(`text_overlay_skia._draw_karaoke_line`): a list of
+`{text, start_s, end_s, duration_cs}`. The renderer switches each word to the
+highlight color at `start_s`; `duration_cs` is retained as a fallback payload for
+legacy callers and ASS.
 
 `MIN_WORD_CS` mirrors the floor in `lyric_injector` so a synthesized sweep can never
 emit a sub-renderable (<50 ms) word that would flicker or collapse onto its neighbour.
 
 Guarantees (the correctness contract — see tests/pipeline/test_word_timing.py):
-  - cumulative word-end times are STRICTLY increasing (no two words highlight at once),
+  - word starts/ends are STRICTLY increasing (no two words highlight at once),
   - every `duration_cs >= MIN_WORD_CS`,
   - beat-snapping only ever moves a word-end onto an in-window beat, never backwards
     past the previous word and never onto a beat already claimed by the previous word
