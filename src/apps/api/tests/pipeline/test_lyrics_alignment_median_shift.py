@@ -405,12 +405,12 @@ class TestConstants:
 
 
 class TestPromptVersionBump:
-    """Lock the prompt_version that invalidates pre-median cached blobs."""
+    """Lock the prompt_version that invalidates stale cached lyric blobs."""
 
     def test_lyrics_extraction_prompt_version_bumped(self) -> None:
         from app.agents.lyrics import LyricsExtractionAgent
 
-        assert LyricsExtractionAgent.spec.prompt_version == "2026-05-28.median"
+        assert LyricsExtractionAgent.spec.prompt_version == "2026-05-31.linear-reanchor"
 
 
 # ────────────────────────────────────────────────────────────────────────────

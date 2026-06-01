@@ -35,12 +35,13 @@ from __future__ import annotations
 import re
 import statistics
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 import structlog
 
+from app.config import settings
 from app.services.lrclib_client import SyncedLine
 from app.services.whisper_lyrics import WhisperWord
 
@@ -499,6 +500,19 @@ _MULTILINE_MAX_MAD_S = 0.22
 _MULTILINE_INLIER_K = 1.5
 _MULTILINE_MIN_INLIERS = 3
 
+# Linear re-anchor — first path, above the uniform multi-line median.
+# This catches tracks where the LRCLIB-indexed recording and the actual
+# audio cut diverge progressively rather than by one constant offset. The
+# model is deliberately small and robust: Theil-Sen slope + median
+# intercept, gated by sample count, track-span coverage, minimum slope,
+# residual MAD, and implausible endpoint shifts. Any failed gate falls back
+# to the existing uniform paths byte-for-byte.
+_LINEAR_MIN_ELIGIBLE_LINES = 6
+_LINEAR_MIN_SPAN_FRAC = 0.30
+_LINEAR_MIN_SLOPE = 0.01
+_LINEAR_MAX_RESID_MAD_S = 0.15
+_LINEAR_MIN_X_DELTA_S = 1e-6
+
 
 def align_with_line_anchors(
     anchor_lines: Sequence[SyncedLine],
@@ -531,10 +545,10 @@ def align_with_line_anchors(
     whisper_list = list(whisper_words)
     aligned_lines: list[AlignedLine] = []
     # Parallel-list invariant: `matched_counts[i]` is the count of real
-    # Whisper word matches that backed `aligned_lines[i]`. The multi-line
-    # median re-anchor uses this to exclude Strategy 3 (pure linear
-    # interpolation, matched_count = 0) lines from its shift estimate —
-    # see the constant block above for why.
+    # Whisper word matches that backed `aligned_lines[i]`. The linear and
+    # multi-line re-anchor paths use this to exclude Strategy 3 (pure
+    # interpolation, matched_count = 0) lines from shift estimates — see the
+    # constant block above for why.
     matched_counts: list[int] = []
     total_words = 0
     matched_words = 0
@@ -636,9 +650,15 @@ def _maybe_reanchor_to_lrc(
 ) -> list[AlignedLine]:
     """Decide whether to rewrite line bounds to `LRC_anchor[i] + shift`.
 
-    Two paths, evaluated in order:
+    Three paths, evaluated in order:
 
-      1. **Multi-line median (sub-second drift)**: when at least
+      0. **Linear drift fit (progressive cut drift)**: when enough
+         matched lines are spread across the track and their shifts fit a
+         low-residual line, apply `intercept + slope * LRC_anchor_time`.
+         Catches official-video cuts whose audio slowly diverges from the
+         LRCLIB-indexed recording.
+
+      1. **Multi-line median (sub-second uniform drift)**: when at least
          `_MULTILINE_MIN_ELIGIBLE_LINES` aligned lines have real Whisper
          matches AND their per-line shifts agree (low spread) AND the
          median shift is meaningfully non-zero, apply the median.
@@ -646,8 +666,8 @@ def _maybe_reanchor_to_lrc(
          that single-L0 can't safely detect because L0 noise on clean
          tracks (~100-300ms) sits in the same range.
 
-      2. **Single-L0 (large-cut drift)**: when path 1 doesn't qualify,
-         fall back to the original L0-shift logic. Catches the Instant
+      2. **Single-L0 (large-cut drift)**: when the earlier paths don't
+         qualify, fall back to the original L0-shift logic. Catches the Instant
          Crush class: large shift (>1s) where even noisy L0 detection
          is unambiguous, or short tracks where only 1-2 lines aligned
          cleanly.
@@ -662,7 +682,7 @@ def _maybe_reanchor_to_lrc(
         matched_counts: parallel to `aligned_lines`; counts real Whisper
             word matches per line. Used to filter Strategy 3 (pure
             interpolation, shift=0 by construction) lines out of the
-            multi-line median's eligible set.
+            linear and multi-line eligible sets.
     """
     if not aligned_lines or not anchor_lines:
         return aligned_lines
@@ -703,10 +723,50 @@ def _maybe_reanchor_to_lrc(
         else (whisper_words[-1].end_s if whisper_words else 0.0)
     )
 
-    # ── Path 1: multi-line median ──────────────────────────────────────
+    # ── Path 0: linear fit for progressively drifting cuts ─────────────
     eligible_indices = [
         i for i, mc in enumerate(matched_counts) if mc >= _MULTILINE_MATCHED_COUNT_THRESHOLD
     ]
+    linear_diag: dict[str, object] = {
+        "aligned_count": len(aligned_lines),
+        "eligible_count": len(eligible_indices),
+        "eligible_threshold": _MULTILINE_MATCHED_COUNT_THRESHOLD,
+        "matched_counts": list(matched_counts),
+        "enabled": settings.lyric_linear_reanchor_enabled,
+    }
+    if settings.lyric_linear_reanchor_enabled:
+        linear_result = _fit_linear_reanchor(
+            aligned_lines=aligned_lines,
+            anchor_lines=anchor_lines,
+            eligible_indices=eligible_indices,
+            track_dur=track_dur,
+        )
+        linear_diag.update(linear_result.diag)
+        if linear_result.applied:
+            log.info(
+                "lyrics_alignment_reanchor_linear_applied",
+                path="linear",
+                **linear_diag,
+            )
+            return _apply_shift(
+                aligned_lines=aligned_lines,
+                anchor_lines=anchor_lines,
+                shift_at=linear_result.shift_at,
+                track_end_s=track_end_s,
+            )
+        log.info(
+            "lyrics_alignment_reanchor_linear_skipped",
+            reason=linear_result.reason,
+            **linear_diag,
+        )
+    else:
+        log.info(
+            "lyrics_alignment_reanchor_linear_skipped",
+            reason="disabled_by_flag",
+            **linear_diag,
+        )
+
+    # ── Path 1: multi-line median ──────────────────────────────────────
     multiline_diag: dict[str, object] = {
         "aligned_count": len(aligned_lines),
         "eligible_count": len(eligible_indices),
@@ -861,6 +921,98 @@ def _maybe_reanchor_to_lrc(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _LinearReanchorResult:
+    applied: bool
+    reason: str
+    diag: dict[str, object]
+    shift_at: Callable[[float], float]
+
+
+def _fit_linear_reanchor(
+    *,
+    aligned_lines: list[AlignedLine],
+    anchor_lines: Sequence[SyncedLine],
+    eligible_indices: list[int],
+    track_dur: float,
+) -> _LinearReanchorResult:
+    """Fit a robust per-anchor shift curve and decide whether to apply it."""
+
+    def _constant_zero(_t: float) -> float:
+        return 0.0
+
+    diag: dict[str, object] = {
+        "min_eligible": _LINEAR_MIN_ELIGIBLE_LINES,
+        "min_span_frac": _LINEAR_MIN_SPAN_FRAC,
+        "min_slope": _LINEAR_MIN_SLOPE,
+        "max_resid_mad_s": _LINEAR_MAX_RESID_MAD_S,
+    }
+    if len(eligible_indices) < _LINEAR_MIN_ELIGIBLE_LINES:
+        return _LinearReanchorResult(False, "insufficient_eligible_lines", diag, _constant_zero)
+    if track_dur <= 0:
+        return _LinearReanchorResult(False, "missing_track_duration", diag, _constant_zero)
+
+    points = [
+        (anchor_lines[i].start_s, aligned_lines[i].start_s - anchor_lines[i].start_s)
+        for i in eligible_indices
+    ]
+    xs = [p[0] for p in points]
+    shifts = [p[1] for p in points]
+    x_min = min(xs)
+    x_max = max(xs)
+    x_span = x_max - x_min
+    x_span_frac = x_span / track_dur
+    diag.update(
+        {
+            "eligible_indices": list(eligible_indices),
+            "x_span_s": round(x_span, 3),
+            "x_span_frac": round(x_span_frac, 4),
+            "per_line_shifts": [round(s, 3) for s in shifts],
+        }
+    )
+    if x_span_frac < _LINEAR_MIN_SPAN_FRAC:
+        return _LinearReanchorResult(False, "span_too_small", diag, _constant_zero)
+
+    slopes: list[float] = []
+    for i, (x_i, shift_i) in enumerate(points):
+        for x_j, shift_j in points[i + 1 :]:
+            dx = x_j - x_i
+            if abs(dx) <= _LINEAR_MIN_X_DELTA_S:
+                continue
+            slopes.append((shift_j - shift_i) / dx)
+    if not slopes:
+        return _LinearReanchorResult(False, "no_valid_slope_pairs", diag, _constant_zero)
+
+    slope = statistics.median(slopes)
+    intercept = statistics.median(shift - slope * x for x, shift in points)
+    residuals = [shift - (intercept + slope * x) for x, shift in points]
+    residual_median = statistics.median(residuals)
+    resid_mad = _mad(residuals, residual_median)
+    pred_min = intercept + slope * x_min
+    pred_max = intercept + slope * x_max
+    diag.update(
+        {
+            "slope": round(slope, 6),
+            "intercept": round(intercept, 3),
+            "resid_mad_s": round(resid_mad, 3),
+            "pred_shift_min_s": round(pred_min, 3),
+            "pred_shift_max_s": round(pred_max, 3),
+        }
+    )
+
+    if abs(slope) <= _LINEAR_MIN_SLOPE:
+        return _LinearReanchorResult(False, "slope_too_small", diag, _constant_zero)
+    if resid_mad >= _LINEAR_MAX_RESID_MAD_S:
+        return _LinearReanchorResult(False, "residual_spread_too_wide", diag, _constant_zero)
+    if max(abs(pred_min), abs(pred_max)) > track_dur / 3.0:
+        return _LinearReanchorResult(False, "implausible_endpoint_shift", diag, _constant_zero)
+
+    def _shift_at(t: float) -> float:
+        return intercept + slope * t
+
+    return _LinearReanchorResult(True, "applied", diag, _shift_at)
+
+
 def _apply_uniform_shift(
     *,
     aligned_lines: list[AlignedLine],
@@ -870,22 +1022,43 @@ def _apply_uniform_shift(
 ) -> list[AlignedLine]:
     """Rewrite every line's `start_s` / `end_s` to `LRC_anchor[i] + shift_s`.
 
-    Used by both the multi-line median path and the single-L0 path —
-    identical math so behavior is symmetric. Per-word `AlignedWord`
-    timings are NOT modified (the karaoke contract).
+    Uniform wrapper around `_apply_shift`, used by the multi-line median and
+    single-L0 fallback paths.
+    """
 
-    Caller is responsible for ensuring `len(aligned_lines) ==
-    len(anchor_lines)` (this function assumes ordinal mapping).
+    return _apply_shift(
+        aligned_lines=aligned_lines,
+        anchor_lines=anchor_lines,
+        shift_at=lambda _t: shift_s,
+        track_end_s=track_end_s,
+    )
+
+
+def _apply_shift(
+    *,
+    aligned_lines: list[AlignedLine],
+    anchor_lines: Sequence[SyncedLine],
+    shift_at: Callable[[float], float],
+    track_end_s: float | None,
+) -> list[AlignedLine]:
+    """Rewrite line bounds to `LRC_anchor[i] + shift_at(anchor_time)`.
+
+    Per-word `AlignedWord` timings are NOT modified (the karaoke contract).
+    Caller is responsible for ensuring `len(aligned_lines) == len(anchor_lines)`.
     """
     from dataclasses import replace  # noqa: PLC0415
 
     rebuilt: list[AlignedLine] = []
     for i, line in enumerate(aligned_lines):
         anchor = anchor_lines[i]
-        new_start = anchor.start_s + shift_s
+        new_start = anchor.start_s + shift_at(anchor.start_s)
         if i + 1 < len(anchor_lines):
             next_anchor = anchor_lines[i + 1]
-            new_end = next_anchor.start_s + shift_s - _REANCHOR_NEXT_LINE_SAFETY_S
+            new_end = (
+                next_anchor.start_s
+                + shift_at(next_anchor.start_s)
+                - _REANCHOR_NEXT_LINE_SAFETY_S
+            )
         else:
             # Final line — no next anchor. Use whisper's last-word end (when
             # available) which is the most reliable signal we have for the
@@ -923,7 +1096,9 @@ def _apply_uniform_shift(
             if words_max_end > new_end:
                 if i + 1 < len(anchor_lines):
                     hard_cap_end = (
-                        anchor_lines[i + 1].start_s + shift_s - _REANCHOR_NEXT_LINE_SAFETY_S
+                        anchor_lines[i + 1].start_s
+                        + shift_at(anchor_lines[i + 1].start_s)
+                        - _REANCHOR_NEXT_LINE_SAFETY_S
                     )
                 elif track_end_s is not None:
                     hard_cap_end = track_end_s
