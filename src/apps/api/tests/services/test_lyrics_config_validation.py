@@ -131,6 +131,14 @@ class TestValidateLyricsConfigDict:
     def test_absent_style_allows_shared_non_timing_keys(self):
         validate_lyrics_config_dict({"enabled": True, "text_color": "#FFFFFF"})
 
+    def test_accepts_shared_sync_offset_without_style(self):
+        validate_lyrics_config_dict({"sync_offset_s": -1.25})
+
+    @pytest.mark.parametrize("bad_value", [-5.1, 5.1])
+    def test_rejects_out_of_range_sync_offset(self, bad_value):
+        with pytest.raises(ValueError, match="sync_offset_s"):
+            validate_lyrics_config_dict({"sync_offset_s": bad_value})
+
     def test_rejects_line_timing_key_for_karaoke(self):
         with pytest.raises(ValueError, match="post_dwell_s"):
             validate_lyrics_config_dict({"style": "karaoke", "post_dwell_s": 1.0})

@@ -221,6 +221,7 @@ export interface LyricsConfig {
   fade_in_ms?: number;
   fade_out_ms?: number;
   hold_to_next_threshold_ms?: number;
+  sync_offset_s?: number;
   font_family?: string;
   /**
    * Admin manual override: pin a specific LRCLIB row ID for extraction.
@@ -238,6 +239,7 @@ export interface LyricsConfigOverride {
   fade_in_ms?: number;
   fade_out_ms?: number;
   hold_to_next_threshold_ms?: number;
+  sync_offset_s?: number;
   font_family?: string;
 }
 

@@ -14,6 +14,7 @@ _FLOAT_KEYS = {
     "max_overlap_s",
     "fade_in_s",
     "fade_out_s",
+    "sync_offset_s",
 }
 _INT_KEYS = {
     "fade_in_ms",

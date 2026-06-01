@@ -27,7 +27,19 @@ interface LyricsTimingPanelProps {
   onSaved?: (savedConfig: Partial<LyricsConfig>) => void;
 }
 
-const DEFAULTS: Required<Omit<LyricsConfigOverride, "font_family">> = {
+type LineTimingDefaults = Required<
+  Pick<
+    LyricsConfigOverride,
+    | "pre_roll_s"
+    | "post_dwell_s"
+    | "next_line_gap_s"
+    | "fade_in_ms"
+    | "fade_out_ms"
+    | "hold_to_next_threshold_ms"
+  >
+>;
+
+const DEFAULTS: LineTimingDefaults = {
   pre_roll_s: 0.1,
   post_dwell_s: 1.0,
   next_line_gap_s: 0.1,

@@ -49,6 +49,7 @@ LYRICS_CONFIG_KEYS = {
     "fade_in_ms",
     "fade_out_ms",
     "hold_to_next_threshold_ms",
+    "sync_offset_s",
     "font_family",
 }
 
@@ -162,6 +163,7 @@ def validate_lyrics_config_dict(cfg: object) -> None:
     _validate_number(cfg, "fade_in_ms", min_value=0, max_value=2000, integer=True)
     _validate_number(cfg, "fade_out_ms", min_value=0, max_value=2000, integer=True)
     _validate_number(cfg, "hold_to_next_threshold_ms", min_value=0, max_value=5000, integer=True)
+    _validate_number(cfg, "sync_offset_s", min_value=-5.0, max_value=5.0)
 
 
 def _validate_number(

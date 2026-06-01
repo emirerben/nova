@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { adminGetAudioUrl, type SongSection } from "@/lib/music-api";
+import { adminGetAudioUrl, type LyricsCacheLine, type SongSection } from "@/lib/music-api";
 import { matchSectionByBounds } from "@/lib/music-section-match";
 import { countSlotsClient } from "@/lib/music-slot-count";
 
@@ -16,6 +16,15 @@ import { countSlotsClient } from "@/lib/music-slot-count";
 // disagree on which band is selected.
 
 type SelectionMode = "start" | "end" | null;
+type LyricSyncRow = {
+  index: number;
+  text: string;
+  rawStart: number;
+  rawEnd: number;
+  adjustedStart: number;
+  adjustedEnd: number;
+  active: boolean;
+};
 
 // Color tokens for the 3 ranked agent sections. Most-saturated = rank 1.
 // Stays in the page's violet/zinc/green/red palette.
@@ -24,6 +33,9 @@ const RANK_COLORS: Record<1 | 2 | 3, { fill: string; stroke: string; text: strin
   2: { fill: "rgba(139,92,246,0.45)", stroke: "#8b5cf6", text: "#ede9fe" },
   3: { fill: "rgba(139,92,246,0.22)", stroke: "#7c3aed", text: "#ddd6fe" },
 };
+
+const LYRICS_SYNC_MIN_S = -5;
+const LYRICS_SYNC_MAX_S = 5;
 
 function pickTickInterval(duration: number): number {
   if (duration <= 30) return 5;
@@ -40,6 +52,19 @@ function formatTime(seconds: number): string {
   return `${m}:${r.toFixed(1).padStart(4, "0")}`;
 }
 
+function clampLyricsOffset(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(LYRICS_SYNC_MIN_S, Math.min(LYRICS_SYNC_MAX_S, value));
+}
+
+function formatOffset(value: number): string {
+  return clampLyricsOffset(value).toFixed(1);
+}
+
+function formatLyricRange(start: number, end: number): string {
+  return `${Math.max(0, start).toFixed(1)}-${Math.max(0, end).toFixed(1)}s`;
+}
+
 export function AudioPlayer({
   trackId,
   beats,
@@ -48,6 +73,9 @@ export function AudioPlayer({
   end,
   sections,
   slotEveryN = 8,
+  lyricsLines = null,
+  lyricsSyncOffsetS = 0,
+  onLyricsSyncOffsetSave,
   onStartChange,
   onEndChange,
 }: {
@@ -57,12 +85,15 @@ export function AudioPlayer({
   start: number;
   end: number;
   sections: SongSection[] | null;
+  lyricsLines?: LyricsCacheLine[] | null;
+  lyricsSyncOffsetS?: number | null;
   /**
    * Current `slot_every_n_beats` from the form (NOT the saved cfg value),
    * so the per-band 0-slot warning updates live as the user edits N.
    * Defaults to 8 to keep existing call sites working.
    */
   slotEveryN?: number;
+  onLyricsSyncOffsetSave?: (offsetS: number) => Promise<void> | void;
   onStartChange: (s: number) => void;
   onEndChange: (s: number) => void;
 }) {
@@ -73,6 +104,11 @@ export function AudioPlayer({
   const [currentTime, setCurrent] = useState(0);
   const [selectMode, setSelectMode] = useState<SelectionMode>(null);
   const [hoverSection, setHoverSection] = useState<SongSection | null>(null);
+  const savedLyricsOffset = clampLyricsOffset(lyricsSyncOffsetS ?? 0);
+  const [lyricsOffsetText, setLyricsOffsetText] = useState(() => formatOffset(savedLyricsOffset));
+  const [lyricsOffsetSaving, setLyricsOffsetSaving] = useState(false);
+  const [lyricsOffsetStatus, setLyricsOffsetStatus] = useState<string | null>(null);
+  const [lyricsOffsetError, setLyricsOffsetError] = useState<string | null>(null);
   const rafRef = useRef<number>(0);
   // Track the active end-of-section timeupdate listener so rapid clicks
   // don't stack listeners that fire on stale `end_s` values and pause the
@@ -99,6 +135,12 @@ export function AudioPlayer({
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
   }, [audioUrl]);
+
+  useEffect(() => {
+    setLyricsOffsetText(formatOffset(savedLyricsOffset));
+    setLyricsOffsetStatus(null);
+    setLyricsOffsetError(null);
+  }, [savedLyricsOffset]);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
@@ -198,6 +240,8 @@ export function AudioPlayer({
   // the form into a state that 422s on Save.
   // Hooks MUST run before any early return — keep this above the
   // audioError / !audioUrl guards below.
+  const activeStart = start;
+  const activeEnd = end;
   const bandWouldZeroSlot = useMemo(() => {
     if (!sections) return new Map<SongSection, boolean>();
     const m = new Map<SongSection, boolean>();
@@ -206,6 +250,63 @@ export function AudioPlayer({
     }
     return m;
   }, [sections, beats, slotEveryN]);
+
+  const parsedLyricsOffset = Number.parseFloat(lyricsOffsetText);
+  const lyricsOffsetValid = Number.isFinite(parsedLyricsOffset);
+  const lyricsOffsetDraft = lyricsOffsetValid
+    ? clampLyricsOffset(Math.round(parsedLyricsOffset * 10) / 10)
+    : savedLyricsOffset;
+  const lyricsOffsetDirty = lyricsOffsetValid
+    && Math.abs(lyricsOffsetDraft - savedLyricsOffset) >= 0.0005;
+  const lyricRows = useMemo(() => {
+    return (lyricsLines ?? [])
+      .map<LyricSyncRow | null>((line, index) => {
+        const rawStart = Number(line.start_s);
+        const rawEnd = Number(line.end_s);
+        if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) return null;
+        const adjustedStart = Math.max(0, rawStart + lyricsOffsetDraft);
+        const adjustedEnd = Math.max(adjustedStart, rawEnd + lyricsOffsetDraft);
+        return {
+          index,
+          text: line.text || "(untitled lyric)",
+          rawStart,
+          rawEnd,
+          adjustedStart,
+          adjustedEnd,
+          active: currentTime >= adjustedStart && currentTime <= adjustedEnd,
+        };
+      })
+      .filter((row): row is LyricSyncRow => row !== null)
+      .filter((row) => row.adjustedEnd >= activeStart && row.adjustedStart <= activeEnd)
+      .sort((a, b) => a.adjustedStart - b.adjustedStart);
+  }, [lyricsLines, lyricsOffsetDraft, activeStart, activeEnd, currentTime]);
+
+  const visibleLyricRows = lyricRows.slice(0, 24);
+  const hiddenLyricRowCount = Math.max(0, lyricRows.length - visibleLyricRows.length);
+
+  const bumpLyricsOffset = useCallback((delta: number) => {
+    const base = lyricsOffsetValid ? lyricsOffsetDraft : savedLyricsOffset;
+    setLyricsOffsetText(formatOffset(base + delta));
+    setLyricsOffsetStatus(null);
+    setLyricsOffsetError(null);
+  }, [lyricsOffsetDraft, lyricsOffsetValid, savedLyricsOffset]);
+
+  const saveLyricsOffset = useCallback(async () => {
+    if (!onLyricsSyncOffsetSave || !lyricsOffsetValid) return;
+    const nextOffset = clampLyricsOffset(Math.round(parsedLyricsOffset * 10) / 10);
+    setLyricsOffsetSaving(true);
+    setLyricsOffsetStatus(null);
+    setLyricsOffsetError(null);
+    try {
+      await onLyricsSyncOffsetSave(nextOffset);
+      setLyricsOffsetText(formatOffset(nextOffset));
+      setLyricsOffsetStatus("Saved");
+    } catch (err) {
+      setLyricsOffsetError(err instanceof Error ? err.message : "Could not save lyrics sync offset");
+    } finally {
+      setLyricsOffsetSaving(false);
+    }
+  }, [lyricsOffsetValid, onLyricsSyncOffsetSave, parsedLyricsOffset]);
 
   if (audioError) {
     return <p className="text-sm text-red-400">Could not load audio: {audioError}</p>;
@@ -223,8 +324,6 @@ export function AudioPlayer({
   // sensible "active window" (no other section was reachable), but with
   // click-to-select the form IS the active window — beats must agree.
   const hasSections = !!sections && sections.length > 0;
-  const activeStart = start;
-  const activeEnd = end;
   // Single source of truth for "which band is selected" — used by both
   // the per-band ✓ + thicker stroke below AND the top metadata Row in
   // page.tsx (via the same helper). Computed once, identity-compared
@@ -473,6 +572,120 @@ export function AudioPlayer({
           opacity={0.8}
         />
       </svg>
+
+      <div
+        data-testid="lyrics-sync-panel"
+        className="mt-3 border-t border-zinc-800 pt-3"
+      >
+        <div className="flex flex-wrap items-end justify-between gap-3 mb-2">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+              Lyrics sync
+            </div>
+            <div className="text-xs text-zinc-500">
+              Negative offset renders lyrics earlier. Showing lines inside {activeStart.toFixed(1)}-{activeEnd.toFixed(1)}s.
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {[-1, -0.1, 0.1, 1].map((delta) => (
+              <button
+                key={delta}
+                type="button"
+                onClick={() => bumpLyricsOffset(delta)}
+                className="h-8 min-w-11 rounded bg-zinc-800 px-2 text-xs font-semibold text-zinc-200 hover:bg-zinc-700"
+              >
+                {delta > 0 ? "+" : ""}{delta}s
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                setLyricsOffsetText("0.0");
+                setLyricsOffsetStatus(null);
+                setLyricsOffsetError(null);
+              }}
+              className="h-8 rounded bg-zinc-800 px-2 text-xs font-semibold text-zinc-300 hover:bg-zinc-700"
+            >
+              Reset
+            </button>
+            <label className="flex items-center gap-2 text-xs text-zinc-400">
+              Offset
+              <input
+                aria-label="Lyrics sync offset"
+                type="number"
+                min={LYRICS_SYNC_MIN_S}
+                max={LYRICS_SYNC_MAX_S}
+                step={0.1}
+                value={lyricsOffsetText}
+                onChange={(e) => {
+                  setLyricsOffsetText(e.target.value);
+                  setLyricsOffsetStatus(null);
+                  setLyricsOffsetError(null);
+                }}
+                onBlur={() => {
+                  if (lyricsOffsetValid) setLyricsOffsetText(formatOffset(lyricsOffsetDraft));
+                }}
+                className="h-8 w-20 rounded border border-zinc-700 bg-zinc-950 px-2 text-right font-mono text-xs text-zinc-100"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={saveLyricsOffset}
+              disabled={!onLyricsSyncOffsetSave || !lyricsOffsetDirty || !lyricsOffsetValid || lyricsOffsetSaving}
+              className="h-8 rounded bg-violet-700 px-3 text-xs font-semibold text-white hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {lyricsOffsetSaving ? "Saving..." : "Save"}
+            </button>
+          </div>
+        </div>
+        <div className="min-h-[32px]">
+          {lyricsOffsetError && (
+            <div className="mb-2 text-xs text-red-400">{lyricsOffsetError}</div>
+          )}
+          {lyricsOffsetStatus && (
+            <div className="mb-2 text-xs text-emerald-400">{lyricsOffsetStatus}</div>
+          )}
+          {!lyricsOffsetValid && (
+            <div className="mb-2 text-xs text-amber-300">Enter a number between -5.0 and 5.0.</div>
+          )}
+          {lyricsLines && lyricsLines.length > 0 ? (
+            visibleLyricRows.length > 0 ? (
+              <div className="max-h-60 overflow-y-auto rounded border border-zinc-800 bg-zinc-950/40">
+                {visibleLyricRows.map((row) => (
+                  <div
+                    key={`${row.index}-${row.rawStart}`}
+                    data-testid="lyrics-sync-row"
+                    className={`grid grid-cols-[108px_1fr_96px] items-center gap-2 border-b border-zinc-900 px-2 py-1.5 text-xs last:border-b-0 ${
+                      row.active ? "bg-violet-500/10 text-zinc-50" : "text-zinc-300"
+                    }`}
+                  >
+                    <span className="font-mono tabular-nums text-violet-200">
+                      {formatLyricRange(row.adjustedStart, row.adjustedEnd)}
+                    </span>
+                    <span className="truncate">{row.text}</span>
+                    <span className="text-right font-mono tabular-nums text-zinc-600">
+                      raw {formatLyricRange(row.rawStart, row.rawEnd)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded border border-dashed border-zinc-800 px-3 py-2 text-xs text-zinc-500">
+                No cached lyric lines overlap this selected section at the current offset.
+              </div>
+            )
+          ) : (
+            <div className="rounded border border-dashed border-zinc-800 px-3 py-2 text-xs text-zinc-500">
+              No cached lyrics available for this track yet.
+            </div>
+          )}
+          {hiddenLyricRowCount > 0 && (
+            <div className="mt-1 text-xs text-zinc-500">
+              {hiddenLyricRowCount} more lyric line{hiddenLyricRowCount === 1 ? "" : "s"} in this section.
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Section hover detail card. Always render the slot so the layout
           doesn't jump as the user moves between bands.
