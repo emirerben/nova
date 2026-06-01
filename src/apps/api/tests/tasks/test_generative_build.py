@@ -642,6 +642,203 @@ def test_pretonemap_failure_leaves_hdr_clip_in_place(tmp_path, monkeypatch):
     assert clip_id_to_local["hlg"] == "/hlg.mp4"  # untouched, no exception raised
 
 
+def test_pretonemap_runs_clips_concurrently_and_mutates_after_join(tmp_path, monkeypatch):
+    """The per-clip tonemaps must OVERLAP on a bounded pool (serial 4-8min/clip blew
+    the task time budget — prod job d30c61fe), and every converted clip must be
+    repointed + reprobed after the join."""
+    import subprocess
+    import threading
+    import time
+
+    import app.pipeline.reframe as reframe
+    import app.tasks.template_orchestrate as tmpl
+
+    monkeypatch.setattr(reframe, "_zscale_available", lambda: True)
+    monkeypatch.setattr(tmpl, "_probe_clips", lambda paths: {p: _ClrProbe("bt709") for p in paths})
+
+    lock = threading.Lock()
+    state = {"active": 0, "max": 0}
+
+    def _fake_run(cmd, **kwargs):
+        with lock:
+            state["active"] += 1
+            state["max"] = max(state["max"], state["active"])
+        time.sleep(0.05)  # hold the slot so a serial impl can never reach max>=2
+        with lock:
+            state["active"] -= 1
+        with open(cmd[-1], "wb") as f:
+            f.write(b"\x00")
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    clip_id_to_local = {f"hdr{i}": f"/hdr{i}.mp4" for i in range(4)}
+    probe_map = {f"/hdr{i}.mp4": _ClrProbe("arib-std-b67") for i in range(4)}
+
+    n = gb._pretonemap_hdr_clips(clip_id_to_local, probe_map, str(tmp_path), job_id=None)
+
+    assert n == 4
+    assert state["max"] >= 2, "tonemaps must run concurrently, not strictly serially"
+    assert state["max"] <= gb._PRETONEMAP_MAX_WORKERS, "concurrency must stay bounded"
+    for i in range(4):
+        repointed = clip_id_to_local[f"hdr{i}"]
+        assert "sdr_" in repointed and repointed != f"/hdr{i}.mp4"
+        assert probe_map[repointed].color_trc == "bt709"
+
+
+def test_pretonemap_partial_failure_only_repoints_successes(tmp_path, monkeypatch):
+    """Concurrency changed the serial mutate-in-loop to collect-then-mutate-after-join.
+    A clip that fails tonemap must stay HDR (untouched) while its siblings repoint —
+    only the successful (clip_id, sdr_path, probe) tuples get applied."""
+    import subprocess
+
+    import app.pipeline.reframe as reframe
+    import app.tasks.template_orchestrate as tmpl
+
+    monkeypatch.setattr(reframe, "_zscale_available", lambda: True)
+    monkeypatch.setattr(tmpl, "_probe_clips", lambda paths: {p: _ClrProbe("bt709") for p in paths})
+
+    def _fake_run(cmd, **kwargs):
+        out = cmd[-1]
+        if "hdr1.mp4" in out:  # fail exactly the middle clip
+            raise subprocess.CalledProcessError(1, "ffmpeg", stderr=b"boom")
+        with open(out, "wb") as f:
+            f.write(b"\x00")
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    clip_id_to_local = {f"hdr{i}": f"/hdr{i}.mp4" for i in range(3)}
+    probe_map = {f"/hdr{i}.mp4": _ClrProbe("arib-std-b67") for i in range(3)}
+
+    n = gb._pretonemap_hdr_clips(clip_id_to_local, probe_map, str(tmp_path), job_id=None)
+
+    assert n == 2
+    assert clip_id_to_local["hdr1"] == "/hdr1.mp4"  # failed clip untouched, stays HDR
+    assert "sdr_" in clip_id_to_local["hdr0"] and "sdr_" in clip_id_to_local["hdr2"]
+
+
+def test_pretonemap_emits_progress_events_when_job_id_set(tmp_path, monkeypatch):
+    """With a job_id, the pre-tonemap re-establishes the trace contextvar inside the
+    worker thread (it isn't inherited from the orchestrator) and emits one
+    `pretonemap_progress` event per HDR clip — so a slow-but-alive job is
+    distinguishable from a hang in the admin debug view."""
+    _patch_pretonemap(monkeypatch)
+
+    import app.services.pipeline_trace as pt
+
+    events: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        pt,
+        "record_pipeline_event",
+        lambda stage, event, data=None: events.append((stage, event, data)),
+    )
+    # Stub the contextmanager so the test needs no DB / contextvar machinery.
+    import contextlib
+
+    monkeypatch.setattr(pt, "pipeline_trace_for", lambda job_id: contextlib.nullcontext())
+
+    clip_id_to_local = {"hlg": "/hlg.mp4", "hdr10": "/hdr10.mp4"}
+    probe_map = {"/hlg.mp4": _ClrProbe("arib-std-b67"), "/hdr10.mp4": _ClrProbe("smpte2084")}
+
+    gb._pretonemap_hdr_clips(clip_id_to_local, probe_map, str(tmp_path), job_id="job-x")
+
+    progress = [e for e in events if e[1] == "pretonemap_progress"]
+    assert len(progress) == 2  # one per HDR clip
+    assert progress[-1][2] == {"done": 2, "total": 2}
+
+
+def test_no_rerun_statuses_all_skip(monkeypatch):
+    """Every terminal status in _NO_RERUN_STATUSES must short-circuit a redelivered
+    job — guards against someone dropping a member and silently re-running finished work."""
+    monkeypatch.setattr(gb.settings, "text_renderer_skia_enabled", True, raising=False)
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("terminal must not re-enter")),
+        raising=False,
+    )
+    for status in gb._NO_RERUN_STATUSES:
+        job = _FakeJob()
+        job.status = status
+        _patch_job_session(monkeypatch, job)
+        gb._run_generative_job("55555555-5555-5555-5555-555555555555")
+        assert job.status == status  # untouched
+
+
+# ── Timeout / redelivery safety (never freeze on "analyzing your clips") ───────
+
+
+def test_softtimelimit_marks_processing_failed_not_frozen(monkeypatch):
+    """A soft time-limit during processing must fail the job VISIBLY (processing_failed
+    + actionable message), never leave it frozen at status=processing forever
+    (prod job d30c61fe)."""
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    def _boom(job_id):
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(gb, "_run_generative_job", _boom)
+    captured: dict = {}
+    monkeypatch.setattr(
+        gb,
+        "_fail_job",
+        lambda jid, detail, failure_reason=None: captured.update(
+            job_id=jid, detail=detail, reason=failure_reason
+        ),
+    )
+
+    gb.orchestrate_generative_job.run("22222222-2222-2222-2222-222222222222")
+
+    assert captured["reason"] == "processing_timeout"
+    assert "timed out" in captured["detail"].lower()
+
+
+def test_terminal_status_skips_rerun(monkeypatch):
+    """A redelivered job (Celery acks_late) already in a terminal state must no-op —
+    not repeat the expensive pre-tonemap or clobber a finished result."""
+    monkeypatch.setattr(gb.settings, "text_renderer_skia_enabled", True, raising=False)
+
+    def _should_not_run(*a, **k):
+        raise AssertionError("terminal job must not re-enter the pipeline")
+
+    monkeypatch.setattr(gb, "_ingest_clips", _should_not_run, raising=False)
+
+    job = _FakeJob()
+    job.status = "variants_ready"
+    _patch_job_session(monkeypatch, job)
+
+    gb._run_generative_job("33333333-3333-3333-3333-333333333333")
+
+    assert job.status == "variants_ready"  # untouched, never set back to "processing"
+
+
+def test_mid_render_status_still_reruns(monkeypatch):
+    """Inverse guard: a job killed mid-render is left at "rendering" (NOT terminal) so
+    the resume path still re-enters and reuses persisted variants."""
+    monkeypatch.setattr(gb.settings, "text_renderer_skia_enabled", True, raising=False)
+    entered = {"ingest": False}
+
+    def _stop_after_status(*a, **k):
+        entered["ingest"] = True
+        raise RuntimeError("stop here — we only assert the guard let us in")
+
+    monkeypatch.setattr(gb, "_ingest_clips", _stop_after_status, raising=False)
+
+    job = _FakeJob()
+    job.status = "rendering"
+    job.mode = "generative"
+    job.all_candidates = {"clip_paths": ["music-uploads/x/slot.mov"]}
+    _patch_job_session(monkeypatch, job)
+
+    try:
+        gb._run_generative_job("44444444-4444-4444-4444-444444444444")
+    except RuntimeError:
+        pass
+
+    assert entered["ingest"], "rendering (non-terminal) job must re-enter the pipeline"
+
+
 # ── Resumable variants (survive deploy/OOM kills) ──────────────────────────────
 
 
