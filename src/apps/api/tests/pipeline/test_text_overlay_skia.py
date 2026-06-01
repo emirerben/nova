@@ -681,11 +681,12 @@ def test_center_anchor_stays_vertically_centered():
     )
 
 
-def test_pop_in_suffix_has_no_bounce_full_size_from_start():
-    """The revealed word appears at full size immediately — no 30→115→100
-    scale bounce. The word-by-word reveal comes from per-stage timing, not a
-    springy pop. Asserts the suffix bbox is identical early (t=0.02) and
-    settled (t=0.9)."""
+def test_pop_in_suffix_scales_new_word_only():
+    """The revealed word uses the same 30→115→100 pop as the ASS renderer.
+
+    The prefix stays static, so the left edge remains stable while the suffix
+    grows into place.
+    """
     import io
 
     ov = {
@@ -703,8 +704,41 @@ def test_pop_in_suffix_has_no_bounce_full_size_from_start():
         img = tos._draw_frame(ov, t, 1.0)
         return Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA").getbbox()
 
-    early, settled = bbox(0.02), bbox(0.9)
-    assert early == settled, f"word scaled (bounce) between t=0.02 {early} and t=0.9 {settled}"
+    early, peak, settled = bbox(0.0), bbox(0.16), bbox(0.9)
+    assert early is not None and peak is not None and settled is not None
+    assert abs(early[0] - settled[0]) <= 3, (
+        f"prefix moved during suffix pop: early {early}, settled {settled}"
+    )
+    assert early[2] < settled[2] - 30, (
+        f"suffix should start smaller than settled: early {early}, settled {settled}"
+    )
+    assert peak[2] >= settled[2], (
+        f"suffix should overshoot before settling: peak {peak}, settled {settled}"
+    )
+
+
+def test_plain_pop_in_scales_from_small_to_settled():
+    import io
+
+    ov = {
+        "text": "OOPS",
+        "effect": "pop-in",
+        "text_size_px": 120,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.44,
+        "text_color": "#FFFFFF",
+        "text_anchor": "center",
+    }
+
+    def bbox(t):
+        img = tos._draw_frame(ov, t, 1.0)
+        return Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA").getbbox()
+
+    early, settled = bbox(0.0), bbox(0.9)
+    assert early is not None and settled is not None
+    assert early[2] - early[0] < (settled[2] - settled[0]) * 0.5
+
+
 def test_left_anchor_karaoke_line_not_clipped():
     """karaoke-line was the last Skia draw path that still centered every line
     on position_x_frac unconditionally (text_overlay_skia._draw_karaoke_line),

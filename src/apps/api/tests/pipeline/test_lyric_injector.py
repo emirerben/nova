@@ -151,6 +151,49 @@ def test_per_word_pop_overlays_are_butted_with_no_gap_or_overlap() -> None:
     assert overlays[2]["end_s"] == pytest.approx(1.8, abs=1e-3)
 
 
+def test_per_word_pop_terminal_dwell_clears_before_next_line_first_word() -> None:
+    """A line's added dwell must not hide the next line's first-word pop.
+
+    Repro: in lyrics-preview job 9ee75e6e, "body" held into the first 200ms
+    of "But", so the actual pop happened underneath the previous line. By the
+    time "body" cleared, "But" was already full-size and looked like it had
+    appeared abruptly. "soul" -> "Let's" looked correct because there was
+    enough blank time between lines.
+    """
+    recipe = _make_recipe([6.0])
+    cache = _make_lyrics_cache(
+        [
+            (
+                "You may have the body",
+                0.0,
+                2.0,
+                [
+                    ("You", 0.0, 0.4),
+                    ("may", 0.4, 0.8),
+                    ("have", 0.8, 1.2),
+                    ("the", 1.2, 1.6),
+                    ("body", 1.6, 2.0),
+                ],
+            ),
+            ("But", 2.1, 2.4, [("But", 2.1, 2.4)]),
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        6.0,
+        {"enabled": True, "style": "per-word-pop"},
+    )
+
+    overlays = out["slots"][0]["text_overlays"]
+    body = next(o for o in overlays if o["text"] == "You may have the body")
+    but = next(o for o in overlays if o["text"] == "But")
+
+    assert body["end_s"] < but["start_s"]
+    assert body["end_s"] == pytest.approx(2.067, abs=1e-3)
+
+
 def test_per_word_pop_drops_sub_renderable_middle_stage() -> None:
     """A middle word whose natural span < _MIN_RENDERABLE_S is dropped.
 
