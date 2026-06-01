@@ -22,6 +22,7 @@ INPUT
                     "font_style": "display" | "sans" | "serif",
                     "text_size": "medium" | "large" | ...,
                     "outline_px": 2,
+                    "sync_offset_s": -1.0,        # shift cached lyric timing
                     "lines_per_screen": 1,           # karaoke only (v1: always 1)
                   }
 
@@ -38,6 +39,7 @@ should treat this as "lyrics opt-in but unavailable for this track".
 from __future__ import annotations
 
 import copy
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -275,6 +277,10 @@ def inject_lyric_overlays(
         log.warning("lyric_inject_unknown_style", style=style)
         return recipe_dict
 
+    sync_offset_s = _lyrics_sync_offset_s(cfg)
+    if sync_offset_s:
+        lyrics_cached = _shift_lyrics_cached(lyrics_cached, sync_offset_s)
+
     lines = lyrics_cached.get("lines") or []
     if not lines:
         log.info("lyric_inject_skipped_empty", reason="lyrics_cached.lines empty")
@@ -317,6 +323,7 @@ def inject_lyric_overlays(
     log.info(
         "lyric_inject_done",
         style=style,
+        sync_offset_s=sync_offset_s,
         section_lines=len(section_lines),
         overlays_injected=injected,
     )
@@ -324,6 +331,56 @@ def inject_lyric_overlays(
 
 
 # ── Internals ─────────────────────────────────────────────────────────────────
+
+
+def _lyrics_sync_offset_s(cfg: dict) -> float:
+    """Return a bounded whole-track lyrics timing correction.
+
+    Positive values make lyrics render later; negative values make them render
+    earlier. Validation normally bounds this at the route/schema layer, but the
+    injector is deliberately fail-soft because it runs inside render jobs.
+    """
+    raw = cfg.get("sync_offset_s")
+    if raw is None:
+        return 0.0
+    try:
+        offset_s = float(raw)
+    except (TypeError, ValueError):
+        log.warning("lyric_sync_offset_ignored_invalid", value=raw)
+        return 0.0
+    if not math.isfinite(offset_s):
+        log.warning("lyric_sync_offset_ignored_non_finite", value=raw)
+        return 0.0
+    return max(-5.0, min(5.0, offset_s))
+
+
+def _shift_lyrics_cached(lyrics_cached: dict, offset_s: float) -> dict:
+    """Return a shifted lyrics cache without mutating the persisted cache."""
+    shifted = copy.deepcopy(lyrics_cached)
+    lines = shifted.get("lines")
+    if not isinstance(lines, list):
+        return shifted
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        _shift_timing_pair(line, offset_s)
+        words = line.get("words")
+        if isinstance(words, list):
+            for word in words:
+                if isinstance(word, dict):
+                    _shift_timing_pair(word, offset_s)
+    return shifted
+
+
+def _shift_timing_pair(item: dict, offset_s: float) -> None:
+    for key in ("start_s", "end_s"):
+        if key not in item:
+            continue
+        try:
+            shifted = float(item[key]) + offset_s
+        except (TypeError, ValueError):
+            continue
+        item[key] = round(max(0.0, shifted), 6)
 
 
 def _apply_style_set_defaults(cfg: dict, set_id: str) -> dict:

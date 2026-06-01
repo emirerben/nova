@@ -14,7 +14,7 @@
  * focuses on the visual surface (the marker rendering).
  */
 import "@testing-library/jest-dom";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { AudioPlayer } from "@/app/admin/music/[id]/components/AudioPlayer";
 import type { SongSection } from "@/lib/music-api";
@@ -147,5 +147,53 @@ describe("AudioPlayer — per-band 0-slot warning", () => {
     await screen.findByTestId("section-band-1");
     // At N=1, the tight section is recipe-compatible → no warning summary.
     expect(screen.queryByTestId("band-warn-summary")).toBeNull();
+  });
+
+  test("lyrics sync panel shows adjusted and raw line timing", async () => {
+    renderPlayer({
+      start: 20,
+      end: 22,
+      lyricsSyncOffsetS: -1,
+      lyricsLines: [
+        {
+          text: "Line is late",
+          start_s: 21.3,
+          end_s: 21.9,
+          words: [],
+        },
+      ],
+    });
+
+    const row = await screen.findByTestId("lyrics-sync-row");
+    expect(row).toHaveTextContent("20.3-20.9s");
+    expect(row).toHaveTextContent("Line is late");
+    expect(row).toHaveTextContent("raw 21.3-21.9s");
+  });
+
+  test("lyrics sync controls save a negative offset", async () => {
+    const save = jest.fn().mockResolvedValue(undefined);
+    renderPlayer({
+      start: 20,
+      end: 22,
+      lyricsSyncOffsetS: 0,
+      onLyricsSyncOffsetSave: save,
+      lyricsLines: [
+        {
+          text: "Line is late",
+          start_s: 21.3,
+          end_s: 21.9,
+          words: [],
+        },
+      ],
+    });
+
+    await screen.findByTestId("lyrics-sync-row");
+    fireEvent.click(screen.getByRole("button", { name: "-1s" }));
+    expect(screen.getByTestId("lyrics-sync-row")).toHaveTextContent("20.3-20.9s");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(save).toHaveBeenCalledWith(-1));
+    expect(await screen.findByText("Saved")).toBeInTheDocument();
   });
 });

@@ -83,6 +83,37 @@ def test_karaoke_injects_one_overlay_per_line_in_correct_slot() -> None:
     assert ov1["start_s"] == pytest.approx(1.0, abs=1e-3)
 
 
+def test_sync_offset_shifts_karaoke_timing_without_mutating_cache() -> None:
+    recipe = _make_recipe([5.0, 5.0])
+    cache = _make_lyrics_cache(
+        [
+            (
+                "Late line",
+                2.0,
+                3.0,
+                [("Late", 2.0, 2.4), ("line", 2.4, 3.0)],
+            )
+        ]
+    )
+    before = copy.deepcopy(cache)
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        10.0,
+        {"enabled": True, "style": "karaoke", "sync_offset_s": -1.0},
+    )
+
+    ov = out["slots"][0]["text_overlays"][0]
+    assert ov["start_s"] == pytest.approx(1.0, abs=1e-3)
+    assert ov["end_s"] == pytest.approx(2.0, abs=1e-3)
+    assert ov["section_anchor_s"] == pytest.approx(1.0, abs=1e-3)
+    assert ov["section_end_anchor_s"] == pytest.approx(2.0, abs=1e-3)
+    assert ov["word_timings"][0]["start_s"] == pytest.approx(0.0, abs=1e-3)
+    assert ov["word_timings"][1]["start_s"] == pytest.approx(0.4, abs=1e-3)
+    assert cache == before
+
+
 def test_per_word_pop_accumulates_cumulative_line_text() -> None:
     """Each stage carries cumulative-line text; only the suffix is animated.
 

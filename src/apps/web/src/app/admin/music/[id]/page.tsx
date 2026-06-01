@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   adminGetMusicTrack,
-  adminGetAudioUrl,
+  adminPatchLyricsConfig,
   adminUpdateMusicTrack,
   adminReanalyzeMusicTrack,
   adminArchiveMusicTrack,
@@ -454,6 +454,24 @@ function ConfigTabContent({
     return null;
   }, [previewSlots, track.beat_timestamps_s, submitStart, submitEnd, submitN]);
 
+  const handleLyricsSyncOffsetSave = useCallback(
+    async (offsetS: number) => {
+      const res = await adminPatchLyricsConfig(id, { sync_offset_s: offsetS });
+      setTrack({
+        ...track,
+        track_config: {
+          ...cfg,
+          ...(track.track_config ?? {}),
+          lyrics_config: {
+            ...(track.track_config?.lyrics_config ?? {}),
+            ...(res.lyrics_config ?? {}),
+          } as LyricsConfig,
+        },
+      });
+    },
+    [cfg, id, setTrack, track],
+  );
+
   return (
     <>
       {/* Info card */}
@@ -557,6 +575,9 @@ function ConfigTabContent({
             end={bestEnd === "" ? (cfg.best_end_s ?? 0) : parseFloat(bestEnd)}
             sections={track.best_sections}
             slotEveryN={Number.isFinite(liveN) ? liveN : 8}
+            lyricsLines={track.lyrics_cached?.lines ?? null}
+            lyricsSyncOffsetS={track.track_config?.lyrics_config?.sync_offset_s ?? 0}
+            onLyricsSyncOffsetSave={handleLyricsSyncOffsetSave}
             onStartChange={(s) => setBestStart(s.toString())}
             onEndChange={(s) => setBestEnd(s.toString())}
           />
