@@ -19,12 +19,14 @@ from app.agents._runtime import RunContext
 from app.agents._schemas.content_plan import (
     CONTENT_PLAN_PROMPT_VERSION,
     ContentPlanInput,
+    ContentPlanOutput,
 )
 from app.agents._schemas.persona import Persona
 from app.agents.content_plan_generator import ContentPlanGeneratorAgent
 from app.database import sync_session
 from app.models import ContentPlan, PlanItem, User
 from app.models import Persona as PersonaRow
+from app.services.content_plan_dedup import choose_replacements, flag_replacement_indices
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -56,6 +58,7 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
     try:
         agent = ContentPlanGeneratorAgent(default_client())
         output = agent.run(agent_input, ctx=RunContext(job_id=None))
+        output = _dedup_and_replace(agent, agent_input, output, plan_id)
     except Exception as exc:  # noqa: BLE001
         log.warning("content_plan_build.failed", plan_id=plan_id, error=str(exc))
         with sync_session() as session:
@@ -102,6 +105,56 @@ def _fail(session, plan: ContentPlan, detail: str) -> None:  # noqa: ANN001
     session.commit()
 
 
+def _dedup_and_replace(
+    agent: ContentPlanGeneratorAgent,
+    agent_input: ContentPlanInput,
+    output: ContentPlanOutput,
+    plan_id: str,
+) -> ContentPlanOutput:
+    """Replace near-duplicate ideas via one constrained regeneration call.
+
+    The whole-plan LLM pass self-imposes variety poorly (~1 in 5 plans repeats a
+    concept). We detect near-dupes deterministically (services/content_plan_dedup),
+    then re-invoke the SAME generator once with the kept ideas as an explicit
+    "avoid these" list and swap the fresh, distinct ideas into the duplicate day
+    slots — keeping each slot's day_index so the plan stays full-length.
+
+    Best-effort by design: no dupes → no extra LLM call; a failed/short regen
+    leaves the original plan untouched. Dedup must never degrade or fail a plan.
+    """
+    items = list(output.items)
+    flagged = flag_replacement_indices(items)
+    if not flagged:
+        return output
+
+    flagged_set = set(flagged)
+    kept_ideas = [it.idea for i, it in enumerate(items) if i not in flagged_set]
+    try:
+        regen = agent.run(
+            agent_input.model_copy(update={"exclude_ideas": kept_ideas}),
+            ctx=RunContext(job_id=None),
+        )
+    except Exception as exc:  # noqa: BLE001 — dedup is best-effort, never fail the plan
+        log.warning(
+            "content_plan_dedup.regen_failed", plan_id=plan_id, flagged=len(flagged), error=str(exc)
+        )
+        return output
+
+    replacements = choose_replacements(len(flagged), list(regen.items), kept_ideas)
+    new_items = list(items)
+    for slot_idx, repl in zip(flagged, replacements):  # zip stops short → unfilled slots kept
+        new_items[slot_idx] = repl.model_copy(update={"day_index": items[slot_idx].day_index})
+    new_items.sort(key=lambda it: it.day_index)
+    log.info(
+        "content_plan_dedup.replaced",
+        plan_id=plan_id,
+        flagged=len(flagged),
+        replaced=len(replacements),
+        candidates=len(regen.items),
+    )
+    return ContentPlanOutput(items=new_items)
+
+
 @celery_app.task(
     name="app.tasks.content_plan_build.regenerate_content_plan",
     bind=True,
@@ -142,6 +195,7 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
     try:
         agent = ContentPlanGeneratorAgent(default_client())
         output = agent.run(agent_input, ctx=RunContext(job_id=None))
+        output = _dedup_and_replace(agent, agent_input, output, plan_id)
     except Exception as exc:  # noqa: BLE001
         log.warning("content_plan_regen.failed", plan_id=plan_id, error=str(exc))
         with sync_session() as session:

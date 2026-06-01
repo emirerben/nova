@@ -70,3 +70,20 @@ def test_parse_refuses_when_nothing_valid() -> None:
 def test_parse_rejects_missing_items_array() -> None:
     with pytest.raises(SchemaError):
         _agent().parse(json.dumps({"nope": []}), _input())
+
+
+def test_render_prompt_omits_variety_block_on_first_pass() -> None:
+    # No exclude_ideas → no constraint block at all (keeps the first-pass prompt
+    # the proven baseline; an inert block measurably dilutes sibling agents).
+    txt = _agent().render_prompt(_input())
+    assert "VARIETY CONSTRAINT" not in txt
+    assert "EXISTING_IDEAS" not in txt
+    assert "$variety_constraint" not in txt  # placeholder fully substituted
+
+
+def test_render_prompt_injects_excluded_ideas_on_regen() -> None:
+    inp = _input().model_copy(update={"exclude_ideas": ["5am gym workout", "weekend brunch spots"]})
+    txt = _agent().render_prompt(inp)
+    assert "VARIETY CONSTRAINT" in txt
+    assert "5am gym workout" in txt
+    assert "weekend brunch spots" in txt

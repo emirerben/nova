@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.73.0] - 2026-06-01
+
+### Added
+- **Code-enforced near-duplicate dedup for generated content plans.** The plan generator is asked in its prompt to "never repeat the same idea twice", but a single whole-plan LLM pass self-imposes variety poorly — ~1 in 5 plans ships two days that are the same idea reworded ("5am gym workout motivation routine" vs "early morning gym workout motivation routine"). The `audit-plan-quality` skill found intra-plan repetition was the planner's top residual weakness. Prompt wording alone hadn't fixed it (it's already asked), so this enforces variety in code instead of hoping the model complies.
+  - **Detection (`app/services/content_plan_dedup.py`, pure/deterministic).** After the generator returns, near-duplicate ideas are flagged by a lexical similarity score — `max(Jaccard, containment)` over stopword-filtered content tokens of the `idea` field (containment carries the dominant "reworded repeat" case that Jaccard alone underweights). Conservative threshold (0.72) with a safety cap (≤40% of a plan can be flagged) keeps false positives low. Compares `idea` only, never `theme` (a pillar label that legitimately repeats as pillars rotate). This is a lexical signal — it catches reworded repeats, not disjoint-vocabulary paraphrase (which needs embeddings, out of scope).
+  - **Replacement via one constrained regeneration call (`_dedup_and_replace` in `app/tasks/content_plan_build.py`).** When dupes are found, the generator is re-invoked ONCE with the kept ideas as an explicit "avoid these" list (new `$variety_constraint` prompt block + `ContentPlanInput.exclude_ideas`), and the fresh distinct ideas are swapped into the duplicate day slots — the slot's `day_index` is preserved so the plan stays full-length. Applied to both `generate_content_plan` and `regenerate_content_plan`.
+  - **Best-effort by design:** no dupes → no extra LLM call; a failed or too-short regeneration leaves the original plan untouched. Dedup never fails or shrinks a plan. `CONTENT_PLAN_PROMPT_VERSION` bumped to `2026-06-01`.
+
 ## [0.4.72.1] - 2026-05-31
 
 ### Fixed
