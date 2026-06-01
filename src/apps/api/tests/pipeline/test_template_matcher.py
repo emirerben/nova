@@ -49,6 +49,20 @@ def _moment(start_s: float, end_s: float, energy: float = 7.0) -> dict:
     return {"start_s": start_s, "end_s": end_s, "energy": energy, "description": "test"}
 
 
+def _quality(classification: str, luma_mean: float) -> dict:
+    return {
+        "classification": classification,
+        "sample_count": 2,
+        "luma_mean": luma_mean,
+        "luma_min": luma_mean,
+        "luma_max": luma_mean,
+        "luma_stddev": 0.0,
+        "dark_frame_ratio": 1.0 if classification in {"low_light", "very_dark"} else 0.0,
+        "very_dark_frame_ratio": 1.0 if classification == "very_dark" else 0.0,
+        "unavailable_reason": "",
+    }
+
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 class TestTemplateMatcher:
@@ -226,6 +240,76 @@ class TestTemplateMatcher:
         # slot 1 (energy=2.0) should get the low-energy moment (2.5)
         slot1_step = next(s for s in plan.steps if s.slot["position"] == 1)
         assert slot1_step.moment["energy"] == pytest.approx(2.5)
+
+    def test_visual_quality_prefers_bright_clip_over_dark_energy_match(self):
+        """REGRESSION: music matching must not force an underexposed clip just
+        because its energy fits the beat better."""
+        recipe = _make_recipe([
+            {
+                "position": 1,
+                "target_duration_s": 5.0,
+                "priority": 5,
+                "slot_type": "broll",
+                "energy": 9.0,
+            }
+        ])
+        dark = _moment(0.0, 5.0, energy=9.0)
+        dark["visual_quality"] = _quality("very_dark", 28.0)
+        bright = _moment(0.0, 5.0, energy=3.0)
+        bright["visual_quality"] = _quality("usable", 120.0)
+        clip_dark = _make_clip("clip_dark", [dark])
+        clip_bright = _make_clip("clip_bright", [bright])
+
+        plan = match(recipe, [clip_dark, clip_bright])
+
+        assert plan.steps[0].clip_id == "clip_bright"
+
+    def test_visual_quality_can_override_usage_cap(self):
+        """REGRESSION: with one bright and one dark clip for two slots, the
+        matcher should reuse the bright clip instead of forcing the dark one."""
+        recipe = _make_recipe([
+            {"position": 1, "target_duration_s": 5.0, "priority": 5, "energy": 9.0},
+            {"position": 2, "target_duration_s": 5.0, "priority": 5, "energy": 9.0},
+        ])
+        dark = _moment(0.0, 5.0, energy=9.0)
+        dark["visual_quality"] = _quality("very_dark", 28.0)
+        bright = _moment(0.0, 5.0, energy=3.0)
+        bright["visual_quality"] = _quality("usable", 120.0)
+
+        plan = match(recipe, [_make_clip("clip_dark", [dark]), _make_clip("clip_bright", [bright])])
+
+        assert [step.clip_id for step in plan.steps] == ["clip_bright", "clip_bright"]
+
+    def test_visual_quality_does_not_force_brightness_for_neon_recipe(self):
+        """Night/neon recipes can still choose low-light clips intentionally."""
+        recipe = _make_recipe([
+            {
+                "position": 1,
+                "target_duration_s": 5.0,
+                "priority": 5,
+                "slot_type": "broll",
+                "energy": 9.0,
+            }
+        ])
+        recipe.creative_direction = "neon club nightlife music video"
+        dark = _moment(0.0, 5.0, energy=9.0)
+        dark["visual_quality"] = _quality("very_dark", 28.0)
+        bright = _moment(0.0, 5.0, energy=3.0)
+        bright["visual_quality"] = _quality("usable", 120.0)
+
+        plan = match(recipe, [_make_clip("clip_dark", [dark]), _make_clip("clip_bright", [bright])])
+
+        assert plan.steps[0].clip_id == "clip_dark"
+
+    def test_all_dark_candidates_still_match(self):
+        """A dark-only upload should render best available footage instead of failing."""
+        recipe = _make_recipe([_slot(1, 5.0)])
+        dark = _moment(0.0, 5.0, energy=7.0)
+        dark["visual_quality"] = _quality("very_dark", 25.0)
+
+        plan = match(recipe, [_make_clip("clip_dark", [dark])])
+
+        assert plan.steps[0].clip_id == "clip_dark"
 
 
 # ── Pinned-clip reuse regression (1-clip → multi-slot templates) ─────────────

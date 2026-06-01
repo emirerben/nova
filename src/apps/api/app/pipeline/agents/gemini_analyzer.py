@@ -55,6 +55,7 @@ class ClipMeta:
     # Composition signal for agent-decided overlay sizing (overlay_sizing.py).
     text_safe_zone: dict | None = None  # {"x","y","w","h"} normalized to the 9:16 frame
     visual_density: float = 5.0  # 0 (empty) .. 10 (cluttered)
+    visual_quality: dict | None = None
 
 
 @dataclass

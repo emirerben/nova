@@ -202,6 +202,7 @@ class TestOrchestratePipelineHelpers:
         """An upload that returned None should still produce a ClipMeta via
         the Whisper fallback path inside _analyze_clips_parallel."""
         from app.pipeline.agents.gemini_analyzer import ClipMeta
+        from app.services.clip_visual_quality import LumaSample
         from app.tasks.template_orchestrate import _analyze_clips_parallel
 
         good_ref = MagicMock(name="files/good")
@@ -225,6 +226,16 @@ class TestOrchestratePipelineHelpers:
                 "app.pipeline.transcribe.transcribe_whisper",
                 return_value=fake_transcript,
             ),
+            patch(
+                "app.tasks.template_orchestrate.sample_luma_timeline",
+                return_value=[
+                    LumaSample(t_s=0.0, luma_mean=20.0),
+                    LumaSample(t_s=1.0, luma_mean=25.0),
+                    LumaSample(t_s=7.0, luma_mean=130.0),
+                    LumaSample(t_s=8.0, luma_mean=135.0),
+                    LumaSample(t_s=9.0, luma_mean=140.0),
+                ],
+            ),
         ):
             metas, failed = _analyze_clips_parallel(
                 [good_ref, None],
@@ -240,6 +251,57 @@ class TestOrchestratePipelineHelpers:
         fallback = next(m for m in metas if m.analysis_degraded)
         assert fallback.clip_id == "clip_1"
         assert fallback.clip_path == "/tmp/bad.mp4"
+        assert fallback.visual_quality["classification"] == "usable"
+        assert any(m["start_s"] > 0 for m in fallback.best_moments)
+
+    def test_fallback_moments_use_brightest_window_when_luma_samples_exist(self):
+        """REGRESSION: fallback moments should not blindly start at a dark 0.0s intro."""
+        from app.services.clip_visual_quality import LumaSample
+        from app.tasks.template_orchestrate import _fallback_moments
+
+        moments = _fallback_moments(
+            12.0,
+            visual_samples=[
+                LumaSample(t_s=0.0, luma_mean=20.0),
+                LumaSample(t_s=1.0, luma_mean=25.0),
+                LumaSample(t_s=7.0, luma_mean=130.0),
+                LumaSample(t_s=8.0, luma_mean=135.0),
+            ],
+        )
+
+        assert moments[0]["start_s"] > 0.0
+        assert moments[0]["visual_quality"]["classification"] == "usable"
+
+    def test_analyze_clips_parallel_annotates_gemini_moments_with_visual_quality(self):
+        from app.services.clip_visual_quality import LumaSample
+        from app.tasks.template_orchestrate import _analyze_clips_parallel
+
+        good_ref = MagicMock(name="files/good")
+        good_ref.name = "files/good"
+        good_meta = ClipMeta(
+            clip_id="files/good",
+            transcript="ok",
+            hook_text="ok",
+            hook_score=7.0,
+            best_moments=[{"start_s": 0, "end_s": 5, "energy": 5, "description": "ok"}],
+            analysis_degraded=False,
+        )
+
+        with (
+            patch("app.tasks.template_orchestrate.analyze_clip", return_value=good_meta),
+            patch(
+                "app.tasks.template_orchestrate.sample_luma_timeline",
+                return_value=[
+                    LumaSample(t_s=0.0, luma_mean=85.0),
+                    LumaSample(t_s=1.0, luma_mean=90.0),
+                ],
+            ),
+        ):
+            metas, failed = _analyze_clips_parallel([good_ref], ["/tmp/good.mp4"])
+
+        assert failed == 0
+        assert metas[0].visual_quality["classification"] == "usable"
+        assert metas[0].best_moments[0]["visual_quality"]["classification"] == "usable"
 
     def test_probe_and_upload_concurrent_returns_both(self):
         """Slice-5 contract: helper runs probe + upload concurrently and

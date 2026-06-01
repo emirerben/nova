@@ -77,6 +77,16 @@ from app.pipeline.template_matcher import (
     match,
 )
 from app.pipeline.text_reveal import butt_join_cumulative_phrases
+from app.services.clip_visual_quality import (
+    LumaSample,
+    VisualQualityError,
+    annotate_moments,
+    best_quality_window,
+    sample_luma_timeline,
+    summarize_samples,
+    summarize_window,
+    unavailable_quality,
+)
 from app.services.job_phases import (
     PHASE_ANALYZE_CLIPS,
     PHASE_ASSEMBLE,
@@ -2036,6 +2046,7 @@ def _analyze_clips_with_cache(
         cached = get_cached_meta(h, filter_hint) if h else None
         if cached is not None:
             cached.clip_path = local_paths[i]
+            _ensure_clip_visual_quality(cached, local_paths[i])
             clip_metas_ordered[i] = cached
             cache_hits += 1
         else:
@@ -2102,6 +2113,65 @@ def _analyze_clips_with_cache(
     return compact, clip_metas_ordered, file_refs_ordered, probe_map, failed_count
 
 
+def _ensure_clip_visual_quality(meta: ClipMeta, path: str) -> list[LumaSample] | None:
+    """Attach deterministic luma metrics to a ClipMeta and its moments.
+
+    Visual-quality sampling is best-effort. A broken FFmpeg probe must not kill
+    a render job; the matcher treats `"unavailable"` as neutral.
+    """
+    if meta.visual_quality and all(
+        not isinstance(moment, dict) or moment.get("visual_quality")
+        for moment in (meta.best_moments or [])
+    ):
+        return None
+
+    try:
+        samples = sample_luma_timeline(path)
+    except VisualQualityError as exc:
+        quality = unavailable_quality(str(exc)).to_dict()
+        meta.visual_quality = quality
+        for moment in meta.best_moments or []:
+            if isinstance(moment, dict):
+                moment["visual_quality"] = quality
+        log.warning(
+            "clip_visual_quality_unavailable",
+            clip_id=meta.clip_id,
+            clip_path=os.path.basename(path),
+            error=str(exc),
+        )
+        _record_clip_quality_event(
+            "visual_quality_unavailable",
+            {
+                "clip_id": meta.clip_id,
+                "clip_path": os.path.basename(path),
+                "reason": str(exc)[:200],
+            },
+        )
+        return None
+
+    meta.visual_quality = summarize_samples(samples).to_dict()
+    annotate_moments(meta.best_moments or [], samples)
+    _record_clip_quality_event(
+        "clip_visual_quality_measured",
+        {
+            "clip_id": meta.clip_id,
+            "clip_path": os.path.basename(path),
+            "quality": meta.visual_quality,
+            "moments": len(meta.best_moments or []),
+        },
+    )
+    return samples
+
+
+def _record_clip_quality_event(event: str, data: dict) -> None:
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event("clip_quality", event, data)
+    except Exception as exc:  # noqa: BLE001 — diagnostics must never break rendering
+        log.debug("clip_quality_trace_failed", event_name=event, error=str(exc))
+
+
 def _analyze_clips_parallel(
     file_refs: list,
     local_paths: list[str],
@@ -2156,6 +2226,7 @@ def _analyze_clips_parallel(
                 )
                 raise GeminiAnalysisError("analyze_clip succeeded but returned 0 best_moments")
             meta.clip_path = path
+            _ensure_clip_visual_quality(meta, path)
             return meta, None
         except (GeminiRefusalError, GeminiAnalysisError, Exception) as exc:
             log.warning("clip_analysis_failed", clip_idx=idx, error=str(exc))
@@ -2181,15 +2252,47 @@ def _analyze_clips_parallel(
             try:
                 transcript = transcribe_whisper(path)
                 clip_dur = probe_map[path].duration_s if probe_map and path in probe_map else 30.0
+                visual_samples: list[LumaSample] | None = None
+                visual_quality = None
+                try:
+                    visual_samples = sample_luma_timeline(path)
+                    visual_quality = summarize_samples(visual_samples).to_dict()
+                except VisualQualityError as visual_exc:
+                    visual_quality = unavailable_quality(str(visual_exc)).to_dict()
+                    log.warning(
+                        "fallback_clip_visual_quality_unavailable",
+                        clip_idx=idx,
+                        clip_path=path,
+                        error=str(visual_exc),
+                    )
                 fallback_meta = ClipMeta(
                     clip_id=getattr(ref, "name", f"clip_{idx}"),
                     transcript=transcript.full_text,
                     hook_text=transcript.full_text[:100] if transcript.full_text else "",
                     hook_score=5.0,
-                    best_moments=_fallback_moments(clip_dur),
+                    best_moments=_fallback_moments(clip_dur, visual_samples=visual_samples),
                     analysis_degraded=True,
                     clip_path=path,
+                    visual_quality=visual_quality,
                 )
+                if visual_quality and visual_samples is None:
+                    for moment in fallback_meta.best_moments:
+                        if isinstance(moment, dict):
+                            moment["visual_quality"] = visual_quality
+                if visual_quality and visual_samples:
+                    shifted = [
+                        m for m in fallback_meta.best_moments
+                        if isinstance(m, dict) and float(m.get("start_s", 0.0)) > 0.0
+                    ]
+                    if shifted:
+                        _record_clip_quality_event(
+                            "fallback_window_shifted",
+                            {
+                                "clip_id": fallback_meta.clip_id,
+                                "clip_path": os.path.basename(path),
+                                "starts": [m.get("start_s") for m in shifted],
+                            },
+                        )
                 return fallback_meta, None
             except Exception as whisper_exc:
                 log.warning("whisper_fallback_failed", clip_idx=idx, error=str(whisper_exc))
@@ -2215,22 +2318,54 @@ def _analyze_clips_parallel(
 # ── Fallback helpers ──────────────────────────────────────────────────────────
 
 
-def _fallback_moments(clip_dur: float) -> list[dict]:
+def _fallback_moments(
+    clip_dur: float,
+    *,
+    visual_samples: list[LumaSample] | None = None,
+) -> list[dict]:
     """Generate overlapping moments at multiple durations for Whisper-fallback clips.
 
     Covers short (3–5s), medium (8–12s), and long (15s+) slot ranges so that
     a fallback clip can satisfy template slots of any target_duration_s.
+    When luma samples are available, choose the brightest viable window instead
+    of blindly starting every fallback at 0.0s.
     """
-    moments = [
-        {"start_s": 0.0, "end_s": min(clip_dur, 5.0), "energy": 5.0, "description": "fallback"},
-        {"start_s": 0.0, "end_s": min(clip_dur, 10.0), "energy": 5.0, "description": "fallback"},
-        {"start_s": 0.0, "end_s": min(clip_dur, 15.0), "energy": 5.0, "description": "fallback"},
-    ]
+    def _moment_for(duration_s: float) -> dict:
+        target_dur = min(clip_dur, duration_s)
+        start_s = 0.0
+        quality = None
+        if visual_samples:
+            start_s, q = best_quality_window(
+                visual_samples,
+                clip_dur=clip_dur,
+                window_dur=target_dur,
+            )
+            quality = q.to_dict()
+        end_s = min(clip_dur, start_s + target_dur)
+        moment = {
+            "start_s": round(start_s, 3),
+            "end_s": round(end_s, 3),
+            "energy": 5.0,
+            "description": "fallback",
+        }
+        if quality:
+            moment["visual_quality"] = quality
+        return moment
+
+    moments = [_moment_for(5.0), _moment_for(10.0), _moment_for(15.0)]
     # Add a full-clip moment only if it meaningfully extends beyond 15s
     if clip_dur > 21.0:
-        moments.append(
-            {"start_s": 0.0, "end_s": clip_dur, "energy": 5.0, "description": "fallback"}
-        )
+        full_clip = {
+            "start_s": 0.0,
+            "end_s": round(clip_dur, 3),
+            "energy": 5.0,
+            "description": "fallback",
+        }
+        if visual_samples:
+            full_clip["visual_quality"] = summarize_window(
+                visual_samples, 0.0, clip_dur
+            ).to_dict()
+        moments.append(full_clip)
     return moments
 
 

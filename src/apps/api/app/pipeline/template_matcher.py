@@ -11,7 +11,7 @@ Algorithm (match):
      - Loose pass (±6s): only used when no tight candidate exists.
   3. First try candidates where clip_use_count < max_uses (hard cap).
      If none qualify, fall back to any candidate within duration tolerance.
-  4. Pick the highest-scoring pair (by moment energy).
+  4. Pick the highest-scoring pair (visual quality, variety, energy).
   5. CRITICAL: sort final plan by slot.position before returning (temporal
      order for FFmpeg concat — greedy builds in priority order).
 
@@ -73,6 +73,19 @@ _BALL_ACTION_KEYWORDS = (
     "attack", "atak", "hücum", "finish", "bitiriş",
 )
 _FOOTBALL_HINT_KEYS = ("ball", "top", "futbol", "football", "soccer")
+_LOW_LIGHT_OK_KEYS = (
+    "night",
+    "nightlife",
+    "neon",
+    "club",
+    "concert",
+    "stage",
+    "laser",
+    "strobe",
+    "skyline",
+    "after-dark",
+    "after dark",
+)
 
 
 def _is_football_hint(hint: str) -> bool:
@@ -94,6 +107,62 @@ def _ball_bonus(moment: dict) -> float:
     if not desc:
         return 0.0
     return 2.0 if any(k in desc for k in _BALL_ACTION_KEYWORDS) else 0.0
+
+
+def _recipe_allows_low_light(recipe: TemplateRecipe, filter_hint: str) -> bool:
+    fields = [
+        filter_hint,
+        getattr(recipe, "creative_direction", ""),
+        getattr(recipe, "color_grade", ""),
+        getattr(recipe, "pacing_style", ""),
+        getattr(recipe, "transition_style", ""),
+        getattr(recipe, "caption_style", ""),
+        getattr(recipe, "subject_niche", ""),
+    ]
+    text = " ".join(str(v or "") for v in fields).lower()
+    return any(key in text for key in _LOW_LIGHT_OK_KEYS)
+
+
+def _moment_quality_class(moment: dict) -> str:
+    quality = moment.get("visual_quality") if isinstance(moment, dict) else None
+    if not isinstance(quality, dict):
+        return "unavailable"
+    return str(quality.get("classification") or "unavailable")
+
+
+def _quality_penalty(moment: dict, *, allow_low_light: bool) -> float:
+    if allow_low_light:
+        return 0.0
+    return {
+        "very_dark": -3.0,
+        "low_light": -1.0,
+    }.get(_moment_quality_class(moment), 0.0)
+
+
+def _all_known_moments_are_low_light(meta: ClipMeta) -> bool:
+    classes = [
+        _moment_quality_class(moment)
+        for moment in meta.best_moments
+        if isinstance(moment, dict) and _moment_quality_class(moment) != "unavailable"
+    ]
+    return bool(classes) and all(cls in {"low_light", "very_dark"} for cls in classes)
+
+
+def _is_known_low_light(moment: dict) -> bool:
+    return _moment_quality_class(moment) in {"low_light", "very_dark"}
+
+
+def _has_known_usable_quality(moment: dict) -> bool:
+    return _moment_quality_class(moment) == "usable"
+
+
+def _record_match_quality_event(event: str, data: dict) -> None:
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event("clip_quality", event, data)
+    except Exception as exc:  # noqa: BLE001 — trace writes are diagnostic only
+        log.debug("matcher_clip_quality_trace_failed", event_name=event, error=str(exc))
 
 
 class TemplateMismatchError(Exception):
@@ -420,6 +489,7 @@ def _minimum_coverage_pass(
     slots: list[dict],
     clip_metas: list[ClipMeta],
     apply_ball_bonus: bool = False,
+    allow_low_light: bool = False,
 ) -> dict[int, tuple[ClipMeta, dict]]:
     """Pre-assign clips to slots to maximize clip coverage (variety).
 
@@ -437,6 +507,10 @@ def _minimum_coverage_pass(
     # so the most-constrained-clip-first heuristic still picks the ball moment.
     clip_valid_slots: dict[str, list[tuple[dict, dict]]] = {}
     for meta in clip_metas:
+        if not allow_low_light and _all_known_moments_are_low_light(meta):
+            log.info("coverage_skip_low_light_clip", clip_id=meta.clip_id)
+            clip_valid_slots[meta.clip_id] = []
+            continue
         valid: list[tuple[dict, dict]] = []
         for slot in unlocked_slots:
             target_dur = float(
@@ -453,9 +527,19 @@ def _minimum_coverage_pass(
             if apply_ball_bonus:
                 # Pick the ball-action moment if any matches; else first available.
                 best = max(candidates_for_slot,
-                           key=lambda m: (_ball_bonus(m), m.get("energy", 5.0)))
+                           key=lambda m: (
+                               _ball_bonus(m),
+                               _quality_penalty(m, allow_low_light=allow_low_light),
+                               m.get("energy", 5.0),
+                           ))
             else:
-                best = candidates_for_slot[0]
+                best = max(
+                    candidates_for_slot,
+                    key=lambda m: (
+                        _quality_penalty(m, allow_low_light=allow_low_light),
+                        m.get("energy", 5.0),
+                    ),
+                )
             valid.append((slot, best))
         clip_valid_slots[meta.clip_id] = valid
 
@@ -490,9 +574,10 @@ def _minimum_coverage_pass(
             )
             slot_energy = float(slot.get("energy", 5.0))
             ball = _ball_bonus(moment) if apply_ball_bonus else 0.0
+            quality = _quality_penalty(moment, allow_low_light=allow_low_light)
             dur_fit = -abs(_moment_duration(moment) - target_dur)
             energy_fit = -abs(moment.get("energy", 5.0) - slot_energy)
-            score = (ball, dur_fit, energy_fit)
+            score = (ball, quality, dur_fit, energy_fit)
             if best_score is None or score > best_score:
                 best_score = score
                 best_slot = slot
@@ -603,6 +688,7 @@ def match(
     clip_use_count: dict[str, int] = defaultdict(int)
 
     apply_ball_bonus = _is_football_hint(filter_hint)
+    allow_low_light = _recipe_allows_low_light(recipe, filter_hint)
     pre_assigned_positions: set[int] = set()
     pinned_clip_ids: set[str] = set()
     used_moments: set[tuple[str, float, float]] = set()  # variety: dedup moments across slots
@@ -630,7 +716,12 @@ def match(
     ]
     coverage_metas = [m for m in clip_metas if m.clip_id not in pinned_clip_ids]
     pre_assigned = (
-        _minimum_coverage_pass(coverage_slots, coverage_metas, apply_ball_bonus=apply_ball_bonus)
+        _minimum_coverage_pass(
+            coverage_slots,
+            coverage_metas,
+            apply_ball_bonus=apply_ball_bonus,
+            allow_low_light=allow_low_light,
+        )
         if coverage_metas else {}
     )
 
@@ -774,24 +865,43 @@ def match(
                 )
                 capped_candidates = relaxed_unused
 
-        # Final fallback: reuse only when truly no unused clip remains
+        # Final fallback: reuse only when truly no unused clip remains, except
+        # when the cap would force a dark clip while a known-usable clip exists.
+        # In that case, visual quality beats clip-coverage purity.
         candidates = capped_candidates if capped_candidates else loose_candidates
+        if (
+            capped_candidates
+            and not allow_low_light
+            and all(_is_known_low_light(moment) for _meta, moment in capped_candidates)
+            and any(_has_known_usable_quality(moment) for _meta, moment in loose_candidates)
+        ):
+            log.info(
+                "matcher_relaxed_usage_cap_for_visual_quality",
+                slot_position=slot_position,
+                capped_candidates=len(capped_candidates),
+                loose_candidates=len(loose_candidates),
+            )
+            candidates = loose_candidates
 
         # Scoring (highest tuple wins):
         # (1) ball-action bonus (when filter_hint is football) — ball moments outrank vague,
-        # (2) variety penalty — moments already used in another slot rank lower,
-        # (3) least-used clips first (round-robin ensures all clips featured),
-        # (4) closest energy match to slot's musical intensity,
-        # (5) highest absolute energy as final tiebreaker.
+        # (2) visual quality — avoid underexposed moments unless the recipe
+        #     explicitly asks for night/neon/stage footage,
+        # (3) variety penalty — moments already used in another slot rank lower,
+        # (4) least-used clips first (round-robin ensures all clips featured),
+        # (5) closest energy match to slot's musical intensity,
+        # (6) highest absolute energy as final tiebreaker.
         def _score_candidate(pair: tuple[ClipMeta, dict]) -> tuple:
             meta, moment = pair
             ball = _ball_bonus(moment) if apply_ball_bonus else 0.0
+            quality = _quality_penalty(moment, allow_low_light=allow_low_light)
             mkey = (meta.clip_id,
                     float(moment.get("start_s", 0.0)),
                     float(moment.get("end_s", 0.0)))
             variety = -1.0 if mkey in used_moments else 0.0
             return (
                 ball,
+                quality,
                 variety,
                 -clip_use_count[meta.clip_id],
                 -abs(moment.get("energy", 5.0) - slot_energy),
@@ -799,6 +909,42 @@ def match(
             )
 
         best_meta, best_moment = max(candidates, key=_score_candidate)
+        penalized_candidates = [
+            (meta, moment)
+            for meta, moment in candidates
+            if _quality_penalty(moment, allow_low_light=allow_low_light) < 0.0
+        ]
+        known_quality_classes = [
+            _moment_quality_class(moment)
+            for _meta, moment in candidates
+            if _moment_quality_class(moment) != "unavailable"
+        ]
+        if penalized_candidates:
+            _record_match_quality_event(
+                "dark_candidate_penalized",
+                {
+                    "slot_position": slot_position,
+                    "target_dur": target_dur,
+                    "penalized_count": len(penalized_candidates),
+                    "selected_clip_id": best_meta.clip_id,
+                    "selected_quality": best_moment.get("visual_quality"),
+                    "low_light_allowed": allow_low_light,
+                },
+            )
+        if (
+            known_quality_classes
+            and all(cls in {"low_light", "very_dark"} for cls in known_quality_classes)
+        ):
+            _record_match_quality_event(
+                "all_candidates_dark",
+                {
+                    "slot_position": slot_position,
+                    "target_dur": target_dur,
+                    "candidate_count": len(candidates),
+                    "selected_clip_id": best_meta.clip_id,
+                    "selected_quality": best_moment.get("visual_quality"),
+                },
+            )
         used_moments.add((best_meta.clip_id,
                           float(best_moment.get("start_s", 0.0)),
                           float(best_moment.get("end_s", 0.0))))

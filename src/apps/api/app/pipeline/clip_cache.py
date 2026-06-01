@@ -51,7 +51,7 @@ CLIP_ANALYSIS_PROMPT_VERSION = "v1"
 # with the default value for the new field — a subtle correctness bug because
 # downstream code can't distinguish "cached from before the field existed"
 # from "actually scored 0.0". Schema version is the cache's contract version.
-CACHE_SCHEMA_VERSION = "s1"
+CACHE_SCHEMA_VERSION = "s2"
 
 # 30-day TTL. Clip content is immutable but the cache shouldn't grow unbounded.
 CACHE_TTL_S = 30 * 24 * 60 * 60

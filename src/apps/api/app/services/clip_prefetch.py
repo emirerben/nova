@@ -146,6 +146,13 @@ async def _run_prefetch_locked(gcs_path: str, filter_hint: str) -> None:
         get_cached_meta,
         set_cached_meta,
     )
+    from app.services.clip_visual_quality import (  # noqa: PLC0415
+        VisualQualityError,
+        annotate_moments,
+        sample_luma_timeline,
+        summarize_samples,
+        unavailable_quality,
+    )
     from app.storage import download_to_file  # noqa: PLC0415
 
     log.info("prefetch_start", gcs_path=gcs_path, filter_hint=filter_hint)
@@ -193,6 +200,20 @@ async def _run_prefetch_locked(gcs_path: str, filter_hint: str) -> None:
         except Exception as exc:
             log.info("prefetch_gemini_analyze_failed", gcs_path=gcs_path, error=str(exc))
             return
+
+        try:
+            if not os.path.exists(local):
+                raise VisualQualityError("downloaded file missing after prefetch")
+            samples = await asyncio.to_thread(sample_luma_timeline, local)
+        except VisualQualityError as exc:
+            quality = unavailable_quality(str(exc)).to_dict()
+            meta.visual_quality = quality
+            for moment in meta.best_moments or []:
+                if isinstance(moment, dict):
+                    moment["visual_quality"] = quality
+        else:
+            meta.visual_quality = summarize_samples(samples).to_dict()
+            annotate_moments(meta.best_moments or [], samples)
 
         # ── Cache write ──────────────────────────────────────────────────
         # set_cached_meta refuses to write degraded/failed metas; we don't
