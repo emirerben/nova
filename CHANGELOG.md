@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.74.3] - 2026-06-01
+
+### Fixed
+- **Voiceover edits silently dropped the recording — generative jobs rendered with no voice over the footage.** A browser `MediaRecorder` tags its blob with a codec-qualified MIME type (`audio/webm;codecs=opus` in Chrome, `audio/mp4;codecs=…` in Safari), but `classify_slot_kind` in `app/routes/music_jobs.py` matched the content type against the allowlist by exact set membership. The parameterized string was never in the set, so every browser-recorded voiceover upload to `POST /music-jobs/upload-slot` returned `422 Unprocessable Content`. The web client swallowed the failed upload, the generative job was created without a `voiceover_gcs_path`, and the orchestrator fell back to the non-voiceover variants (only `original_text` rendered) — the voiceover archetype never triggered.
+  - **Fix: strip MIME parameters before the allowlist check.** `classify_slot_kind` now normalizes the content type to its bare media type (`content_type.split(";", 1)[0].strip().lower()`) before matching, so `audio/webm;codecs=opus` resolves to `audio` like bare `audio/webm` already did. The extension-vs-content-type disagreement guard and the unknown-type fallthrough are unchanged, so no new bypass: the allowlist still governs the bare type and junk uploads still 422. Pinned by `test_classify_slot_kind_accepts_parameterized_audio_mime` (covers Chrome/Safari codec params, whitespace after the semicolon, and uppercase media types).
+
 ## [0.4.74.1] - 2026-06-01
 
 ### Fixed

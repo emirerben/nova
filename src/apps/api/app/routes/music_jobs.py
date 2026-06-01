@@ -234,7 +234,9 @@ def classify_slot_kind(filename: str, content_type: str) -> str:
     """Resolve a slot upload's media kind, failing closed on MIME/extension drift."""
     ext = Path(filename or "").suffix.lower()
     ext_kind = _kind_from_extension(filename)
-    ct_raw = (content_type or "").lower()
+    # Strip MIME parameters (browser MediaRecorder emits "audio/webm;codecs=opus")
+    # so the allowlist matches on the bare media type, not the codec-qualified string.
+    ct_raw = (content_type or "").split(";", 1)[0].strip().lower()
 
     if ct_raw in _UNKNOWN_CONTENT_TYPES:
         if ext_kind is None:
@@ -248,7 +250,7 @@ def classify_slot_kind(filename: str, content_type: str) -> str:
             )
         return ext_kind
 
-    ct_kind = _kind_from_content_type(content_type)
+    ct_kind = _kind_from_content_type(ct_raw)
     if ct_kind is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
