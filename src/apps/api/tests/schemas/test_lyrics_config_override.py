@@ -10,12 +10,14 @@ def test_valid_partial_payload_parses() -> None:
         fade_in_s=0.1,
         fade_out_s=0.4,
         fade_in_ms=100,
+        sync_offset_s=-1.25,
     )
     assert parsed.post_dwell_s == 1.25
     assert parsed.max_overlap_s == 0.5
     assert parsed.fade_in_s == 0.1
     assert parsed.fade_out_s == 0.4
     assert parsed.fade_in_ms == 100
+    assert parsed.sync_offset_s == -1.25
 
 
 def test_unknown_field_rejected() -> None:
@@ -30,6 +32,15 @@ def test_unknown_field_rejected() -> None:
 def test_out_of_range_post_dwell_rejected() -> None:
     try:
         LyricsConfigOverride(post_dwell_s=10.0)
+    except ValidationError as exc:
+        assert "less than or equal to 5" in str(exc)
+    else:
+        raise AssertionError("expected ValidationError")
+
+
+def test_out_of_range_sync_offset_rejected() -> None:
+    try:
+        LyricsConfigOverride(sync_offset_s=6.0)
     except ValidationError as exc:
         assert "less than or equal to 5" in str(exc)
     else:

@@ -505,8 +505,33 @@ def test_inject_lyrics_passes_style_set_id(monkeypatch):
     gb._inject_lyrics({"slots": []}, _track(), style_set_id="travel_editorial")
     assert captured["cfg"]["enabled"] is True
     assert captured["cfg"]["style_set_id"] == "travel_editorial"
-    # The set is authoritative — we do NOT inherit the track's saved lyric tuning.
+    # The set is authoritative — we do NOT inherit visual lyric tuning.
     assert "style" not in captured["cfg"]
+
+
+def test_inject_lyrics_preserves_sync_offset_with_style_set(monkeypatch):
+    captured: dict = {}
+
+    def _fake_inject(recipe_dict, lyrics_cached, *, best_start_s, best_end_s, lyrics_config):
+        captured["cfg"] = lyrics_config
+        return recipe_dict
+
+    monkeypatch.setattr(
+        "app.pipeline.lyric_injector.inject_lyric_overlays", _fake_inject, raising=False
+    )
+    track = _track()
+    track.track_config = {
+        "best_start_s": 0.0,
+        "best_end_s": 30.0,
+        "lyrics_config": {"sync_offset_s": -0.75, "style": "line", "post_dwell_s": 1.0},
+    }
+
+    gb._inject_lyrics({"slots": []}, track, style_set_id="travel_editorial")
+
+    assert captured["cfg"]["style_set_id"] == "travel_editorial"
+    assert captured["cfg"]["sync_offset_s"] == -0.75
+    assert "style" not in captured["cfg"]
+    assert "post_dwell_s" not in captured["cfg"]
 
 
 def test_select_style_set_falls_back_to_default_on_failure(monkeypatch):

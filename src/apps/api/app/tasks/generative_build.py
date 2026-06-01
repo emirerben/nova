@@ -1454,11 +1454,18 @@ def _inject_lyrics(recipe_dict: dict, track: MusicTrack, style_set_id: str | Non
     if style_set_id:
         # The chosen curated set drives the lyric look for a generative edit and is
         # authoritative over the track's saved (music-job) lyric tuning, so we do NOT
-        # inherit `cfg["lyrics_config"]`. The set's lyric role implies the injector
-        # style (line/karaoke/word-pop) via `lyric_style_for_set`. style_set_id is
-        # consumed by `inject_lyric_overlays` directly (not a validated config key),
-        # so set it on the dict rather than routing it through effective_lyrics_config.
+        # inherit visual fields from `cfg["lyrics_config"]`. The set's lyric role
+        # implies the injector style (line/karaoke/word-pop) via `lyric_style_for_set`.
+        # style_set_id is consumed by `inject_lyric_overlays` directly (not a
+        # validated config key), so set it on the dict rather than routing it
+        # through effective_lyrics_config.
         lyrics_config = {"enabled": True, "style_set_id": style_set_id}
+        saved_lyrics_config = cfg.get("lyrics_config") if isinstance(cfg, dict) else None
+        if (
+            isinstance(saved_lyrics_config, dict)
+            and saved_lyrics_config.get("sync_offset_s") is not None
+        ):
+            lyrics_config["sync_offset_s"] = saved_lyrics_config["sync_offset_s"]
     else:
         # Force lyrics on for this variant (the user explicitly chose the lyrics edit).
         lyrics_config = effective_lyrics_config(cfg, {"enabled": True, "style": "karaoke"})
