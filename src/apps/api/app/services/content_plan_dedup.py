@@ -38,6 +38,14 @@ import unicodedata
 
 from app.agents._schemas.content_plan import PlanItemSpec
 
+__all__ = [
+    "DEFAULT_MAX_FRACTION",
+    "DEFAULT_SIMILARITY_THRESHOLD",
+    "choose_replacements",
+    "flag_replacement_indices",
+    "idea_similarity",
+]
+
 # Conservative default: a reworded repeat ("5am gym workout motivation routine" vs
 # "early morning gym workout motivation routine") scores ~0.8 and is caught;
 # ideas that merely share a noun or two ("coffee shop tour" vs "hiking trails")
