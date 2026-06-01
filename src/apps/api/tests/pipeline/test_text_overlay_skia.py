@@ -758,10 +758,10 @@ def test_left_anchor_static_overlay_not_clipped():
 
 def test_pop_in_suffix_wide_line_wraps_instead_of_clipping():
     """REGRESSION: a pop-in-with-suffix line too wide for one line must wrap
-    (fall back to the whole-line pop) instead of clipping off the right edge.
-    A manually-edited cumulative phrase grown past ~90% canvas width
-    ("combination of hard work" at 120px) overflowed because the suffix-pop
-    layout placed prefix+suffix on a single baseline."""
+    while still using the suffix-aware draw path instead of clipping off the
+    right edge. A manually-edited cumulative phrase grown past ~90% canvas
+    width ("combination of hard work" at 120px) overflowed because the
+    suffix-pop layout placed prefix+suffix on a single baseline."""
     import io
 
     overlay = {
@@ -785,6 +785,31 @@ def test_pop_in_suffix_wide_line_wraps_instead_of_clipping():
     # so content starts at/below 0.40*1920=768 — a centered block would start
     # well ABOVE that. Locks the _vertical_block_top fix on the wrap path.
     assert bbox[1] > 700, f"wrapped left-anchored block should be top-anchored; bbox {bbox}"
+
+
+def test_pop_in_suffix_wide_line_caps_at_two_lines():
+    """Long lyric Pop-up stages should wrap to at most two caption lines."""
+    overlay = {
+        "text": "Let's make this happen let's make this happen",
+        "effect": "pop-in",
+        "pop_animated_suffix": "happen",
+        "text_size_px": 120,
+        "text_color": "#FFFFFF",
+        "text_anchor": "center",
+    }
+
+    typeface = tos._typeface_for_overlay(overlay)
+    font, _size, lines = tos._shrink_to_fit_max_lines(
+        overlay["text"],
+        typeface,
+        tos._resolve_font_size_px(overlay),
+        tos.CANVAS_W * tos._MAX_LINE_W_FRAC,
+        tos._POP_SUFFIX_MAX_LINES,
+    )
+
+    assert 1 < len(lines) <= 2
+    assert lines[-1].endswith("happen")
+    assert max(font.measureText(line) for line in lines) <= tos.CANVAS_W * tos._MAX_LINE_W_FRAC
 
 
 def test_left_anchor_cumulative_stage_prior_lines_stable():
@@ -887,11 +912,10 @@ def test_center_anchor_stays_vertically_centered():
     )
 
 
-def test_pop_in_suffix_scales_new_word_only():
-    """The revealed word uses the same 30→115→100 pop as the ASS renderer.
+def test_pop_in_suffix_has_no_bounce_full_size_from_start():
+    """The revealed word appears at full size immediately.
 
-    The prefix stays static, so the left edge remains stable while the suffix
-    grows into place.
+    The word-by-word reveal comes from per-stage timing, not a scale bounce.
     """
     import io
 
@@ -910,17 +934,8 @@ def test_pop_in_suffix_scales_new_word_only():
         img = tos._draw_frame(ov, t, 1.0)
         return Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA").getbbox()
 
-    early, peak, settled = bbox(0.0), bbox(0.16), bbox(0.9)
-    assert early is not None and peak is not None and settled is not None
-    assert abs(early[0] - settled[0]) <= 3, (
-        f"prefix moved during suffix pop: early {early}, settled {settled}"
-    )
-    assert early[2] < settled[2] - 30, (
-        f"suffix should start smaller than settled: early {early}, settled {settled}"
-    )
-    assert peak[2] >= settled[2], (
-        f"suffix should overshoot before settling: peak {peak}, settled {settled}"
-    )
+    early, settled = bbox(0.02), bbox(0.9)
+    assert early == settled, f"word scaled between t=0.02 {early} and t=0.9 {settled}"
 
 
 def test_plain_pop_in_scales_from_small_to_settled():

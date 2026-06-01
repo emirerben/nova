@@ -2665,6 +2665,80 @@ class TestAssembleClipsTextOverlays:
         result = _collect_absolute_overlays([step], [5.0], None, "")
         assert result == []
 
+    def test_collect_absolute_overlays_preserves_pop_animated_suffix(self):
+        """Full music renders must keep the per-word-pop suffix marker.
+
+        The lyrics preview path renders the injector's slot overlays directly,
+        but full music jobs rebuild absolute overlay dicts here before burning
+        text. Dropping this field makes the renderer animate the whole
+        cumulative sentence instead of only the newly added word.
+        """
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(
+            overlays=[
+                {
+                    "role": "hook",
+                    "sample_text": "I got room",
+                    "start_s": 0.9,
+                    "end_s": 1.8,
+                    "position": "bottom",
+                    "effect": "pop-in",
+                    "pop_animated_suffix": "room",
+                }
+            ]
+        )
+
+        result = _collect_absolute_overlays([step], [5.0], None, "")
+
+        assert len(result) == 1
+        assert result[0]["text"] == "I got room"
+        assert result[0]["pop_animated_suffix"] == "room"
+
+    def test_collect_absolute_overlays_resyncs_pop_to_word_anchor(self):
+        """Full music Pop-up timing must resolve to the sung word onset.
+
+        Beat-snap can move the rendered slot boundary after lyrics were
+        injected. The per-word-pop overlay carries section_anchor_s for the
+        word onset; the full render path must use that anchor, not stale
+        slot-relative timing, so the word appears exactly when sung.
+        """
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step1 = self._make_step_with_overlays(clip_id="clip_a", overlays=[])
+        step2 = self._make_step_with_overlays(
+            clip_id="clip_b",
+            overlays=[
+                {
+                    "role": "lyrics",
+                    "text": "And",
+                    # Stale pre-snap slot-relative timing. If production used
+                    # this directly, absolute start would be 8.68s.
+                    "start_s": 1.0,
+                    "end_s": 1.3,
+                    "position": "bottom",
+                    "effect": "pop-in",
+                    "pop_animated_suffix": "And",
+                    # Canonical sung-word anchors after sync correction.
+                    "section_anchor_s": 9.05,
+                    "section_end_anchor_s": 9.55,
+                }
+            ],
+        )
+
+        result = _collect_absolute_overlays(
+            [step1, step2],
+            [7.68, 1.992],
+            None,
+            "",
+        )
+
+        assert len(result) == 1
+        assert result[0]["text"] == "And"
+        assert result[0]["start_s"] == pytest.approx(9.05, abs=1e-3)
+        assert result[0]["end_s"] == pytest.approx(9.55, abs=1e-3)
+        assert result[0]["pop_animated_suffix"] == "And"
+
     def _gappy_reveal_overlays(self):
         return [
             {"role": "hook", "start_s": 0.0, "end_s": 0.4, "position": "center",

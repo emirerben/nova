@@ -93,6 +93,7 @@ _MIN_FONT_SIZE = 24
 _POP_IN_KEYFRAMES_S = (0.0, 0.150, 0.250)
 _POP_IN_SCALES = (0.30, 1.15, 1.00)
 _POP_IN_MAX_SCALE = max(_POP_IN_SCALES)
+_POP_SUFFIX_MAX_LINES = 2
 
 
 # -- Typeface cache (load once at import) -------------------------------------
@@ -378,6 +379,33 @@ def _shrink_to_fit(
         if widest <= max_width:
             break
         size = max(_MIN_FONT_SIZE, int(size * 0.85))
+        font = skia.Font(typeface, size)
+        font.setSubpixel(True)
+        lines = _wrap_text_to_lines(text, font, max_width)
+        iterations += 1
+
+    return font, size, lines
+
+
+def _shrink_to_fit_max_lines(
+    text: str,
+    typeface: skia.Typeface,
+    initial_size: int,
+    max_width: float,
+    max_lines: int,
+) -> tuple[skia.Font, int, list[str]]:
+    """Wrap + shrink until text fits horizontally and within max_lines."""
+    size = initial_size
+    font = skia.Font(typeface, size)
+    font.setSubpixel(True)
+    lines = _wrap_text_to_lines(text, font, max_width)
+
+    iterations = 0
+    while iterations < 10 and size > _MIN_FONT_SIZE:
+        widest = max((font.measureText(ln) for ln in lines), default=0)
+        if widest <= max_width and len(lines) <= max_lines:
+            break
+        size = max(_MIN_FONT_SIZE, int(size * 0.9))
         font = skia.Font(typeface, size)
         font.setSubpixel(True)
         lines = _wrap_text_to_lines(text, font, max_width)
@@ -679,12 +707,12 @@ def _draw_pop_in_with_suffix(
     canvas: skia.Canvas, overlay: dict, t_local: float, duration_s: float
 ) -> None:
     """pop-in with `pop_animated_suffix`: prefix renders static at 100% scale,
-    suffix scales through 30→115→100 envelope over the first 250ms.
+    suffix appears immediately at 100% scale.
 
-    Used by music's per-word-pop lyric style. Mirrors text_overlay's libass
-    `\\fscx`/`\\fscy` keyframes (production keyframes_ms = (0, 150, 250),
-    scales = (30, 115, 100)). Without this, every new lyric word re-pops the
-    full accumulated line — visible flicker.
+    Used by music's per-word-pop lyric style. The reveal timing comes from the
+    overlay's `start_s`, which is the sung word onset. Without the suffix split,
+    every new lyric word re-renders the full accumulated line and looks like the
+    whole sentence popped again.
     """
     text = _overlay_text(overlay)
     suffix = overlay.get("pop_animated_suffix") or ""
@@ -699,86 +727,92 @@ def _draw_pop_in_with_suffix(
 
     typeface = _typeface_for_overlay(overlay)
     initial_size = _resolve_font_size_px(overlay)
-    # Lay out the FULL line so prefix + suffix stay in their original positions
-    # even when the suffix overshoots to 115%.
-    full_font, _full_size, full_lines = _shrink_to_fit(
-        text,
-        typeface,
-        initial_size,
-        CANVAS_W * _MAX_LINE_W_FRAC / _POP_IN_MAX_SCALE,
-    )
+    cx, cy = _resolve_anchor(overlay)
+    anchor = _resolve_text_anchor(overlay)
+    # Lay out the FULL text so prefix + suffix stay in their final positions.
+    # Center/right music captions are capped at two lines. Left-anchored Layer-2
+    # cumulative reveals keep the standard multi-line layout so previously
+    # visible lines do not shrink and jump when later words are added.
+    if anchor == "left":
+        full_font, _full_size, full_lines = _shrink_to_fit(
+            text,
+            typeface,
+            initial_size,
+            CANVAS_W * _MAX_LINE_W_FRAC,
+        )
+    else:
+        full_font, _full_size, full_lines = _shrink_to_fit_max_lines(
+            text,
+            typeface,
+            initial_size,
+            CANVAS_W * _MAX_LINE_W_FRAC,
+            _POP_SUFFIX_MAX_LINES,
+        )
     if not full_lines:
         return
 
-    suffix_line_idx: int | None = None
-    for i in range(len(full_lines) - 1, -1, -1):
-        if full_lines[i].rstrip().endswith(suffix):
-            suffix_line_idx = i
-            break
-    if suffix_line_idx is None:
+    suffix_line_idx = len(full_lines) - 1
+    if not full_lines[suffix_line_idx].rstrip().endswith(suffix):
         _draw_with_animation(canvas, overlay, t_local, duration_s, effect="pop-in")
         return
 
     block = _measure_block(full_font, full_lines)
-    cx, cy = _resolve_anchor(overlay)
-    anchor = _resolve_text_anchor(overlay)
     block_top = _vertical_block_top(anchor, cy, block["block_h"])
     first_baseline = block_top + block["ascent_offset"]
 
     fill_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
-
+    static_lines: list[str] = []
     for i, line in enumerate(full_lines):
-        if i > suffix_line_idx:
+        if i == suffix_line_idx:
+            static_lines.append(line.rstrip()[: -len(suffix)].rstrip())
+        else:
+            static_lines.append(line)
+
+    full_w = full_font.measureText(full_lines[suffix_line_idx])
+    suffix_w = full_font.measureText(suffix)
+    for i, line in enumerate(static_lines):
+        if not line:
             continue
         baseline_y = first_baseline + i * block["line_step"]
-        line_w = block["widths"][i]
-        line_start_x = _anchored_left_x(anchor, cx, line_w)
-        if i < suffix_line_idx:
-            _draw_line_with_layers(
-                canvas,
-                line,
-                line_start_x,
-                baseline_y,
-                full_font,
-                fill_color,
-                stroke_px,
-                shadow_alpha=160,
-            )
-            continue
-        prefix_for_width = line[: -len(suffix)]
-        prefix_draw = prefix_for_width.rstrip()
-        if prefix_draw:
-            _draw_line_with_layers(
-                canvas,
-                prefix_draw,
-                line_start_x,
-                baseline_y,
-                full_font,
-                fill_color,
-                stroke_px,
-                shadow_alpha=160,
-            )
-        suffix_x = line_start_x + full_font.measureText(prefix_for_width)
-        suffix_w = full_font.measureText(suffix)
-        suffix_cx = suffix_x + suffix_w / 2.0
-        scale = _pop_in_scale_at(t_local, duration_s)
-
-        canvas.save()
-        canvas.translate(suffix_cx, baseline_y)
-        canvas.scale(scale, scale)
-        canvas.translate(-suffix_cx, -baseline_y)
+        line_w = full_font.measureText(line)
+        anchor_w = full_w if i == suffix_line_idx else line_w
+        line_start_x = _anchored_left_x(anchor, cx, anchor_w)
         _draw_line_with_layers(
             canvas,
-            suffix,
-            suffix_x,
+            line,
+            line_start_x,
             baseline_y,
             full_font,
             fill_color,
             stroke_px,
             shadow_alpha=160,
         )
-        canvas.restore()
+
+    suffix_static_prefix = static_lines[suffix_line_idx]
+    suffix_line_x = _anchored_left_x(anchor, cx, full_w)
+    suffix_x = suffix_line_x + full_font.measureText(
+        (suffix_static_prefix + " ") if suffix_static_prefix else ""
+    )
+    suffix_cx = suffix_x + suffix_w / 2.0
+    baseline_y = first_baseline + suffix_line_idx * block["line_step"]
+    scale = 1.0
+
+    canvas.save()
+    canvas.translate(suffix_cx, baseline_y)
+    canvas.scale(scale, scale)
+    canvas.translate(-suffix_cx, -baseline_y)
+    _draw_line_with_layers(
+        canvas,
+        suffix,
+        suffix_x,
+        baseline_y,
+        full_font,
+        fill_color,
+        stroke_px,
+        shadow_alpha=160,
+    )
+    canvas.restore()
 
 
 def _draw_karaoke_line(

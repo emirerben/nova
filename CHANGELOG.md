@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.74.4] - 2026-06-01
+
+### Fixed
+- **Full music Pop-up renders now match the lyrics preview path.** The full-job
+  overlay collection step now preserves `pop_animated_suffix`, so the Skia burn
+  path reveals only the newly sung word instead of re-popping the whole
+  cumulative sentence. Pop-up suffix stages render the new word immediately at
+  full size, keep the prior words static, and wrap wide lyric lines into a
+  two-line caption layout when needed. Regression tests cover suffix propagation,
+  beat-snap-resynced word anchors, two-line fitting, and QuickTime-safe final
+  MP4 encoder settings.
+
 ## [0.4.74.3] - 2026-06-01
 
 ### Fixed
