@@ -252,3 +252,88 @@ def test_build_generative_job_rejects_bad_voiceover_path():
             clip_paths=["slot-uploads/b.mp4"],
             voiceover_gcs_path="processed-outputs/voice.mp3",
         )
+
+
+# ── Playback URL re-signing (expired-signature bug) ─────────────────────────────
+# generative-jobs/ blobs persist forever but `output_url` is signed for 1 day at
+# render time, so a >24h-old "ready" item served the stale signature → 400
+# ExpiredToken → empty <video>. `_variants_for_response` must re-sign on read from
+# the persisted `video_path` key. See PLAYBACK_URL_TTL_MIN.
+
+
+def _resign_job():
+    import types
+    import uuid
+
+    return types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "song_lyrics",
+                    "render_status": "ready",
+                    "video_path": "generative-jobs/j/variant_1_song_lyrics.mp4",
+                    "output_url": "https://stale.example/expired?X-Goog-Expires=86400",
+                    "ok": True,
+                },
+                {
+                    "variant_id": "original_text",
+                    "render_status": "failed",
+                    "output_url": None,
+                    "ok": False,
+                },
+            ]
+        },
+    )
+
+
+def test_variants_for_response_resigns_ready_variant(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    calls: list = []
+
+    def fake_sign(path, ttl):
+        calls.append((path, ttl))
+        return f"https://fresh.example/{path}?sig=new"
+
+    monkeypatch.setattr(gj, "signed_get_url", fake_sign)
+
+    out = gj._variants_for_response(_resign_job())
+
+    # Ready variant gets a fresh URL signed from its video_path, not the stale stored one.
+    ready = next(v for v in out if v["variant_id"] == "song_lyrics")
+    assert ready["output_url"] == (
+        "https://fresh.example/generative-jobs/j/variant_1_song_lyrics.mp4?sig=new"
+    )
+    assert calls == [("generative-jobs/j/variant_1_song_lyrics.mp4", gj.PLAYBACK_URL_TTL_MIN)]
+
+    # Failed variant (no video_path) keeps its null URL and is not re-signed.
+    failed = next(v for v in out if v["variant_id"] == "original_text")
+    assert failed["output_url"] is None
+
+
+def test_variants_for_response_does_not_mutate_stored_dicts(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, ttl: "https://fresh.example/x")
+    job = _resign_job()
+    gj._variants_for_response(job)
+
+    # The raw assembly_plan variant (read by the mutate endpoints) must be untouched —
+    # we never want a short-lived re-signed URL written back to the DB.
+    stored = job.assembly_plan["variants"][0]
+    assert stored["output_url"] == "https://stale.example/expired?X-Goog-Expires=86400"
+
+
+def test_variants_for_response_signing_failure_falls_back(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    def boom(path, ttl):
+        raise RuntimeError("no credentials")
+
+    monkeypatch.setattr(gj, "signed_get_url", boom)
+    out = gj._variants_for_response(_resign_job())
+
+    # A signing failure must not 500 the poll — fall back to the stored URL.
+    ready = next(v for v in out if v["variant_id"] == "song_lyrics")
+    assert ready["output_url"] == "https://stale.example/expired?X-Goog-Expires=86400"
