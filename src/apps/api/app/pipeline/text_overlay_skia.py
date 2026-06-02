@@ -404,6 +404,24 @@ def _shrink_to_fit(
     return font, size, lines
 
 
+def _wrap_at_fixed_size(
+    text: str,
+    typeface: skia.Typeface,
+    size: int,
+    max_width: float,
+) -> tuple[skia.Font, int, list[str]]:
+    """Wrap text at the requested font size without shrinking.
+
+    Used for lyric pop-up stages where typography should stay constant while
+    the cumulative sentence grows. Long phrases move onto another line instead
+    of getting smaller as more words appear.
+    """
+    size = max(_MIN_FONT_SIZE, int(size))
+    font = skia.Font(typeface, size)
+    font.setSubpixel(True)
+    return font, size, _wrap_text_to_lines(text, font, max_width)
+
+
 def _shrink_to_fit_max_lines(
     text: str,
     typeface: skia.Typeface,
@@ -511,9 +529,14 @@ def _draw_centered_text(
         lines = _wrap_text_to_lines(text, font, CANVAS_W * _MAX_LINE_W_FRAC)
     else:
         initial_size = _resolve_font_size_px(overlay)
-        font, size, lines = _shrink_to_fit(
-            text, typeface, initial_size, CANVAS_W * _MAX_LINE_W_FRAC
-        )
+        if overlay.get("preserve_font_size"):
+            font, size, lines = _wrap_at_fixed_size(
+                text, typeface, initial_size, CANVAS_W * _MAX_LINE_W_FRAC
+            )
+        else:
+            font, size, lines = _shrink_to_fit(
+                text, typeface, initial_size, CANVAS_W * _MAX_LINE_W_FRAC
+            )
 
     if not lines:
         return
@@ -747,10 +770,17 @@ def _draw_pop_in_with_suffix(
     cx, cy = _resolve_anchor(overlay)
     anchor = _resolve_text_anchor(overlay)
     # Lay out the FULL text so prefix + suffix stay in their final positions.
-    # Center/right music captions are capped at two lines. Left-anchored Layer-2
-    # cumulative reveals keep the standard multi-line layout so previously
-    # visible lines do not shrink and jump when later words are added.
-    if anchor == "left":
+    # Lyric pop-up stages can opt into fixed typography: cumulative lines wrap
+    # at the resolved size instead of shrinking as later words are added.
+    # Center/right captions without that flag are capped at two lines.
+    if overlay.get("preserve_font_size"):
+        full_font, _full_size, full_lines = _wrap_at_fixed_size(
+            text,
+            typeface,
+            initial_size,
+            CANVAS_W * _MAX_LINE_W_FRAC,
+        )
+    elif anchor == "left":
         full_font, _full_size, full_lines = _shrink_to_fit(
             text,
             typeface,

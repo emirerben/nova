@@ -3950,6 +3950,8 @@ def _collect_absolute_overlays(
                 entry["word_timings"] = ov["word_timings"]
             if ov.get("pop_animated_suffix"):
                 entry["pop_animated_suffix"] = ov["pop_animated_suffix"]
+            if ov.get("preserve_font_size"):
+                entry["preserve_font_size"] = True
             if ov.get("highlight_color"):
                 entry["highlight_color"] = ov["highlight_color"]
             # `lyric-line` effect fade durations. Threaded through the same
@@ -4661,6 +4663,8 @@ def _pre_burn_curtain_slot_text(
             entry["font_family"] = ov["font_family"]
         if ov.get("cycle_fonts"):
             entry["cycle_fonts"] = ov["cycle_fonts"]
+        if ov.get("preserve_font_size"):
+            entry["preserve_font_size"] = True
 
         # Style set (agentic curtain-slot labels): same per-role resolution as
         # _collect_absolute_overlays so a style-set-styled subject label gets

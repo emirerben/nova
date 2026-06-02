@@ -812,6 +812,54 @@ def test_pop_in_suffix_wide_line_caps_at_two_lines():
     assert max(font.measureText(line) for line in lines) <= tos.CANVAS_W * tos._MAX_LINE_W_FRAC
 
 
+def test_pop_in_suffix_preserve_font_size_wraps_without_shrinking():
+    """Per-word-pop lyrics keep the chosen type size and wrap to new lines.
+
+    This is the music lyric behavior: as cumulative text grows, typography
+    should remain stable instead of shrinking the whole phrase to fit.
+    """
+    import io
+
+    overlay = {
+        "text": "Let's make this happen let's make this happen",
+        "effect": "pop-in",
+        "pop_animated_suffix": "happen",
+        "font_family": "Bodoni Moda",
+        "text_size_px": 64,
+        "position_x_frac": 0.06,
+        "position_y_frac": 0.78,
+        "text_color": "#FFFFFF",
+        "text_anchor": "left",
+        "preserve_font_size": True,
+    }
+
+    typeface = tos._typeface_for_overlay(overlay)
+    font, size, lines = tos._wrap_at_fixed_size(
+        overlay["text"],
+        typeface,
+        tos._resolve_font_size_px(overlay),
+        tos.CANVAS_W * tos._MAX_LINE_W_FRAC,
+    )
+    assert size == 64
+    assert len(lines) > 1
+    assert max(font.measureText(line) for line in lines) <= tos.CANVAS_W * tos._MAX_LINE_W_FRAC
+
+    with (
+        mock.patch.object(tos, "_shrink_to_fit", wraps=tos._shrink_to_fit) as shrink,
+        mock.patch.object(
+            tos, "_shrink_to_fit_max_lines", wraps=tos._shrink_to_fit_max_lines
+        ) as shrink_max,
+    ):
+        img = tos._draw_frame(overlay, 0.9, 1.5)
+
+    assert shrink.call_count == 0
+    assert shrink_max.call_count == 0
+    im = Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA")
+    bbox = im.getbbox()
+    assert bbox is not None
+    assert bbox[3] - bbox[1] > 100, f"expected wrapped multi-line text; bbox {bbox}"
+
+
 def test_left_anchor_cumulative_stage_prior_lines_stable():
     """REGRESSION (the "all previous words re-appear" bug, prod 89cde014): a
     cumulative left-anchored phrase that wraps to multiple lines must keep its
