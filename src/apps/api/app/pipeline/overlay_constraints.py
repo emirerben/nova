@@ -45,14 +45,14 @@ _MAX_SHRINK_ITERS = 12
 # Extra headroom on the width budget so a Pillow-approved fit survives Skia's
 # (slightly wider) HarfBuzz shaping.
 _SKIA_SAFETY = 0.97
-# Effects whose renderers draw the text on a SINGLE line (no wrap): the karaoke
-# sweep and the calm lyric line both lay the whole line out horizontally, and a
-# cumulative word-reveal (pop-in with a `pop_animated_suffix`) builds one growing
-# line. For these the fit test must use the UNWRAPPED full-line width — wrapping
-# would let an over-wide line "fit" as N stacked lines that the renderer then
-# clips off both edges (caught on a real karaoke render: "city lights keep
-# calling out my name" measured as 3 wrapped lines, drawn as one 3×-too-wide line).
-_SINGLE_LINE_EFFECTS = {"karaoke-line", "lyric-line"}
+# Karaoke lyrics are expected to wrap instead of shrinking. Four lines covers
+# common repeated hooks at 100-120px without turning the bottom third into a wall
+# of text; beyond that, the generic shrink loop still protects the frame.
+_KARAOKE_MAX_LINES = 4
+# Effects whose renderers draw the text on a SINGLE line (no wrap). Karaoke is
+# intentionally not listed: it wraps by word at render time so lyric font size
+# stays stable and long phrases become multiple lines instead of shrinking.
+_SINGLE_LINE_EFFECTS = {"lyric-line"}
 # Horizontal clamp uses a near-zero margin (frame bound), NOT the vertical safe
 # margin: the 6% safe zone exists for the TikTok/Reels UI chrome at the top and
 # bottom, but content legitimately sits close to the left/right edges (Layer-2
@@ -110,7 +110,12 @@ def apply_overlay_constraints(
         single_line = ov.get("effect") in _SINGLE_LINE_EFFECTS or bool(
             ov.get("pop_animated_suffix")
         )
-        ov_max_lines = 1 if single_line else max_lines
+        if single_line:
+            ov_max_lines = 1
+        elif ov.get("effect") == "karaoke-line":
+            ov_max_lines = max(max_lines, _KARAOKE_MAX_LINES)
+        else:
+            ov_max_lines = max_lines
         measure_budget = canvas_w * 10 if single_line else width_budget
 
         lines, widest = wrap_and_measure(

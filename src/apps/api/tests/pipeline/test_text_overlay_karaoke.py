@@ -87,6 +87,41 @@ def test_karaoke_line_anchors_word_starts_and_preserves_gaps() -> None:
         assert r"\kf100" not in content
 
 
+def test_karaoke_line_wraps_long_text_without_shrinking_ass_font() -> None:
+    words = "Let's make this happen let's make this happen".split()
+    overlays = [
+        {
+            "effect": "karaoke-line",
+            "text": " ".join(words),
+            "start_s": 0.0,
+            "end_s": 3.0,
+            "position": "bottom",
+            "font_family": "Inter",
+            "text_size_px": 120,
+            "text_color": "#FFFFFF",
+            "highlight_color": "#FFFF00",
+            "word_timings": [
+                {
+                    "text": word,
+                    "start_s": i * 0.25,
+                    "end_s": i * 0.25 + 0.2,
+                    "duration_cs": 20,
+                }
+                for i, word in enumerate(words)
+            ],
+        }
+    ]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ass_paths = generate_animated_overlay_ass(
+            overlays, slot_duration_s=3.0, output_dir=tmpdir, slot_index=0
+        )
+        assert ass_paths is not None
+        content = open(ass_paths[0]).read()  # noqa: PTH123, SIM115
+        assert r"\N" in content
+        assert r"\fs120" in content
+        assert r"\fs102" not in content
+
+
 def test_karaoke_line_without_word_timings_falls_back_gracefully() -> None:
     """No word_timings → render plain text without karaoke tags; never crash."""
     overlays = [
