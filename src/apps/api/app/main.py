@@ -11,9 +11,11 @@ from app.config import settings
 from app.limiter import limiter
 from app.routes import (
     admin,
+    admin_build_tasks,
     admin_generative,
     admin_jobs,
     admin_music,
+    admin_review,
     auth,
     clips,
     content_plans,
@@ -91,6 +93,10 @@ app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(admin_jobs.router, prefix="/admin/jobs", tags=["admin-jobs"])
 app.include_router(admin_music.router, prefix="/admin/music-tracks", tags=["admin-music"])
 app.include_router(admin_generative.router, prefix="/admin/generative", tags=["admin-generative"])
+app.include_router(
+    admin_build_tasks.router, prefix="/admin/build-tasks", tags=["admin-build-tasks"]
+)
+app.include_router(admin_review.router, prefix="/admin/review", tags=["admin-review"])
 app.include_router(template_jobs.router, prefix="/template-jobs", tags=["template-jobs"])
 app.include_router(music.router, prefix="/music-tracks", tags=["music"])
 app.include_router(music_jobs.router, prefix="/music-jobs", tags=["music-jobs"])

@@ -22,6 +22,7 @@ celery_app = Celery(
         "app.tasks.content_plan_build",
         "app.tasks.online_eval",
         "app.tasks.grade_final_video",
+        "app.tasks.send_daily_digest",
         "app.tasks.maintenance",
     ],
 )
@@ -58,6 +59,14 @@ celery_app.conf.update(
             "task": "tasks.cleanup_agent_runs",
             "schedule": crontab(hour=4, minute=0),
         },
+        # Daily dev-loop heartbeat digest (plan D5 / T7). 13:00 UTC ≈ morning
+        # for the founder, within the builder cron's work-hours window so the
+        # dead-man's-switch can meaningfully fire on a no-activity weekday.
+        # Skips silently if DIGEST_RECIPIENT_EMAIL / RESEND_API_KEY are unset.
+        "dev-loop-heartbeat-digest-daily": {
+            "task": "tasks.send_daily_digest",
+            "schedule": crontab(hour=13, minute=0),
+        },
     },
 )
 
@@ -83,6 +92,7 @@ def _reap_orphans_on_startup(sender, **kwargs):  # pragma: no cover (signal wiri
     """
     import threading  # noqa: PLC0415
 
+    from app.tasks.build_task_reaper import reap_stale_build_tasks  # noqa: PLC0415
     from app.tasks.reaper import reap_orphans  # noqa: PLC0415
 
     def _run():
@@ -94,6 +104,19 @@ def _reap_orphans_on_startup(sender, **kwargs):  # pragma: no cover (signal wiri
                 print(f"[worker_ready] reaped {count} orphan job(s) at startup")
         except Exception as exc:  # noqa: BLE001
             print(f"[worker_ready] orphan reap failed (non-fatal): {exc!r}")
+
+        # Sweep zombie build_tasks the same way: a builder run (GH Actions) that
+        # died mid-task leaves a row stuck `in_progress`. Best-effort, never
+        # fatal — modeled on the orphan reap above.
+        try:
+            summary = reap_stale_build_tasks()
+            if summary["total"]:
+                print(
+                    f"[worker_ready] reaped {summary['total']} stale build_task(s) "
+                    f"(requeued={summary['requeued']} blocked={summary['blocked']})"
+                )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[worker_ready] build_task reap failed (non-fatal): {exc!r}")
 
     threading.Thread(target=_run, daemon=True, name="orphan-reaper").start()
 
