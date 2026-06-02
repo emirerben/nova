@@ -2695,6 +2695,41 @@ class TestAssembleClipsTextOverlays:
         assert result[0]["text"] == "I got room"
         assert result[0]["pop_animated_suffix"] == "room"
 
+    def test_collect_absolute_overlays_preserves_pop_fixed_font_size(self):
+        """Per-word-pop lyrics must keep fixed-size wrapping through render prep.
+
+        The injector writes `preserve_font_size=True`, but full music jobs rebuild
+        overlay dicts here before the universal constraint pass and Skia renderer.
+        Dropping the flag makes constraints shrink the cumulative lyric into one
+        line instead of letting the renderer wrap at the configured size.
+        """
+        from app.tasks.template_orchestrate import _collect_absolute_overlays
+
+        step = self._make_step_with_overlays(
+            overlays=[
+                {
+                    "role": "lyrics",
+                    "text": "Let's make this happen let's make this happen",
+                    "start_s": 0.9,
+                    "end_s": 1.8,
+                    "position": "bottom",
+                    "effect": "pop-in",
+                    "font_family": "Bodoni Moda",
+                    "text_size_px": 64,
+                    "text_anchor": "left",
+                    "position_x_frac": 0.06,
+                    "pop_animated_suffix": "happen",
+                    "preserve_font_size": True,
+                }
+            ]
+        )
+
+        result = _collect_absolute_overlays([step], [5.0], None, "")
+
+        assert len(result) == 1
+        assert result[0]["preserve_font_size"] is True
+        assert result[0]["text_size_px"] == 64
+
     def test_collect_absolute_overlays_resyncs_pop_to_word_anchor(self):
         """Full music Pop-up timing must resolve to the sung word onset.
 

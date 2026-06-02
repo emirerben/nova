@@ -46,11 +46,12 @@ _LYRIC_INJECTOR_PATH = (
 # in PR Instant-Crush (2026-05-27): a new constants block above `_inject_line`
 # (the trailing-line drop thresholds) shifted the function by +41 lines but
 # the content of `_inject_line` + post-pass is byte-identical (same SHA) →
-# 797..1299 after post-merge helper growth above `_inject_line` (PR #414).
+# 797..1299 after post-merge helper growth above `_inject_line` (PR #414) →
+# 814..1316 after per-word-pop helper growth above `_inject_line`.
 # If the file structure changes such that this range no longer captures the
 # right scope, update BOTH endpoints below AND the SHA.
-_LINE_FROZEN_RANGE_START: int = 797
-_LINE_FROZEN_RANGE_END: int = 1299
+_LINE_FROZEN_RANGE_START: int = 814
+_LINE_FROZEN_RANGE_END: int = 1316
 
 # Locked SHA256 of the frozen range. DO NOT update this constant casually.
 # Read the module docstring above for the legitimate update procedure.

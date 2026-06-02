@@ -234,6 +234,54 @@ def test_per_word_pop_terminal_dwell_clears_before_next_line_first_word() -> Non
     assert body["end_s"] == pytest.approx(2.067, abs=1e-3)
 
 
+def test_per_word_pop_forces_left_anchor_even_with_centered_style_set() -> None:
+    """REGRESSION: cumulative pop-up lyrics must grow from a fixed left edge.
+
+    The default style set's lyric_word_pop role is editorial/centered, but
+    per-word-pop emits cumulative stages ("You" -> "You may" -> ...). If those
+    stages inherit center alignment, each longer stage recenters and the visible
+    prefix shifts left, as seen in prod job 86bad910-596a-448a-a36a-5604d8ac4509.
+    """
+    recipe = _make_recipe([6.0])
+    cache = _make_lyrics_cache(
+        [
+            (
+                "You may have the body",
+                0.0,
+                2.0,
+                [
+                    ("You", 0.0, 0.4),
+                    ("may", 0.4, 0.8),
+                    ("have", 0.8, 1.2),
+                    ("the", 1.2, 1.6),
+                    ("body", 1.6, 2.0),
+                ],
+            )
+        ]
+    )
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        6.0,
+        {"enabled": True, "style": "per-word-pop", "style_set_id": "default"},
+    )
+
+    overlays = out["slots"][0]["text_overlays"]
+    assert [o["text"] for o in overlays] == [
+        "You",
+        "You may",
+        "You may have",
+        "You may have the",
+        "You may have the body",
+    ]
+    assert all(o["text_anchor"] == "left" for o in overlays)
+    assert all(o["position_x_frac"] == pytest.approx(0.06) for o in overlays)
+    assert all(o["preserve_font_size"] is True for o in overlays)
+    # The style set still owns typography; only cumulative geometry is forced.
+    assert all(o["font_family"] == "Playfair Display" for o in overlays)
+
+
 def test_per_word_pop_drops_sub_renderable_middle_stage() -> None:
     """A middle word whose natural span < _MIN_RENDERABLE_S is dropped.
 

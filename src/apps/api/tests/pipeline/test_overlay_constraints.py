@@ -73,29 +73,55 @@ def test_empty_text_skipped() -> None:
     assert out["text_size_px"] == 250
 
 
-def test_karaoke_line_shrinks_to_single_line() -> None:
-    """REGRESSION: karaoke-line renders on ONE line (no wrap), so the constraint
-    pass must shrink the FULL line to fit width — not let it 'fit' as wrapped
-    lines the renderer then clips off both edges. Caught on a real karaoke render
-    where a 6-word lyric at 120px stayed 120px (measured as 3 wrapped lines)."""
+def test_karaoke_line_wraps_instead_of_shrinking() -> None:
+    """Karaoke wraps by word at render time, so normal multi-word overflow should
+    keep the requested font size and become multiple caption lines."""
     from app.pipeline.text_overlay import wrap_and_measure
 
     ov = _ov(
-        "city lights keep calling out my name",
+        "Let's make this happen let's make this happen",
         text_size_px=120,
         effect="karaoke-line",
         position="bottom",
     )
     [out] = apply_overlay_constraints([ov])
-    assert out["text_size_px"] < 120, "karaoke line must shrink to fit one line"
-    # The full (unwrapped) line now fits the safe-zone width.
-    _, widest = wrap_and_measure(
+    assert out["text_size_px"] == 120, "karaoke should wrap, not shrink, normal word overflow"
+    lines, widest = wrap_and_measure(
         out["text"],
         font_family="Montserrat",
         text_size_px=out["text_size_px"],
-        max_width_px=CANVAS_W * 10,  # huge budget => single line
+        max_width_px=int(0.88 * CANVAS_W),
     )
+    assert len(lines) >= 2
     assert widest <= 0.88 * CANVAS_W or out["text_size_px"] == _MIN_FONT_SIZE
+
+
+def test_preserve_font_size_pop_suffix_wraps_instead_of_shrinking() -> None:
+    """Per-word lyric popups keep their style-set size and wrap as they grow."""
+    from app.pipeline.text_overlay import wrap_and_measure
+
+    ov = _ov(
+        "Let's make this happen let's make this happen",
+        font_family="Bodoni Moda",
+        text_size_px=64,
+        effect="pop-in",
+        pop_animated_suffix="happen",
+        preserve_font_size=True,
+        position="bottom",
+        text_anchor="left",
+        position_x_frac=0.06,
+    )
+    [out] = apply_overlay_constraints([ov])
+    assert out["text_size_px"] == 64
+
+    lines, widest = wrap_and_measure(
+        out["text"],
+        font_family="Bodoni Moda",
+        text_size_px=out["text_size_px"],
+        max_width_px=int(0.88 * CANVAS_W * 0.97),
+    )
+    assert len(lines) > 1
+    assert widest <= 0.88 * CANVAS_W * 0.97
 
 
 def test_does_not_rewrite_text() -> None:

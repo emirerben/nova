@@ -414,6 +414,8 @@ def _apply_style_set_defaults(cfg: dict, set_id: str) -> dict:
     _default("text_size", resolved.get("text_size"))
     _default("text_size_px", resolved.get("text_size_px"))
     _default("font_family", resolved.get("font_family"))
+    _default("text_anchor", resolved.get("text_anchor"))
+    _default("position_x_frac", resolved.get("position_x_frac"))
     _default("position_y_frac", resolved.get("position_y_frac"))
     # The renderers/injectors call the stroke field `outline_px`; sets use the
     # canonical `stroke_width`.
@@ -606,6 +608,14 @@ def _common_overlay_fields(cfg: dict) -> dict[str, Any]:
     }
     if cfg.get("font_family"):
         out["font_family"] = cfg["font_family"]
+    if cfg.get("text_size_px") is not None:
+        out["text_size_px"] = int(cfg["text_size_px"])
+    if cfg.get("text_anchor"):
+        out["text_anchor"] = cfg["text_anchor"]
+    if cfg.get("position_x_frac") is not None:
+        out["position_x_frac"] = float(cfg["position_x_frac"])
+    if cfg.get("position_y_frac") is not None:
+        out["position_y_frac"] = float(cfg["position_y_frac"])
     outline = cfg.get("outline_px")
     if outline is not None:
         out["outline_px"] = int(outline)
@@ -709,6 +719,13 @@ def _inject_per_word_pop(
     the slot boundary.
     """
     base = _common_overlay_fields(cfg)
+    # Per-word-pop stages are cumulative: "You" -> "You may" -> ...
+    # Center anchoring re-centers every new stage, so earlier words drift left as
+    # the line grows. Pin the left edge for this style regardless of the set's
+    # generic lyric defaults; font/color/size still come from the chosen set.
+    base["text_anchor"] = "left"
+    base["position_x_frac"] = float(cfg.get("position_x_frac") or 0.06)
+    base["preserve_font_size"] = True
     injected = 0
 
     for line_idx, line in enumerate(section_lines):

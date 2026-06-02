@@ -9,6 +9,8 @@ all paths and is independent of which style set was chosen.
 What it enforces, per overlay:
   • max line count (default 3) and max line width within the 9:16 safe zone —
     by shrinking `text_size_px` (never the text) down to a legibility floor;
+    overlays with `preserve_font_size=True` opt out of size shrinkage and wrap
+    at their configured size instead;
   • the rendered text block stays inside the safe-zone margins — by clamping
     `position_y_frac` and (anchor-aware) `position_x_frac`.
 
@@ -45,14 +47,15 @@ _MAX_SHRINK_ITERS = 12
 # Extra headroom on the width budget so a Pillow-approved fit survives Skia's
 # (slightly wider) HarfBuzz shaping.
 _SKIA_SAFETY = 0.97
-# Effects whose renderers draw the text on a SINGLE line (no wrap): the karaoke
-# sweep and the calm lyric line both lay the whole line out horizontally, and a
-# cumulative word-reveal (pop-in with a `pop_animated_suffix`) builds one growing
-# line. For these the fit test must use the UNWRAPPED full-line width — wrapping
-# would let an over-wide line "fit" as N stacked lines that the renderer then
-# clips off both edges (caught on a real karaoke render: "city lights keep
-# calling out my name" measured as 3 wrapped lines, drawn as one 3×-too-wide line).
-_SINGLE_LINE_EFFECTS = {"karaoke-line", "lyric-line"}
+# Karaoke lyrics are expected to wrap instead of shrinking. Four lines covers
+# common repeated hooks at 100-120px without turning the bottom third into a wall
+# of text; beyond that, the generic shrink loop still protects the frame.
+_KARAOKE_MAX_LINES = 4
+# Effects whose renderers draw the text on a SINGLE line (no wrap). Karaoke and
+# fixed-size cumulative word-reveals are intentionally not listed: they wrap by
+# word at render time so lyric font size stays stable and long phrases become
+# multiple lines instead of shrinking.
+_SINGLE_LINE_EFFECTS = {"lyric-line"}
 # Horizontal clamp uses a near-zero margin (frame bound), NOT the vertical safe
 # margin: the 6% safe zone exists for the TikTok/Reels UI chrome at the top and
 # bottom, but content legitimately sits close to the left/right edges (Layer-2
@@ -104,13 +107,20 @@ def apply_overlay_constraints(
         size_px = _current_size_px(ov)
         original_size_px = size_px
 
+        preserve_font_size = bool(ov.get("preserve_font_size"))
+
         # Single-line effects must fit the WHOLE line horizontally (the renderer
         # never wraps them). Measuring with a very wide budget keeps it one line
         # so the loop shrinks until the full line fits `width_budget`.
-        single_line = ov.get("effect") in _SINGLE_LINE_EFFECTS or bool(
-            ov.get("pop_animated_suffix")
+        single_line = ov.get("effect") in _SINGLE_LINE_EFFECTS or (
+            bool(ov.get("pop_animated_suffix")) and not preserve_font_size
         )
-        ov_max_lines = 1 if single_line else max_lines
+        if single_line:
+            ov_max_lines = 1
+        elif ov.get("effect") == "karaoke-line":
+            ov_max_lines = max(max_lines, _KARAOKE_MAX_LINES)
+        else:
+            ov_max_lines = max_lines
         measure_budget = canvas_w * 10 if single_line else width_budget
 
         lines, widest = wrap_and_measure(
@@ -124,7 +134,11 @@ def apply_overlay_constraints(
         # own shrink-to-fit net to handle it rather than guessing.
         floor_hit = False
         iters = 0
-        while widest > 0 and (len(lines) > ov_max_lines or widest > width_budget):
+        while (
+            not preserve_font_size
+            and widest > 0
+            and (len(lines) > ov_max_lines or widest > width_budget)
+        ):
             if size_px <= _MIN_FONT_SIZE or iters >= _MAX_SHRINK_ITERS:
                 if len(lines) > ov_max_lines or widest > width_budget:
                     floor_hit = True
