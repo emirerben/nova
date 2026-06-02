@@ -249,6 +249,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Process groups: api (FastAPI/uvicorn) + worker (Celery)
 - Release command: `python -m alembic upgrade head` (runs migrations on every deploy)
 - VM sizing: api = 1 shared CPU / 512MB, worker = 4 shared CPUs / 6144MB (size class is shared-cpu-4x because shared-cpu-2x hard-caps at 4096MB; see `fly.toml` for the 2026-05-17 OOM incident that drove the bump)
+- **Celery time-limit invariant:** every long-running task's `time_limit` MUST stay strictly under the worker's broker `visibility_timeout` (`app/worker.py`, currently 1900s). With `task_acks_late=True`, a task still in-flight past `visibility_timeout` is redelivered to a SECOND worker while the first runs — duplicate concurrent execution. For render tasks that fills the RAM-backed `/tmp` (tmpfs) → `No space left on device` (prod 08532ba3, 2026-06-01: generative voiceover job at `time_limit=2000` vs visibility 1900 double-ran the HDR pre-tonemap). Render orchestrators use `soft_time_limit=1740, time_limit=1800`. Locked by `tests/tasks/test_task_time_limits.py`. `batch_import_from_drive` (2400) is the deliberate exception (download-bound, separate handling).
 - Dockerfile: repo-root `Dockerfile` (cached dependency layer from pyproject.toml)
 - Docker image includes: `app/`, `assets/`, `prompts/`, `alembic.ini`
 - CORS: `ALLOWED_ORIGINS` env var — JSON array format, e.g. `'["http://localhost:3000","https://nova-video.vercel.app"]'`

@@ -100,8 +100,15 @@ _NO_RERUN_STATUSES = frozenset(
     retry_backoff_max=60,
     retry_jitter=False,
     max_retries=7,
-    soft_time_limit=1800,
-    time_limit=2000,
+    # time_limit MUST stay under the broker visibility_timeout=1900 (worker.py).
+    # With acks_late, a job still in-flight past visibility_timeout is redelivered
+    # to a SECOND worker while the first runs — two concurrent HDR pre-tonemap
+    # passes fill the RAM-backed /tmp (tmpfs) → "No space left on device"
+    # (prod 08532ba3). At 1740/1800 the soft limit fails the job terminal BEFORE
+    # 1900, so #419's _NO_RERUN_STATUSES guard no-ops the redelivery. Matches
+    # orchestrate_music_job / orchestrate_template_job.
+    soft_time_limit=1740,
+    time_limit=1800,
 )
 def orchestrate_generative_job(self, job_id: str) -> None:
     """Entry point. Never raises — any exception becomes processing_failed."""
@@ -595,8 +602,10 @@ def _pretonemap_hdr_clips(
     retry_backoff_max=60,
     retry_jitter=False,
     max_retries=7,
-    soft_time_limit=1800,
-    time_limit=2000,
+    # Keep under broker visibility_timeout=1900 (worker.py) — see
+    # orchestrate_generative_job above for the acks_late double-run rationale.
+    soft_time_limit=1740,
+    time_limit=1800,
 )
 def regenerate_generative_variant(
     self,
