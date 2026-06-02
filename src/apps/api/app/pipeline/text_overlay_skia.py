@@ -357,6 +357,23 @@ def _wrap_text_to_lines(text: str, font: skia.Font, max_width: float) -> list[st
     return out
 
 
+def _wrap_word_indices(words: list[str], font: skia.Font, max_width: float) -> list[list[int]]:
+    """Greedy word-wrap that preserves original word indices for per-word effects."""
+    lines: list[list[int]] = []
+    current: list[int] = []
+    for i, word in enumerate(words):
+        candidate = [*current, i]
+        candidate_text = " ".join(words[j] for j in candidate)
+        if font.measureText(candidate_text) <= max_width or not current:
+            current.append(i)
+        else:
+            lines.append(current)
+            current = [i]
+    if current:
+        lines.append(current)
+    return lines
+
+
 def _shrink_to_fit(
     text: str,
     typeface: skia.Typeface,
@@ -866,49 +883,54 @@ def _draw_karaoke_line(
     starts: list[float] = []
     acc = 0.0
     for w in word_timings:
-        words.append(w.get("text", ""))
+        word_text = str(w.get("text", "")).strip()
+        if not word_text:
+            continue
+        words.append(word_text)
         start = _finite_float(w.get("start_s"), acc)
         fallback_dur_s = max(0.05, _finite_float(w.get("duration_cs"), 5.0) / 100.0)
         end = _finite_float(w.get("end_s"), start + fallback_dur_s)
         dur_s = end - start if end > start else fallback_dur_s
         starts.append(max(0.0, start))
         acc = max(acc, start + dur_s)
+    if not words:
+        _draw_centered_text(canvas, text, overlay)
+        return
 
     typeface = _typeface_for_overlay(overlay)
     initial_size = _resolve_font_size_px(overlay)
-    # Use full text for layout sizing so a long lyric line shrinks once at the
-    # start instead of per-word.
-    font, _size, _lines = _shrink_to_fit(
-        " ".join(words), typeface, initial_size, CANVAS_W * _MAX_LINE_W_FRAC
-    )
+    font = skia.Font(typeface, initial_size)
+    font.setSubpixel(True)
+    max_width = CANVAS_W * _MAX_LINE_W_FRAC
+    line_word_indices = _wrap_word_indices(words, font, max_width)
+    if not line_word_indices:
+        return
 
     space_w = font.measureText(" ")
     word_widths = [font.measureText(w) for w in words]
-    total_w = sum(word_widths) + space_w * max(0, len(words) - 1)
+    line_texts = [" ".join(words[i] for i in line) for line in line_word_indices]
 
     cx, cy = _resolve_anchor(overlay)
-    # Mirror _draw_centered_text: left/right-anchored overlays pin the line's
-    # left/right edge at position_x_frac; centered overlays center on cx.
     anchor = _resolve_text_anchor(overlay)
-    x = _anchored_left_x(anchor, cx, total_w)
-    metrics = font.getMetrics()
-    line_height_raw = metrics.fDescent - metrics.fAscent
-    # Match _vertical_block_top so a karaoke line shares the same vertical
-    # origin convention as the centered/pop-in paths (top for left/right,
-    # centered for center).
-    baseline_y = _vertical_block_top(anchor, cy, line_height_raw) + (-metrics.fAscent)
+    block = _measure_block(font, line_texts)
+    block_top = _vertical_block_top(anchor, cy, block["block_h"])
+    first_baseline = block_top + block["ascent_offset"]
 
     primary_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
     highlight_color = _skia_color_from_hex(overlay.get("highlight_color") or "#FFD24A")
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
 
-    for i, word in enumerate(words):
-        sung = t_local >= starts[i]
-        color = highlight_color if sung else primary_color
-        _draw_line_with_layers(
-            canvas, word, x, baseline_y, font, color, stroke_px, shadow_alpha=160
-        )
-        x += word_widths[i] + space_w
+    for line_idx, line in enumerate(line_word_indices):
+        line_w = sum(word_widths[i] for i in line) + space_w * max(0, len(line) - 1)
+        x = _anchored_left_x(anchor, cx, line_w)
+        baseline_y = first_baseline + line_idx * block["line_step"]
+        for i in line:
+            sung = t_local >= starts[i]
+            color = highlight_color if sung else primary_color
+            _draw_line_with_layers(
+                canvas, words[i], x, baseline_y, font, color, stroke_px, shadow_alpha=160
+            )
+            x += word_widths[i] + space_w
 
 
 def _lyric_line_alpha(overlay: dict, t_local: float, duration_s: float) -> float:

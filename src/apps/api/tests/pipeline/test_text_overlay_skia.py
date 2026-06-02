@@ -1038,6 +1038,45 @@ def test_left_anchor_karaoke_line_not_clipped():
     assert bbox[2] < width, f"karaoke right edge overflow; bbox {bbox}"
 
 
+def test_karaoke_line_wraps_without_shrinking_font():
+    words = "Let's make this happen let's make this happen".split()
+    overlay = {
+        "text": " ".join(words),
+        "effect": "karaoke-line",
+        "text_size_px": 120,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.78,
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A",
+        "font_family": "Inter",
+        "text_anchor": "center",
+        "word_timings": [
+            {
+                "text": word,
+                "start_s": i * 0.25,
+                "end_s": i * 0.25 + 0.2,
+                "duration_cs": 20,
+            }
+            for i, word in enumerate(words)
+        ],
+    }
+
+    seen_sizes: list[int] = []
+    original_draw = tos._draw_line_with_layers
+
+    def capture_draw(canvas, line, x, baseline_y, font, fill_color, stroke_px, shadow_alpha):
+        seen_sizes.append(int(font.getSize()))
+        return original_draw(canvas, line, x, baseline_y, font, fill_color, stroke_px, shadow_alpha)
+
+    with mock.patch.object(tos, "_draw_line_with_layers", side_effect=capture_draw):
+        bbox, width = _frame_bbox(overlay, t_local=1.0, duration_s=3.0)
+
+    assert bbox is not None
+    assert seen_sizes and set(seen_sizes) == {120}
+    assert bbox[2] < width, f"wrapped karaoke line should fit horizontally; bbox {bbox}"
+    assert bbox[3] - bbox[1] > 200, f"expected multi-line karaoke render; bbox {bbox}"
+
+
 # -- Skia / Pillow renderer parity guard -------------------------------------
 #
 # The #296 class of bug: a field carried through the burn dict but honored by

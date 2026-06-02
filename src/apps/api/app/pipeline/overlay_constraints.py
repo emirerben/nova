@@ -47,11 +47,15 @@ _MAX_SHRINK_ITERS = 12
 # Extra headroom on the width budget so a Pillow-approved fit survives Skia's
 # (slightly wider) HarfBuzz shaping.
 _SKIA_SAFETY = 0.97
-# Effects whose renderers draw the text on a SINGLE line (no wrap): the karaoke
-# sweep and the calm lyric line both lay the whole line out horizontally. Legacy
-# cumulative word-reveals also shrink as one growing line unless they explicitly
-# request fixed typography via preserve_font_size.
-_SINGLE_LINE_EFFECTS = {"karaoke-line", "lyric-line"}
+# Karaoke lyrics are expected to wrap instead of shrinking. Four lines covers
+# common repeated hooks at 100-120px without turning the bottom third into a wall
+# of text; beyond that, the generic shrink loop still protects the frame.
+_KARAOKE_MAX_LINES = 4
+# Effects whose renderers draw the text on a SINGLE line (no wrap). Karaoke and
+# fixed-size cumulative word-reveals are intentionally not listed: they wrap by
+# word at render time so lyric font size stays stable and long phrases become
+# multiple lines instead of shrinking.
+_SINGLE_LINE_EFFECTS = {"lyric-line"}
 # Horizontal clamp uses a near-zero margin (frame bound), NOT the vertical safe
 # margin: the 6% safe zone exists for the TikTok/Reels UI chrome at the top and
 # bottom, but content legitimately sits close to the left/right edges (Layer-2
@@ -111,7 +115,12 @@ def apply_overlay_constraints(
         single_line = ov.get("effect") in _SINGLE_LINE_EFFECTS or (
             bool(ov.get("pop_animated_suffix")) and not preserve_font_size
         )
-        ov_max_lines = 1 if single_line else max_lines
+        if single_line:
+            ov_max_lines = 1
+        elif ov.get("effect") == "karaoke-line":
+            ov_max_lines = max(max_lines, _KARAOKE_MAX_LINES)
+        else:
+            ov_max_lines = max_lines
         measure_budget = canvas_w * 10 if single_line else width_budget
 
         lines, widest = wrap_and_measure(
