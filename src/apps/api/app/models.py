@@ -705,3 +705,86 @@ class VideoFeedback(Base):
         Index("idx_video_feedback_job", "job_id"),
         Index("idx_video_feedback_content_plan", "content_plan_id"),
     )
+
+
+class BuildTask(Base):
+    """A unit of autonomous-dev-loop builder work (M4 — the builder cron's
+    task queue). The GitHub Actions builder claims the oldest incomplete row
+    with `SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1`, does a bounded chunk in a
+    worktree, WIP-commits to `branch`, writes a `progress_note` checkpoint, and
+    releases the row. The schedule (every ~30-60 min) is the auto-resume
+    mechanism: a soft-exit on a Claude usage-limit leaves the row resumable so
+    the next tick continues from the checkpoint — there is no waiting logic.
+
+    All status transitions go through `app.services.build_task_repo` (the
+    builder, reaper, and heartbeat import it — no scattered SQL). See the
+    Session-Resilience plan section.
+
+    Security invariant (CEO D3): `provenance` records whether the signal that
+    minted this task is `trusted` (rubric-gap finder, failing evals, founder
+    notes) or `untrusted` (VideoFeedback notes, future Reddit/TikTok comments).
+    In v1 an `untrusted` signal must NEVER auto-mint a build_task — only trusted
+    signals mint. Enforced in `build_task_repo.create_build_task` + tested.
+    """
+
+    __tablename__ = "build_task"
+
+    # Status lifecycle:
+    #   queued      → not yet claimed; reaper never touches it.
+    #   in_progress → claimed by a builder run (claimed_at / claimed_by set);
+    #                 the reaper resets a stale one back to `queued`.
+    #   blocked     → attempt_count tripped the cap; needs a human (no infinite
+    #                 retry loop). Terminal until a human re-queues it.
+    #   done        → completed; idempotent skip on any future claim.
+    STATUSES = ("queued", "in_progress", "blocked", "done")
+    PROVENANCES = ("trusted", "untrusted")
+    # Only trusted provenance may mint a build_task in v1 (security invariant).
+    MINTABLE_PROVENANCES = ("trusted",)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # queued | in_progress | blocked | done (CHECK-constrained; see migration 0045).
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    # Free-text checkpoint label the builder writes each run ("Stage E: aligning
+    # overlays"); how a fresh session re-orients without a resumable Claude
+    # session. NULL until the first checkpoint.
+    stage: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The WIP git branch the builder commits to; `git log -1` + `git diff` on it
+    # is the resume anchor. NULL until the builder creates the branch.
+    branch: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Incremented every time a run fails (non-zero hard exit, NOT a soft-exit on
+    # a usage limit). The reaper trips this over ATTEMPT_CAP → status `blocked`.
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # trusted | untrusted (CHECK-constrained). Security boundary — see docstring.
+    provenance: Mapped[str] = mapped_column(Text, nullable=False, server_default="trusted")
+    # Lower number = higher priority (claimed first). Ties broken by created_at.
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
+    # Set when a builder run claims the row (in_progress); the reaper compares
+    # claimed_at against a generous threshold to detect a runner that died.
+    claimed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # Opaque run identity (e.g. the GH Actions run id) — observability only.
+    claimed_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    # Human-readable task spec (TODOS.md house format: title / what / why / how).
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'in_progress', 'blocked', 'done')",
+            name="ck_build_task_status",
+        ),
+        CheckConstraint(
+            "provenance IN ('trusted', 'untrusted')",
+            name="ck_build_task_provenance",
+        ),
+        # Claim path: WHERE status='queued' ORDER BY priority, created_at LIMIT 1
+        # FOR UPDATE SKIP LOCKED. This index serves the ORDER BY directly.
+        Index("idx_build_task_status_priority_created", "status", "priority", "created_at"),
+        # Reaper path: WHERE status='in_progress' AND claimed_at < cutoff.
+        Index("idx_build_task_status_claimed", "status", "claimed_at"),
+    )
