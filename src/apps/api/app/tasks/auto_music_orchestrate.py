@@ -167,8 +167,13 @@ _RENDER_PARALLELISM = DEFAULT_N_VARIANTS
     # Covers the documented 65s nova-db VM stall (2026-05-18 07:45:57Z)
     # with ~2× safety margin. retry_backoff_max=60 caps any single delay.
     max_retries=7,
-    soft_time_limit=1800,
-    time_limit=2000,
+    # time_limit MUST stay under broker visibility_timeout=1900 (worker.py): with
+    # acks_late, a job in-flight past 1900s is redelivered to a 2nd worker while the
+    # first runs → concurrent double-run of the same render → tmpfs /tmp exhaustion
+    # (same class as generative prod 08532ba3). 1740/1800 matches the other render
+    # orchestrators and lets the soft limit fail the job terminal before redelivery.
+    soft_time_limit=1740,
+    time_limit=1800,
 )
 def orchestrate_auto_music_job(self, job_id: str) -> None:
     """Top-level entry point — wraps ``_run_auto_music_job`` in failure handling.
