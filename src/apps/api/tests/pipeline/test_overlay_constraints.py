@@ -98,6 +98,34 @@ def test_karaoke_line_shrinks_to_single_line() -> None:
     assert widest <= 0.88 * CANVAS_W or out["text_size_px"] == _MIN_FONT_SIZE
 
 
+def test_preserve_font_size_pop_suffix_wraps_instead_of_shrinking() -> None:
+    """Per-word lyric popups keep their style-set size and wrap as they grow."""
+    from app.pipeline.text_overlay import wrap_and_measure
+
+    ov = _ov(
+        "Let's make this happen let's make this happen",
+        font_family="Bodoni Moda",
+        text_size_px=64,
+        effect="pop-in",
+        pop_animated_suffix="happen",
+        preserve_font_size=True,
+        position="bottom",
+        text_anchor="left",
+        position_x_frac=0.06,
+    )
+    [out] = apply_overlay_constraints([ov])
+    assert out["text_size_px"] == 64
+
+    lines, widest = wrap_and_measure(
+        out["text"],
+        font_family="Bodoni Moda",
+        text_size_px=out["text_size_px"],
+        max_width_px=int(0.88 * CANVAS_W * 0.97),
+    )
+    assert len(lines) > 1
+    assert widest <= 0.88 * CANVAS_W * 0.97
+
+
 def test_does_not_rewrite_text() -> None:
     ov = _ov("Some overflowing caption text that must be shrunk to fit nicely", text_size_px=250)
     original = ov["text"]
