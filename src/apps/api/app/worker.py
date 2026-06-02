@@ -21,6 +21,7 @@ celery_app = Celery(
         "app.tasks.persona_build",
         "app.tasks.content_plan_build",
         "app.tasks.online_eval",
+        "app.tasks.grade_final_video",
         "app.tasks.maintenance",
     ],
 )
