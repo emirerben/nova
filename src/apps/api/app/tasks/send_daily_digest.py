@@ -37,7 +37,8 @@ ESCALATE_BAND = "escalate"
 DEFAULT_FROM_EMAIL = "Nova <hello@nova.video>"
 # Work-hours weekday window the builder cron runs in (UTC). Outside it, zero
 # activity is expected, so the dead-man's-switch must NOT fire. Mirrors the
-# nova-builder.yml schedule (Mon-Fri work hours).
+# work-hours guard in scripts/cron/build_task_runner.sh (the OpenClaw/Paperclip
+# scheduler fires the builder Mon-Fri in this window).
 WORK_HOURS_UTC = range(11, 19)  # 11:00–18:59 UTC
 
 

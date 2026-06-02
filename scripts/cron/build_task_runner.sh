@@ -29,6 +29,19 @@ set -uo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO_ROOT" || { echo "ERROR: repo root not found"; exit 1; }
 
+# Work-hours guard (UTC, Mon-Fri 11:00–18:59 — mirrors WORK_HOURS_UTC in
+# app/tasks/send_daily_digest.py and the retired nova-builder.yml cron). The
+# OpenClaw/Paperclip scheduler fires this script; the guard stops a stray
+# off-hours tick from spending the shared Claude subscription. Set
+# NOVA_BUILDER_FORCE=1 to bypass for a manual test tick.
+if [ "${NOVA_BUILDER_FORCE:-0}" != "1" ]; then
+  _H=$((10#$(date -u +%H))); _DOW=$(date -u +%u)
+  if [ "$_DOW" -gt 5 ] || [ "$_H" -lt 11 ] || [ "$_H" -ge 19 ]; then
+    echo "[builder] outside work-hours window (UTC Mon-Fri 11–18); quiet tick"
+    exit 0
+  fi
+fi
+
 ADMIN="python3 scripts/admin.py --prod --yes"
 RUN_ID="${NOVA_BUILDER_RUN_ID:-local-$(date +%s)}"
 TIMEOUT_S="${NOVA_BUILDER_TIMEOUT_S:-900}"
