@@ -826,6 +826,42 @@ def _wrap_and_shrink_for_lyric_line(
     return "\\N".join(lines), size
 
 
+def _wrap_karaoke_timed_words_for_ass(
+    timed_words: list[dict],
+    font_family: str | None,
+    base_size_px: int,
+) -> list[list[dict]]:
+    """Wrap karaoke timing payloads while preserving per-word ASS timing tags."""
+    if not timed_words:
+        return []
+
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    family = font_family or "Playfair Display"
+    font = _resolve_font_family(family, base_size_px)
+    if font is None:
+        return [timed_words]
+
+    max_width = int(CANVAS_W * _TEXT_MAX_LINE_W)
+    dummy = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(dummy)
+
+    lines: list[list[dict]] = []
+    current: list[dict] = []
+    for word in timed_words:
+        candidate = [*current, word]
+        candidate_text = " ".join(str(w["text"]) for w in candidate)
+        bbox = draw.textbbox((0, 0), candidate_text, font=font)
+        if bbox[2] - bbox[0] <= max_width or not current:
+            current.append(word)
+        else:
+            lines.append(current)
+            current = [word]
+    if current:
+        lines.append(current)
+    return lines
+
+
 def _emit_lyric_line_alpha_tags(
     section_start_s: float,
     section_end_s: float,
@@ -1045,12 +1081,22 @@ def _write_animated_ass(
         # `\kf` (fill) is preferred over `\k` (sharp swap) because it looks
         # less jarring at typical sub-second word durations.
         timings = word_timings or []
+        base_size = int(text_size_px) if text_size_px else OVERLAY_FONT_SIZE
+        fs_tag = f"\\fs{base_size}" if base_size != OVERLAY_FONT_SIZE else ""
         if not timings:
             # No per-word data — fall back to a simple no-animation render so
             # the line at least appears on screen. The caller already logs
             # this as a degraded path.
             pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
-            dialogue_text = f"{{{pos_or_align}{outline_tag}}}{text}"
+            font = _resolve_font_family(font_family or "Playfair Display", base_size)
+            if font is not None:
+                from PIL import Image, ImageDraw  # noqa: PLC0415
+
+                dummy = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+                draw = ImageDraw.Draw(dummy)
+                lines = _wrap_text_to_lines(text, font, int(CANVAS_W * _TEXT_MAX_LINE_W), draw)
+                text = "\\N".join(lines)
+            dialogue_text = f"{{{pos_or_align}\\q2{outline_tag}{fs_tag}}}{text}"
         else:
             # ASS color encoding is &HBBGGRR& (note byte order). With \kf,
             # SecondaryColour is the unsung baseline and PrimaryColour is the
@@ -1058,11 +1104,15 @@ def _write_animated_ass(
             primary_bgr = _hex_to_ass_bgr(highlight_color or "#FFFF00")
             secondary_bgr = _hex_to_ass_bgr(text_color or "#FFFFFF")
             pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
-            parts = [f"{{{pos_or_align}{outline_tag}\\1c&H{primary_bgr}&\\2c&H{secondary_bgr}&}}"]
+            parts = [
+                f"{{{pos_or_align}\\q2{outline_tag}{fs_tag}"
+                f"\\1c&H{primary_bgr}&\\2c&H{secondary_bgr}&}}"
+            ]
             # `\kt` / `\kf` payloads are in centiseconds. We clamp each word
             # to at least 5cs (50ms) so karaoke never emits a zero-length
             # token which libass renders as an immediate primary-color flash.
             cursor_s = 0.0
+            timed_words: list[dict] = []
             for w in timings:
                 word_text = str(w.get("text", "")).strip()
                 if not word_text:
@@ -1079,8 +1129,16 @@ def _write_animated_ass(
                 )
                 dur_cs = max(5, int(round(dur_s * 100.0)))
                 start_cs = max(0, int(round(start_word_s * 100.0)))
-                parts.append(f"{{\\kt{start_cs}\\kf{dur_cs}}}{word_text} ")
+                timed_words.append({"text": word_text, "start_cs": start_cs, "dur_cs": dur_cs})
                 cursor_s = max(cursor_s, start_word_s + dur_cs / 100.0)
+            wrapped_words = _wrap_karaoke_timed_words_for_ass(timed_words, font_family, base_size)
+            for line_idx, line in enumerate(wrapped_words):
+                if line_idx > 0:
+                    parts.append(r"\N")
+                for word in line:
+                    parts.append(
+                        f"{{\\kt{word['start_cs']}\\kf{word['dur_cs']}}}{word['text']} "
+                    )
             dialogue_text = "".join(parts).rstrip()
 
     elif effect == "lyric-line":
