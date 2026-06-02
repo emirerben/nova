@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.74.6] - 2026-06-02
+
+### Fixed
+- **Generative (and auto-music) jobs failed with `No space left on device` because the same job ran twice on two workers at once.** The Celery worker sets `broker_transport_options={"visibility_timeout": 1900}` (`app/worker.py`) with `task_acks_late=True` — and the documented invariant is that every task's `time_limit` must stay under that 1900s window so a still-running job is never redelivered. But `orchestrate_generative_job`, `regenerate_generative_variant`, and `orchestrate_auto_music_job` all ran with `soft_time_limit=1800, time_limit=2000`. A heavy job alive in the 1900-2000s window was redelivered by `acks_late` to a SECOND worker while the first was still running: two concurrent HDR pre-tonemap passes wrote near-lossless intermediates into the RAM-backed `/tmp` (tmpfs on the 6144MB Firecracker worker) and the job died `[Errno 28] No space left on device` (prod job `08532ba3`, whose `pipeline_trace` shows the whole pipeline running twice, 27 min apart). The v0.4.74.5 `_NO_RERUN_STATUSES` redelivery guard could not help — during that window the first run's status is still `processing`/`rendering`, not terminal, so nothing was no-op'd.
+  - **Fix: lower all three render orchestrators to `soft_time_limit=1740, time_limit=1800`** (matching `orchestrate_music_job` / `orchestrate_template_job`), bringing `time_limit` under `visibility_timeout=1900`. Now the soft limit fails a too-heavy job terminal (`failure_reason="processing_timeout"`, "try fewer or shorter clips") BEFORE the broker redelivers, so the redelivery hits the terminal-status guard and no-ops instead of double-running. Legitimate worker-death redelivery is unaffected: a dead worker leaves the job at `rendering` (not terminal) and the resume path reuses persisted variants with no concurrency.
+  - New import-free regression test `tests/tasks/test_task_time_limits.py` locks `soft_time_limit < time_limit < visibility_timeout` for every render orchestrator, reading both limits and the broker `visibility_timeout` straight from source — so the next decorator that drifts fails in CI, not in prod. (`batch_import_from_drive` at 2400s is intentionally download-bound and excluded; it needs a separate raise-visibility-timeout decision.)
+
 ## [0.4.74.5] - 2026-06-01
 
 ### Fixed
