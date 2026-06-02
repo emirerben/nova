@@ -22,6 +22,7 @@ celery_app = Celery(
         "app.tasks.content_plan_build",
         "app.tasks.online_eval",
         "app.tasks.grade_final_video",
+        "app.tasks.send_daily_digest",
         "app.tasks.maintenance",
     ],
 )
@@ -57,6 +58,14 @@ celery_app.conf.update(
         "cleanup-agent-runs-daily": {
             "task": "tasks.cleanup_agent_runs",
             "schedule": crontab(hour=4, minute=0),
+        },
+        # Daily dev-loop heartbeat digest (plan D5 / T7). 13:00 UTC ≈ morning
+        # for the founder, within the builder cron's work-hours window so the
+        # dead-man's-switch can meaningfully fire on a no-activity weekday.
+        # Skips silently if DIGEST_RECIPIENT_EMAIL / RESEND_API_KEY are unset.
+        "dev-loop-heartbeat-digest-daily": {
+            "task": "tasks.send_daily_digest",
+            "schedule": crontab(hour=13, minute=0),
         },
     },
 )
