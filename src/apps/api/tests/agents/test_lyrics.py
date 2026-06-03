@@ -90,6 +90,7 @@ def test_lrclib_synced_plus_whisper_happy_path(mock_lrclib, mock_whisper) -> Non
     assert out.language == "en"
     assert out.track_title_matched == "Test Song"
     assert out.lrclib_id == 99
+    assert out.prompt_version == LyricsExtractionAgent.spec.prompt_version
     assert out.genius_url == ""  # cleared on new LRCLIB extractions
     assert len(out.lines) == 2
     assert out.lines[0].text == "Hello world"
@@ -691,6 +692,7 @@ def test_legacy_genius_plus_whisper_blob_deserializes() -> None:
 
     parsed = LyricsOutput.model_validate(legacy_blob)
     assert parsed.source == "genius+whisper"
+    assert parsed.prompt_version == ""
     assert parsed.genius_url == "https://genius.com/old-song"
     assert parsed.lrclib_id is None  # new field, defaults gracefully
     assert len(parsed.lines) == 1
