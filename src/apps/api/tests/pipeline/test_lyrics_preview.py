@@ -1255,6 +1255,58 @@ def test_build_lyrics_preview_recipe_honors_style_override(tmp_path: Path) -> No
     )
 
 
+def test_build_lyrics_preview_recipe_clamps_overlapping_karaoke_lines() -> None:
+    lyrics_cached = {
+        "source": "lrclib_synced+whisper",
+        "lines": [
+            {
+                "text": "When I'm fucked up that's the real me",
+                "start_s": 13.0,
+                "end_s": 14.45,
+                "words": [
+                    {"text": "When", "start_s": 13.0, "end_s": 13.3},
+                    {"text": "I'm", "start_s": 13.3, "end_s": 13.55},
+                    {"text": "fucked", "start_s": 13.55, "end_s": 14.0},
+                    {"text": "up", "start_s": 14.0, "end_s": 14.35},
+                    {"text": "that's", "start_s": 14.35, "end_s": 14.45},
+                ],
+            },
+            {
+                "text": "When I'm fucked up that's the real me yeah",
+                "start_s": 14.05,
+                "end_s": 16.2,
+                "words": [
+                    {"text": "When", "start_s": 14.05, "end_s": 14.35},
+                    {"text": "I'm", "start_s": 14.35, "end_s": 14.55},
+                    {"text": "fucked", "start_s": 14.55, "end_s": 14.9},
+                    {"text": "up", "start_s": 14.9, "end_s": 15.1},
+                    {"text": "that's", "start_s": 15.1, "end_s": 15.35},
+                    {"text": "the", "start_s": 15.35, "end_s": 15.55},
+                    {"text": "real", "start_s": 15.55, "end_s": 15.8},
+                    {"text": "me", "start_s": 15.8, "end_s": 16.0},
+                    {"text": "yeah", "start_s": 16.0, "end_s": 16.2},
+                ],
+            },
+        ],
+    }
+    track = _track(
+        duration_s=17.0,
+        track_config={"best_start_s": 13.0, "best_end_s": 16.5},
+        lyrics_cached=lyrics_cached,
+    )
+
+    recipe = build_lyrics_preview_recipe(track, {"enabled": True, "style": "karaoke"})
+    overlays = recipe["slots"][0]["text_overlays"]
+
+    assert len(overlays) == 2
+    first, second = overlays
+    assert first["effect"] == "karaoke-line"
+    assert first["end_s"] == pytest.approx(second["start_s"], abs=1e-3)
+    assert first["section_end_anchor_s"] == pytest.approx(
+        second["section_anchor_s"], abs=1e-3
+    )
+
+
 def test_first_line_start_s_rejects_non_finite_floats() -> None:
     """`float("nan")` and `float("inf")` both succeed and would propagate past
     the `<=` comparison in `_resolve_preview_window` (all NaN comparisons

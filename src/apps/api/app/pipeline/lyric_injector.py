@@ -96,6 +96,7 @@ class _SlotWindow:
 # would overlap the next stage and glitch the screen.
 _MIN_OVERLAY_DURATION_S = 0.18
 _WORD_POP_LINE_CLEAR_GAP_S = 1.0 / 30.0
+_KARAOKE_OVERLAP_EPS_S = 1e-3
 
 # `_LAST_WORD_DWELL_S` and `_MIN_RENDERABLE_S` are re-exported from
 # `text_reveal` (above) so existing callers/tests that import these names from
@@ -317,6 +318,7 @@ def inject_lyric_overlays(
         return recipe_dict
 
     if style == "karaoke":
+        section_lines = _enforce_karaoke_no_stacking(section_lines)
         injected = _inject_karaoke(section_lines, slot_windows, new_slots, cfg)
     elif style == "line":
         injected = _inject_line(section_lines, slot_windows, new_slots, cfg)
@@ -595,6 +597,103 @@ def _ensure_overlay_list(slot: dict) -> list[dict]:
         arr = []
         slot["text_overlays"] = arr
     return arr
+
+
+def _clip_karaoke_line_end(line: dict, new_end_s: float) -> dict | None:
+    """Return a karaoke line clipped to ``new_end_s`` in section coordinates."""
+    start_s = float(line["start_s"])
+    old_end_s = float(line["end_s"])
+    end_s = min(old_end_s, float(new_end_s))
+    if end_s - start_s < _MIN_OVERLAY_DURATION_S:
+        return None
+
+    clipped = copy.deepcopy(line)
+    clipped["end_s"] = end_s
+
+    raw_words = line.get("words") or []
+    had_words = bool(raw_words)
+    words: list[dict] = []
+    for w in raw_words:
+        try:
+            ws = float(w.get("start_s", 0.0))
+            we = float(w.get("end_s", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if we <= start_s or ws >= end_s:
+            continue
+        word = dict(w)
+        word["start_s"] = max(ws, start_s)
+        word["end_s"] = min(we, end_s)
+        if word["end_s"] <= word["start_s"]:
+            continue
+        words.append(word)
+
+    if had_words and not words:
+        return None
+    clipped["words"] = words
+    return clipped
+
+
+def _enforce_karaoke_no_stacking(section_lines: list[dict]) -> list[dict]:
+    """Prevent two karaoke lines from being active at the same visual anchor.
+
+    Karaoke renders exactly one bottom-anchored line. If cached lyrics contain
+    nested or overlapping line windows, separate ASS events draw on top of each
+    other at the same baseline. Clamp the outgoing line to the next line's
+    start before `_inject_karaoke` derives overlay windows and resync anchors.
+    """
+    if len(section_lines) <= 1:
+        return section_lines
+
+    valid_lines: list[dict] = []
+    for line in section_lines:
+        try:
+            start_s = float(line["start_s"])
+            end_s = float(line["end_s"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if end_s <= start_s:
+            continue
+        valid_lines.append(line)
+
+    ordered = sorted(
+        valid_lines,
+        key=lambda line: (float(line["start_s"]), float(line["end_s"])),
+    )
+    out: list[dict] = []
+    for idx, line in enumerate(ordered):
+        current = copy.deepcopy(line)
+        if idx + 1 < len(ordered):
+            next_line = ordered[idx + 1]
+            line_start_s = float(current["start_s"])
+            line_end_s = float(current["end_s"])
+            next_start_s = float(next_line["start_s"])
+            if next_start_s < line_end_s - _KARAOKE_OVERLAP_EPS_S:
+                clipped = _clip_karaoke_line_end(current, next_start_s)
+                if clipped is None:
+                    log.info(
+                        "lyric_karaoke_overlap_dropped",
+                        line_text=str(current.get("text", ""))[:80],
+                        next_text=str(next_line.get("text", ""))[:80],
+                        line_start_s=round(line_start_s, 3),
+                        line_end_s=round(line_end_s, 3),
+                        next_start_s=round(next_start_s, 3),
+                        overlap_s=round(line_end_s - next_start_s, 3),
+                    )
+                    continue
+                log.info(
+                    "lyric_karaoke_overlap_clamped",
+                    line_text=str(current.get("text", ""))[:80],
+                    next_text=str(next_line.get("text", ""))[:80],
+                    line_start_s=round(line_start_s, 3),
+                    old_end_s=round(line_end_s, 3),
+                    new_end_s=round(float(clipped["end_s"]), 3),
+                    overlap_s=round(line_end_s - next_start_s, 3),
+                )
+                current = clipped
+        out.append(current)
+
+    return out
 
 
 def _common_overlay_fields(cfg: dict) -> dict[str, Any]:

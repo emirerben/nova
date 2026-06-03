@@ -67,6 +67,40 @@ def _two_line_fixture() -> list[dict]:
     ]
 
 
+def _overlapping_karaoke_fixture() -> list[dict]:
+    """Regression shape from the 14s lyric-preview overlap bug."""
+    return [
+        {
+            "text": "When I'm fucked up that's the real me",
+            "start_s": 13.0,
+            "end_s": 14.45,
+            "words": [
+                {"text": "When", "start_s": 13.0, "end_s": 13.3},
+                {"text": "I'm", "start_s": 13.3, "end_s": 13.55},
+                {"text": "fucked", "start_s": 13.55, "end_s": 14.0},
+                {"text": "up", "start_s": 14.0, "end_s": 14.35},
+                {"text": "that's", "start_s": 14.35, "end_s": 14.45},
+            ],
+        },
+        {
+            "text": "When I'm fucked up that's the real me yeah",
+            "start_s": 14.05,
+            "end_s": 16.2,
+            "words": [
+                {"text": "When", "start_s": 14.05, "end_s": 14.35},
+                {"text": "I'm", "start_s": 14.35, "end_s": 14.55},
+                {"text": "fucked", "start_s": 14.55, "end_s": 14.9},
+                {"text": "up", "start_s": 14.9, "end_s": 15.1},
+                {"text": "that's", "start_s": 15.1, "end_s": 15.35},
+                {"text": "the", "start_s": 15.35, "end_s": 15.55},
+                {"text": "real", "start_s": 15.55, "end_s": 15.8},
+                {"text": "me", "start_s": 15.8, "end_s": 16.0},
+                {"text": "yeah", "start_s": 16.0, "end_s": 16.2},
+            ],
+        },
+    ]
+
+
 # ── per-line invariants ────────────────────────────────────────────────────
 
 
@@ -134,6 +168,48 @@ def test_karaoke_duration_cs_payload_present_and_non_negative() -> None:
             assert wt["duration_cs"] >= 5, (
                 f"duration_cs floor is 5cs (matches _inject_karaoke), got {wt['duration_cs']}"
             )
+
+
+def test_karaoke_clamps_overlapping_line_windows_before_overlay_emit() -> None:
+    """Nested cached lyric lines must not become simultaneous ASS events.
+
+    The preview bug at 14s came from two karaoke overlays with identical text
+    anchors being active together. The injector should keep both surviving
+    lyric lines but cut the outgoing visual window at the next line's start.
+    """
+    overlays = inject_overlays_for_style(
+        style="karaoke",
+        target_duration_s=4.0,
+        best_start_s=13.0,
+        best_end_s=16.2,
+        lines=_overlapping_karaoke_fixture(),
+    )
+
+    assert len(overlays) == 2
+    first, second = overlays
+    assert first["end_s"] == pytest.approx(second["start_s"], abs=1e-3)
+    assert first["section_end_anchor_s"] == pytest.approx(
+        second["section_anchor_s"], abs=1e-3
+    )
+
+    first_span_s = float(first["end_s"]) - float(first["start_s"])
+    for wt in first["word_timings"]:
+        assert float(wt["end_s"]) <= first_span_s + 1e-6
+
+
+def test_karaoke_invariant_no_overlapping_active_windows() -> None:
+    overlays = inject_overlays_for_style(
+        style="karaoke",
+        target_duration_s=4.0,
+        best_start_s=13.0,
+        best_end_s=16.2,
+        lines=_overlapping_karaoke_fixture(),
+    )
+
+    sorted_overlays = sorted(overlays, key=lambda ov: float(ov["section_anchor_s"]))
+    for prev, nxt in zip(sorted_overlays, sorted_overlays[1:], strict=False):
+        assert float(prev["section_end_anchor_s"]) <= float(nxt["section_anchor_s"]) + 1e-6
+        assert float(prev["end_s"]) <= float(nxt["start_s"]) + 1e-6
 
 
 # ── resync stamp invariants ────────────────────────────────────────────────
