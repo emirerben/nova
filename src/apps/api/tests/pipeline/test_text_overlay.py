@@ -541,6 +541,69 @@ class TestAnimatedOverlayASS:
             assert int(m1.group(1)) == 194, f"expected x=194, got {m1.group(1)}"
             assert int(m2.group(1)) == 885, f"expected x=885, got {m2.group(1)}"
 
+    def test_text_anchor_maps_explicit_ass_positions(self):
+        """Explicit ASS positions must preserve left/center/right anchoring."""
+        cases = [
+            ("left", "\\an4"),
+            ("center", "\\an5"),
+            ("right", "\\an6"),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for idx, (anchor, alignment_tag) in enumerate(cases):
+                result = generate_animated_overlay_ass(
+                    [{
+                        "text": anchor,
+                        "start_s": 0.0,
+                        "end_s": 1.0,
+                        "position": "bottom",
+                        "effect": "fade-in",
+                        "position_x_frac": 0.25,
+                        "position_y_frac": 0.80,
+                        "text_anchor": anchor,
+                    }],
+                    5.0,
+                    tmpdir,
+                    idx,
+                )
+                assert result
+                dialogue = next(
+                    ln for ln in open(result[0]).read().splitlines()
+                    if ln.startswith("Dialogue:")
+                )
+                assert f"{alignment_tag}\\pos(270,1536)" in dialogue, dialogue
+
+    def test_text_anchor_left_in_pop_in_suffix_uses_middle_left_explicit_pos(self):
+        """Regression for lyric preview clipping at x_frac=0.06.
+
+        The preview style asks for text_anchor="left", but the ASS path used to
+        hard-code \\an5 at \\pos(64,1632), making libass place the text center
+        at x=64 and crop the first characters at the canvas edge.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{
+                    "text": "only time that I'd be by your side",
+                    "start_s": 0.0,
+                    "end_s": 1.5,
+                    "position": "bottom",
+                    "effect": "pop-in",
+                    "position_x_frac": 0.06,
+                    "text_anchor": "left",
+                    "font_family": "Bodoni Moda",
+                    "pop_animated_suffix": "side",
+                }],
+                5.0,
+                tmpdir,
+                0,
+            )
+            assert result
+            dialogue = next(
+                ln for ln in open(result[0]).read().splitlines()
+                if ln.startswith("Dialogue:")
+            )
+            assert "\\an4\\pos(64,1632)" in dialogue, dialogue
+            assert "\\an5\\pos(64,1632)" not in dialogue, dialogue
+
     def test_position_x_frac_in_slide_uses_custom_x(self):
         """slide-up / slide-down \\move tags must respect position_x_frac
         for both start and end coordinates (otherwise text slides centered
@@ -560,6 +623,54 @@ class TestAnimatedOverlayASS:
             assert m, f"\\move tag missing: {content[:300]}"
             assert int(m.group(1)) == 270, f"start x: {m.group(1)}"
             assert int(m.group(3)) == 270, f"end x: {m.group(3)}"
+
+    def test_text_anchor_left_in_slide_uses_middle_left_move_anchor(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{
+                    "text": "Drop",
+                    "start_s": 0.0,
+                    "end_s": 2.0,
+                    "position": "bottom",
+                    "effect": "slide-down",
+                    "position_x_frac": 0.25,
+                    "position_y_frac": 0.80,
+                    "text_anchor": "left",
+                }],
+                5.0,
+                tmpdir,
+                0,
+            )
+            assert result
+            dialogue = next(
+                ln for ln in open(result[0]).read().splitlines()
+                if ln.startswith("Dialogue:")
+            )
+            assert "\\an4\\move(270,-200,270,1536,0,500)" in dialogue, dialogue
+
+    def test_typewriter_uses_explicit_pos_and_text_anchor(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_animated_overlay_ass(
+                [{
+                    "text": "Type",
+                    "start_s": 0.0,
+                    "end_s": 1.0,
+                    "position": "bottom",
+                    "effect": "typewriter",
+                    "position_x_frac": 0.06,
+                    "text_anchor": "left",
+                }],
+                5.0,
+                tmpdir,
+                0,
+            )
+            assert result
+            dialogue = next(
+                ln for ln in open(result[0]).read().splitlines()
+                if ln.startswith("Dialogue:")
+            )
+            assert "\\an4\\pos(64,1632)" in dialogue, dialogue
+            assert "\\k" in dialogue, dialogue
 
     def test_position_x_frac_none_keeps_centered(self):
         """No position_x_frac \u2192 existing centered behavior (x=540 on 1080

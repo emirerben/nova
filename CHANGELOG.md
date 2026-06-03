@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.75.1] - 2026-06-03
+
+### Fixed
+- **Pop-up lyric previews no longer clip the first letters of left-anchored lines.** Animated ASS overlays now honor `text_anchor` when rendering explicit `\pos` and `\move` coordinates, so left-anchored lyric styles grow rightward from their intended margin instead of centering the text at that margin. Regression tests cover the production `x_frac=0.06` pop-in lyric case plus fade-in, slide, and typewriter variants.
+
 ## [0.4.75.0] - 2026-06-03
 
 ### Fixed
