@@ -266,6 +266,19 @@ _ASS_POSITION = {
 }
 
 
+def _ass_explicit_pos_alignment(text_anchor: str | None) -> int:
+    r"""ASS alignment for explicit \pos/\move coordinates.
+
+    Keep the vertical anchor on ASS's middle row so existing y coordinates keep
+    their meaning: left=\an4, center=\an5, right=\an6.
+    """
+    if text_anchor == "left":
+        return 4
+    if text_anchor == "right":
+        return 6
+    return 5
+
+
 def _build_ass_header(
     fontname: str = "Playfair Display",
     *,
@@ -467,6 +480,7 @@ def generate_animated_overlay_ass(
                 font_family=font_family,
                 position_x_frac=overlay.get("position_x_frac"),
                 position_y_frac=overlay.get("position_y_frac"),
+                text_anchor=overlay.get("text_anchor", "center"),
                 outline_px=overlay.get("outline_px"),
                 # Karaoke needs per-word timings (relative to overlay start)
                 # plus the highlight color used for "already sung" words.
@@ -909,6 +923,7 @@ def _write_animated_ass(
     font_family: str | None = None,
     position_x_frac: float | None = None,
     position_y_frac: float | None = None,
+    text_anchor: str = "center",
     outline_px: int | None = None,
     # Karaoke-only: per-word timings relative to overlay start, and the
     # highlight color used for "already sung" words. None for non-karaoke
@@ -949,6 +964,7 @@ def _write_animated_ass(
     or `\\move` tags at the explicit pixel coordinate instead of relying
     on the `\\an<alignment>` margins. Used by Waka Waka's "This" / "is"
     overlays which sit at lower-left / lower-right (off-center).
+    `text_anchor` selects the horizontal side of explicit coordinates.
     """
     alignment, margin_v = _ASS_POSITION.get(position, (5, 0))
     start_str = format_ass_time(start_s)
@@ -970,6 +986,8 @@ def _write_animated_ass(
         )
         target_y = int(CANVAS_H * y_frac_for_pos)
         pos_tag = f"\\pos({target_x},{target_y})"
+    explicit_alignment = _ass_explicit_pos_alignment(text_anchor)
+    pos_or_align = f"\\an{explicit_alignment}{pos_tag}" if pos_tag else f"\\an{alignment}"
 
     # Optional black outline override via \bord + \3c (outline colour) tags
     outline_tag = ""
@@ -977,16 +995,13 @@ def _write_animated_ass(
         outline_tag = f"\\bord{outline_px}\\3c&H000000&"
 
     if effect == "fade-in":
-        if pos_tag:
-            dialogue_text = f"{{\\an5{pos_tag}{outline_tag}\\fad(500,0)}}{text}"
-        else:
-            dialogue_text = f"{{\\an{alignment}{outline_tag}\\fad(500,0)}}{text}"
+        dialogue_text = f"{{{pos_or_align}{outline_tag}\\fad(500,0)}}{text}"
 
     elif effect == "typewriter":
         total_dur_cs = int((end_s - start_s) * 100)
         char_count = max(len(text), 1)
         per_char_cs = max(1, total_dur_cs // char_count)
-        parts = [f"{{\\an{alignment}{outline_tag}}}"]
+        parts = [f"{{{pos_or_align}{outline_tag}}}"]
         for ch in text:
             parts.append(f"{{\\k{per_char_cs}}}{ch}")
         dialogue_text = "".join(parts)
@@ -996,7 +1011,9 @@ def _write_animated_ass(
         target_y = int(CANVAS_H * y_frac)
         start_y = CANVAS_H + 100
         dialogue_text = (
-            f"{{\\an5\\move({target_x},{start_y},{target_x},{target_y},0,500){outline_tag}}}{text}"
+            f"{{\\an{explicit_alignment}"
+            f"\\move({target_x},{start_y},{target_x},{target_y},0,500)"
+            f"{outline_tag}}}{text}"
         )
 
     elif effect == "slide-down":
@@ -1007,7 +1024,9 @@ def _write_animated_ass(
         target_y = int(CANVAS_H * y_frac)
         start_y = -200  # 200 px above the top edge of the 1920 canvas
         dialogue_text = (
-            f"{{\\an5\\move({target_x},{start_y},{target_x},{target_y},0,500){outline_tag}}}{text}"
+            f"{{\\an{explicit_alignment}"
+            f"\\move({target_x},{start_y},{target_x},{target_y},0,500)"
+            f"{outline_tag}}}{text}"
         )
 
     elif effect == "pop-in":
@@ -1022,7 +1041,6 @@ def _write_animated_ass(
         duration_ms = int((end_s - start_s) * 1000)
         k0, k1, k2 = _clamp_keyframes(_POP_IN_KEYFRAMES_MS, duration_ms)
         s0, s1, s2 = _POP_IN_SCALES
-        pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
         scale_anim = (
             f"\\fscx{s0}\\fscy{s0}"
             f"\\t({k0},{k1},\\fscx{s1}\\fscy{s1})"
@@ -1087,7 +1105,6 @@ def _write_animated_ass(
             # No per-word data — fall back to a simple no-animation render so
             # the line at least appears on screen. The caller already logs
             # this as a degraded path.
-            pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
             font = _resolve_font_family(font_family or "Playfair Display", base_size)
             if font is not None:
                 from PIL import Image, ImageDraw  # noqa: PLC0415
@@ -1103,7 +1120,6 @@ def _write_animated_ass(
             # active/sung highlight after the fill completes.
             primary_bgr = _hex_to_ass_bgr(highlight_color or "#FFFF00")
             secondary_bgr = _hex_to_ass_bgr(text_color or "#FFFFFF")
-            pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
             parts = [
                 f"{{{pos_or_align}\\q2{outline_tag}{fs_tag}"
                 f"\\1c&H{primary_bgr}&\\2c&H{secondary_bgr}&}}"
@@ -1146,7 +1162,6 @@ def _write_animated_ass(
         # thin outline, hard libass offset shadow, and eased opacity transforms.
         # The transforms use libass's accel exponent, not cubic-bezier curves,
         # and the shadow is hard-edged rather than blurred.
-        pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
         color_tag = ""
         if text_color:
             bgr = _hex_to_ass_bgr(text_color)
@@ -1181,7 +1196,6 @@ def _write_animated_ass(
         duration_ms = int((end_s - start_s) * 1000)
         k0, k1, k2, k3 = _clamp_keyframes(_BOUNCE_KEYFRAMES_MS, duration_ms)
         s0, s1, s2, s3 = _BOUNCE_SCALES
-        pos_or_align = f"\\an5{pos_tag}" if pos_tag else f"\\an{alignment}"
         dialogue_text = (
             f"{{{pos_or_align}\\q2{outline_tag}"
             f"\\fscx{s0}\\fscy{s0}"
@@ -1192,11 +1206,7 @@ def _write_animated_ass(
         )
 
     else:
-        dialogue_text = (
-            f"{{\\an5{pos_tag}{outline_tag}}}{text}"
-            if pos_tag
-            else f"{{\\an{alignment}{outline_tag}}}{text}"
-        )
+        dialogue_text = f"{{{pos_or_align}{outline_tag}}}{text}"
 
     style_name = "LyricLine" if effect == "lyric-line" else "Overlay"
 
