@@ -66,9 +66,11 @@ jobs:
       # index, and the very first open_clip call at worker boot raised
       # `RuntimeError('operator torchvision::nms does not exist')` because
       # the C++ op never registered against CPU-only torch. The image
-      # built fine; the failure only surfaced at deploy. Importing
-      # clip_font_matcher and exercising encode_image on a 1×1 image
-      # forces every torch/torchvision/open-clip layer to wire up.
+      # built fine; the failure only surfaced at deploy. Load the registry
+      # artifact, then build ViT-B/32 without pretrained weights and run a
+      # real encode_image pass. That still forces torch/torchvision/open-clip
+      # to wire up, but keeps PR CI deterministic instead of depending on a
+      # cold Hugging Face download from inside the container.
       - name: Smoke-check CLIP font matcher loads at runtime
         run: |
           docker run --rm \
@@ -82,19 +84,38 @@ jobs:
             -e ALLOWED_ORIGINS='["http://localhost:3000"]' \
             --entrypoint python nova-build-test:ci -c '
           import io
+          import open_clip
+          import torch
           from PIL import Image
-          from app.services.clip_font_matcher import ClipFontMatcher, _ensure_loaded
+          from app.pipeline.font_identification import load_registry_embeddings
+          from app.services.clip_font_matcher import (
+              MODEL_ARCHITECTURE,
+              MODEL_ID,
+              MODEL_VERSION,
+          )
 
-          # Force the model + registry to load. If torch/torchvision are
-          # mismatched (CUDA vs CPU build skew), this is where the
-          # `operator torchvision::nms does not exist` error surfaces.
-          _ensure_loaded()
+          registry = load_registry_embeddings(
+              expected_model_id=MODEL_ID,
+              expected_model_version=MODEL_VERSION,
+          )
+          assert len(registry.families) > 0, "registry embeddings are empty"
+          model, _train_pre, preprocess = open_clip.create_model_and_transforms(
+              MODEL_ARCHITECTURE,
+              pretrained=None,
+              load_weights=False,
+              pretrained_image=False,
+              pretrained_text=False,
+              device="cpu",
+          )
+          model.eval()
 
           # Run a real embedding to exercise the visual tower + preprocess
           # pipeline (which is where torchvision ops live).
           buf = io.BytesIO()
           Image.new("RGB", (8, 8), color=(128, 128, 128)).save(buf, format="PNG")
-          emb = ClipFontMatcher().embed_image(buf.getvalue())
-          assert emb.shape == (512,), f"unexpected embedding shape {emb.shape}"
+          tensor = preprocess(Image.open(io.BytesIO(buf.getvalue())).convert("RGB")).unsqueeze(0)
+          with torch.no_grad():
+              emb = model.encode_image(tensor)
+          assert emb.shape[-1] == 512, f"unexpected embedding shape {emb.shape}"
           print("CLIP smoke check passed: embedding shape", emb.shape)
           '
