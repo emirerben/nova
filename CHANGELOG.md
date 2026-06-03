@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.75.0] - 2026-06-03
+
+### Fixed
+- **Admin music lyric sync now refreshes stale cached lyric timing blobs instead of silently showing empty lyric windows for vocal sections.** Lyric extraction outputs now persist the `LyricsExtractionAgent` prompt version into `MusicTrack.lyrics_cached`, giving operators a reliable way to find caches produced before the latest timing alignment fixes.
+- **The lyric-cache backfill tool now talks to the current admin API and refreshes only lyrics.** `scripts/backfill_lyrics.py` uses the `X-Admin-Token` header, follows the paginated admin track list, fetches detail rows for `lyrics_cached`, filters published ready tracks, and queues `/extract-lyrics` instead of full beat/section reanalysis. Regression tests lock the auth header, stale-cache detection, legacy cache compatibility, and prompt-version stamping.
+
 ## [0.4.74.6] - 2026-06-02
 
 ### Fixed

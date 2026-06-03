@@ -1,4 +1,4 @@
-"""One-shot backfill: re-analyze published tracks whose lyrics_cached blob
+"""One-shot backfill: re-extract published tracks whose lyrics_cached blob
 predates the current `LyricsExtractionAgent.prompt_version`.
 
 Why this exists
@@ -14,15 +14,15 @@ the music gallery surface stale alignment data.
 This script accelerates that invalidation. It iterates published
 non-archived tracks where `lyrics_cached.prompt_version` doesn't match
 the current code's `LyricsExtractionAgent.spec.prompt_version` and POSTs
-`/admin/music-tracks/{id}/reanalyze` for each. Sleeps between calls to
-respect Gemini rate limits.
+`/admin/music-tracks/{id}/extract-lyrics` for each. Sleeps between calls to
+avoid stampeding the worker.
 
 Usage
 -----
     # Dry-run (default) — print planned actions, do not POST
     python3 scripts/backfill_lyrics.py
 
-    # Actually fire the reanalyze calls (against prod):
+    # Actually fire the lyric extraction calls (against prod):
     python3 scripts/backfill_lyrics.py --prod --execute
 
     # Override the inter-call sleep (default 2.0s):
@@ -80,7 +80,7 @@ def http_request(
     """Stdlib HTTP request returning (status, parsed_body_or_text)."""
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("X-Admin-Token", token)
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
@@ -121,6 +121,75 @@ def get_current_prompt_version() -> str | None:
         return None
 
 
+def _extract_track_rows(body: dict | list) -> tuple[list[dict], int | None]:
+    """Normalize current and legacy admin list response shapes."""
+    if isinstance(body, dict) and isinstance(body.get("tracks"), list):
+        total = body.get("total")
+        return list(body["tracks"]), total if isinstance(total, int) else None
+    if isinstance(body, list):
+        return list(body), len(body)
+    raise ValueError(f"unexpected /admin/music-tracks response shape: {type(body).__name__}")
+
+
+def list_music_track_rows(base: str, token: str, *, limit: int = 100) -> list[dict]:
+    """Fetch every admin music-track list row, following offset pagination."""
+    rows: list[dict] = []
+    offset = 0
+    while True:
+        status_code, body = http_request(
+            method="GET",
+            url=f"{base}/admin/music-tracks?limit={limit}&offset={offset}",
+            token=token,
+        )
+        if status_code != 200 or not isinstance(body, dict | list):
+            raise RuntimeError(f"GET /admin/music-tracks → {status_code}: {body!r}")
+        page_rows, total = _extract_track_rows(body)
+        rows.extend(page_rows)
+        if not page_rows:
+            break
+        if total is not None and len(rows) >= total:
+            break
+        if len(page_rows) < limit:
+            break
+        offset += len(page_rows)
+    return rows
+
+
+def find_stale_tracks(base: str, token: str, target: str) -> tuple[list[tuple[str, str, str | None]], int]:
+    """Return published ready tracks whose detail lyrics cache is stale."""
+    list_rows = list_music_track_rows(base, token)
+    stale: list[tuple[str, str, str | None]] = []
+    for row in list_rows:
+        if row.get("analysis_status") != "ready":
+            continue
+        if row.get("archived_at"):
+            continue
+        if not row.get("published_at"):
+            # Stale lyrics on unpublished tracks don't affect users.
+            continue
+
+        track_id = row.get("id")
+        if not isinstance(track_id, str) or not track_id:
+            continue
+        status_code, detail = http_request(
+            method="GET",
+            url=f"{base}/admin/music-tracks/{track_id}",
+            token=token,
+        )
+        if status_code != 200 or not isinstance(detail, dict):
+            raise RuntimeError(
+                f"GET /admin/music-tracks/{track_id} → {status_code}: {detail!r}"
+            )
+
+        blob = detail.get("lyrics_cached") or {}
+        blob_version = blob.get("prompt_version") if isinstance(blob, dict) else None
+        if blob_version != target:
+            title = detail.get("title") or row.get("title") or "<no title>"
+            stale.append((track_id, title, blob_version))
+
+    return stale, len(list_rows)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -131,13 +200,13 @@ def main() -> int:
     parser.add_argument(
         "--execute",
         action="store_true",
-        help="Actually POST reanalyze (default: dry-run, print only).",
+        help="Actually POST lyric extraction (default: dry-run, print only).",
     )
     parser.add_argument(
         "--sleep",
         type=float,
         default=2.0,
-        help="Seconds to sleep between reanalyze calls (default: 2.0).",
+        help="Seconds to sleep between extraction calls (default: 2.0).",
     )
     parser.add_argument(
         "--target-version",
@@ -173,60 +242,29 @@ def main() -> int:
     print(f"Mode: {'EXECUTE' if args.execute else 'DRY-RUN'}")
     print()
 
-    # List published tracks via /admin/music-tracks (no archived filter on
-    # this endpoint, so we drop archived rows client-side).
-    status_code, body = http_request(
-        method="GET",
-        url=f"{base}/admin/music-tracks",
-        token=token,
-    )
-    if status_code != 200 or not isinstance(body, list):
-        print(f"error: GET /admin/music-tracks → {status_code}: {body!r}", file=sys.stderr)
+    try:
+        stale, total_rows = find_stale_tracks(base, token, target)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    stale: list[tuple[str, str, str | None]] = []  # (id, title, blob_version)
-    for track in body:
-        if track.get("status") != "ready":
-            continue
-        if track.get("archived_at"):
-            continue
-        if not track.get("published_at"):
-            # Stale lyrics on un-published tracks don't affect users.
-            # Backfill only published.
-            continue
-        blob = track.get("lyrics_cached") or {}
-        blob_version = blob.get("prompt_version") if isinstance(blob, dict) else None
-        if blob_version != target:
-            stale.append((track["id"], track.get("title") or "<no title>", blob_version))
-
-    print(f"Found {len(stale)} stale tracks out of {len(body)} total.")
+    print(f"Found {len(stale)} stale published tracks out of {total_rows} total.")
     if not stale:
         return 0
 
-    # The /reanalyze endpoint runs the FULL analyze pipeline (Whisper +
-    # Gemini classification + sections + lyrics extraction), not just the
-    # lyrics step. Surface the cost / duration up-front so an operator
-    # doesn't trigger an unexpected $50-200 burst by misreading the
-    # script's name. Sleep math: roughly (sleep * N) seconds of inter-call
-    # delay PLUS per-track analyze latency on the worker (~1-3 min each,
-    # but those run in parallel via Celery so wall-clock is bounded by
-    # worker concurrency).
+    # The /extract-lyrics endpoint reuses existing beat/section analysis and
+    # refreshes only the LRCLIB + Whisper cache. Sleep math is just inter-call
+    # pacing; the worker jobs themselves run asynchronously.
     if args.execute:
-        est_min_cost = 0.5 * len(stale)
-        est_max_cost = 2.0 * len(stale)
         est_inter_call_s = args.sleep * len(stale)
         print()
         print(
-            f"WARNING: --execute will trigger FULL re-analysis on {len(stale)} tracks "
-            f"(Whisper + Gemini, NOT just lyrics)."
-        )
-        print(
-            f"  Estimated Gemini cost: ${est_min_cost:.0f}-${est_max_cost:.0f} "
-            f"(rough, varies by track length)."
+            f"WARNING: --execute will trigger lyric extraction on {len(stale)} tracks "
+            f"(LRCLIB + Whisper, no beat/section reanalysis)."
         )
         print(
             f"  Estimated inter-call delay: {est_inter_call_s:.0f}s "
-            f"(worker analyze runs in parallel via Celery)."
+            f"(worker extraction runs asynchronously)."
         )
         print()
 
@@ -234,13 +272,13 @@ def main() -> int:
     for i, (track_id, title, blob_version) in enumerate(stale, 1):
         prefix = f"[{i}/{len(stale)}]"
         action = "POST" if args.execute else "DRY-RUN"
-        print(f"{prefix} {action} reanalyze {track_id} '{title}' (was: {blob_version!r})")
+        print(f"{prefix} {action} extract-lyrics {track_id} '{title}' (was: {blob_version!r})")
         if not args.execute:
             continue
 
         status_code, body = http_request(
             method="POST",
-            url=f"{base}/admin/music-tracks/{track_id}/reanalyze",
+            url=f"{base}/admin/music-tracks/{track_id}/extract-lyrics",
             token=token,
         )
         if status_code != 200:
@@ -256,7 +294,7 @@ def main() -> int:
     if failed:
         print(f"DONE with {len(failed)} failures: {failed}", file=sys.stderr)
         return 1
-    print(f"DONE: {len(stale)} tracks queued for reanalyze.")
+    print(f"DONE: {len(stale)} tracks queued for lyric extraction.")
     return 0
 
 
