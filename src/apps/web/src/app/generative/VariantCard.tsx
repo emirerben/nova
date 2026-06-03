@@ -9,6 +9,7 @@ import {
   type GenerativeVariant,
 } from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
+import { downloadVideo } from "@/lib/download-video";
 
 export const TEXT_MODE_LABEL: Record<string, string> = {
   lyrics: "Lyrics",
@@ -107,6 +108,16 @@ export function VariantCard({
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2">
+        {!rendering && !failed && variant.output_url && (
+          <button
+            onClick={() =>
+              downloadVideo(variant.output_url!, `nova-${variant.variant_id}.mp4`)
+            }
+            className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40"
+          >
+            Download
+          </button>
+        )}
         <button
           disabled={rendering}
           onClick={() => {

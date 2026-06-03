@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ContentPlan } from "@/lib/plan-api";
 import { addJobToPlan, type LibraryJob } from "@/lib/me-api";
+import { downloadVideo } from "@/lib/download-video";
 import FeedbackButtons from "./FeedbackButtons";
 
 /**
@@ -52,6 +53,15 @@ export default function LibraryTile({
             </span>
           ) : (
             <AddToPlan job={job} plan={plan} onPinned={onPinned} />
+          )}
+          {job.output_url && (
+            <button
+              type="button"
+              onClick={() => downloadVideo(job.output_url!, `nova-${job.id.slice(0, 8)}.mp4`)}
+              className="mt-2 min-h-11 rounded-full border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white"
+            >
+              Download
+            </button>
           )}
           <FeedbackButtons jobId={job.id} initialSignal={job.feedback_signal} />
         </div>

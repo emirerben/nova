@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { type PlanItem, type PlanItemStatus, updatePlanItem } from "@/lib/plan-api";
+import { stripRationalePrefix } from "@/lib/plan-text";
 
 // Glyph + text so status reads without relying on color alone (a11y).
 const STATUS_META: Record<PlanItemStatus, { glyph: string; label: string; cls: string }> = {
@@ -98,7 +99,8 @@ export default function PlanItemCard({
           {idea && <p className="mt-2 line-clamp-2 text-sm text-zinc-400">{idea}</p>}
           {item.rationale && (
             <p className="mt-2 text-xs text-zinc-500">
-              <span className="text-amber-300/80">Why this works:</span> {item.rationale}
+              <span className="text-amber-300/80">Why this works:</span>{" "}
+              {stripRationalePrefix(item.rationale)}
             </p>
           )}
           <div className="mt-2 flex items-center justify-between border-t border-zinc-800 pt-1">
