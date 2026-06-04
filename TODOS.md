@@ -9,12 +9,6 @@
 **Effort:** XS (human: ~30 min / CC: ~5 min)
 **Priority:** P3
 
-### Fix `test_active_font_renders_with_ass` smoke test on FFmpeg 8.1.1
-**What:** `tests/pipeline/test_text_overlay_smoke.py::test_active_font_renders_with_ass` is parametrized over every active font and fails for ALL of them on FFmpeg 8.1.1 (Homebrew, macOS). All 24 failures share the same error: `[AVFilterGraph] No option name near '/tmp/.../font-smoke.ass:fontsdir=...'` — FFmpeg's filter-graph parser is rejecting the unescaped `:` in the absolute ASS path. Was 18 failures on main pre-v0.4.38.1; now 24 because the new fonts get parametrized in. Verified pre-existing.
-**Why:** This is the only test that exercises libass actually loading a font from fontsdir end-to-end. With it broken locally, font-related changes can ship subtle render-time bugs (like the Montserrat family-name issue v0.4.38.1 fixed by adding a unit-level guard test). CI may still pass if it uses an older FFmpeg, but local devs can't verify.
-**How:** Update the `subtitles=...` filter string in the test to escape colons in the ASS path, matching what `single_pass.py` does at line ~457 (escapes `:` to `\:`). Cross-check against `app/pipeline/single_pass.py:457` for the exact escaping rules. Verify against both FFmpeg 6.x and 8.x.
-**Effort:** S (human: ~1h / CC: ~15 min)
-**Priority:** P2
 
 ## Agent evals — Phase 2
 
@@ -633,3 +627,6 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 **Effort:** M (human: ~2-4d / CC: ~1-2h) — cap-res alone is S (~half day) if shipped without the adaptive path.
 **Priority:** P2 — most direct per-frame win, gated on banding A/B not regressing.
 **Depends on:** a tonemap-quality A/B check (local docker render of sky/gradient footage) before merge.
+
+### Fix `test_active_font_renders_with_ass` smoke test on FFmpeg 8.1.1
+**Completed:** v0.4.75.3 (2026-06-04) — detected libass-capable ffmpeg-full via `_find_libass_ffmpeg()`; escaped paths with `escape_ffmpeg_filter_path()` matching `single_pass.py`. All 33 font parametrize cases pass.
