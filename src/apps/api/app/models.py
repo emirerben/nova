@@ -730,13 +730,26 @@ class BuildTask(Base):
     __tablename__ = "build_task"
 
     # Status lifecycle:
-    #   queued      → not yet claimed; reaper never touches it.
-    #   in_progress → claimed by a builder run (claimed_at / claimed_by set);
-    #                 the reaper resets a stale one back to `queued`.
-    #   blocked     → attempt_count tripped the cap; needs a human (no infinite
-    #                 retry loop). Terminal until a human re-queues it.
-    #   done        → completed; idempotent skip on any future claim.
-    STATUSES = ("queued", "in_progress", "blocked", "done")
+    #   queued           → not yet claimed; reaper never touches it.
+    #   in_progress      → claimed by a builder run (claimed_at / claimed_by set);
+    #                      the reaper resets a stale one back to `queued`.
+    #   gating           → built; a gate tick claimed it to run the hard gates +
+    #                      rebase onto origin/main (Phase 2). The reaper sweeps a
+    #                      stale `gating` row (claimed OR unclaimed) back to queued.
+    #   awaiting_approval→ gates green + PR opened; rests here until a human merges
+    #                      (Phase 3's phone surface reads these). Idle, NOT claimed
+    #                      — the reaper leaves it alone; the digest surfaces it.
+    #   blocked          → attempt_count tripped the cap; needs a human (no
+    #                      infinite retry loop). Terminal until a human re-queues.
+    #   done             → completed; idempotent skip on any future claim.
+    STATUSES = (
+        "queued",
+        "in_progress",
+        "gating",
+        "awaiting_approval",
+        "blocked",
+        "done",
+    )
     PROVENANCES = ("trusted", "untrusted")
     # Only trusted provenance may mint a build_task in v1 (security invariant).
     MINTABLE_PROVENANCES = ("trusted",)
@@ -773,9 +786,24 @@ class BuildTask(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # ── Ship-gate (Phase 2) ──────────────────────────────────────────────────
+    # The exact commit the builder pushed; the gate tick asserts
+    # origin/<branch> == head_sha before running so it never gates a branch the
+    # builder never finished pushing. NULL until the first push.
+    head_sha: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The PR opened once gates pass (open_pr). NULL until then.
+    pr_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Per-gate pass/fail + advisory /qa + codex results; rendered into the PR
+    # body and the daily digest. NULL until the gate tick writes it.
+    gate_report: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     __table_args__ = (
+        # Keep in lockstep with STATUSES above + migration 0046's _STATUS_NEW.
+        # create_all() (used by tests) reads THIS constraint, not the migration.
         CheckConstraint(
-            "status IN ('queued', 'in_progress', 'blocked', 'done')",
+            "status IN ('queued', 'in_progress', 'gating', "
+            "'awaiting_approval', 'blocked', 'done')",
             name="ck_build_task_status",
         ),
         CheckConstraint(

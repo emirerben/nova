@@ -49,26 +49,45 @@ def reap_stale_build_tasks(
     call repeatedly — a row already past the cap goes `blocked` and is no longer
     `in_progress`, so it won't be re-swept.
 
-    Returns ``{"requeued": N, "blocked": M, "total": N+M}``.
+    Returns ``{"requeued": N, "blocked": M, "regated": K, "total": N+M+K}``.
+
+    Two stale classes are swept (both are CLAIMED rows a dead run abandoned):
+      - in_progress → the builder run died; reap to `queued` (resume the build).
+      - gating      → the GATE run died (Docker OOM mid verify-overlays, host
+                       slept); reap to `gating` (re-gate the already-built
+                       branch, NOT rebuild it). `requeue_status="gating"`.
+    Both bump attempt_count, so a persistently-dying run still escalates to
+    `blocked` at the cap. An UNCLAIMED stale `gating` row is NOT swept here —
+    it isn't wedged (the next gate tick claims it); the digest surfaces it as a
+    dead-gate-tick warning instead.
     """
     requeued = 0
     blocked = 0
+    regated = 0
     with sync_session() as db:
-        stale = build_task_repo.find_stale_in_progress(db, threshold_min=threshold_min)
-        for task in stale:
+        for task in build_task_repo.find_stale_in_progress(db, threshold_min=threshold_min):
             result = build_task_repo.reap_stale_task(db, task, attempt_cap=attempt_cap)
             if result == "blocked":
                 blocked += 1
             else:
                 requeued += 1
+        for task in build_task_repo.find_stale_gating(db, threshold_min=threshold_min):
+            result = build_task_repo.reap_stale_task(
+                db, task, attempt_cap=attempt_cap, requeue_status="gating"
+            )
+            if result == "blocked":
+                blocked += 1
+            else:
+                regated += 1
         db.commit()
 
-    total = requeued + blocked
+    total = requeued + blocked + regated
     if total:
         log.info(
             "build_task_reaper_swept",
             requeued=requeued,
             blocked=blocked,
+            regated=regated,
             threshold_min=threshold_min,
         )
-    return {"requeued": requeued, "blocked": blocked, "total": total}
+    return {"requeued": requeued, "blocked": blocked, "regated": regated, "total": total}

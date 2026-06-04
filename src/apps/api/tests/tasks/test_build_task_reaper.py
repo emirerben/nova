@@ -58,7 +58,7 @@ class TestReaperConstants:
             ),
         ):
             summary = reap_stale_build_tasks()
-        assert summary == {"requeued": 0, "blocked": 0, "total": 0}
+        assert summary == {"requeued": 0, "blocked": 0, "regated": 0, "total": 0}
         session.commit.assert_called_once()
 
 

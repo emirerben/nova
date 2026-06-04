@@ -229,6 +229,8 @@ class TestSendDailyDigestTask:
             "built": 2,
             "graded": 5,
             "escalated": 1,
+            "awaiting_approval": 1,
+            "stale_gating": 0,
             "grader_spend_usd": 0.5,
             "weekly_spend_usd": 3.0,
             "resilience": ResilienceEvents(in_progress=1, queued_now=1),

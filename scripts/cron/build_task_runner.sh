@@ -23,28 +23,40 @@
 # Optional:
 #   NOVA_BUILDER_TIMEOUT_S    — per-run Claude wall-clock cap (default 900 = 15m).
 #   NOVA_API_BASE             — override prod base (admin.py --prod targets Fly).
+#
+# SECURITY (dev-loop ship-gate, 2026-06-04): the headless agent below runs with
+# --permission-mode bypassPermissions, so it can read any file in this worktree
+# and run any command. Three guards keep prod credentials and secrets off origin:
+#   1. The prod admin key MUST come from the runner's ENVIRONMENT, never a .env
+#      file in this worktree (the agent could `cat .env`). Enforced at startup.
+#   2. The key is stripped from the agent child's env (`env -u ...`).
+#   3. Every outgoing diff is secret-scanned BEFORE push (secret_scan_or_abort);
+#      a hit blocks the task for human review instead of pushing the leak.
 
 set -uo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO_ROOT" || { echo "ERROR: repo root not found"; exit 1; }
 
-# Work-hours guard (UTC, Mon-Fri 11:00–18:59 — mirrors WORK_HOURS_UTC in
-# app/tasks/send_daily_digest.py and the retired nova-builder.yml cron). The
-# OpenClaw/Paperclip scheduler fires this script; the guard stops a stray
-# off-hours tick from spending the shared Claude subscription. Set
-# NOVA_BUILDER_FORCE=1 to bypass for a manual test tick.
-if [ "${NOVA_BUILDER_FORCE:-0}" != "1" ]; then
-  _H=$((10#$(date -u +%H))); _DOW=$(date -u +%u)
-  if [ "$_DOW" -gt 5 ] || [ "$_H" -lt 11 ] || [ "$_H" -ge 19 ]; then
-    echo "[builder] outside work-hours window (UTC Mon-Fri 11–18); quiet tick"
-    exit 0
-  fi
-fi
+# Shared helpers — the SINGLE canonical copy of the security scan, .env guard,
+# work-hours guard, and json_str (so a fix can't drift from gate_runner.sh).
+# shellcheck source=scripts/cron/_dev_loop_lib.sh
+source "scripts/cron/_dev_loop_lib.sh"
 
 ADMIN="python3 scripts/admin.py --prod --yes"
+
+assert_no_prod_key_in_env_file   # Guard 1: prod key must not live in worktree .env
+work_hours_guard_or_exit         # quiet off-hours tick unless NOVA_BUILDER_FORCE=1
 RUN_ID="${NOVA_BUILDER_RUN_ID:-local-$(date +%s)}"
 TIMEOUT_S="${NOVA_BUILDER_TIMEOUT_S:-900}"
+
+# Builder logs go OUTSIDE the repo so the `git add -A` below never sweeps them
+# into the task branch — a builder PR must carry ONLY the agent's code change,
+# not transient run logs. (Smoke test caught this committing 200+ junk lines.)
+LOGDIR="$(mktemp -d)"
+STDERR_LOG="$LOGDIR/builder_stderr.log"
+STDOUT_LOG="$LOGDIR/builder_stdout.log"
+trap 'rm -rf "$LOGDIR"' EXIT
 
 # Soft-exit helper: release the task (resumable) and exit 0 so the schedule
 # resumes it. Used on any Claude usage limit / 429 — NOT a failure.
@@ -66,10 +78,8 @@ fail_task() {
   exit 0
 }
 
-# Minimal JSON string escaper (quotes + backslashes) — avoids a jq dependency.
-json_str() {
-  python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"
-}
+# json_str / abort_block / secret_scan_or_abort come from _dev_loop_lib.sh
+# (sourced above) — one canonical copy shared with gate_runner.sh.
 
 # ── 1. claim ────────────────────────────────────────────────────────────────
 echo "[builder] tick $RUN_ID — claiming oldest queued task"
@@ -121,10 +131,13 @@ WIP-commit. Do NOT deploy, merge, or touch prod. If the task is already
 complete, say 'TASK COMPLETE' on its own line. Otherwise summarize what remains."
 
 set +e
-timeout "${TIMEOUT_S}s" claude --print \
+# Guard 2: strip the prod/local admin keys from the agent child's env. The
+# builder edits code + runs tests; it never needs the admin API (the runner
+# shell owns those calls). The OAuth token stays so the agent can authenticate.
+timeout "${TIMEOUT_S}s" env -u ADMIN_PROD_API_KEY -u ADMIN_API_KEY claude --print \
   --permission-mode bypassPermissions \
   --model claude-sonnet-4-6 \
-  "$PROMPT" 2>builder_stderr.log | tee builder_stdout.log
+  "$PROMPT" 2>"$STDERR_LOG" | tee "$STDOUT_LOG"
 CLAUDE_EXIT=${PIPESTATUS[0]}
 set -e 2>/dev/null || true
 
@@ -132,12 +145,13 @@ set -e 2>/dev/null || true
 # `timeout` exits 124 when it kills Claude at the wall-clock cap. A usage-limit
 # / 429 surfaces as a non-zero Claude exit with a recognizable stderr string.
 # Both are SOFT — the task stays resumable.
-if grep -qiE 'usage limit|rate limit|429|resource_exhausted|please try again later' builder_stderr.log builder_stdout.log 2>/dev/null; then
+if grep -qiE 'usage limit|rate limit|429|resource_exhausted|please try again later' "$STDERR_LOG" "$STDOUT_LOG" 2>/dev/null; then
   soft_exit_release "$TASK_ID" "paused on usage limit at stage=run ($(date -u +%FT%TZ)); resume next tick"
 fi
 if [ "$CLAUDE_EXIT" -eq 124 ]; then
   # Hit the per-run wall-clock cap mid-chunk — commit WIP + release (resumable).
   git add -A && git commit -m "wip(builder): timeout-bounded chunk for $TASK_ID" --no-verify || true
+  secret_scan_or_abort "$TASK_ID"
   git push -u origin "$TASK_BRANCH" --no-verify || true
   soft_exit_release "$TASK_ID" "hit ${TIMEOUT_S}s run cap; WIP committed, resume next tick"
 fi
@@ -145,17 +159,35 @@ if [ "$CLAUDE_EXIT" -ne 0 ]; then
   fail_task "$TASK_ID" "claude exited $CLAUDE_EXIT (genuine error)"
 fi
 
-# ── 5. success: WIP commit + checkpoint, or complete ─────────────────────────
+# ── 5. success: WIP commit + push, then HAND OFF TO THE GATE (or release) ─────
 git add -A
 if ! git diff --cached --quiet; then
   git commit -m "wip(builder): chunk for $TASK_ID — $TASK_TITLE" --no-verify || true
+  secret_scan_or_abort "$TASK_ID"
   git push -u origin "$TASK_BRANCH" --no-verify || true
 fi
 
-if grep -q 'TASK COMPLETE' builder_stdout.log 2>/dev/null; then
-  echo "[builder] task $TASK_ID reported complete"
-  $ADMIN PATCH "build-tasks/$TASK_ID" \
-    --json "{\"action\": \"complete\", \"branch\": $(json_str "$TASK_BRANCH"), \"progress_note\": \"task complete; PR ready for evening review\"}" || true
+# Does the branch carry real work (commits beyond origin/main)? Drives whether
+# there's anything to gate. HEAD is the exact commit the gate tick must match.
+git fetch origin main --quiet 2>/dev/null || true
+HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo "")"
+BASE_SHA="$(git rev-parse origin/main 2>/dev/null || echo "")"
+
+if grep -q 'TASK COMPLETE' "$STDOUT_LOG" 2>/dev/null; then
+  if [ -n "$HEAD_SHA" ] && [ "$HEAD_SHA" != "$BASE_SHA" ]; then
+    # Built + pushed → hand off to the gate tick (Phase 2). Records head_sha so
+    # the gate asserts it's gating the exact tree the builder pushed, then runs
+    # the hard gates + opens a PR. NOT `complete` — the gate decides the verdict.
+    echo "[builder] task $TASK_ID complete → handing to gate @ ${HEAD_SHA:0:12}"
+    $ADMIN PATCH "build-tasks/$TASK_ID" \
+      --json "{\"action\": \"start_gating\", \"head_sha\": $(json_str "$HEAD_SHA"), \"branch\": $(json_str "$TASK_BRANCH"), \"progress_note\": \"built; handed to the gate tick\"}" || true
+  else
+    # Agent reported done but the branch has no commits beyond main — nothing to
+    # gate or PR, so just mark it done.
+    echo "[builder] task $TASK_ID complete with no changes → done (nothing to gate)"
+    $ADMIN PATCH "build-tasks/$TASK_ID" \
+      --json "{\"action\": \"complete\", \"branch\": $(json_str "$TASK_BRANCH"), \"progress_note\": \"complete; no changes to gate\"}" || true
+  fi
 else
   echo "[builder] task $TASK_ID checkpointed (more work remains)"
   $ADMIN PATCH "build-tasks/$TASK_ID" \
@@ -163,4 +195,5 @@ else
 fi
 
 echo "[builder] tick $RUN_ID done"
+exit 0
 exit 0
