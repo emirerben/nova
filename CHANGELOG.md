@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.75.2] - 2026-06-04
+
+### Added
+- **Download button on the content-plan, generative, and library result surfaces.** The plan-item result (`plan/items/[id]/page.tsx`), each generative `VariantCard`, and each `LibraryTile` now expose a "Download" button that saves the rendered MP4 (fetch→blob→`<a download>`, with a new-tab fallback on fetch failure). Previously a finished video could only be saved via the native `<video>` context menu — a "ready to post" product with no way to get the file out. New shared helper `src/lib/download-video.ts`. Surfaced by the 2026-06-03 new-user dogfood (`.dev/dogfood-feedback-2026-06-03.md`).
+
+### Fixed
+- **Doubled "Why this works:" on every plan item.** The UI renders a "Why this works" label and the model's `rationale` body frequently repeats the same prefix, producing "Why this works: Why this works: …". A new pure helper `src/lib/plan-text.ts::stripRationalePrefix` strips the leading prefix from the body where the rationale is rendered (`plan/items/[id]/page.tsx`, `PlanItemCard.tsx`); backend prompt untouched.
+- **Sign-in gate subtitle contrast** raised (`text-zinc-400` → `text-zinc-300` in `SignInPrompt.tsx`) — the gate read as half-loaded/disabled on black.
+- **Homepage no longer renders broken `0s · 1 clip` template cards** — `TemplateGridLoader` (`app/page.tsx`) filters templates with `total_duration_s <= 0` (bad seed data).
+
+### Changed
+- **Honest plan/persona loading copy** (`plan/page.tsx`): persona generation "a few seconds" → "15-30 seconds"; plan generation "a few seconds" → "up to a minute" (measured ~16s / ~51s).
+- **"Find my best clip" → "Find my best clips"** (`SeedUploadCard.tsx`) — the activation flow takes a batch.
+
 ## [0.4.75.1] - 2026-06-03
 
 ### Fixed

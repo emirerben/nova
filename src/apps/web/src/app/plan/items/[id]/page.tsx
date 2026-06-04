@@ -21,6 +21,8 @@ import {
 import { getGenerativeStyleSets, type GenerativeStyleSet } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { FONT_FACES } from "@/lib/font-faces";
+import { downloadVideo } from "@/lib/download-video";
+import { stripRationalePrefix } from "@/lib/plan-text";
 import PlanShell from "../../_components/PlanShell";
 import PlanFilmstrip from "../../_components/PlanFilmstrip";
 import PlanVariantEditor from "../../_components/PlanVariantEditor";
@@ -291,7 +293,7 @@ export default function PlanItemPage() {
           {item.rationale && (
             <div className="mb-4 mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
               <p className="mb-1 text-xs font-medium text-amber-300/80">Why this works</p>
-              <p className="text-sm text-zinc-300">{item.rationale}</p>
+              <p className="text-sm text-zinc-300">{stripRationalePrefix(item.rationale)}</p>
             </div>
           )}
           {item.filming_suggestion && (
@@ -378,6 +380,20 @@ export default function PlanItemPage() {
             {/* Hero */}
             <div className="w-full shrink-0 sm:max-w-sm lg:w-[380px]">
               <Hero variant={focused} generating={isGenerating} />
+              {focused?.output_url && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadVideo(
+                      focused.output_url!,
+                      `nova-${slugify(item.theme) || itemId.slice(0, 8)}.mp4`,
+                    )
+                  }
+                  className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-full border border-zinc-700 px-5 py-2 text-sm text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white"
+                >
+                  Download
+                </button>
+              )}
             </div>
             {/* Filmstrip + editor */}
             <div className="min-w-0 flex-1 space-y-5">
@@ -485,6 +501,15 @@ function SkeletonTile() {
   return (
     <div className="aspect-[9/16] w-full animate-shimmer rounded-xl border border-zinc-800 bg-[length:200%_100%] bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-900" />
   );
+}
+
+/** Lowercase, hyphenated, ASCII-safe slug for download filenames. */
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
 }
 
 function StatusLine({ status }: { status: string }) {

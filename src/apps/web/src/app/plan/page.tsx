@@ -253,7 +253,7 @@ function PersonaStepView({
     return (
       <GeneratingState
         title="Crafting your persona…"
-        subtitle="Reading your answers for the voice and themes behind your videos. This takes a few seconds."
+        subtitle="Reading your answers for the voice and themes behind your videos. This usually takes 15-30 seconds."
         lines={4}
       />
     );
@@ -368,7 +368,7 @@ function PlanStepView({
     return (
       <GeneratingState
         title="Building your 30-day plan…"
-        subtitle="Scripting a month of video ideas around your persona. This takes a few seconds."
+        subtitle="Scripting a month of video ideas around your persona. This usually takes up to a minute."
         lines={6}
       />
     );
