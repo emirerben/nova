@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.75.3] - 2026-06-04
+
+### Fixed
+- **Font smoke tests now pass on FFmpeg 8.1.1 (Homebrew macOS).** The Homebrew `ffmpeg` formula no longer includes libass; tests now detect and prefer the `ffmpeg-full` keg-only formula when available. Path escaping in the `subtitles=` filter also updated to match production (`single_pass.py`) — guards against paths containing colons on any platform.
+
 ## [0.4.75.2] - 2026-06-04
 
 ### Added
