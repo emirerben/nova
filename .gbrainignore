@@ -1,0 +1,4 @@
+# Files excluded from gbrain's code-strategy walk.
+# Without this, TODOS.md collides with the manually-managed `todos` concept
+# page and causes a createVersion failure that blocks the code sync bookmark.
+TODOS.md

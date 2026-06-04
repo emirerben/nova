@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nova.gbrain-refresh</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <!-- Update this path after cloning to wherever your Nova worktree lives -->
+        <string>/Users/emirerben/Projects/nova/scripts/brain/refresh-nova.sh</string>
+    </array>
+
+    <!-- Twice daily at times the Mac is likely awake.
+         launchd automatically runs a missed job once on the next wake
+         if the machine was asleep at the scheduled time. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key><integer>10</integer>
+            <key>Minute</key><integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key><integer>18</integer>
+            <key>Minute</key><integer>0</integer>
+        </dict>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/emirerben/.gbrain/logs/refresh-nova.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/emirerben/.gbrain/logs/refresh-nova.launchd.log</string>
+</dict>
+</plist>
