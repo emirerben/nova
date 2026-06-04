@@ -76,20 +76,37 @@ builder runs `--permission-mode bypassPermissions` and could read `.env`, so the
 runners refuse to start if the prod key is in it. `scripts/admin.py` picks the key
 up from the environment (`{**.env, **os.environ}`).
 
-## 3. Intake — enqueue a task
+## 3. Intake — enqueue tasks
 
-No new tool: `scripts/admin.py` is the intake CLI. Provenance defaults to
-`trusted` (only trusted signals may mint in v1).
+Use `scripts/queue.sh` (a thin wrapper over `admin.py` that resolves the prod key
+from `~/.nova/dev-loop.env` and fixes macOS TLS for you):
 
 ```bash
 cd ~/.nova/loop/nova
-ADMIN_PROD_API_KEY=$(grep -E '^ADMIN_PROD_API_KEY=' ~/.nova/dev-loop.env | cut -d= -f2-) \
-  python scripts/admin.py --prod POST build-tasks \
-  --json '{"title":"Tidy a docstring in app/services/build_gate.py","body":"Small, low-risk: improve one docstring; run pytest for that module."}'
+scripts/queue.sh add "Tidy a docstring in app/services/build_gate.py" \
+  "Small, low-risk: improve one docstring; run pytest for that module."
+scripts/queue.sh ls                    # list all; or: ls queued / ls awaiting_approval
+scripts/queue.sh block <id>            # stop a task   ·   reset <id> = un-block/re-queue
 ```
 
-Keep the first dogfood task **low-risk** (a docstring / a single unit test) so the
-gate can pass cleanly.
+**A list of todos** — keep a checklist in `TASKS.md` (repo root) and sync it:
+
+```
+- [ ] (p50) Add a retry to the GCS upload helper :: wrap upload in tenacity retry(3) + a test
+- [ ] Tighten the lyric-merge gap threshold docstring
+```
+
+```bash
+scripts/queue.sh sync                  # mints one build_task per new `- [ ]` item
+```
+
+`sync` is idempotent — it dedups by **title** against the existing queue, so
+re-running never double-mints. `- [x]` items are skipped (your "stop considering
+this" lever). Items stay in `TASKS.md` as a record (commit it for shared history).
+
+Provenance defaults to `trusted` (only trusted signals may mint in v1). Keep the
+first dogfood task **low-risk** (a docstring / a single unit test) so the gate
+passes cleanly. Raw `admin.py` still works if you need a field `queue.sh` doesn't expose.
 
 ## 4. Prove a tick (manual, before enabling the timer)
 
