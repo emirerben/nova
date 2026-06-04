@@ -140,17 +140,11 @@ gbrain embed --stale 2>&1 | tail -3 || echo "embed failed (non-fatal)"
 
 # --- Stage 7: One-line status summary ---
 echo "--- [7/7] status ---"
-STATS=$(gbrain stats --json 2>/dev/null || echo '{}')
-PAGES=$(echo "$STATS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('page_count', d.get('pages','?')))" 2>/dev/null || echo "?")
-EMBD=$(echo "$STATS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('embedded_count', d.get('embedded','?')))" 2>/dev/null || echo "?")
-SYNC_TS=$(gbrain sources list --json 2>/dev/null | python3 -c "
-import sys, json
-sources = json.load(sys.stdin)
-for s in sources:
-    if s.get('id','').startswith('gstack-code'):
-        print(s.get('last_sync','?')[:19])
-        break
-" 2>/dev/null || echo "?")
+# gbrain stats outputs plain text (no --json). Parse it with grep.
+STATS_OUT=$(gbrain stats 2>/dev/null || echo "")
+PAGES=$(echo "$STATS_OUT" | grep "^Pages:" | awk '{print $2}' || echo "?")
+EMBD=$(echo "$STATS_OUT" | grep "^Embedded:" | awk '{print $2}' || echo "?")
+SYNC_TS=$(gbrain sources list 2>/dev/null | grep "gstack-code" | grep -o "last sync [^ ]*" | awk '{print $3}' || echo "?")
 echo "DONE: pages=$PAGES embedded=$EMBD code-source-sync=$SYNC_TS"
 
 echo "=== $(date '+%Y-%m-%d %H:%M:%S') refresh done ==="
