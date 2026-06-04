@@ -328,5 +328,141 @@ class TestAtomicClaimConcurrency:
             assert rows[0].claimed_by in {"run-1", "run-2"}
 
 
+# ── Ship-gate (Phase 2) transitions + gating reaper ────────────────────────────
+
+
+class TestShipGate:
+    """start_gating → claim_next_gating_task → open_pr / gate_failed, plus the
+    gating reaper (claimed-stale re-gate; unclaimed-stale digest count)."""
+
+    def test_start_gating_releases_for_the_gate_claim(self, db):
+        t = _mint(db, title="sg")
+        build_task_repo.claim_next_task(db, claimed_by="b1")
+        db.commit()
+        build_task_repo.start_gating(db, t.id, head_sha="deadbeef", branch="builder/x")
+        db.commit()
+
+        after = build_task_repo.get_task(db, t.id)
+        assert after.status == "gating"
+        assert after.head_sha == "deadbeef"
+        assert after.branch == "builder/x"
+        assert after.claimed_at is None  # released so the gate tick can claim
+
+        # The BUILDER claim ignores a gating row; the GATE claim picks it up.
+        assert build_task_repo.claim_next_task(db) is None
+        claimed = build_task_repo.claim_next_gating_task(db, claimed_by="g1")
+        db.commit()
+        assert claimed is not None and claimed.id == t.id
+        assert claimed.status == "gating"  # stays gating; claimed_at marks WIP
+        assert claimed.claimed_by == "g1"
+        # A second gate claim on the now-claimed row gets nothing.
+        assert build_task_repo.claim_next_gating_task(db, claimed_by="g2") is None
+
+    def test_open_pr_parks_in_awaiting_approval_unclaimable(self, db):
+        t = _mint(db, title="pr")
+        build_task_repo.claim_next_task(db)
+        db.commit()
+        build_task_repo.start_gating(db, t.id, head_sha="h", branch="builder/x")
+        db.commit()
+        build_task_repo.claim_next_gating_task(db, claimed_by="g1")
+        db.commit()
+        report = {"passed": True, "results": []}
+        build_task_repo.open_pr(
+            db, t.id, pr_url="https://gh/pr/1", pr_number=1, gate_report=report
+        )
+        db.commit()
+
+        after = build_task_repo.get_task(db, t.id)
+        assert after.status == "awaiting_approval"
+        assert after.pr_url == "https://gh/pr/1"
+        assert after.pr_number == 1
+        assert after.gate_report == report
+        assert after.claimed_at is None
+        # Idle resting state: neither tick re-claims it (the human merges).
+        assert build_task_repo.claim_next_task(db) is None
+        assert build_task_repo.claim_next_gating_task(db) is None
+
+    def test_gate_failed_records_report_and_requeues_below_cap(self, db):
+        t = _mint(db, title="gf")
+        build_task_repo.claim_next_task(db)
+        db.commit()
+        build_task_repo.start_gating(db, t.id, head_sha="h")
+        db.commit()
+        build_task_repo.claim_next_gating_task(db, claimed_by="g1")
+        db.commit()
+        report = {
+            "passed": False,
+            "results": [{"name": "pytest", "blocking": True, "passed": False}],
+        }
+        build_task_repo.gate_failed(
+            db, t.id, gate_report=report, progress_note="pytest failed"
+        )
+        db.commit()
+
+        after = build_task_repo.get_task(db, t.id)
+        assert after.status == "queued"  # 1 < cap → another builder chunk
+        assert after.attempt_count == 1  # gate_failed delegates the bump to fail_task
+        assert after.gate_report == report
+        assert after.progress_note == "pytest failed"
+
+    def test_gate_failed_blocks_at_cap(self, db):
+        t = _mint(db, title="gf-cap")
+        cap = build_task_repo.ATTEMPT_CAP
+        for _ in range(cap):
+            build_task_repo.gate_failed(db, t.id, gate_report={"passed": False})
+            db.commit()
+        final = build_task_repo.get_task(db, t.id)
+        assert final.status == "blocked"
+        assert final.attempt_count >= cap
+
+    def test_stale_claimed_gating_reaps_back_to_gating_not_queued(self, db):
+        """A gate run that died (claimed-stale) re-gates the already-built branch —
+        NOT back to queued (which would re-invoke the builder)."""
+        from datetime import UTC, datetime, timedelta
+
+        t = _mint(db, title="stale-gate")
+        build_task_repo.claim_next_task(db)
+        db.commit()
+        build_task_repo.start_gating(db, t.id, head_sha="h", branch="builder/x")
+        db.commit()
+        build_task_repo.claim_next_gating_task(db, claimed_by="g1")
+        db.commit()
+        # The gate run dies: age its claim past the threshold.
+        task = build_task_repo.get_task(db, t.id)
+        task.claimed_at = datetime.now(UTC) - timedelta(minutes=120)
+        db.commit()
+
+        stale = build_task_repo.find_stale_gating(db)
+        assert [s.id for s in stale] == [t.id]
+        result = build_task_repo.reap_stale_task(db, stale[0], requeue_status="gating")
+        db.commit()
+
+        after = build_task_repo.get_task(db, t.id)
+        assert result == "gating"  # re-gate, not re-build
+        assert after.status == "gating"
+        assert after.claimed_at is None  # unclaimed → next gate tick picks it up
+        assert after.attempt_count == 1  # a died run still counts toward the cap
+
+    def test_unclaimed_stale_gating_is_counted_not_reaped(self, db):
+        """An unclaimed gating row isn't wedged (the next gate tick claims it) — the
+        digest counts it as a dead-gate-tick warning; find_stale_gating ignores it."""
+        from datetime import UTC, datetime, timedelta
+
+        t = _mint(db, title="unclaimed-gate")
+        build_task_repo.claim_next_task(db)
+        db.commit()
+        build_task_repo.start_gating(db, t.id, head_sha="h")  # unclaimed gating
+        db.commit()
+        assert build_task_repo.count_stale_unclaimed_gating(db) == 0  # fresh
+        assert build_task_repo.find_stale_gating(db) == []  # never claimed
+
+        task = build_task_repo.get_task(db, t.id)
+        task.updated_at = datetime.now(UTC) - timedelta(minutes=120)
+        db.commit()
+        assert build_task_repo.count_stale_unclaimed_gating(db) == 1
+        # Still not in the claimed-stale reaper set.
+        assert build_task_repo.find_stale_gating(db) == []
+
+
 # keep Base referenced so the import isn't flagged unused (table registration).
 _ = Base

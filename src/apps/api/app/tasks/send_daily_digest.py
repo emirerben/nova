@@ -127,6 +127,12 @@ def _gather_stats(session, *, window_hours: int):  # noqa: ANN001 — sync sqlal
         session.execute(select(func.coalesce(func.max(BuildTask.attempt_count), 0))).scalar_one()
         or 0
     )
+
+    # ── Ship-gate (Phase 2): PRs awaiting merge + a stalled-gate-tick alarm ──
+    from app.services import build_task_repo  # noqa: PLC0415
+
+    awaiting_approval = status_counts.get("awaiting_approval", 0)
+    stale_gating = build_task_repo.count_stale_unclaimed_gating(session)
     # `failed` is inferred from in-window attempt activity on still-queued rows;
     # a precise count would need an event log (deferred), so we surface the
     # attempt ceiling + blocked count, which are the load-bearing alarms.
@@ -143,6 +149,8 @@ def _gather_stats(session, *, window_hours: int):  # noqa: ANN001 — sync sqlal
         "built": built,
         "graded": graded,
         "escalated": escalated,
+        "awaiting_approval": awaiting_approval,
+        "stale_gating": stale_gating,
         "grader_spend_usd": grader_spend,
         "weekly_spend_usd": weekly_spend,
         "resilience": resilience,
@@ -203,6 +211,8 @@ def _run_digest(*, window_hours: int) -> None:
         weekly_budget_usd=weekly_budget,
         resilience=stats["resilience"],
         loop_should_have_run=loop_should_have_run(),
+        awaiting_approval=stats["awaiting_approval"],
+        stale_gating=stats["stale_gating"],
     )
 
     _send_digest_email(

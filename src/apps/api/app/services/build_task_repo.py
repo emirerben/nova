@@ -148,6 +148,34 @@ def claim_next_task(db: Session, *, claimed_by: str | None = None) -> BuildTask 
     return task
 
 
+def claim_next_gating_task(
+    db: Session, *, claimed_by: str | None = None
+) -> BuildTask | None:
+    """Atomically claim the oldest UNCLAIMED `gating` task, or None.
+
+    The gate tick's analogue of `claim_next_task`: the builder leaves a built
+    task in `gating` with claimed_at=NULL (see `start_gating`); a gate tick
+    grabs it via the same `FOR UPDATE SKIP LOCKED` primitive so two overlapping
+    gate ticks never run the same gate. Status STAYS `gating` (claimed_at marks
+    it as being worked); `open_pr`/`gate_failed` move it out. Caller commits.
+    """
+    stmt = (
+        select(BuildTask)
+        .where(BuildTask.status == "gating", BuildTask.claimed_at.is_(None))
+        .order_by(BuildTask.priority.asc(), BuildTask.created_at.asc())
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+    task = db.execute(stmt).scalar_one_or_none()
+    if task is None:
+        return None
+    task.claimed_at = datetime.now(UTC)
+    task.claimed_by = claimed_by
+    db.flush()
+    log.info("build_task_gating_claimed", task_id=str(task.id), claimed_by=claimed_by)
+    return task
+
+
 def get_task(db: Session, task_id) -> BuildTask | None:
     """Fetch a single task by id (no lock). Read-only convenience."""
     return db.execute(select(BuildTask).where(BuildTask.id == task_id)).scalar_one_or_none()
@@ -201,6 +229,94 @@ def complete_task(db: Session, task_id, *, progress_note: str | None = None) -> 
     db.flush()
     log.info("build_task_completed", task_id=str(task.id))
     return task
+
+
+def start_gating(
+    db: Session, task_id, *, head_sha: str, branch: str | None = None
+) -> BuildTask | None:
+    """Flip a built `in_progress` task to `gating` so a gate tick can pick it up.
+
+    Called by the builder where it used to call `complete` (on TASK COMPLETE).
+    Records `head_sha` (the exact pushed commit) so the gate tick can assert it
+    is gating the tree the builder actually pushed — never a stale/partial push.
+    CLEARS the claim so `claim_next_gating_task` can atomically grab it; the
+    builder is done with this row. Caller commits.
+    """
+    task = get_task(db, task_id)
+    if task is None:
+        return None
+    task.status = "gating"
+    task.head_sha = head_sha
+    if branch is not None:
+        task.branch = branch
+    task.claimed_at = None
+    task.claimed_by = None
+    db.flush()
+    log.info("build_task_start_gating", task_id=str(task.id), head_sha=head_sha)
+    return task
+
+
+def open_pr(
+    db: Session,
+    task_id,
+    *,
+    pr_url: str,
+    pr_number: int | None = None,
+    gate_report: dict | None = None,
+    branch: str | None = None,
+) -> BuildTask | None:
+    """Gates green: flip `gating` → `awaiting_approval` and record the PR.
+
+    The resting state for Phase 2 (the founder merges the PR by hand) AND the
+    queue Phase 3's phone surface reads — same rows, no rename. Idle from here:
+    the reaper never touches `awaiting_approval`; the digest surfaces it. Clears
+    the claim. Caller commits.
+    """
+    task = get_task(db, task_id)
+    if task is None:
+        return None
+    task.status = "awaiting_approval"
+    task.pr_url = pr_url
+    if pr_number is not None:
+        task.pr_number = pr_number
+    if gate_report is not None:
+        task.gate_report = gate_report
+    if branch is not None:
+        task.branch = branch
+    task.claimed_at = None
+    task.claimed_by = None
+    db.flush()
+    log.info("build_task_pr_opened", task_id=str(task.id), pr_url=pr_url)
+    return task
+
+
+def gate_failed(
+    db: Session,
+    task_id,
+    *,
+    gate_report: dict | None = None,
+    progress_note: str | None = None,
+    attempt_cap: int = ATTEMPT_CAP,
+) -> BuildTask | None:
+    """A BLOCKING gate failed (tests red, overlays clipped): record + fail.
+
+    Distinct from a gate-tick ABORT (timeout / Docker OOM), which is infra, not
+    the code's fault — the gate runner calls `release_task` for that (no bump).
+    A real gate failure means the built chunk isn't good enough; it bumps
+    attempt_count and re-queues for another builder chunk to fix, blocking at the
+    cap so a persistently-failing task escalates to a human instead of looping.
+    Records `gate_report`/`progress_note` first (so the next chunk knows WHAT
+    failed), then delegates the bump/route to `fail_task` (DRY). Caller commits.
+    """
+    task = get_task(db, task_id)
+    if task is None:
+        return None
+    if gate_report is not None:
+        task.gate_report = gate_report
+    if progress_note is not None:
+        task.progress_note = progress_note
+    db.flush()
+    return fail_task(db, task_id, attempt_cap=attempt_cap)
 
 
 def release_task(db: Session, task_id, *, progress_note: str | None = None) -> BuildTask | None:
@@ -315,13 +431,24 @@ def find_stale_in_progress(
     return list(db.execute(stmt).scalars().all())
 
 
-def reap_stale_task(db: Session, task, *, attempt_cap: int = ATTEMPT_CAP) -> str:
-    """Reset ONE stale in_progress task. Returns the resulting status.
+def reap_stale_task(
+    db: Session,
+    task,
+    *,
+    attempt_cap: int = ATTEMPT_CAP,
+    requeue_status: str = "queued",
+) -> str:
+    """Reset ONE stale claimed task. Returns the resulting status.
 
     Bumps attempt_count (the run that claimed it died without finishing, which
     counts as an attempt). If that trips the cap → `blocked` (wedged, needs a
-    human); otherwise → `queued` (resumable next tick). This is what guarantees
-    a task can't wedge forever AND can't loop forever. Caller commits.
+    human); otherwise → `requeue_status`. This is what guarantees a task can't
+    wedge forever AND can't loop forever. Caller commits.
+
+    `requeue_status` is "queued" for a stale `in_progress` builder run (resume
+    from the builder), but "gating" for a stale `gating` gate run — the code is
+    already built + pushed, so re-running the GATE (not the builder) is the
+    right resume. Either way the cap routes a persistently-dying task to blocked.
     """
     task.attempt_count += 1
     if task.attempt_count >= attempt_cap:
@@ -333,16 +460,73 @@ def reap_stale_task(db: Session, task, *, attempt_cap: int = ATTEMPT_CAP) -> str
             attempt_cap=attempt_cap,
         )
     else:
-        task.status = "queued"
+        task.status = requeue_status
         log.info(
             "build_task_reaped_requeued",
             task_id=str(task.id),
             attempt_count=task.attempt_count,
+            requeue_status=requeue_status,
         )
     task.claimed_at = None
     task.claimed_by = None
     db.flush()
     return task.status
+
+
+def find_stale_gating(
+    db: Session,
+    *,
+    threshold_min: int = STALE_THRESHOLD_MIN,
+    now: datetime | None = None,
+) -> list[BuildTask]:
+    """Return CLAIMED `gating` tasks whose gate run died (claimed_at too old).
+
+    A gate tick that claimed a `gating` row and then died (Docker OOM mid
+    verify-overlays, host slept) leaves it claimed forever — `claim_next_gating_
+    task` only hands out UNCLAIMED gating rows, so it would wedge. The reaper
+    re-runs these via `reap_stale_task(..., requeue_status="gating")` so another
+    gate tick re-gates the already-built branch. Read-only. (Unclaimed-stale
+    gating is NOT wedged — the next gate tick claims it — so the digest, not the
+    reaper, surfaces it via `count_stale_unclaimed_gating`.)
+    """
+    cutoff = (now or datetime.now(UTC)) - timedelta(minutes=threshold_min)
+    stmt = (
+        select(BuildTask)
+        .where(
+            BuildTask.status == "gating",
+            BuildTask.claimed_at.is_not(None),
+            BuildTask.claimed_at < cutoff,
+        )
+        .order_by(BuildTask.claimed_at.asc())
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def count_stale_unclaimed_gating(
+    db: Session,
+    *,
+    threshold_min: int = STALE_THRESHOLD_MIN,
+    now: datetime | None = None,
+) -> int:
+    """Count UNCLAIMED `gating` rows sitting longer than the threshold.
+
+    Not a wedge (the next gate tick will claim it) — a non-zero count means the
+    gate tick itself isn't running (scheduler down / crashed). The digest
+    surfaces this as a dead-gate-tick warning. Read-only.
+    """
+    from sqlalchemy import func
+
+    cutoff = (now or datetime.now(UTC)) - timedelta(minutes=threshold_min)
+    stmt = (
+        select(func.count())
+        .select_from(BuildTask)
+        .where(
+            BuildTask.status == "gating",
+            BuildTask.claimed_at.is_(None),
+            BuildTask.updated_at < cutoff,
+        )
+    )
+    return int(db.execute(stmt).scalar_one())
 
 
 # ── Listing / heartbeat support ─────────────────────────────────────────────────

@@ -70,6 +70,12 @@ class DigestData:
     built: int = 0
     graded: int = 0
     escalated: int = 0
+    # PRs the loop has gated + opened, now resting in `awaiting_approval` for the
+    # founder to merge by hand (Phase 2). A sign of life AND the daily to-do.
+    awaiting_approval: int = 0
+    # UNCLAIMED `gating` rows older than the stale threshold: built tasks no gate
+    # tick has picked up = the gate tick is likely down. A half-dead-loop alarm.
+    stale_gating: int = 0
     grader_spend_usd: float = 0.0
     weekly_spend_usd: float = 0.0
     weekly_budget_usd: float = DEFAULT_WEEKLY_BUDGET_USD
@@ -90,6 +96,7 @@ class DigestData:
         return (
             self.built
             + self.graded
+            + self.awaiting_approval
             + self.resilience.limit_resumes
             + self.resilience.failed
             + self.resilience.in_progress
@@ -98,7 +105,9 @@ class DigestData:
 
     @property
     def needs_attention(self) -> bool:
-        return self.dead_mans_switch or self.resilience.has_concern
+        # A stalled gate tick (built work nobody gated) is a half-dead loop —
+        # surface it like the other concerns.
+        return self.dead_mans_switch or self.stale_gating > 0 or self.resilience.has_concern
 
 
 def compute_dead_mans_switch(*, total_activity: int, loop_should_have_run: bool) -> bool:
@@ -122,6 +131,8 @@ def build_digest(
     weekly_budget_usd: float,
     resilience: ResilienceEvents,
     loop_should_have_run: bool,
+    awaiting_approval: int = 0,
+    stale_gating: int = 0,
     generated_at: datetime | None = None,
 ) -> DigestData:
     """Assemble a `DigestData` from pre-computed counts, deriving the switch."""
@@ -130,6 +141,8 @@ def build_digest(
         built=built,
         graded=graded,
         escalated=escalated,
+        awaiting_approval=awaiting_approval,
+        stale_gating=stale_gating,
         grader_spend_usd=round(grader_spend_usd, 4),
         weekly_spend_usd=round(weekly_spend_usd, 4),
         weekly_budget_usd=weekly_budget_usd,
@@ -150,13 +163,18 @@ def digest_subject(data: DigestData) -> str:
     """The email subject line — leads with the alarm when one fires."""
     if data.dead_mans_switch:
         return "[Nova loop] ⚠️ DEAD-MAN'S-SWITCH — zero activity when the loop should have run"
+    if data.stale_gating > 0:
+        return (
+            f"[Nova loop] ⚠️ gate tick stalled — {data.stale_gating} built task(s) "
+            f"not gated; check the gate_runner schedule"
+        )
     if data.resilience.has_concern:
         return (
             f"[Nova loop] ⚠️ needs a look — "
             f"{data.resilience.blocked} blocked, {data.escalated} to review"
         )
     return (
-        f"[Nova loop] built {data.built} · graded {data.graded} · "
+        f"[Nova loop] built {data.built} · {data.awaiting_approval} to merge · "
         f"{data.escalated} to review · ${data.grader_spend_usd:.2f}"
     )
 
@@ -171,6 +189,14 @@ def digest_html(data: DigestData) -> str:
             'margin-bottom:16px;font-weight:600;">'
             "⚠️ Dead-man's-switch: the loop should have run but produced ZERO activity. "
             "Check the GitHub Actions cron, the OAuth token, and the API health."
+            "</div>"
+        )
+    elif data.stale_gating > 0:
+        banner = (
+            '<div style="background:#78350f;color:#fff;padding:12px 16px;border-radius:8px;'
+            'margin-bottom:16px;font-weight:600;">'
+            f"⚠️ {data.stale_gating} task(s) built but not gated for over an hour — "
+            "the gate tick may be down. Check the gate_runner schedule."
             "</div>"
         )
     elif r.has_concern:
@@ -199,6 +225,7 @@ def digest_html(data: DigestData) -> str:
         {banner}
         <table style="width:100%;border-collapse:collapse;font-size:14px;">
             {row("Built (PRs done)", str(data.built))}
+            {row("Awaiting merge (PRs)", str(data.awaiting_approval))}
             {row("Graded", str(data.graded))}
             {row("Escalated to phone", str(data.escalated))}
             {row("Grader spend (window)", f"${data.grader_spend_usd:.2f}")}

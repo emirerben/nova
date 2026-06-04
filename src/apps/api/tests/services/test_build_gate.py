@@ -8,7 +8,6 @@ clipped video — the #296 class), so it gets the most cases.
 from __future__ import annotations
 
 from app.services.build_gate import (
-    GateReport,
     GateResult,
     aggregate_gate_results,
     build_pr_body,
@@ -17,10 +16,10 @@ from app.services.build_gate import (
     render_paths_touched,
 )
 
-_UNIFIED = """diff --git a/src/apps/api/app/pipeline/reframe.py b/src/apps/api/app/pipeline/reframe.py
+_UNIFIED = """diff --git a/app/pipeline/reframe.py b/app/pipeline/reframe.py
 index 111..222 100644
---- a/src/apps/api/app/pipeline/reframe.py
-+++ b/src/apps/api/app/pipeline/reframe.py
+--- a/app/pipeline/reframe.py
++++ b/app/pipeline/reframe.py
 @@ -1 +1 @@
 -old
 +new
@@ -33,7 +32,7 @@ _NAME_ONLY = "src/apps/web/src/app/page.tsx\nsrc/apps/api/app/routes/music.py\n"
 
 
 def test_changed_paths_parses_unified_diff():
-    assert changed_paths(_UNIFIED) == ["src/apps/api/app/pipeline/reframe.py"]
+    assert changed_paths(_UNIFIED) == ["app/pipeline/reframe.py"]
 
 
 def test_changed_paths_parses_name_only():

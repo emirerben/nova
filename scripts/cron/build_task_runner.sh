@@ -38,29 +38,15 @@ set -uo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO_ROOT" || { echo "ERROR: repo root not found"; exit 1; }
 
-# Guard 1: refuse to run if the prod admin key lives in this worktree's .env —
-# the bypassPermissions agent could read it straight off disk. The home-box
-# scheduler must export ADMIN_PROD_API_KEY as an env var and keep it out of .env.
-if [ -f .env ] && grep -qE '^[[:space:]]*ADMIN_PROD_API_KEY[[:space:]]*=' .env; then
-  echo "ERROR: ADMIN_PROD_API_KEY found in worktree .env — the headless agent could read it." >&2
-  echo "  Remove it from .env and set it as an env var in the scheduler job instead." >&2
-  exit 1
-fi
-
-# Work-hours guard (UTC, Mon-Fri 11:00–18:59 — mirrors WORK_HOURS_UTC in
-# app/tasks/send_daily_digest.py and the retired nova-builder.yml cron). The
-# OpenClaw/Paperclip scheduler fires this script; the guard stops a stray
-# off-hours tick from spending the shared Claude subscription. Set
-# NOVA_BUILDER_FORCE=1 to bypass for a manual test tick.
-if [ "${NOVA_BUILDER_FORCE:-0}" != "1" ]; then
-  _H=$((10#$(date -u +%H))); _DOW=$(date -u +%u)
-  if [ "$_DOW" -gt 5 ] || [ "$_H" -lt 11 ] || [ "$_H" -ge 19 ]; then
-    echo "[builder] outside work-hours window (UTC Mon-Fri 11–18); quiet tick"
-    exit 0
-  fi
-fi
+# Shared helpers — the SINGLE canonical copy of the security scan, .env guard,
+# work-hours guard, and json_str (so a fix can't drift from gate_runner.sh).
+# shellcheck source=scripts/cron/_dev_loop_lib.sh
+source "scripts/cron/_dev_loop_lib.sh"
 
 ADMIN="python3 scripts/admin.py --prod --yes"
+
+assert_no_prod_key_in_env_file   # Guard 1: prod key must not live in worktree .env
+work_hours_guard_or_exit         # quiet off-hours tick unless NOVA_BUILDER_FORCE=1
 RUN_ID="${NOVA_BUILDER_RUN_ID:-local-$(date +%s)}"
 TIMEOUT_S="${NOVA_BUILDER_TIMEOUT_S:-900}"
 
@@ -84,47 +70,8 @@ fail_task() {
   exit 0
 }
 
-# Minimal JSON string escaper (quotes + backslashes) — avoids a jq dependency.
-json_str() {
-  python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"
-}
-
-# Hard-block helper: a secret is about to leak — block the task for human review
-# (action=block, no retry) rather than push it or burn attempts silently.
-abort_block() {
-  local task_id="$1" note="$2"
-  echo "[builder][SECURITY] $note" >&2
-  $ADMIN PATCH "build-tasks/$task_id" \
-    --json "{\"action\": \"block\", \"progress_note\": $(json_str "$note")}" || true
-  exit 1
-}
-
-# Guard 3: scan the diff that is about to be pushed for secrets, BEFORE the push.
-# Runs unconditionally (the agent runs with bypassPermissions, so this is the
-# last line of defense before bytes hit origin). --no-verify on the push can't
-# bypass this — it is an explicit call, not a git hook. Uses gitleaks if present;
-# always also scans for the live credential VALUES + a few high-signal patterns.
-secret_scan_or_abort() {
-  local task_id="$1"
-  git fetch origin main --quiet 2>/dev/null || true
-  local diff
-  diff="$(git diff origin/main...HEAD 2>/dev/null)"
-  [ -z "$diff" ] && return 0
-  if command -v gitleaks >/dev/null 2>&1; then
-    if ! gitleaks detect --no-banner --redact --log-opts='origin/main...HEAD' >/dev/null 2>&1; then
-      abort_block "$task_id" "ABORTED: gitleaks flagged a secret in the outgoing diff; not pushed. Manual review needed."
-    fi
-  fi
-  local v
-  for v in "${ADMIN_PROD_API_KEY:-}" "${ADMIN_API_KEY:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}" "${GH_TOKEN:-}"; do
-    if [ -n "$v" ] && printf '%s' "$diff" | grep -qF -- "$v"; then
-      abort_block "$task_id" "ABORTED: a live credential value appeared in the outgoing diff; not pushed. Manual review needed."
-    fi
-  done
-  if printf '%s' "$diff" | grep -qiE 'sk-[a-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|xox[baprs]-[0-9A-Za-z-]{10,}'; then
-    abort_block "$task_id" "ABORTED: a secret-like pattern appeared in the outgoing diff; not pushed. Manual review needed."
-  fi
-}
+# json_str / abort_block / secret_scan_or_abort come from _dev_loop_lib.sh
+# (sourced above) — one canonical copy shared with gate_runner.sh.
 
 # ── 1. claim ────────────────────────────────────────────────────────────────
 echo "[builder] tick $RUN_ID — claiming oldest queued task"
