@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.75.3] - 2026-06-04
+
+### Fixed
+- **Karaoke lyric renders now keep centered text directly on the source video and stay synced to the audible vocal window.** The production karaoke role for `lyric_word_pop_punchy` now uses the centered Bodoni karaoke style instead of inheriting the left-anchored pop-up layout, and both ASS and Skia karaoke renderers share balanced word wrapping so long lines split as readable 5/4 or 6/5 groups instead of leaving orphan 1-3 word tails.
+- **Karaoke highlight timing no longer runs into inaudible duplicate tail fragments.** Karaoke overlays now carry original song-time line/word metadata through injection, finalize against the post-snap audio duration, rebuild `word_timings` for audible partials, and drop too-short final fragments. Overlap clamping now runs after finalization, so a dropped duplicate tail can no longer shorten the meaningful previous line. Regression coverage locks job `1af7113b-5685-46c5-90e4-fec811393b06`, including the final `"When I'm fucked up, that's the real me"` line.
+
 ## [0.4.75.2] - 2026-06-04
 
 ### Added
