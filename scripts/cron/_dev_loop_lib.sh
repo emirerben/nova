@@ -54,11 +54,12 @@ acquire_lock() {
     trap "release_lock '$dir'" EXIT
     return 0
   fi
-  # Lock dir exists — reclaim only if stale (crashed holder). stat is BSD on
-  # macOS (-f %m) and GNU on Linux (-c %Y); try both.
+  # Lock dir exists — reclaim only if stale (crashed holder). mtime via python3
+  # (a hard dep of these scripts) avoids the BSD vs GNU `stat` format split that
+  # otherwise leaks non-numeric output into the arithmetic below.
   local now mtime age
   now="$(date +%s)"
-  mtime="$(stat -f %m "$dir" 2>/dev/null || stat -c %Y "$dir" 2>/dev/null || echo "$now")"
+  mtime="$(python3 -c 'import os,sys; print(int(os.path.getmtime(sys.argv[1])))' "$dir" 2>/dev/null || echo "$now")"
   age=$(( now - mtime ))
   if [ "$age" -ge "$DEV_LOOP_LOCK_STALE_S" ]; then
     echo "[dev-loop] reclaiming stale lock $dir (age ${age}s)" >&2
