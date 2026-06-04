@@ -163,6 +163,10 @@ class LyricsOutput(BaseModel):
     deserialize unchanged. New LRCLIB extractions leave it empty and use
     `lrclib_id` instead.
 
+    `prompt_version` is the LyricsExtractionAgent.spec.prompt_version that
+    produced this cache blob. Backfill tooling compares this to the live
+    version to find stale alignment data after timing fixes.
+
     `lyrics_diagnostic` is the structured trace of every LRCLIB lookup
     attempt this extraction ran. Populated on every terminal state (success
     AND failure) so the admin debug UI never has a "why did this fail?"
@@ -171,6 +175,7 @@ class LyricsOutput(BaseModel):
     """
 
     source: str = "lrclib_synced+whisper"
+    prompt_version: str = ""
     language: str = ""
     track_title_matched: str = ""
     artist_matched: str = ""
@@ -585,7 +590,8 @@ def _finish_extraction(
 
 
 def _attach_diagnostic(out: LyricsOutput, diag: _Diagnostic) -> LyricsOutput:
-    """Stamp the assembled diagnostic onto the output before returning."""
+    """Stamp runtime metadata onto the output before returning."""
+    out.prompt_version = LyricsExtractionAgent.spec.prompt_version
     out.lyrics_diagnostic = diag.to_dict()
     return out
 

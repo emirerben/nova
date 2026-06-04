@@ -633,7 +633,7 @@ def _inject_karaoke(
     highlight = cfg.get("highlight_color") or "#FFFF00"
     injected = 0
 
-    for line in section_lines:
+    for line in _enforce_karaoke_no_stacking(section_lines):
         slot_win = _slot_for_time(line["start_s"], windows)
         if slot_win is None:
             continue
@@ -1785,3 +1785,100 @@ def _align_audible_words_to_original_text(
     first_start_char = tokens[best_start][0]
     last_end_char = tokens[best_end - 1][1]
     return original_text[first_start_char:last_end_char]
+
+
+def _clip_karaoke_line_end(line: dict, new_end_s: float) -> dict | None:
+    """Return a karaoke line clipped to ``new_end_s`` in section coordinates."""
+    start_s = float(line["start_s"])
+    old_end_s = float(line["end_s"])
+    end_s = min(old_end_s, float(new_end_s))
+    if end_s - start_s < _MIN_OVERLAY_DURATION_S:
+        return None
+
+    clipped = copy.deepcopy(line)
+    clipped["end_s"] = end_s
+
+    raw_words = line.get("words") or []
+    had_words = bool(raw_words)
+    words: list[dict] = []
+    for w in raw_words:
+        try:
+            ws = float(w.get("start_s", 0.0))
+            we = float(w.get("end_s", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if we <= start_s or ws >= end_s:
+            continue
+        word = dict(w)
+        word["start_s"] = max(ws, start_s)
+        word["end_s"] = min(we, end_s)
+        if word["end_s"] <= word["start_s"]:
+            continue
+        words.append(word)
+
+    if had_words and not words:
+        return None
+    clipped["words"] = words
+    return clipped
+
+
+def _enforce_karaoke_no_stacking(section_lines: list[dict]) -> list[dict]:
+    """Prevent two karaoke lines from being active at the same visual anchor.
+
+    Karaoke renders exactly one bottom-anchored line. If cached lyrics contain
+    nested or overlapping line windows, separate ASS events draw on top of each
+    other at the same baseline. Clamp the outgoing line to the next line's
+    start before `_inject_karaoke` derives overlay windows and resync anchors.
+    """
+    if len(section_lines) <= 1:
+        return section_lines
+
+    valid_lines: list[dict] = []
+    for line in section_lines:
+        try:
+            start_s = float(line["start_s"])
+            end_s = float(line["end_s"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if end_s <= start_s:
+            continue
+        valid_lines.append(line)
+
+    ordered = sorted(
+        valid_lines,
+        key=lambda line: (float(line["start_s"]), float(line["end_s"])),
+    )
+    out: list[dict] = []
+    for idx, line in enumerate(ordered):
+        current = copy.deepcopy(line)
+        if idx + 1 < len(ordered):
+            next_line = ordered[idx + 1]
+            line_start_s = float(current["start_s"])
+            line_end_s = float(current["end_s"])
+            next_start_s = float(next_line["start_s"])
+            if next_start_s < line_end_s - 1e-3:
+                clipped = _clip_karaoke_line_end(current, next_start_s)
+                if clipped is None:
+                    log.info(
+                        "lyric_karaoke_overlap_dropped",
+                        line_text=str(current.get("text", ""))[:80],
+                        next_text=str(next_line.get("text", ""))[:80],
+                        line_start_s=round(line_start_s, 3),
+                        line_end_s=round(line_end_s, 3),
+                        next_start_s=round(next_start_s, 3),
+                        overlap_s=round(line_end_s - next_start_s, 3),
+                    )
+                    continue
+                log.info(
+                    "lyric_karaoke_overlap_clamped",
+                    line_text=str(current.get("text", ""))[:80],
+                    next_text=str(next_line.get("text", ""))[:80],
+                    line_start_s=round(line_start_s, 3),
+                    old_end_s=round(line_end_s, 3),
+                    new_end_s=round(float(clipped["end_s"]), 3),
+                    overlap_s=round(line_end_s - next_start_s, 3),
+                )
+                current = clipped
+        out.append(current)
+
+    return out

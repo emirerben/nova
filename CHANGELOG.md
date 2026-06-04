@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.74.7] - 2026-06-03
+## [0.4.75.2] - 2026-06-04
 
 ### Added
 - **Download button on the content-plan, generative, and library result surfaces.** The plan-item result (`plan/items/[id]/page.tsx`), each generative `VariantCard`, and each `LibraryTile` now expose a "Download" button that saves the rendered MP4 (fetch→blob→`<a download>`, with a new-tab fallback on fetch failure). Previously a finished video could only be saved via the native `<video>` context menu — a "ready to post" product with no way to get the file out. New shared helper `src/lib/download-video.ts`. Surfaced by the 2026-06-03 new-user dogfood (`.dev/dogfood-feedback-2026-06-03.md`).
@@ -15,6 +15,17 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - **Honest plan/persona loading copy** (`plan/page.tsx`): persona generation "a few seconds" → "15-30 seconds"; plan generation "a few seconds" → "up to a minute" (measured ~16s / ~51s).
 - **"Find my best clip" → "Find my best clips"** (`SeedUploadCard.tsx`) — the activation flow takes a batch.
+
+## [0.4.75.1] - 2026-06-03
+
+### Fixed
+- **Pop-up lyric previews no longer clip the first letters of left-anchored lines.** Animated ASS overlays now honor `text_anchor` when rendering explicit `\pos` and `\move` coordinates, so left-anchored lyric styles grow rightward from their intended margin instead of centering the text at that margin. Regression tests cover the production `x_frac=0.06` pop-in lyric case plus fade-in, slide, and typewriter variants.
+
+## [0.4.75.0] - 2026-06-03
+
+### Fixed
+- **Admin music lyric sync now refreshes stale cached lyric timing blobs instead of silently showing empty lyric windows for vocal sections.** Lyric extraction outputs now persist the `LyricsExtractionAgent` prompt version into `MusicTrack.lyrics_cached`, giving operators a reliable way to find caches produced before the latest timing alignment fixes.
+- **The lyric-cache backfill tool now talks to the current admin API and refreshes only lyrics.** `scripts/backfill_lyrics.py` uses the `X-Admin-Token` header, follows the paginated admin track list, fetches detail rows for `lyrics_cached`, filters published ready tracks, and queues `/extract-lyrics` instead of full beat/section reanalysis. Regression tests lock the auth header, stale-cache detection, legacy cache compatibility, and prompt-version stamping.
 
 ## [0.4.74.6] - 2026-06-02
 
