@@ -72,3 +72,14 @@ secret_scan_or_abort() {
   fi
   return 0
 }
+
+# macOS python.org Python ships WITHOUT a CA bundle, so admin.py's urllib TLS
+# call to prod fails with CERTIFICATE_VERIFY_FAILED — which would make every tick
+# silently unable to reach the queue API on the home box. Point urllib at
+# certifi's bundle if it's present and SSL_CERT_FILE isn't already set. Guarded
+# so we never export an empty value (which would itself break verification).
+if [ -z "${SSL_CERT_FILE:-}" ]; then
+  _certifi_path="$(python3 -c 'import certifi; print(certifi.where())' 2>/dev/null || true)"
+  [ -n "$_certifi_path" ] && export SSL_CERT_FILE="$_certifi_path"
+  unset _certifi_path
+fi
