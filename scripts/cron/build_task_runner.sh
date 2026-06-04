@@ -50,6 +50,14 @@ work_hours_guard_or_exit         # quiet off-hours tick unless NOVA_BUILDER_FORC
 RUN_ID="${NOVA_BUILDER_RUN_ID:-local-$(date +%s)}"
 TIMEOUT_S="${NOVA_BUILDER_TIMEOUT_S:-900}"
 
+# Builder logs go OUTSIDE the repo so the `git add -A` below never sweeps them
+# into the task branch — a builder PR must carry ONLY the agent's code change,
+# not transient run logs. (Smoke test caught this committing 200+ junk lines.)
+LOGDIR="$(mktemp -d)"
+STDERR_LOG="$LOGDIR/builder_stderr.log"
+STDOUT_LOG="$LOGDIR/builder_stdout.log"
+trap 'rm -rf "$LOGDIR"' EXIT
+
 # Soft-exit helper: release the task (resumable) and exit 0 so the schedule
 # resumes it. Used on any Claude usage limit / 429 — NOT a failure.
 soft_exit_release() {
@@ -129,7 +137,7 @@ set +e
 timeout "${TIMEOUT_S}s" env -u ADMIN_PROD_API_KEY -u ADMIN_API_KEY claude --print \
   --permission-mode bypassPermissions \
   --model claude-sonnet-4-6 \
-  "$PROMPT" 2>builder_stderr.log | tee builder_stdout.log
+  "$PROMPT" 2>"$STDERR_LOG" | tee "$STDOUT_LOG"
 CLAUDE_EXIT=${PIPESTATUS[0]}
 set -e 2>/dev/null || true
 
@@ -137,7 +145,7 @@ set -e 2>/dev/null || true
 # `timeout` exits 124 when it kills Claude at the wall-clock cap. A usage-limit
 # / 429 surfaces as a non-zero Claude exit with a recognizable stderr string.
 # Both are SOFT — the task stays resumable.
-if grep -qiE 'usage limit|rate limit|429|resource_exhausted|please try again later' builder_stderr.log builder_stdout.log 2>/dev/null; then
+if grep -qiE 'usage limit|rate limit|429|resource_exhausted|please try again later' "$STDERR_LOG" "$STDOUT_LOG" 2>/dev/null; then
   soft_exit_release "$TASK_ID" "paused on usage limit at stage=run ($(date -u +%FT%TZ)); resume next tick"
 fi
 if [ "$CLAUDE_EXIT" -eq 124 ]; then
@@ -165,7 +173,7 @@ git fetch origin main --quiet 2>/dev/null || true
 HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo "")"
 BASE_SHA="$(git rev-parse origin/main 2>/dev/null || echo "")"
 
-if grep -q 'TASK COMPLETE' builder_stdout.log 2>/dev/null; then
+if grep -q 'TASK COMPLETE' "$STDOUT_LOG" 2>/dev/null; then
   if [ -n "$HEAD_SHA" ] && [ "$HEAD_SHA" != "$BASE_SHA" ]; then
     # Built + pushed → hand off to the gate tick (Phase 2). Records head_sha so
     # the gate asserts it's gating the exact tree the builder pushed, then runs
