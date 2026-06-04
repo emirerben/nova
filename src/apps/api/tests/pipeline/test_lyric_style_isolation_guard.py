@@ -47,15 +47,17 @@ _LYRIC_INJECTOR_PATH = (
 # (the trailing-line drop thresholds) shifted the function by +41 lines but
 # the content of `_inject_line` + post-pass is byte-identical (same SHA) →
 # 797..1299 after post-merge helper growth above `_inject_line` (PR #414) →
-# 814..1316 after per-word-pop helper growth above `_inject_line`.
+# 814..1316 after per-word-pop helper growth above `_inject_line` →
+# 822..1325 after karaoke finalization metadata growth above `_inject_line`;
+# verified with `test_lyric_injector_no_stacking.py` (66 tests) on 2026-06-04.
 # If the file structure changes such that this range no longer captures the
 # right scope, update BOTH endpoints below AND the SHA.
-_LINE_FROZEN_RANGE_START: int = 814
-_LINE_FROZEN_RANGE_END: int = 1316
+_LINE_FROZEN_RANGE_START: int = 822
+_LINE_FROZEN_RANGE_END: int = 1325
 
 # Locked SHA256 of the frozen range. DO NOT update this constant casually.
 # Read the module docstring above for the legitimate update procedure.
-_LINE_FROZEN_RANGE_SHA256: str = "462a379b58f782ad0335ffe524db35eee525d66ca5558cd9662e4b2ea049bc6a"
+_LINE_FROZEN_RANGE_SHA256: str = "9b9cdbfb023d89aea4ff5d3d274741cd8cff3779c92dc57e10ef85d1ef7fa694"
 
 
 def _compute_range_sha256() -> str:

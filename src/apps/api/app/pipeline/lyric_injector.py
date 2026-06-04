@@ -633,7 +633,7 @@ def _inject_karaoke(
     highlight = cfg.get("highlight_color") or "#FFFF00"
     injected = 0
 
-    for line in _enforce_karaoke_no_stacking(section_lines):
+    for line in section_lines:
         slot_win = _slot_for_time(line["start_s"], windows)
         if slot_win is None:
             continue
@@ -693,6 +693,14 @@ def _inject_karaoke(
                 "section_end_anchor_s": round(line["end_s"], 3),
             }
         )
+        for key in (
+            "original_text",
+            "original_start_s_song",
+            "original_end_s_song",
+            "original_words",
+        ):
+            if line.get(key) is not None:
+                overlay[key] = copy.deepcopy(line[key])
         _ensure_overlay_list(slots[slot_win.index]).append(overlay)
         injected += 1
 
@@ -1311,6 +1319,7 @@ _BASIC_WORD_COUNT_FLOOR = 2
 _BASIC_AUDIBLE_SPEECH_S_FLOOR = 0.75
 _FINAL_LINE_TAIL_TOLERANCE_S = 0.25  # "final" iff abs_end within this of mix end
 _LINE_VS_WORD_BOUNDS_MISMATCH_S = 0.1  # log if line-end differs from last-word-end by more
+_FINALIZABLE_LYRIC_EFFECTS = frozenset({"lyric-line", "karaoke-line"})
 _EPS = 1e-6
 
 
@@ -1319,14 +1328,15 @@ def _finalize_lyric_audible_window(
     audio_mix_song_start_s: float,
     audio_mix_song_end_s: float,
 ) -> list[dict]:
-    """Audible-window-aware finalization for line-lyric overlays.
+    """Audible-window-aware finalization for lyric overlays.
 
     Contract (see plan §2i):
       - non-lyric overlays pass through unchanged in their original positions;
       - lyric overlays dropped by the decision procedure are removed;
-      - lyric overlays kept have `display_text` set and `start_s`/`end_s`
-        conservatively bounded to the audible region; `text` /
-        `original_text` / fade timings preserved.
+      - lyric-line overlays kept may receive `display_text`, and karaoke-line
+        overlays kept may receive rebuilt `word_timings`;
+      - kept lyric overlays have `start_s`/`end_s` conservatively bounded to
+        the audible region where needed.
       - The returned list IS what renderers consume.
 
     Args:
@@ -1364,7 +1374,7 @@ def _finalize_lyric_audible_window(
     final_idxs: set[int] = set()
     audible_clipped_ends: list[tuple[int, float]] = []
     for idx, ov in enumerate(overlays):
-        if ov.get("effect") != "lyric-line":
+        if ov.get("effect") not in _FINALIZABLE_LYRIC_EFFECTS:
             continue
         orig_start = ov.get("original_start_s_song")
         orig_end = ov.get("original_end_s_song")
@@ -1394,20 +1404,138 @@ def _finalize_lyric_audible_window(
 
     out: list[dict] = []
     for idx, ov in enumerate(overlays):
-        if ov.get("effect") != "lyric-line":
+        effect = ov.get("effect")
+        if effect not in _FINALIZABLE_LYRIC_EFFECTS:
             out.append(ov)
             continue
         is_final = idx in final_idxs
-        finalized = _finalize_one_lyric_line(
-            ov,
-            audio_mix_song_start_s=audio_mix_song_start_s,
-            audio_mix_song_end_s=audio_mix_song_end_s,
-            audible_end_abs=audible_end_abs,
-            is_final=is_final,
-        )
+        if effect == "karaoke-line":
+            finalized = _finalize_one_karaoke_line(
+                ov,
+                audio_mix_song_start_s=audio_mix_song_start_s,
+                audio_mix_song_end_s=audio_mix_song_end_s,
+                audible_end_abs=audible_end_abs,
+                is_final=is_final,
+            )
+        else:
+            finalized = _finalize_one_lyric_line(
+                ov,
+                audio_mix_song_start_s=audio_mix_song_start_s,
+                audio_mix_song_end_s=audio_mix_song_end_s,
+                audible_end_abs=audible_end_abs,
+                is_final=is_final,
+            )
         if finalized is not None:
             out.append(finalized)
+    return _enforce_finalized_karaoke_no_stacking(out)
+
+
+def _same_karaoke_screen_slot(a: dict, b: dict) -> bool:
+    return (
+        a.get("effect") == "karaoke-line"
+        and b.get("effect") == "karaoke-line"
+        and a.get("position", "bottom") == b.get("position", "bottom")
+        and a.get("position_x_frac") == b.get("position_x_frac")
+        and a.get("position_y_frac") == b.get("position_y_frac")
+        and a.get("text_anchor", "center") == b.get("text_anchor", "center")
+    )
+
+
+def _clip_finalized_karaoke_overlay_end(overlay: dict, new_end_s: float) -> dict | None:
+    start_s = float(overlay.get("start_s", 0.0))
+    end_s = min(float(overlay.get("end_s", 0.0)), float(new_end_s))
+    if end_s - start_s < _MIN_OVERLAY_DURATION_S:
+        return None
+
+    out = dict(overlay)
+    out["end_s"] = end_s
+    span_s = end_s - start_s
+    if out.get("section_anchor_s") is not None:
+        try:
+            out["section_end_anchor_s"] = round(float(out["section_anchor_s"]) + span_s, 3)
+        except (TypeError, ValueError):
+            pass
+
+    raw_timings = overlay.get("word_timings") or []
+    if not raw_timings:
+        return out
+
+    clipped_timings: list[dict] = []
+    prev_end_rel = 0.0
+    for wt in raw_timings:
+        text = str(wt.get("text", "")).strip()
+        if not text:
+            continue
+        try:
+            ws = float(wt.get("start_s", 0.0))
+            we = float(wt.get("end_s", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if we <= 0.0 or ws >= span_s:
+            continue
+        word = dict(wt)
+        word["start_s"] = round(max(0.0, ws), 3)
+        word["end_s"] = round(min(span_s, we), 3)
+        if float(word["end_s"]) <= float(word["start_s"]):
+            continue
+        dur_s = max(0.05, float(word["end_s"]) - prev_end_rel)
+        prev_end_rel = float(word["end_s"])
+        word["duration_cs"] = max(5, int(round(dur_s * 100)))
+        clipped_timings.append(word)
+
+    if raw_timings and not clipped_timings:
+        return None
+
+    out["word_timings"] = clipped_timings
+    out["text"] = " ".join(str(w["text"]) for w in clipped_timings).strip() or out.get("text", "")
     return out
+
+
+def _enforce_finalized_karaoke_no_stacking(overlays: list[dict]) -> list[dict]:
+    if len(overlays) <= 1:
+        return overlays
+
+    out = [dict(ov) for ov in overlays]
+    karaoke_idxs = [
+        idx
+        for idx, ov in enumerate(out)
+        if ov.get("effect") == "karaoke-line"
+    ]
+    karaoke_idxs.sort(key=lambda idx: (float(out[idx].get("start_s", 0.0)), idx))
+
+    dropped: set[int] = set()
+    for prev_idx, next_idx in zip(karaoke_idxs, karaoke_idxs[1:], strict=False):
+        if prev_idx in dropped or next_idx in dropped:
+            continue
+        prev = out[prev_idx]
+        nxt = out[next_idx]
+        if not _same_karaoke_screen_slot(prev, nxt):
+            continue
+        prev_end = float(prev.get("end_s", 0.0))
+        next_start = float(nxt.get("start_s", 0.0))
+        if next_start >= prev_end - 1e-3:
+            continue
+        clipped = _clip_finalized_karaoke_overlay_end(prev, next_start)
+        if clipped is None:
+            dropped.add(prev_idx)
+            log.info(
+                "karaoke_finalize_overlap_dropped",
+                line_text=str(prev.get("text", ""))[:80],
+                next_text=str(nxt.get("text", ""))[:80],
+                overlap_s=round(prev_end - next_start, 3),
+            )
+        else:
+            out[prev_idx] = clipped
+            log.info(
+                "karaoke_finalize_overlap_clamped",
+                line_text=str(prev.get("text", ""))[:80],
+                next_text=str(nxt.get("text", ""))[:80],
+                old_end_s=round(prev_end, 3),
+                new_end_s=round(float(clipped["end_s"]), 3),
+                overlap_s=round(prev_end - next_start, 3),
+            )
+
+    return [ov for idx, ov in enumerate(out) if idx not in dropped]
 
 
 def _finalize_one_lyric_line(
@@ -1628,6 +1756,201 @@ def _finalize_one_lyric_line(
     )
 
 
+def _finalize_one_karaoke_line(
+    overlay: dict,
+    *,
+    audio_mix_song_start_s: float,
+    audio_mix_song_end_s: float,
+    audible_end_abs: float,
+    is_final: bool,
+) -> dict | None:
+    """Apply audible-window finalization to one karaoke-line overlay.
+
+    Karaoke renderers consume `word_timings` directly, not `display_text`.
+    When the selected section extends past the post-snap video duration, this
+    function drops inaudible tails or rebuilds `word_timings` to the audible
+    word subset so the yellow sweep cannot continue into unheard lyrics.
+    """
+    line_id = overlay.get("lyric_line_id") or overlay.get("section_anchor_s")
+    required = (
+        "original_text",
+        "original_start_s_song",
+        "original_end_s_song",
+        "original_words",
+    )
+    missing = [k for k in required if overlay.get(k) is None]
+    for k in ("original_start_s_song", "original_end_s_song"):
+        if k not in missing:
+            try:
+                v = float(overlay[k])
+                if v != v:  # NaN
+                    missing.append(k)
+            except (TypeError, ValueError):
+                missing.append(k)
+    if missing:
+        log.warning(
+            "karaoke_segments_missing_finalization_metadata",
+            line_id=line_id,
+            missing_fields=missing,
+        )
+        return overlay
+
+    original_text = str(overlay["original_text"])
+    original_start_s_song = float(overlay["original_start_s_song"])
+    original_end_s_song = float(overlay["original_end_s_song"])
+    original_words = list(overlay.get("original_words") or [])
+
+    if not original_words:
+        clipped_start = max(original_start_s_song, audio_mix_song_start_s)
+        clipped_end = min(original_end_s_song, audio_mix_song_end_s)
+        overlap_s = max(0.0, clipped_end - clipped_start)
+        original_dur = max(_EPS, original_end_s_song - original_start_s_song)
+        cov = overlap_s / original_dur
+        if cov < 0.5:
+            log.info(
+                "karaoke_finalize_dropped_empty_words_outside_window",
+                line_id=line_id,
+                coverage_duration=round(cov, 4),
+            )
+            return None
+        out = dict(overlay)
+        new_end_s = min(float(out.get("end_s", 0.0)), audible_end_abs)
+        new_start_s = max(0.0, float(out.get("start_s", 0.0)))
+        if new_end_s > new_start_s:
+            out["end_s"] = new_end_s
+            out["start_s"] = new_start_s
+        log.info("karaoke_finalize_empty_words_kept_with_clamp", line_id=line_id)
+        return out
+
+    first_w = original_words[0]
+    last_w = original_words[-1]
+    try:
+        first_w_start = float(first_w.get("start_s_song", original_start_s_song))
+        last_w_end = float(last_w.get("end_s_song", original_end_s_song))
+    except (TypeError, ValueError):
+        first_w_start = original_start_s_song
+        last_w_end = original_end_s_song
+    start_mismatch = abs(original_start_s_song - first_w_start)
+    end_mismatch = abs(original_end_s_song - last_w_end)
+    if (
+        start_mismatch > _LINE_VS_WORD_BOUNDS_MISMATCH_S
+        or end_mismatch > _LINE_VS_WORD_BOUNDS_MISMATCH_S
+    ):
+        log.warning(
+            "karaoke_finalize_line_bounds_word_mismatch",
+            line_id=line_id,
+            line_start_s_song=original_start_s_song,
+            line_end_s_song=original_end_s_song,
+            first_word_start_s_song=first_w_start,
+            last_word_end_s_song=last_w_end,
+            start_mismatch_s=round(start_mismatch, 4),
+            end_mismatch_s=round(end_mismatch, 4),
+        )
+        original_start_s_song = first_w_start
+        original_end_s_song = last_w_end
+
+    audible_words = [
+        w for w in original_words if _word_audible(w, audio_mix_song_start_s, audio_mix_song_end_s)
+    ]
+    surviving_word_count = len(audible_words)
+    original_word_count = len(original_words)
+
+    clipped_start = max(original_start_s_song, audio_mix_song_start_s)
+    clipped_end = min(original_end_s_song, audio_mix_song_end_s)
+    overlap_s = max(0.0, clipped_end - clipped_start)
+    original_dur = max(_EPS, original_end_s_song - original_start_s_song)
+    coverage_duration = overlap_s / original_dur
+    coverage_words = surviving_word_count / max(1, original_word_count)
+
+    audible_speech_s = 0.0
+    for w in audible_words:
+        try:
+            ws = float(w.get("start_s_song", 0.0))
+            we = float(w.get("end_s_song", 0.0))
+        except (TypeError, ValueError):
+            continue
+        audible_speech_s += max(
+            0.0, min(we, audio_mix_song_end_s) - max(ws, audio_mix_song_start_s)
+        )
+
+    if coverage_duration >= _NEAR_COMPLETE_DURATION and coverage_words >= _NEAR_COMPLETE_WORDS:
+        return overlay
+
+    candidate_text: str | None = None
+    candidate_source: str | None = None
+    if surviving_word_count >= 2:
+        rebuilt = _align_audible_words_to_original_text(
+            original_text=original_text,
+            audible_words=audible_words,
+        )
+        if rebuilt is not None:
+            candidate_text = rebuilt
+            candidate_source = "alignment"
+        else:
+            candidate_text = " ".join(str(w.get("text", "")) for w in audible_words).strip()
+            candidate_source = "conservative_join"
+
+    if not candidate_text or not candidate_text.strip():
+        log.info(
+            "karaoke_finalize_dropped_no_candidate_text",
+            line_id=line_id,
+            surviving_word_count=surviving_word_count,
+        )
+        return None
+
+    if is_final:
+        if (
+            audible_speech_s < _BASIC_AUDIBLE_SPEECH_S_FLOOR
+            or surviving_word_count < _BASIC_WORD_COUNT_FLOOR
+        ):
+            log.info(
+                "karaoke_finalize_final_line_dropped_fragment_too_short",
+                line_id=line_id,
+                audible_speech_s=round(audible_speech_s, 4),
+                surviving_word_count=surviving_word_count,
+            )
+            return None
+        return _apply_finalized_karaoke(
+            overlay,
+            audible_words=audible_words,
+            display_text=candidate_text,
+            audio_mix_song_start_s=audio_mix_song_start_s,
+            audible_end_abs=audible_end_abs,
+            log_event="karaoke_finalize_final_line_kept_truncated",
+            source=candidate_source,
+            line_id=line_id,
+        )
+
+    interior_basic_ok = (
+        audible_speech_s >= _BASIC_AUDIBLE_SPEECH_S_FLOOR
+        and surviving_word_count >= _BASIC_WORD_COUNT_FLOOR
+    )
+    interior_coverage_ok = (
+        coverage_duration >= _INTERIOR_COVERAGE_FLOOR or coverage_words >= _INTERIOR_COVERAGE_FLOOR
+    )
+    if not (interior_basic_ok and interior_coverage_ok):
+        log.info(
+            "karaoke_finalize_dropped_interior_partial",
+            line_id=line_id,
+            audible_speech_s=round(audible_speech_s, 4),
+            surviving_word_count=surviving_word_count,
+            coverage_duration=round(coverage_duration, 4),
+            coverage_words=round(coverage_words, 4),
+        )
+        return None
+
+    return _apply_finalized_karaoke(
+        overlay,
+        audible_words=audible_words,
+        display_text=candidate_text,
+        audio_mix_song_start_s=audio_mix_song_start_s,
+        audible_end_abs=audible_end_abs,
+        log_event="karaoke_finalize_interior_partial_kept_truncated",
+        source=candidate_source,
+        line_id=line_id,
+    )
+
+
 def _word_audible(
     word: dict,
     audio_mix_song_start_s: float,
@@ -1668,6 +1991,76 @@ def _apply_finalized(
     if new_end_s > new_start_s:
         out["end_s"] = new_end_s
         out["start_s"] = new_start_s
+    log.info(log_event, line_id=line_id, source=source)
+    return out
+
+
+def _apply_finalized_karaoke(
+    overlay: dict,
+    *,
+    audible_words: list[dict],
+    display_text: str,
+    audio_mix_song_start_s: float,
+    audible_end_abs: float,
+    log_event: str,
+    source: str | None,
+    line_id: str | None,
+) -> dict | None:
+    """Rewrite a karaoke overlay to the audible word subset.
+
+    Unlike lyric-line overlays, karaoke has no renderer-level `display_text`
+    path. The rendered words come from `word_timings`, so truncation must
+    rebuild that payload and keep each word's local timing aligned to the
+    overlay's absolute start.
+    """
+    out = dict(overlay)
+    new_start_s = max(0.0, float(out.get("start_s", 0.0)))
+    new_end_s = min(float(out.get("end_s", 0.0)), audible_end_abs)
+    if new_end_s <= new_start_s:
+        log.info("karaoke_finalize_dropped_empty_window", line_id=line_id)
+        return None
+
+    span_s = new_end_s - new_start_s
+    word_timings: list[dict] = []
+    prev_end_rel = 0.0
+    for w in audible_words:
+        text = str(w.get("text", "")).strip()
+        if not text:
+            continue
+        try:
+            ws_song = float(w.get("start_s_song", 0.0))
+            we_song = float(w.get("end_s_song", 0.0))
+        except (TypeError, ValueError):
+            continue
+        abs_word_start_s = max(0.0, ws_song - audio_mix_song_start_s)
+        abs_word_end_s = min(audible_end_abs, we_song - audio_mix_song_start_s)
+        local_start_s = max(0.0, abs_word_start_s - new_start_s)
+        if local_start_s >= span_s:
+            continue
+        local_end_s = min(span_s, abs_word_end_s - new_start_s)
+        if local_end_s <= local_start_s:
+            local_end_s = min(span_s, local_start_s + 0.05)
+        if local_end_s <= local_start_s:
+            continue
+        dur_s = max(0.05, local_end_s - prev_end_rel)
+        prev_end_rel = local_end_s
+        word_timings.append(
+            {
+                "text": text,
+                "start_s": round(local_start_s, 3),
+                "end_s": round(local_end_s, 3),
+                "duration_cs": max(5, int(round(dur_s * 100))),
+            }
+        )
+
+    if not word_timings:
+        log.info("karaoke_finalize_dropped_no_word_timings", line_id=line_id)
+        return None
+
+    out["text"] = display_text
+    out["word_timings"] = word_timings
+    out["start_s"] = new_start_s
+    out["end_s"] = new_end_s
     log.info(log_event, line_id=line_id, source=source)
     return out
 
@@ -1785,100 +2178,3 @@ def _align_audible_words_to_original_text(
     first_start_char = tokens[best_start][0]
     last_end_char = tokens[best_end - 1][1]
     return original_text[first_start_char:last_end_char]
-
-
-def _clip_karaoke_line_end(line: dict, new_end_s: float) -> dict | None:
-    """Return a karaoke line clipped to ``new_end_s`` in section coordinates."""
-    start_s = float(line["start_s"])
-    old_end_s = float(line["end_s"])
-    end_s = min(old_end_s, float(new_end_s))
-    if end_s - start_s < _MIN_OVERLAY_DURATION_S:
-        return None
-
-    clipped = copy.deepcopy(line)
-    clipped["end_s"] = end_s
-
-    raw_words = line.get("words") or []
-    had_words = bool(raw_words)
-    words: list[dict] = []
-    for w in raw_words:
-        try:
-            ws = float(w.get("start_s", 0.0))
-            we = float(w.get("end_s", 0.0))
-        except (TypeError, ValueError):
-            continue
-        if we <= start_s or ws >= end_s:
-            continue
-        word = dict(w)
-        word["start_s"] = max(ws, start_s)
-        word["end_s"] = min(we, end_s)
-        if word["end_s"] <= word["start_s"]:
-            continue
-        words.append(word)
-
-    if had_words and not words:
-        return None
-    clipped["words"] = words
-    return clipped
-
-
-def _enforce_karaoke_no_stacking(section_lines: list[dict]) -> list[dict]:
-    """Prevent two karaoke lines from being active at the same visual anchor.
-
-    Karaoke renders exactly one bottom-anchored line. If cached lyrics contain
-    nested or overlapping line windows, separate ASS events draw on top of each
-    other at the same baseline. Clamp the outgoing line to the next line's
-    start before `_inject_karaoke` derives overlay windows and resync anchors.
-    """
-    if len(section_lines) <= 1:
-        return section_lines
-
-    valid_lines: list[dict] = []
-    for line in section_lines:
-        try:
-            start_s = float(line["start_s"])
-            end_s = float(line["end_s"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if end_s <= start_s:
-            continue
-        valid_lines.append(line)
-
-    ordered = sorted(
-        valid_lines,
-        key=lambda line: (float(line["start_s"]), float(line["end_s"])),
-    )
-    out: list[dict] = []
-    for idx, line in enumerate(ordered):
-        current = copy.deepcopy(line)
-        if idx + 1 < len(ordered):
-            next_line = ordered[idx + 1]
-            line_start_s = float(current["start_s"])
-            line_end_s = float(current["end_s"])
-            next_start_s = float(next_line["start_s"])
-            if next_start_s < line_end_s - 1e-3:
-                clipped = _clip_karaoke_line_end(current, next_start_s)
-                if clipped is None:
-                    log.info(
-                        "lyric_karaoke_overlap_dropped",
-                        line_text=str(current.get("text", ""))[:80],
-                        next_text=str(next_line.get("text", ""))[:80],
-                        line_start_s=round(line_start_s, 3),
-                        line_end_s=round(line_end_s, 3),
-                        next_start_s=round(next_start_s, 3),
-                        overlap_s=round(line_end_s - next_start_s, 3),
-                    )
-                    continue
-                log.info(
-                    "lyric_karaoke_overlap_clamped",
-                    line_text=str(current.get("text", ""))[:80],
-                    next_text=str(next_line.get("text", ""))[:80],
-                    line_start_s=round(line_start_s, 3),
-                    old_end_s=round(line_end_s, 3),
-                    new_end_s=round(float(clipped["end_s"]), 3),
-                    overlap_s=round(line_end_s - next_start_s, 3),
-                )
-                current = clipped
-        out.append(current)
-
-    return out

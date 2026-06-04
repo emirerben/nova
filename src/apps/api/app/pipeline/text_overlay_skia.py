@@ -66,6 +66,7 @@ from app.pipeline.text_overlay import (
     _hex_to_rgba,
     _validate_overlay,
 )
+from app.pipeline.text_wrap import balanced_word_wrap_indices
 
 log = structlog.get_logger()
 
@@ -358,20 +359,8 @@ def _wrap_text_to_lines(text: str, font: skia.Font, max_width: float) -> list[st
 
 
 def _wrap_word_indices(words: list[str], font: skia.Font, max_width: float) -> list[list[int]]:
-    """Greedy word-wrap that preserves original word indices for per-word effects."""
-    lines: list[list[int]] = []
-    current: list[int] = []
-    for i, word in enumerate(words):
-        candidate = [*current, i]
-        candidate_text = " ".join(words[j] for j in candidate)
-        if font.measureText(candidate_text) <= max_width or not current:
-            current.append(i)
-        else:
-            lines.append(current)
-            current = [i]
-    if current:
-        lines.append(current)
-    return lines
+    """Balanced word-wrap that preserves original word indices."""
+    return balanced_word_wrap_indices(words, font.measureText, max_width)
 
 
 def _shrink_to_fit(
@@ -870,8 +859,8 @@ def _draw_karaoke_line(
     {text, start_s, end_s, duration_cs} relative to the overlay start.
 
     Karaoke does NOT consume `display_text` — its per-word highlight order
-    is keyed off the original `text`. Layer 2's finalizer never sets
-    `display_text` on karaoke overlays (it only fires for effect="lyric-line").
+    is keyed off `word_timings`. If audible-window finalization trims a
+    karaoke line, it must rebuild `text` + `word_timings` before render.
     """
     text = overlay.get("text", "") or ""
     word_timings = overlay.get("word_timings") or []

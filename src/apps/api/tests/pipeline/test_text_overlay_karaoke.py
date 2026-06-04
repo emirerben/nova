@@ -8,6 +8,7 @@ import tempfile
 from app.pipeline.text_overlay import (
     ASS_ANIMATED_EFFECTS,
     _hex_to_ass_bgr,
+    _wrap_karaoke_timed_words_for_ass,
     generate_animated_overlay_ass,
 )
 
@@ -120,6 +121,21 @@ def test_karaoke_line_wraps_long_text_without_shrinking_ass_font() -> None:
         assert r"\N" in content
         assert r"\fs120" in content
         assert r"\fs102" not in content
+
+
+def test_karaoke_ass_wrap_balances_production_orphan_lines() -> None:
+    text = "I only call you when it's half past five"
+    timed_words = [{"text": word, "duration_cs": 20} for word in text.split()]
+
+    lines = _wrap_karaoke_timed_words_for_ass(
+        timed_words,
+        font_family="Bodoni Moda",
+        base_size_px=64,
+    )
+
+    counts = [len(line) for line in lines]
+    assert len(lines) == 2
+    assert counts == [5, 4]
 
 
 def test_karaoke_line_without_word_timings_falls_back_gracefully() -> None:
