@@ -279,24 +279,33 @@ class of bug fails on the PR, not on merge-to-main.
 
 GBrain is set up and synced on this machine. The agent should prefer gbrain
 over Grep when the question is semantic or when you don't know the exact
-identifier yet.
+identifier yet. See `docs/runbooks/company-brain.md` for the full
+architecture, data flows, ops procedures, and cofounder onboarding.
 
-**This worktree is pinned to a worktree-scoped code source** via the
-`.gbrain-source` file in the repo root (kubectl-style context). Any
-`gbrain code-def`, `code-refs`, `code-callers`, `code-callees`, or `query`
-call from anywhere under this worktree routes to that source by default —
-no `--source` flag needed.
+**Source routing — important:** The `.gbrain-source` file pins code-related
+commands to the code source. `gbrain search`/`query` from inside a worktree
+searches only the code source unless you pass `--source default`.
+
+Code lookups (use without `--source`):
+- `gbrain code-def <symbol>`, `code-refs`, `code-callers`, `code-callees`
+- `gbrain search "<terms>"` — code source only (default from worktree)
+- `gbrain query "<question>"` — code source only (default from worktree)
+
+Knowledge lookups (learnings, decisions, docs, engineering memos):
+- `gbrain search "<terms>" --source default`
+- `gbrain query "<question>" --source default`
+
+Both corpora in one query: run two searches, or search from `~` (no pin).
 
 Prefer gbrain when:
-- "Where is X handled?" / semantic intent, no exact string yet:
-    `gbrain search "<terms>"` or `gbrain query "<question>"`
-- "Where is symbol Y defined?" / symbol-based code questions:
-    `gbrain code-def <symbol>` or `gbrain code-refs <symbol>`
-- "What calls Y?" / "What does Y depend on?":
-    `gbrain code-callers <symbol>` / `gbrain code-callees <symbol>`
+- "Where is X handled?" → `gbrain search "<terms>"` (code source default)
+- "What did we decide about X?" → `gbrain query "<question>" --source default`
+- Symbol definition/references → `gbrain code-def`/`code-refs`
+- Callers/callees → `gbrain code-callers`/`gbrain code-callees`
 
-Grep is still right for known exact strings, regex, multiline patterns, and
-file globs. Run `/sync-gbrain` after meaningful code changes; for ongoing
-auto-sync, run `gbrain autopilot --install` once per machine.
+Grep is still right for known exact strings, regex, and multiline patterns.
+Auto-sync: a launchd job (`com.nova.gbrain-refresh`) runs twice daily from
+`scripts/brain/refresh-nova.sh`. To force a sync now: `bash
+scripts/brain/refresh-nova.sh` or run `/sync-gbrain`.
 
 <!-- gstack-gbrain-search-guidance:end -->
