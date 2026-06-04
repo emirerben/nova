@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 import structlog
 
 from app.pipeline.ass_utils import format_ass_time, sanitize_ass_text
+from app.pipeline.text_wrap import balanced_word_wrap_indices
 
 log = structlog.get_logger()
 
@@ -860,20 +861,16 @@ def _wrap_karaoke_timed_words_for_ass(
     dummy = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(dummy)
 
-    lines: list[list[dict]] = []
-    current: list[dict] = []
-    for word in timed_words:
-        candidate = [*current, word]
-        candidate_text = " ".join(str(w["text"]) for w in candidate)
+    word_texts = [str(w["text"]) for w in timed_words]
+
+    def measure(candidate_text: str) -> float:
         bbox = draw.textbbox((0, 0), candidate_text, font=font)
-        if bbox[2] - bbox[0] <= max_width or not current:
-            current.append(word)
-        else:
-            lines.append(current)
-            current = [word]
-    if current:
-        lines.append(current)
-    return lines
+        return float(bbox[2] - bbox[0])
+
+    return [
+        [timed_words[i] for i in line]
+        for line in balanced_word_wrap_indices(word_texts, measure, max_width)
+    ]
 
 
 def _emit_lyric_line_alpha_tags(

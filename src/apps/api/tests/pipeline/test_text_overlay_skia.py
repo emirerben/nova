@@ -504,6 +504,32 @@ def test_word_wrap_preserves_explicit_newlines():
     assert lines == ["first", "second"]
 
 
+def test_karaoke_word_wrap_balances_production_orphan_lines():
+    """Regression for job 1af7113b: greedy wrapping produced 8+1 and 6+3
+    word splits. Karaoke should keep the minimum line count but avoid
+    preventable orphan tails."""
+    tf = tos._typeface_for_overlay({"font_family": "Bodoni Moda"})
+    font = skia.Font(tf, 64)
+    max_width = tos.CANVAS_W * tos._MAX_LINE_W_FRAC
+
+    cases = [
+        "I only call you when it's half past five",
+        "The only time that I'd be by your side",
+        "I only love it when you touch me not feel me",
+        "When I'm fucked up that's the real me yeah",
+    ]
+    for text in cases:
+        words = text.split()
+        wrapped = tos._wrap_word_indices(words, font, max_width)
+        counts = [len(line) for line in wrapped]
+        assert len(wrapped) == 2, f"expected two-line wrap for {text!r}, got {counts}"
+        assert min(counts) >= 4, f"preventable orphan line for {text!r}: {counts}"
+        assert max(counts) - min(counts) <= 1, f"unbalanced line split for {text!r}: {counts}"
+        for line in wrapped:
+            line_text = " ".join(words[i] for i in line)
+            assert font.measureText(line_text) <= max_width
+
+
 def test_shrink_to_fit_reduces_font_for_single_long_word():
     """A single un-breakable word that's too wide at the requested size
     should trigger the shrink-to-fit loop."""
