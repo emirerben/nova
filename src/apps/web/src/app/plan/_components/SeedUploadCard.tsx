@@ -174,7 +174,7 @@ export default function SeedUploadCard({
         disabled={uploading || seededCount === 0}
         className="mt-4 rounded-full bg-amber-400 px-6 py-3 font-medium text-black transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
       >
-        Find my best clip
+        Find my best clips
       </button>
       {seededCount === 0 && !uploading && (
         <p className="mt-2 text-sm text-zinc-500">Upload at least one clip first.</p>

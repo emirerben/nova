@@ -18,7 +18,7 @@ export default function SignInPrompt({
   return (
     <div className="animate-fade-up py-24 text-center">
       <h1 className="mb-3 font-display text-3xl text-white">{title}</h1>
-      <p className="mx-auto mb-8 max-w-sm text-zinc-400">{subtitle}</p>
+      <p className="mx-auto mb-8 max-w-sm text-zinc-300">{subtitle}</p>
       <button
         onClick={() => signIn("google", { callbackUrl })}
         className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 font-medium text-black transition-colors hover:bg-zinc-200"

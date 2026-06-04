@@ -19,7 +19,9 @@ async function fetchTemplates(): Promise<TemplateListItem[]> {
 
 async function TemplateGridLoader() {
   const templates = await fetchTemplates();
-  return <TemplateGrid templates={templates} />;
+  // Hide templates with broken/zero duration (looks like bad seed data — renders "0s · 1 clip").
+  const visible = templates.filter((t) => t.total_duration_s > 0);
+  return <TemplateGrid templates={visible} />;
 }
 
 export default function HomePage() {

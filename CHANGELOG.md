@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.75.3] - 2026-06-04
+
+### Fixed
+- **Karaoke lyric renders now keep centered text directly on the source video and stay synced to the audible vocal window.** The production karaoke role for `lyric_word_pop_punchy` now uses the centered Bodoni karaoke style instead of inheriting the left-anchored pop-up layout, and both ASS and Skia karaoke renderers share balanced word wrapping so long lines split as readable 5/4 or 6/5 groups instead of leaving orphan 1-3 word tails.
+- **Karaoke highlight timing no longer runs into inaudible duplicate tail fragments.** Karaoke overlays now carry original song-time line/word metadata through injection, finalize against the post-snap audio duration, rebuild `word_timings` for audible partials, and drop too-short final fragments. Overlap clamping now runs after finalization, so a dropped duplicate tail can no longer shorten the meaningful previous line. Regression coverage locks job `1af7113b-5685-46c5-90e4-fec811393b06`, including the final `"When I'm fucked up, that's the real me"` line.
+- **Font smoke tests now pass on FFmpeg 8.1.1 (Homebrew macOS).** The Homebrew `ffmpeg` formula no longer includes libass; tests now detect and prefer the `ffmpeg-full` keg-only formula when available. Path escaping in the `subtitles=` filter also updated to match production (`single_pass.py`) — guards against paths containing colons on any platform.
+
+## [0.4.75.2] - 2026-06-04
+
+### Added
+- **Download button on the content-plan, generative, and library result surfaces.** The plan-item result (`plan/items/[id]/page.tsx`), each generative `VariantCard`, and each `LibraryTile` now expose a "Download" button that saves the rendered MP4 (fetch→blob→`<a download>`, with a new-tab fallback on fetch failure). Previously a finished video could only be saved via the native `<video>` context menu — a "ready to post" product with no way to get the file out. New shared helper `src/lib/download-video.ts`. Surfaced by the 2026-06-03 new-user dogfood (`.dev/dogfood-feedback-2026-06-03.md`).
+
+### Fixed
+- **Doubled "Why this works:" on every plan item.** The UI renders a "Why this works" label and the model's `rationale` body frequently repeats the same prefix, producing "Why this works: Why this works: …". A new pure helper `src/lib/plan-text.ts::stripRationalePrefix` strips the leading prefix from the body where the rationale is rendered (`plan/items/[id]/page.tsx`, `PlanItemCard.tsx`); backend prompt untouched.
+- **Sign-in gate subtitle contrast** raised (`text-zinc-400` → `text-zinc-300` in `SignInPrompt.tsx`) — the gate read as half-loaded/disabled on black.
+- **Homepage no longer renders broken `0s · 1 clip` template cards** — `TemplateGridLoader` (`app/page.tsx`) filters templates with `total_duration_s <= 0` (bad seed data).
+
+### Changed
+- **Honest plan/persona loading copy** (`plan/page.tsx`): persona generation "a few seconds" → "15-30 seconds"; plan generation "a few seconds" → "up to a minute" (measured ~16s / ~51s).
+- **"Find my best clip" → "Find my best clips"** (`SeedUploadCard.tsx`) — the activation flow takes a batch.
+
 ## [0.4.75.1] - 2026-06-03
 
 ### Fixed

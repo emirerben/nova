@@ -22,6 +22,7 @@ import math
 
 import pytest
 
+from app.pipeline.lyric_injector import _finalize_lyric_audible_window
 from app.pipeline.lyric_word_resync import resync_slot_overlays
 from tests.pipeline._lyric_invariant_helpers import (
     inject_overlays_for_style,
@@ -101,6 +102,39 @@ def _overlapping_karaoke_fixture() -> list[dict]:
     ]
 
 
+def _karaoke_overlay(
+    *,
+    text: str,
+    start_s: float,
+    end_s: float,
+    original_start_s_song: float,
+    original_words: list[dict],
+) -> dict:
+    original_end_s_song = max(float(w["end_s_song"]) for w in original_words)
+    return {
+        "text": text,
+        "effect": "karaoke-line",
+        "start_s": start_s,
+        "end_s": end_s,
+        "position": "bottom",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFFF00",
+        "word_timings": [
+            {
+                "text": w["text"],
+                "start_s": round(float(w["start_s_song"]) - original_start_s_song, 3),
+                "end_s": round(float(w["end_s_song"]) - original_start_s_song, 3),
+                "duration_cs": 10,
+            }
+            for w in original_words
+        ],
+        "original_text": text,
+        "original_start_s_song": original_start_s_song,
+        "original_end_s_song": original_end_s_song,
+        "original_words": original_words,
+    }
+
+
 # ── per-line invariants ────────────────────────────────────────────────────
 
 
@@ -170,13 +204,8 @@ def test_karaoke_duration_cs_payload_present_and_non_negative() -> None:
             )
 
 
-def test_karaoke_clamps_overlapping_line_windows_before_overlay_emit() -> None:
-    """Nested cached lyric lines must not become simultaneous ASS events.
-
-    The preview bug at 14s came from two karaoke overlays with identical text
-    anchors being active together. The injector should keep both surviving
-    lyric lines but cut the outgoing visual window at the next line's start.
-    """
+def test_karaoke_finalize_clamps_surviving_overlapping_line_windows() -> None:
+    """Nested cached lyric lines must not survive as simultaneous events."""
     overlays = inject_overlays_for_style(
         style="karaoke",
         target_duration_s=4.0,
@@ -184,9 +213,14 @@ def test_karaoke_clamps_overlapping_line_windows_before_overlay_emit() -> None:
         best_end_s=16.2,
         lines=_overlapping_karaoke_fixture(),
     )
+    finalized = _finalize_lyric_audible_window(
+        overlays,
+        audio_mix_song_start_s=13.0,
+        audio_mix_song_end_s=16.2,
+    )
 
-    assert len(overlays) == 2
-    first, second = overlays
+    assert len(finalized) == 2
+    first, second = finalized
     assert first["end_s"] == pytest.approx(second["start_s"], abs=1e-3)
     assert first["section_end_anchor_s"] == pytest.approx(
         second["section_anchor_s"], abs=1e-3
@@ -197,7 +231,7 @@ def test_karaoke_clamps_overlapping_line_windows_before_overlay_emit() -> None:
         assert float(wt["end_s"]) <= first_span_s + 1e-6
 
 
-def test_karaoke_invariant_no_overlapping_active_windows() -> None:
+def test_karaoke_finalize_invariant_no_overlapping_active_windows() -> None:
     overlays = inject_overlays_for_style(
         style="karaoke",
         target_duration_s=4.0,
@@ -205,11 +239,72 @@ def test_karaoke_invariant_no_overlapping_active_windows() -> None:
         best_end_s=16.2,
         lines=_overlapping_karaoke_fixture(),
     )
+    finalized = _finalize_lyric_audible_window(
+        overlays,
+        audio_mix_song_start_s=13.0,
+        audio_mix_song_end_s=16.2,
+    )
 
-    sorted_overlays = sorted(overlays, key=lambda ov: float(ov["section_anchor_s"]))
+    sorted_overlays = sorted(finalized, key=lambda ov: float(ov["section_anchor_s"]))
     for prev, nxt in zip(sorted_overlays, sorted_overlays[1:], strict=False):
         assert float(prev["section_end_anchor_s"]) <= float(nxt["section_anchor_s"]) + 1e-6
         assert float(prev["end_s"]) <= float(nxt["start_s"]) + 1e-6
+
+
+def test_karaoke_finalize_dropping_final_fragment_does_not_shorten_previous_line() -> None:
+    """Job 1af7113b had a meaningful previous line followed by a tiny final
+    duplicate fragment. Dropping the fragment must not clamp the previous line
+    before "that's the real me" finishes."""
+    lines = [
+        {
+            "text": "When I'm fucked up, that's the real me",
+            "start_s": 55.08,
+            "end_s": 57.18,
+            "words": [
+                {"text": "When", "start_s": 55.08, "end_s": 55.30},
+                {"text": "I'm", "start_s": 55.30, "end_s": 55.58},
+                {"text": "fucked", "start_s": 55.58, "end_s": 55.92},
+                {"text": "up", "start_s": 55.92, "end_s": 56.22},
+                {"text": "that's", "start_s": 56.22, "end_s": 56.48},
+                {"text": "the", "start_s": 56.50, "end_s": 56.56},
+                {"text": "real", "start_s": 56.56, "end_s": 56.84},
+                {"text": "me", "start_s": 56.84, "end_s": 57.18},
+            ],
+        },
+        {
+            "text": "When I'm fucked up, that's the real me, yeah",
+            "start_s": 56.93,
+            "end_s": 59.57,
+            "words": [
+                {"text": "When", "start_s": 56.93, "end_s": 57.16},
+                {"text": "I'm", "start_s": 57.18, "end_s": 57.48},
+                {"text": "fucked", "start_s": 57.48, "end_s": 57.80},
+                {"text": "up", "start_s": 57.80, "end_s": 58.16},
+                {"text": "that's", "start_s": 58.20, "end_s": 58.48},
+                {"text": "the", "start_s": 58.50, "end_s": 58.55},
+                {"text": "real", "start_s": 58.56, "end_s": 58.80},
+                {"text": "me", "start_s": 58.80, "end_s": 59.30},
+                {"text": "yeah", "start_s": 59.32, "end_s": 59.57},
+            ],
+        },
+    ]
+    overlays = inject_overlays_for_style(
+        style="karaoke",
+        target_duration_s=16.64,
+        best_start_s=42.86,
+        best_end_s=59.5,
+        lines=lines,
+    )
+
+    finalized = _finalize_lyric_audible_window(
+        overlays,
+        audio_mix_song_start_s=42.86,
+        audio_mix_song_end_s=57.434,
+    )
+
+    assert len(finalized) == 1
+    assert finalized[0]["text"] == "When I'm fucked up, that's the real me"
+    assert finalized[0]["end_s"] == pytest.approx(14.32, abs=1e-3)
 
 
 # ── resync stamp invariants ────────────────────────────────────────────────
@@ -247,6 +342,18 @@ def test_karaoke_section_anchor_equals_line_start_s_in_section_coords() -> None:
             f"section_anchor_s drift: got {ov['section_anchor_s']}, "
             f"expected {exp} (line start_s in section coords)"
         )
+
+
+def test_karaoke_overlays_carry_original_song_time_metadata() -> None:
+    """The post-snap audible-window finalizer needs song-time originals.
+    Without these fields karaoke falls back to passthrough and cannot drop
+    out-of-window tails like job 1af7113b."""
+    overlays = inject_overlays_for_style(style="karaoke", lines=_two_line_fixture())
+    for ov in overlays:
+        assert ov["original_text"] == ov["text"]
+        assert isinstance(ov["original_start_s_song"], int | float)
+        assert isinstance(ov["original_end_s_song"], int | float)
+        assert ov["original_words"], f"missing original_words on {ov['text']!r}"
 
 
 # ── sync correctness against beat-snap drift ───────────────────────────────
@@ -341,3 +448,73 @@ def test_karaoke_word_onsets_drift_without_resync_on_realistic_beat_snap() -> No
         "on a 200ms slot shift — they didn't. Either the beat-snap math "
         "or the resync hook has changed elsewhere; re-verify before relaxing."
     )
+
+
+# ── final audible-window regressions ────────────────────────────────────────
+
+
+def test_karaoke_finalize_drops_job_1af7113b_final_tail_fragment() -> None:
+    """Regression for job 1af7113b.
+
+    The selected track section was 16.64s, but post-snap video/audio duration
+    was 14.574s. The final karaoke line started at 14.07s and could only show
+    about 0.48s of speech, so the yellow sweep never reached "real me yeah".
+    """
+    best_start_s = 42.86
+    post_snap_video_duration_s = 14.574
+    original_words = [
+        {"text": "When", "start_s_song": 56.93, "end_s_song": 57.16},
+        {"text": "I'm", "start_s_song": 57.18, "end_s_song": 57.48},
+        {"text": "fucked", "start_s_song": 57.48, "end_s_song": 57.80},
+        {"text": "up", "start_s_song": 57.80, "end_s_song": 58.16},
+        {"text": "that's", "start_s_song": 58.20, "end_s_song": 58.48},
+        {"text": "the", "start_s_song": 58.50, "end_s_song": 58.55},
+        {"text": "real", "start_s_song": 58.56, "end_s_song": 58.80},
+        {"text": "me", "start_s_song": 58.80, "end_s_song": 59.30},
+        {"text": "yeah", "start_s_song": 59.32, "end_s_song": 59.57},
+    ]
+    overlay = _karaoke_overlay(
+        text="When I'm fucked up, that's the real me, yeah",
+        start_s=14.07,
+        end_s=16.64,
+        original_start_s_song=56.93,
+        original_words=original_words,
+    )
+
+    out = _finalize_lyric_audible_window(
+        [overlay],
+        audio_mix_song_start_s=best_start_s,
+        audio_mix_song_end_s=best_start_s + post_snap_video_duration_s,
+    )
+
+    assert out == []
+
+
+def test_karaoke_finalize_keeps_meaningful_final_partial_with_rebuilt_timings() -> None:
+    """A final partial is fine when enough words are actually audible. The
+    renderer consumes word_timings, so the kept overlay must rebuild those
+    timings instead of only changing text metadata."""
+    original_words = [
+        {"text": w, "start_s_song": 130.0 + i * 0.5, "end_s_song": 130.5 + i * 0.5}
+        for i, w in enumerate("A B C D E F G H I J".split())
+    ]
+    overlay = _karaoke_overlay(
+        text="A B C D E F G H I J",
+        start_s=2.0,
+        end_s=7.0,
+        original_start_s_song=130.0,
+        original_words=original_words,
+    )
+
+    out = _finalize_lyric_audible_window(
+        [overlay],
+        audio_mix_song_start_s=128.0,
+        audio_mix_song_end_s=132.0,
+    )
+
+    assert len(out) == 1
+    result = out[0]
+    assert result["text"] == "A B C D"
+    assert [w["text"] for w in result["word_timings"]] == ["A", "B", "C", "D"]
+    span = result["end_s"] - result["start_s"]
+    assert all(float(w["end_s"]) <= span + 1e-6 for w in result["word_timings"])

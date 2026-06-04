@@ -394,10 +394,11 @@ def build_lyrics_preview_recipe(track: Any, lyrics_config_effective: dict) -> di
         best_end_s=preview_start_s + preview_duration_s,
         lyrics_config=cfg,
     )
-    if cfg.get("style") == "line":
+    if cfg.get("style") in {"line", "karaoke"}:
         # Full music renders run this after slot collection. Preview has one
         # synthetic slot, so slot-relative time already equals absolute video
-        # time; running it here keeps stale line-bound text out of the preview.
+        # time; running it here keeps stale line-bound text and karaoke overlap
+        # out of the preview.
         slot = recipe["slots"][0]
         slot["text_overlays"] = _finalize_lyric_audible_window(
             slot.get("text_overlays") or [],

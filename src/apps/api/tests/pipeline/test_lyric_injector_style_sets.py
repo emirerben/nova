@@ -67,6 +67,25 @@ def test_karaoke_set_picks_karaoke_injector() -> None:
     assert overlays[0]["font_family"] == "Fraunces"
 
 
+def test_word_pop_set_karaoke_role_centers_when_style_is_karaoke() -> None:
+    recipe = inject_lyric_overlays(
+        _recipe(),
+        _LYRICS,
+        best_start_s=0.0,
+        best_end_s=10.0,
+        lyrics_config={
+            "enabled": True,
+            "style": "karaoke",
+            "style_set_id": "lyric_word_pop_punchy",
+        },
+    )
+    overlay = recipe["slots"][0]["text_overlays"][0]
+    assert overlay["effect"] == "karaoke-line"
+    assert overlay["font_family"] == "Bodoni Moda"
+    assert overlay["text_anchor"] == "center"
+    assert overlay["position_x_frac"] == 0.5
+
+
 def test_no_set_id_unchanged_behavior() -> None:
     # Without a set, the explicit style still drives the injector.
     recipe = inject_lyric_overlays(
