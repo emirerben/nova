@@ -23,11 +23,29 @@
 # Optional:
 #   NOVA_BUILDER_TIMEOUT_S    — per-run Claude wall-clock cap (default 900 = 15m).
 #   NOVA_API_BASE             — override prod base (admin.py --prod targets Fly).
+#
+# SECURITY (dev-loop ship-gate, 2026-06-04): the headless agent below runs with
+# --permission-mode bypassPermissions, so it can read any file in this worktree
+# and run any command. Three guards keep prod credentials and secrets off origin:
+#   1. The prod admin key MUST come from the runner's ENVIRONMENT, never a .env
+#      file in this worktree (the agent could `cat .env`). Enforced at startup.
+#   2. The key is stripped from the agent child's env (`env -u ...`).
+#   3. Every outgoing diff is secret-scanned BEFORE push (secret_scan_or_abort);
+#      a hit blocks the task for human review instead of pushing the leak.
 
 set -uo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$REPO_ROOT" || { echo "ERROR: repo root not found"; exit 1; }
+
+# Guard 1: refuse to run if the prod admin key lives in this worktree's .env —
+# the bypassPermissions agent could read it straight off disk. The home-box
+# scheduler must export ADMIN_PROD_API_KEY as an env var and keep it out of .env.
+if [ -f .env ] && grep -qE '^[[:space:]]*ADMIN_PROD_API_KEY[[:space:]]*=' .env; then
+  echo "ERROR: ADMIN_PROD_API_KEY found in worktree .env — the headless agent could read it." >&2
+  echo "  Remove it from .env and set it as an env var in the scheduler job instead." >&2
+  exit 1
+fi
 
 # Work-hours guard (UTC, Mon-Fri 11:00–18:59 — mirrors WORK_HOURS_UTC in
 # app/tasks/send_daily_digest.py and the retired nova-builder.yml cron). The
@@ -69,6 +87,43 @@ fail_task() {
 # Minimal JSON string escaper (quotes + backslashes) — avoids a jq dependency.
 json_str() {
   python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"
+}
+
+# Hard-block helper: a secret is about to leak — block the task for human review
+# (action=block, no retry) rather than push it or burn attempts silently.
+abort_block() {
+  local task_id="$1" note="$2"
+  echo "[builder][SECURITY] $note" >&2
+  $ADMIN PATCH "build-tasks/$task_id" \
+    --json "{\"action\": \"block\", \"progress_note\": $(json_str "$note")}" || true
+  exit 1
+}
+
+# Guard 3: scan the diff that is about to be pushed for secrets, BEFORE the push.
+# Runs unconditionally (the agent runs with bypassPermissions, so this is the
+# last line of defense before bytes hit origin). --no-verify on the push can't
+# bypass this — it is an explicit call, not a git hook. Uses gitleaks if present;
+# always also scans for the live credential VALUES + a few high-signal patterns.
+secret_scan_or_abort() {
+  local task_id="$1"
+  git fetch origin main --quiet 2>/dev/null || true
+  local diff
+  diff="$(git diff origin/main...HEAD 2>/dev/null)"
+  [ -z "$diff" ] && return 0
+  if command -v gitleaks >/dev/null 2>&1; then
+    if ! gitleaks detect --no-banner --redact --log-opts='origin/main...HEAD' >/dev/null 2>&1; then
+      abort_block "$task_id" "ABORTED: gitleaks flagged a secret in the outgoing diff; not pushed. Manual review needed."
+    fi
+  fi
+  local v
+  for v in "${ADMIN_PROD_API_KEY:-}" "${ADMIN_API_KEY:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}" "${GH_TOKEN:-}"; do
+    if [ -n "$v" ] && printf '%s' "$diff" | grep -qF -- "$v"; then
+      abort_block "$task_id" "ABORTED: a live credential value appeared in the outgoing diff; not pushed. Manual review needed."
+    fi
+  done
+  if printf '%s' "$diff" | grep -qiE 'sk-[a-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|xox[baprs]-[0-9A-Za-z-]{10,}'; then
+    abort_block "$task_id" "ABORTED: a secret-like pattern appeared in the outgoing diff; not pushed. Manual review needed."
+  fi
 }
 
 # ── 1. claim ────────────────────────────────────────────────────────────────
@@ -121,7 +176,10 @@ WIP-commit. Do NOT deploy, merge, or touch prod. If the task is already
 complete, say 'TASK COMPLETE' on its own line. Otherwise summarize what remains."
 
 set +e
-timeout "${TIMEOUT_S}s" claude --print \
+# Guard 2: strip the prod/local admin keys from the agent child's env. The
+# builder edits code + runs tests; it never needs the admin API (the runner
+# shell owns those calls). The OAuth token stays so the agent can authenticate.
+timeout "${TIMEOUT_S}s" env -u ADMIN_PROD_API_KEY -u ADMIN_API_KEY claude --print \
   --permission-mode bypassPermissions \
   --model claude-sonnet-4-6 \
   "$PROMPT" 2>builder_stderr.log | tee builder_stdout.log
@@ -138,6 +196,7 @@ fi
 if [ "$CLAUDE_EXIT" -eq 124 ]; then
   # Hit the per-run wall-clock cap mid-chunk — commit WIP + release (resumable).
   git add -A && git commit -m "wip(builder): timeout-bounded chunk for $TASK_ID" --no-verify || true
+  secret_scan_or_abort "$TASK_ID"
   git push -u origin "$TASK_BRANCH" --no-verify || true
   soft_exit_release "$TASK_ID" "hit ${TIMEOUT_S}s run cap; WIP committed, resume next tick"
 fi
@@ -149,6 +208,7 @@ fi
 git add -A
 if ! git diff --cached --quiet; then
   git commit -m "wip(builder): chunk for $TASK_ID — $TASK_TITLE" --no-verify || true
+  secret_scan_or_abort "$TASK_ID"
   git push -u origin "$TASK_BRANCH" --no-verify || true
 fi
 
