@@ -58,6 +58,17 @@ def test_installer_substitutes_the_plist_placeholder() -> None:
     assert "__DEV_LOOP_TICK__" in text and "dev_loop_tick.sh" in text
 
 
+def test_installer_strips_prod_key_from_seeded_env() -> None:
+    # .env.example documents ADMIN_PROD_API_KEY (empty); copying it verbatim into
+    # the checkout's .env trips assert_no_prod_key_in_env_file (it matches ANY
+    # occurrence), so the installer MUST strip that line after the copy.
+    text = INSTALLER.read_text()
+    assert ".env.example" in text, "installer should seed .env from .env.example"
+    assert "sed" in text and "ADMIN_PROD_API_KEY" in text, (
+        "installer must strip ADMIN_PROD_API_KEY from the seeded .env"
+    )
+
+
 @bash
 @pytest.mark.parametrize("script", ["dev_loop_tick.sh", "install-dev-loop.sh"])
 def test_shell_script_passes_bash_n(script: str) -> None:
