@@ -128,3 +128,62 @@ These are the "why" behind invariants stated tersely in CLAUDE.md's pipeline sec
 - PR #102: curtain-close → `medium`.
 - PR #105: curtain-close → `fast` + `--concurrency=1` + PNG-overlay.
 - Brazil pixelation fix: propagated `fast` to the three `template_orchestrate.py` final-output sites the prior PRs missed (`ultrafast` disables `mb-tree`/`psy-rd`/B-frames/trellis → visible 16×16 macroblocking on smooth gradients; CRF does not compensate). Locked by `tests/test_encoder_policy.py`.
+
+---
+
+## Storage retention incidents (extracted from CLAUDE.md for size)
+
+### Generative re-signing invariant (added 2026-06)
+**Rule:** `generative-jobs/*` blobs persist forever (NOT in the 24h delete rule) but
+`upload_public_read` still signs `output_url` for only 1 day. A content-plan /
+generative item viewed >24h after render reads "ready" but its stored signature is
+expired → GCS 400 `ExpiredToken` → empty `<video>`.
+
+**Fix:** read-time re-signing, NOT a TTL bump (a longer global TTL would make
+`dev-user/`/`music-jobs/` URLs outlive their 1-day-deleted blobs):
+`GET /generative-jobs/{id}/status` re-signs each ready variant's `output_url` from
+the persisted `video_path` key via `_variants_for_response` (`routes/generative_jobs.py`,
+`PLAYBACK_URL_TTL_MIN`). The raw `_variants_of` stays unsigned for the mutate paths so
+a short-lived URL never lands back in the DB.
+
+Pinned by `test_variants_for_response_resigns_ready_variant` in
+`tests/routes/test_generative_jobs.py`. Admin debug/list views still show stored (stale)
+URLs — follow-up.
+
+---
+
+## Celery time-limit invariant (extracted from CLAUDE.md for size)
+
+### [2026-06-01] Duplicate-worker space exhaustion (prod job 08532ba3)
+**Incident:** generative voiceover job `08532ba3` at `time_limit=2000` vs broker
+`visibility_timeout=1900s`. With `task_acks_late=True`, a task still in-flight past
+visibility_timeout is redelivered to a SECOND worker while the first runs — duplicate
+concurrent execution. Two workers both writing to the RAM-backed `/tmp` (tmpfs) →
+`No space left on device` mid HDR pre-tonemap.
+
+**Rule:** every long-running task's `time_limit` MUST stay strictly under the worker's
+broker `visibility_timeout` (`app/worker.py`, currently 1900s). Render orchestrators
+use `soft_time_limit=1740, time_limit=1800`. `batch_import_from_drive` (2400) is the
+deliberate exception (download-bound, separate handling).
+
+Locked by `tests/tasks/test_task_time_limits.py`.
+
+---
+
+## Kill-switch incidents (extracted from CLAUDE.md for size)
+
+### LYRIC_DYNAMIC_CROSSFADE_ENABLED — WARNING on disabling
+**Background:** Defaults to `true`. Set to `false` to fall back to legacy
+`_inject_line` scheduler behavior byte-identically.
+
+**WARNING:** disabling this flag re-introduces the stacked-text bug observed in prod
+jobs `5a71226e` and `e72d52e9` (Mirea track) — the legacy timing math is precisely
+what produced the bug. Use ONLY for emergency rollback (e.g., the new path itself ships
+a regression), and re-enable as soon as the regression is patched. Do NOT leave the
+kill switch off as a long-term mode.
+
+Kill-switch byte-identical test:
+`tests/pipeline/test_lyric_injector_no_stacking.py::test_kill_switch_disabled_reproduces_pre_fix_output`
+
+Apply: `fly secrets set LYRIC_DYNAMIC_CROSSFADE_ENABLED=false --app nova-video` then
+`fly machine restart <id>` on the worker process group.

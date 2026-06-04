@@ -150,7 +150,8 @@ if grep -qiE 'usage limit|rate limit|429|resource_exhausted|please try again lat
 fi
 if [ "$CLAUDE_EXIT" -eq 124 ]; then
   # Hit the per-run wall-clock cap mid-chunk — commit WIP + release (resumable).
-  git add -A && git commit -m "wip(builder): timeout-bounded chunk for $TASK_ID" --no-verify || true
+  # Exclude CLAUDE.md: headless agents must not silently commit project-memory edits.
+  git add -A -- . ':(exclude)CLAUDE.md' && git commit -m "wip(builder): timeout-bounded chunk for $TASK_ID" --no-verify || true
   secret_scan_or_abort "$TASK_ID"
   git push -u origin "$TASK_BRANCH" --no-verify || true
   soft_exit_release "$TASK_ID" "hit ${TIMEOUT_S}s run cap; WIP committed, resume next tick"
@@ -160,7 +161,8 @@ if [ "$CLAUDE_EXIT" -ne 0 ]; then
 fi
 
 # ── 5. success: commit any leftover WIP, PUSH if ahead of main, hand off ──────
-git add -A
+# Exclude CLAUDE.md: headless agents must not silently commit project-memory edits.
+git add -A -- . ':(exclude)CLAUDE.md'
 if ! git diff --cached --quiet; then
   git commit -m "wip(builder): chunk for $TASK_ID — $TASK_TITLE" --no-verify || true
 fi

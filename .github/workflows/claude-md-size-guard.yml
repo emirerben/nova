@@ -1,0 +1,23 @@
+name: CLAUDE.md size guard
+
+# Keep CLAUDE.md under 38,000 chars so Claude Code stays performant.
+# Fires only on PRs that touch CLAUDE.md, so an already-over-budget file doesn't
+# fail unrelated PRs. See scripts/check_claude_md_size.sh for the policy.
+
+on:
+  pull_request:
+    paths:
+      - CLAUDE.md
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require CLAUDE.md stays under 38k chars
+        run: bash scripts/check_claude_md_size.sh
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
