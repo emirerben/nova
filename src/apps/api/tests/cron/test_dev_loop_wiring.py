@@ -80,6 +80,57 @@ def test_shell_script_passes_bash_n(script: str) -> None:
     assert proc.returncode == 0, proc.stderr
 
 
+LIB = SCRIPTS_DIR / "_dev_loop_lib.sh"
+
+
+@pytest.mark.parametrize("script", ["dev_loop_tick.sh", "gate_runner.sh", "_dev_loop_lib.sh"])
+def test_no_script_invokes_flock(script: str) -> None:
+    # flock is util-linux and absent on stock macOS; invoking it silently no-ops
+    # every tick. The locks must stay on the portable mkdir helper. (We check the
+    # code only — comments may legitimately mention flock to explain its absence.)
+    code = "\n".join(
+        line.split("#", 1)[0] for line in (SCRIPTS_DIR / script).read_text().splitlines()
+    )
+    assert "flock" not in code, f"{script} invokes flock (breaks macOS)"
+
+
+@bash
+def test_mkdir_lock_is_mutually_exclusive(tmp_path: Path) -> None:
+    # acquire_lock holds; a second acquire on the same dir fails; release frees it.
+    lock = tmp_path / "lock.d"
+    script = f"""
+        set -u
+        source '{LIB}'
+        acquire_lock '{lock}' || {{ echo FAIL_FIRST; exit 10; }}
+        if ( acquire_lock '{lock}' ); then echo FAIL_SECOND; exit 11; fi
+        release_lock '{lock}'
+        acquire_lock '{lock}' || {{ echo FAIL_THIRD; exit 12; }}
+        release_lock '{lock}'
+        echo OK
+    """
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert "OK" in proc.stdout, proc.stdout
+
+
+@bash
+def test_mkdir_lock_reclaims_stale(tmp_path: Path) -> None:
+    # A lock older than DEV_LOOP_LOCK_STALE_S is reclaimed (a crashed tick can't
+    # wedge the loop forever).
+    lock = tmp_path / "stale.d"
+    lock.mkdir()
+    script = f"""
+        set -u
+        export DEV_LOOP_LOCK_STALE_S=0
+        source '{LIB}'
+        acquire_lock '{lock}' || {{ echo FAIL_RECLAIM; exit 13; }}
+        echo OK
+    """
+    proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    assert "OK" in proc.stdout, proc.stdout
+
+
 @bash
 def test_wrapper_rejects_unknown_mode() -> None:
     proc = subprocess.run(
