@@ -1495,12 +1495,15 @@ def _enforce_finalized_karaoke_no_stacking(overlays: list[dict]) -> list[dict]:
     if len(overlays) <= 1:
         return overlays
 
-    out = [dict(ov) for ov in overlays]
     karaoke_idxs = [
         idx
-        for idx, ov in enumerate(out)
+        for idx, ov in enumerate(overlays)
         if ov.get("effect") == "karaoke-line"
     ]
+    if len(karaoke_idxs) <= 1:
+        return overlays
+
+    out = list(overlays)
     karaoke_idxs.sort(key=lambda idx: (float(out[idx].get("start_s", 0.0)), idx))
 
     dropped: set[int] = set()
