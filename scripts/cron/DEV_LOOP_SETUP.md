@@ -35,6 +35,26 @@ This:
 - scaffolds `~/.nova/dev-loop.env` (chmod 600).
 - renders `~/Library/LaunchAgents/com.nova.dev-loop.plist` (timer **not** loaded).
 
+### Provision the dedicated checkout (one-time, required for the GATE)
+
+The gate runs the full test matrix against the clone, so it needs deps + infra
+installed there once:
+
+```bash
+cd ~/.nova/loop/nova
+# Python (api) deps
+python3 -m venv src/apps/api/.venv && \
+  src/apps/api/.venv/bin/pip install -e 'src/apps/api[dev]'
+# Web deps
+(cd src/apps/web && npm ci)
+# Test infra (postgres + redis) — the gate's pytest/admin calls need a DB
+docker-compose up -d redis db
+```
+
+Without these the gate's `pytest` / `npm test` / `tsc` will (correctly) fail and
+route the task back to the builder. `verify-overlays` only runs when a change
+touches render paths.
+
 ## 2. Secrets (`~/.nova/dev-loop.env`)
 
 Only one key is mandatory. `claude` and `gh` use their existing logins on the box.
@@ -85,9 +105,8 @@ tail -f ~/.nova/logs/dev-loop-*.log
 A PR should appear on the repo; its body carries the gate evidence table. You are
 the merge gate.
 
-> Ops: the gate runs the full `pytest` + `npm test`. Bring up local infra in the
-> dedicated checkout first — `docker-compose up -d redis db` — or DB-backed tests
-> will (correctly) fail the gate.
+> Ops: the gate needs the dedicated checkout provisioned (deps + infra) — see
+> "Provision the dedicated checkout" above. Bring DB/redis up before a gate tick.
 
 ## 5. Enable the recurring timer
 

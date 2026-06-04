@@ -76,11 +76,13 @@ cd "$DEV_LOOP_REPO" || { echo "ERROR: cannot cd $DEV_LOOP_REPO" >&2; exit 1; }
 git fetch origin main --quiet 2>/dev/null || true
 
 # ── overlap lock ─────────────────────────────────────────────────────────────
-# Keep a slow tick from stacking on the previous one. A DIFFERENT lock path from
-# gate_runner.sh's /tmp/nova-dev-loop.lock so our wrapper lock and the gate's
-# internal lock can never deadlock each other.
-exec 8>"/tmp/nova-dev-loop-tick.lock"
-if ! flock -n 8; then
+# Keep a slow tick from stacking on the previous one, using the lib's portable
+# mkdir lock (flock is util-linux, absent on stock macOS). A DIFFERENT lock path
+# from gate_runner.sh's /tmp/nova-dev-loop.lock.d so our wrapper lock and the
+# gate's internal lock never deadlock each other.
+# shellcheck source=scripts/cron/_dev_loop_lib.sh
+source scripts/cron/_dev_loop_lib.sh
+if ! acquire_lock "/tmp/nova-dev-loop-tick.lock.d"; then
   echo "[tick] a prior dev-loop tick is still running; quiet tick"
   echo "=== dev-loop tick ($MODE) end (locked) $(date) ==="
   exit 0

@@ -36,9 +36,15 @@ else
 fi
 
 # Seed a .env for the gate's tests, but NEVER carry the prod admin key there.
+# .env.example documents ADMIN_PROD_API_KEY as a known var (empty placeholder),
+# and the runners' assert_no_prod_key_in_env_file rejects ANY occurrence of it
+# (even empty), so strip the line after copying — the prod key lives ONLY in
+# $ENV_FILE. (sed -i.bak + rm is the portable macOS/GNU spelling.)
 if [ ! -f "$DEV_LOOP_REPO/.env" ] && [ -f "$DEV_LOOP_REPO/.env.example" ]; then
   cp "$DEV_LOOP_REPO/.env.example" "$DEV_LOOP_REPO/.env"
-  echo "[install] seeded $DEV_LOOP_REPO/.env from .env.example (keep prod keys OUT of it)"
+  sed -i.bak '/^[[:space:]]*ADMIN_PROD_API_KEY[[:space:]]*=/d' "$DEV_LOOP_REPO/.env"
+  rm -f "$DEV_LOOP_REPO/.env.bak"
+  echo "[install] seeded $DEV_LOOP_REPO/.env from .env.example (prod key stripped; it lives only in $ENV_FILE)"
 fi
 if [ -f "$DEV_LOOP_REPO/.env" ] && grep -qE '^[[:space:]]*ADMIN_PROD_API_KEY[[:space:]]*=' "$DEV_LOOP_REPO/.env"; then
   echo "[install] ERROR: ADMIN_PROD_API_KEY is in $DEV_LOOP_REPO/.env — remove it." >&2

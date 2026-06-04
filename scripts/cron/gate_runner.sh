@@ -34,9 +34,9 @@ work_hours_guard_or_exit
 
 # Global mutex: build + gate ticks must NEVER run concurrently on this host — two
 # full test/Docker runs at once OOMs the daily-driver Mac (same class as the
-# logged Fly OOM), and an OOM-killed gate reads as a false failure.
-exec 9>"/tmp/nova-dev-loop.lock"
-if ! flock -n 9; then
+# logged Fly OOM), and an OOM-killed gate reads as a false failure. flock is
+# util-linux (absent on stock macOS), so use the lib's portable mkdir lock.
+if ! acquire_lock "/tmp/nova-dev-loop.lock.d"; then
   echo "[gate] another dev-loop tick holds the lock; quiet tick"
   exit 0
 fi

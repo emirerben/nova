@@ -36,6 +36,49 @@ json_str() {
   python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"
 }
 
+# Portable advisory lock. flock is util-linux and ABSENT on stock macOS (where
+# `if ! flock -n` inverts to "held" and the tick silently no-ops every run), so
+# use an atomic `mkdir`: the first caller creates the dir; a second caller's
+# mkdir fails. A lock left by a crashed tick is reclaimed once it is older than
+# DEV_LOOP_LOCK_STALE_S (default 2h — safely longer than any real tick, so a live
+# long gate is never yanked) so a hard-killed run can't wedge the loop forever.
+# On success it arms an EXIT trap to self-release (do NOT combine with another
+# EXIT trap in the same script). Returns 0 if acquired, 1 if another live tick
+# holds it.
+DEV_LOOP_LOCK_STALE_S="${DEV_LOOP_LOCK_STALE_S:-7200}"
+acquire_lock() {
+  local dir="$1"
+  if mkdir "$dir" 2>/dev/null; then
+    echo "$$" > "$dir/pid" 2>/dev/null || true
+    # shellcheck disable=SC2064
+    trap "release_lock '$dir'" EXIT
+    return 0
+  fi
+  # Lock dir exists — reclaim only if stale (crashed holder). mtime via python3
+  # (a hard dep of these scripts) avoids the BSD vs GNU `stat` format split that
+  # otherwise leaks non-numeric output into the arithmetic below.
+  local now mtime age
+  now="$(date +%s)"
+  mtime="$(python3 -c 'import os,sys; print(int(os.path.getmtime(sys.argv[1])))' "$dir" 2>/dev/null || echo "$now")"
+  age=$(( now - mtime ))
+  if [ "$age" -ge "$DEV_LOOP_LOCK_STALE_S" ]; then
+    echo "[dev-loop] reclaiming stale lock $dir (age ${age}s)" >&2
+    rm -rf "$dir"
+    if mkdir "$dir" 2>/dev/null; then
+      echo "$$" > "$dir/pid" 2>/dev/null || true
+      # shellcheck disable=SC2064
+      trap "release_lock '$dir'" EXIT
+      return 0
+    fi
+  fi
+  return 1
+}
+
+release_lock() {
+  local dir="$1"
+  [ -n "$dir" ] && [ -d "$dir" ] && rm -rf "$dir"
+}
+
 # Hard-block: a secret is about to leak — block the task for human review
 # (action=block, no retry) instead of pushing it. Exits 1 (genuine abort).
 abort_block() {
