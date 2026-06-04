@@ -69,6 +69,16 @@ def test_installer_strips_prod_key_from_seeded_env() -> None:
     )
 
 
+def test_gate_mirrors_ci_and_drops_tsc() -> None:
+    # The gate must predict CI: mirror its pytest invocation and NOT gate on
+    # `tsc --noEmit` (CI doesn't run it; the project doesn't pass it standalone).
+    text = (SCRIPTS_DIR / "gate_runner.sh").read_text()
+    assert "--ignore=tests/quality" in text, "gate pytest should mirror CI"
+    # no `tsc --noEmit` hard gate
+    code = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+    assert "tsc --noEmit" not in code, "tsc must not be a hard gate (CI doesn't run it)"
+
+
 def test_builder_pushes_when_ahead_of_main() -> None:
     # The agent is told to WIP-commit, so its work is already committed and
     # nothing is staged. The push must fire on "branch ahead of origin/main",
