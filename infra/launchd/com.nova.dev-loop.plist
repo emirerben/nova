@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.nova.dev-loop — runs ONE combined dev-loop tick (builder then gate) every
+  30 minutes. The runners' UTC Mon-Fri 11-18 work-hours guard owns the actual
+  window, so this fires around the clock and quiet-ticks off-hours (no local-time
+  math needed here). RunAtLoad is false: enabling the timer is a deliberate
+  `launchctl bootstrap` after a manual tick is proven end-to-end.
+
+  __DEV_LOOP_TICK__ and __HOME__ are substituted by scripts/cron/install-dev-loop.sh.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.nova.dev-loop</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__DEV_LOOP_TICK__</string>
+    <string>both</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__HOME__/.nova/logs/dev-loop.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.nova/logs/dev-loop.launchd.err.log</string>
+</dict>
+</plist>
