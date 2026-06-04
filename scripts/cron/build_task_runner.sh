@@ -150,7 +150,8 @@ if grep -qiE 'usage limit|rate limit|429|resource_exhausted|please try again lat
 fi
 if [ "$CLAUDE_EXIT" -eq 124 ]; then
   # Hit the per-run wall-clock cap mid-chunk — commit WIP + release (resumable).
-  git add -A && git commit -m "wip(builder): timeout-bounded chunk for $TASK_ID" --no-verify || true
+  # Exclude CLAUDE.md: headless agents must not silently commit project-memory edits.
+  git add -A -- . ':(exclude)CLAUDE.md' && git commit -m "wip(builder): timeout-bounded chunk for $TASK_ID" --no-verify || true
   secret_scan_or_abort "$TASK_ID"
   git push -u origin "$TASK_BRANCH" --no-verify || true
   soft_exit_release "$TASK_ID" "hit ${TIMEOUT_S}s run cap; WIP committed, resume next tick"
@@ -159,19 +160,28 @@ if [ "$CLAUDE_EXIT" -ne 0 ]; then
   fail_task "$TASK_ID" "claude exited $CLAUDE_EXIT (genuine error)"
 fi
 
-# ── 5. success: WIP commit + push, then HAND OFF TO THE GATE (or release) ─────
-git add -A
+# ── 5. success: commit any leftover WIP, PUSH if ahead of main, hand off ──────
+# Exclude CLAUDE.md: headless agents must not silently commit project-memory edits.
+git add -A -- . ':(exclude)CLAUDE.md'
 if ! git diff --cached --quiet; then
   git commit -m "wip(builder): chunk for $TASK_ID — $TASK_TITLE" --no-verify || true
-  secret_scan_or_abort "$TASK_ID"
-  git push -u origin "$TASK_BRANCH" --no-verify || true
 fi
 
-# Does the branch carry real work (commits beyond origin/main)? Drives whether
-# there's anything to gate. HEAD is the exact commit the gate tick must match.
+# Does the branch carry real work (commits beyond origin/main)? HEAD is the exact
+# commit the gate tick must match.
 git fetch origin main --quiet 2>/dev/null || true
 HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo "")"
 BASE_SHA="$(git rev-parse origin/main 2>/dev/null || echo "")"
+
+# Push whenever the branch is AHEAD of origin/main — the agent is told to WIP-commit,
+# so its work is usually already committed and nothing is staged. The old guard
+# pushed only when *we* had something to commit, so an agent-committed branch was
+# never pushed and the gate could never fetch its head_sha. secret_scan_or_abort
+# always precedes the push.
+if [ -n "$HEAD_SHA" ] && [ "$HEAD_SHA" != "$BASE_SHA" ]; then
+  secret_scan_or_abort "$TASK_ID"
+  git push -u origin "$TASK_BRANCH" --no-verify || true
+fi
 
 if grep -q 'TASK COMPLETE' "$STDOUT_LOG" 2>/dev/null; then
   if [ -n "$HEAD_SHA" ] && [ "$HEAD_SHA" != "$BASE_SHA" ]; then

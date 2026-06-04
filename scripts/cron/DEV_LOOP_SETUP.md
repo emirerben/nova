@@ -49,7 +49,12 @@ python3 -m venv src/apps/api/.venv && \
 (cd src/apps/web && npm ci)
 # Test infra (postgres + redis) — the gate's pytest/admin calls need a DB
 docker-compose up -d redis db
+# The gate's pytest defaults to a `nova_test` DB (tests/conftest.py); create it once
+docker exec nova-db-1 psql -U postgres -c "CREATE DATABASE nova_test;" 2>/dev/null || true
 ```
+
+The wrapper auto-activates `src/apps/api/.venv` if present, so the gate finds
+`python`/`ruff`/`pytest` with deps.
 
 Without these the gate's `pytest` / `npm test` / `tsc` will (correctly) fail and
 route the task back to the builder. `verify-overlays` only runs when a change

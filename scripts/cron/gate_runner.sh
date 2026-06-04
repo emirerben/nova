@@ -115,10 +115,15 @@ run_gate() { # name blocking(0/1) -- cmd...
   fi
 }
 
-run_gate pytest 1 bash -c "cd src/apps/api && python -m pytest -q"
+# Mirror CI's exact pytest invocation (.github/workflows/ci.yml test-api) so the
+# gate predicts CI: ignore the non-test helper dir, run in parallel, cap per-test.
+run_gate pytest 1 bash -c "cd src/apps/api && python -m pytest tests/ --ignore=tests/quality -n auto --timeout=60 -q"
 run_gate ruff 1 bash -c "cd src/apps/api && ruff check ."
 run_gate npm-test 1 bash -c "cd src/apps/web && npm test --silent"
-run_gate tsc 1 bash -c "cd src/apps/web && npx tsc --noEmit"
+# NOTE: no `tsc --noEmit` gate — CI does not run it and the project does not pass
+# a bare `npx tsc --noEmit` (the __tests__ files reference jest globals the root
+# tsconfig doesn't type). Gating on it would block every task. Re-add here only
+# once CI enforces it.
 run_gate lint 1 bash -c "cd src/apps/web && npm run lint --silent"
 
 # verify-overlays is BLOCKING but only runs when render paths changed (the
