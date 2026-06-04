@@ -14,10 +14,13 @@ The autonomous dev-loop mints one **build_task** per unchecked item below.
 > Priority: prefix a title with `(p<N>)` to set priority (lower = sooner), e.g.
 > `- [ ] (p10) Fix the flaky upload test :: ...`. Default priority is 100.
 
+> Note: large multi-file features (a whole frontend page) are bigger than the
+> current builder reliably does in bounded chunks — treat the items below as a
+> tracked backlog for a focused session until the builder handles larger scope.
+
 ## Backlog
 
-<!-- Add `- [ ] Title :: body` items below. `scripts/queue.sh sync` mints them.
-     Example (uncomment + edit to use):
-     - [ ] (p50) Add a retry to the GCS upload helper :: wrap the upload in
-       app/services/storage.py with tenacity retry(3) + a unit test; keep the signature.
--->
+- [ ] (p80) Web review page for the dev-loop queue :: Next.js admin page at src/apps/web/src/app/admin/build-tasks/page.tsx listing build_tasks by status, showing each gate_report (per-gate pass/fail table) and linking the PRs. Mirror src/apps/web/src/app/admin/jobs/page.tsx; add a typed client src/apps/web/src/lib/admin-build-tasks-api.ts over the /api/admin proxy; re-queue/block buttons (PATCH action). Inherits ADMIN_BASIC_AUTH middleware. Add a Jest test under src/apps/web/src/__tests__/admin/. Verify the real admin patterns first.
+- [ ] (p80) Gate advisory: run /review on the diff :: In scripts/cron/gate_runner.sh, replace the placeholder `add_result qa 0 1 "advisory /qa not yet wired headless"` with a real time-bounded headless `claude --print "/review"` against the rebased diff, capturing a short verdict into the advisory gate result + PR body. Stays NON-blocking (advisory only).
+
+<!-- Add `- [ ] Title :: body` items above. `scripts/queue.sh sync` mints them. -->
