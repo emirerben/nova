@@ -2,6 +2,16 @@
 
 Nova transforms raw real-life videos into viral short-form content (TikTok, Reels, Shorts).
 
+## CLAUDE.md size budget
+
+Hard budget: **38,000 chars**, enforced by CI (`scripts/check_claude_md_size.sh`).
+
+**Pattern:** keep inline → invariants, guard-test names, run commands, file pointers.
+Move out → incident narratives (prod job IDs, multi-paragraph "why") →
+`agents/DECISIONS.md`; feature internals → `docs/pipelines/` or `docs/runbooks/`.
+
+When the CI guard fails your PR: move narrative out, don't fight the check.
+
 ## Session workflow: isolate in a worktree
 
 **Before starting non-trivial work, create a fresh worktree off `origin/main`.** The primary checkout at `/Users/emirerben/Projects/nova` is shared across sessions; uncommitted edits collide and the checkout stays pinned to whatever branch was last left there. Symptoms: stray `.venv` deletions, duplicate migration files, mixed `git status`, PRs with phantom conflicts because work landed against a stale base.
@@ -36,65 +46,52 @@ Rules:
 - DB: PostgreSQL (job metadata, user state)
 
 ## Key paths
-- src/apps/web/  — Next.js frontend (upload UI, progress tracker, result viewer)
-- src/apps/web/src/app/admin/templates/[id]/components/ — visual overlay editor (OverlayPreview, OverlayTimeline, PropertyPanel, overlay-constants.ts)
-- src/apps/web/src/app/music/ — music gallery page (browse tracks, select, upload clips, poll result)
-- src/apps/web/src/app/admin/music/ — admin music management (upload tracks, monitor analysis, publish/archive); `/admin/music/[id]` has Config + Test tabs (Test tab uploads clips, renders a job against the track, polls status, plays output, and re-renders the same clips against the latest `track_config`)
-- src/apps/web/src/lib/music-api.ts — typed API client for music routes
-- src/apps/api/  — Python API (upload endpoint, job queue, FFmpeg pipeline)
-- src/apps/api/app/routes/admin_music.py — admin music-track CRUD + publish/reanalyze endpoints; also serializes `best_sections` + `section_version` from the `song_sections` agent (per-row Pydantic coercion drops drifted enums so one bad row can't 500 the whole list). Hosts the Test tab's admin-token-gated job endpoints: `POST /admin/music-tracks/{id}/test-job` (bypasses the public `published_at`/`archived_at` gates, still requires `ready` + `audio_gcs_path`), `POST /admin/music-tracks/{id}/rerender-job` (re-renders a prior job's clips against the track's current `track_config`), `GET /admin/music-tracks/{id}/jobs/{job_id}/status` (track-scoped status poll so admin job IDs don't leak through the public endpoint), and `GET /admin/music-tracks/{id}/test-jobs` (recent jobs list for the "Previous renders" panel). `clip_gcs_paths` on test/rerender is allowlisted to the `music-uploads/` and `slot-uploads/` prefixes at the Pydantic validator — arbitrary bucket keys are rejected before any download.
-- src/apps/api/app/routes/music.py — public music-track gallery endpoint
-- src/apps/api/app/routes/music_jobs.py — beat-sync job submission + status polling. `_validate_clip_count` is public (no underscore) so `admin_music.py`'s test-job/rerender endpoints can reuse it across modules.
-- src/apps/api/app/routes/generative_jobs.py — generative-edit job submission + status: `POST /generative-jobs` (no template, no pre-selected song), `GET /generative-jobs/{id}/status` (surfaces per-variant state from `assembly_plan["variants"]`), plus async `swap-song` / `retext` per-variant re-renders. Reuses `admin_music._validate_clip_path_prefixes` for the clip allowlist.
-- src/apps/api/app/routes/admin_generative.py — `GET /admin/generative` dashboard list (materializes per-variant JSONB the generic /admin/jobs list defers); detail/debug reuses `/admin/jobs/{id}/debug`.
-- src/apps/api/app/tasks/generative_build.py — `orchestrate_generative_job` Celery task (see Generative-edits pipeline below).
-- src/apps/api/app/pipeline/generative_overlays.py — builds the agent-authored "hero intro" overlay and injects it directly into the recipe (same pattern as lyric injection; bypasses the `template_text`/`text_designer` schemas).
-- src/apps/web/src/app/generative/ + admin/generative/ — public generative-edit upload/result UI + admin dashboard.
-- src/apps/api/app/pipeline/music_recipe.py — beat-snap recipe generator (slot layout from beats)
-- src/apps/api/app/tasks/music_orchestrate.py — Celery tasks: beat analysis + music job orchestration
-- src/apps/api/app/services/audio_download.py — yt-dlp audio download + beat detection via FFmpeg
-- src/apps/api/prompts/ — LLM prompt templates (template analysis, transcription)
-- agents/        — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
+- `src/apps/web/` — Next.js frontend (upload UI, progress tracker, result viewer)
+- `src/apps/web/src/app/admin/templates/[id]/components/` — visual overlay editor (OverlayPreview, OverlayTimeline, PropertyPanel, overlay-constants.ts)
+- `src/apps/web/src/app/music/` — music gallery page
+- `src/apps/web/src/app/admin/music/` — admin music management; `/admin/music/[id]` Config + Test tabs
+- `src/apps/web/src/lib/music-api.ts` — typed API client for music routes
+- `src/apps/api/` — Python API (upload endpoint, job queue, FFmpeg pipeline)
+- `src/apps/api/app/routes/admin_music.py` — music CRUD + publish/reanalyze + Test tab endpoints (test-job, rerender-job, status, test-jobs list); `clip_gcs_paths` allowlisted to `music-uploads/` and `slot-uploads/` prefixes
+- `src/apps/api/app/routes/music.py` — public music-track gallery endpoint
+- `src/apps/api/app/routes/music_jobs.py` — beat-sync job submission + status; `_validate_clip_count` is public so `admin_music.py` can reuse it
+- `src/apps/api/app/routes/generative_jobs.py` — generative-edit submission + status + swap-song/retext; re-signs ready variant URLs on read (`_variants_for_response`)
+- `src/apps/api/app/routes/admin_generative.py` — `/admin/generative` dashboard list
+- `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery task (see `docs/pipelines/generative.md`)
+- `src/apps/api/app/pipeline/generative_overlays.py` — agent-authored intro overlay injector
+- `src/apps/web/src/app/generative/` + `admin/generative/` — public generative UI + admin dashboard
+- `src/apps/api/app/pipeline/music_recipe.py` — beat-snap recipe generator (see `docs/pipelines/music.md`)
+- `src/apps/api/app/tasks/music_orchestrate.py` — Celery tasks: beat analysis + music job orchestration
+- `src/apps/api/app/services/audio_download.py` — yt-dlp audio download + beat detection via FFmpeg
+- `src/apps/api/prompts/` — LLM prompt templates (template analysis, transcription)
+- `agents/` — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
 
 ## Local dev
+```bash
 cp .env.example .env            # fill in values
 ./scripts/dev-auto.sh            # single-command dev env with hot reload
+```
 
-`dev-auto.sh` starts redis + postgres via `docker-compose up -d redis db` (infra only — not the app), runs migrations, then launches API (`uvicorn --reload`), Celery worker (`watchfiles` auto-restart on `.py` edits), and Next.js (HMR) natively. Logs go to `.dev/<service>.log`. Do NOT restart servers manually — hot reload handles all code edits. Stop with `./scripts/dev-stop.sh`.
-
-### Local sign-in (dev-login)
-The content-plan / generative flows are Google-gated. To sign in on localhost without Google consent, the repo ships a `dev-login` NextAuth provider (`src/apps/web/src/lib/auth.ts`) gated behind `ALLOW_DEV_LOGIN=true`. Because `dev-auto.sh` sources the repo-root `.env`, setting `ALLOW_DEV_LOGIN=true` + `INTERNAL_API_KEY=<any-string>` there (see `.env.example`) makes dev-login work in **every worktree** automatically — no per-worktree setup. Sign in at `http://localhost:3000/api/auth/signin` → "Dev login (local only)" → any email. Both the API and web must read the same `INTERNAL_API_KEY` (sourcing root `.env` guarantees this); the API fail-closes (401 on plan routes) if it's unset. NEVER set `ALLOW_DEV_LOGIN` in Vercel/Fly. If you run web/API by hand (not via `dev-auto.sh`), remember Next.js loads env from `src/apps/web/`, not repo root — so `source ../../../.env` into the launch shell or the web process won't see `INTERNAL_API_KEY`/`NEXTAUTH_SECRET`.
+`dev-auto.sh` starts redis + postgres via `docker-compose up -d redis db` (infra only), runs migrations, then launches API (`uvicorn --reload`), Celery worker (`watchfiles`), and Next.js (HMR) natively. Logs go to `.dev/<service>.log`. Do NOT restart servers manually — hot reload handles all code edits. Stop with `./scripts/dev-stop.sh`.
 
 Alternatives:
-- `./scripts/dev-no-docker.sh` — same flow but assumes postgres@16 + redis are already running (e.g. via `brew services`)
-- `docker-compose up` — runs the full stack (web/api/worker) in containers; rarely needed since hot-reload native dev is faster
+- `./scripts/dev-no-docker.sh` — same flow but assumes postgres@16 + redis already running
+- `docker-compose up` — full stack in containers; rarely needed since native is faster
 
-Production uses repo-root `Dockerfile` (Python 3.11 + FFmpeg/libheif/libmagic) deployed to Fly.io as both `api` and `worker` processes. Note: `src/apps/api/Dockerfile` and `src/apps/web/Dockerfile` are only referenced by docker-compose; production does not build them.
+Production uses repo-root `Dockerfile` (Python 3.11 + FFmpeg/libheif/libmagic) deployed to Fly.io. Note: `src/apps/api/Dockerfile` and `src/apps/web/Dockerfile` are only referenced by docker-compose.
+
+### Local sign-in (dev-login)
+The content-plan / generative flows are Google-gated. To sign in on localhost without Google consent, the repo ships a `dev-login` NextAuth provider (`src/apps/web/src/lib/auth.ts`) gated behind `ALLOW_DEV_LOGIN=true`. Because `dev-auto.sh` sources the repo-root `.env`, setting `ALLOW_DEV_LOGIN=true` + `INTERNAL_API_KEY=<any-string>` there (see `.env.example`) makes dev-login work in **every worktree** automatically — no per-worktree setup. Sign in at `http://localhost:3000/api/auth/signin` → "Dev login (local only)" → any email. Both the API and web must read the same `INTERNAL_API_KEY` (sourcing root `.env` guarantees this); the API fail-closes (401 on plan routes) if it's unset. NEVER set `ALLOW_DEV_LOGIN` in Vercel/Fly. If you run web/API by hand (not via `dev-auto.sh`), remember Next.js loads env from `src/apps/web/`, not repo root — so `source ../../../.env` into the launch shell.
 
 ### Local-render parity (high-fidelity, slow iteration)
 
-`dev-auto.sh` is for fast iteration but does NOT match prod output: the API + worker run on the Mac host with brew ffmpeg, host fonts, and a host Python. Brew ffmpeg ≠ Debian apt ffmpeg, and host fontconfig will resolve ASS subtitle fallbacks differently. The plain `docker-compose.yml` doesn't fix this either — it builds `src/apps/api/Dockerfile` + `Dockerfile.worker`, both of which are missing `fonts-dejavu-core`, `libheif1`, and the prod root `Dockerfile`'s explicit torch+torchvision CPU-only install.
-
-Use `make local-render` when you need byte-equivalent (or close-to) output before merging a render-affecting change:
+Use `make local-render` when you need byte-equivalent output before merging a render-affecting change — it runs the prod Docker image with matching FFmpeg and fonts. See `docs/runbooks/local-render.md` for full usage, divergence sources, and cache-busting instructions.
 
 ```bash
-cp .env.local-render.example .env.local-render   # fill in GCS + AI keys
-make local-render CLIP=/path/to/clip.mp4 TEMPLATE=<uuid> [MODE=template|music] [INPUTS='{"location":"Tokyo"}']
-
-# generative edits (no template; song auto-matched; renders all 3 variants):
+cp .env.local-render.example .env.local-render
+make local-render CLIP=/path/to/clip.mp4 TEMPLATE=<uuid> [MODE=template|music]
 make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
 ```
-
-This brings up `db` + `redis` + `api` + `worker` containers built from the repo-root `Dockerfile` (the Fly image), waits for `/health` on host port 8001, runs migrations, drives the job through the public API, downloads the rendered MP4 to `.local-render/<job-id>.mp4`, and prints `ffprobe`. The `nova-render` compose project name lets this stack coexist with `make dev` and `dev-auto.sh` on the same machine. Stop with `make local-render-down`; tail with `make local-render-logs`.
-
-**Residual divergence sources** even Docker can't eliminate:
-
-- **LLM nondeterminism** — Gemini/OpenAI calls vary call-to-call; mitigated by `template_cache` (key includes `prompt_version` + `TEXT_OVERLAY_VERSION_V2`) so re-runs of the same `(template_id, source_video)` hit cache. First-run drift is intrinsic — render twice to separate cache from jitter.
-- **DB seed drift** — local Postgres has whatever `seed_*.py` last ran; seed the same template version locally before comparing to a prod render.
-- **Signed-URL host + expiry** — same bucket, different host metadata: MP4 bytes are identical, URL strings differ.
-- **Feature flags** — `text_overlay_v2_enabled`, `ORIENTATION_NORMALIZE_ENABLED`, `SINGLE_PASS_ENCODE_ENABLED`, `TEXT_RENDERER_SKIA_ENABLED`. `.env.local-render.example` lists Fly defaults; the driver prints active container values before submitting. Differ from `fly secrets list` → render won't match.
-
-**Cache busting:** the BuildKit layer cache invalidates automatically when `pyproject.toml` or the `Dockerfile` changes. To force a from-scratch rebuild (e.g. apt-package divergence suspected): `docker-compose -f docker-compose.local-render.yml build --no-cache`.
 
 ## Quality checks
 - Backend tests: `cd src/apps/api && pytest` (asyncio mode auto; tests live in `src/apps/api/tests/`)
@@ -130,63 +127,49 @@ python scripts/admin.py --prod POST templates/abc/publish                     # 
 - Read agents/DECISIONS.md for why key choices were made
 
 ## Storage retention
-- Per-job GCS objects (`dev-user/*`, `music-jobs/*`, `music-lyrics-previews/*`) are deleted by a bucket lifecycle rule 24h after upload. Config lives at `infra/gcs-lifecycle.json`; apply once with `gsutil lifecycle set infra/gcs-lifecycle.json gs://$STORAGE_BUCKET` (not part of CI deploy). `music-lyrics-previews/` is keyed per `{track_id}/{job_id}` so the line-templates dashboard's iteration loop does not silently overwrite older preview bytes — pinned by `test_render_lyrics_preview_writes_per_job_path` in `tests/pipeline/test_lyrics_preview.py`.
-- Curated assets (`music/*` track library, `templates/*` poster/audio) are NOT matched by the rule and persist forever.
-- Signed-URL TTL in `storage.py` is 1 day to match the object lifetime — a 7-day URL pointing at a 1-day object is a lie. Template poster URLs in `routes/templates.py` keep their 7-day TTL because the underlying `templates/*` blobs persist.
-- **`generative-jobs/*` is the exception: blobs persist forever (NOT in the delete rule) but `upload_public_read` still signs `output_url` for only 1 day.** A content-plan / generative item viewed >24h after render therefore reads "ready" but its stored signature is expired → GCS 400 `ExpiredToken` → empty `<video>`. Fix is read-time re-signing, NOT a TTL bump (a longer global TTL would make `dev-user/`/`music-jobs/` URLs outlive their 1-day-deleted blobs): `GET /generative-jobs/{id}/status` re-signs each ready variant's `output_url` from the persisted `video_path` key via `_variants_for_response` (`routes/generative_jobs.py`, `PLAYBACK_URL_TTL_MIN`). The raw `_variants_of` stays unsigned for the mutate paths so a short-lived URL never lands back in the DB. Pinned by `test_variants_for_response_resigns_ready_variant` in `tests/routes/test_generative_jobs.py`. The admin debug/list views still show stored (stale) URLs — follow-up.
-- `JobClip.storage_expires_at` is informational only — no sweeper reads it. Kept truthful (1 day) so a future sweeper isn't surprised.
-- **When auth/login lands:** revisit `infra/gcs-lifecycle.json`. Put authenticated-user content under a new prefix (e.g. `users/{user_id}/`) that the delete rule does NOT match, and grow retention to match whatever the gallery UX promises.
+- Per-job GCS objects (`dev-user/*`, `music-jobs/*`, `music-lyrics-previews/*`) are deleted by a bucket lifecycle rule 24h after upload. Config lives at `infra/gcs-lifecycle.json`; apply once with `gsutil lifecycle set infra/gcs-lifecycle.json gs://$STORAGE_BUCKET` (not part of CI deploy).
+- Curated assets (`music/*`, `templates/*`) are NOT matched by the rule and persist forever.
+- Signed-URL TTL in `storage.py` is 1 day to match the object lifetime.
+- **`generative-jobs/*` exception:** blobs persist forever but `upload_public_read` signs `output_url` for only 1 day → expired URLs show blank video after 24h. Fix is read-time re-signing via `_variants_for_response` in `routes/generative_jobs.py` (`PLAYBACK_URL_TTL_MIN`). Pinned by `test_variants_for_response_resigns_ready_variant`. See agents/DECISIONS.md "Storage retention incidents" for the full narrative.
+- `JobClip.storage_expires_at` is informational only — no sweeper reads it.
+- **When auth/login lands:** revisit `infra/gcs-lifecycle.json`. Put authenticated-user content under a new prefix (e.g. `users/{user_id}/`) that the delete rule does NOT match.
 
 ## ⚠️ Anti-pattern: do NOT use MoviePy / VideoFileClip
 VideoFileClip(path) buffers the entire video into RAM. On a 2GB source file this crashes.
 Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 
 ## Music beat-sync pipeline
-- Beat detection: `_detect_audio_beats()` in `audio_download.py` uses FFmpeg `silencedetect`/`astats` energy-peak analysis on the downloaded audio file
-- Best-section auto-select: `_auto_best_section()` scores 30s windows by beat density; result stored in `MusicTrack.track_config` as `best_start_s`/`best_end_s`/`slot_every_n_beats`
-- Recipe generation: `generate_music_recipe()` in `music_recipe.py` slices the best section into N slots where N = beat_count / slot_every_n_beats; each slot target duration = beats-per-slot × beat interval
-- Job orchestration: `orchestrate_music_job` Celery task runs parallel Gemini clip analysis → `template_matcher.match` → `_assemble_clips` with beat-snap → `_mix_template_audio`
-- Output URL contract: `_run_music_job`, `_run_templated_music_job`, and `orchestrate_auto_music_job` persist the signed URL returned by `upload_public_read` into `assembly_plan.output_url` — NOT the relative GCS path. Matches the template orchestrator and lets consumers (admin Test tab, public job-status responses) drop the value straight into `<video src>`. Legacy rows that still hold the relative path are stripped to `null` by the admin "Previous renders" list (`GET /admin/music-tracks/{id}/test-jobs`); the UI shows a "legacy format, re-render to view" notice instead of a broken `<video>`.
-- Audio download: `audio_download.py` uses yt-dlp subprocess (not yt-dlp Python API) to avoid RAM buffering; downloads to a temp path in GCS-mounted storage
 - Track lifecycle: `pending` → `analyzing` → `ready` | `failed`; only `ready`+`published` tracks appear in the public gallery
-- Admin proxy: Next.js `/api/admin/[...path]` route proxies to Fly.io API, keeping the admin token server-side only (never exposed to browser)
-- Clip count: `slot_count` returned by `/music-tracks` tells the frontend exactly how many clips to collect; `POST /music-jobs` validates clip count matches before enqueuing
-- Beat-sync guard: tracks with 0 detected beats are marked `failed` at analysis time; `POST /music-jobs` rejects non-ready or non-published tracks
-- Auto-music classification: after `_run_gemini_audio_analysis` succeeds, `analyze_music_track_task` reuses the same Gemini `file_ref` to run `song_classifier` (`nova.audio.song_classifier`) and persists a locked-schema `MusicLabels` blob on `MusicTrack.ai_labels` + `label_version` (schema: `app/agents/_schemas/music_labels.py`, `CURRENT_LABEL_VERSION = 2026-05-15`). Classifier failure is non-fatal — recipe still saves, the track just won't be visible to `music_matcher` until backfill (`scripts/backfill_song_classifier.py`)
-- Auto-music matching: `music_matcher` (`nova.audio.music_matcher`, Gemini Flash, text-only) ranks the full published-track library against a clip set using each track's Phase-1 `MusicLabels` — orchestrator (Phase 3, not yet shipped) will take the top-K as variants
-- Song-sections visualizer: `song_sections` agent output (`MusicTrack.best_sections` + `section_version`, schema: `app/agents/_schemas/song_sections.py`) is exposed on `GET /admin/music-tracks` + `/admin/music-tracks/{id}` and rendered as a ranked band SVG over the beat strip at `/admin/music/[id]` (with hover rationale + click-to-seek). `_to_response` in `admin_music.py` coerces sections row-by-row and drops drifted enums so a single bad row can't 500 the list endpoint. `src/lib/music-api.ts` carries a hand-mirrored `SongSection` interface — keep its literal unions in sync when the Pydantic schema changes.
+- Beat detection + best-section auto-select: `_detect_audio_beats()` + `_auto_best_section()` in `audio_download.py`. Tracks with 0 detected beats are marked `failed`.
+- Recipe generation: `generate_music_recipe()` in `music_recipe.py` (slot layout from beats)
+- Job orchestration: `orchestrate_music_job` — parallel Gemini clip analysis → `template_matcher.match` → `_assemble_clips` with beat-snap → `_mix_template_audio`
+- Output URL contract: `_run_music_job` / `_run_templated_music_job` / `orchestrate_auto_music_job` persist the **signed URL** from `upload_public_read` into `assembly_plan.output_url` — NOT the relative GCS path.
+- Clip count: `slot_count` returned by `/music-tracks` tells the frontend how many clips to collect; `POST /music-jobs` validates the count matches.
+- Auto-classification: `song_classifier` runs after beat analysis and persists `MusicLabels` on `MusicTrack.ai_labels`. Classifier failure is non-fatal.
+- Auto-matching: `music_matcher` (Gemini Flash) ranks the full library against a clip set using `MusicLabels`.
+- Song-sections visualizer: `MusicTrack.best_sections` + `section_version` rendered as a ranked band SVG at `/admin/music/[id]`. `src/lib/music-api.ts` carries a hand-mirrored `SongSection` interface — keep its literal unions in sync when the Pydantic schema changes.
+- See `docs/pipelines/music.md` for internals (beat detection algo, recipe slice math, admin proxy, clip validation detail).
 
 ## Generative-edits pipeline
-- A generative edit has NO reference template and NO pre-selected song: the user uploads clips; `orchestrate_generative_job` analyzes them, auto-matches a track, writes its own intro overlay, and renders THREE variants for the user to pick: `song_lyrics` (matched song + its lyrics), `song_text` (matched song + AI hero-intro overlay), `original_text` (clips' original audio + AI intro).
-- Re-anchors on the auto-music engine: reuses `generate_music_recipe`, `music_matcher`, `inject_lyric_overlays`, `_assemble_clips`, `_mix_template_audio`, and the JobClip variant pattern. Net-new render behavior is only the no-music branch (`original_text` skips `_mix_template_audio` to keep source audio) + injecting the agent intro overlay via `generative_overlays.py`.
-- **Best-effort by design:** if no labeled track matches or the matcher fails, song variants are skipped and `original_text` still renders — a generative job never hard-fails on an empty library. If the intro-text agent returns empty, text variants render footage without an intro rather than crashing.
-- Per-variant state is authoritative in `Job.assembly_plan["variants"]` (the task owns it) — no new DB column. Jobs are plain `Job` rows with `mode == "generative"`. Local smoke test: `make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"`.
+- NO reference template and NO pre-selected song: the user uploads clips; `orchestrate_generative_job` analyzes them, auto-matches a track, writes its own intro overlay, and renders THREE variants: `song_lyrics`, `song_text`, `original_text`.
+- **Best-effort by design:** if no labeled track matches, song variants are skipped and `original_text` still renders — a generative job never hard-fails on an empty library.
+- Per-variant state is authoritative in `Job.assembly_plan["variants"]` (the task owns it) — no new DB column. Jobs are plain `Job` rows with `mode == "generative"`.
+- See `docs/pipelines/generative.md` for how the music engine is reused and per-variant mechanics.
 
 ## Template pipeline
-- Interstitials: `app/pipeline/interstitials.py` detects curtain-close vs fade-to-black via FFmpeg luminance band analysis, renders color holds and `geq` pixel-expression curtain-close animations (drawbox cannot animate bar height over time)
-- Transitions: `app/pipeline/transitions.py` translates Gemini vocabulary (whip-pan, zoom-in, dissolve) to internal FFmpeg xfade types
-- Single-pass CFR-before-xfade invariant: every per-clip chain in `app/pipeline/single_pass.py` (`_per_clip_filter_chain`) must end with `fps={output_fps}, setpts=PTS-STARTPTS, settb=AVTB` before its labelled output. The head `framerate=fps=N` interpolates against source PTS and silently fails on inputs reporting `avg_frame_rate=1/0` (some phone HEVC, HEIF-derived video, screen recordings), aborting the whole run; the trailing `fps=` filter is PTS-independent so it works where `framerate=` can't. Locked by `test_per_clip_chain_forces_cfr_before_xfade` in `tests/pipeline/test_single_pass.py`. See DECISIONS.md (2026-05-18).
-- Font bundle: Playfair Display (Bold + Regular) in `assets/fonts/`, referenced via `fontsdir` in ASS subtitle filters
-- Text overlays: `app/pipeline/text_overlay.py` renders gaussian-shadow text (no hard outlines), supports font-cycle and ASS animated overlays. **Renderer split** (since v0.4.41.x): agentic templates + music-job lyrics render via `app/pipeline/text_overlay_skia.py` (skia-python, HarfBuzz shaping, real kerning, paint-based shadows, uniform per-frame PNG sequences instead of libass ASS files); classic non-music + non-agentic templates stay on Pillow + libass. Dispatch is inside `_burn_text_overlays(use_skia=...)` and `_pre_burn_curtain_slot_text(is_agentic=...)` in `template_orchestrate.py`. Kill switch: `TEXT_RENDERER_SKIA_ENABLED=false` reverts agentic + music to Pillow + libass per process — flip the Fly secret and restart workers if a Skia render bug ships to prod. Skia output produces per-overlay PNG sequences fed to FFmpeg's `image2` demuxer + `setpts` shift, so file-descriptor pressure is O(overlay_count) regardless of frame count (the Pillow path's `MAX_FONT_CYCLE_FRAMES=100` cap exists because Pillow returns one config per font frame and the ffmpeg `-i` list can otherwise blow past `ulimit -n`).
-- **Renderer-parity invariant (the #296 class — "looks right locally, clips in prod").** Any overlay field plumbed through the burn entry dict MUST be honored by BOTH renderers, or it silently drops on whichever path it missed. The trap: admin overlay-preview (`render_overlays_at_time`) + classic templates render via Pillow, while agentic + music jobs render via Skia — so a Pillow-only fix passes every local check while the burned agentic/music video stays broken. **Guard:** `test_both_renderers_honor_text_anchor_left` in `tests/pipeline/test_text_overlay_skia.py` renders one overlay through both renderers and asserts identical anchor placement — extend it for any new anchor/position field. **Verification rule:** an agentic/music overlay change is NOT verified by the admin preview — verify the actual burned (Skia) video via `make verify-overlays` (below). See DECISIONS.md (2026-05 #296/#297) for the incident.
-- **Pre-PR text-overlay verify (`make verify-overlays`).** Before any PR touching the Skia renderer, overlay layout, or the burn dict, run this gate. It renders a recipe's overlays through the REAL Skia path inside the prod Docker image (fonts + ffmpeg match prod), asserts each overlay is un-clipped (opaque-pixel bbox vs frame edges — the primary font-independent signal, exits non-zero to gate the PR), and writes a contact-sheet `montage.png` + `report.json` to `.overlay-verify/`. Content correctness is the montage — read it (Claude reads PNGs); tesseract isn't in the prod image. Commands: `ARGS="--fixtures"` (regression set under `tests/fixtures/overlay_verify/`), `ARGS="--recipe <path>"`, or `ARGS="--template <uuid>"`. Optional host-side OCR match: `cd src/apps/api && python -m app.cli.verify_overlays --stage ocr --out ../../../.overlay-verify`. Library: `app/pipeline/overlay_verify.py`; CLI: `app.cli.verify_overlays` (in-image because the prod `Dockerfile` copies `app/`, not `scripts/`); guard: `tests/pipeline/test_overlay_verify.py`. **Source of truth is the recipe** — it verifies the renderer burns what the recipe declares; it does NOT check whether the agent extracted the right text or orchestrator timing clamps. **Agent pre-PR gate:** run it, read `report.json` + `montage.png`, fix any FAIL, then `/ship`.
-- Placeholder substitution: `_resolve_overlay_text()` + `_is_subject_placeholder()` in `template_orchestrate.py` can rewrite short title-case or ALL-CAPS overlay text to the user's subject (e.g. Brazil's `PERU` → user's location). Literal text overlays SHOULD still set `"subject_substitute": False` as defense-in-depth; the per-seed audit in `tests/scripts/test_seed_overlays_literal.py` fails on any new overlay that matches the heuristic without declaring intent.
-- **Gemini metadata never becomes on-screen overlay text** (architectural invariant, scoped). The overlay substitution input is exclusively user-provided (`inputs.location` via `_resolve_user_subject`); the `_consensus_subject` and empty-hook `clip_meta.hook_text` fallbacks were removed (see DECISIONS.md 2026-05-13). `TestNoGeminiTextLeaks` in `tests/tasks/test_template_orchestrate.py` is the sentinel. **Does NOT cover `copy_writer`** — `_extract_hook_text` still pipes `clip_meta.hook_text` into platform captions via `generate_copy`; treat clip-derived hook text there as untrusted input to the caption LLM, not content to reproduce verbatim.
-- Font-cycle: acceleration syncs with curtain-close (`font_cycle_accel_at_s`), `text_color` passthrough for colored text, per-size font caching in `_resolve_cycle_fonts()`, `MAX_FONT_CYCLE_FRAMES` (60) safety cap prevents PNG explosion, gap-fill PNG bridges frame cap to cycle_end
-- Font-cycle settle: when `font_cycle_accel_at_s` is active, settle phase is skipped entirely (cycling runs to end_s)
-- Cross-slot text merge: `_collect_absolute_overlays()` merges same-text+same-position overlays across adjacent slots when gap < `_MERGE_GAP_THRESHOLD_S` (2.0s), inheriting effect and accel from later slots
-- Curtain-close minimum: `MIN_CURTAIN_ANIMATE_S=4.0` enforced at both `_assemble_clips` and `_collect_absolute_overlays` call sites, clamped to 60% of slot duration (`_CURTAIN_MAX_RATIO=0.6`, ensures at least 40% visible footage)
-- Label config: `_LABEL_CONFIG` in `template_orchestrate.py` differentiates subject labels (large/120px/sans/#F4D03F/font-cycle/accel@8s) from prefix labels (medium/72px). Detection is content-based (`_is_subject_placeholder()` or "welcome" prefix), not role-based, because Gemini inconsistently returns `role=hook` instead of `role=label`. First-slot labels get timing overrides (prefix@2s, subject@3s)
-- Clip rotation: `_minimum_coverage_pass()` in `template_matcher.py` pre-assigns most-constrained clips first to maximize variety before the greedy quality pass
-- Timing overrides: `start_s_override` / `end_s_override` on overlay JSON correct Gemini's approximate timing; curtain exit clamp always wins
-- Beat-snap: `cumulative_s` in `_assemble_clips()` must account for interstitial hold durations to keep beat-snap calculations accurate
-- Timing: `_burn_text_overlays()` must not reassign font-cycle multi-PNG timestamps with single overlay timestamps (bug fixed in v0.1.1.0)
-- Agentic pct-timing: AGENTIC templates emit relative timings — slots carry `target_duration_pct` and text overlays carry `start_pct`/`end_pct` instead of absolute seconds. `template_orchestrate.py` dispatches via the `is_agentic` flag through `app/pipeline/agentic_timing.py`, which resolves pct → seconds against the matched clip's effective duration. Classic templates are entirely unaffected. `template_recipe.parse()` adds two D2 guards for agentic output: `_dedup_overlays_across_slots` (collapses duplicate overlays across adjacent slots before render-time merge) and interstitial grounding (rejects interstitial slots that don't line up with an FFmpeg-detected `black_segments` boundary). Bump `prompt_version` (currently `2026-05-17`) when editing the agentic recipe prompt.
+- **Single-pass CFR-before-xfade invariant:** every per-clip chain in `app/pipeline/single_pass.py` (`_per_clip_filter_chain`) must end with `fps={output_fps}, setpts=PTS-STARTPTS, settb=AVTB` before its labelled output. The trailing `fps=` filter is PTS-independent and handles `avg_frame_rate=1/0` inputs (some phone HEVC, HEIF-derived video, screen recordings) where `framerate=fps=N` aborts. Locked by `test_per_clip_chain_forces_cfr_before_xfade` in `tests/pipeline/test_single_pass.py`. See agents/DECISIONS.md (2026-05-18).
+- **Renderer split:** agentic templates + music-job lyrics → `text_overlay_skia.py` (skia-python, HarfBuzz shaping, per-frame PNG sequences); classic non-music + non-agentic → Pillow + libass. Dispatch: `_burn_text_overlays(use_skia=...)` + `_pre_burn_curtain_slot_text(is_agentic=...)` in `template_orchestrate.py`. Kill switch: `TEXT_RENDERER_SKIA_ENABLED=false`.
+- **Renderer-parity invariant:** any overlay field plumbed through the burn dict MUST be honored by BOTH renderers. Guard: `test_both_renderers_honor_text_anchor_left` in `tests/pipeline/test_text_overlay_skia.py` — extend for any new anchor/position field. An agentic/music overlay change is NOT verified by the admin preview. See agents/DECISIONS.md (2026-05 #296/#297) for the incident.
+- **Pre-PR text-overlay verify (`make verify-overlays`):** before any PR touching the Skia renderer, overlay layout, or the burn dict. Renders through the REAL Skia path in the prod Docker image, asserts each overlay is un-clipped (opaque-pixel bbox vs frame edges), writes `montage.png` + `report.json` to `.overlay-verify/`. Library: `app/pipeline/overlay_verify.py`; CLI: `app.cli.verify_overlays`; guard: `tests/pipeline/test_overlay_verify.py`. **Agent pre-PR gate:** run it, read `report.json` + `montage.png`, fix any FAIL, then `/ship`.
+- **Gemini metadata never becomes on-screen overlay text** (architectural invariant). Overlay substitution input is exclusively user-provided (`inputs.location`). `TestNoGeminiTextLeaks` in `tests/tasks/test_template_orchestrate.py` is the sentinel. See agents/DECISIONS.md (2026-05-13). Does NOT cover `copy_writer` captions.
+- Placeholder substitution: `_resolve_overlay_text()` + `_is_subject_placeholder()` in `template_orchestrate.py`. Literal overlays SHOULD set `"subject_substitute": False`; `tests/scripts/test_seed_overlays_literal.py` enforces this.
+- Font bundle: Playfair Display (Bold + Regular) in `assets/fonts/`, referenced via `fontsdir` in ASS subtitle filters.
+- See `docs/pipelines/template.md` for internals: font-cycle mechanics, cross-slot text merge, curtain-close minimum, label config, clip rotation, timing details, agentic pct-timing.
 
 ## Encoder policy (libx264 preset)
-- **Intermediate encodes** (re-encoded downstream by another stage) → `preset="ultrafast"` is fine. Call sites: `reframe_and_export`, `_build_overlay_cmd` in `reframe.py`; `render_color_hold` in `interstitials.py`; `image_clip` rendering; `drive_import` thumbnailing.
-- **Final-output encodes** (bytes that ship to the user) → `preset="fast"` or stricter is REQUIRED. `ultrafast` disables `mb-tree`, `psy-rd`, B-frames and trellis quant, which causes visible 16×16 macroblocking on smooth gradients (sky, dark canopy). CRF does NOT compensate — it controls the rate target, not which encoder features run. Call sites: `_concat_demuxer` fallback, `_pre_burn_curtain_slot_text`, `_burn_text_overlays` in `template_orchestrate.py`; `apply_curtain_close_tail` (`fast` + `tune=film`) in `interstitials.py`; `join_with_transitions` in `transitions.py`.
-- Locked by `tests/test_encoder_policy.py` — adding a new `_encoding_args(...)` call site forces a conscious quality-budget decision via the allow-list. See DECISIONS.md (PR #102/#105 + Brazil pixelation fix) for the history.
+- **Intermediate encodes** → `preset="ultrafast"` is fine. Call sites: `reframe_and_export`, `_build_overlay_cmd` in `reframe.py`; `render_color_hold` in `interstitials.py`; `image_clip` rendering; `drive_import` thumbnailing.
+- **Final-output encodes** → `preset="fast"` or stricter REQUIRED. `ultrafast` causes visible 16×16 macroblocking on smooth gradients (sky, dark canopy); CRF does NOT compensate. Call sites: `_concat_demuxer` fallback, `_pre_burn_curtain_slot_text`, `_burn_text_overlays` in `template_orchestrate.py`; `apply_curtain_close_tail` in `interstitials.py`; `join_with_transitions` in `transitions.py`.
+- Locked by `tests/test_encoder_policy.py` — adding a new `_encoding_args(...)` call site forces a conscious quality-budget decision. See agents/DECISIONS.md for the history (PR #102/#105 + Brazil pixelation fix).
 
 ## Env vars needed (see .env.example for full list with descriptions)
 - STORAGE_BUCKET, STORAGE_PROVIDER
@@ -194,33 +177,23 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - DATABASE_URL
 - OPENAI_API_KEY
 - GEMINI_API_KEY — required for clip analysis (music jobs) and template analysis
-- `ORIENTATION_NORMALIZE_ENABLED` — defaults to `true`. Set to `false` and restart workers to make `normalize_orientation` (the upload-rotation fix in `app/pipeline/orientation.py`) a no-op without redeploying. Safety valve for orientation regressions. Apply with `fly secrets set ORIENTATION_NORMALIZE_ENABLED=false --app nova-video` and then `fly machine restart <id>` on the worker process group.
-- `LYRIC_DYNAMIC_CROSSFADE_ENABLED` — defaults to `true`. Set to `false` and restart workers to fall back to legacy `_inject_line` scheduler behavior byte-identically: pre-fix `dynamic_max_overlap = min(max_overlap_s, fade_in_s + fade_out_s)` additive cap, no per-pair duration matching, no `fade_out_curve="sqrt"` tag. Use to roll back if a music or agentic-lyric render regresses after the dynamic-crossfade change. Apply with `fly secrets set LYRIC_DYNAMIC_CROSSFADE_ENABLED=false --app nova-video` and then `fly machine restart <id>`. The kill-switch byte-identical test (`tests/pipeline/test_lyric_injector_no_stacking.py::test_kill_switch_disabled_reproduces_pre_fix_output`) is the contract this flag must honor. **WARNING:** disabling this flag re-introduces the stacked-text bug observed in prod jobs `5a71226e` and `e72d52e9` (Mirea track) — the legacy timing math is precisely what produced the bug the dynamic-crossfade fix was supposed to eliminate. Use ONLY for emergency rollback (e.g., the new path itself ships a regression), and re-enable as soon as the regression is patched. Do NOT leave the kill switch off as a long-term mode.
+- `ORIENTATION_NORMALIZE_ENABLED` — defaults to `true`. Set to `false` and restart workers to make `normalize_orientation` a no-op (safety valve for orientation regressions). Apply: `fly secrets set ORIENTATION_NORMALIZE_ENABLED=false --app nova-video` + `fly machine restart <id>`.
+- `LYRIC_DYNAMIC_CROSSFADE_ENABLED` — defaults to `true`. Set to `false` to roll back to legacy `_inject_line` behavior byte-identically. **WARNING: disabling re-introduces the stacked-text bug from prod jobs `5a71226e`/`e72d52e9` — use ONLY for emergency rollback.** Kill-switch test: `tests/pipeline/test_lyric_injector_no_stacking.py::test_kill_switch_disabled_reproduces_pre_fix_output`. Apply: `fly secrets set LYRIC_DYNAMIC_CROSSFADE_ENABLED=false --app nova-video` + `fly machine restart <id>`. See agents/DECISIONS.md "Kill-switch incidents" for the full warning.
 
 ## Agent evals
-- Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents. Two layers: deterministic structural assertions + Claude-Sonnet LLM-as-judge.
-- **Layer-2 text-overlay pipeline** — multi-stage OCR pipeline replacing the single Gemini call when `settings.text_overlay_v2_enabled=True` (default `False`) or admin `reanalyze-agentic?use_layer2=true`. Stages A (frames) → B (OCR) → C (temporal group) → D (phrase reconstruction) → E (transcript alignment) → F (classification) → G (output). Entry: `run_full_pipeline()` in `app/pipeline/text_overlay_v2/pipeline.py`; returns `TemplateTextOutput` (Layer-1 schema). Routing in `TemplateTextAgent.run()` (`_run_layer2()` when flag on). Eval fixtures are a follow-up PR — until then run evals against Layer-1 (flag off). Stage E (`nova.compose.text_alignment`, `app/agents/text_alignment.py`) rewrites OCR phrases verbatim from the Whisper transcript (drops hallucinated phrases); `_sanitize_aligned_line` strips ASS tags, Unicode control/format codepoints, `\n`/`\N` literals, and debug markers, but does NOT dedup adjacent tokens (refrains must survive). Stage D `_finalize` and Stage G `sample_text` normalization also strip duplicate events + debug markers so they can't render on screen.
-- **Layer-2 cache namespace:** `template_cache.TEXT_OVERLAY_VERSION_V2` (dated string). **Bumping it is the ONLY thing that invalidates Layer-2 cache** (force_layer2 builds only; `recipe-only` manual templates use a separate namespace). The Stage E/F agent `prompt_version`s are NOT in the cache key, so editing those prompts without bumping is invisible in prod (the "looks right locally, stale in prod" trap). CI guard `.github/workflows/layer2-cache-guard.yml` (`scripts/check_layer2_cache_bump.sh`) fails any PR touching `text_overlay_v2/`, the Stage E/F agents/schemas, or their prompts without a bump. Escape hatch: `[skip-layer2-cache-bump]` in a commit message.
-- **Layer-2 OCR backend divergence (local ≠ prod):** Stage B picks its backend at runtime via `default_backend()` in `app/services/text_overlay_ocr.py` — Cloud Vision when `GOOGLE_SERVICE_ACCOUNT_JSON`/`GOOGLE_APPLICATION_CREDENTIALS` is set (prod), else Apple Vision (local macOS). They return different boxes/confidence/line reconstructions, so a result verified locally on Apple Vision will NOT match the prod (Cloud Vision) render. Generate Layer-2 fixtures against Cloud Vision, or pin via the `backend=` kwarg on `run_full_pipeline()`.
-- **`nova.compose.template_text`** — focused text-overlay extraction pass after `template_recipe` in agentic templates only (NOT music jobs, NOT manual templates). Replaces `recipe.slots[*].text_overlays` with overlays carrying a required normalized bbox + font color. Eval consumes optional OCR ground truth at `tests/fixtures/agent_evals/template_text/ground_truth/<slug>.json` (build via `scripts/build_text_ground_truth.py`); without it the judge inspects qualitatively per rubric.
+- Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents.
 - Default: `cd src/apps/api && pytest tests/evals/ -v` — structural-only, replay mode, no network. Runs in CI.
-- With judge: `... --with-judge` (needs `ANTHROPIC_API_KEY`).
-- Live Gemini: `NOVA_EVAL_MODE=live ... --eval-mode=live --with-judge` (needs both keys; ~$2-5/run).
-- Manual GH Action: `.github/workflows/agent-evals.yml` (`workflow_dispatch`).
-- **Prompt-change rule:** when editing any file under `src/apps/api/prompts/` or any `render_prompt()`, bump the agent's `prompt_version` in its `AgentSpec` AND run `pytest tests/evals/<agent>_evals.py -v --with-judge --eval-mode=live` against current fixtures before merge. Compare scores against the prior version's run.
-- **template_text live-eval wrapper:** `bash src/apps/api/scripts/run_template_text_eval.sh` (checks env + fixtures, runs live + judge, tees to `.dev/eval-results/`; `--help` for usage). The raw pytest invocation still works when you need `--shadow-prompts-dir` etc.
-- See `tests/evals/README.md` for the full prompt-iteration loop.
+- With judge: `... --with-judge` (needs `ANTHROPIC_API_KEY`). Live Gemini: `NOVA_EVAL_MODE=live ... --eval-mode=live --with-judge` (~$2-5/run).
+- **Prompt-change rule:** when editing any file under `src/apps/api/prompts/` or any `render_prompt()`, bump the agent's `prompt_version` in its `AgentSpec` AND run live evals against current fixtures before merge.
+- **template_text live-eval wrapper:** `bash src/apps/api/scripts/run_template_text_eval.sh`. See `tests/evals/README.md` for the full prompt-iteration loop.
+- **Layer-2 cache-bump rule:** any PR touching `text_overlay_v2/`, the Stage E/F agents/schemas, or their prompts must bump `TEXT_OVERLAY_VERSION_V2` in `template_cache.py`. Guard: `.github/workflows/layer2-cache-guard.yml`. Escape hatch: `[skip-layer2-cache-bump]` in a commit message.
+- See `docs/pipelines/layer2-text-overlay.md` for Layer-2 stage details, OCR backend divergence (local Apple Vision ≠ prod Cloud Vision), and the template_text agent rubric.
 
 ## Admin job-debug view
-- Surfaces every agent's full I/O + every non-LLM pipeline decision per job. Lives at `/admin/jobs` (list) and `/admin/jobs/{id}` (detail). Use it to answer "is this bad output from an agent, the agent's parameters, or assembly?"
-- **Template-scoped sibling:** `/admin/templates/{id}` has a "Debug" tab backed by `GET /admin/templates/{id}/debug` that surfaces the same agent_runs (`template_recipe`, `creative_direction`, etc.) but scoped to one template — usable before any job has referenced it. Uses the same shared `AgentSection` component (`src/apps/web/src/app/admin/_shared/`). Cap: 100 runs, DESC ordered (newest first).
-- Two storage layers:
-  - `agent_run` table (one row per agent invocation) — written automatically by `app/agents/_runtime._log_outcome` via `app/agents/_persistence.persist_agent_run`. Captures input/output Pydantic dicts, full raw LLM response, outcome, tokens, cost, latency. Best-effort: DB failure never breaks an in-flight job. Skips non-UUID job_ids (e.g. `"track:<id>"` track-level analyses).
-  - `Job.pipeline_trace` JSONB column — appended by `app/services/pipeline_trace.record_pipeline_event(stage, event, data)`. Reads the current job_id from a contextvar set by `pipeline_trace_for(job_id)`. Capped at 500 events/job.
-- **Mandatory orchestrator contract:** every Celery task that drives agents must wrap its body in `with pipeline_trace_for(job_id):` and clear on exit (the contextmanager handles this). Currently applied in `orchestrate_music_job`, `orchestrate_template_job`, `orchestrate_auto_music_job`, `orchestrate_generative_job`. New orchestrators MUST do the same or downstream `record_pipeline_event` calls silently drop.
-- **Adding pipeline events:** call `record_pipeline_event("<stage>", "<event_name>", {"...": ...})` from inside any `app/pipeline/*` module at any decision point (current sites: curtain-close, xfade picks, beat-snap drift, orientation normalization). Stage buckets: `interstitial`, `transition`, `overlay`, `beat_snap`, `reframe`, `audio_mix`, `assembly`, `orientation`. The `orientation` stage emits five events: `skipped` (rotation flag is 0), `flag_stripped_no_rotation` (already-portrait pixels with stale ±90 flag — codec-copy remux, no pixel change), `flag_stripped_no_rotation_180` (already-portrait + ambiguous 180 flag, also strip-only with a warning), `normalized` (landscape pixels + flag, full re-encode with transpose), `disabled_by_env` (env var kill switch hit).
-- **Eval harness opt-out:** the eval RunContext sets `extra={"skip_agent_run_persist": True}` so replay-mode evals don't pollute the prod `agent_run` table. Don't drop this flag.
-- **Success-outcome set:** `app/agents/_runtime.SUCCESS_OUTCOMES` is the single source of truth for which agent outcomes count as success. Any SQL filter or UI label that distinguishes pass/fail MUST import this constant — the admin route already does (`app/routes/admin_jobs.py`).
+- Surfaces every agent's full I/O + every non-LLM pipeline decision per job. Lives at `/admin/jobs` (list) and `/admin/jobs/{id}` (detail).
+- **Mandatory orchestrator contract:** every Celery task that drives agents must wrap its body in `with pipeline_trace_for(job_id):`. Currently applied in `orchestrate_music_job`, `orchestrate_template_job`, `orchestrate_auto_music_job`, `orchestrate_generative_job`. New orchestrators MUST do the same or `record_pipeline_event` calls silently drop.
+- **Success-outcome set:** `app/agents/_runtime.SUCCESS_OUTCOMES` is the single source of truth for which agent outcomes count as success. Any SQL filter or UI label that distinguishes pass/fail MUST import this constant.
+- See `docs/runbooks/admin-job-debug.md` for storage layer details, event names, template-scoped sibling, and the eval harness opt-out flag.
 
 ## Deploy Configuration
 
@@ -233,10 +206,9 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Production URL: https://nova-video.vercel.app
 - Framework: Next.js (auto-detected)
 - Root directory: `src/apps/web/`
-- Deploy: auto-deploys on push to `main` via GitHub integration. **Do NOT run `vercel --prod` from a feature branch** — it pushes your local working tree to production, including files not yet in `main`, and can ship a frontend route without its backing API endpoint. For an emergency manual deploy: `git checkout main && git pull`, then `cd src/apps/web && vercel --prod`.
+- Deploy: auto-deploys on push to `main` via GitHub integration. **Do NOT run `vercel --prod` from a feature branch** — it pushes your local working tree to production. For an emergency manual deploy: `git checkout main && git pull`, then `cd src/apps/web && vercel --prod`.
 - Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXT_PUBLIC_GOOGLE_CLIENT_ID, NEXT_PUBLIC_GOOGLE_PICKER_API_KEY, NEXTAUTH_SECRET, ADMIN_BASIC_AUTH_USER, ADMIN_BASIC_AUTH_PASSWORD)
-- **`ADMIN_BASIC_AUTH_USER` + `ADMIN_BASIC_AUTH_PASSWORD` are MANDATORY.** They gate `/admin/*` and `/api/admin/*` via `src/apps/web/src/middleware.ts`. Without them set on Production AND Preview environments, every admin page returns 503 "Admin auth not configured" — fail-closed by design. Rotate by setting new values + redeploying (Edge runtime reads env at module init, no live refresh). This is a stopgap until proper per-user auth lands.
-- Deployment Protection: preview-only (production is public). The `ADMIN_BASIC_AUTH_*` middleware is the only admin gate on production.
+- **`ADMIN_BASIC_AUTH_USER` + `ADMIN_BASIC_AUTH_PASSWORD` are MANDATORY.** They gate `/admin/*` and `/api/admin/*` via `src/apps/web/src/middleware.ts`. Without them, every admin page returns 503 — fail-closed by design.
 - Preview deploys: full API access via regex CORS (`allow_origin_regex` in `main.py`)
 
 ### Fly.io — API + Workers (configured by /setup-deploy)
@@ -248,15 +220,15 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Merge method: squash
 - Process groups: api (FastAPI/uvicorn) + worker (Celery)
 - Release command: `python -m alembic upgrade head` (runs migrations on every deploy)
-- VM sizing: api = 1 shared CPU / 512MB, worker = 4 shared CPUs / 6144MB (size class is shared-cpu-4x because shared-cpu-2x hard-caps at 4096MB; see `fly.toml` for the 2026-05-17 OOM incident that drove the bump)
-- **Celery time-limit invariant:** every long-running task's `time_limit` MUST stay strictly under the worker's broker `visibility_timeout` (`app/worker.py`, currently 1900s). With `task_acks_late=True`, a task still in-flight past `visibility_timeout` is redelivered to a SECOND worker while the first runs — duplicate concurrent execution. For render tasks that fills the RAM-backed `/tmp` (tmpfs) → `No space left on device` (prod 08532ba3, 2026-06-01: generative voiceover job at `time_limit=2000` vs visibility 1900 double-ran the HDR pre-tonemap). Render orchestrators use `soft_time_limit=1740, time_limit=1800`. Locked by `tests/tasks/test_task_time_limits.py`. `batch_import_from_drive` (2400) is the deliberate exception (download-bound, separate handling).
+- VM sizing: api = 1 shared CPU / 512MB, worker = 4 shared CPUs / 6144MB
+- **Celery time-limit invariant:** every long-running task's `time_limit` MUST stay strictly under the worker's broker `visibility_timeout` (`app/worker.py`, currently 1900s). Render orchestrators use `soft_time_limit=1740, time_limit=1800`. Locked by `tests/tasks/test_task_time_limits.py`. See agents/DECISIONS.md "Celery time-limit invariant" for the prod incident.
 - Dockerfile: repo-root `Dockerfile` (cached dependency layer from pyproject.toml)
 - Docker image includes: `app/`, `assets/`, `prompts/`, `alembic.ini`
-- CORS: `ALLOWED_ORIGINS` env var — JSON array format, e.g. `'["http://localhost:3000","https://nova-video.vercel.app"]'`
+- CORS: `ALLOWED_ORIGINS` env var — JSON array format
 
 ### Custom deploy hooks
 - Pre-merge: none
-- Deploy trigger (API): `fly deploy` (manual) or GitHub Actions (after CD workflow added)
+- Deploy trigger (API): `fly deploy` (manual) or GitHub Actions
 - Deploy trigger (Frontend): push to `main` (Vercel auto-deploy) or `cd src/apps/web && vercel --prod`
 - Deploy status (API): `fly status --app nova-video`
 - Health check (API): https://nova-video.fly.dev/health
@@ -294,33 +266,13 @@ tree, not the image). The deploy then failed on Fly. PR #119 (`121a6e9`) hotfixe
 every PR that touches `Dockerfile`, `.dockerignore`, or `src/apps/api/**` — so this
 class of bug fails on the PR, not on merge-to-main.
 
-
 ## Agentic workflow (how to work fast here)
 
-The fastest way to work in this repo is to delegate, not to open a new session per
-subtask. Context isolation is already automatic — use it.
-
-- **Default to subagents, not new sessions.** When a task splits into subtasks, spawn
-  a subagent (Agent tool) per heavy subtask from ONE orchestrating session. Each
-  subagent burns its own context window and returns only a summary, so the
-  orchestrator stays lean no matter how many subtasks run. Do NOT finish subtask 1,
-  open a new session, do subtask 2, etc. — that is hand-rolling what the Agent tool
-  does for free.
-- **Parallelize independent subtasks** in one message (multiple Agent calls) so they
-  run concurrently. Use `isolation: "worktree"` on any subagent that edits files in
-  parallel so they don't collide.
-- **For batchable work** — the same operation across N items (per-file transforms,
-  audits, migrations, multi-variant renders) — run the decompose workflow instead of
-  doing items one at a time: `Workflow({ scriptPath: ".claude/workflows/decompose.js",
-  args: { subtasks: [{title, prompt}, ...] } })`. Running ANY workflow needs explicit
-  opt-in — include the word "workflow" in the request. It fans out across subagents in
-  the background and returns one synthesized report.
-- **Prefer gbrain over grep for semantic lookups.** `gbrain search "<intent>"`,
-  `gbrain code-def <symbol>`, `gbrain code-callers <symbol>` for "where is X handled".
-  Grep is still right for exact strings and regex. (Pinned per-worktree via
-  `.gbrain-source`; `new-session.sh` propagates the pin to new worktrees.)
-- **Only start a new session when** the work is genuinely unrelated, or after a
-  deliberate `/context-save` → `/context-restore` handoff. Not per subtask.
+- **Default to subagents, not new sessions.** Spawn a subagent (Agent tool) per heavy subtask from ONE orchestrating session. Each subagent burns its own context window and returns only a summary. Do NOT open a new session per subtask.
+- **Parallelize independent subtasks** in one message (multiple Agent calls). Use `isolation: "worktree"` on subagents that edit files in parallel.
+- **For batchable work** across N items, run the decompose workflow: `Workflow({ scriptPath: ".claude/workflows/decompose.js", args: { subtasks: [{title, prompt}, ...] } })`. Running ANY workflow needs explicit opt-in — include the word "workflow" in the request.
+- **Prefer gbrain over grep for semantic lookups.** `gbrain search "<intent>"`, `gbrain code-def <symbol>`, `gbrain code-callers <symbol>`. Grep is still right for exact strings and regex.
+- **Only start a new session when** the work is genuinely unrelated, or after a deliberate `/context-save` → `/context-restore` handoff.
 
 ## GBrain Search Guidance (configured by /sync-gbrain)
 <!-- gstack-gbrain-search-guidance:start -->
