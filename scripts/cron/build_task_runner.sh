@@ -151,7 +151,7 @@ if [ "$CLAUDE_EXIT" -ne 0 ]; then
   fail_task "$TASK_ID" "claude exited $CLAUDE_EXIT (genuine error)"
 fi
 
-# ── 5. success: WIP commit + checkpoint, or complete ─────────────────────────
+# ── 5. success: WIP commit + push, then HAND OFF TO THE GATE (or release) ─────
 git add -A
 if ! git diff --cached --quiet; then
   git commit -m "wip(builder): chunk for $TASK_ID — $TASK_TITLE" --no-verify || true
@@ -159,10 +159,27 @@ if ! git diff --cached --quiet; then
   git push -u origin "$TASK_BRANCH" --no-verify || true
 fi
 
+# Does the branch carry real work (commits beyond origin/main)? Drives whether
+# there's anything to gate. HEAD is the exact commit the gate tick must match.
+git fetch origin main --quiet 2>/dev/null || true
+HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo "")"
+BASE_SHA="$(git rev-parse origin/main 2>/dev/null || echo "")"
+
 if grep -q 'TASK COMPLETE' builder_stdout.log 2>/dev/null; then
-  echo "[builder] task $TASK_ID reported complete"
-  $ADMIN PATCH "build-tasks/$TASK_ID" \
-    --json "{\"action\": \"complete\", \"branch\": $(json_str "$TASK_BRANCH"), \"progress_note\": \"task complete; PR ready for evening review\"}" || true
+  if [ -n "$HEAD_SHA" ] && [ "$HEAD_SHA" != "$BASE_SHA" ]; then
+    # Built + pushed → hand off to the gate tick (Phase 2). Records head_sha so
+    # the gate asserts it's gating the exact tree the builder pushed, then runs
+    # the hard gates + opens a PR. NOT `complete` — the gate decides the verdict.
+    echo "[builder] task $TASK_ID complete → handing to gate @ ${HEAD_SHA:0:12}"
+    $ADMIN PATCH "build-tasks/$TASK_ID" \
+      --json "{\"action\": \"start_gating\", \"head_sha\": $(json_str "$HEAD_SHA"), \"branch\": $(json_str "$TASK_BRANCH"), \"progress_note\": \"built; handed to the gate tick\"}" || true
+  else
+    # Agent reported done but the branch has no commits beyond main — nothing to
+    # gate or PR, so just mark it done.
+    echo "[builder] task $TASK_ID complete with no changes → done (nothing to gate)"
+    $ADMIN PATCH "build-tasks/$TASK_ID" \
+      --json "{\"action\": \"complete\", \"branch\": $(json_str "$TASK_BRANCH"), \"progress_note\": \"complete; no changes to gate\"}" || true
+  fi
 else
   echo "[builder] task $TASK_ID checkpointed (more work remains)"
   $ADMIN PATCH "build-tasks/$TASK_ID" \
@@ -170,4 +187,5 @@ else
 fi
 
 echo "[builder] tick $RUN_ID done"
+exit 0
 exit 0
