@@ -75,6 +75,14 @@ fi
 cd "$DEV_LOOP_REPO" || { echo "ERROR: cannot cd $DEV_LOOP_REPO" >&2; exit 1; }
 git fetch origin main --quiet 2>/dev/null || true
 
+# Activate the checkout's api venv if it's provisioned, so the gate's bare
+# `python`/`ruff`/`pytest` calls (like CI's activated venv) resolve WITH deps.
+# No-op if absent (e.g. a builder-only box). See DEV_LOOP_SETUP.md provisioning.
+if [ -f "src/apps/api/.venv/bin/activate" ]; then
+  # shellcheck disable=SC1091
+  source src/apps/api/.venv/bin/activate
+fi
+
 # ── overlap lock ─────────────────────────────────────────────────────────────
 # Keep a slow tick from stacking on the previous one, using the lib's portable
 # mkdir lock (flock is util-linux, absent on stock macOS). A DIFFERENT lock path

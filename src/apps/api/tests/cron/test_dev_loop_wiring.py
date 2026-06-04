@@ -69,8 +69,32 @@ def test_installer_strips_prod_key_from_seeded_env() -> None:
     )
 
 
+def test_builder_pushes_when_ahead_of_main() -> None:
+    # The agent is told to WIP-commit, so its work is already committed and
+    # nothing is staged. The push must fire on "branch ahead of origin/main",
+    # NOT only when there are uncommitted changes (else the branch never reaches
+    # origin and the gate can't fetch its head_sha).
+    text = (SCRIPTS_DIR / "build_task_runner.sh").read_text()
+    # the success-path push is conditioned on HEAD != BASE, then pushes
+    assert '!= "$BASE_SHA"' in text
+    idx = text.index('!= "$BASE_SHA"')
+    after = text[idx:]
+    assert 'git push -u origin "$TASK_BRANCH"' in after, (
+        "success-path push must be guarded by HEAD-ahead-of-main, not uncommitted-changes"
+    )
+
+
 @bash
-@pytest.mark.parametrize("script", ["dev_loop_tick.sh", "install-dev-loop.sh"])
+@pytest.mark.parametrize(
+    "script",
+    [
+        "dev_loop_tick.sh",
+        "install-dev-loop.sh",
+        "build_task_runner.sh",
+        "gate_runner.sh",
+        "_dev_loop_lib.sh",
+    ],
+)
 def test_shell_script_passes_bash_n(script: str) -> None:
     proc = subprocess.run(
         ["bash", "-n", str(SCRIPTS_DIR / script)],
