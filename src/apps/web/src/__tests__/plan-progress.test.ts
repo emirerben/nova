@@ -8,6 +8,8 @@ function item(day: number, status: PlanItemStatus): PlanItem {
     theme: "t",
     idea: "i",
     filming_suggestion: null,
+    rationale: null,
+    filming_guide: [],
     clip_gcs_paths: [],
     status,
     current_job_id: null,

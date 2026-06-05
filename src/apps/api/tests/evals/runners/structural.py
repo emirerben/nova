@@ -1291,6 +1291,13 @@ def check_content_plan_generator(
             failures.append(f"day_index {it.day_index} outside 1..{horizon}")
         if not it.theme.strip() or not it.idea.strip():
             failures.append(f"day {it.day_index}: empty theme or idea")
+        # Soft floor for filming_guide: empty list is fine (legacy items, new
+        # goldens have no guide yet); a non-empty guide must have valid shots.
+        for i, shot in enumerate(it.filming_guide):
+            if not shot.what.strip():
+                failures.append(f"day {it.day_index} shot {i}: empty 'what'")
+            if shot.duration_s < 1:
+                failures.append(f"day {it.day_index} shot {i}: duration_s={shot.duration_s} < 1")
     return failures
 
 

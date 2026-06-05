@@ -72,7 +72,14 @@ Build a $horizon_days-day content plan with about $target_item_count items total
       "idea": "one concrete video concept, specific to this creator",
       "filming_suggestion": "a practical tip for shooting it (setting, shot, time of day)",
       "rationale": "one short sentence, shown to the creator as 'why this works': why this idea fits them AND which proven lever it pulls (name a success factor above, e.g. save-worthy, hook in the first 2s, relatable one-liner).",
-      "edit_format": "one of: montage | talking_head | day_vlog | single_hero — the edit shape this idea should become (see rules)"
+      "edit_format": "one of: montage | talking_head | day_vlog | single_hero — the edit shape this idea should become (see rules)",
+      "filming_guide": [
+        {
+          "what": "what the camera points at — the specific subject or action",
+          "how": "angle, framing, or movement (can be empty if obvious)",
+          "duration_s": 5
+        }
+      ]
     }
   ]
 }
@@ -92,4 +99,14 @@ Rules:
     - single_hero — one strong continuous shot stands on its own (one cooked dish, one view, one outfit), minimal cutting.
     - montage — default: multiple short clips cut to music with text. Use when none of the above clearly fits.
   When unsure, use montage. Match the filming_suggestion: if it says "to camera", that is talking_head; if it spans a day, that is day_vlog.
+- filming_guide: 2–4 concrete shots the creator can capture in one short session. Each shot has:
+    - what: what the camera points at — specific subject or action (required, non-empty)
+    - how: angle / framing / movement, e.g. "handheld close-up" (optional, can be "")
+    - duration_s: rough clip length in seconds, integer 2–15
+  Shape the shots to the edit_format:
+    - montage: 3–4 varied cuts across the idea (different angles, actions, or moments)
+    - day_vlog: 2–4 shots in time order, spanning the outing or day
+    - talking_head: 1–2 shots — the to-camera take is always first; add B-roll only if it clearly helps
+    - single_hero: 1–2 shots of the hero subject from the best angle
+  filming_guide must agree with filming_suggestion (the one-liner summary). Same real-life moment, same place.
 - Output valid JSON and nothing else. No markdown.

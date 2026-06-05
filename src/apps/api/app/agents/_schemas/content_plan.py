@@ -39,10 +39,31 @@ from app.agents._schemas.persona import Persona
 # 2026-06-01.1 — weekly research refresh: content_ideas.json bumped to 2026-05-31
 #                (new market-research ideas). Bump invalidates the planner cache so
 #                the new ideas take effect on top of the dedup block.
-CONTENT_PLAN_PROMPT_VERSION = "2026-06-05"
+# 2026-06-05.1 — per-item filming_guide: 2-4 shots each with {what, how, duration_s},
+#                keyed to edit_format so montage/day_vlog/talking_head/single_hero each
+#                get the right shot shape. Stored on PlanItem as JSONB; rendered on the
+#                item detail page. filming_suggestion stays (feeds clip_plan_matcher).
+CONTENT_PLAN_PROMPT_VERSION = "2026-06-05.1"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60
+
+# Filming-guide constants — shared between the schema validator and parse().
+MAX_SHOTS_PER_ITEM = 4
+MIN_SHOT_DURATION_S = 1
+MAX_SHOT_DURATION_S = 60
+
+
+class ShotSpec(BaseModel):
+    """One concrete shot in a filming guide.
+
+    Best-effort: ``how`` is optional (an empty string is valid); ``duration_s``
+    is clamped server-side so an out-of-range LLM value never raises.
+    """
+
+    what: str = Field(min_length=1)  # what to film ("wide shot of the dish being plated")
+    how: str = ""  # angle / framing / movement ("handheld, eye level")
+    duration_s: int = Field(ge=MIN_SHOT_DURATION_S, le=MAX_SHOT_DURATION_S)
 
 
 class ContentPlanInput(BaseModel):
@@ -75,6 +96,10 @@ class PlanItemSpec(BaseModel):
     # dispatch. Defaults to (and coerces unknowns to) montage so a missing or
     # drifted LLM value never drops the item.
     edit_format: EditFormat = DEFAULT_EDIT_FORMAT
+    # Structured shot list, 2–4 shots keyed to the edit_format. Empty list is
+    # valid (covers legacy items and malformed LLM output); best-effort like
+    # filming_suggestion — a missing guide never drops an otherwise-good item.
+    filming_guide: list[ShotSpec] = Field(default_factory=list)
 
     @field_validator("edit_format", mode="before")
     @classmethod

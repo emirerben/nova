@@ -22,9 +22,13 @@ from pydantic import ValidationError
 from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents._schemas.content_plan import (
     CONTENT_PLAN_PROMPT_VERSION,
+    MAX_SHOT_DURATION_S,
+    MAX_SHOTS_PER_ITEM,
+    MIN_SHOT_DURATION_S,
     ContentPlanInput,
     ContentPlanOutput,
     PlanItemSpec,
+    ShotSpec,
 )
 from app.agents._schemas.persona import resolve_posts_per_week
 from app.agents.music_matcher import _sanitize_text
@@ -32,6 +36,52 @@ from app.agents.persona_examples import format_ideas_for_pillars, format_success
 from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
+
+
+def _parse_filming_guide(raw: object) -> list[ShotSpec]:
+    """Parse and sanitize the filming_guide field from a raw LLM dict.
+
+    Best-effort: any malformed input degrades to [] (never raises). The guide is
+    additive — a missing or garbage guide must never drop an otherwise-good plan item.
+
+    Defences applied per-shot:
+    - Non-list input → []
+    - Non-dict entry → skipped
+    - Non-str ``what`` (null, nested dict) → skipped (prevents ``str(None)``="None" corruption)
+    - Missing or empty ``what`` after sanitization → skipped (a shot without a subject is useless)
+    - ``_sanitize_text`` on ``what`` and ``how`` (untrusted-LLM-text defence)
+    - Non-str ``how`` (null, nested dict) → treated as "" (optional field)
+    - ``duration_s`` coerced to int, clamped to [MIN_SHOT_DURATION_S, MAX_SHOT_DURATION_S];
+      OverflowError (e.g. 400-digit JSON int) caught alongside TypeError/ValueError
+    - Total shots capped at MAX_SHOTS_PER_ITEM
+    """
+    if not isinstance(raw, list):
+        return []
+    shots: list[ShotSpec] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        # Guard: non-str 'what' (JSON null, nested dict/list) would stringify to
+        # "None" or a Python repr — skip the shot entirely rather than corrupt the DB.
+        what_raw = entry.get("what", "")
+        if not isinstance(what_raw, str):
+            continue
+        what = _sanitize_text(what_raw)
+        if not what:
+            continue  # skip: a shot without a subject is meaningless
+        # Guard: non-str 'how' (JSON null) → "" rather than "None".
+        how_raw = entry.get("how", "")
+        how = _sanitize_text(how_raw) if isinstance(how_raw, str) else ""
+        try:
+            duration_s = int(float(entry.get("duration_s", MIN_SHOT_DURATION_S)))
+        except (TypeError, ValueError, OverflowError):
+            # OverflowError: int(float(10**400)) fails; JSON has no integer size limit.
+            duration_s = MIN_SHOT_DURATION_S
+        duration_s = max(MIN_SHOT_DURATION_S, min(MAX_SHOT_DURATION_S, duration_s))
+        shots.append(ShotSpec(what=what, how=how, duration_s=duration_s))
+        if len(shots) >= MAX_SHOTS_PER_ITEM:
+            break
+    return shots
 
 
 def _preferences_block(summary: str) -> str:
@@ -156,6 +206,11 @@ class ContentPlanGeneratorAgent(Agent[ContentPlanInput, ContentPlanOutput]):
                     # Without this line, every item silently defaults to montage regardless
                     # of what the model emitted (parse-threading trap).
                     edit_format=raw.get("edit_format"),
+                    # Thread filming_guide through explicitly — the parse-threading trap
+                    # class: new list fields silently default to [] if not named here,
+                    # regardless of what the model emitted (same bug class as edit_format
+                    # before PR #448).
+                    filming_guide=_parse_filming_guide(raw.get("filming_guide")),
                 )
             )
 

@@ -296,9 +296,28 @@ export default function PlanItemPage() {
               <p className="text-sm text-zinc-300">{stripRationalePrefix(item.rationale)}</p>
             </div>
           )}
-          {item.filming_suggestion && (
+          {item.filming_guide && item.filming_guide.length > 0 ? (
+            <div className="mb-8 mt-1 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
+              <p className="mb-2 text-xs font-medium text-amber-300/80">🎬 How to film this</p>
+              <ol className="space-y-2">
+                {item.filming_guide.map((shot, i) => (
+                  <li key={i} className="flex items-start gap-2 text-sm">
+                    <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
+                      {shot.duration_s}s
+                    </span>
+                    <span>
+                      <span className="text-zinc-300">{shot.what}</span>
+                      {shot.how ? (
+                        <span className="text-zinc-500"> — {shot.how}</span>
+                      ) : null}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : item.filming_suggestion ? (
             <p className="mb-8 text-sm text-zinc-500">🎬 {item.filming_suggestion}</p>
-          )}
+          ) : null}
 
           {error && (
             <div className="mb-6 rounded border border-red-700 bg-red-950/50 px-4 py-3 text-red-200">

@@ -635,6 +635,10 @@ class PlanItem(Base):
     edit_format: Mapped[str] = mapped_column(Text, nullable=False, server_default="montage")
     # Themed uploads land here (users/{user_id}/plan/{plan_item_id}/...).
     clip_gcs_paths: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # Structured shot list generated at plan time: 2–4 shots, each {what, how, duration_s}.
+    # Stored as raw JSONB (no separate table) and returned read-only by the API.
+    # Legacy rows receive [] via server_default; no backfill needed.
+    filming_guide: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # idea | awaiting_clips ONLY. Render state is derived from current_job.status.
     item_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="idea")
     # Forward link to the job currently rendering this item (the circular pair's
@@ -802,8 +806,7 @@ class BuildTask(Base):
         # Keep in lockstep with STATUSES above + migration 0046's _STATUS_NEW.
         # create_all() (used by tests) reads THIS constraint, not the migration.
         CheckConstraint(
-            "status IN ('queued', 'in_progress', 'gating', "
-            "'awaiting_approval', 'blocked', 'done')",
+            "status IN ('queued', 'in_progress', 'gating', 'awaiting_approval', 'blocked', 'done')",
             name="ck_build_task_status",
         ),
         CheckConstraint(

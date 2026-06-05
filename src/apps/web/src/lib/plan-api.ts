@@ -130,6 +130,13 @@ export type PlanItemStatus =
   | "ready"
   | "failed";
 
+/** One concrete shot in a filming guide. */
+export interface FilmingShot {
+  what: string;
+  how: string;
+  duration_s: number;
+}
+
 export interface PlanItem {
   id: string;
   day_index: number;
@@ -139,6 +146,9 @@ export interface PlanItem {
   // The AI's "why this works" — shown read-only. null for items made before
   // this field shipped (the UI hides the line).
   rationale: string | null;
+  // Structured shot list generated at plan time. Empty for items made before
+  // this field shipped; the UI falls back to filming_suggestion in that case.
+  filming_guide: FilmingShot[];
   clip_gcs_paths: string[];
   status: PlanItemStatus;
   current_job_id: string | null;
