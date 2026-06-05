@@ -151,6 +151,131 @@ def test_anchored_count_mismatch_falls_back_to_fuzzy_align() -> None:
     assert 0.5 < result.confidence < 0.7
 
 
+def test_anchored_collapsed_word_cluster_spreads_local_phrase() -> None:
+    """Prod regression: Again / Roger Sanchez job 213243c6.
+
+    Whisper returned distinct words for the lyric text, but seven middle words
+    shared the same 50ms timing. That made karaoke sit on "I" and then flash
+    "don't even know why I put up" all at once.
+    """
+    line_text = "I swear to God, I don't even know why I put up with you"
+    anchors = [
+        SyncedLine(start_s=232.44, text=line_text),
+        SyncedLine(start_s=235.63, text="Ok stop"),
+    ]
+    whisper = [
+        _ww("I", 232.44, 232.86),
+        _ww("swear", 232.88, 233.267),
+        _ww("to", 233.307, 233.693),
+        _ww("God", 233.733, 234.12),
+        _ww("I", 234.14, 234.9),
+        _ww("don't", 234.92, 234.97),
+        _ww("even", 234.92, 234.97),
+        _ww("know", 234.92, 234.97),
+        _ww("why", 234.92, 234.97),
+        _ww("I", 234.92, 234.97),
+        _ww("put", 234.92, 234.97),
+        _ww("up", 234.92, 234.97),
+        _ww("with", 234.9, 235.66),
+        _ww("you", 235.68, 235.93),
+        _ww("Ok", 235.63, 235.86),
+        _ww("stop", 235.88, 236.18),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=237.0)
+    line = next(line for line in result.lines if line.text == line_text)
+    words = line.words
+
+    assert [w.text for w in words[4:13]] == [
+        "I",
+        "don't",
+        "even",
+        "know",
+        "why",
+        "I",
+        "put",
+        "up",
+        "with",
+    ]
+    starts = [w.start_s for w in words[4:13]]
+    assert len(set(starts)) == len(starts)
+    for prev, nxt in zip(words[4:12], words[5:13], strict=False):
+        assert prev.end_s <= nxt.start_s
+        assert nxt.start_s - prev.start_s >= 0.09
+    assert words[5].start_s < 234.3
+    assert words[7].start_s < 234.5
+    assert words[12].start_s == 234.9
+
+
+def test_anchored_late_anchor_uses_matching_prefix_from_lookback_without_global_shift() -> None:
+    """Prod regression: Again / Roger Sanchez job 213243c6.
+
+    LRCLIB's line anchor for "I swear to God..." landed ~1.16s after the
+    actual vocal. The old hard-window code excluded "I swear to God" before
+    alignment, so the whole line rendered late. The local prefix lookback
+    admits the real line start, but must not treat that one repaired line as
+    whole-track drift and shift the following "Ok stop" anchor earlier.
+    """
+    line_text = "I swear to God, I don't even know why I put up with you"
+    anchors = [
+        SyncedLine(start_s=232.44, text=line_text),
+        SyncedLine(start_s=235.63, text="Ok stop"),
+    ]
+    whisper = [
+        _ww("I", 231.28, 231.38),
+        _ww("swear", 231.38, 231.88),
+        _ww("to", 231.88, 232.08),
+        _ww("God", 232.08, 232.32),
+        _ww("I", 232.80, 232.85),
+        _ww("don't", 232.85, 233.12),
+        _ww("even", 233.12, 233.35),
+        _ww("know", 233.35, 233.57),
+        _ww("why", 233.57, 233.69),
+        _ww("I", 233.76, 233.79),
+        _ww("put", 233.90, 234.18),
+        _ww("up", 234.18, 234.40),
+        _ww("with", 234.80, 235.36),
+        _ww("you", 235.36, 235.58),
+        _ww("Ok", 235.70, 235.98),
+        _ww("stop", 236.05, 236.35),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=237.0)
+    line = next(line for line in result.lines if line.text == line_text)
+    ok_line = next(line for line in result.lines if line.text == "Ok stop")
+
+    assert line.start_s == 231.28
+    assert [w.start_s for w in line.words[:4]] == [231.28, 231.38, 231.88, 232.08]
+    # Without excluding local prefix repairs from global re-anchor, this
+    # would be rewritten to ~234.47s by the first-line -1.16s shift.
+    assert ok_line.start_s == 235.7
+
+
+def test_anchored_prefix_lookback_requires_strong_prefix(monkeypatch) -> None:
+    """Do not pull a line earlier from a single common pre-anchor word."""
+    from app.pipeline import lyrics_alignment
+
+    rec = _LogRecorder()
+    monkeypatch.setattr(lyrics_alignment, "log", rec)
+
+    anchors = [
+        SyncedLine(start_s=10.0, text="I swear to God"),
+        SyncedLine(start_s=14.0, text="next line"),
+    ]
+    whisper = [
+        _ww("I", 9.30, 9.40),
+        _ww("swear", 10.20, 10.55),
+        _ww("to", 10.60, 10.75),
+        _ww("God", 10.80, 11.10),
+        _ww("next", 14.10, 14.30),
+        _ww("line", 14.30, 14.60),
+    ]
+
+    align_with_line_anchors(anchors, whisper, track_end_s=15.0)
+
+    assert not rec.events_named("lyrics_alignment_anchor_prefix_lookback_applied")
+
+
 def test_anchored_zero_whisper_words_in_window_interpolates_linearly() -> None:
     """A window with zero matching Whisper words (Whisper missed a quiet
     line, or there's instrumental in this section). Distribute canonical

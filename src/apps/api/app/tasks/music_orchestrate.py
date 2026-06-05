@@ -41,6 +41,7 @@ from app.pipeline.music_recipe import (
     generate_music_recipe,
     merge_audio_recipe,
 )
+from app.services.lyrics_cache_refresh import ensure_fresh_lyrics_cached_for_render
 from app.services.lyrics_config_effective import effective_lyrics_config
 from app.services.music_sections import (
     reconcile_track_config_to_rank_one,
@@ -643,6 +644,13 @@ def _run_music_job(job_id: str) -> None:
         lyrics_config = _maybe_select_lyric_style_set(
             lyrics_config, track.ai_labels, track.title or ""
         )
+
+    lyrics_cached = ensure_fresh_lyrics_cached_for_render(
+        track_id=music_track_id,
+        lyrics_cached=lyrics_cached,
+        lyrics_config=lyrics_config,
+        reason="music_job",
+    )
 
     # [3] Generate recipe from beats
     recipe_dict = generate_music_recipe(track_data)
@@ -1333,13 +1341,14 @@ def _run_templated_music_job(job_id: str) -> None:
 
         if not job.music_track_id:
             raise ValueError("Job has no music_track_id")
+        music_track_id_tmpl = job.music_track_id
         all_candidates = job.all_candidates or {}
         clip_paths_gcs: list[str] = all_candidates.get("clip_paths", [])
         lyrics_config_override = all_candidates.get("lyrics_config_override") or None
 
-        track = db.get(MusicTrack, job.music_track_id)
+        track = db.get(MusicTrack, music_track_id_tmpl)
         if track is None:
-            raise ValueError(f"MusicTrack {job.music_track_id} not found")
+            raise ValueError(f"MusicTrack {music_track_id_tmpl} not found")
         if not track.audio_gcs_path:
             raise ValueError("MusicTrack has no audio_gcs_path")
         if not track.recipe_cached:
@@ -1354,6 +1363,13 @@ def _run_templated_music_job(job_id: str) -> None:
         lyrics_config_tmpl = _maybe_select_lyric_style_set(
             lyrics_config_tmpl, track.ai_labels, track.title or ""
         )
+
+    lyrics_cached_tmpl = ensure_fresh_lyrics_cached_for_render(
+        track_id=music_track_id_tmpl,
+        lyrics_cached=lyrics_cached_tmpl,
+        lyrics_config=lyrics_config_tmpl,
+        reason="templated_music_job",
+    )
 
     # Inject lyric overlays for templated tracks. `best_start_s` defaults to 0
     # for templated tracks (slot times already start at the beginning of the

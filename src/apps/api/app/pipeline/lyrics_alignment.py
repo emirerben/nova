@@ -20,10 +20,10 @@ Two entry points:
 
   align_with_line_anchors(anchor_lines, whisper_words, track_end_s)
       Used when the source provides line-level start times (LRCLIB
-      syncedLyrics). Each anchor line defines a hard time window; per-word
-      timing is distributed within the window using Whisper. Strictly
-      higher quality than the unanchored path because the line bounds are
-      exact rather than fuzzy-matched.
+      syncedLyrics). Each anchor line defines a primary time window;
+      per-word timing is distributed within the window using Whisper. A
+      narrow prefix lookback repairs isolated late anchors without turning
+      that local correction into a global audio-vs-LRC drift.
 
 This is a deliberately simple O(N*W) Needleman-Wunsch-style alignment with
 a small look-ahead window — it's pure Python, has no SciPy dependency, and
@@ -96,6 +96,32 @@ _NEXT_LINE_SAFETY_S = 0.05
 # gets `_MAX_INTERP_SLICE_S * this factor` seconds, sized below normal
 # karaoke pace so a noisy tail never runs long against the next line.
 _TRAILING_SPREAD_CONSERVATIVE_FACTOR = 0.5
+
+# Whisper occasionally returns a dense cluster of exact-count words with
+# effectively identical 50ms timings. If we cache those verbatim, karaoke
+# stays on the previous word and then flashes the clustered words all at once.
+_COLLAPSED_WORD_MAX_DUR_S = 0.08
+_COLLAPSED_RUN_MAX_SPAN_S = 0.12
+_COLLAPSED_RUN_MIN_WORDS = 2
+_COLLAPSED_EDGE_GAP_S = 0.08
+_COLLAPSED_EDGE_MIN_DUR_S = 0.25
+_COLLAPSED_MIN_SLICE_S = 0.05
+
+# LRCLIB syncedLyrics anchors are usually good line starts, but a single late
+# anchor can exclude the real opening words before alignment ever sees them.
+# Allow a narrow pre-anchor lookback only when the canonical line prefix is
+# clearly present before the anchor.
+_ANCHOR_PREFIX_LOOKBACK_S = 1.5
+_ANCHOR_PREFIX_LOOKBACK_MAX_WORDS = 5
+_ANCHOR_PREFIX_LOOKBACK_MIN_MATCHES = 3
+_ANCHOR_PREFIX_LOOKBACK_MIN_SHIFT_S = 0.2
+
+
+@dataclass(frozen=True, slots=True)
+class _PrefixLookbackMatch:
+    start_s: float
+    matched_count: int
+    matched_words: tuple[str, ...]
 
 
 def align(
@@ -225,6 +251,69 @@ def _find_match(
     if best_idx is None or best_score < _MIN_SIMILARITY:
         return None
     return best_idx
+
+
+def _count_ordered_prefix_matches(
+    expected_words: list[str],
+    whisper_words: list[WhisperWord],
+    *,
+    cursor: int = 0,
+) -> tuple[int, int | None, tuple[str, ...]]:
+    """Count how many canonical prefix words match in order from `cursor`."""
+    matched: list[str] = []
+    first_idx: int | None = None
+    next_cursor = cursor
+    for canonical_word in expected_words[:_ANCHOR_PREFIX_LOOKBACK_MAX_WORDS]:
+        match_idx = _find_match(canonical_word, whisper_words, next_cursor)
+        if match_idx is None:
+            break
+        if first_idx is None:
+            first_idx = match_idx
+        matched.append(canonical_word)
+        next_cursor = match_idx + 1
+    return len(matched), first_idx, tuple(matched)
+
+
+def _find_pre_anchor_prefix_match(
+    expected_words: list[str],
+    lookback_words: list[WhisperWord],
+    *,
+    anchor_start_s: float,
+) -> _PrefixLookbackMatch | None:
+    """Find a strong canonical prefix match just before a late LRC anchor."""
+    if len(expected_words) < _ANCHOR_PREFIX_LOOKBACK_MIN_MATCHES:
+        return None
+    if len(lookback_words) < _ANCHOR_PREFIX_LOOKBACK_MIN_MATCHES:
+        return None
+
+    best: _PrefixLookbackMatch | None = None
+    for cursor in range(len(lookback_words)):
+        matched_count, first_idx, matched_words = _count_ordered_prefix_matches(
+            expected_words,
+            lookback_words,
+            cursor=cursor,
+        )
+        if matched_count < _ANCHOR_PREFIX_LOOKBACK_MIN_MATCHES or first_idx is None:
+            continue
+
+        start_s = lookback_words[first_idx].start_s
+        if anchor_start_s - start_s < _ANCHOR_PREFIX_LOOKBACK_MIN_SHIFT_S:
+            continue
+
+        candidate = _PrefixLookbackMatch(
+            start_s=start_s,
+            matched_count=matched_count,
+            matched_words=matched_words,
+        )
+        if best is None:
+            best = candidate
+            continue
+        if candidate.matched_count > best.matched_count:
+            best = candidate
+        elif candidate.matched_count == best.matched_count and candidate.start_s < best.start_s:
+            best = candidate
+
+    return best
 
 
 def _build_line(
@@ -368,13 +457,16 @@ def _build_line(
         spans.append((start, end))
 
     # Build per-word objects (canonical text preserved).
-    aligned_words = tuple(
-        AlignedWord(
-            text=word,
-            start_s=round(spans[i][0], 3),
-            end_s=round(max(spans[i][1], spans[i][0] + 0.05), 3),
-        )
-        for i, (word, _, _) in enumerate(slots)
+    aligned_words = _repair_collapsed_word_runs(
+        tuple(
+            AlignedWord(
+                text=word,
+                start_s=round(spans[i][0], 3),
+                end_s=round(max(spans[i][1], spans[i][0] + 0.05), 3),
+            )
+            for i, (word, _, _) in enumerate(slots)
+        ),
+        line=canonical_line,
     )
 
     line_start = aligned_words[0].start_s
@@ -385,6 +477,110 @@ def _build_line(
         end_s=line_end,
         words=aligned_words,
     )
+
+
+def _repair_collapsed_word_runs(
+    words: tuple[AlignedWord, ...],
+    *,
+    line: str,
+) -> tuple[AlignedWord, ...]:
+    """Spread dense Whisper timestamp clusters across their local phrase."""
+    if len(words) < _COLLAPSED_RUN_MIN_WORDS:
+        return words
+
+    def _dur(word: AlignedWord) -> float:
+        return max(0.0, word.end_s - word.start_s)
+
+    def _run_span(items: list[AlignedWord]) -> float:
+        return max(w.end_s for w in items) - min(w.start_s for w in items)
+
+    out = list(words)
+    changed = False
+    i = 0
+    while i < len(out):
+        if _dur(out[i]) > _COLLAPSED_WORD_MAX_DUR_S:
+            i += 1
+            continue
+
+        run_start = i
+        run_end = i
+        run_items = [out[i]]
+        j = i + 1
+        while j < len(out) and _dur(out[j]) <= _COLLAPSED_WORD_MAX_DUR_S:
+            candidate = [*run_items, out[j]]
+            if _run_span(candidate) > _COLLAPSED_RUN_MAX_SPAN_S:
+                break
+            run_items.append(out[j])
+            run_end = j
+            j += 1
+
+        if run_end - run_start + 1 < _COLLAPSED_RUN_MIN_WORDS:
+            i = run_end + 1
+            continue
+
+        repair_start = run_start
+        repair_end = run_end
+        left_edge_added = False
+        right_boundary_s: float | None = None
+        run_min_start = min(w.start_s for w in run_items)
+        run_max_end = max(w.end_s for w in run_items)
+
+        if repair_start > 0:
+            prev = out[repair_start - 1]
+            if (
+                _dur(prev) >= _COLLAPSED_EDGE_MIN_DUR_S
+                and run_min_start - prev.end_s <= _COLLAPSED_EDGE_GAP_S
+            ):
+                repair_start -= 1
+                left_edge_added = True
+
+        if repair_end + 1 < len(out):
+            nxt = out[repair_end + 1]
+            if (
+                _dur(nxt) >= _COLLAPSED_EDGE_MIN_DUR_S
+                and nxt.start_s - run_max_end <= _COLLAPSED_EDGE_GAP_S
+            ):
+                if left_edge_added:
+                    right_boundary_s = nxt.start_s
+                else:
+                    repair_end += 1
+
+        count = repair_end - repair_start + 1
+        budget_start = out[repair_start].start_s
+        budget_end = right_boundary_s or out[repair_end].end_s
+        budget_s = budget_end - budget_start
+        if count <= 0 or budget_s < count * _COLLAPSED_MIN_SLICE_S:
+            i = run_end + 1
+            continue
+
+        slice_s = min(budget_s / count, _MAX_INTERP_SLICE_S)
+        rebuilt: list[AlignedWord] = []
+        for offset, original in enumerate(out[repair_start : repair_end + 1]):
+            start_s = budget_start + slice_s * offset
+            end_s = min(budget_end, start_s + slice_s)
+            if end_s - start_s < _COLLAPSED_MIN_SLICE_S:
+                end_s = min(budget_end, start_s + _COLLAPSED_MIN_SLICE_S)
+            rebuilt.append(
+                AlignedWord(
+                    text=original.text,
+                    start_s=round(start_s, 3),
+                    end_s=round(end_s, 3),
+                )
+            )
+
+        out[repair_start : repair_end + 1] = rebuilt
+        changed = True
+        log.warning(
+            "lyrics_alignment_collapsed_word_run_repaired",
+            line=line.strip()[:80],
+            collapsed_count=run_end - run_start + 1,
+            repaired_count=count,
+            old_start_s=round(budget_start, 3),
+            old_end_s=round(budget_end, 3),
+        )
+        i = repair_end + 1
+
+    return tuple(out) if changed else words
 
 
 # Safety fallback for the very last anchor line when neither track_end_s nor
@@ -519,12 +715,14 @@ def align_with_line_anchors(
     whisper_words: Sequence[WhisperWord] | tuple[WhisperWord, ...],
     track_end_s: float | None = None,
 ) -> AlignmentResult:
-    """Align canonical lines using LRC line timestamps as hard bounds.
+    """Align canonical lines using LRC line timestamps as line bounds.
 
-    Each `anchor_lines[i]` provides exact start time `t_i`; the line's window
-    is `[t_i, t_{i+1})` (last line uses `track_end_s` or
+    Each `anchor_lines[i]` provides primary start time `t_i`; the line's
+    window is `[t_i, t_{i+1})` (last line uses `track_end_s` or
     `whisper_words[-1].end_s + 0.5`). Per-word timing is distributed within
-    each window using Whisper's words.
+    each window using Whisper's words. If the canonical line prefix is
+    strongly present just before `t_i`, the window start is moved back for
+    that line only.
 
     Strictly higher quality than `align()`: line bounds are exact rather
     than recovered via fuzzy matching, so we don't bleed timing across
@@ -550,6 +748,10 @@ def align_with_line_anchors(
     # interpolation, matched_count = 0) lines from shift estimates — see the
     # constant block above for why.
     matched_counts: list[int] = []
+    # Parallel to aligned_lines. True means a line-specific prefix lookback
+    # moved the window start earlier than its LRC anchor. Those local fixes
+    # must not be used as evidence for whole-track re-anchoring.
+    local_anchor_adjusted: list[bool] = []
     total_words = 0
     matched_words = 0
 
@@ -575,13 +777,50 @@ def align_with_line_anchors(
         total_words += len(expected)
 
         words_in_window = [w for w in whisper_list if window_start <= w.start_s < window_end]
+        effective_window_start = window_start
+        prefix_match: _PrefixLookbackMatch | None = None
+
+        # If the line's own prefix is already visible inside the normal
+        # anchor window, keep the LRCLIB anchor as-is. The lookback is only
+        # for the bug class where a late anchor chopped off the line start.
+        in_window_prefix_count, _, _ = _count_ordered_prefix_matches(expected, words_in_window)
+        if in_window_prefix_count < _ANCHOR_PREFIX_LOOKBACK_MIN_MATCHES:
+            lookback_start = max(
+                anchor_lines[i - 1].start_s if i > 0 else 0.0,
+                window_start - _ANCHOR_PREFIX_LOOKBACK_S,
+            )
+            lookback_words = [w for w in whisper_list if lookback_start <= w.start_s < window_start]
+            prefix_match = _find_pre_anchor_prefix_match(
+                expected,
+                lookback_words,
+                anchor_start_s=window_start,
+            )
+            if prefix_match is not None:
+                effective_window_start = prefix_match.start_s
+                words_in_window = [
+                    w for w in whisper_list if effective_window_start <= w.start_s < window_end
+                ]
+                log.warning(
+                    "lyrics_alignment_anchor_prefix_lookback_applied",
+                    line=anchor.text.strip()[:80],
+                    anchor_s=round(window_start, 3),
+                    effective_start_s=round(effective_window_start, 3),
+                    shift_s=round(effective_window_start - window_start, 3),
+                    matched_prefix=list(prefix_match.matched_words),
+                    matched_count=prefix_match.matched_count,
+                )
 
         line, matched_in_line = _align_within_window(
-            anchor.text, expected, words_in_window, window_start, window_end
+            anchor.text,
+            expected,
+            words_in_window,
+            effective_window_start,
+            window_end,
         )
         if line is not None:
             aligned_lines.append(line)
             matched_counts.append(matched_in_line)
+            local_anchor_adjusted.append(prefix_match is not None)
             matched_words += matched_in_line
 
     confidence = (matched_words / total_words) if total_words else 0.0
@@ -614,6 +853,7 @@ def align_with_line_anchors(
         track_end_s=track_end_s,
         whisper_words=whisper_list,
         matched_counts=matched_counts,
+        local_anchor_adjusted=local_anchor_adjusted,
     )
 
     log.info(
@@ -647,6 +887,7 @@ def _maybe_reanchor_to_lrc(
     track_end_s: float | None,
     whisper_words: list[WhisperWord],
     matched_counts: list[int],
+    local_anchor_adjusted: list[bool] | None = None,
 ) -> list[AlignedLine]:
     """Decide whether to rewrite line bounds to `LRC_anchor[i] + shift`.
 
@@ -683,6 +924,10 @@ def _maybe_reanchor_to_lrc(
             word matches per line. Used to filter Strategy 3 (pure
             interpolation, shift=0 by construction) lines out of the
             linear and multi-line eligible sets.
+        local_anchor_adjusted: parallel to `aligned_lines`; marks lines
+            whose start was repaired with pre-anchor prefix lookback. These
+            local corrections are excluded from global drift estimation.
+            Defaults to all-False for legacy direct test calls.
     """
     if not aligned_lines or not anchor_lines:
         return aligned_lines
@@ -693,6 +938,12 @@ def _maybe_reanchor_to_lrc(
     # mis-alignment downstream.
     assert len(aligned_lines) == len(matched_counts), (
         f"matched_counts length ({len(matched_counts)}) must match "
+        f"aligned_lines length ({len(aligned_lines)})"
+    )
+    if local_anchor_adjusted is None:
+        local_anchor_adjusted = [False] * len(aligned_lines)
+    assert len(aligned_lines) == len(local_anchor_adjusted), (
+        f"local_anchor_adjusted length ({len(local_anchor_adjusted)}) must match "
         f"aligned_lines length ({len(aligned_lines)})"
     )
 
@@ -725,13 +976,16 @@ def _maybe_reanchor_to_lrc(
 
     # ── Path 0: linear fit for progressively drifting cuts ─────────────
     eligible_indices = [
-        i for i, mc in enumerate(matched_counts) if mc >= _MULTILINE_MATCHED_COUNT_THRESHOLD
+        i
+        for i, mc in enumerate(matched_counts)
+        if mc >= _MULTILINE_MATCHED_COUNT_THRESHOLD and not local_anchor_adjusted[i]
     ]
     linear_diag: dict[str, object] = {
         "aligned_count": len(aligned_lines),
         "eligible_count": len(eligible_indices),
         "eligible_threshold": _MULTILINE_MATCHED_COUNT_THRESHOLD,
         "matched_counts": list(matched_counts),
+        "local_anchor_adjusted": list(local_anchor_adjusted),
         "enabled": settings.lyric_linear_reanchor_enabled,
     }
     if settings.lyric_linear_reanchor_enabled:
@@ -772,6 +1026,7 @@ def _maybe_reanchor_to_lrc(
         "eligible_count": len(eligible_indices),
         "eligible_threshold": _MULTILINE_MATCHED_COUNT_THRESHOLD,
         "matched_counts": list(matched_counts),
+        "local_anchor_adjusted": list(local_anchor_adjusted),
     }
 
     if len(eligible_indices) >= _MULTILINE_MIN_ELIGIBLE_LINES:
@@ -886,6 +1141,16 @@ def _maybe_reanchor_to_lrc(
     first_aligned_start = aligned_lines[0].start_s
     first_anchor_start = anchor_lines[0].start_s
     audio_shift_s = first_aligned_start - first_anchor_start
+
+    if local_anchor_adjusted[0]:
+        log.info(
+            "lyrics_alignment_reanchor_no_shift",
+            path="none",
+            reason="first_line_local_anchor_adjusted",
+            audio_shift_s=round(audio_shift_s, 3),
+            threshold_s=_AUDIO_SHIFT_THRESHOLD_S,
+        )
+        return aligned_lines
 
     if abs(audio_shift_s) <= _AUDIO_SHIFT_THRESHOLD_S:
         log.info(
@@ -1055,9 +1320,7 @@ def _apply_shift(
         if i + 1 < len(anchor_lines):
             next_anchor = anchor_lines[i + 1]
             new_end = (
-                next_anchor.start_s
-                + shift_at(next_anchor.start_s)
-                - _REANCHOR_NEXT_LINE_SAFETY_S
+                next_anchor.start_s + shift_at(next_anchor.start_s) - _REANCHOR_NEXT_LINE_SAFETY_S
             )
         else:
             # Final line — no next anchor. Use whisper's last-word end (when
@@ -1150,13 +1413,16 @@ def _align_within_window(
     """
     # Strategy 1 — exact-count fast path.
     if len(whisper_words_in_window) == len(expected_words):
-        words = tuple(
-            AlignedWord(
-                text=expected_words[k],
-                start_s=round(whisper_words_in_window[k].start_s, 3),
-                end_s=round(whisper_words_in_window[k].end_s, 3),
-            )
-            for k in range(len(expected_words))
+        words = _repair_collapsed_word_runs(
+            tuple(
+                AlignedWord(
+                    text=expected_words[k],
+                    start_s=round(whisper_words_in_window[k].start_s, 3),
+                    end_s=round(whisper_words_in_window[k].end_s, 3),
+                )
+                for k in range(len(expected_words))
+            ),
+            line=anchor_text,
         )
         return (
             AlignedLine(
