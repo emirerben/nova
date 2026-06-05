@@ -438,6 +438,31 @@ def test_karaoke_line_honors_explicit_word_start_after_gap(tmp_workdir):
     )
 
 
+def test_karaoke_line_keeps_completed_word_highlighted(tmp_workdir):
+    """Between words, already-sung words stay yellow."""
+    overlay = {
+        "text": "wait now",
+        "start_s": 0.0,
+        "end_s": 1.5,
+        "position": "center",
+        "effect": "karaoke-line",
+        "word_timings": [
+            {"text": "wait", "start_s": 0.0, "end_s": 0.3, "duration_cs": 30},
+            {"text": "now", "start_s": 1.0, "end_s": 1.3, "duration_cs": 30},
+        ],
+        "font_family": "Inter",
+        "text_size_px": 110,
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFD24A",
+    }
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
+    assert seq is not None
+    frame_15 = os.path.join(tmp_workdir, f"skia_overlay_000_f{15:04d}.png")
+    assert os.path.exists(frame_15)
+    img = Image.open(frame_15)
+    assert _has_gold_pixel(img), "completed words should stay highlighted after being sung"
+
+
 def test_long_karaoke_line_uses_long_running_frame_ceiling(tmp_workdir):
     overlay = {
         "text": "one two three four five",

@@ -25,7 +25,7 @@ def test_hex_to_ass_bgr_swaps_bytes() -> None:
     assert _hex_to_ass_bgr("invalid") == "FFFFFF"
 
 
-def test_karaoke_line_renders_ass_file_with_k_tags() -> None:
+def test_karaoke_line_renders_ass_file_with_start_anchored_sung_words() -> None:
     overlays = [
         {
             "effect": "karaoke-line",
@@ -49,15 +49,19 @@ def test_karaoke_line_renders_ass_file_with_k_tags() -> None:
         assert len(ass_paths) == 1
 
         content = open(ass_paths[0]).read()  # noqa: PTH123, SIM115
-        # Has karaoke tags
-        assert r"\kt0\kf5" in content
-        assert r"\kt40\kf5" in content
+        assert r"\kt" not in content
+        assert r"\kf" not in content
+        dialogue_lines = [line for line in content.splitlines() if line.startswith("Dialogue:")]
+        assert len(dialogue_lines) == 2
+        assert "0:00:00.00,0:00:00.40" in dialogue_lines[0]
+        assert "0:00:00.40,0:00:01.00" in dialogue_lines[1]
         assert "Hello" in content
         assert "world" in content
-        # Primary / secondary colors emitted as BGR. In libass karaoke \kf,
-        # PrimaryColour is the active/sung highlight.
-        assert r"\1c&H00FFFF&" in content  # yellow highlight (#FFFF00 -> 00FFFF)
-        assert r"\2c&HFFFFFF&" in content  # white text_color
+        # ASS color encoding is BGR: yellow active word, white inactive word.
+        assert r"\1c&H00FFFF&}Hello" in dialogue_lines[0]
+        assert r"\1c&HFFFFFF&}world" in dialogue_lines[0]
+        assert r"\1c&H00FFFF&}Hello" in dialogue_lines[1]
+        assert r"\1c&H00FFFF&}world" in dialogue_lines[1]
 
 
 def test_karaoke_line_anchors_word_starts_and_preserves_gaps() -> None:
@@ -83,19 +87,20 @@ def test_karaoke_line_anchors_word_starts_and_preserves_gaps() -> None:
         )
         assert ass_paths is not None
         content = open(ass_paths[0]).read()  # noqa: PTH123, SIM115
-        assert r"\kt0\kf5" in content
-        assert r"\kt100\kf5" in content
-        assert r"\kf30" not in content
-        assert r"\kf100" not in content
+        assert r"\kt" not in content
+        assert r"\kf" not in content
+        dialogue_lines = [line for line in content.splitlines() if line.startswith("Dialogue:")]
+        assert len(dialogue_lines) == 2
+        assert "0:00:00.00,0:00:01.00" in dialogue_lines[0]
+        assert r"\1c&H00FFFF&}wait" in dialogue_lines[0]
+        assert r"\1c&HFFFFFF&}now" in dialogue_lines[0]
+        assert "0:00:01.00,0:00:01.50" in dialogue_lines[1]
+        assert r"\1c&H00FFFF&}wait" in dialogue_lines[1]
+        assert r"\1c&H00FFFF&}now" in dialogue_lines[1]
 
 
-def test_karaoke_ass_highlight_uses_short_onset_ramp_not_word_duration() -> None:
-    """ASS preview should switch highlight at word onset like Skia.
-
-    A duration-long `\\kf` fill makes the word look late even when `\\kt`
-    anchors the correct start. Keep the fill ramp short and let the start tag
-    carry timing.
-    """
+def test_karaoke_ass_highlight_switches_at_onset_and_keeps_sung_words() -> None:
+    """ASS preview should switch at word onset and keep completed words yellow."""
     overlays = [
         {
             "effect": "karaoke-line",
@@ -119,10 +124,22 @@ def test_karaoke_ass_highlight_uses_short_onset_ramp_not_word_duration() -> None
         assert ass_paths is not None
         content = open(ass_paths[0]).read()  # noqa: PTH123, SIM115
 
-    assert r"\kt0\kf5" in content
-    assert r"\kt25\kf5" in content
-    assert r"\kt45\kf5" in content
-    assert r"\kf50" not in content
+    assert r"\kt" not in content
+    assert r"\kf" not in content
+    dialogue_lines = [line for line in content.splitlines() if line.startswith("Dialogue:")]
+    assert len(dialogue_lines) == 3
+    assert "0:00:00.00,0:00:00.25" in dialogue_lines[0]
+    assert r"\1c&H00FFFF&}What" in dialogue_lines[0]
+    assert r"\1c&HFFFFFF&}comes" in dialogue_lines[0]
+    assert r"\1c&HFFFFFF&}next" in dialogue_lines[0]
+    assert "0:00:00.25,0:00:00.45" in dialogue_lines[1]
+    assert r"\1c&H00FFFF&}What" in dialogue_lines[1]
+    assert r"\1c&H00FFFF&}comes" in dialogue_lines[1]
+    assert r"\1c&HFFFFFF&}next" in dialogue_lines[1]
+    assert "0:00:00.45,0:00:02.00" in dialogue_lines[2]
+    assert r"\1c&H00FFFF&}What" in dialogue_lines[2]
+    assert r"\1c&H00FFFF&}comes" in dialogue_lines[2]
+    assert r"\1c&H00FFFF&}next" in dialogue_lines[2]
 
 
 def test_karaoke_line_wraps_long_text_without_shrinking_ass_font() -> None:

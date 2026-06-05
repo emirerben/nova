@@ -873,6 +873,93 @@ def _wrap_karaoke_timed_words_for_ass(
     ]
 
 
+def _normalize_karaoke_timed_words(timings: list[dict]) -> list[dict]:
+    timed_words: list[dict] = []
+    cursor_s = 0.0
+    for w in timings:
+        word_text = str(w.get("text", "")).strip()
+        if not word_text:
+            continue
+        start_word_s = max(0.0, _finite_float(w.get("start_s"), cursor_s))
+        fallback_dur_s = max(0.05, _finite_float(w.get("duration_cs"), 30.0) / 100.0)
+        raw_end_s = _finite_float(w.get("end_s"), start_word_s + fallback_dur_s)
+        end_word_s = raw_end_s if raw_end_s > start_word_s else start_word_s + fallback_dur_s
+        end_word_s = max(end_word_s, start_word_s + 0.05)
+        dur_cs = max(5, int(round((end_word_s - start_word_s) * 100.0)))
+        timed_words.append(
+            {
+                "index": len(timed_words),
+                "text": word_text,
+                "start_s": start_word_s,
+                "end_s": end_word_s,
+            }
+        )
+        cursor_s = max(cursor_s, start_word_s + dur_cs / 100.0)
+    return timed_words
+
+
+def _karaoke_active_dialogue_text(
+    wrapped_words: list[list[dict]],
+    *,
+    highlighted_indices: set[int],
+    pos_or_align: str,
+    outline_tag: str,
+    fs_tag: str,
+    active_bgr: str,
+    inactive_bgr: str,
+) -> str:
+    parts = [f"{{{pos_or_align}\\q2{outline_tag}{fs_tag}}}"]
+    for line_idx, line in enumerate(wrapped_words):
+        if line_idx > 0:
+            parts.append(r"\N")
+        for word in line:
+            bgr = active_bgr if int(word["index"]) in highlighted_indices else inactive_bgr
+            parts.append(f"{{\\1c&H{bgr}&}}{word['text']} ")
+    return "".join(parts).rstrip()
+
+
+def _karaoke_active_dialogue_events(
+    *,
+    start_s: float,
+    end_s: float,
+    timed_words: list[dict],
+    wrapped_words: list[list[dict]],
+    pos_or_align: str,
+    outline_tag: str,
+    fs_tag: str,
+    active_bgr: str,
+    inactive_bgr: str,
+) -> list[tuple[float, float, str]]:
+    duration_s = max(0.0, end_s - start_s)
+    if duration_s <= 0:
+        return []
+    points = {0.0, duration_s}
+    for word in timed_words:
+        word_start = max(0.0, min(duration_s, float(word["start_s"])))
+        points.add(word_start)
+
+    events: list[tuple[float, float, str]] = []
+    sorted_points = sorted(points)
+    for seg_start, seg_end in zip(sorted_points, sorted_points[1:], strict=False):
+        if seg_end - seg_start < 0.01:
+            continue
+        midpoint = (seg_start + seg_end) / 2.0
+        highlighted = {
+            int(word["index"]) for word in timed_words if float(word["start_s"]) <= midpoint
+        }
+        dialogue_text = _karaoke_active_dialogue_text(
+            wrapped_words,
+            highlighted_indices=highlighted,
+            pos_or_align=pos_or_align,
+            outline_tag=outline_tag,
+            fs_tag=fs_tag,
+            active_bgr=active_bgr,
+            inactive_bgr=inactive_bgr,
+        )
+        events.append((start_s + seg_start, start_s + seg_end, dialogue_text))
+    return events
+
+
 def _emit_lyric_line_alpha_tags(
     section_start_s: float,
     section_end_s: float,
@@ -964,8 +1051,6 @@ def _write_animated_ass(
     `text_anchor` selects the horizontal side of explicit coordinates.
     """
     alignment, margin_v = _ASS_POSITION.get(position, (5, 0))
-    start_str = format_ass_time(start_s)
-    end_str = format_ass_time(end_s)
 
     # Resolve horizontal anchor — explicit x_frac wins, otherwise center.
     if position_x_frac is not None:
@@ -985,6 +1070,7 @@ def _write_animated_ass(
         pos_tag = f"\\pos({target_x},{target_y})"
     explicit_alignment = _ass_explicit_pos_alignment(text_anchor)
     pos_or_align = f"\\an{explicit_alignment}{pos_tag}" if pos_tag else f"\\an{alignment}"
+    dialogue_events: list[tuple[float, float, str]] | None = None
 
     # Optional black outline override via \bord + \3c (outline colour) tags
     outline_tag = ""
@@ -1087,13 +1173,9 @@ def _write_animated_ass(
 
     elif effect == "karaoke-line":
         # Sing-along: the full line is visible for the overlay duration. Each
-        # word is wrapped in ASS karaoke timing tags `{\kt<start>\kf<ramp>}`.
-        # `\kt` anchors the word to the real overlay-relative vocal onset;
-        # without it, lyric alignment gaps get flattened into the following
-        # word and the highlight drifts. Keep the `\kf` ramp deliberately tiny:
-        # Skia switches words to highlight color at start_s, and the ASS preview
-        # should match that onset-based contract instead of slowly filling over
-        # the whole sung word and looking late.
+        # word switches to highlight color at its real overlay-relative vocal
+        # onset. Completed words stay highlighted so the ASS preview matches the
+        # Skia contract and the approved admin render.
         timings = word_timings or []
         base_size = int(text_size_px) if text_size_px else OVERLAY_FONT_SIZE
         fs_tag = f"\\fs{base_size}" if base_size != OVERLAY_FONT_SIZE else ""
@@ -1111,48 +1193,30 @@ def _write_animated_ass(
                 text = "\\N".join(lines)
             dialogue_text = f"{{{pos_or_align}\\q2{outline_tag}{fs_tag}}}{text}"
         else:
-            # ASS color encoding is &HBBGGRR& (note byte order). With \kf,
-            # SecondaryColour is the unsung baseline and PrimaryColour is the
-            # active/sung highlight after the fill completes.
-            primary_bgr = _hex_to_ass_bgr(highlight_color or "#FFFF00")
-            secondary_bgr = _hex_to_ass_bgr(text_color or "#FFFFFF")
-            parts = [
-                f"{{{pos_or_align}\\q2{outline_tag}{fs_tag}"
-                f"\\1c&H{primary_bgr}&\\2c&H{secondary_bgr}&}}"
-            ]
-            # `\kt` / `\kf` payloads are in centiseconds. We clamp each word
-            # to at least 5cs (50ms) so karaoke never emits a zero-length
-            # token which libass renders as an immediate primary-color flash.
-            cursor_s = 0.0
-            timed_words: list[dict] = []
-            for w in timings:
-                word_text = str(w.get("text", "")).strip()
-                if not word_text:
-                    continue
-                start_word_s = max(0.0, _finite_float(w.get("start_s"), cursor_s))
-                fallback_dur_s = max(
-                    0.05, _finite_float(w.get("duration_cs"), 30.0) / 100.0
-                )
-                end_word_s = _finite_float(w.get("end_s"), start_word_s + fallback_dur_s)
-                dur_s = (
-                    end_word_s - start_word_s
-                    if end_word_s > start_word_s
-                    else fallback_dur_s
-                )
-                word_dur_cs = max(5, int(round(dur_s * 100.0)))
-                ramp_cs = max(1, min(5, word_dur_cs))
-                start_cs = max(0, int(round(start_word_s * 100.0)))
-                timed_words.append({"text": word_text, "start_cs": start_cs, "dur_cs": ramp_cs})
-                cursor_s = max(cursor_s, start_word_s + word_dur_cs / 100.0)
+            # ASS color encoding is &HBBGGRR& (note byte order). Built-in
+            # karaoke tags are cumulative: a word becomes fully highlighted
+            # only after the sung duration elapses and then stays highlighted
+            # forever. Admin previews need start-anchored highlighting while
+            # still keeping already-sung words yellow, so emit contiguous
+            # dialogue slices instead.
+            active_bgr = _hex_to_ass_bgr(highlight_color or "#FFFF00")
+            inactive_bgr = _hex_to_ass_bgr(text_color or "#FFFFFF")
+            timed_words = _normalize_karaoke_timed_words(timings)
             wrapped_words = _wrap_karaoke_timed_words_for_ass(timed_words, font_family, base_size)
-            for line_idx, line in enumerate(wrapped_words):
-                if line_idx > 0:
-                    parts.append(r"\N")
-                for word in line:
-                    parts.append(
-                        f"{{\\kt{word['start_cs']}\\kf{word['dur_cs']}}}{word['text']} "
-                    )
-            dialogue_text = "".join(parts).rstrip()
+            if timed_words and wrapped_words:
+                dialogue_events = _karaoke_active_dialogue_events(
+                    start_s=start_s,
+                    end_s=end_s,
+                    timed_words=timed_words,
+                    wrapped_words=wrapped_words,
+                    pos_or_align=pos_or_align,
+                    outline_tag=outline_tag,
+                    fs_tag=fs_tag,
+                    active_bgr=active_bgr,
+                    inactive_bgr=inactive_bgr,
+                )
+            if not dialogue_events:
+                dialogue_text = f"{{{pos_or_align}\\q2{outline_tag}{fs_tag}}}{text}"
 
     elif effect == "lyric-line":
         # YouTube-lyric-video style: one static line of plain text with a
@@ -1239,9 +1303,13 @@ def _write_animated_ass(
         f.write(header)
         f.write("\n[Events]\n")
         f.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
-        f.write(
-            f"Dialogue: 0,{start_str},{end_str},{style_name},,0,0,{margin_v},,{dialogue_text}\n"
-        )
+        rows = dialogue_events or [(start_s, end_s, dialogue_text)]
+        for row_start_s, row_end_s, row_text in rows:
+            f.write(
+                "Dialogue: "
+                f"0,{format_ass_time(row_start_s)},{format_ass_time(row_end_s)},"
+                f"{style_name},,0,0,{margin_v},,{row_text}\n"
+            )
 
 
 def _validate_ass_file(path: str) -> bool:

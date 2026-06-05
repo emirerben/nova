@@ -89,6 +89,19 @@ from app.services.music_sections import current_best_section_for_track
 log = structlog.get_logger()
 router = APIRouter()
 
+_ALT_STYLE_PREVIEW_RESET_KEYS = frozenset(
+    {
+        "font_family",
+        "font_style",
+        "highlight_color",
+        "outline_px",
+        "sync_offset_s",
+        "text_size",
+        "text_color",
+    }
+)
+_DEFAULT_ALT_STYLE_SET_ID = "default"
+
 
 # ── Auth ───────────────────────────────────────────────────────────────────────
 
@@ -1526,6 +1539,13 @@ async def create_admin_lyrics_preview(
     # handler runs. No runtime re-check needed here.
     try:
         merged = effective_lyrics_config(track.track_config, override)
+        track_lyrics_cfg = (
+            (track.track_config or {}).get("lyrics_config")
+            if isinstance(track.track_config, dict)
+            else {}
+        )
+        saved_style = track_lyrics_cfg.get("style") if isinstance(track_lyrics_cfg, dict) else None
+        is_alt_style_preview = req.style != "line" and req.style != saved_style
         # When the admin picks a non-Line style for preview, the merged
         # config may still carry line-only knobs (pre_roll_s, fade_in_ms, …)
         # inherited from track_config.lyrics_config. The validator rejects
@@ -1534,6 +1554,13 @@ async def create_admin_lyrics_preview(
         # one-shot, request-scoped projection for previewing only.
         if req.style != "line":
             merged = {k: v for k, v in merged.items() if k not in _LINE_ONLY_KEYS_RUNTIME}
+        if is_alt_style_preview:
+            # Alt-style preview slots should show the selected style's own
+            # visual/timing defaults, not stale Line tuning. Keep an explicit
+            # request override when the admin is tuning this Karaoke render.
+            reset_keys = _ALT_STYLE_PREVIEW_RESET_KEYS - set(override)
+            merged = {k: v for k, v in merged.items() if k not in reset_keys}
+            merged.setdefault("style_set_id", _DEFAULT_ALT_STYLE_SET_ID)
         effective = {**merged, "enabled": True, "style": req.style}
         validate_lyrics_config_dict(effective)
     except ValueError as exc:
