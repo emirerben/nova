@@ -3,9 +3,11 @@
 Locks the cumulative-reveal contracts that prevent visual overlap and
 "double pop" stutters:
   - Stages are strictly monotonically non-decreasing in start_s.
-  - Adjacent stages butt-join (end of N == start of N+1) so two cumulative
-    reveals never render simultaneously — the same invariant the
+  - Adjacent stages within one line butt-join (end of N == start of N+1) so two
+    cumulative reveals never render simultaneously — the same invariant the
     line-style overlap-prevention enforces, scaled to per-word grain.
+  - When the next lyric line starts before a stale cached line end, the outgoing
+    line clears by a one-frame gap before the new line claims the lane.
   - Each stage carries the `pop_animated_suffix` field marking which word
     pops on entry (the renderer keeps the prefix static — without this
     field every stage would re-animate the entire line).
@@ -20,8 +22,13 @@ import math
 
 import pytest
 
+from app.pipeline.lyric_injector import _WORD_POP_LINE_CLEAR_GAP_S, inject_lyric_overlays
 from app.pipeline.lyric_word_resync import resync_slot_overlays
-from tests.pipeline._lyric_invariant_helpers import inject_overlays_for_style
+from tests.pipeline._lyric_invariant_helpers import (
+    build_single_slot_recipe,
+    inject_overlays_for_style,
+    make_lyrics_cached,
+)
 
 # Per-stage gap below which we declare two stages as butted (adjacent),
 # accounting for the 3-decimal rounding inside `_inject_per_word_pop`.
@@ -82,6 +89,18 @@ def _nested_adlib_fixture() -> list[dict]:
     ]
 
 
+def _two_word_line() -> dict:
+    return {
+        "text": "Hello there",
+        "start_s": 1.0,
+        "end_s": 2.0,
+        "words": [
+            {"text": "Hello", "start_s": 1.0, "end_s": 1.4},
+            {"text": "there", "start_s": 1.4, "end_s": 2.0},
+        ],
+    }
+
+
 # ── per-stage shape invariants ─────────────────────────────────────────────
 
 
@@ -112,6 +131,72 @@ def test_popup_stages_carry_pop_animated_suffix_field() -> None:
         assert isinstance(suffix, str) and suffix.strip(), (
             f"missing or empty pop_animated_suffix on stage {ov.get('text')!r}"
         )
+
+
+def test_popup_no_stack_ignores_template_pop_suffix_overlays() -> None:
+    """A template text overlay can also carry ``pop_animated_suffix``.
+
+    The lyric no-stack cleanup must only touch lyric-owned pop stages, not
+    pre-existing template text that happens to use the same renderer hint.
+    """
+    template_overlay = {
+        "text": "Template hook",
+        "effect": "pop-in",
+        "pop_animated_suffix": "hook",
+        "start_s": 0.0,
+        "end_s": 5.0,
+        "position": "bottom",
+        "position_x_frac": 0.06,
+        "text_anchor": "left",
+    }
+    recipe = build_single_slot_recipe(target_duration_s=6.0)
+    recipe["slots"][0]["text_overlays"] = [template_overlay]
+
+    out = inject_lyric_overlays(
+        recipe,
+        make_lyrics_cached(lines=[_two_word_line()]),
+        best_start_s=0.0,
+        best_end_s=6.0,
+        lyrics_config={"enabled": True, "style": "per-word-pop"},
+    )
+
+    rendered_template = out["slots"][0]["text_overlays"][0]
+    assert rendered_template["text"] == "Template hook"
+    assert rendered_template["start_s"] == 0.0
+    assert rendered_template["end_s"] == 5.0
+
+
+def test_popup_no_stack_ignores_malformed_non_lyric_pop_suffix_overlays() -> None:
+    """Malformed recipe text should not crash lyric injection.
+
+    Recipes come from JSONB/admin-edited sources, so a non-lyric overlay with a
+    renderer suffix hint and bad timing must be ignored by the lyric cleanup.
+    """
+    template_overlay = {
+        "text": "Template hook",
+        "effect": "pop-in",
+        "pop_animated_suffix": "hook",
+        "start_s": "not-a-number",
+        "end_s": "also-not-a-number",
+        "position": "bottom",
+        "position_x_frac": 0.06,
+        "text_anchor": "left",
+    }
+    recipe = build_single_slot_recipe(target_duration_s=6.0)
+    recipe["slots"][0]["text_overlays"] = [template_overlay]
+
+    out = inject_lyric_overlays(
+        recipe,
+        make_lyrics_cached(lines=[_two_word_line()]),
+        best_start_s=0.0,
+        best_end_s=6.0,
+        lyrics_config={"enabled": True, "style": "per-word-pop"},
+    )
+
+    rendered_template = out["slots"][0]["text_overlays"][0]
+    assert rendered_template["text"] == "Template hook"
+    assert rendered_template["start_s"] == "not-a-number"
+    assert rendered_template["end_s"] == "also-not-a-number"
 
 
 def test_popup_stages_are_monotonic_in_start_s() -> None:
@@ -278,6 +363,102 @@ def test_popup_drops_leading_sentence_tail_from_clamped_preview_start() -> None:
     assert not any(text.startswith("do") for text in texts)
     assert any(text.startswith("You men") for text in texts)
     assert texts[-1] == "You men are all alike"
+
+
+def test_popup_drops_repeated_parenthetical_prefix_from_clamped_marea_preview() -> None:
+    """Regression for Marea pop-up preview job c9dc62c7.
+
+    The preview starts inside ``Day by day (we've lost dancing)``. Pop-up used
+    the raw section-clamped words and opened on ``by day`` even though the
+    audible hook is the parenthetical phrase.
+    """
+    overlays = inject_overlays_for_style(
+        style="per-word-pop",
+        target_duration_s=15.3,
+        best_start_s=155.7,
+        best_end_s=171.0,
+        lines=[
+            {
+                "text": "Day by day (we've lost dancing)",
+                "start_s": 155.02,
+                "end_s": 158.34,
+                "words": [
+                    {"text": "Day", "start_s": 155.02, "end_s": 155.28},
+                    {"text": "by", "start_s": 155.28, "end_s": 155.94},
+                    {"text": "day", "start_s": 156.04, "end_s": 157.02},
+                    {"text": "we've", "start_s": 157.02, "end_s": 157.02},
+                    {"text": "lost", "start_s": 157.02, "end_s": 157.62},
+                    {"text": "dancing", "start_s": 157.62, "end_s": 158.34},
+                ],
+            },
+            {
+                "text": "Marvellous",
+                "start_s": 170.12,
+                "end_s": 171.94,
+                "words": [
+                    {"text": "Marvellous", "start_s": 170.12, "end_s": 171.94},
+                ],
+            },
+        ],
+    )
+
+    texts = [str(ov.get("text", "")).strip() for ov in overlays]
+    assert texts
+    assert texts[0] == "we've lost"
+    assert "we've lost dancing" in texts
+    assert not any(text.startswith("by") or text.startswith("day") for text in texts)
+
+
+def test_popup_clips_previous_line_when_next_long_line_starts_before_cached_line_end() -> None:
+    """Regression for Marea pop-up preview job c9dc62c7 around ``Will``.
+
+    LRCLIB can leave the previous line's cached end past the next line's first
+    word. The terminal cumulative stage must clear when the next pop-up line
+    starts; otherwise the frame reads as overlapping ``Will`` + ``What`` text.
+    """
+    overlays = inject_overlays_for_style(
+        style="per-word-pop",
+        target_duration_s=15.3,
+        lines=[
+            {
+                "text": "What comes next",
+                "start_s": 7.8,
+                # Overlong line bound: last word ends at 9.15s, but the cached
+                # line lingers into the next lyric line.
+                "end_s": 11.4,
+                "words": [
+                    {"text": "What", "start_s": 7.8, "end_s": 8.2},
+                    {"text": "comes", "start_s": 8.2, "end_s": 8.65},
+                    {"text": "next", "start_s": 8.65, "end_s": 9.15},
+                ],
+            },
+            {
+                "text": "Will be marvellous",
+                "start_s": 10.8,
+                "end_s": 13.0,
+                "words": [
+                    {"text": "Will", "start_s": 10.8, "end_s": 11.15},
+                    {"text": "be", "start_s": 11.15, "end_s": 11.5},
+                    {"text": "marvellous", "start_s": 11.5, "end_s": 13.0},
+                ],
+            },
+        ],
+    )
+
+    stage_by_text = {str(ov.get("text", "")).strip(): ov for ov in overlays}
+    what_end_s = float(stage_by_text["What comes next"]["end_s"])
+    will_start_s = float(stage_by_text["Will"]["start_s"])
+    assert what_end_s == pytest.approx(
+        will_start_s - _WORD_POP_LINE_CLEAR_GAP_S,
+        abs=_BUTT_JOIN_EPSILON_S,
+    )
+    assert what_end_s < will_start_s
+    active_at_will = [
+        str(ov.get("text", "")).strip()
+        for ov in overlays
+        if float(ov["start_s"]) <= will_start_s < float(ov["end_s"])
+    ]
+    assert active_at_will == ["Will"]
 
 
 def test_popup_repairs_collapsed_non_monotonic_word_timings_for_sync() -> None:

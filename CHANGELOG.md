@@ -2,15 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.77.2] - 2026-06-05
+## [0.4.78.1] - 2026-06-05
 
 ### Fixed
 - **Lyric preview jobs now reject stale non-renderable cached lyrics before queueing a render.** Admin preview and enable-lyrics routes share the injector's renderable source allowlist, so Whisper-only cache drift surfaces an actionable LRCLIB/manual-recovery error instead of failing later in the worker. Legacy `genius+whisper` caches remain renderable.
 - **Stale LRCLIB refresh failures now leave tracks in the manual recovery state.** When a render-time stale refresh cannot produce publishable LRCLIB lyrics, the cache is cleared, the Whisper draft is preserved, and diagnostics are recorded so admins can recover with a forced LRCLIB row instead of retrying the same failed preview.
 
+## [0.4.78.0] - 2026-06-05
+
+### Fixed
+- **Karaoke lyric previews now start on the audible hook text instead of stale repeated context.** When a preview begins inside a parenthetical lyric such as Marea's `"Day by day (we've lost dancing)"`, karaoke word timings now trim the same dropped prefix as the displayed line, so the first scene renders `"we've lost dancing"` without the stray `"day"`.
+- **Karaoke preview highlights now hit word onsets instead of lagging through the word duration.** The ASS preview path keeps `\kt` anchored to the real word start and uses a short highlight ramp, so phrases like `"What comes next"` are already yellow when they have been sung while preserving the following lyric sequence.
+
 ## [0.4.77.1] - 2026-06-05
 
 ### Fixed
+- **Pop-up lyric previews now trim repeated hook lead-ins and clear stale line tails.** The per-word pop injector drops repeated parenthetical prefixes when a preview starts mid-line and clamps any previous same-lane pop-up stage when the next lyric begins. The production preview job `c9dc62c7-1215-4e49-a12e-b6912d359a63` now opens on the audible hook and no longer stacks the prior line tail under the next word.
 - **Pop-up lyric previews now clear overlapping lyric lines before the next vocal line appears.** The per-word pop injector truncates an outgoing cumulative line when the next lyric line starts before that row's own end time, preventing the Billie Jean preview job `20ebb8b8-b604-435d-961e-6ff1f6873b96` from rendering `She` on top of the previous `Do think twice Ah-hoo` popup. Regression coverage locks the one-frame clear gap and verifies the Line-style frozen range still points at unchanged Line code.
 
 ## [0.4.76.1] - 2026-06-05

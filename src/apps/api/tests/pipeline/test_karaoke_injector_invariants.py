@@ -188,9 +188,9 @@ def test_karaoke_word_timings_strictly_monotonic_in_start_s() -> None:
 
 
 def test_karaoke_duration_cs_payload_present_and_non_negative() -> None:
-    """`duration_cs` is the libass `\\kf` payload (centiseconds, integer).
-    Missing or negative values cause the ASS writer to either skip the
-    word or generate malformed tags. Pin both presence and lower bound.
+    """`duration_cs` is the centisecond fallback for karaoke word duration.
+    Missing or negative values leave renderers without a safe cursor advance
+    when explicit word starts/ends are absent. Pin presence and lower bound.
     """
     overlays = inject_overlays_for_style(style="karaoke", lines=_two_line_fixture())
     for ov in overlays:
@@ -518,3 +518,47 @@ def test_karaoke_finalize_keeps_meaningful_final_partial_with_rebuilt_timings() 
     assert [w["text"] for w in result["word_timings"]] == ["A", "B", "C", "D"]
     span = result["end_s"] - result["start_s"]
     assert all(float(w["end_s"]) <= span + 1e-6 for w in result["word_timings"])
+
+
+def test_karaoke_finalize_drops_marea_dangling_parenthetical_prefix() -> None:
+    """Karaoke must share Line's clipped-parenthetical cleanup.
+
+    Marea's preview can start inside ``Day by day (we've lost dancing)``.
+    The audible word slice is ``day we've lost dancing``, but the rendered hook
+    should be just ``we've lost dancing`` because the leading ``day`` is the
+    repeated pre-parenthetical tail. Since karaoke renders from word_timings,
+    the stale word must be removed from both text and timing rows.
+    """
+    original_words = [
+        {"text": "Day", "start_s_song": 155.02, "end_s_song": 155.28},
+        {"text": "by", "start_s_song": 155.28, "end_s_song": 155.94},
+        {"text": "day", "start_s_song": 156.04, "end_s_song": 157.02},
+        {"text": "we've", "start_s_song": 157.02, "end_s_song": 157.02},
+        {"text": "lost", "start_s_song": 157.02, "end_s_song": 157.62},
+        {"text": "dancing", "start_s_song": 157.62, "end_s_song": 158.34},
+    ]
+    first_line = _karaoke_overlay(
+        text="Day by day (we've lost dancing)",
+        start_s=0.0,
+        end_s=3.34,
+        original_start_s_song=155.02,
+        original_words=original_words,
+    )
+    first_line["lyric_line_id"] = "line:marea-day-karaoke"
+    tail = _karaoke_overlay(
+        text="Marvellous",
+        start_s=14.42,
+        end_s=15.3,
+        original_start_s_song=170.12,
+        original_words=[
+            {"text": "Marvellous", "start_s_song": 170.12, "end_s_song": 171.94},
+        ],
+    )
+    tail["lyric_line_id"] = "line:marea-tail-karaoke"
+
+    out = _finalize_lyric_audible_window([first_line, tail], 155.7, 171.0)
+    kept = [ov for ov in out if ov.get("lyric_line_id") == "line:marea-day-karaoke"]
+
+    assert len(kept) == 1
+    assert kept[0]["text"] == "we've lost dancing"
+    assert [w["text"] for w in kept[0]["word_timings"]] == ["we've", "lost", "dancing"]

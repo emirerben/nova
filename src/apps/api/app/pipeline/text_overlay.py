@@ -1087,14 +1087,13 @@ def _write_animated_ass(
 
     elif effect == "karaoke-line":
         # Sing-along: the full line is visible for the overlay duration. Each
-        # word is wrapped in ASS karaoke timing tags `{\kt<start>\kf<duration>}`,
-        # which fade the word's fill from SecondaryColour to PrimaryColour
-        # over the word's duration. `\kt` anchors the word to the real
-        # overlay-relative vocal onset; without it, lyric alignment gaps get
-        # flattened into the following word and the highlight drifts. The
-        # result is a smooth left-to-right color sweep that follows the vocal.
-        # `\kf` (fill) is preferred over `\k` (sharp swap) because it looks
-        # less jarring at typical sub-second word durations.
+        # word is wrapped in ASS karaoke timing tags `{\kt<start>\kf<ramp>}`.
+        # `\kt` anchors the word to the real overlay-relative vocal onset;
+        # without it, lyric alignment gaps get flattened into the following
+        # word and the highlight drifts. Keep the `\kf` ramp deliberately tiny:
+        # Skia switches words to highlight color at start_s, and the ASS preview
+        # should match that onset-based contract instead of slowly filling over
+        # the whole sung word and looking late.
         timings = word_timings or []
         base_size = int(text_size_px) if text_size_px else OVERLAY_FONT_SIZE
         fs_tag = f"\\fs{base_size}" if base_size != OVERLAY_FONT_SIZE else ""
@@ -1140,10 +1139,11 @@ def _write_animated_ass(
                     if end_word_s > start_word_s
                     else fallback_dur_s
                 )
-                dur_cs = max(5, int(round(dur_s * 100.0)))
+                word_dur_cs = max(5, int(round(dur_s * 100.0)))
+                ramp_cs = max(1, min(5, word_dur_cs))
                 start_cs = max(0, int(round(start_word_s * 100.0)))
-                timed_words.append({"text": word_text, "start_cs": start_cs, "dur_cs": dur_cs})
-                cursor_s = max(cursor_s, start_word_s + dur_cs / 100.0)
+                timed_words.append({"text": word_text, "start_cs": start_cs, "dur_cs": ramp_cs})
+                cursor_s = max(cursor_s, start_word_s + word_dur_cs / 100.0)
             wrapped_words = _wrap_karaoke_timed_words_for_ass(timed_words, font_family, base_size)
             for line_idx, line in enumerate(wrapped_words):
                 if line_idx > 0:
