@@ -50,12 +50,13 @@ _LYRIC_INJECTOR_PATH = (
 # 814..1316 after per-word-pop helper growth above `_inject_line` →
 # 822..1325 after karaoke finalization metadata growth above `_inject_line` →
 # 1162..1665 after pop-up-only helper growth above `_inject_line` plus the
-# 2026-06-05 audible-word rule update for tail-started lyric preview words.
+# 2026-06-05 audible-word rule update for tail-started lyric preview words →
+# 1152..1655 after moving the renderable-source allowlist out of this module.
 # Verified with `test_lyric_injector_no_stacking.py` (66 tests) on 2026-06-05.
 # If the file structure changes such that this range no longer captures the
 # right scope, update BOTH endpoints below AND the SHA.
-_LINE_FROZEN_RANGE_START: int = 1162
-_LINE_FROZEN_RANGE_END: int = 1665
+_LINE_FROZEN_RANGE_START: int = 1152
+_LINE_FROZEN_RANGE_END: int = 1655
 
 # Locked SHA256 of the frozen range. DO NOT update this constant casually.
 # Read the module docstring above for the legitimate update procedure.

@@ -151,7 +151,14 @@ def test_ensure_fresh_refuses_to_render_stale_cache_when_refresh_is_not_publisha
         artist="Roger Sanchez",
         duration_s=240.0,
         lyrics_cached={"prompt_version": "old"},
+        lyrics_status="ready",
+        lyrics_whisper_draft=None,
+        lyrics_source="lrclib_synced+whisper",
+        lyrics_error_detail=None,
+        lyrics_diagnostic=None,
+        lyrics_extracted_at=None,
     )
+    commits = 0
 
     class FakeSession:
         def __enter__(self):
@@ -162,6 +169,10 @@ def test_ensure_fresh_refuses_to_render_stale_cache_when_refresh_is_not_publisha
 
         def get(self, _model, _track_id):
             return track
+
+        def commit(self):
+            nonlocal commits
+            commits += 1
 
     class FakeOutput:
         is_empty = False
@@ -192,3 +203,14 @@ def test_ensure_fresh_refuses_to_render_stale_cache_when_refresh_is_not_publisha
             lyrics_config={"enabled": True},
             reason="music_job",
         )
+
+    assert commits == 1
+    assert track.lyrics_status == "needs_manual_lyrics"
+    assert track.lyrics_cached is None
+    assert track.lyrics_whisper_draft == {
+        "prompt_version": "live",
+        "source": "whisper_only",
+        "lines": [],
+    }
+    assert track.lyrics_source == "whisper_only"
+    assert track.lyrics_error_detail == "LRCLIB lookup failed; paste a row ID to recover"

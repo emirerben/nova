@@ -20,6 +20,7 @@ from app.agents.lyrics import (
     PUBLISHABLE_LYRICS_SOURCES,
     LyricsExtractionAgent,
     LyricsInput,
+    LyricsOutput,
 )
 from app.config import settings
 from app.database import sync_session as _sync_session
@@ -108,6 +109,7 @@ def ensure_fresh_lyrics_cached_for_render(
         )
 
     if output.is_empty or output.source not in PUBLISHABLE_LYRICS_SOURCES:
+        _persist_non_publishable_refresh(track_id=track_id, output=output)
         raise LyricsCacheRefreshError(
             "stale lyrics_cached refresh did not produce publishable LRCLIB lyrics"
         )
@@ -140,6 +142,30 @@ def ensure_fresh_lyrics_cached_for_render(
         lines=len(output.lines),
     )
     return fresh
+
+
+def _persist_non_publishable_refresh(*, track_id: str, output: LyricsOutput) -> None:
+    """Move a failed render-time refresh into the normal manual-recovery state."""
+
+    with _sync_session() as db:
+        track = db.get(MusicTrack, track_id)
+        if track is None:
+            return
+        track.lyrics_status = "needs_manual_lyrics"
+        track.lyrics_cached = None
+        track.lyrics_whisper_draft = output.model_dump()
+        track.lyrics_source = output.source
+        track.lyrics_error_detail = "LRCLIB lookup failed; paste a row ID to recover"
+        track.lyrics_diagnostic = output.lyrics_diagnostic
+        track.lyrics_extracted_at = datetime.now(UTC)
+        db.commit()
+
+    log.warning(
+        "lyrics_cache_stale_refresh_needs_manual",
+        track_id=track_id,
+        source=output.source,
+        lines=len(output.lines),
+    )
 
 
 def _forced_lrclib_id(track_config: dict) -> int | None:

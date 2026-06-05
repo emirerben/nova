@@ -9,6 +9,7 @@ import pytest
 from app.agents._runtime import TerminalError
 from app.agents.lyrics import (
     PUBLISHABLE_LYRICS_SOURCES,
+    RENDERABLE_CACHED_LYRICS_SOURCES,
     LyricsExtractionAgent,
     LyricsInput,
     LyricsOutput,
@@ -708,6 +709,20 @@ def test_publishable_sources_allowlist_pinned() -> None:
             "lrclib_plain+whisper",
         }
     )
+
+
+def test_renderable_cached_sources_include_legacy_but_not_whisper_only() -> None:
+    """Existing cached rows may be renderable even when new writes are LRCLIB-only."""
+
+    assert RENDERABLE_CACHED_LYRICS_SOURCES == frozenset(
+        {
+            "lrclib_synced+whisper",
+            "lrclib_plain+whisper",
+            "genius+whisper",
+            "manual",
+        }
+    )
+    assert "whisper_only" not in RENDERABLE_CACHED_LYRICS_SOURCES
 
 
 def test_whisper_only_is_not_publishable() -> None:
