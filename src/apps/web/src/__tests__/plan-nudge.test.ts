@@ -12,6 +12,8 @@ function item(
     theme: "t",
     idea: "i",
     filming_suggestion: null,
+    rationale: null,
+    filming_guide: [],
     clip_gcs_paths: clips,
     status,
     current_job_id: null,

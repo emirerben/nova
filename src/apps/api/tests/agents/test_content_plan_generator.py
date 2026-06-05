@@ -229,3 +229,97 @@ def test_parse_edit_format_absent_defaults_to_montage() -> None:
     raw = json.dumps({"items": [{"day_index": 1, "theme": "t", "idea": "i"}]})
     out = _agent().parse(raw, _input())
     assert out.items[0].edit_format == "montage"
+
+
+# ── filming_guide parse-threading regression + helper unit tests ──────────────
+
+
+def _item_with_guide(guide: object) -> str:
+    """Build a single-item JSON with the given filming_guide value."""
+    return json.dumps(
+        {"items": [{"day_index": 1, "theme": "t", "idea": "i", "filming_guide": guide}]}
+    )
+
+
+def test_parse_threads_filming_guide() -> None:
+    """filming_guide from model output must reach PlanItemSpec (parse-threading trap).
+
+    This is the load-bearing regression lock: if filming_guide is not named
+    explicitly in the PlanItemSpec() constructor in parse(), every item silently
+    gets [] regardless of what the model emitted — same bug class as edit_format
+    before PR #448.
+    """
+    guide = [{"what": "dish being plated", "how": "handheld close-up", "duration_s": 5}]
+    out = _agent().parse(_item_with_guide(guide), _input())
+    assert len(out.items[0].filming_guide) == 1
+    shot = out.items[0].filming_guide[0]
+    assert shot.what == "dish being plated"
+    assert shot.how == "handheld close-up"
+    assert shot.duration_s == 5
+
+
+def test_parse_filming_guide_absent_defaults_empty() -> None:
+    """Absent filming_guide (legacy items, older model output) defaults to []."""
+    raw = json.dumps({"items": [{"day_index": 1, "theme": "t", "idea": "i"}]})
+    out = _agent().parse(raw, _input())
+    assert out.items[0].filming_guide == []
+
+
+def test_parse_filming_guide_non_list_yields_empty() -> None:
+    """Non-list filming_guide values (string, dict, null) degrade to []."""
+    for bad in ["some string", {"key": "val"}, None, 42]:
+        out = _agent().parse(_item_with_guide(bad), _input())
+        assert out.items[0].filming_guide == [], f"expected [] for {bad!r}"
+
+
+def test_parse_filming_guide_drops_malformed_shots() -> None:
+    """Non-dict entries, non-str 'what', and shots missing 'what' are dropped silently."""
+    guide = [
+        "not a dict",  # dropped: not a dict
+        {"how": "wide", "duration_s": 4},  # dropped: no 'what'
+        {"what": "", "how": "zoom", "duration_s": 3},  # dropped: empty 'what'
+        {"what": None, "duration_s": 5},  # dropped: null 'what' (would stringify to "None")
+        {"what": {"nested": "val"}, "duration_s": 5},  # dropped: dict 'what' (Python repr risk)
+        {"what": "creator to camera", "duration_s": 6},  # kept
+    ]
+    out = _agent().parse(_item_with_guide(guide), _input())
+    assert len(out.items[0].filming_guide) == 1
+    assert out.items[0].filming_guide[0].what == "creator to camera"
+
+
+def test_parse_filming_guide_null_how_becomes_empty_string() -> None:
+    """JSON-null 'how' must not become the string 'None' — it becomes ''."""
+    guide = [{"what": "creator to camera", "how": None, "duration_s": 5}]
+    out = _agent().parse(_item_with_guide(guide), _input())
+    assert out.items[0].filming_guide[0].how == ""
+
+
+def test_parse_filming_guide_clamps_duration() -> None:
+    """duration_s is clamped to [MIN_SHOT_DURATION_S, MAX_SHOT_DURATION_S].
+
+    Also verifies OverflowError from a 400-digit integer is caught — JSON has
+    no integer size limit so a Gemini hallucination could crash the task.
+    """
+    from app.agents._schemas.content_plan import MAX_SHOT_DURATION_S, MIN_SHOT_DURATION_S
+
+    guide = [
+        {"what": "shot A", "duration_s": 0},  # below min → clamped to MIN
+        {"what": "shot B", "duration_s": 999},  # above max → clamped to MAX
+        {"what": "shot C", "duration_s": "bad"},  # non-numeric → MIN
+        {"what": "shot D", "duration_s": 10**400},  # OverflowError → MIN (not a task crash)
+    ]
+    out = _agent().parse(_item_with_guide(guide), _input())
+    shots = out.items[0].filming_guide
+    assert shots[0].duration_s == MIN_SHOT_DURATION_S
+    assert shots[1].duration_s == MAX_SHOT_DURATION_S
+    assert shots[2].duration_s == MIN_SHOT_DURATION_S
+    assert shots[3].duration_s == MIN_SHOT_DURATION_S  # OverflowError caught → MIN
+
+
+def test_parse_filming_guide_caps_shot_count() -> None:
+    """Guide is capped at MAX_SHOTS_PER_ITEM shots; extras are dropped."""
+    from app.agents._schemas.content_plan import MAX_SHOTS_PER_ITEM
+
+    guide = [{"what": f"shot {i}", "duration_s": 5} for i in range(MAX_SHOTS_PER_ITEM + 2)]
+    out = _agent().parse(_item_with_guide(guide), _input())
+    assert len(out.items[0].filming_guide) == MAX_SHOTS_PER_ITEM

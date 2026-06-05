@@ -53,6 +53,8 @@ _LYRIC_INJECTOR_PATH = (
 # 2026-06-05 audible-word rule update for tail-started lyric preview words →
 # 1218..1721 after popup overlap truncation helper growth above `_inject_line` →
 # 1208..1711 after moving the renderable-source allowlist out of this module →
+# 1204..1707 after Ruff collapsed two pop-up helper expressions above the
+# frozen window; SHA stayed identical, so the frozen content is unchanged →
 # 1452..1955 after guarded canonical/Whisper repair and terminal popup-rescue
 # helpers grew above `_inject_line` without changing Line code.
 # Verified with `test_lyric_injector_no_stacking.py` (66 tests) on 2026-06-05.

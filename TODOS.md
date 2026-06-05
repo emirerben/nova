@@ -1,5 +1,28 @@
 # Nova — Deferred Work
 
+## Filming guide (v1 shipped in v0.4.79.0)
+
+### Expose edit_format in PlanItemResponse + item detail UI pill
+**What:** `PlanItem.edit_format` is stored but never returned by `plan_item_response()` (read-only, zero consumers so far). A simple `edit_format: str` field on `PlanItemResponse` + a small pill on the item detail page (`/plan/items/[id]`) would show the user what render archetype their idea is heading toward.
+**Why:** Helps the user understand why the filming guide has the shape it does (e.g. why a talking_head plan only shows 1–2 shots vs a montage's 3–4).
+**How:** Add `edit_format: str` to `PlanItemResponse` + expose in `plan_item_response()`. Add a small `bg-zinc-800 text-zinc-400` pill after the rationale callout on `items/[id]/page.tsx`. No new migration needed — field already exists on the row.
+**Effort:** XS (CC: ~5 min)
+**Priority:** P3
+
+### User-editable shot list (filming_guide PATCH)
+**What:** `filming_guide` is read-only in v1. Let the user add/edit/reorder shots from the item detail page so they can refine the AI-generated guide before filming.
+**Why:** The AI guide is a good starting point but some users may want to adjust shots to match their specific location or setup.
+**How:** Add `filming_guide` to `PlanItemEdit` PATCH whitelist. Build a shot-list editor component (add/remove/reorder shots, edit what/how/duration_s). Needs structured editing UI — non-trivial.
+**Effort:** M (CC: ~1h)
+**Priority:** P3
+
+### Shot-count hint on the content-plan calendar card
+**What:** The calendar card today shows the day's theme and idea. Adding a tiny `3 shots` badge would give the user a sense of filming effort before tapping into the item.
+**Why:** Helps plan filming sessions — a 4-shot montage vs a 1-shot talking head are very different commitment levels.
+**How:** Include `filming_guide` in the plan-list API response (currently already there via `plan_item_response` reuse in `content_plans.py`). Render `filming_guide.length` as a badge on `PlanCalendar` or the item card.
+**Effort:** XS (CC: ~5 min)
+**Priority:** P3
+
 ## Fonts
 
 ### Save the variable-font instancing helper as a committed script

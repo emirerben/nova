@@ -2562,6 +2562,7 @@ def _finalize_one_karaoke_line(
             display_text=candidate_text,
             audio_mix_song_start_s=audio_mix_song_start_s,
             audible_end_abs=audible_end_abs,
+            line_clipped_from_start=original_start_s_song < audio_mix_song_start_s,
             log_event="karaoke_finalize_final_line_kept_truncated",
             source=candidate_source,
             line_id=line_id,
@@ -2591,6 +2592,7 @@ def _finalize_one_karaoke_line(
         display_text=candidate_text,
         audio_mix_song_start_s=audio_mix_song_start_s,
         audible_end_abs=audible_end_abs,
+        line_clipped_from_start=original_start_s_song < audio_mix_song_start_s,
         log_event="karaoke_finalize_interior_partial_kept_truncated",
         source=candidate_source,
         line_id=line_id,
@@ -2661,6 +2663,7 @@ def _apply_finalized_karaoke(
     display_text: str,
     audio_mix_song_start_s: float,
     audible_end_abs: float,
+    line_clipped_from_start: bool = False,
     log_event: str,
     source: str | None,
     line_id: str | None,
@@ -2683,7 +2686,7 @@ def _apply_finalized_karaoke(
     word_timings: list[dict] = []
     prev_end_rel = 0.0
     render_words = _trim_audible_words_to_display_text(audible_words, display_text)
-    for w in render_words:
+    for idx, w in enumerate(render_words):
         text = str(w.get("text", "")).strip()
         if not text:
             continue
@@ -2695,6 +2698,8 @@ def _apply_finalized_karaoke(
         abs_word_start_s = max(0.0, ws_song - audio_mix_song_start_s)
         abs_word_end_s = min(audible_end_abs, we_song - audio_mix_song_start_s)
         local_start_s = max(0.0, abs_word_start_s - new_start_s)
+        if idx == 0 and line_clipped_from_start and new_start_s <= _EPS:
+            local_start_s = 0.0
         if local_start_s >= span_s:
             continue
         local_end_s = min(span_s, abs_word_end_s - new_start_s)

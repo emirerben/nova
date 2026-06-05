@@ -880,8 +880,9 @@ def _draw_karaoke_line(
         fallback_dur_s = max(0.05, _finite_float(w.get("duration_cs"), 5.0) / 100.0)
         end = _finite_float(w.get("end_s"), start + fallback_dur_s)
         dur_s = end - start if end > start else fallback_dur_s
-        starts.append(max(0.0, start))
-        acc = max(acc, start + dur_s)
+        clamped_start = max(0.0, start)
+        starts.append(clamped_start)
+        acc = max(acc, clamped_start + dur_s)
     if not words:
         _draw_centered_text(canvas, text, overlay)
         return
@@ -914,8 +915,8 @@ def _draw_karaoke_line(
         x = _anchored_left_x(anchor, cx, line_w)
         baseline_y = first_baseline + line_idx * block["line_step"]
         for i in line:
-            sung = t_local >= starts[i]
-            color = highlight_color if sung else primary_color
+            already_sung = starts[i] <= t_local
+            color = highlight_color if already_sung else primary_color
             _draw_line_with_layers(
                 canvas, words[i], x, baseline_y, font, color, stroke_px, shadow_alpha=160
             )

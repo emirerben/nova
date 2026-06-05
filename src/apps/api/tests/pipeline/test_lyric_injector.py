@@ -1858,6 +1858,48 @@ def test_finalize_keeps_final_karaoke_single_word_started_before_window_end() ->
     assert [w["text"] for w in out[0]["word_timings"]] == ["Marvellous"]
 
 
+def test_finalize_karaoke_clipped_leading_line_highlights_first_survivor_at_zero() -> None:
+    """When a preview starts mid-line, the first visible word is in progress.
+
+    Production preview b9192f96 clipped "So" from "So take my strong advice".
+    The rendered line starts at video t=0 with "take"; its highlight should
+    also start at t=0 instead of waiting for the original song-time offset.
+    """
+    ov = _make_lyric_overlay(
+        text="So take my strong advice",
+        start_s=0.0,
+        end_s=1.92,
+        line_id="line:billie-leading-karaoke",
+        original_text="So take my strong advice",
+        original_start_s_song=127.14,
+        original_end_s_song=129.65,
+        original_words=[
+            {"text": "So", "start_s_song": 127.14, "end_s_song": 128.0},
+            {"text": "take", "start_s_song": 128.0, "end_s_song": 128.2},
+            {"text": "my", "start_s_song": 128.2, "end_s_song": 128.66},
+            {"text": "strong", "start_s_song": 128.66, "end_s_song": 129.22},
+            {"text": "advice", "start_s_song": 129.22, "end_s_song": 129.65},
+        ],
+        extras={
+            "effect": "karaoke-line",
+            "word_timings": [
+                {"text": "take", "start_s": 0.27, "end_s": 0.47},
+                {"text": "my", "start_s": 0.47, "end_s": 0.93},
+                {"text": "strong", "start_s": 0.93, "end_s": 1.49},
+                {"text": "advice", "start_s": 1.49, "end_s": 1.92},
+            ],
+        },
+    )
+
+    out = _finalize_lyric_audible_window([ov], 127.73, 140.57)
+
+    assert len(out) == 1
+    assert out[0]["text"] == "take my strong advice"
+    assert out[0]["word_timings"][0]["text"] == "take"
+    assert out[0]["word_timings"][0]["start_s"] == 0.0
+    assert out[0]["word_timings"][1]["start_s"] == 0.47
+
+
 def test_finalize_missing_metadata_passes_through_with_warning() -> None:
     """Overlay lacking `original_*` fields → passthrough unchanged + warning."""
     ov = {
