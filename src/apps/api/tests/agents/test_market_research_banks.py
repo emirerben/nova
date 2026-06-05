@@ -226,8 +226,9 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     # izzsiomoi sunrise hike).
     # 2026-06-05: posts_per_week alignment — prompt now uses $posts_per_week +
     #             $target_item_count to produce the right idea count per week.
+    # 2026-06-05.1: per-item filming_guide (2–4 shots keyed to edit_format).
     assert content_ideas_version() == "2026-05-31"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-05"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-05.1"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -240,7 +241,7 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # (new overlay bank).
     assert success_factors_version() == "2026-05-30"
     assert PERSONA_PROMPT_VERSION == "2026-06-05"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-05"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-05.1"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-05-31"
 
 

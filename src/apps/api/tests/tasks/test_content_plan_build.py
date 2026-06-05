@@ -297,6 +297,135 @@ def test_regenerate_preserves_user_edited_and_in_flight_items() -> None:
     assert added[0].theme == "NEW 2"
 
 
+# ── filming_guide persistence in both copy blocks ─────────────────────────────
+
+
+def _spec_with_guide() -> PlanItemSpec:
+    """A PlanItemSpec with a non-empty filming_guide for persistence assertions."""
+    from app.agents._schemas.content_plan import ShotSpec  # noqa: PLC0415
+
+    return PlanItemSpec(
+        day_index=1,
+        theme="morning routine",
+        idea="film the 5am gym start",
+        filming_guide=[
+            ShotSpec(what="creator lacing shoes", how="close-up", duration_s=5),
+        ],
+    )
+
+
+def test_generate_persists_filming_guide() -> None:
+    """generate_content_plan must pass filming_guide into the PlanItem row.
+
+    Locks the persistence copy block so a missed filming_guide=[...] line is
+    caught before reaching prod (where it would silently store [] on every item).
+    """
+    plan_id = uuid.uuid4()
+    plan = MagicMock()
+    plan.id = plan_id
+    plan.user_id = uuid.uuid4()
+    plan.persona_id = uuid.uuid4()
+    plan.events = None
+    plan.horizon_days = 30
+    plan.items = []
+    plan.plan_status = "generating"
+
+    persona_row = MagicMock()
+    persona_row.persona = _valid_persona()
+
+    user = MagicMock()
+    user.onboarding_status = "plan_ready"
+
+    session = MagicMock()
+    session.get = MagicMock(
+        side_effect=lambda model, _pk: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+            __import__("app.models", fromlist=["User"]).User: user,
+        }.get(model)
+    )
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__ = MagicMock(return_value=False)
+
+    spec = _spec_with_guide()
+    output = MagicMock()
+    output.items = [spec]
+    agent = MagicMock()
+    agent.run = MagicMock(return_value=output)
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.tasks.content_plan_build.default_client"),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent", return_value=agent),
+        patch("app.tasks.content_plan_build._dedup_and_replace", return_value=output),
+    ):
+        from app.tasks.content_plan_build import generate_content_plan  # noqa: PLC0415
+
+        generate_content_plan.run(str(plan_id))
+
+    added = [c.args[0] for c in session.add.call_args_list]
+    assert len(added) == 1
+    persisted_guide = added[0].filming_guide
+    assert isinstance(persisted_guide, list)
+    assert len(persisted_guide) == 1
+    assert persisted_guide[0]["what"] == "creator lacing shoes"
+    assert persisted_guide[0]["duration_s"] == 5
+
+
+def test_regenerate_persists_filming_guide() -> None:
+    """regenerate_content_plan must pass filming_guide into the PlanItem row.
+
+    This is the second copy block — both must be updated or regenerated plans
+    silently lose their filming guides.
+    """
+    plan_id = uuid.uuid4()
+    regenerable = _plan_item(2, user_edited=False, current_job_id=None)
+
+    plan = MagicMock()
+    plan.id = plan_id
+    plan.user_id = uuid.uuid4()
+    plan.persona_id = uuid.uuid4()
+    plan.events = None
+    plan.horizon_days = 30
+    plan.items = [regenerable]
+
+    persona_row = MagicMock()
+    persona_row.persona = _valid_persona()
+
+    session = MagicMock()
+    session.get = MagicMock(
+        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+    )
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__ = MagicMock(return_value=False)
+
+    spec = _spec_with_guide()
+    output = MagicMock()
+    output.items = [spec]
+    agent = MagicMock()
+    agent.run = MagicMock(return_value=output)
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.tasks.content_plan_build.default_client"),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent", return_value=agent),
+        patch(
+            "app.services.feedback_summary.rollup_user_feedback",
+            return_value="",
+        ),
+    ):
+        regenerate_content_plan.run(str(plan_id))
+
+    added = [c.args[0] for c in session.add.call_args_list]
+    assert len(added) == 1
+    persisted_guide = added[0].filming_guide
+    assert isinstance(persisted_guide, list)
+    assert len(persisted_guide) == 1
+    assert persisted_guide[0]["what"] == "creator lacing shoes"
+
+
 # ── posts_per_week flows from persona JSONB into ContentPlanInput ─────────────
 
 

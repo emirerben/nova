@@ -70,6 +70,18 @@ def derive_item_status(item: PlanItem) -> str:
     return "generating"
 
 
+class FilmingShotResponse(BaseModel):
+    """One shot from the plan item's filming guide.
+
+    All fields default to safe values so a hand-corrupted or legacy JSONB row
+    with missing keys never 500s the read path.
+    """
+
+    what: str = ""
+    how: str = ""
+    duration_s: int = 1  # matches MIN_SHOT_DURATION_S; 0 would render as confusing "0s" badge
+
+
 class PlanItemResponse(BaseModel):
     id: str
     day_index: int
@@ -78,6 +90,9 @@ class PlanItemResponse(BaseModel):
     filming_suggestion: str | None
     # The AI's "why this works", surfaced read-only in the dashboard.
     rationale: str | None
+    # Structured shot list (2–4 shots). Always a list; empty for legacy items
+    # whose plans predate this field (frontend falls back to filming_suggestion).
+    filming_guide: list[FilmingShotResponse]
     clip_gcs_paths: list[str]
     status: str
     current_job_id: str | None
@@ -85,6 +100,17 @@ class PlanItemResponse(BaseModel):
 
 
 def plan_item_response(item: PlanItem) -> PlanItemResponse:
+    # Tolerate missing keys in individual JSONB shots — each shot is constructed
+    # via .get() so a hand-corrupted row or a migration-era partial row never raises.
+    shots = [
+        FilmingShotResponse(
+            what=s.get("what", ""),
+            how=s.get("how", ""),
+            duration_s=s.get("duration_s", 1),  # 1 = MIN_SHOT_DURATION_S; 0 renders as "0s" badge
+        )
+        for s in (item.filming_guide or [])
+        if isinstance(s, dict)
+    ]
     return PlanItemResponse(
         id=str(item.id),
         day_index=item.day_index,
@@ -92,6 +118,7 @@ def plan_item_response(item: PlanItem) -> PlanItemResponse:
         idea=item.idea,
         filming_suggestion=item.filming_suggestion,
         rationale=item.rationale,
+        filming_guide=shots,
         clip_gcs_paths=list(item.clip_gcs_paths or []),
         status=derive_item_status(item),
         current_job_id=str(item.current_job_id) if item.current_job_id else None,

@@ -85,6 +85,7 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                     filming_suggestion=spec.filming_suggestion or None,
                     rationale=spec.rationale or None,
                     edit_format=spec.edit_format,
+                    filming_guide=[s.model_dump() for s in spec.filming_guide],
                     item_status="idea",
                 )
             )
@@ -229,6 +230,7 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                     filming_suggestion=spec.filming_suggestion or None,
                     rationale=spec.rationale or None,
                     edit_format=spec.edit_format,
+                    filming_guide=[s.model_dump() for s in spec.filming_guide],
                     item_status="idea",
                 )
             )
