@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.76.0] - 2026-06-05
+
+### Fixed
+- **Admin lyric previews now keep text aligned with the audible vocal window at section edges.** Line previews no longer render stale repeated pre-parenthetical prefixes when the preview starts mid-line, so Marea-style hooks show `"we've lost dancing"` instead of `"day (we've lost dancing"`. A final word that starts before the preview cut now renders as the full word in both line and karaoke styles, while pre-started tail overlap still drops as a visual flash. Regression coverage locks the Marea preview window, the parenthetical guard, the final `"Marvellous"` tail word, the trailing-flash drop rule, and the Line invariant SHA update.
+
 ## [0.4.75.3] - 2026-06-04
 
 ### Fixed
