@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.77.1] - 2026-06-05
+
+### Fixed
+- **Pop-up lyric previews now trim repeated hook lead-ins and clear stale line tails.** The per-word pop injector drops repeated parenthetical prefixes when a preview starts mid-line and clamps any previous same-lane pop-up stage when the next lyric begins. The production preview job `c9dc62c7-1215-4e49-a12e-b6912d359a63` now opens on the audible hook and no longer stacks the prior line tail under the next word.
+
 ## [0.4.76.1] - 2026-06-05
 
 ### Fixed
