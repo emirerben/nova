@@ -111,17 +111,70 @@ CLAUDE_MEMORY_DIR="$HOME/.claude/projects/-Users-emirerben-Projects-nova/memory"
     echo "claude memory dir not found (ok on other machines)"; } \
 ) || echo "import stage failed (non-fatal)"
 
-# --- Stage 4: Incremental curated-memory ingest (learnings/timeline/reviews/retros) ---
+# --- Stage 4: Incremental curated-memory ingest (learnings/timeline/retros) ---
 echo "--- [4/7] memory ingest ---"
 MEMORY_INGEST="$HOME/.claude/skills/gstack/bin/gstack-memory-ingest.ts"
 if command -v bun >/dev/null 2>&1 && [ -f "$MEMORY_INGEST" ]; then
   # Run from ~ to avoid .gbrain-source pin routing to the code source
   (cd ~ && bun "$MEMORY_INGEST" \
     --incremental \
-    --sources learning,timeline,review,retro,ceo-plan,design-doc \
+    --sources learning,timeline,retro,ceo-plan,design-doc \
     --quiet 2>&1 | tail -5) || echo "memory ingest failed (non-fatal)"
 else
   echo "bun or gstack-memory-ingest not found, skipping."
+fi
+
+# --- Stage 4b: Review JSONL → markdown → brain (gstack-memory-ingest doesn't support reviews) ---
+REVIEWS_DIR="$HOME/.gstack/projects/emirerben-nova"
+REVIEWS_STAGING="$HOME/.gstack/.staging-reviews-$$"
+if ls "$REVIEWS_DIR"/*reviews*.jsonl >/dev/null 2>&1; then
+  python3 - "$REVIEWS_DIR" "$REVIEWS_STAGING" <<'PYEOF'
+import json, os, re, sys
+from pathlib import Path
+src, staging = Path(sys.argv[1]), Path(sys.argv[2])
+(staging).mkdir(exist_ok=True)
+written = 0
+for jfile in sorted(src.glob("*reviews*.jsonl")):
+    branch = re.sub(r"-reviews\.jsonl$", "", jfile.name)
+    entries = [json.loads(l) for l in jfile.read_text().splitlines() if l.strip()]
+    if not entries: continue
+    timestamps = [e.get("timestamp","") for e in entries if e.get("timestamp")]
+    date = (min(timestamps) if timestamps else "")[:10]
+    rows = []
+    for e in entries:
+        ts = e.get("timestamp","?")[:16].replace("T"," ")
+        skill = e.get("skill","?")
+        status = e.get("status","")
+        score = ""
+        if "overall_score" in e:
+            score = f"{e.get('initial_score','?')}→{e.get('overall_score','?')}"
+            if e.get("unresolved"): score += f" ({e['unresolved']} unresolved)"
+        if "coverage_pct" in e:
+            score = f"{e['coverage_pct']}% coverage, {e.get('plan_items_done','?')}/{e.get('plan_items_total','?')} items"
+        rows.append(f"| {ts} | {skill} | {status} | {score} |")
+    table = "| timestamp | skill | status | score / coverage |\n|---|---|---|---|\n" + "\n".join(rows)
+    md = f"""---
+name: reviews/emirerben-nova/{branch}
+description: Review ledger for branch {branch} — {len(entries)} skill run(s)
+metadata:
+  type: review
+  branch: {branch}
+  repo: emirerben-nova
+  entry_count: {len(entries)}
+---
+
+# Review log — {branch}
+
+{table}
+"""
+    (staging / f"{branch}.md").write_text(md)
+    written += 1
+print(f"{written} review pages staged", flush=True)
+PYEOF
+  (cd ~ && gbrain import "$REVIEWS_STAGING" --source-id default --no-embed 2>&1 | tail -2) || echo "review import failed (non-fatal)"
+  rm -rf "$REVIEWS_STAGING"
+else
+  echo "no review files found, skipping."
 fi
 
 # --- Stage 5: Drain gstack artifacts queue ---

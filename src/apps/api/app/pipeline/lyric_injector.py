@@ -562,18 +562,26 @@ def _select_section_lines(
     # Trailing-line drop: a line whose clamped start lands in the last
     # `_TRAILING_LINE_DROP_TAIL_S` of the section AND whose clamped duration
     # is below `_TRAILING_LINE_DROP_MIN_DUR_S` is dropped rather than
-    # rendered as a sub-second flash. The Instant Crush 20s preview lands
-    # L4 at clamped duration 0.55s — that's visually meaningless and the
-    # user sees text without ever hearing the matching vocal. Mid-section
-    # short lines are untouched: this rule fires only on the LAST emitted
-    # line, by tail-position, so legitimately short fully-contained ad-libs
-    # mid-section (e.g. "yeah!") still render.
+    # rendered as a sub-second flash. If at least one word starts inside the
+    # renderable section, keep it: lyric previews should show the full word
+    # once the listener hears that word begin, even when its midpoint/end lands
+    # just beyond the preview tail (Marea: "Marvellous" starts at 14.42s of a
+    # 15.3s preview).
     if out:
         last = out[-1]
         section_dur_s = best_end_s - best_start_s
         last_dur_s = last["end_s"] - last["start_s"]
         starts_in_tail = last["start_s"] >= section_dur_s - _TRAILING_LINE_DROP_TAIL_S
-        if starts_in_tail and last_dur_s < _TRAILING_LINE_DROP_MIN_DUR_S:
+        has_started_word = False
+        for w in last.get("original_words") or []:
+            try:
+                word_start_s = float(w.get("start_s_song", -1.0))
+            except (TypeError, ValueError):
+                continue
+            if best_start_s <= word_start_s < best_end_s:
+                has_started_word = True
+                break
+        if starts_in_tail and last_dur_s < _TRAILING_LINE_DROP_MIN_DUR_S and not has_started_word:
             log.info(
                 "lyric_inject_dropped_trailing_flash",
                 line_text=str(last.get("text", ""))[:80],
@@ -1639,8 +1647,8 @@ def _inject_line(
 # perceptual match, and resilience to Whisper edge-jitter (±20 ms typical).
 # Document so it's not a magic heuristic.
 _AUDIBLE_WORD_MIDPOINT_RULE = (
-    "word_audible iff (word.start_s_song + word.end_s_song) / 2 "
-    "is in [audio_mix_song_start_s, audio_mix_song_end_s)"
+    "word_audible iff the word midpoint OR word start is in "
+    "[audio_mix_song_start_s, audio_mix_song_end_s)"
 )
 
 # Quality thresholds (one input among several; not the sole input).
@@ -2017,7 +2025,9 @@ def _finalize_one_lyric_line(
     candidate_source: str | None = None
     if surviving_word_count >= 2:
         rebuilt = _align_audible_words_to_original_text(
-            original_text=original_text, audible_words=audible_words
+            original_text=original_text,
+            audible_words=audible_words,
+            drop_dangling_parenthetical_prefix=True,
         )
         if rebuilt is not None:
             candidate_text = rebuilt
@@ -2025,6 +2035,9 @@ def _finalize_one_lyric_line(
         else:
             candidate_text = " ".join(str(w.get("text", "")) for w in audible_words).strip()
             candidate_source = "conservative_join"
+    elif surviving_word_count == 1:
+        candidate_text = str(audible_words[0].get("text", "")).strip()
+        candidate_source = "single_started_word"
 
     # Step 3 — No candidate text: drop unconditionally.
     if not candidate_text or not candidate_text.strip():
@@ -2037,9 +2050,13 @@ def _finalize_one_lyric_line(
 
     # Step 4 — Final-partial-line quality floor (basic only, more permissive).
     if is_final:
-        if (
-            audible_speech_s < _BASIC_AUDIBLE_SPEECH_S_FLOOR
-            or surviving_word_count < _BASIC_WORD_COUNT_FLOOR
+        single_started_word_ok = (
+            surviving_word_count == 1
+            and candidate_source == "single_started_word"
+            and audible_speech_s >= _BASIC_AUDIBLE_SPEECH_S_FLOOR
+        )
+        if audible_speech_s < _BASIC_AUDIBLE_SPEECH_S_FLOOR or (
+            surviving_word_count < _BASIC_WORD_COUNT_FLOOR and not single_started_word_ok
         ):
             log.info(
                 "lyric_finalize_final_line_dropped_fragment_too_short",
@@ -2220,6 +2237,9 @@ def _finalize_one_karaoke_line(
         else:
             candidate_text = " ".join(str(w.get("text", "")) for w in audible_words).strip()
             candidate_source = "conservative_join"
+    elif surviving_word_count == 1:
+        candidate_text = str(audible_words[0].get("text", "")).strip()
+        candidate_source = "single_started_word"
 
     if not candidate_text or not candidate_text.strip():
         log.info(
@@ -2230,9 +2250,13 @@ def _finalize_one_karaoke_line(
         return None
 
     if is_final:
-        if (
-            audible_speech_s < _BASIC_AUDIBLE_SPEECH_S_FLOOR
-            or surviving_word_count < _BASIC_WORD_COUNT_FLOOR
+        single_started_word_ok = (
+            surviving_word_count == 1
+            and candidate_source == "single_started_word"
+            and audible_speech_s >= _BASIC_AUDIBLE_SPEECH_S_FLOOR
+        )
+        if audible_speech_s < _BASIC_AUDIBLE_SPEECH_S_FLOOR or (
+            surviving_word_count < _BASIC_WORD_COUNT_FLOOR and not single_started_word_ok
         ):
             log.info(
                 "karaoke_finalize_final_line_dropped_fragment_too_short",
@@ -2287,14 +2311,27 @@ def _word_audible(
     audio_mix_song_start_s: float,
     audio_mix_song_end_s: float,
 ) -> bool:
-    """Midpoint-in-window rule. See `_AUDIBLE_WORD_MIDPOINT_RULE`."""
+    """Return true when a word is meaningfully audible in the rendered window.
+
+    Midpoint-in-window keeps the existing leading-edge behavior. The
+    start-in-window clause handles preview tails: once a word begins with a
+    short readable overlap before the audio cut, render the whole word text
+    instead of dropping it just because the word's midpoint falls after the cut.
+    """
     try:
         ws = float(word.get("start_s_song", 0.0))
         we = float(word.get("end_s_song", 0.0))
     except (TypeError, ValueError):
         return False
     midpoint = (ws + we) / 2.0
-    return audio_mix_song_start_s <= midpoint < audio_mix_song_end_s
+    started_in_window = audio_mix_song_start_s <= ws < audio_mix_song_end_s
+    audible_overlap_s = max(
+        0.0,
+        min(we, audio_mix_song_end_s) - max(ws, audio_mix_song_start_s),
+    )
+    return (audio_mix_song_start_s <= midpoint < audio_mix_song_end_s) or (
+        started_in_window and audible_overlap_s >= _MIN_LINE_VISIBLE_S
+    )
 
 
 def _apply_finalized(
@@ -2428,7 +2465,10 @@ def _tokenize_lyric_text(text: str) -> list[tuple[int, int, str]]:
 
 
 def _align_audible_words_to_original_text(
-    *, original_text: str, audible_words: list[dict]
+    *,
+    original_text: str,
+    audible_words: list[dict],
+    drop_dangling_parenthetical_prefix: bool = False,
 ) -> str | None:
     """Find a contiguous subsequence of tokens in `original_text` that matches
     the normalized `audible_words` text list, and return the original-string
@@ -2442,6 +2482,13 @@ def _align_audible_words_to_original_text(
     caller will fall back to conservative join (`" ".join(audible_words)`),
     which is safer than silently dropping a real audible word into the
     substring slice.
+
+    `drop_dangling_parenthetical_prefix` is line-style-only cleanup for clipped
+    backing-vocal parentheticals: if a section starts mid-line and the exact
+    slice would render a single dangling word before a parenthetical hook
+    (`day (we've lost dancing`), return just the parenthetical phrase. Karaoke
+    callers leave this false because they must keep text and word timings in
+    lockstep.
 
     Returns None on:
       - audible_words count < 2
@@ -2508,4 +2555,55 @@ def _align_audible_words_to_original_text(
 
     first_start_char = tokens[best_start][0]
     last_end_char = tokens[best_end - 1][1]
+    if drop_dangling_parenthetical_prefix:
+        adjusted = _drop_dangling_parenthetical_prefix(
+            original_text=original_text,
+            tokens=tokens,
+            match_start_idx=best_start,
+            match_end_idx=best_end,
+        )
+        if adjusted:
+            return adjusted
     return original_text[first_start_char:last_end_char]
+
+
+def _drop_dangling_parenthetical_prefix(
+    *,
+    original_text: str,
+    tokens: list[tuple[int, int, str]],
+    match_start_idx: int,
+    match_end_idx: int,
+) -> str | None:
+    """Return parenthetical text when a clipped line leaves one dangling prefix word.
+
+    Example: original ``Day by day (we've lost dancing)`` clipped to audible
+    tokens ``day we've lost dancing`` should display ``we've lost dancing``, not
+    ``day (we've lost dancing``. Only fire when the match is already a leading
+    truncation (`match_start_idx > 0`) and the text after ``(`` stays inside the
+    same parenthetical group.
+    """
+    if match_start_idx <= 0 or match_end_idx <= match_start_idx:
+        return None
+
+    first_start_char = tokens[match_start_idx][0]
+    last_end_char = tokens[match_end_idx - 1][1]
+    open_idx = original_text.find("(", first_start_char, last_end_char)
+    if open_idx < 0:
+        return None
+
+    close_idx = original_text.find(")", open_idx + 1)
+    if close_idx >= 0 and close_idx < last_end_char:
+        return None
+
+    matched_tokens = tokens[match_start_idx:match_end_idx]
+    prefix_tokens = [token for token in matched_tokens if token[0] < open_idx]
+    parenthetical_tokens = [token for token in matched_tokens if token[0] > open_idx]
+    if len(prefix_tokens) != 1 or len(parenthetical_tokens) < 2:
+        return None
+
+    prefix_norm = prefix_tokens[0][2]
+    prior_norms = {token[2] for token in tokens[:match_start_idx]}
+    if prefix_norm not in prior_norms:
+        return None
+
+    return original_text[parenthetical_tokens[0][0] : last_end_char].strip() or None
