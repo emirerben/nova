@@ -3,9 +3,11 @@
 Locks the cumulative-reveal contracts that prevent visual overlap and
 "double pop" stutters:
   - Stages are strictly monotonically non-decreasing in start_s.
-  - Adjacent stages butt-join (end of N == start of N+1) so two cumulative
-    reveals never render simultaneously — the same invariant the
+  - Adjacent stages within one line butt-join (end of N == start of N+1) so two
+    cumulative reveals never render simultaneously — the same invariant the
     line-style overlap-prevention enforces, scaled to per-word grain.
+  - When the next lyric line starts before a stale cached line end, the outgoing
+    line clears by a one-frame gap before the new line claims the lane.
   - Each stage carries the `pop_animated_suffix` field marking which word
     pops on entry (the renderer keeps the prefix static — without this
     field every stage would re-animate the entire line).
@@ -20,7 +22,7 @@ import math
 
 import pytest
 
-from app.pipeline.lyric_injector import inject_lyric_overlays
+from app.pipeline.lyric_injector import _WORD_POP_LINE_CLEAR_GAP_S, inject_lyric_overlays
 from app.pipeline.lyric_word_resync import resync_slot_overlays
 from tests.pipeline._lyric_invariant_helpers import (
     build_single_slot_recipe,
@@ -444,14 +446,17 @@ def test_popup_clips_previous_line_when_next_long_line_starts_before_cached_line
     )
 
     stage_by_text = {str(ov.get("text", "")).strip(): ov for ov in overlays}
-    assert stage_by_text["What comes next"]["end_s"] == pytest.approx(
-        stage_by_text["Will"]["start_s"],
+    what_end_s = float(stage_by_text["What comes next"]["end_s"])
+    will_start_s = float(stage_by_text["Will"]["start_s"])
+    assert what_end_s == pytest.approx(
+        will_start_s - _WORD_POP_LINE_CLEAR_GAP_S,
         abs=_BUTT_JOIN_EPSILON_S,
     )
+    assert what_end_s < will_start_s
     active_at_will = [
         str(ov.get("text", "")).strip()
         for ov in overlays
-        if float(ov["start_s"]) <= 10.9 < float(ov["end_s"])
+        if float(ov["start_s"]) <= will_start_s < float(ov["end_s"])
     ]
     assert active_at_will == ["Will"]
 
