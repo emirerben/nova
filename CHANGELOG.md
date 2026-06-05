@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.79.1] - 2026-06-05
+
+### Fixed
+- **Pop-up lyric previews now recover missing repeated-hook tails from audio-backed Whisper timings.** When a synced LRCLIB row matches only a low-confidence prefix and its canonical tail diverges from the recording, lyrics alignment preserves the trusted prefix and replaces the bad tail with unused Whisper words from the same line window. The lyric extractor prompt version was bumped so stale cached rows refresh before production renders reuse old timing blobs. Regression coverage locks the production preview job `9cc0cb15-9cc0-4302-9ef6-661ce63e2a3d` and negative guardrails for loose mid-window speech.
+
 ## [0.4.79.0] - 2026-06-05
 
 ### Added
