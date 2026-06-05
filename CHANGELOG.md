@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Pop-up lyric previews now trim repeated hook lead-ins and clear stale line tails.** The per-word pop injector drops repeated parenthetical prefixes when a preview starts mid-line and clamps any previous same-lane pop-up stage when the next lyric begins. The production preview job `c9dc62c7-1215-4e49-a12e-b6912d359a63` now opens on the audible hook and no longer stacks the prior line tail under the next word.
+- **Pop-up lyric previews now clear overlapping lyric lines before the next vocal line appears.** The per-word pop injector truncates an outgoing cumulative line when the next lyric line starts before that row's own end time, preventing the Billie Jean preview job `20ebb8b8-b604-435d-961e-6ff1f6873b96` from rendering `She` on top of the previous `Do think twice Ah-hoo` popup. Regression coverage locks the one-frame clear gap and verifies the Line-style frozen range still points at unchanged Line code.
 
 ## [0.4.76.1] - 2026-06-05
 
