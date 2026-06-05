@@ -105,6 +105,45 @@ def test_preview_recipe_renders_full_length_when_track_is_shorter_than_window() 
     assert recipe["slots"][0]["target_duration_s"] == 5.0
 
 
+def test_preview_recipe_keeps_tail_word_started_before_window_end() -> None:
+    """Regression for Marea preview: a final word starts before the 15.3s cut."""
+    track = _track(
+        duration_s=200.0,
+        track_config={"best_start_s": 155.7, "best_end_s": 171.0},
+        lyrics_cached={
+            "source": "lrclib_synced+whisper",
+            "lines": [
+                {
+                    "text": "Day by day (we've lost dancing)",
+                    "start_s": 155.02,
+                    "end_s": 158.34,
+                    "words": [
+                        {"text": "Day", "start_s": 155.02, "end_s": 155.28},
+                        {"text": "by", "start_s": 155.28, "end_s": 155.94},
+                        {"text": "day", "start_s": 156.04, "end_s": 157.02},
+                        {"text": "we've", "start_s": 157.02, "end_s": 157.02},
+                        {"text": "lost", "start_s": 157.02, "end_s": 157.62},
+                        {"text": "dancing", "start_s": 157.62, "end_s": 158.34},
+                    ],
+                },
+                {
+                    "text": "Marvellous",
+                    "start_s": 170.12,
+                    "end_s": 171.94,
+                    "words": [
+                        {"text": "Marvellous", "start_s": 170.12, "end_s": 171.94},
+                    ],
+                },
+            ],
+        },
+    )
+
+    recipe = build_lyrics_preview_recipe(track, {"enabled": True, "style": "line"})
+    overlays = recipe["slots"][0]["text_overlays"]
+
+    assert any((ov.get("display_text") or ov.get("text")) == "Marvellous" for ov in overlays)
+
+
 def test_preview_recipe_at_exact_window_boundary() -> None:
     """Boundary value `duration_s == PREVIEW_WINDOW_S` lands on the clamp's
     inclusive side. Locks that a future refactor swapping `min(a, b)` for an
@@ -1308,9 +1347,7 @@ def test_build_lyrics_preview_recipe_clamps_overlapping_karaoke_lines() -> None:
     first, second = overlays
     assert first["effect"] == "karaoke-line"
     assert first["end_s"] == pytest.approx(second["start_s"], abs=1e-3)
-    assert first["section_end_anchor_s"] == pytest.approx(
-        second["section_anchor_s"], abs=1e-3
-    )
+    assert first["section_end_anchor_s"] == pytest.approx(second["section_anchor_s"], abs=1e-3)
 
 
 def test_first_line_start_s_rejects_non_finite_floats() -> None:

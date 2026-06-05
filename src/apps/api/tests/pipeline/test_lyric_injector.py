@@ -386,6 +386,16 @@ def test_partial_overlap_right_edge_is_clamped() -> None:
     assert word_texts == ["Bleeds"]
 
 
+def test_trailing_flash_drop_uses_original_word_start_not_clamped_overlap() -> None:
+    """Do not keep a trailing flash just because a pre-started word overlaps it."""
+    recipe = _make_recipe([0.75])
+    cache = _make_lyrics_cache([("Already started", 9.0, 10.75, [("Already", 9.0, 10.75)])])
+
+    out = inject_lyric_overlays(recipe, cache, 10.0, 10.75, {"enabled": True, "style": "karaoke"})
+
+    assert out["slots"][0]["text_overlays"] == []
+
+
 def test_partial_overlap_dropped_when_clamped_below_min_visible() -> None:
     """A line that collapses below _MIN_LINE_VISIBLE_S after clamping is dropped.
 
@@ -1254,10 +1264,11 @@ def test_word_audible_midpoint_before_start_drops_word() -> None:
     assert _word_audible(w, 128.0, 139.036) is False
 
 
-def test_word_audible_50pct_overlap_midpoint_at_boundary_excluded() -> None:
-    # Midpoint == audio_mix_song_end_s → excluded (right side is exclusive).
+def test_word_audible_start_inside_window_keeps_tail_word() -> None:
+    # Midpoint == audio_mix_song_end_s, but the word started before the cut.
+    # Preview tails should show the full word once the vocal begins.
     w = {"text": "x", "start_s_song": 138.0, "end_s_song": 140.0}  # midpoint 139.0
-    assert _word_audible(w, 128.0, 139.0) is False
+    assert _word_audible(w, 128.0, 139.0) is True
 
 
 def test_word_audible_80pct_overlap_midpoint_inside_kept() -> None:
@@ -1352,6 +1363,87 @@ def test_finalize_billie_jean_leading_partial_keeps_audible_suffix_with_comma() 
     # Original text preserved untouched.
     assert result["text"] == original
     assert result["original_text"] == original
+
+
+def test_finalize_marea_preview_drops_dangling_parenthetical_prefix() -> None:
+    """Regression for lyrics-preview job 2bc32709 (Marea).
+
+    Preview window starts at song-time 155.700s, inside
+    "Day by day (we've lost dancing)". The audible-word slice is
+    "day we've lost dancing"; rendering that as ``day (we've lost dancing``
+    keeps a stale prefix on screen while the backing hook is what the user
+    hears. Line style should display just the parenthetical hook.
+    """
+    original = "Day by day (we've lost dancing)"
+    original_words = [
+        {"text": "Day", "start_s_song": 155.02, "end_s_song": 155.28},
+        {"text": "by", "start_s_song": 155.28, "end_s_song": 155.94},
+        {"text": "day", "start_s_song": 156.04, "end_s_song": 157.02},
+        {"text": "we've", "start_s_song": 157.02, "end_s_song": 157.02},
+        {"text": "lost", "start_s_song": 157.02, "end_s_song": 157.62},
+        {"text": "dancing", "start_s_song": 157.62, "end_s_song": 158.34},
+    ]
+    first_line = _make_lyric_overlay(
+        text=original,
+        start_s=0.0,
+        end_s=3.34,
+        line_id="line:marea-day",
+        original_text=original,
+        original_start_s_song=155.02,
+        original_end_s_song=158.34,
+        original_words=original_words,
+    )
+    # Later audible line makes the Marea line a true interior partial, matching
+    # the prod preview instead of relying on the permissive final-line path.
+    tail = _make_lyric_overlay(
+        text="Marvellous",
+        start_s=14.42,
+        end_s=15.3,
+        line_id="line:marea-tail",
+        original_text="Marvellous",
+        original_start_s_song=170.12,
+        original_end_s_song=171.94,
+        original_words=[
+            {"text": "Marvellous", "start_s_song": 170.12, "end_s_song": 171.94},
+        ],
+    )
+
+    out = _finalize_lyric_audible_window([first_line, tail], 155.7, 171.0)
+    kept = [ov for ov in out if ov.get("lyric_line_id") == "line:marea-day"]
+
+    assert len(kept) == 1
+    assert kept[0]["display_text"] == "we've lost dancing"
+
+
+def test_finalize_parenthetical_keeps_non_repeated_audible_prefix() -> None:
+    """Do not drop a real audible prefix just because a parenthetical follows."""
+    original = "If I can live through this (we've lost dancing)"
+    original_words = [
+        {"text": "If", "start_s_song": 158.34, "end_s_song": 158.8},
+        {"text": "I", "start_s_song": 158.8, "end_s_song": 159.1},
+        {"text": "can", "start_s_song": 159.1, "end_s_song": 159.6},
+        {"text": "live", "start_s_song": 159.6, "end_s_song": 160.0},
+        {"text": "through", "start_s_song": 160.0, "end_s_song": 160.5},
+        {"text": "this", "start_s_song": 160.5, "end_s_song": 161.0},
+        {"text": "we've", "start_s_song": 161.0, "end_s_song": 161.2},
+        {"text": "lost", "start_s_song": 161.2, "end_s_song": 161.7},
+        {"text": "dancing", "start_s_song": 161.7, "end_s_song": 162.5},
+    ]
+    ov = _make_lyric_overlay(
+        text=original,
+        start_s=0.0,
+        end_s=4.16,
+        line_id="line:marea-through-this",
+        original_text=original,
+        original_start_s_song=158.34,
+        original_end_s_song=162.5,
+        original_words=original_words,
+    )
+
+    out = _finalize_lyric_audible_window([ov], 160.3, 162.5)
+
+    assert len(out) == 1
+    assert out[0]["display_text"].startswith("this ")
 
 
 def test_finalize_well_aligned_full_line_unchanged() -> None:
@@ -1543,7 +1635,7 @@ def test_finalize_keeps_final_partial_when_fragment_meaningful() -> None:
 
 
 def test_finalize_drops_final_line_too_short_fragment() -> None:
-    """Final line, surviving_word_count=1 → dropped (basic floor fails)."""
+    """Final line with one very short started word still drops."""
     original = "Hello world"
     original_words = [
         {"text": "Hello", "start_s_song": 130.0, "end_s_song": 130.5},
@@ -1561,7 +1653,54 @@ def test_finalize_drops_final_line_too_short_fragment() -> None:
     )
     # Audible window ends at 130.6 → only "Hello" audible (midpoint 130.25).
     out = _finalize_lyric_audible_window([ov], 128.0, 130.6)
-    assert out == []  # dropped — 1 surviving word < basic floor
+    assert out == []  # dropped — 0.5s of audible speech is below the final-line floor
+
+
+def test_finalize_keeps_final_single_word_started_before_window_end() -> None:
+    """A tail word that starts before the preview cut should render as a word."""
+    ov = _make_lyric_overlay(
+        text="Marvellous",
+        start_s=14.42,
+        end_s=15.3,
+        line_id="line:marea-marvellous",
+        original_text="Marvellous",
+        original_start_s_song=170.12,
+        original_end_s_song=171.94,
+        original_words=[
+            {"text": "Marvellous", "start_s_song": 170.12, "end_s_song": 171.94},
+        ],
+    )
+
+    out = _finalize_lyric_audible_window([ov], 155.7, 171.0)
+
+    assert len(out) == 1
+    assert out[0]["display_text"] == "Marvellous"
+
+
+def test_finalize_keeps_final_karaoke_single_word_started_before_window_end() -> None:
+    """The tail-word rule applies to karaoke previews as well as line previews."""
+    ov = _make_lyric_overlay(
+        text="Marvellous",
+        start_s=14.42,
+        end_s=15.3,
+        line_id="line:marea-marvellous-karaoke",
+        original_text="Marvellous",
+        original_start_s_song=170.12,
+        original_end_s_song=171.94,
+        original_words=[
+            {"text": "Marvellous", "start_s_song": 170.12, "end_s_song": 171.94},
+        ],
+        extras={
+            "effect": "karaoke-line",
+            "word_timings": [{"text": "Marvellous", "start_s": 0.0, "end_s": 1.82}],
+        },
+    )
+
+    out = _finalize_lyric_audible_window([ov], 155.7, 171.0)
+
+    assert len(out) == 1
+    assert out[0]["text"] == "Marvellous"
+    assert [w["text"] for w in out[0]["word_timings"]] == ["Marvellous"]
 
 
 def test_finalize_missing_metadata_passes_through_with_warning() -> None:
@@ -1807,8 +1946,8 @@ def test_log_lyric_finalize_dropped_no_candidate_text(monkeypatch) -> None:
     rec = _LogRecorder()
     monkeypatch.setattr(lyric_injector, "log", rec)
     # Final partial with empty surviving words (no words at all → empty-words
-    # short-circuit fires first). Use a one-word non-empty list so we hit Step 3
-    # (no candidate_text) via Step 2's `surviving_word_count >= 2` failing.
+    # short-circuit fires first). Use a non-empty word list whose timings sit
+    # outside the audible window so we hit Step 3 with no candidate_text.
     overlay = _make_lyric_overlay(
         text="Lone word",
         start_s=2.0,
@@ -1818,12 +1957,12 @@ def test_log_lyric_finalize_dropped_no_candidate_text(monkeypatch) -> None:
         original_start_s_song=130.0,
         original_end_s_song=130.6,
         original_words=[
-            {"text": "Lone", "start_s_song": 130.0, "end_s_song": 130.5},
-            {"text": "word", "start_s_song": 130.5, "end_s_song": 130.6},
+            {"text": "Lone", "start_s_song": 131.0, "end_s_song": 131.5},
+            {"text": "word", "start_s_song": 131.5, "end_s_song": 132.0},
         ],
     )
-    # Audible end 130.4 → only "Lone" survives midpoint test → 1 word.
-    # Step 2 needs ≥2 → candidate_text stays None → Step 3 drops.
+    # Audible end 130.4 → no word midpoint/start survives.
+    # candidate_text stays None → Step 3 drops.
     out = _finalize_lyric_audible_window([overlay], 128.0, 130.4)
     assert out == []
     events = rec.events_named("lyric_finalize_dropped_no_candidate_text")
@@ -2284,12 +2423,12 @@ def test_apply_finalized_preserves_post_dwell_only_clamps_to_audio_end() -> None
             {"text": "word", "start_s_song": 145.25, "end_s_song": 145.5},
         ],
     )
-    # audible_end song = 131.7 → drops the 8th word (midpoint 131.75).
+    # audible_end song = 131.49 → drops the 8th word (starts at 131.5).
     # → 7 of 8 words audible, coverage_words = 0.875 < 0.9 (not near-complete).
     # → alignment runs, candidate_text rebuilt.
-    # → interior partial floors: speech ~3.5s, words 7 → both meet floor.
-    # → Step 6 kept. _apply_finalized fires.
-    out = _finalize_lyric_audible_window([overlay, last_word], 128.0, 131.7)
+    # → final partial floors: speech ~3.49s, words 7 → both meet floor.
+    # → _apply_finalized fires.
+    out = _finalize_lyric_audible_window([overlay, last_word], 128.0, 131.49)
     kept = [o for o in out if o.get("lyric_line_id") == "line:postdwell"]
     assert len(kept) == 1
     # display_text was rewritten (partial path).
