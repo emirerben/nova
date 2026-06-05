@@ -50,6 +50,8 @@ _LYRIC_INJECTOR_PATH = (
 # 814..1316 after per-word-pop helper growth above `_inject_line` →
 # 822..1325 after karaoke finalization metadata growth above `_inject_line`;
 # verified with `test_lyric_injector_no_stacking.py` (66 tests) on 2026-06-04.
+# Same range, new SHA on 2026-06-05 after the audible-word rule string was
+# updated for tail-started lyric preview words; invariant suite still passes.
 # If the file structure changes such that this range no longer captures the
 # right scope, update BOTH endpoints below AND the SHA.
 _LINE_FROZEN_RANGE_START: int = 822
@@ -57,7 +59,7 @@ _LINE_FROZEN_RANGE_END: int = 1325
 
 # Locked SHA256 of the frozen range. DO NOT update this constant casually.
 # Read the module docstring above for the legitimate update procedure.
-_LINE_FROZEN_RANGE_SHA256: str = "9b9cdbfb023d89aea4ff5d3d274741cd8cff3779c92dc57e10ef85d1ef7fa694"
+_LINE_FROZEN_RANGE_SHA256: str = "ebe3028ba09e466f7da1f635af2ccd4af7a91ab49cb8b1d83dab3479957264b8"
 
 
 def _compute_range_sha256() -> str:

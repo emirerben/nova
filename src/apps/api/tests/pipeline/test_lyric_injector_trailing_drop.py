@@ -6,11 +6,10 @@
     of the section, AND
   - its clamped duration is below `_TRAILING_LINE_DROP_MIN_DUR_S`.
 
-Use case: a 20s lyrics-preview window where the last line's vocal
-sneaks in only at section ~19.45s — clamped to 0.55s of preview window,
-the user sees text without ever hearing the matching vocal. The Instant
-Crush preview (L4 "One thing I never see the same when your 'round")
-demonstrates this. Better to drop the flash entirely.
+Use case: a 20s lyrics-preview window where the last line's text barely
+overlaps the section tail, but no word actually starts inside that tail.
+Better to drop that flash entirely. If a word does start in the tail, keep
+the line so the preview can render the whole started word.
 
 The rule fires ONLY on the last emitted line by tail position — a
 legitimately short fully-contained ad-lib mid-section ("yeah!", etc.)
@@ -39,19 +38,28 @@ def _mk_line(text: str, start_s: float, end_s: float) -> dict:
 
 
 class TestTrailingDropRule:
-    def test_drops_trailing_flash_at_section_tail(self) -> None:
+    def test_drops_trailing_flash_at_section_tail_without_started_word(self) -> None:
         """A line whose clamped duration is < 1.0s AND whose clamped start
-        is in the last 1.0s of the section gets dropped — the Instant Crush
-        L4 case."""
-        # Section [0, 20]. L4 starts at 19.45 (last 1.0s) and would clamp to
-        # 19.45..20.0 (0.55s) — below the 1.0s min-dur threshold.
+        is in the last 1.0s of the section gets dropped when no word starts
+        inside the renderable section."""
+        # Section [10, 10.75]. The line overlaps for 0.75s, but its only word
+        # started at 9.0 — before the preview audio. This is a visual tail, not
+        # a started lyric word.
+        lines = [_mk_line("Already started", 9.0, 10.75)]
+        out = _select_section_lines(lines, best_start_s=10.0, best_end_s=10.75)
+        assert out == []
+
+    def test_keeps_trailing_line_when_word_starts_in_tail(self) -> None:
+        """A short tail line is kept once a word starts before the section cut."""
         lines = [
             _mk_line("normal line", 5.0, 9.0),
-            _mk_line("One thing I never see the same when your 'round", 19.45, 23.85),
+            _mk_line("Marvellous", 19.45, 21.27),
         ]
+
         out = _select_section_lines(lines, best_start_s=0.0, best_end_s=20.0)
-        assert len(out) == 1
-        assert out[0]["text"] == "normal line"
+
+        assert len(out) == 2
+        assert out[-1]["text"] == "Marvellous"
 
     def test_does_not_drop_mid_section_short_ad_lib(self) -> None:
         """A short line mid-section (not the last line) must NOT be dropped.
