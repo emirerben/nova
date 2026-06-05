@@ -850,7 +850,133 @@ def _inject_per_word_pop(
             _ensure_overlay_list(slots[slot_win.index]).append(overlay)
             injected += 1
 
-    return injected
+    dropped = 0
+    for slot in slots:
+        overlays = slot.get("text_overlays")
+        if not isinstance(overlays, list):
+            continue
+        before = _count_word_pop_overlays(overlays)
+        slot["text_overlays"] = _enforce_word_pop_no_stacking(overlays)
+        after = _count_word_pop_overlays(slot["text_overlays"])
+        dropped += before - after
+
+    return max(0, injected - dropped)
+
+
+def _count_word_pop_overlays(overlays: list[dict]) -> int:
+    return sum(
+        1
+        for overlay in overlays
+        if isinstance(overlay, dict) and _is_word_pop_overlay(overlay)
+    )
+
+
+def _coerce_finite_float(value: object) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _is_word_pop_overlay(overlay: dict) -> bool:
+    if (
+        overlay.get("role") != "lyrics"
+        or overlay.get("effect") != "pop-in"
+        or not bool(overlay.get("pop_animated_suffix"))
+    ):
+        return False
+    return all(
+        _coerce_finite_float(overlay.get(key)) is not None
+        for key in ("start_s", "end_s", "section_anchor_s", "section_end_anchor_s")
+    )
+
+
+def _word_pop_screen_slot_key(overlay: dict) -> tuple[object, ...]:
+    return (
+        overlay.get("position", "bottom"),
+        overlay.get("position_x_frac"),
+        overlay.get("position_y_frac"),
+        overlay.get("text_anchor", "left"),
+    )
+
+
+def _clip_word_pop_overlay_end(overlay: dict, new_end_s: float) -> dict | None:
+    start_s = _coerce_finite_float(overlay.get("start_s"))
+    current_end_s = _coerce_finite_float(overlay.get("end_s"))
+    target_end_s = _coerce_finite_float(new_end_s)
+    if start_s is None or current_end_s is None or target_end_s is None:
+        return None
+
+    end_s = min(current_end_s, target_end_s)
+    if end_s - start_s < _MIN_RENDERABLE_S:
+        return None
+
+    out = dict(overlay)
+    out["end_s"] = round(end_s, 3)
+    section_anchor_s = _coerce_finite_float(out.get("section_anchor_s"))
+    if section_anchor_s is not None:
+        out["section_end_anchor_s"] = round(
+            section_anchor_s + (end_s - start_s),
+            3,
+        )
+    return out
+
+
+def _enforce_word_pop_no_stacking(overlays: list[dict]) -> list[dict]:
+    """Clip or drop same-lane pop-up stages so two lyric lines never stack."""
+    word_pop_idxs = [
+        idx
+        for idx, overlay in enumerate(overlays)
+        if isinstance(overlay, dict) and _is_word_pop_overlay(overlay)
+    ]
+    if len(word_pop_idxs) <= 1:
+        return overlays
+
+    out = list(overlays)
+    word_pop_idxs.sort(
+        key=lambda idx: (_coerce_finite_float(out[idx].get("start_s")) or 0.0, idx)
+    )
+    dropped: set[int] = set()
+    prev_by_slot: dict[tuple[object, ...], int] = {}
+    for next_idx in word_pop_idxs:
+        if next_idx in dropped:
+            continue
+        nxt = out[next_idx]
+        slot_key = _word_pop_screen_slot_key(nxt)
+        prev_idx = prev_by_slot.get(slot_key)
+        prev_by_slot[slot_key] = next_idx
+        if prev_idx is None or prev_idx in dropped:
+            continue
+        prev = out[prev_idx]
+        prev_end = _coerce_finite_float(prev.get("end_s"))
+        next_start = _coerce_finite_float(nxt.get("start_s"))
+        if prev_end is None or next_start is None:
+            continue
+        if next_start >= prev_end - 1e-3:
+            continue
+
+        clipped = _clip_word_pop_overlay_end(prev, next_start)
+        if clipped is None:
+            dropped.add(prev_idx)
+            log.info(
+                "lyric_word_pop_overlap_dropped",
+                line_text=str(prev.get("text", ""))[:80],
+                next_text=str(nxt.get("text", ""))[:80],
+                overlap_s=round(prev_end - next_start, 3),
+            )
+        else:
+            out[prev_idx] = clipped
+            log.info(
+                "lyric_word_pop_overlap_clamped",
+                line_text=str(prev.get("text", ""))[:80],
+                next_text=str(nxt.get("text", ""))[:80],
+                old_end_s=round(prev_end, 3),
+                new_end_s=round(float(clipped["end_s"]), 3),
+                overlap_s=round(prev_end - next_start, 3),
+            )
+
+    return [overlay for idx, overlay in enumerate(out) if idx not in dropped]
 
 
 def _repair_word_pop_collapsed_timings(
@@ -1078,6 +1204,21 @@ def _drop_leading_partial_sentence_fragment(line: dict, word_dicts: list[dict]) 
     if best_start < 0 or best_len < 2:
         return word_dicts
 
+    parenthetical_start_idx = _word_pop_parenthetical_suffix_start_index(
+        original_text=original_text,
+        token_matches=token_matches,
+        token_norms=token_norms,
+        match_start_idx=best_start,
+        match_len=best_len,
+    )
+    if parenthetical_start_idx is not None:
+        log.info(
+            "lyric_word_pop_leading_parenthetical_prefix_dropped",
+            line_text=original_text[:80],
+            dropped_words=[str(w.get("text", "")) for w in word_dicts[:parenthetical_start_idx]],
+        )
+        return word_dicts[parenthetical_start_idx:]
+
     max_prefix = min(best_len, _WORD_POP_PARTIAL_SENTENCE_PREFIX_MAX_WORDS)
     for word_idx in range(max_prefix):
         token_idx = best_start + word_idx
@@ -1100,6 +1241,50 @@ def _drop_leading_partial_sentence_fragment(line: dict, word_dicts: list[dict]) 
         return word_dicts[word_idx + 1 :]
 
     return word_dicts
+
+
+def _word_pop_parenthetical_suffix_start_index(
+    *,
+    original_text: str,
+    token_matches: list[re.Match[str]],
+    token_norms: list[str],
+    match_start_idx: int,
+    match_len: int,
+) -> int | None:
+    """Return the word index where a clipped parenthetical hook should begin."""
+    if match_start_idx <= 0 or match_len <= 1:
+        return None
+
+    match_end_idx = match_start_idx + match_len
+    first_start_char = token_matches[match_start_idx].start()
+    last_end_char = token_matches[match_end_idx - 1].end()
+    open_idx = original_text.find("(", first_start_char, last_end_char)
+    if open_idx < 0:
+        return None
+
+    close_idx = original_text.find(")", open_idx + 1)
+    if close_idx >= 0 and close_idx < last_end_char:
+        return None
+
+    matched_indices = list(range(match_start_idx, match_end_idx))
+    prefix_indices = [idx for idx in matched_indices if token_matches[idx].start() < open_idx]
+    parenthetical_indices = [
+        idx for idx in matched_indices if token_matches[idx].start() > open_idx
+    ]
+    if (
+        not prefix_indices
+        or len(prefix_indices) > _WORD_POP_PARTIAL_SENTENCE_PREFIX_MAX_WORDS
+        or len(parenthetical_indices) < 2
+    ):
+        return None
+
+    # Only drop the prefix when it looks like a repeated lead-in, e.g.
+    # "Day by day (we've lost dancing)" clipped to "by day we've...".
+    prior_norms = {norm for norm in token_norms[:match_start_idx] if norm}
+    if token_norms[prefix_indices[-1]] not in prior_norms:
+        return None
+
+    return len(prefix_indices)
 
 
 def _drop_nested_word_pop_lines(section_lines: list[dict]) -> list[dict]:
@@ -2598,10 +2783,14 @@ def _drop_dangling_parenthetical_prefix(
     matched_tokens = tokens[match_start_idx:match_end_idx]
     prefix_tokens = [token for token in matched_tokens if token[0] < open_idx]
     parenthetical_tokens = [token for token in matched_tokens if token[0] > open_idx]
-    if len(prefix_tokens) != 1 or len(parenthetical_tokens) < 2:
+    if (
+        not prefix_tokens
+        or len(prefix_tokens) > _WORD_POP_PARTIAL_SENTENCE_PREFIX_MAX_WORDS
+        or len(parenthetical_tokens) < 2
+    ):
         return None
 
-    prefix_norm = prefix_tokens[0][2]
+    prefix_norm = prefix_tokens[-1][2]
     prior_norms = {token[2] for token in tokens[:match_start_idx]}
     if prefix_norm not in prior_norms:
         return None
