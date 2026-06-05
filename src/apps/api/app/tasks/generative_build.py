@@ -1573,6 +1573,9 @@ def _render_talking_head_variant(
 
 def _inject_lyrics(recipe_dict: dict, track: MusicTrack, style_set_id: str | None = None) -> dict:
     from app.pipeline.lyric_injector import inject_lyric_overlays  # noqa: PLC0415
+    from app.services.lyrics_cache_refresh import (  # noqa: PLC0415
+        ensure_fresh_lyrics_cached_for_render,
+    )
     from app.services.lyrics_config_effective import effective_lyrics_config  # noqa: PLC0415
 
     cfg = track.track_config or {}
@@ -1594,9 +1597,17 @@ def _inject_lyrics(recipe_dict: dict, track: MusicTrack, style_set_id: str | Non
     else:
         # Force lyrics on for this variant (the user explicitly chose the lyrics edit).
         lyrics_config = effective_lyrics_config(cfg, {"enabled": True, "style": "karaoke"})
+
+    lyrics_cached = ensure_fresh_lyrics_cached_for_render(
+        track_id=str(track.id),
+        lyrics_cached=track.lyrics_cached,
+        lyrics_config=lyrics_config,
+        reason="generative_lyrics_variant",
+    )
+    track.lyrics_cached = lyrics_cached
     return inject_lyric_overlays(
         recipe_dict,
-        track.lyrics_cached,
+        lyrics_cached,
         best_start_s=float(cfg.get("best_start_s", 0.0)),
         best_end_s=float(cfg.get("best_end_s", 0.0)),
         lyrics_config=lyrics_config,

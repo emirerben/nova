@@ -263,9 +263,15 @@ class LyricsExtractionAgent(Agent[LyricsInput, LyricsOutput]):
         # Previous: 2026-05-28.median: multi-line median re-anchor layered
         # above single-L0 to catch sub-second consistent drift (Overnight,
         # The Bay class).
-        # Current: linear re-anchor layered above uniform paths to catch
-        # progressively growing audio-vs-LRCLIB drift.
-        prompt_version="2026-05-31.linear-reanchor",
+        # Previous: 2026-05-31.linear-reanchor: linear re-anchor layered
+        # above uniform paths to catch progressively growing audio-vs-LRCLIB
+        # drift.
+        # Previous: 2026-06-05.collapsed-word-runs: repair dense Whisper
+        # word-timing clusters that exact-count alignment would otherwise
+        # cache as one 50ms karaoke flash.
+        # Current: repair isolated late LRC anchors by admitting a strong
+        # matching line prefix from the pre-anchor lookback window.
+        prompt_version="2026-06-05.anchor-prefix-lookback",
         model="rule_based",
         # LRCLIB + Whisper each have their own retry/timeout policy. The
         # agent runtime's retry loop doesn't apply to rule_based agents.

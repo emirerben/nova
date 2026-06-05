@@ -114,6 +114,58 @@ def test_sync_offset_shifts_karaoke_timing_without_mutating_cache() -> None:
     assert cache == before
 
 
+def test_again_late_anchor_fix_survives_prod_injection_rebase() -> None:
+    """Prod-equivalent final link for job 213243c6.
+
+    Once lyrics extraction caches the repaired song-time start (231.28s), the
+    production injector must rebase it against the rendered section
+    (`best_start_s=223.0`) and preserve the track's sync offset (-0.4s). The
+    resulting overlay starts at 7.88s in the 14s preview, matching the local
+    verification render.
+    """
+    line_text = "I swear to God, I don't even know why I put up with you"
+    recipe = _make_recipe([14.0])
+    cache = _make_lyrics_cache(
+        [
+            (
+                line_text,
+                231.28,
+                235.58,
+                [
+                    ("I", 231.28, 231.38),
+                    ("swear", 231.38, 231.88),
+                    ("to", 231.88, 232.08),
+                    ("God", 232.08, 232.32),
+                    ("I", 232.80, 232.85),
+                    ("don't", 232.85, 233.12),
+                    ("even", 233.12, 233.35),
+                    ("know", 233.35, 233.57),
+                    ("why", 233.57, 233.69),
+                    ("I", 233.76, 233.79),
+                    ("put", 233.90, 234.18),
+                    ("up", 234.18, 234.40),
+                    ("with", 234.80, 235.36),
+                ],
+            )
+        ]
+    )
+
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        best_start_s=223.0,
+        best_end_s=237.0,
+        lyrics_config={"enabled": True, "style": "karaoke", "sync_offset_s": -0.4},
+    )
+
+    ov = out["slots"][0]["text_overlays"][0]
+    assert ov["text"] == line_text
+    assert ov["start_s"] == pytest.approx(7.88, abs=1e-3)
+    assert ov["section_anchor_s"] == pytest.approx(7.88, abs=1e-3)
+    assert ov["word_timings"][0]["start_s"] == pytest.approx(0.0, abs=1e-3)
+    assert ov["word_timings"][1]["start_s"] == pytest.approx(0.1, abs=1e-3)
+
+
 def test_per_word_pop_accumulates_cumulative_line_text() -> None:
     """Each stage carries cumulative-line text; only the suffix is animated.
 

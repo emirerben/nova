@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.77.0] - 2026-06-05
+
+### Fixed
+- **Karaoke lyric renders now recover line starts when LRCLIB anchors land late.** The lyrics extractor admits a strong matching prefix from just before the LRC anchor, spreads collapsed Whisper word clusters instead of flashing them all at once, and keeps those local repairs out of whole-track reanchor math. The Roger Sanchez "Again" production regression now caches the audible `"I swear to God..."` start time and survives the render-time section rebase.
+- **Lyrics-enabled renders no longer silently burn stale cached timing blobs.** Music jobs, templated music jobs, template-linked music renders, generative lyrics variants, and admin lyric previews now refresh old `lyrics_cached` rows before rendering; if a fresh publishable LRCLIB result cannot be produced, the render fails loudly instead of shipping the old misaligned cache.
+
 ## [0.4.76.0] - 2026-06-05
 
 ### Fixed

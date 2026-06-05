@@ -117,6 +117,70 @@ def test_lrclib_plain_falls_back_to_fuzzy_align(mock_lrclib, mock_whisper) -> No
     assert len(out.lines) >= 1
 
 
+@patch("app.agents.lyrics.transcribe_for_lyrics")
+@patch("app.agents.lyrics.search_lrclib")
+def test_lrclib_synced_repairs_late_line_anchor_prefix(mock_lrclib, mock_whisper) -> None:
+    """Prod-equivalent regression: Again / Roger Sanchez job 213243c6.
+
+    The LRCLIB anchor for "I swear to God..." was late enough to exclude the
+    real opening words from the hard anchor window. The agent must cache the
+    Whisper prefix timing, not the stale LRCLIB anchor, so production renders
+    read the corrected `lyrics_cached` blob.
+    """
+    line_text = "I swear to God, I don't even know why I put up with you"
+    mock_lrclib.return_value = LrclibLyrics(
+        title="Again",
+        artist="Roger Sanchez",
+        plain_lines=(line_text, "Ok stop"),
+        synced_lines=(
+            SyncedLine(start_s=232.44, text=line_text),
+            SyncedLine(start_s=235.63, text="Ok stop"),
+        ),
+        instrumental=False,
+        lrclib_id=213243,
+    )
+    mock_whisper.return_value = WhisperLyricsResult(
+        words=(
+            _ww("I", 231.28, 231.38),
+            _ww("swear", 231.38, 231.88),
+            _ww("to", 231.88, 232.08),
+            _ww("God", 232.08, 232.32),
+            _ww("I", 232.80, 232.85),
+            _ww("don't", 232.85, 233.12),
+            _ww("even", 233.12, 233.35),
+            _ww("know", 233.35, 233.57),
+            _ww("why", 233.57, 233.69),
+            _ww("I", 233.76, 233.79),
+            _ww("put", 233.90, 234.18),
+            _ww("up", 234.18, 234.40),
+            _ww("with", 234.80, 235.36),
+            _ww("you", 235.36, 235.58),
+            _ww("Ok", 235.70, 235.98),
+            _ww("stop", 236.05, 236.35),
+        ),
+        full_text="I swear to God I don't even know why I put up with you Ok stop",
+        language="en",
+    )
+
+    agent = LyricsExtractionAgent(model_client=None)  # type: ignore[arg-type]
+    out = agent.run(
+        LyricsInput(
+            audio_path="/tmp/again.m4a",
+            track_title="Again",
+            artist="Roger Sanchez",
+            duration_s=240.0,
+        )
+    )
+
+    assert out.source == "lrclib_synced+whisper"
+    assert out.prompt_version == LyricsExtractionAgent.spec.prompt_version
+    line = next(line for line in out.lines if line.text == line_text)
+    ok_line = next(line for line in out.lines if line.text == "Ok stop")
+    assert line.start_s == 231.28
+    assert [word.start_s for word in line.words[:4]] == [231.28, 231.38, 231.88, 232.08]
+    assert ok_line.start_s == 235.7
+
+
 # ── Fallback paths ────────────────────────────────────────────────────────────
 
 

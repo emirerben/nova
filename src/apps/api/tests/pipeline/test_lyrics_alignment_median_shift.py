@@ -410,7 +410,7 @@ class TestPromptVersionBump:
     def test_lyrics_extraction_prompt_version_bumped(self) -> None:
         from app.agents.lyrics import LyricsExtractionAgent
 
-        assert LyricsExtractionAgent.spec.prompt_version == "2026-05-31.linear-reanchor"
+        assert LyricsExtractionAgent.spec.prompt_version == "2026-06-05.anchor-prefix-lookback"
 
 
 # ────────────────────────────────────────────────────────────────────────────
