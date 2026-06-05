@@ -7,8 +7,10 @@ either no timings or only line-level timings. Whisper gives word-grain
 timings but mishears words (especially on Turkish + heavy-instrumental
 tracks). We want:
 
-  - The canonical text shown to the viewer (correct spelling, line breaks)
-  - Whisper's timings driving the karaoke / per-word animation
+  - Canonical text shown to the viewer where it agrees with the audio
+    (correct spelling, line breaks)
+  - Whisper's timings driving the karaoke / per-word animation, with narrow
+    transcript-backed repairs for isolated canonical/source mistakes
 
 Two entry points:
 
@@ -50,14 +52,14 @@ log = structlog.get_logger()
 
 @dataclass(frozen=True, slots=True)
 class AlignedWord:
-    text: str  # canonical text (from Genius)
+    text: str  # display token: canonical lyric text unless a guarded Whisper repair wins
     start_s: float
     end_s: float
 
 
 @dataclass(frozen=True, slots=True)
 class AlignedLine:
-    text: str  # canonical line text (from Genius, original casing/punctuation)
+    text: str  # display line text, preserving canonical casing/punctuation where possible
     start_s: float
     end_s: float
     words: tuple[AlignedWord, ...]
@@ -115,6 +117,19 @@ _ANCHOR_PREFIX_LOOKBACK_S = 1.5
 _ANCHOR_PREFIX_LOOKBACK_MAX_WORDS = 5
 _ANCHOR_PREFIX_LOOKBACK_MIN_MATCHES = 3
 _ANCHOR_PREFIX_LOOKBACK_MIN_SHIFT_S = 0.2
+
+# Exact-count windows are only a fast path when count AND content agree. If a
+# single LRCLIB token disagrees with Whisper inside an otherwise matching phrase,
+# repair that token from Whisper instead of stamping a word the listener never
+# hears. Require surrounding agreement so Whisper one-offs still lose to the
+# canonical lyric source.
+_EXACT_COUNT_REPAIR_MIN_MATCH_RATIO = 0.60
+_EXACT_COUNT_REPAIR_MIN_MATCHES = 2
+# Repair only a single isolated token; multiple transcript-authored words are
+# too much trust to place in Whisper when the canonical lyric source disagrees.
+_EXACT_COUNT_REPAIR_MAX_MISMATCHES = 1
+_LEADING_WHISPER_PREFIX_MAX_WORDS = 2
+_LEADING_WHISPER_PREFIX_MAX_GAP_S = 0.75
 
 # If a synced LRCLIB line only matches a prefix and Whisper has a substantial
 # unused tail in the same line window, the canonical row is probably wrong for
@@ -205,7 +220,7 @@ def _normalize(token: str) -> str:
     """Lowercase + strip diacritics + strip apostrophes for matching only.
 
     Returned string is for SIMILARITY scoring, not display. Display strings
-    always come from the canonical (Genius) source.
+    come from the canonical lyric source unless a guarded Whisper repair wins.
     """
     # NFKD splits "ü" → "u" + combining mark; we discard the marks.
     decomposed = unicodedata.normalize("NFKD", token)
@@ -325,6 +340,196 @@ def _find_pre_anchor_prefix_match(
             best = candidate
 
     return best
+
+
+def _case_like(source: str, replacement: str) -> str:
+    """Apply source token casing to a Whisper replacement token."""
+    if not replacement:
+        return replacement
+    if source.isupper():
+        return replacement.upper()
+    if source[:1].isupper():
+        return replacement[:1].upper() + replacement[1:].lower()
+    if source.islower():
+        return replacement.lower()
+    return replacement
+
+
+def _replace_line_tokens(line: str, replacement_tokens: list[str]) -> str:
+    """Replace lyric word tokens while preserving original spaces/punctuation."""
+    token_matches = list(re.finditer(r"[\w']+", line, flags=re.UNICODE))
+    if len(token_matches) != len(replacement_tokens):
+        return " ".join(replacement_tokens).strip()
+
+    chunks: list[str] = []
+    cursor = 0
+    for match, replacement in zip(token_matches, replacement_tokens, strict=True):
+        chunks.append(line[cursor : match.start()])
+        chunks.append(replacement)
+        cursor = match.end()
+    chunks.append(line[cursor:])
+    return "".join(chunks).strip()
+
+
+def _align_exact_count_window(
+    anchor_text: str,
+    expected_words: list[str],
+    whisper_words_in_window: list[WhisperWord],
+) -> tuple[AlignedLine, int] | None:
+    """Fast path for same-count windows, guarded by pairwise word agreement."""
+    pair_scores = [
+        _similarity(_normalize(expected), _normalize(whisper.text))
+        for expected, whisper in zip(expected_words, whisper_words_in_window, strict=True)
+    ]
+    pair_matches = [score >= _MIN_SIMILARITY for score in pair_scores]
+    matched_count = sum(1 for ok in pair_matches if ok)
+
+    display_words = list(expected_words)
+    display_text = anchor_text.strip()
+    if matched_count != len(expected_words):
+        match_ratio = matched_count / max(1, len(expected_words))
+        mismatch_count = len(expected_words) - matched_count
+        if (
+            mismatch_count > _EXACT_COUNT_REPAIR_MAX_MISMATCHES
+            or matched_count < _EXACT_COUNT_REPAIR_MIN_MATCHES
+            or match_ratio < _EXACT_COUNT_REPAIR_MIN_MATCH_RATIO
+        ):
+            log.warning(
+                "lyrics_alignment_exact_count_mismatch_fallback",
+                line=anchor_text.strip()[:80],
+                matched_count=matched_count,
+                total_words=len(expected_words),
+                mismatch_count=mismatch_count,
+                pair_scores=[round(score, 3) for score in pair_scores],
+            )
+            return None
+
+        display_words = [
+            expected
+            if pair_matches[idx]
+            else _case_like(expected, whisper_words_in_window[idx].text)
+            for idx, expected in enumerate(expected_words)
+        ]
+        display_text = _replace_line_tokens(anchor_text, display_words)
+        log.warning(
+            "lyrics_alignment_exact_count_mismatch_repaired",
+            line=anchor_text.strip()[:80],
+            repaired_line=display_text[:80],
+            mismatches=[
+                {
+                    "canonical": expected_words[idx],
+                    "whisper": whisper_words_in_window[idx].text,
+                    "score": round(pair_scores[idx], 3),
+                }
+                for idx, ok in enumerate(pair_matches)
+                if not ok
+            ],
+            matched_count=matched_count,
+            total_words=len(expected_words),
+        )
+
+    words = _repair_collapsed_word_runs(
+        tuple(
+            AlignedWord(
+                text=display_words[k],
+                start_s=round(whisper_words_in_window[k].start_s, 3),
+                end_s=round(whisper_words_in_window[k].end_s, 3),
+            )
+            for k in range(len(expected_words))
+        ),
+        line=display_text,
+    )
+    return (
+        AlignedLine(
+            text=display_text,
+            start_s=words[0].start_s,
+            end_s=words[-1].end_s,
+            words=words,
+        ),
+        matched_count,
+    )
+
+
+def _align_leading_whisper_prefix_window(
+    anchor_text: str,
+    expected_words: list[str],
+    whisper_words_in_window: list[WhisperWord],
+) -> tuple[AlignedLine, int] | None:
+    """Repair a canonical line that omitted a short audible leading prefix."""
+    extra_count = len(whisper_words_in_window) - len(expected_words)
+    if extra_count <= 0 or extra_count > _LEADING_WHISPER_PREFIX_MAX_WORDS:
+        return None
+    if len(expected_words) < _EXACT_COUNT_REPAIR_MIN_MATCHES:
+        return None
+
+    suffix_words = whisper_words_in_window[extra_count:]
+    pair_scores = [
+        _similarity(_normalize(expected), _normalize(whisper.text))
+        for expected, whisper in zip(expected_words, suffix_words, strict=True)
+    ]
+    if any(score < _MIN_SIMILARITY for score in pair_scores):
+        return None
+
+    adjacent_words = list(whisper_words_in_window[:extra_count]) + suffix_words[:1]
+    adjacent_gaps = [
+        adjacent_words[idx + 1].start_s - adjacent_words[idx].end_s
+        for idx in range(len(adjacent_words) - 1)
+    ]
+    if any(gap > _LEADING_WHISPER_PREFIX_MAX_GAP_S for gap in adjacent_gaps):
+        log.warning(
+            "lyrics_alignment_leading_whisper_prefix_gap_rejected",
+            line=anchor_text.strip()[:80],
+            prefix_words=[w.text for w in whisper_words_in_window[:extra_count]],
+            first_suffix_word=suffix_words[0].text if suffix_words else "",
+            gaps=[round(gap, 3) for gap in adjacent_gaps],
+            max_gap_s=_LEADING_WHISPER_PREFIX_MAX_GAP_S,
+        )
+        return None
+
+    prefix_display_words = [whisper_words_in_window[idx].text.strip() for idx in range(extra_count)]
+    prefix_display_words = [word for word in prefix_display_words if word]
+    if not prefix_display_words:
+        return None
+
+    prefix_display_words[0] = _case_like("Aa", prefix_display_words[0])
+    display_text = f"{' '.join(prefix_display_words)} {anchor_text.strip()}".strip()
+    log.warning(
+        "lyrics_alignment_leading_whisper_prefix_repaired",
+        line=anchor_text.strip()[:80],
+        repaired_line=display_text[:80],
+        prefix_words=prefix_display_words,
+        matched_count=len(expected_words),
+        total_canonical_words=len(expected_words),
+    )
+    aligned_words = [
+        AlignedWord(
+            text=prefix_display_words[idx],
+            start_s=round(whisper_words_in_window[idx].start_s, 3),
+            end_s=round(whisper_words_in_window[idx].end_s, 3),
+        )
+        for idx in range(len(prefix_display_words))
+    ]
+    aligned_words.extend(
+        AlignedWord(
+            text=expected_words[idx],
+            start_s=round(suffix_words[idx].start_s, 3),
+            end_s=round(suffix_words[idx].end_s, 3),
+        )
+        for idx in range(len(expected_words))
+    )
+    words = _repair_collapsed_word_runs(
+        tuple(aligned_words),
+        line=display_text,
+    )
+    return (
+        AlignedLine(
+            text=display_text,
+            start_s=words[0].start_s,
+            end_s=words[-1].end_s,
+            words=words,
+        ),
+        len(expected_words),
+    )
 
 
 def _build_line(
@@ -467,7 +672,7 @@ def _build_line(
 
         spans.append((start, end))
 
-    # Build per-word objects (canonical text preserved).
+    # Build per-word objects (canonical display text preserved).
     aligned_words = _repair_collapsed_word_runs(
         tuple(
             AlignedWord(
@@ -1424,26 +1629,17 @@ def _align_within_window(
     """
     # Strategy 1 — exact-count fast path.
     if len(whisper_words_in_window) == len(expected_words):
-        words = _repair_collapsed_word_runs(
-            tuple(
-                AlignedWord(
-                    text=expected_words[k],
-                    start_s=round(whisper_words_in_window[k].start_s, 3),
-                    end_s=round(whisper_words_in_window[k].end_s, 3),
-                )
-                for k in range(len(expected_words))
-            ),
-            line=anchor_text,
-        )
-        return (
-            AlignedLine(
-                text=anchor_text.strip(),
-                start_s=words[0].start_s,
-                end_s=words[-1].end_s,
-                words=words,
-            ),
-            len(expected_words),
-        )
+        exact = _align_exact_count_window(anchor_text, expected_words, whisper_words_in_window)
+        if exact is not None:
+            return exact
+
+    prefix_repaired = _align_leading_whisper_prefix_window(
+        anchor_text,
+        expected_words,
+        whisper_words_in_window,
+    )
+    if prefix_repaired is not None:
+        return prefix_repaired
 
     # Strategy 2 — fuzzy align within the window using the existing matcher.
     if whisper_words_in_window:
