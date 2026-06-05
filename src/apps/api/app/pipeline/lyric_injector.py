@@ -773,9 +773,21 @@ def _inject_per_word_pop(
             line_end_s=line_end_s,
             line_text=str(line.get("text", "")),
         )
+        next_line_start_s = (
+            float(section_lines[line_idx + 1]["start_s"])
+            if line_idx + 1 < len(section_lines)
+            else None
+        )
+        words, line_end_s = _truncate_word_pop_before_next_line(
+            words,
+            line_end_s=line_end_s,
+            next_line_start_s=next_line_start_s,
+            line_text=str(line.get("text", "")),
+        )
+        if not words:
+            continue
         dwell_s = _LAST_WORD_DWELL_S
-        if line_idx + 1 < len(section_lines):
-            next_line_start_s = float(section_lines[line_idx + 1]["start_s"])
+        if next_line_start_s is not None:
             dwell_budget_s = next_line_start_s - line_end_s
             if dwell_budget_s < dwell_s:
                 # First words should pop onto a clean screen. The terminal
@@ -841,6 +853,50 @@ def _inject_per_word_pop(
             injected += 1
 
     return injected
+
+
+def _truncate_word_pop_before_next_line(
+    words: list[_RevealWord],
+    *,
+    line_end_s: float,
+    next_line_start_s: float | None,
+    line_text: str,
+) -> tuple[list[_RevealWord], float]:
+    """Cut an outgoing popup line before the next line claims the visual lane."""
+    if next_line_start_s is None or next_line_start_s >= line_end_s:
+        return words, line_end_s
+
+    cutoff_s = max(0.0, next_line_start_s - _WORD_POP_LINE_CLEAR_GAP_S)
+    max_word_start_s = cutoff_s - _MIN_RENDERABLE_S
+    kept = [
+        _RevealWord(
+            text=word.text,
+            start_s=word.start_s,
+            end_s=min(word.end_s, cutoff_s),
+        )
+        for word in words
+        if word.start_s <= max_word_start_s
+    ]
+    if not kept:
+        log.info(
+            "lyric_word_pop_overlapping_line_dropped",
+            line_text=line_text[:80],
+            line_end_s=round(line_end_s, 3),
+            next_line_start_s=round(next_line_start_s, 3),
+        )
+        return [], line_end_s
+
+    new_line_end_s = min(line_end_s, cutoff_s)
+    if len(kept) != len(words) or new_line_end_s != line_end_s:
+        log.info(
+            "lyric_word_pop_overlapping_line_truncated",
+            line_text=line_text[:80],
+            old_line_end_s=round(line_end_s, 3),
+            new_line_end_s=round(new_line_end_s, 3),
+            next_line_start_s=round(next_line_start_s, 3),
+            dropped_words=[word.text for word in words[len(kept) :]],
+        )
+    return kept, new_line_end_s
 
 
 def _repair_word_pop_collapsed_timings(

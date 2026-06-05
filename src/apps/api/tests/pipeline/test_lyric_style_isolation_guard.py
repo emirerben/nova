@@ -1,7 +1,7 @@
 """Strict-isolation contract guard for Line lyric code.
 
 This test FAILS the build whenever anyone edits the frozen `_inject_line`
-range in `app/pipeline/lyric_injector.py` (lines 1162..1665, which covers
+range in `app/pipeline/lyric_injector.py` (lines 1208..1711, which covers
 the line-style injector AND the dynamic-crossfade post-pass `§1c`/`§1g`
 reconciliation). It does NOT prevent the edit — it forces the editor to
 acknowledge they're touching Line code and update the locked SHA below
@@ -21,7 +21,7 @@ How to legitimately update the SHA
      pytest tests/pipeline/test_lyric_injector_no_stacking.py -v
    It must all pass.
 3. Recompute the new SHA:
-     sed -n '1162,1665p' app/pipeline/lyric_injector.py | shasum -a 256
+     sed -n '1208,1711p' app/pipeline/lyric_injector.py | shasum -a 256
 4. Replace _LINE_FROZEN_RANGE_SHA256 below with the new value.
 5. In the PR description, name the invariant you reverified and link to
    the test run output.
@@ -39,7 +39,7 @@ _LYRIC_INJECTOR_PATH = (
 )
 
 # Inclusive line range covering `_inject_line` and the dynamic-crossfade
-# post-pass. Line 1162 starts with `def _inject_line(`; line 1665 is the
+# post-pass. Line 1208 starts with `def _inject_line(`; line 1711 is the
 # last line before `def _finalize_lyric_audible_window(` (the next public
 # function). Range moved through 644..1146 → 677..1179 (PR Beauty-And-A-Beat,
 # 2026-05-27) → 679..1181 (insertion of _INJECTOR_ALLOWED_SOURCES) → 720..1222
@@ -51,12 +51,13 @@ _LYRIC_INJECTOR_PATH = (
 # 822..1325 after karaoke finalization metadata growth above `_inject_line` →
 # 1162..1665 after pop-up-only helper growth above `_inject_line` plus the
 # 2026-06-05 audible-word rule update for tail-started lyric preview words →
-# 1152..1655 after moving the renderable-source allowlist out of this module.
+# 1218..1721 after popup overlap truncation helper growth above `_inject_line` →
+# 1208..1711 after moving the renderable-source allowlist out of this module.
 # Verified with `test_lyric_injector_no_stacking.py` (66 tests) on 2026-06-05.
 # If the file structure changes such that this range no longer captures the
 # right scope, update BOTH endpoints below AND the SHA.
-_LINE_FROZEN_RANGE_START: int = 1152
-_LINE_FROZEN_RANGE_END: int = 1655
+_LINE_FROZEN_RANGE_START: int = 1208
+_LINE_FROZEN_RANGE_END: int = 1711
 
 # Locked SHA256 of the frozen range. DO NOT update this constant casually.
 # Read the module docstring above for the legitimate update procedure.
