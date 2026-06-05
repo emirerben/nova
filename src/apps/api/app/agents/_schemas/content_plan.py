@@ -31,10 +31,15 @@ from app.agents._schemas.persona import Persona
 #              ideas as an explicit "avoid these" list (the model won't self-impose
 #              variety in one pass). Block is empty on the first pass, so that
 #              render stays the proven baseline.
+# 2026-06-05 — posts_per_week: plan now emits ~N items per 7-day window instead of
+#              one item per calendar day. Prompt uses $posts_per_week + $target_item_count;
+#              parse() enforces a per-week cap server-side. Also fixed the edit_format
+#              parse-threading bug (items were silently defaulting to montage regardless
+#              of what the model emitted).
 # 2026-06-01.1 — weekly research refresh: content_ideas.json bumped to 2026-05-31
 #                (new market-research ideas). Bump invalidates the planner cache so
 #                the new ideas take effect on top of the dedup block.
-CONTENT_PLAN_PROMPT_VERSION = "2026-06-01.1"
+CONTENT_PLAN_PROMPT_VERSION = "2026-06-05"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60

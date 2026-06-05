@@ -207,6 +207,11 @@ function PersonaSummary({ persona }: { persona: PersonaContent }) {
     value: (persona[f.key] as string)?.trim(),
   })).filter((f) => f.value);
 
+  // Show posts_per_week when set; falls after cadence in the grid.
+  if (persona.posts_per_week != null) {
+    facts.push({ label: "Posts/week", value: String(persona.posts_per_week) });
+  }
+
   return (
     <div className="space-y-8">
       {persona.summary?.trim() ? (
@@ -276,6 +281,31 @@ function PersonaForm({
           />
         </label>
       ))}
+
+      {/* Numeric posts-per-week control — drives how many ideas appear in the plan */}
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium text-zinc-300">Posts per week</span>
+        <input
+          type="number"
+          min={1}
+          max={7}
+          value={draft.posts_per_week ?? ""}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (raw === "") {
+              setDraft({ ...draft, posts_per_week: null });
+            } else {
+              const n = parseInt(raw, 10);
+              setDraft({ ...draft, posts_per_week: isNaN(n) ? null : Math.max(1, Math.min(7, n)) });
+            }
+          }}
+          placeholder="1–7"
+          className="w-24 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white transition-colors focus:border-amber-400/60 focus:outline-none"
+        />
+        <p className="mt-1 text-xs text-zinc-500">
+          How many posts per week? This drives your plan&apos;s idea count (blank = inferred from cadence).
+        </p>
+      </label>
 
       {LIST_FIELDS.map((f) => (
         <ChipListEditor

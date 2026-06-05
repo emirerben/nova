@@ -80,3 +80,31 @@ def test_parse_strips_role_markers_from_model_output() -> None:
     # The role marker is replaced by the sanitizer breadcrumb, not preserved verbatim.
     assert "System:" not in out.summary
     assert "role-marker-stripped" in out.summary
+
+
+# ── posts_per_week parse-threading tests ─────────────────────────────────────
+
+
+def test_parse_threads_posts_per_week_through() -> None:
+    """posts_per_week must survive the sanitize pass.
+
+    This test is the load-bearing regression for the parse-threading trap:
+    Persona() is built with named args, not **splat, so any new field MUST be
+    explicitly added to the constructor — omitting it silently defaults to None.
+    """
+    data = {**_VALID, "posts_per_week": 4}
+    out = _agent().parse(json.dumps(data), PersonaQuestionnaire())
+    assert out.posts_per_week == 4
+
+
+def test_parse_defaults_posts_per_week_none_when_absent() -> None:
+    """Older model output that omits posts_per_week must still validate (field is optional)."""
+    out = _agent().parse(json.dumps(_VALID), PersonaQuestionnaire())
+    assert out.posts_per_week is None
+
+
+def test_parse_rejects_out_of_range_posts_per_week() -> None:
+    """posts_per_week=9 violates le=7 → Pydantic raises → RefusalError."""
+    data = {**_VALID, "posts_per_week": 9}
+    with pytest.raises(RefusalError):
+        _agent().parse(json.dumps(data), PersonaQuestionnaire())

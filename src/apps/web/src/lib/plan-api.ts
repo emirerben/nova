@@ -37,6 +37,10 @@ export interface PersonaContent {
   tone: string;
   audience: string;
   posting_cadence: string;
+  // Structured post frequency (1-7). Drives how many plan ideas appear per week.
+  // Optional: personas generated before this field shipped won't have it; the
+  // backend resolve_posts_per_week() falls back to the cadence prose or 7.
+  posts_per_week?: number | null;
   sample_topics: string[];
   // The AI's "why this lane" — shown read-only in the dashboard. Optional:
   // personas generated before this field shipped won't have it.

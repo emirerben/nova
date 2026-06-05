@@ -14,7 +14,7 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +50,10 @@ class PersonaEdit(BaseModel):
     tone: str | None = None
     audience: str | None = None
     posting_cadence: str | None = None
+    # Structured post frequency: drives the number of plan ideas per week.
+    # Integer so the merge loop stores it verbatim (never stringified). 422 on
+    # out-of-range (ge/le). Omit to leave the existing value unchanged.
+    posts_per_week: int | None = Field(default=None, ge=1, le=7)
     sample_topics: list[str] | None = None
 
 
@@ -151,6 +155,12 @@ async def edit_persona(
     for key, value in updates.items():
         if isinstance(value, list):
             persona[key] = [v for v in (_sanitize_text(str(x)) for x in value) if v]
+        elif isinstance(value, int) and not isinstance(value, bool):
+            # Store integers verbatim — running _sanitize_text(str(4)) → "4" would
+            # work but loses the type; Persona(**persona) would then accept "4" as
+            # a str where int is expected. Booleans are excluded (isinstance(True, int)
+            # is True in Python) — they're not in PersonaEdit but guards future fields.
+            persona[key] = value
         else:
             persona[key] = _sanitize_text(str(value))
 

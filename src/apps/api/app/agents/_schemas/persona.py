@@ -9,11 +9,16 @@ plan's T7).
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field
 
 # Bump when prompts/generate_persona.txt OR prompts/persona_archetypes.json OR
 # prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
 # archetype bank + success-factor bank are part of the prompt).
+# 2026-06-05 — added posts_per_week (int 1-7) so the plan agent can emit the right
+#              number of ideas per week; resolve_posts_per_week() provides a legacy
+#              fallback for personas that predate this field.
 # 2026-05-31 — concrete-pillar constraint: content_pillars + sample_topics must be
 #              filmable real-life moments, never abstract concepts ("Analytical
 #              Thinking") — stops the abstract pillar that seeds plan-agent cringe.
@@ -21,7 +26,7 @@ from pydantic import BaseModel, Field
 #                "update persona from feedback" re-tunes the lane toward what works.
 # 2026-05-30.1 — added `rationale` (the AI's "why this lane" shown in the dashboard).
 # 2026-05-30 — added $success_factors block + archetype performance ranking.
-PERSONA_PROMPT_VERSION = "2026-05-31.1"
+PERSONA_PROMPT_VERSION = "2026-06-05"
 
 # Upper bounds keep a runaway model response from bloating the persona row.
 _MAX_PILLARS = 8
@@ -56,6 +61,10 @@ class Persona(BaseModel):
     tone: str = Field(min_length=1)
     audience: str = Field(min_length=1)
     posting_cadence: str = Field(min_length=1)
+    # Structured post frequency (1-7 per week). Optional so legacy personas that
+    # predate this field validate cleanly; resolve_posts_per_week() derives the
+    # effective value with a regex fallback on posting_cadence prose.
+    posts_per_week: int | None = Field(default=None, ge=1, le=7)
     sample_topics: list[str] = Field(default_factory=list, max_length=_MAX_TOPICS)
     # The AI's short "why this lane fits you + why it works on TikTok", surfaced
     # read-only in the dashboard. Optional so a user edit that drops it never
@@ -64,3 +73,20 @@ class Persona(BaseModel):
 
     def to_dict(self) -> dict:
         return self.model_dump()
+
+
+def resolve_posts_per_week(persona: Persona) -> int:
+    """Derive the effective posts-per-week for this persona.
+
+    Priority:
+    1. Structured field (set by the persona LLM or the user directly).
+    2. Regex: find the largest integer in 1..7 in the posting_cadence prose
+       (handles "3-4 posts/week" → 4, "post 3x a week" → 3).
+    3. Fallback: 7 — preserves the pre-feature behavior of one item per day.
+    """
+    if persona.posts_per_week is not None:
+        return max(1, min(7, persona.posts_per_week))
+    numbers = [int(n) for n in re.findall(r"\d+", persona.posting_cadence) if 1 <= int(n) <= 7]
+    if numbers:
+        return max(numbers)
+    return 7

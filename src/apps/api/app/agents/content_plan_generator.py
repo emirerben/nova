@@ -13,6 +13,7 @@ range, drops empty/duplicate-day items, and refuses if nothing valid survives.
 from __future__ import annotations
 
 import json
+import math
 from typing import ClassVar
 
 import structlog
@@ -25,6 +26,7 @@ from app.agents._schemas.content_plan import (
     ContentPlanOutput,
     PlanItemSpec,
 )
+from app.agents._schemas.persona import resolve_posts_per_week
 from app.agents.music_matcher import _sanitize_text
 from app.agents.persona_examples import format_ideas_for_pillars, format_success_factors
 from app.pipeline.prompt_loader import load_prompt
@@ -89,6 +91,9 @@ class ContentPlanGeneratorAgent(Agent[ContentPlanInput, ContentPlanOutput]):
 
     def render_prompt(self, input: ContentPlanInput) -> str:  # noqa: A002
         p = input.persona
+        ppw = resolve_posts_per_week(p)
+        weeks = max(1, math.ceil(input.horizon_days / 7))
+        target = min(input.horizon_days, ppw * weeks)
         return load_prompt(
             "generate_content_plan",
             summary=_sanitize_text(p.summary),
@@ -96,6 +101,8 @@ class ContentPlanGeneratorAgent(Agent[ContentPlanInput, ContentPlanOutput]):
             tone=_sanitize_text(p.tone),
             audience=_sanitize_text(p.audience),
             posting_cadence=_sanitize_text(p.posting_cadence),
+            posts_per_week=str(ppw),
+            target_item_count=str(target),
             sample_topics=_sanitize_text(", ".join(p.sample_topics)),
             events=_sanitize_text(input.events) or "(none provided)",
             horizon_days=str(input.horizon_days),
@@ -144,8 +151,29 @@ class ContentPlanGeneratorAgent(Agent[ContentPlanInput, ContentPlanOutput]):
                     filming_suggestion=_sanitize_text(str(raw.get("filming_suggestion", ""))),
                     # User-facing "why this works"; sanitized like the other fields.
                     rationale=_sanitize_text(str(raw.get("rationale", ""))),
+                    # Thread edit_format through explicitly — coerce_edit_format (Pydantic
+                    # mode="before" validator) maps None/unknown values to "montage" safely.
+                    # Without this line, every item silently defaults to montage regardless
+                    # of what the model emitted (parse-threading trap).
+                    edit_format=raw.get("edit_format"),
                 )
             )
+
+        # Per-week cap: keep at most posts_per_week items in each 7-day window.
+        # Enforced server-side so the plan is correct even when the model overshoots.
+        # No-op when ppw >= 7: status quo preserved, golden replay unaffected.
+        ppw = resolve_posts_per_week(input.persona)
+        if ppw < 7:
+            # Items are not yet sorted; bucket by week and keep lowest day_index first.
+            items.sort(key=lambda it: it.day_index)
+            capped: list[PlanItemSpec] = []
+            week_counts: dict[int, int] = {}
+            for item in items:
+                week = (item.day_index - 1) // 7  # 0-indexed week bucket
+                if week_counts.get(week, 0) < ppw:
+                    capped.append(item)
+                    week_counts[week] = week_counts.get(week, 0) + 1
+            items = capped
 
         if not items:
             raise RefusalError("content_plan: no valid items after validation")
