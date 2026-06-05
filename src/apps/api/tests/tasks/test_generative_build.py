@@ -12,6 +12,7 @@ from __future__ import annotations
 import types
 
 import app.tasks.generative_build as gb
+from app.agents.lyrics import LyricsExtractionAgent
 
 
 class _Meta:
@@ -34,7 +35,13 @@ def _track(track_id="t1", lyrics_cached=None):
         track_config={"best_start_s": 0.0, "best_end_s": 30.0},
         ai_labels={"labels": {}},
         analysis_status="ready",
-        lyrics_cached=lyrics_cached if lyrics_cached is not None else {"lines": [{"text": "hi"}]},
+        lyrics_cached=lyrics_cached
+        if lyrics_cached is not None
+        else {
+            "prompt_version": LyricsExtractionAgent.spec.prompt_version,
+            "source": "lrclib_synced+whisper",
+            "lines": [{"text": "hi"}],
+        },
     )
 
 

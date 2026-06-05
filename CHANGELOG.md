@@ -8,6 +8,11 @@ All notable changes to this project will be documented in this file.
 - **Pop-up lyric previews no longer render short nested ad-libs over the main lyric line.** The per-word pop injector now suppresses one- and two-word lines that materially overlap a longer lyric line in the same one-lane visual surface, fixing the `Ok` / `Ok stop` overlap from preview job `1b23fc80-db29-40ed-8c69-ca6bf30fd3d6` while keeping valid adjacent short lyric lines with only tiny boundary overlap.
 - **Pop-up preview starts now drop clipped previous-sentence tails.** When a preview window begins mid-line, leading fragments such as `do you?` are trimmed before the intended opening phrase, so the render starts on `You men are all alike` instead of showing stale context from before the selected section.
 - **Malformed pop-up word timing clusters are repaired before stage generation.** Large collapsed or non-monotonic word timing runs are redistributed across the available phrase window, and implausibly late collapsed lines are pulled earlier after the previous line. This keeps fast phrases such as `I swear to God I don't even know why I put up with you` revealing in sync instead of arriving late in a burst.
+## [0.4.77.0] - 2026-06-05
+
+### Fixed
+- **Karaoke lyric renders now recover line starts when LRCLIB anchors land late.** The lyrics extractor admits a strong matching prefix from just before the LRC anchor, spreads collapsed Whisper word clusters instead of flashing them all at once, and keeps those local repairs out of whole-track reanchor math. The Roger Sanchez "Again" production regression now caches the audible `"I swear to God..."` start time and survives the render-time section rebase.
+- **Lyrics-enabled renders no longer silently burn stale cached timing blobs.** Music jobs, templated music jobs, template-linked music renders, generative lyrics variants, and admin lyric previews now refresh old `lyrics_cached` rows before rendering; if a fresh publishable LRCLIB result cannot be produced, the render fails loudly instead of shipping the old misaligned cache.
 
 ## [0.4.76.0] - 2026-06-05
 

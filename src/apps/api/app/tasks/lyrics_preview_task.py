@@ -10,6 +10,7 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
 from app.pipeline.lyrics_preview import LyricsPreviewInputError, render_lyrics_preview
+from app.services.lyrics_cache_refresh import ensure_fresh_lyrics_cached_for_render
 from app.services.pipeline_trace import pipeline_trace_for
 from app.worker import celery_app
 
@@ -54,6 +55,14 @@ def render_lyrics_preview_task(self, job_id: str) -> None:
 
                 override_payload = job.all_candidates or {}
                 lyrics_config_effective = override_payload.get("lyrics_config_effective") or {}
+
+            fresh_lyrics_cached = ensure_fresh_lyrics_cached_for_render(
+                track_id=str(track.id),
+                lyrics_cached=track.lyrics_cached,
+                lyrics_config=lyrics_config_effective,
+                reason="lyrics_preview",
+            )
+            track.lyrics_cached = fresh_lyrics_cached
 
             output_url, debug_meta = render_lyrics_preview(
                 track, lyrics_config_effective, job_id=job_id

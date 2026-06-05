@@ -916,7 +916,9 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         track_lyrics_cached: dict | None = None
         effective_lyrics_cfg: dict | None = None
         best_end_s_for_lyrics: float = 0.0
+        lyrics_music_track_id: str | None = None
         if template.music_track_id:
+            lyrics_music_track_id = template.music_track_id
             track = db.get(MusicTrack, template.music_track_id)
             if track and track.track_config:
                 audio_start_offset_s = float(track.track_config.get("best_start_s", 0.0) or 0.0)
@@ -946,6 +948,9 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
         from copy import deepcopy  # noqa: PLC0415
 
         from app.pipeline.lyric_injector import inject_lyric_overlays  # noqa: PLC0415
+        from app.services.lyrics_cache_refresh import (  # noqa: PLC0415
+            ensure_fresh_lyrics_cached_for_render,
+        )
 
         # When the track doesn't carry an explicit best_end_s, fall back to
         # the recipe's total slot duration so the section window covers the
@@ -954,6 +959,13 @@ def _run_template_job(job_id: str, force_single_pass: bool = False) -> None:
             best_end_s_for_lyrics = sum(
                 float(s.get("target_duration_s", 0.0) or 0.0)
                 for s in recipe_data.get("slots", []) or []
+            )
+        if lyrics_music_track_id:
+            track_lyrics_cached = ensure_fresh_lyrics_cached_for_render(
+                track_id=lyrics_music_track_id,
+                lyrics_cached=track_lyrics_cached,
+                lyrics_config=effective_lyrics_cfg,
+                reason="template_music_track",
             )
         recipe_data = inject_lyric_overlays(
             deepcopy(recipe_data),
