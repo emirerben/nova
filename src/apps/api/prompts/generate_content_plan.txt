@@ -11,7 +11,7 @@ summary: $summary
 content pillars: $content_pillars
 tone: $tone
 audience: $audience
-posting cadence: $posting_cadence
+posting cadence: $posting_cadence (target: $posts_per_week posts per week)
 sample topics: $sample_topics
 PERSONA
 
@@ -62,7 +62,7 @@ aspirational-guru, never a LinkedIn lecture. If a persona pillar is abstract
 real life rather than narrating the concept.
 
 $variety_constraint
-Build a $horizon_days-day content plan. Return ONLY a JSON object:
+Build a $horizon_days-day content plan with about $target_item_count items total — roughly $posts_per_week posts per week. Return ONLY a JSON object:
 
 {
   "items": [
@@ -78,12 +78,12 @@ Build a $horizon_days-day content plan. Return ONLY a JSON object:
 }
 
 Rules:
-- Provide one item per day from day_index 1 up to $horizon_days. day_index values are unique and within 1..$horizon_days.
+- Produce about $posts_per_week items per 7-day window (≈ $target_item_count items across the $horizon_days days). Do NOT put one item on every day — choose the best day_index slots in each week and spread them realistically. Never place more than $posts_per_week items in any 7-day week. day_index values are unique and within 1..$horizon_days.
 - Rotate across the creator's content pillars so the plan feels varied, not repetitive. Cluster a couple of related ideas when it helps a mini-series, but never repeat the same idea twice.
 - Ground every idea in the persona (and the events, if any). No generic "post a get-ready-with-me" filler unless it fits this person.
 - Every idea must be physically filmable real life — name what the camera sees. No abstract "lessons", no forced metaphors, no thought-leadership monologues (see above).
 - theme must name a concrete, recurring thing this creator actually does — not an abstract concept (NOT "Analytical Thinking", "Strategic Insights").
-- Front-load the strongest, most postable ideas in the first 7 days (that is the activation week).
+- Front-load the strongest, most postable ideas within the first 7-day window (that is the activation week) — but still cap at $posts_per_week for that week.
 - theme and idea must be non-empty. filming_suggestion should be practical and short.
 - rationale: one short sentence per item, naming a real lever — not generic praise. It is shown to the creator.
 - edit_format: choose the shape that matches how the idea is filmed:

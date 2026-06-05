@@ -87,3 +87,145 @@ def test_render_prompt_injects_excluded_ideas_on_regen() -> None:
     assert "VARIETY CONSTRAINT" in txt
     assert "5am gym workout" in txt
     assert "weekend brunch spots" in txt
+
+
+# ── posts_per_week + edit_format tests ───────────────────────────────────────
+
+
+def _input_with_ppw(ppw: int | None, horizon: int = 30) -> ContentPlanInput:
+    """Helper that sets posts_per_week on the nested persona."""
+    from app.agents._schemas.persona import Persona  # noqa: PLC0415
+
+    return ContentPlanInput(
+        persona=Persona(
+            summary="s",
+            content_pillars=["a", "b"],
+            tone="warm",
+            audience="students",
+            posting_cadence="4/week",
+            posts_per_week=ppw,
+            sample_topics=["x"],
+        ),
+        events="",
+        horizon_days=horizon,
+    )
+
+
+def _items_with_format(*specs: tuple[int, str, str, str]) -> str:
+    """Build an items JSON with day_index, theme, idea, edit_format."""
+    return json.dumps(
+        {
+            "items": [
+                {"day_index": d, "theme": t, "idea": i, "edit_format": f} for d, t, i, f in specs
+            ]
+        }
+    )
+
+
+def test_render_prompt_includes_posts_per_week() -> None:
+    """Rendered prompt must contain the resolved ppw and target_item_count.
+
+    Also verifies no raw placeholders survive substitution."""
+    inp = _input_with_ppw(ppw=3, horizon=30)
+    txt = _agent().render_prompt(inp)
+    # ppw=3, horizon=30 → weeks=5, target=min(30, 3*5)=15
+    assert "3 posts per week" in txt or "target: 3" in txt
+    assert "$posts_per_week" not in txt
+    assert "$target_item_count" not in txt
+
+
+def test_parse_caps_items_per_week() -> None:
+    """With ppw=2, only 2 items per 7-day bucket survive (lowest day_index first)."""
+    # 7 items in week 1 (days 1-7), ppw=2 → only days 1 and 2 survive.
+    raw = json.dumps({"items": [{"day_index": d, "theme": "t", "idea": "i"} for d in range(1, 8)]})
+    out = _agent().parse(raw, _input_with_ppw(ppw=2))
+    week1 = [it for it in out.items if it.day_index <= 7]
+    assert len(week1) == 2
+    assert week1[0].day_index == 1
+    assert week1[1].day_index == 2
+
+
+def test_parse_no_cap_when_posts_per_week_seven() -> None:
+    """ppw=7 is a no-op — all 7 items in the week survive (current behavior pinned)."""
+    raw = json.dumps({"items": [{"day_index": d, "theme": "t", "idea": "i"} for d in range(1, 8)]})
+    out = _agent().parse(raw, _input_with_ppw(ppw=7))
+    assert len(out.items) == 7
+
+
+def test_parse_cap_applies_across_multiple_weeks() -> None:
+    """ppw=2 keeps ≤2 items per 7-day window across the full horizon."""
+    # 30 items (one per day), ppw=2, horizon=30 → 5 weeks × 2 = 10 items.
+    raw = json.dumps({"items": [{"day_index": d, "theme": "t", "idea": "i"} for d in range(1, 31)]})
+    out = _agent().parse(raw, _input_with_ppw(ppw=2, horizon=30))
+    assert len(out.items) == 10
+    # Check each week has at most 2 items.
+    for week in range(5):
+        week_items = [it for it in out.items if week * 7 < it.day_index <= (week + 1) * 7]
+        assert len(week_items) <= 2
+
+
+def test_parse_cap_respects_partial_final_week() -> None:
+    """Items in the partial last week are still capped at ppw."""
+    # horizon=30, ppw=4, put 3 items in the final partial week (days 29, 30, 31→OOR).
+    # Days 29 and 30 are in week 5 (days 29-35), day 31 is out of range.
+    raw = json.dumps({"items": [{"day_index": d, "theme": "t", "idea": "i"} for d in [29, 30]]})
+    out = _agent().parse(raw, _input_with_ppw(ppw=4, horizon=30))
+    # Both survive: 2 ≤ ppw=4
+    assert {it.day_index for it in out.items} == {29, 30}
+
+
+def test_parse_no_cap_when_posts_per_week_none_falls_back() -> None:
+    """ppw=None → resolve falls back to 7 → cap is a no-op → all items survive."""
+    raw = json.dumps({"items": [{"day_index": d, "theme": "t", "idea": "i"} for d in range(1, 8)]})
+    # _input() (the original helper) has cadence "4/week" → resolve=4 via regex.
+    # Use ppw=None explicitly with a cadence that has no number to force 7.
+    from app.agents._schemas.content_plan import ContentPlanInput  # noqa: PLC0415
+    from app.agents._schemas.persona import Persona  # noqa: PLC0415
+
+    inp = ContentPlanInput(
+        persona=Persona(
+            summary="s",
+            content_pillars=["a"],
+            tone="t",
+            audience="a",
+            posting_cadence="posts most days",  # no number → fallback 7
+            posts_per_week=None,
+            sample_topics=["x"],
+        ),
+        events="",
+        horizon_days=30,
+    )
+    out = _agent().parse(raw, inp)
+    assert len(out.items) == 7  # all survive, 7 is no-op
+
+
+# ── edit_format parse-threading regression ────────────────────────────────────
+
+
+def test_parse_threads_edit_format() -> None:
+    """edit_format from the model output must reach PlanItemSpec.
+
+    Before the fix, edit_format was missing from the PlanItemSpec() constructor,
+    so it silently defaulted to montage regardless of what the model emitted.
+    """
+    raw = json.dumps(
+        {"items": [{"day_index": 1, "theme": "t", "idea": "i", "edit_format": "talking_head"}]}
+    )
+    out = _agent().parse(raw, _input())
+    assert out.items[0].edit_format == "talking_head"
+
+
+def test_parse_edit_format_unknown_coerced_to_montage() -> None:
+    """An unrecognized edit_format is coerced to 'montage' by the validator."""
+    raw = json.dumps(
+        {"items": [{"day_index": 1, "theme": "t", "idea": "i", "edit_format": "bad_value"}]}
+    )
+    out = _agent().parse(raw, _input())
+    assert out.items[0].edit_format == "montage"
+
+
+def test_parse_edit_format_absent_defaults_to_montage() -> None:
+    """Absent edit_format (older model output) defaults to montage."""
+    raw = json.dumps({"items": [{"day_index": 1, "theme": "t", "idea": "i"}]})
+    out = _agent().parse(raw, _input())
+    assert out.items[0].edit_format == "montage"

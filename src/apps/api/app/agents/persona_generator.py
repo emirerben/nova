@@ -113,6 +113,10 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
             tone=_sanitize_text(persona.tone),
             audience=_sanitize_text(persona.audience),
             posting_cadence=_sanitize_text(persona.posting_cadence),
+            # Integer — no text-sanitization needed; Pydantic already validated 1..7.
+            # MUST be threaded explicitly: Persona() is named-arg, NOT **splat, so any
+            # new field omitted here silently defaults (parse-threading trap).
+            posts_per_week=persona.posts_per_week,
             content_pillars=[p for p in (_sanitize_text(x) for x in persona.content_pillars) if p],
             sample_topics=[t for t in (_sanitize_text(x) for x in persona.sample_topics) if t],
             # User-facing "why this lane"; sanitized like the rest (it renders in
@@ -126,8 +130,10 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
     def schema_clarification(self) -> str:
         return (
             "\n\nIMPORTANT: Return ONLY the JSON object with keys summary, "
-            "content_pillars, tone, audience, posting_cadence, sample_topics. "
+            "content_pillars, tone, audience, posting_cadence, posts_per_week, "
+            "sample_topics, rationale. "
             "content_pillars MUST have 3-5 short items; sample_topics 5-8. "
+            "posts_per_week MUST be an integer 1-7, consistent with posting_cadence. "
             "No markdown, no text outside the JSON."
         )
 

@@ -295,3 +295,34 @@ def test_regenerate_preserves_user_edited_and_in_flight_items() -> None:
     assert len(added) == 1
     assert added[0].day_index == 2
     assert added[0].theme == "NEW 2"
+
+
+# ── posts_per_week flows from persona JSONB into ContentPlanInput ─────────────
+
+
+def test_persona_posts_per_week_reaches_plan_input() -> None:
+    """Persona JSONB with posts_per_week=3 must produce a Persona with posts_per_week=3
+    inside ContentPlanInput, which the plan generator then uses to derive the cap.
+
+    This is the task-boundary test: `Persona(**persona_row.persona)` in
+    generate_content_plan / regenerate_content_plan must forward the new key
+    without any extra code, because Persona validates via **kwargs.
+    """
+    from app.agents._schemas.content_plan import ContentPlanInput  # noqa: PLC0415
+    from app.agents._schemas.persona import Persona  # noqa: PLC0415
+
+    persona_dict = {
+        "summary": "you film calm morning routines",
+        "content_pillars": ["mornings", "discipline"],
+        "tone": "warm and steady",
+        "audience": "people who want a calmer start",
+        "posting_cadence": "3-4 posts/week",
+        "posts_per_week": 3,
+        "sample_topics": ["sunrise walk"],
+    }
+    # Simulate what generate_content_plan / regenerate_content_plan does.
+    persona = Persona(**persona_dict)
+    assert persona.posts_per_week == 3
+
+    plan_input = ContentPlanInput(persona=persona, horizon_days=30)
+    assert plan_input.persona.posts_per_week == 3

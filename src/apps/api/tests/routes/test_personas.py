@@ -150,3 +150,66 @@ def test_retune_404_for_other_users_persona(client: TestClient) -> None:
 
     resp = client.post(f"/personas/{row.id}/retune-from-feedback")
     assert resp.status_code == 404
+
+
+# ── PATCH posts_per_week ──────────────────────────────────────────────────────
+
+
+def _editable_row(user_id: uuid.UUID) -> MagicMock:
+    """A persona row the caller owns, in a state that accepts edits."""
+    row = MagicMock()
+    row.id = uuid.uuid4()
+    row.user_id = user_id
+    row.persona_status = "ready"
+    row.questionnaire = None  # must be a dict or None — MagicMock fails PersonaResponse validation
+    row.persona = {
+        "summary": "you",
+        "content_pillars": ["a"],
+        "tone": "warm",
+        "audience": "anyone",
+        "posting_cadence": "4/week",
+    }
+    row.error_detail = None
+    return row
+
+
+def test_patch_persona_accepts_posts_per_week(client: TestClient) -> None:
+    """PATCH {posts_per_week: 4} must store the integer, not a stringified '4'."""
+    user = _fake_user()
+    row = _editable_row(user.id)
+    db = _async_db()
+    db.get = AsyncMock(return_value=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(f"/personas/{row.id}", json={"posts_per_week": 4})
+
+    assert resp.status_code == 200
+    assert row.persona["posts_per_week"] == 4
+    assert isinstance(row.persona["posts_per_week"], int)
+
+
+def test_patch_persona_rejects_out_of_range_posts_per_week(client: TestClient) -> None:
+    """posts_per_week=9 violates ge=1,le=7 → 422 Unprocessable Entity."""
+    user = _fake_user()
+    row = _editable_row(user.id)
+    db = _async_db()
+    db.get = AsyncMock(return_value=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(f"/personas/{row.id}", json={"posts_per_week": 9})
+    assert resp.status_code == 422
+
+
+def test_patch_persona_rejects_zero_posts_per_week(client: TestClient) -> None:
+    """posts_per_week=0 violates ge=1 → 422."""
+    user = _fake_user()
+    row = _editable_row(user.id)
+    db = _async_db()
+    db.get = AsyncMock(return_value=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(f"/personas/{row.id}", json={"posts_per_week": 0})
+    assert resp.status_code == 422

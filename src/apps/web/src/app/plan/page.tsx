@@ -389,6 +389,7 @@ function blankPersona(): PersonaContent {
     tone: "",
     audience: "",
     posting_cadence: "",
+    posts_per_week: null,
     sample_topics: [],
   };
 }
